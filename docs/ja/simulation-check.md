@@ -7,6 +7,7 @@
 | 調べること | 節 |
 |---|---|
 | 何を、どの順に照合するか | [照合の順序](#照合の順序) |
+| 実行ファイルを起動せず設定ファイルだけ照合する | [ファイルだけを照合する（`--file-only`）](#ファイルだけを照合する--file-only) |
 | 実行ファイルを起動せずに照合する | [保存した説明](#保存した説明--write-descriptions--descriptions) |
 | 編集で、実行されるコマンドが変わるか | [実行されるコマンドを比べる](#実行されるコマンドを比べる--compare-commands) |
 | 指摘のコードの意味と直し方 | [指摘のコード](#指摘のコード) |
@@ -35,6 +36,10 @@
 | 4 | 設定ファイルと `--describe` の出力 | 2 つを照合します。 |
 
 `--connect` があると、順 3 の後に、つなぐネットワークごとにブリッジを探し、ランチャーが渡す引数でその `--describe` を走らせます（[simulation-config.md](simulation-config.md#ネットワークを外につなぐexternal--connect)「ネットワークを外につなぐ」）。
+
+### ファイルだけを照合する（`--file-only`）
+
+`check --file-only` は順 1（設定テキスト、機種の差分、時間ロック、`--connect` の形式とネットワーク名の検証）だけを実行し、順 2〜4 とシナリオの読み込みを省略して ECU やブリッジの実行ファイルを一切起動しません。指摘はソートして返します。`--json` では `file_sha256`（生の構成ファイルバイト列に対する小文字 16 進 FIPS 180-4 SHA-256。読めない・未読時は `null`）と `hot_eligibility`（`vehicle_sil_launch serve` で実行可能か）を追加します。`--file-only` は `--text-from-stdin` と併用できず、`run`、`test`、`serve` では拒否されます（終了コード 4）。
 
 **順 1 の補足**
 
@@ -434,6 +439,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `participants[]` | participant の配列（設定ファイルの順） |
 | `networks[]` | ネットワークの配列（設定ファイルの順） |
 | `findings[]` | 指摘の配列（人向けと同じ順） |
+| `file_sha256` | `--file-only` のときだけ存在: 生の設定ファイルバイト列の小文字 16 進 SHA-256（読めない・未読時は `null`） |
+| `hot_eligibility` | `--file-only` のときだけ存在: `vehicle_sil_launch serve` 向け適格性 `{ "eligible": bool, "reason": string\|null, "message": string\|null }`（`reason` は `"usage"`、`"config-unreadable"`、`"fixed-registry"`、`"manual-participants"`、`"trace-enabled"`、適格時は `null`） |
 
 - `--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます。
 - `params` の要素は、`name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`）です。

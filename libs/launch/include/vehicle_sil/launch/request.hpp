@@ -180,6 +180,10 @@ struct RequestFileRead
 /// participants and the networks is the check's to say. No file system access.
 [[nodiscard]] RequestFileRead read_request_file(std::string_view text, std::string_view shown);
 
+/// Reads inline run-request JSON ("intent" of serve's run command): same rules as
+/// read_request_file(), except "vehicle_sil_run_request" is optional (validated == 1 if present).
+[[nodiscard]] RequestFileRead read_request_intent(std::string_view text, std::string_view shown);
+
 /// The --connect requests of a run: those of the command line (`arguments`), then those of the
 /// request file (`file`) for a network that the command line does not name and whose target is
 /// not kNoTarget. So an argument replaces the file's target of its network, `<network>=none` on

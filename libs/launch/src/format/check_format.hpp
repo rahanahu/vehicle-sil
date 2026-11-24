@@ -6,6 +6,7 @@
 
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/config/check.hpp"
+#include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/scenario/scenario_run.hpp"
 #include "vehicle_sil/runner/traffic.hpp"
 
@@ -32,10 +33,8 @@ namespace vehicle_sil::launch::detail {
 /// Columns of the width of their longest cell, two spaces apart.
 [[nodiscard]] std::string table_text(const std::vector<std::vector<std::string>>& rows);
 [[nodiscard]] const char* severity_text(config::Severity severity);
-/// format_json()'s object, as the member `key` of the object `w` is in ("" at the top). `scenario`:
-/// the member "scenario"; null for none.
-void write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const config::CheckReport& report,
-                      const scenario::ScenarioCheck* scenario);
+/// format_json()'s object, as the member `key` of the object `w` is in ("" at the top).
+void write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const Checked& checked);
 /// The array "networks" of a participant's "reported": what its executable described, under the
 /// executable's names (check_networks.cpp).
 void write_reported_networks(vehicle_sil::json::JsonWriter& w, const EcuDescription& ecu);

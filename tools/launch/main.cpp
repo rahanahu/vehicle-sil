@@ -99,7 +99,7 @@ namespace {
 using namespace vehicle_sil;
 
 constexpr const char* kUsage =
-    "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
+    "usage: vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                                [--time-policy realtime|free] [--request <file>] [--speed <speed>]\n"
     "                                [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
@@ -207,6 +207,8 @@ constexpr const char* kUsage =
     "  --text-from-stdin           check: read the configuration's text from stdin, not from <file>; <file> still\n"
     "                              says where it is (its relative paths are from its directory) and names it in\n"
     "                              the findings, and need not exist\n"
+    "  --file-only                 check: only read the file (no executable is looked for or run); --json adds\n"
+    "                              file_sha256 and hot_eligibility\n"
     "  --write-descriptions <file> check: write each participant's --describe output that the check read to <file>,\n"
     "                              for --descriptions (only the same vehicle_sil_launch reads it)\n"
     "  --descriptions <file>       check: start no process: take each participant's --describe output from <file>\n"
@@ -949,36 +951,42 @@ int finish_events(launch::EventStream& events, const launch::RunReport& report, 
     return code;
 }
 
-/// A wrong command line: each error and the usage on stderr; with --json also the JSON (result
-/// "usage") on stdout, with --events the result event, so that a program that reads it gets an
-/// answer. `file`: the configuration file if the arguments name one, else "" (null in the JSON).
-/// `variants`: the variants the file defines, if it was read (the JSON lists what --variant takes).
-int usage_error(const std::vector<config::Finding>& errors, bool json, launch::CommandKind command, const std::string& file,
-                launch::EventStream* events, const std::vector<std::string>& variants = {}, bool serve_ends = false)
+void write_usage_stderr(const std::vector<config::Finding>& errors)
 {
     for (const auto& error : errors)
     {
         write_stderr_line("error: " + error.message);
     }
+    const std::unique_lock lock(shared().stderr_mutex, kStderrWait);
+    if (lock.owns_lock())
     {
-        const std::unique_lock lock(shared().stderr_mutex, kStderrWait);
-        if (lock.owns_lock())
-        {
-            std::fputs(kUsage, stderr);
-            std::fflush(stderr);
-        }
+        std::fputs(kUsage, stderr);
+        std::fflush(stderr);
     }
+}
+
+/// A wrong command line: each error and the usage on stderr; with --json also the JSON (result
+/// "usage") on stdout, with --events the result event, so that a program that reads it gets an
+/// answer. `file`: the configuration file if the arguments name one, else "" (null in the JSON).
+/// `variants`: the variants the file defines, if it was read (the JSON lists what --variant takes).
+int usage_error(const std::vector<config::Finding>& errors, bool json, launch::CommandKind command, const std::string& file,
+                launch::EventStream* events, const std::vector<std::string>& variants = {}, bool serve_ends = false,
+                bool file_only = false)
+{
+    write_usage_stderr(errors);
     if (events != nullptr)
     {
         return finish_events(*events, launch::usage_run_report(file, errors, variants), cli::kExitUsage, serve_ends);
     }
-    return json ? write_or_fail(launch::format_usage_json(command, file, errors, variants), cli::kExitUsage) : cli::kExitUsage;
+    return json ? write_or_fail(launch::format_usage_json(command, file, errors, variants, file_only), cli::kExitUsage)
+                : cli::kExitUsage;
 }
 
 int usage_error(const std::string& message, bool json, launch::CommandKind command, const std::string& file, launch::EventStream* events,
-                bool serve_ends = false)
+                bool serve_ends = false, bool file_only = false)
 {
-    return usage_error({config::Finding{config::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events, {}, serve_ends);
+    return usage_error({config::Finding{config::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events, {}, serve_ends,
+                       file_only);
 }
 
 /// The arguments that are no option or an option's value (as cli::Args reads them), for a usage
@@ -1287,15 +1295,28 @@ int check(const cli::Args& args)
             throw cli::UsageError("--" + std::string(runOnly) + " is for run: check starts no participant");
         }
     }
+    if (args.flag("file-only") && args.flag("text-from-stdin"))
+    {
+        throw cli::UsageError("--file-only cannot be used with --text-from-stdin: --file-only reads the configuration file itself");
+    }
     const RequestArgument asked = read_request_argument(args);
     launch::RunRequest request = read_request(args, launch::RequestCommand::Check, asked);
     read_speed(args, request.intent);
     request = whole_request(request, launch::RequestCommand::Check, asked);
     const std::string& file = request.host.config;
-    const launch::Checked report = launch::check_file(request);
+    launch::CheckOptions options;
+    options.file_only = args.flag("file-only");
+    options.trace_enabled = vehicle_sil::trace::enabled();
+    const launch::Checked report = launch::check_file(request, options);
     if (report.usage)
     {
-        return usage_error(report.findings, args.flag("json"), launch::CommandKind::Check, file, nullptr, report.variants);
+        if (options.file_only && args.flag("json"))
+        {
+            write_usage_stderr(report.findings);
+            return write_or_fail(launch::format_json(report), cli::kExitUsage);
+        }
+        return usage_error(report.findings, args.flag("json"), launch::CommandKind::Check, file, nullptr, report.variants, false,
+                           options.file_only);
     }
     return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), launch::check_exit_code(report));
 }
@@ -1349,6 +1370,10 @@ void read_control(const cli::Args& args, launch::RunHost& host)
 
 int run(const cli::Args& args, launch::EventStream* events)
 {
+    if (args.flag("file-only"))
+    {
+        throw cli::UsageError("--file-only is for check: run starts the simulation");
+    }
     const RequestArgument asked = read_request_argument(args);
     launch::RunRequest request = read_request(args, launch::RequestCommand::Run, asked);
     launch::RunHost& host = request.host;
@@ -1546,7 +1571,7 @@ int serve(const cli::Args& args, launch::EventStream* events, const std::string&
                                   " is not for serve: serve always writes events on stdout and reads commands from stdin");
         }
     }
-    for (const char* other : {"json", "text-from-stdin", "descriptions", "write-descriptions", "compare-commands"})
+    for (const char* other : {"json", "file-only", "text-from-stdin", "descriptions", "write-descriptions", "compare-commands"})
     {
         if (args.has(other) || args.flag(other))
         {
@@ -1632,6 +1657,7 @@ int serve(const cli::Args& args, launch::EventStream* events, const std::string&
     options.base = std::move(base);
     options.instance = instance;
     options.source_name = source_name;
+    options.trace_enabled = vehicle_sil::trace::enabled();
     // Never destroyed: the detached stdin reader and the events' watch thread may call into it until the process ends.
     auto* const server = new launch::Serve(*events, g_end, std::move(options));
     g_serve.store(server);
@@ -1692,6 +1718,10 @@ std::vector<std::string> spread_scenarios(const std::vector<std::string>& argume
 
 int test(const cli::Args& args)
 {
+    if (args.flag("file-only"))
+    {
+        throw cli::UsageError("--file-only is for check, not for test");
+    }
     if (args.has("scenario"))
     {
         throw cli::UsageError("--scenario is for check and run: test takes its scenarios with --scenarios <directory or files>");
@@ -1845,6 +1875,7 @@ int main(int argc, char** argv)
     }
     bool json = false;
     bool events = false;
+    bool file_only = false;
     for (const auto& argument : arguments)
     {
         if (argument == "--")
@@ -1861,6 +1892,7 @@ int main(int argc, char** argv)
         }
         json = json || argument == "--json";
         events = events || argument == "--events";
+        file_only = file_only || argument == "--file-only";
     }
     // The command and the file, for a usage error's JSON.
     const std::vector<std::string> positionals = positional_arguments(arguments);
@@ -1923,7 +1955,7 @@ int main(int argc, char** argv)
                                 "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
                                 "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
-                               {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin"},
+                               {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin", "file-only"},
                                {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "stop-at-ms", "late-tolerance-ms",
@@ -1932,18 +1964,18 @@ int main(int argc, char** argv)
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
                                 "timeline", "time-policy", "request", "descriptions", "write-descriptions",
                                 "compare-commands"},
-                               {"json", "strict", "events", "stdin-commands", "start-paused", "text-from-stdin"},
+                               {"json", "strict", "events", "stdin-commands", "start-paused", "text-from-stdin", "file-only"},
                                {"disable", "enable", "manual", "param", "connect"});
         if (args.positionals().empty())
         {
             code = usage_error("no command: give check <file>, run <file>, serve <file>, test <file>, connections <file> or version", json,
-                               command, file, stream, isServe);
+                               command, file, stream, isServe, file_only);
         }
         else if (args.positionals().front() != "check" && !isRun && !isServe && !isTest && !isConnections)
         {
             code = usage_error("unknown command '" + args.positionals().front() +
                                    "': the commands are check, run, serve, test, connections and version",
-                               json, command, file, stream, isServe);
+                               json, command, file, stream, isServe, file_only);
         }
         else
         {
@@ -1952,11 +1984,11 @@ int main(int argc, char** argv)
     }
     catch (const cli::UsageError& e)
     {
-        code = usage_error(e.what(), json, command, file, stream, isServe);
+        code = usage_error(e.what(), json, command, file, stream, isServe, file_only);
     }
     catch (const RequestFileError& e)
     {
-        code = usage_error(e.findings, json, command, file, stream, {}, isServe);
+        code = usage_error(e.findings, json, command, file, stream, {}, isServe, file_only);
     }
     catch (const std::exception& e)
     {

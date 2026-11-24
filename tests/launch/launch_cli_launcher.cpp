@@ -1992,6 +1992,102 @@ void compare(const Options& o)
     log("CHECK run and test refuse --compare-commands -> ok");
 }
 
+void file_only(const Options& o)
+{
+    const fs::path dir = o.work_dir / "file_only";
+    fs::create_directories(dir);
+    const std::string lf_text =
+        "vehicle_sil_simulation: 2\n"
+        "networks:\n"
+        "  - name: CAN1\n"
+        "    kind: can\n"
+        "participants:\n"
+        "  - name: Engine\n"
+        "    command: [\"./does_not_exist_ecu\"]\n"
+        "variants:\n"
+        "  fast: {}\n";
+    const std::string crlf_text =
+        "vehicle_sil_simulation: 2\r\n"
+        "networks:\n"
+        "  - name: CAN1\r\n"
+        "    kind: can\r\n"
+        "participants:\n"
+        "  - name: Engine\r\n"
+        "    command: [\"./does_not_exist_ecu\"]\r\n"
+        "variants:\r\n"
+        "  fast: {}\r\n";
+    const fs::path lf = dir / "lf.yaml";
+    const fs::path crlf = dir / "crlf.yaml";
+    write_file(lf, lf_text);
+    write_file(crlf, crlf_text);
+
+    // 1. check --file-only --json succeeds even when ECU executable does not exist.
+    const Captured lf_res = launch(o, {"check", "--file-only", "--json", "--variant", "fast", shown_path(lf)});
+    expect_code(lf_res, 0, "check --file-only --json lf.yaml");
+    require(contains(lf_res.standard_output, "\"result\": \"passed\""), lf_res.standard_output);
+    require(contains(lf_res.standard_output, "\"file_sha256\": \""), lf_res.standard_output);
+    require(contains(lf_res.standard_output, "\"hot_eligibility\": {\n    \"eligible\": true"), lf_res.standard_output);
+
+    const Captured crlf_res = launch(o, {"check", "--file-only", "--json", "--variant", "fast", shown_path(crlf)});
+    expect_code(crlf_res, 0, "check --file-only --json crlf.yaml");
+    require(lf_res.standard_output != crlf_res.standard_output, "LF and CRLF file_sha256 must differ");
+
+    // 2. check --json without --file-only omits file_sha256 and hot_eligibility.
+    const Captured plain = launch(o, {"check", "--json", "--variant", "fast", shown_path(lf)});
+    expect_code(plain, 1, "check --json without --file-only");
+    require(!contains(plain.standard_output, "\"file_sha256\""), plain.standard_output);
+    require(!contains(plain.standard_output, "\"hot_eligibility\""), plain.standard_output);
+
+    // 3. check --file-only --json with fixed registry_uri and manual participant reports ineligible.
+    const fs::path fixed = dir / "fixed.yaml";
+    write_file(fixed,
+               "vehicle_sil_simulation: 2\n"
+               "registry_uri: silkit://127.0.0.1:8500\n"
+               "networks:\n  - name: CAN1\n    kind: can\n"
+               "participants:\n  - name: Engine\n    command: [\"./does_not_exist_ecu\"]\n");
+    const Captured fixed_res = launch(o, {"check", "--file-only", "--json", shown_path(fixed)});
+    expect_code(fixed_res, 0, "check --file-only --json fixed.yaml");
+    require(contains(fixed_res.standard_output, "\"reason\": \"fixed-registry\""), fixed_res.standard_output);
+
+    const fs::path manual = dir / "manual.yaml";
+    write_file(manual,
+               "vehicle_sil_simulation: 2\n"
+               "networks:\n  - name: CAN1\n    kind: can\n"
+               "participants:\n  - name: Engine\n    command: [\"./does_not_exist_ecu\"]\n    manual: true\n");
+    const Captured manual_res = launch(o, {"check", "--file-only", "--json", shown_path(manual)});
+    expect_code(manual_res, 0, "check --file-only --json manual.yaml");
+    require(contains(manual_res.standard_output, "\"reason\": \"manual-participants\""), manual_res.standard_output);
+
+    // 4. check --file-only --json preserves file_sha256 and hot_eligibility on usage error (exit 4).
+    const Captured bad_var = launch(o, {"check", "--file-only", "--json", "--variant", "nope", shown_path(lf)});
+    expect_code(bad_var, 4, "check --file-only --json --variant nope");
+    require(contains(bad_var.standard_output, "\"result\": \"usage\""), bad_var.standard_output);
+    require(contains(bad_var.standard_output, "\"file_sha256\": \""), bad_var.standard_output);
+    require(contains(bad_var.standard_output, "\"reason\": \"usage\""), bad_var.standard_output);
+
+    // 5. check --file-only --text-from-stdin and run/test/serve --file-only are refused (exit 4).
+    const Captured stdin_ref = launch(o, {"check", "--file-only", "--text-from-stdin", shown_path(lf)});
+    expect_code(stdin_ref, 4, "check --file-only --text-from-stdin");
+    require(contains(stdin_ref.standard_error, "--file-only cannot be used with --text-from-stdin"), stdin_ref.standard_error);
+
+    fs::create_directories(dir / "scenarios");
+    for (const auto& [args, expected_err] : std::vector<std::pair<std::vector<std::string>, std::string>>{
+             {{"run", "--file-only", shown_path(lf)}, "--file-only is for check"},
+             {{"test", "--file-only", shown_path(lf), "--scenarios", shown_path(dir / "scenarios")}, "--file-only is for check"},
+             {{"serve", "--file-only", shown_path(lf)}, "--file-only is not for serve"}})
+    {
+        const Captured refused = launch(o, args);
+        expect_code(refused, 4, args.front() + " --file-only");
+        require(contains(refused.standard_error, expected_err), refused.standard_error);
+        if (args.front() == "serve")
+        {
+            require(contains(refused.standard_output, "\"event\":\"hello\""), refused.standard_output);
+            require(contains(refused.standard_output, "\"launcher_ends\":true"), refused.standard_output);
+        }
+    }
+    log("CHECK check --file-only --json and refusals -> ok");
+}
+
 int main(int argc, char** argv)
 {
     set_log_tag("launch-cli");
@@ -2045,6 +2141,10 @@ int main(int argc, char** argv)
         else if (o.scenario == "compare")
         {
             compare(o);
+        }
+        else if (o.scenario == "file_only")
+        {
+            file_only(o);
         }
         else
         {

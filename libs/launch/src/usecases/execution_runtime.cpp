@@ -35,60 +35,11 @@ runner::Command refused_command(const runner::Command& command, const char* reas
     return out;
 }
 
-std::string first_error_message(const std::vector<config::Finding>& findings, std::string_view fallback)
-{
-    for (const config::Finding& f : findings)
-    {
-        if (f.severity == config::Severity::Error && !f.message.empty())
-        {
-            return f.message;
-        }
-    }
-    return std::string(fallback);
-}
-
-HotEligibility evaluate_eligibility(const Checked& checked, const ExecutionRuntimeOptions& options)
-{
-    HotEligibility out;
-    if (checked.usage)
-    {
-        out.reason = "usage";
-        out.message = first_error_message(checked.findings, "invalid prepare arguments");
-        return out;
-    }
-    if (!checked.config)
-    {
-        out.reason = "config-unreadable";
-        out.message = first_error_message(checked.findings, "configuration could not be read");
-        return out;
-    }
-    if (options.refuse_fixed_registry && checked.config->registry_uri.has_value())
-    {
-        out.reason = "fixed-registry";
-        out.message = "configuration uses a fixed registry_uri (" + *checked.config->registry_uri +
-                      "): use run instead of serve";
-        return out;
-    }
-    if (options.refuse_fixed_registry && config::waits_for_manual(*checked.config))
-    {
-        out.reason = "manual-participants";
-        out.message = "configuration waits for manual participants: use run instead of serve";
-        return out;
-    }
-    if (options.trace_enabled)
-    {
-        out.reason = "trace-enabled";
-        out.message = "serve does not run with VEHICLE_SIL_TRACE set";
-        return out;
-    }
-    out.eligible = true;
-    return out;
-}
-
 ConfigMetadata extract_metadata(const Checked& checked)
 {
     ConfigMetadata metadata;
     metadata.variants = checked.variants;
+    metadata.file_sha256 = checked.file_sha256.value_or("");
     if (checked.config)
     {
         const config::SimulationConfig& config = *checked.config;
@@ -222,10 +173,23 @@ ExecutionRuntime::~ExecutionRuntime()
     std::unique_lock lock(mutex_);
     ending_ = true;
     changed_.notify_all();
-    changed_.wait(lock, [this] {
-        return state_ != LauncherState::Preparing && in_flight_prepare_ == 0 && !status_emitting_ &&
-               pending_statuses_.empty();
-    });
+    while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0 || status_emitting_ ||
+           !pending_statuses_.empty())
+    {
+        if (!status_emitting_ && !pending_statuses_.empty())
+        {
+            try
+            {
+                drain_statuses_locked(lock);
+            }
+            catch (...)
+            {
+                pending_statuses_.clear();
+            }
+            continue;
+        }
+        changed_.wait(lock);
+    }
 }
 
 LauncherAllowed ExecutionRuntime::allowed_locked() const
@@ -436,9 +400,13 @@ PrepareResult ExecutionRuntime::prepare(const PrepareSpec& spec)
     CheckOptions check_opts;
     check_opts.file_only = true;
     check_opts.refuse_fixed_registry = false;
+    check_opts.trace_enabled = options_.trace_enabled;
     Checked checked = check_file(req, check_opts);
     ConfigMetadata metadata = extract_metadata(checked);
-    HotEligibility eligibility = evaluate_eligibility(checked, options_);
+    HotEligibility eligibility =
+        (options_.refuse_fixed_registry && checked.hot_eligibility)
+            ? *checked.hot_eligibility
+            : evaluate_hot_eligibility(checked, options_.trace_enabled, options_.refuse_fixed_registry);
 
     lock.lock();
     if (ending_ || end_.requested() || sink_.closed())
@@ -757,10 +725,21 @@ ExecutionEnd ExecutionRuntime::run_loop()
                     pending_statuses_.push_back(snapshot_locked(nullptr));
                 }
                 changed_.notify_all();
-                drain_statuses_locked(lock);
                 while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0 || status_emitting_ ||
                        !pending_statuses_.empty())
                 {
+                    if (!status_emitting_ && !pending_statuses_.empty())
+                    {
+                        try
+                        {
+                            drain_statuses_locked(lock);
+                        }
+                        catch (...)
+                        {
+                            pending_statuses_.clear();
+                        }
+                        continue;
+                    }
                     changed_.wait(lock);
                 }
                 const bool quiet = end_.source() == runner::stop_source::kEndOfInput && !input_ended_in_run_;
@@ -874,10 +853,21 @@ ExecutionEnd ExecutionRuntime::run_loop()
             }
             pending_statuses_.push_back(snapshot_locked(nullptr));
             changed_.notify_all();
-            drain_statuses_locked(lock);
             while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0 || status_emitting_ ||
                    !pending_statuses_.empty())
             {
+                if (!status_emitting_ && !pending_statuses_.empty())
+                {
+                    try
+                    {
+                        drain_statuses_locked(lock);
+                    }
+                    catch (...)
+                    {
+                        pending_statuses_.clear();
+                    }
+                    continue;
+                }
                 changed_.wait(lock);
             }
             return {code, contaminated};

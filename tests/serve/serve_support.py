@@ -47,6 +47,8 @@ EXIT_CONTAMINATED = 6  # the launcher ended after a Run it could not close (laun
 REASON_RUN_REQUIRED = "run-required"
 REASON_RUN_CHANGED = "run-changed"
 REASON_BUSY = "busy"
+REASON_NOT_PREPARED = "not-prepared"
+REASON_CONTAMINATED = "contaminated"
 # The fault injection of a test build: how long the launcher sleeps before it closes its own SIL Kit connections.
 FAULT_DELAY_ENV = "VEHICLE_SIL_FAULT_CLOSE_DELAY_MS"
 FAULT_CLOSE_TIMEOUT_ENV = "VEHICLE_SIL_FAULT_CLOSE_TIMEOUT_MS"
@@ -307,10 +309,41 @@ class Serve:
             pass
 
     def run(self, request: Optional[os.PathLike] = None, timeline: Optional[os.PathLike] = None,
-            id: Optional[int] = None) -> int:
+            id: Optional[int] = None, intent: Optional[Mapping] = None) -> int:
         """Sends a run command; returns its id (the run_start carries it)."""
         id = next(self._ids) if id is None else id
-        self.send(run_command(request, timeline, id))
+        self.send(run_command(request, timeline, id, intent=intent))
+        return id
+
+    def prepare(self, variant: Optional[str] = None, disable: Sequence[str] = (), enable: Sequence[str] = (),
+                manual: Sequence[str] = (), id: Optional[int] = None, timeout: float = 60.0) -> dict:
+        """Sends a prepare command and waits for its prepare reply."""
+        id = next(self._ids) if id is None else id
+        cmd: dict = {"command": "prepare", "id": id}
+        if variant is not None:
+            cmd["variant"] = variant
+        if disable:
+            cmd["disable"] = list(disable)
+        if enable:
+            cmd["enable"] = list(enable)
+        if manual:
+            cmd["manual"] = list(manual)
+        self.send(cmd)
+        return self.wait_event("prepare", timeout=timeout, id=id)
+
+    def status(self, id: Optional[int] = None, timeout: float = 60.0) -> dict:
+        """Sends a status command and waits for its status reply."""
+        id = next(self._ids) if id is None else id
+        self.send({"command": "status", "id": id})
+        return self.wait_event("status", timeout=timeout, id=id)
+
+    def stop(self, run: str, force: Optional[bool] = None, id: Optional[int] = None) -> int:
+        """Sends a stop command; returns its id."""
+        id = next(self._ids) if id is None else id
+        cmd: dict = {"command": "stop", "run": run, "id": id}
+        if force is not None:
+            cmd["force"] = force
+        self.send(cmd)
         return id
 
     def run_started(self, id: int, after: Optional[Mapping] = None, timeout: float = 60.0) -> dict:
@@ -327,11 +360,11 @@ class Serve:
                              f"the result of Run {run}", timeout)
 
     def run_once(self, request: Optional[os.PathLike] = None, timeline: Optional[os.PathLike] = None,
-                 timeout: float = 120.0, idle: bool = True) -> "RunRecord":
+                 timeout: float = 120.0, idle: bool = True, intent: Optional[Mapping] = None) -> "RunRecord":
         """One Run from idle to its result, and to the next idle unless the launcher ends (idle=False: does not wait
         for that idle)."""
         before = self.ready(timeout)
-        id = self.run(request, timeline)
+        id = self.run(request, timeline, intent=intent)
         start = self.run_started(id, after=before, timeout=timeout)
         run = start[RUN_KEY]
         result = self.result_of(run, timeout)
@@ -423,12 +456,14 @@ class Serve:
 
 
 def run_command(request: Optional[os.PathLike] = None, timeline: Optional[os.PathLike] = None,
-                id: Optional[int] = None) -> dict:
+                id: Optional[int] = None, intent: Optional[Mapping] = None) -> dict:
     command: dict = {"command": "run"}
     if id is not None:
         command["id"] = id
     if request is not None:
         command["request"] = pathlib.Path(request).as_posix()
+    if intent is not None:
+        command["intent"] = dict(intent)
     if timeline is not None:
         command["timeline"] = pathlib.Path(timeline).as_posix()
     return command

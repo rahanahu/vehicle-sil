@@ -506,10 +506,10 @@ void detail::write_findings_json(vehicle_sil::json::JsonWriter& w, const std::st
 
 namespace {
 
-std::string json_of(const config::CheckReport& report, const scenario::ScenarioCheck* scenario)
+std::string json_of(const Checked& checked)
 {
     vehicle_sil::json::JsonWriter w;
-    detail::write_check_json(w, {}, report, scenario);
+    detail::write_check_json(w, {}, checked);
     std::string out = w.take();
     out += '\n';
     return out;
@@ -517,11 +517,12 @@ std::string json_of(const config::CheckReport& report, const scenario::ScenarioC
 
 } // namespace
 
-std::string format_json(const Checked& checked) { return json_of(checked, detail::scenario_of(checked)); }
+std::string format_json(const Checked& checked) { return json_of(checked); }
 
-void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view member, const config::CheckReport& report,
-                              const scenario::ScenarioCheck* scenario)
+void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view member, const Checked& checked)
 {
+    const config::CheckReport& report = checked;
+    const scenario::ScenarioCheck* const scenario = detail::scenario_of(checked);
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
         {
@@ -847,6 +848,18 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         w.null("time_lock");
     }
     detail::write_findings_json(w, report.file, report.findings);
+    if (checked.file_sha256)
+    {
+        optional_text("file_sha256", *checked.file_sha256);
+    }
+    if (checked.hot_eligibility)
+    {
+        w.begin_object("hot_eligibility");
+        w.boolean("eligible", checked.hot_eligibility->eligible);
+        optional_text("reason", checked.hot_eligibility->reason);
+        optional_text("message", checked.hot_eligibility->message);
+        w.end_object();
+    }
     if (scenario != nullptr)
     {
         // Only with --scenario: a result without one is as it was before scenarios.

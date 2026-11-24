@@ -17,6 +17,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/usecases/execution_runtime.cpp
   src/usecases/run_file.cpp
   src/usecases/serve.cpp
+  src/usecases/sha256.cpp
   src/usecases/test.cpp
   src/request/request.cpp
   src/request/request_read.cpp

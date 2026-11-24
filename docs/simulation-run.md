@@ -2065,11 +2065,12 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
   [--] <file>
 ```
 
-- `serve` always writes NDJSON events to stdout and reads commands from stdin (see "Resident launcher (`serve`)" in [simulation-events.md](simulation-events.md#resident-launcher-serve)). Passing `--events` or `--stdin-commands` is a usage error.
-- Per-run options (`--scenario`, `--variant`, `--param`, `--speed`, `--strict`, `--start-paused`, `--stop-at-ms`, `--late-tolerance-ms`, `--disable`, `--enable`, `--manual`, `--connect`, `--time-policy`, `--request`, `--timeline`) are not accepted on the command line; pass them in the `"request"` file (and `"timeline"` path) of each `{"command":"run"}` command.
+- `serve` always writes NDJSON events to stdout and reads commands from stdin (see "Resident launcher (`serve`)" in [simulation-events.md](simulation-events.md#resident-launcher-serve)). Passing `--events`, `--stdin-commands`, or `--file-only` is a usage error.
+- Per-run options (`--scenario`, `--variant`, `--param`, `--speed`, `--strict`, `--start-paused`, `--stop-at-ms`, `--late-tolerance-ms`, `--disable`, `--enable`, `--manual`, `--connect`, `--time-policy`, `--request`, `--timeline`) are not accepted on the command line; pass them in the `"request"` file or inline `"intent"` object (and `"timeline"` path) of each `{"command":"run"}` command.
+- `{"command":"prepare"}` re-validates the bound `<file>` (`--file-only` semantics, optional `"variant"`, `"disable"`, `"enable"`, `"manual"` arrays) and replies with `prepare`; `{"command":"status"}` replies with `status`.
 - With `--log-dir <dir>`, each run writes its participant logs under `<dir>/<run ID>/`.
 - With `--control-credentials <file>`, the credentials file is read again before each run so callers can rotate tokens per run.
-- Only one run is executed at a time. A `run` command received before the launcher emits `idle` is refused (`busy`); nothing is queued.
+- Only one run is executed at a time. A `run` or `prepare` command received before the launcher finishes and emits `idle` is refused (`busy`); nothing is queued.
 - A run that fails, times out or is stopped is never retried automatically.
 
 ### Restrictions of `serve`
@@ -2080,7 +2081,8 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
 ### Stopping and exit codes of `serve`
 
 - A targeted stdin `stop` (`{"command":"stop","run":"<run ID>"}`) or a Control API `Stop` with a matching run ID stops only the current run. When the run closes cleanly, the launcher emits `idle` and accepts the next `run`.
-- While a run is already closing its own SIL Kit connection, a single late `stop` for that run does not cut the close wait short; only a second `stop` (force) or a launcher termination request does.
+- An optional `"force"` boolean on stdin `stop` selects idempotent graceful stop (`false`, does not escalate on repeat) or immediate force stop (`true`, cuts close wait); omitting `"force"` preserves escalating `1 -> 2` behavior.
+- While a run is already closing its own SIL Kit connection, a single late `stop` for that run does not cut the close wait short; only a second `stop` (`force: true` or escalated bare `stop`) or a launcher termination request does.
 - `SIGINT`, `SIGTERM`, `SIGHUP` (Windows: `CTRL_C_EVENT`, `CTRL_BREAK_EVENT`, `CTRL_CLOSE_EVENT`), stdin EOF, or closed stdout ends the launcher. If a run is active, it is stopped and its `result` sets `"launcher_ends": true`, with no `idle` after it.
 - If a run cannot close its own SIL Kit connection within the limit (`connection-not-closed`) or throws an internal error, the launcher sets `"launcher_ends": true` on that run's `result` and exits immediately with code 6 so the caller can start a fresh launcher for the next run.
 

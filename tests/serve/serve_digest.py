@@ -126,13 +126,14 @@ def first_points_ms(timeline: Mapping) -> List[int]:
 
 def stream_problems(events: Sequence[Mapping], *, run_key: str = "run", launcher_key: str = "launcher",
                     window_free: Iterable[str] = ("heartbeat",), launcher_commands: str = "command",
-                    complete: bool = True) -> List[str]:
+                    complete: bool = True, allow_replies: bool = False) -> List[str]:
     """What breaks the rules of serve's event stream in `events` (all the lines of one launcher, in order).
 
     `run_key`: the key that names the Run on a line. `launcher_key`: the key of hello with the launcher's instance.
     `window_free`: events that may come inside a Run's window without the Run (heartbeat). `launcher_commands`: the
     event of an answer of the launcher itself, which carries no Run and refuses (accepted false) wherever it comes.
     `complete`: the stream ended (the process has ended): a Run that began has its result.
+    `allow_replies`: also allow launcher-level `prepare` and `status` reply events (both idle and inside a Run window).
     """
     problems: List[str] = []
 
@@ -149,6 +150,8 @@ def stream_problems(events: Sequence[Mapping], *, run_key: str = "run", launcher
     if events[0].get("event") == "hello" and not isinstance(instance, str):
         bad(0, f"hello has no {launcher_key!r} (the launcher's instance)")
     window_free = set(window_free)
+    reply_events = ("prepare", "status") if allow_replies else ()
+    window_free.update(reply_events)
     current: Optional[str] = None  # the Run whose window is open
     ended: set = set()  # Runs whose result was written
     started: List[str] = []
@@ -233,7 +236,7 @@ def stream_problems(events: Sequence[Mapping], *, run_key: str = "run", launcher
             # Only the launcher's own end (a usage error at the start): the last line.
             if i != len(events) - 1:
                 bad(i, "the launcher's result is not the last line")
-        elif name not in ("hello", "heartbeat", launcher_commands):
+        elif name not in ("hello", "heartbeat", launcher_commands, *reply_events):
             bad(i, f"{name} outside a Run's window")
         elif name == launcher_commands and e.get("accepted") is not False:
             bad(i, "the launcher's own command line that is not a refusal")

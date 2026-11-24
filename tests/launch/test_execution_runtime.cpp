@@ -10,6 +10,7 @@
 #include "vehicle_sil/launch/execution_runtime.hpp"
 #include "vehicle_sil/launch/run_sink.hpp"
 #include "vehicle_sil/scenario/timeline.hpp"
+#include "usecases/sha256.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -245,17 +246,18 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
 {
     const std::filesystem::path dir = scratch_dir("prepare_meta");
     const std::filesystem::path valid_cfg = dir / "valid.yaml";
-    write_text(valid_cfg,
-               "vehicle_sil_simulation: 2\n"
-               "networks:\n"
-               "  - name: CAN1\n    kind: can\n"
-               "  - name: ETH0\n    kind: ethernet\n"
-               "participants:\n"
-               "  - name: Engine\n    command: [\"./engine\"]\n"
-               "  - name: Dash\n    command: [\"./dash\"]\n"
-               "variants:\n"
-               "  fast: {}\n"
-               "  slow: {}\n");
+    const std::string valid_text =
+        "vehicle_sil_simulation: 2\n"
+        "networks:\n"
+        "  - name: CAN1\n    kind: can\n"
+        "  - name: ETH0\n    kind: ethernet\n"
+        "participants:\n"
+        "  - name: Engine\n    command: [\"./engine\"]\n"
+        "  - name: Dash\n    command: [\"./dash\"]\n"
+        "variants:\n"
+        "  fast: {}\n"
+        "  slow: {}\n";
+    write_text(valid_cfg, valid_text);
     const std::filesystem::path fixed_cfg = dir / "fixed.yaml";
     write_text(fixed_cfg,
                "vehicle_sil_simulation: 2\n"
@@ -316,7 +318,8 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     CHECK((p_valid.metadata.participant_names == std::vector<std::string>{"Engine", "Dash"}));
     CHECK((p_valid.metadata.network_names == std::vector<std::string>{"CAN1", "ETH0"}));
     CHECK((p_valid.metadata.variants == std::vector<std::string>{"fast", "slow"}));
-    CHECK(p_valid.metadata.file_sha256.empty()); // populated in later PR
+    CHECK(p_valid.metadata.file_sha256 == vehicle_sil::launch::detail::sha256_hex(valid_text));
+    CHECK_EQ(p_valid.metadata.file_sha256.size(), std::size_t{64});
 
     // 2. Fixed registry -> resets Ready back to Idle with fixed-registry reason.
     const PrepareResult p_fixed = rt.prepare(PrepareSpec{fixed_cfg.string()});
@@ -341,12 +344,13 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     CHECK(p_missing.status.eligibility.reason == "config-unreadable");
     CHECK(p_missing.status.launcher_state == LauncherState::Idle);
 
-    // 5. Usage error (nonexistent variant) -> usage, Idle.
+    // 5. Usage error (nonexistent variant) -> usage, Idle, file_sha256 still computed from readable file.
     const PrepareResult p_usage = rt.prepare(PrepareSpec{valid_cfg.string(), std::string("missing_variant")});
     CHECK(p_usage.accepted);
     CHECK(!p_usage.status.eligibility.eligible);
     CHECK(p_usage.status.eligibility.reason == "usage");
     CHECK(p_usage.status.launcher_state == LauncherState::Idle);
+    CHECK(p_usage.metadata.file_sha256 == vehicle_sil::launch::detail::sha256_hex(valid_text));
 
     // 6. Re-prepare valid config -> Ready, then refuse prepare with busy during Running.
     const PrepareResult p_ready = rt.prepare(PrepareSpec{valid_cfg.string(), std::string("slow")});
@@ -368,12 +372,12 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     CHECK(p_busy.status.launcher_allowed.prepare.reason == serve_reason::kBusy);
     CHECK(p_busy.status.launcher_allowed.run.reason == serve_reason::kBusy);
 
+    rt.request_shutdown(stop_source::kEndOfInput);
     {
         const std::lock_guard lock(run_mu);
         allow_finish = true;
     }
     run_cv.notify_all();
-    rt.request_shutdown(stop_source::kEndOfInput);
     const ExecutionEnd ended = loop_future.get();
     CHECK(ended.code == kExitInterrupted);
 
@@ -1349,4 +1353,176 @@ TEST_CASE(execution_runtime_prepare_exception_after_ready_clears_eligibility)
     CHECK(recovered.accepted);
     CHECK(recovered.status.launcher_state == LauncherState::Ready);
     CHECK(recovered.status.launcher_allowed.run.ok);
+}
+
+TEST_CASE(execution_runtime_throwing_on_status_drains_exit_barriers_without_hanging)
+{
+    {
+        std::mutex mu;
+        std::condition_variable cv;
+        bool in_on_status = false;
+        bool in_run = false;
+        bool release_run = false;
+        bool entered_finish = false;
+        bool release_throw = false;
+        std::atomic<bool> loop_exited{false};
+
+        MockExecutionSink sink;
+        sink.status_hook = [&](const ExecutionStatus& s) {
+            if (s.launcher_state == LauncherState::Running)
+            {
+                {
+                    const std::lock_guard lock(mu);
+                    in_on_status = true;
+                }
+                cv.notify_all();
+                std::unique_lock lock(mu);
+                cv.wait(lock, [&] { return release_throw; });
+                throw std::runtime_error("on_status boom");
+            }
+        };
+        sink.finish_hook = [&] {
+            {
+                const std::lock_guard lock(mu);
+                entered_finish = true;
+            }
+            cv.notify_all();
+        };
+
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = "aabbccddeeff0011";
+        opts.base.host.config = "sim.yaml";
+        opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            {
+                const std::lock_guard lock(mu);
+                in_run = true;
+            }
+            cv.notify_all();
+            {
+                std::unique_lock lock(mu);
+                cv.wait(lock, [&] { return release_run; });
+            }
+            lent.controls->set_phase(Phase::Ended);
+            return passed_report();
+        };
+
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] {
+            const ExecutionEnd ended = rt.run_loop();
+            loop_exited.store(true);
+            return ended;
+        });
+        auto start_future = std::async(std::launch::async, [&] { return rt.start_run(RunSubmission{}); });
+
+        {
+            std::unique_lock lock(mu);
+            cv.wait(lock, [&] { return in_on_status && in_run; });
+        }
+        // Hold the active run open across request_shutdown() so input_ended_in_run_ is guaranteed,
+        // then release the run to finish_run() so run_loop() parks at its post-run exit barrier
+        // while status_emitting_ == true. Releasing on_status to throw must wake run_loop() and
+        // drain pending_statuses_ cleanly without hanging.
+        rt.request_shutdown(stop_source::kEndOfInput);
+        {
+            const std::lock_guard lock(mu);
+            release_run = true;
+        }
+        cv.notify_all();
+        {
+            std::unique_lock lock(mu);
+            cv.wait(lock, [&] { return entered_finish; });
+        }
+        CHECK(!loop_exited.load());
+        {
+            const std::lock_guard lock(mu);
+            release_throw = true;
+        }
+        cv.notify_all();
+
+        bool start_threw = false;
+        try
+        {
+            static_cast<void>(start_future.get());
+        }
+        catch (const std::runtime_error&)
+        {
+            start_threw = true;
+        }
+        CHECK(start_threw);
+        const ExecutionEnd ended = loop_future.get();
+        CHECK(loop_exited.load());
+        CHECK_EQ(ended.code, kExitInterrupted);
+    }
+
+    // Throwing directly inside run_loop()'s idle exit barrier (Ending) must be caught cleanly.
+    {
+        MockExecutionSink sink;
+        sink.status_hook = [](const ExecutionStatus& s) {
+            if (s.launcher_state == LauncherState::Ending)
+            {
+                throw std::runtime_error("ending status boom");
+            }
+        };
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = "bbccddeeff001122";
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+        sink.set_closed(true);
+        const ExecutionEnd ended = loop_future.get();
+        CHECK_EQ(ended.code, kExitInterrupted);
+        CHECK(rt.status().launcher_state == LauncherState::Ending);
+    }
+
+    // Throwing directly inside run_loop()'s post-run exit barrier (Ending) must also be caught cleanly.
+    {
+        std::mutex mu;
+        std::condition_variable cv;
+        bool in_run = false;
+        bool release_run = false;
+
+        MockExecutionSink sink;
+        sink.status_hook = [](const ExecutionStatus& s) {
+            if (s.launcher_state == LauncherState::Ending)
+            {
+                throw std::runtime_error("post-run ending status boom");
+            }
+        };
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = "ccddeeff00112233";
+        opts.base.host.config = "sim.yaml";
+        opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            {
+                const std::lock_guard lock(mu);
+                in_run = true;
+            }
+            cv.notify_all();
+            {
+                std::unique_lock lock(mu);
+                cv.wait(lock, [&] { return release_run; });
+            }
+            lent.controls->set_phase(Phase::Ended);
+            return passed_report();
+        };
+
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+        const CommandReply started = rt.start_run(RunSubmission{});
+        CHECK(started.accepted);
+        {
+            std::unique_lock lock(mu);
+            cv.wait(lock, [&] { return in_run; });
+        }
+        rt.request_shutdown(stop_source::kEndOfInput);
+        {
+            const std::lock_guard lock(mu);
+            release_run = true;
+        }
+        cv.notify_all();
+        const ExecutionEnd ended = loop_future.get();
+        CHECK_EQ(ended.code, kExitInterrupted);
+        CHECK(rt.status().launcher_state == LauncherState::Ending);
+    }
 }

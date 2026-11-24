@@ -22,6 +22,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_scenario_samples.cpp
     test_scenario_timeline.cpp
     test_serve.cpp
+    test_sha256.cpp
     test_shared_values.cpp
     test_traffic.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
@@ -193,6 +194,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       descriptions
       docs
       enabled
+      file_only
       request
       strict
       unreadable

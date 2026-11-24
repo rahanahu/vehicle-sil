@@ -20,6 +20,17 @@ struct RunRequest; // request.hpp
 /// The version of the JSON that format_json() writes (its "vehicle_sil_check" key).
 inline constexpr int kCheckFormat = 1;
 
+/// Whether a checked configuration can run inside the resident launcher.
+struct HotEligibility
+{
+    bool eligible = false;
+    /// "", "fixed-registry", "manual-participants", "trace-enabled", "config-unreadable", "usage"
+    std::string reason{};
+    std::string message{};
+
+    [[nodiscard]] bool operator==(const HotEligibility&) const = default;
+};
+
 /// What check_file() returns: the check of the configuration, with the scenario of --scenario.
 /// The findings of the scenario are in CheckReport::findings (with Finding::file set), so that the
 /// counts, the exit code and the order stay one: `scenario` only says what was read. A run, a test
@@ -29,7 +40,18 @@ struct Checked : config::CheckReport
 {
     /// --scenario: the scenario file that was read and checked.
     std::optional<scenario::ScenarioCheck> scenario{};
+    /// Populated only when CheckOptions::file_only is true: lowercase hex FIPS 180-4 SHA-256
+    /// of the raw configuration file bytes if read, or empty string if unreadable/not read.
+    /// std::nullopt when CheckOptions::file_only is false.
+    std::optional<std::string> file_sha256{};
+    /// Populated only when CheckOptions::file_only is true.
+    /// std::nullopt when CheckOptions::file_only is false.
+    std::optional<HotEligibility> hot_eligibility{};
 };
+
+/// Evaluates resident-launcher eligibility from a Checked report.
+[[nodiscard]] HotEligibility evaluate_hot_eligibility(const Checked& checked, bool trace_enabled = false,
+                                                      bool refuse_fixed_registry = true);
 
 namespace detail {
 /// The scenario of a check, or null without --scenario: what the outputs' pieces take
@@ -71,6 +93,9 @@ struct CheckOptions
     /// manual participant) as soon as the file is read, before any executable is described or
     /// started: CheckReport::usage with one finding that says why and to use `run`.
     bool refuse_fixed_registry = false;
+    /// Injected by caller (e.g. tools/launch/main.cpp via trace::enabled()) so libs/launch never
+    /// links vehicle_sil::trace; evaluated for HotEligibility when file_only is true.
+    bool trace_enabled = false;
 };
 
 /// Checks the file of `request` (RunHost::config, shown as given): reads it, checks the

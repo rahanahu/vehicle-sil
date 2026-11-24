@@ -13,6 +13,7 @@
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/launch/command_input.hpp"
 #include "vehicle_sil/launch/events.hpp"
+#include "vehicle_sil/launch/execution_runtime.hpp"
 #include "vehicle_sil/launch/run.hpp"
 
 #include <atomic>
@@ -1614,13 +1615,100 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "request",
     "scenario-samples",
     "run-stop-at",
-    "serve"
+    "serve",
+    "check-file-only",
+    "serve-prepare"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature, kScenarioTimeFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
+}
+
+TEST_CASE(event_stream_formats_prepare_and_status_replies)
+{
+    std::string written;
+    std::mutex mu;
+    std::condition_variable cv;
+    auto count_lines = [&] {
+        return static_cast<std::size_t>(std::count(written.begin(), written.end(), '\n'));
+    };
+    EventStreamOptions opts;
+    opts.heartbeat = 0ms;
+    opts.now_ms = [n = std::make_shared<std::atomic<std::int64_t>>(0)]() { return n->fetch_add(1); };
+    {
+        EventStream stream(
+            [&](std::string_view bytes) {
+                EventWrite w;
+                const std::lock_guard lock(mu);
+                written.append(bytes);
+                cv.notify_all();
+                w.bytes = bytes.size();
+                return w;
+            },
+            [](const std::string&) {}, opts);
+
+        PrepareResult prep_ok;
+        prep_ok.accepted = true;
+        prep_ok.status.instance = "0123456789abcdef";
+        prep_ok.status.status_rev = 2;
+        prep_ok.status.launcher_state = LauncherState::Ready;
+        prep_ok.status.config = "sim.yaml";
+        prep_ok.status.eligibility = HotEligibility{true, "", ""};
+        prep_ok.metadata.participant_names = {"Engine", "Dash"};
+        prep_ok.metadata.network_names = {"CAN1"};
+        prep_ok.metadata.variants = {"fast"};
+        prep_ok.metadata.file_sha256 = std::string(64, 'a');
+        stream.prepare(prep_ok, 11);
+
+        PrepareResult prep_busy;
+        prep_busy.accepted = false;
+        prep_busy.reason = serve_reason::kBusy;
+        prep_busy.message = "busy";
+        prep_busy.status = prep_ok.status;
+        prep_busy.status.launcher_state = LauncherState::Running;
+        prep_busy.status.active_run_id = "0123456789abcdef-1";
+        prep_busy.status.run_state.emplace();
+        prep_busy.status.run_state->rev = 3;
+        prep_busy.status.run_state->phase = runner::Phase::Running;
+        stream.prepare(prep_busy, std::nullopt);
+
+        stream.status(prep_busy.status, 12);
+
+        std::unique_lock lock(mu);
+        CHECK(cv.wait_for(lock, 5000ms, [&] { return count_lines() >= 3; }));
+    }
+    std::vector<std::string> lines;
+    std::size_t pos = 0;
+    while (pos < written.size())
+    {
+        const auto nl = written.find('\n', pos);
+        lines.push_back(written.substr(pos, nl - pos));
+        pos = nl + 1;
+    }
+    CHECK_EQ(lines.size(), std::size_t{3});
+    CHECK(lines[0].find(R"("event":"prepare")") != std::string::npos);
+    CHECK(lines[0].find(R"("id":11)") != std::string::npos);
+    CHECK(lines[0].find(R"("accepted":true)") != std::string::npos);
+    CHECK(lines[0].find(R"("participants":["Engine","Dash"])") != std::string::npos);
+    CHECK(lines[0].find(R"("networks":["CAN1"])") != std::string::npos);
+    CHECK(lines[0].find(R"("variants":["fast"])") != std::string::npos);
+    CHECK(lines[0].find(std::string(64, 'a')) != std::string::npos);
+    CHECK(lines[0].find(R"("run":")") == std::string::npos);
+
+    CHECK(lines[1].find(R"("event":"prepare")") != std::string::npos);
+    CHECK(lines[1].find(R"("id":null)") != std::string::npos);
+    CHECK(lines[1].find(R"("accepted":false)") != std::string::npos);
+    CHECK(lines[1].find(R"("reason":"busy")") != std::string::npos);
+    CHECK(lines[1].find(R"("metadata":null)") != std::string::npos);
+    CHECK(lines[1].find(R"("findings":[])") != std::string::npos);
+
+    CHECK(lines[2].find(R"("event":"status")") != std::string::npos);
+    CHECK(lines[2].find(R"("id":12)") != std::string::npos);
+    CHECK(lines[2].find(R"("launcher_state":"running")") != std::string::npos);
+    CHECK(lines[2].find(R"("active_run_id":"0123456789abcdef-1")") != std::string::npos);
+    CHECK(lines[2].find(R"("run_state":{"rev":3,"phase":"running")") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)

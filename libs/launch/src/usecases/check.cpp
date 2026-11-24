@@ -9,6 +9,7 @@
 // check_report.cpp.
 #include "format/exit_codes.hpp"
 #include "usecases/check_describe.hpp"
+#include "usecases/sha256.hpp"
 
 #include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
@@ -329,6 +330,54 @@ void compare_commands_with(Checked& report, std::string_view text, const std::st
 
 } // namespace
 
+HotEligibility evaluate_hot_eligibility(const Checked& checked, bool trace_enabled, bool refuse_fixed_registry)
+{
+    const auto first_error_message = [](const std::vector<config::Finding>& findings, std::string_view fallback) {
+        for (const config::Finding& f : findings)
+        {
+            if (f.severity == config::Severity::Error && !f.message.empty())
+            {
+                return f.message;
+            }
+        }
+        return std::string(fallback);
+    };
+    HotEligibility out;
+    if (checked.usage)
+    {
+        out.reason = "usage";
+        out.message = first_error_message(checked.findings, "invalid prepare arguments");
+        return out;
+    }
+    if (!checked.config)
+    {
+        out.reason = "config-unreadable";
+        out.message = first_error_message(checked.findings, "configuration could not be read");
+        return out;
+    }
+    if (refuse_fixed_registry && checked.config->registry_uri.has_value())
+    {
+        out.reason = "fixed-registry";
+        out.message = "configuration uses a fixed registry_uri (" + *checked.config->registry_uri +
+                      "): use run instead of serve";
+        return out;
+    }
+    if (refuse_fixed_registry && config::waits_for_manual(*checked.config))
+    {
+        out.reason = "manual-participants";
+        out.message = "configuration waits for manual participants: use run instead of serve";
+        return out;
+    }
+    if (trace_enabled)
+    {
+        out.reason = "trace-enabled";
+        out.message = "serve does not run with VEHICLE_SIL_TRACE set";
+        return out;
+    }
+    out.eligible = true;
+    return out;
+}
+
 Checked check_file(const RunRequest& request, const CheckOptions& options,
                        const std::function<void(const config::TimeLock& lock)>& on_time_lock)
 {
@@ -351,17 +400,31 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     Checked report;
     report.file = host.config;
     report.strict = intent.strict;
+    const auto finalize_file_only = [&options](Checked& out) {
+        if (!options.file_only)
+        {
+            return;
+        }
+        if (!out.file_sha256)
+        {
+            out.file_sha256 = std::string{};
+        }
+        config::sort_findings(out.findings);
+        out.hot_eligibility = evaluate_hot_eligibility(out, options.trace_enabled, /*refuse_fixed_registry=*/true);
+    };
     // Known without the file.
     if (auto invalid = validate_timing(request); !invalid.empty())
     {
         report.usage = true;
         report.findings = std::move(invalid);
+        finalize_file_only(report);
         return report;
     }
     if (auto conflicts = config::override_conflicts(overrides); !conflicts.empty())
     {
         report.usage = true;
         report.findings = std::move(conflicts);
+        finalize_file_only(report);
         return report;
     }
     std::string text;
@@ -374,7 +437,12 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             report.commands = config::CommandsCompared::NotCompared;
             report.findings.push_back(config::commands_not_compared(host.compare_commands, config::kCheckedTextUnreadable));
         }
+        finalize_file_only(report);
         return report;
+    }
+    if (options.file_only && !host.config_from_stdin)
+    {
+        report.file_sha256 = detail::sha256_hex(text);
     }
     config::ConfigRead read = config::read_config(text, overrides);
     if (read.config)
@@ -388,6 +456,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     {
         report.usage = true;
         report.findings = std::move(read.override_errors);
+        finalize_file_only(report);
         return report;
     }
     report.findings = std::move(read.findings);
@@ -429,8 +498,10 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             usage.file = std::move(report.file);
             usage.strict = report.strict;
             usage.variants = std::move(report.variants);
+            usage.file_sha256 = std::move(report.file_sha256);
             usage.usage = true;
             usage.findings = {std::move(finding)};
+            finalize_file_only(usage);
             return usage;
         }
     }
@@ -444,6 +515,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     }
     if (!report.config || options.file_only)
     {
+        finalize_file_only(report);
         return report;
     }
     const std::optional<std::string> listen = environment_value(kListenOnNetworkVariable);

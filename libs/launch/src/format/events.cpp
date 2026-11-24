@@ -6,6 +6,7 @@
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/connections.hpp"
+#include "vehicle_sil/launch/execution_runtime.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
 
@@ -719,7 +720,7 @@ void EventStream::phase(runner::Phase phase)
 
 void EventStream::check(const Checked& report)
 {
-    emit("check", object([&](Writer& w) { detail::write_check_json(w, "check", report, detail::scenario_of(report)); }));
+    emit("check", object([&](Writer& w) { detail::write_check_json(w, "check", report); }));
 }
 
 void EventStream::registry(const std::string& uri)
@@ -927,73 +928,182 @@ void write_allowed(Writer& w, std::string_view key, const runner::Allowed& a, co
     w.end_object();
 }
 
+void write_run_state_members(Writer& w, const runner::RunState& state)
+{
+    w.integer("rev", static_cast<std::int64_t>(state.rev));
+    w.string("phase", runner::phase_name(state.phase));
+    w.boolean("paused", state.paused);
+    if (state.paused_at_ms)
+    {
+        w.integer("paused_at_ms", *state.paused_at_ms);
+    }
+    else
+    {
+        w.null("paused_at_ms");
+    }
+    w.boolean("holding", state.holding);
+    if (!state.speed)
+    {
+        w.null("speed");
+    }
+    else if (*state.speed)
+    {
+        w.real("speed", *state.speed);
+    }
+    else
+    {
+        w.string("speed", "max");
+    }
+    w.string("pacing", runner::pacing_name(state.pacing));
+    w.begin_object("stop");
+    w.integer("requests", state.stop_requests);
+    optional_text(w, "by", state.stopped_by);
+    w.end_object();
+    w.boolean("scenario", state.scenario);
+    w.begin_object("allowed");
+    write_allowed(w, "pause", state.allowed.pause);
+    write_allowed(w, "resume", state.allowed.resume);
+    write_allowed(w, "step", state.allowed.step, "min_ms", "max_ms", true);
+    write_allowed(w, "speed", state.allowed.speed, "min", "max");
+    write_allowed(w, "run_until", state.allowed.run_until);
+    write_allowed(w, "stop", state.allowed.stop);
+    write_allowed(w, "write", state.allowed.write);
+    w.end_object();
+    // What the run is connected to outside: one element for each bridge of --connect.
+    w.begin_array("outside");
+    for (const runner::RunState::Outside& o : state.outside)
+    {
+        w.begin_object({});
+        w.string("network", o.network);
+        w.string("target", o.target);
+        w.string("participant", o.participant);
+        optional_text(w, "link", o.link);
+        optional_text(w, "bus", o.bus);
+        w.boolean("nothing_received", o.nothing_received);
+        w.string("condition", o.condition);
+        w.begin_array("reasons");
+        for (const std::string& reason : o.reasons)
+        {
+            w.string({}, reason);
+        }
+        w.end_array();
+        w.end_object();
+    }
+    w.end_array();
+}
+
+void write_status_members(Writer& w, const ExecutionStatus& status)
+{
+    w.string("instance", status.instance);
+    w.integer("status_rev", static_cast<std::int64_t>(status.status_rev));
+    w.string("launcher_state", launcher_state_name(status.launcher_state));
+    optional_text(w, "config", status.config);
+    w.begin_object("eligibility");
+    w.boolean("eligible", status.eligibility.eligible);
+    optional_text(w, "reason", status.eligibility.reason);
+    optional_text(w, "message", status.eligibility.message);
+    w.end_object();
+    w.begin_object("launcher_allowed");
+    write_allowed(w, "prepare", status.launcher_allowed.prepare);
+    write_allowed(w, "run", status.launcher_allowed.run);
+    w.end_object();
+    if (status.active_run_id)
+    {
+        w.string("active_run_id", *status.active_run_id);
+    }
+    else
+    {
+        w.null("active_run_id");
+    }
+    if (status.last_run_id)
+    {
+        w.string("last_run_id", *status.last_run_id);
+    }
+    else
+    {
+        w.null("last_run_id");
+    }
+    if (status.run_state)
+    {
+        w.begin_object("run_state");
+        write_run_state_members(w, *status.run_state);
+        w.end_object();
+    }
+    else
+    {
+        w.null("run_state");
+    }
+}
+
 } // namespace
+
+void EventStream::prepare(const PrepareResult& result, std::optional<std::int64_t> id)
+{
+    emit("prepare", object([&](Writer& w) {
+             if (id)
+             {
+                 w.integer("id", *id);
+             }
+             else
+             {
+                 w.null("id");
+             }
+             w.boolean("accepted", result.accepted);
+             optional_text(w, "reason", result.accepted ? std::string{} : result.reason);
+             optional_text(w, "message", result.accepted ? std::string{} : result.message);
+             w.begin_object("status");
+             write_status_members(w, result.status);
+             w.end_object();
+             if (result.accepted)
+             {
+                 w.begin_object("metadata");
+                 w.begin_array("participants");
+                 for (const std::string& p : result.metadata.participant_names)
+                 {
+                     w.string({}, p);
+                 }
+                 w.end_array();
+                 w.begin_array("networks");
+                 for (const std::string& n : result.metadata.network_names)
+                 {
+                     w.string({}, n);
+                 }
+                 w.end_array();
+                 w.begin_array("variants");
+                 for (const std::string& v : result.metadata.variants)
+                 {
+                     w.string({}, v);
+                 }
+                 w.end_array();
+                 optional_text(w, "file_sha256", result.metadata.file_sha256);
+                 w.end_object();
+             }
+             else
+             {
+                 w.null("metadata");
+             }
+             detail::write_findings_json(w, result.status.config, result.findings);
+         }));
+}
+
+void EventStream::status(const ExecutionStatus& status, std::optional<std::int64_t> id)
+{
+    emit("status", object([&](Writer& w) {
+             if (id)
+             {
+                 w.integer("id", *id);
+             }
+             else
+             {
+                 w.null("id");
+             }
+             write_status_members(w, status);
+         }));
+}
 
 void EventStream::state(const runner::RunState& state)
 {
-    emit("state", object([&](Writer& w) {
-             w.integer("rev", static_cast<std::int64_t>(state.rev));
-             w.string("phase", runner::phase_name(state.phase));
-             w.boolean("paused", state.paused);
-             if (state.paused_at_ms)
-             {
-                 w.integer("paused_at_ms", *state.paused_at_ms);
-             }
-             else
-             {
-                 w.null("paused_at_ms");
-             }
-             w.boolean("holding", state.holding);
-             if (!state.speed)
-             {
-                 w.null("speed");
-             }
-             else if (*state.speed)
-             {
-                 w.real("speed", *state.speed);
-             }
-             else
-             {
-                 w.string("speed", "max");
-             }
-             w.string("pacing", runner::pacing_name(state.pacing));
-             w.begin_object("stop");
-             w.integer("requests", state.stop_requests);
-             optional_text(w, "by", state.stopped_by);
-             w.end_object();
-             w.boolean("scenario", state.scenario);
-             w.begin_object("allowed");
-             write_allowed(w, "pause", state.allowed.pause);
-             write_allowed(w, "resume", state.allowed.resume);
-             write_allowed(w, "step", state.allowed.step, "min_ms", "max_ms", true);
-             write_allowed(w, "speed", state.allowed.speed, "min", "max");
-             write_allowed(w, "run_until", state.allowed.run_until);
-             write_allowed(w, "stop", state.allowed.stop);
-             write_allowed(w, "write", state.allowed.write);
-             w.end_object();
-             // What the run is connected to outside: one element for each bridge of --connect.
-             w.begin_array("outside");
-             for (const runner::RunState::Outside& o : state.outside)
-             {
-                 w.begin_object({});
-                 w.string("network", o.network);
-                 w.string("target", o.target);
-                 w.string("participant", o.participant);
-                 optional_text(w, "link", o.link);
-                 optional_text(w, "bus", o.bus);
-                 w.boolean("nothing_received", o.nothing_received);
-                 w.string("condition", o.condition);
-                 w.begin_array("reasons");
-                 for (const std::string& reason : o.reasons)
-                 {
-                     w.string({}, reason);
-                 }
-                 w.end_array();
-                 w.end_object();
-             }
-             w.end_array();
-         }),
-         Kind::State);
+    emit("state", object([&](Writer& w) { write_run_state_members(w, state); }), Kind::State);
 }
 
 bool EventStream::result(std::string members, const std::function<bool()>& give_up, bool seal)

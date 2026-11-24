@@ -14,6 +14,12 @@ PreparedRun prepare_serve_run(const RunRequest& base, const ServeCommand& comman
 {
     PreparedRun out;
     out.request = base;
+    if (!command.request.empty() && command.intent_json.has_value())
+    {
+        out.usage.push_back(config::Finding{
+            config::Severity::Error, "usage", "run: cannot give both \"request\" and \"intent\"; choose one", 0, "", ""});
+        return out;
+    }
     if (!command.request.empty())
     {
         std::string text;
@@ -27,6 +33,16 @@ PreparedRun prepare_serve_run(const RunRequest& base, const ServeCommand& comman
             return out;
         }
         RequestFileRead read = read_request_file(text, command.request);
+        if (!read.file)
+        {
+            out.usage = std::move(read.findings);
+            return out;
+        }
+        out.request = with_request_file(base, *read.file, false);
+    }
+    else if (command.intent_json.has_value())
+    {
+        RequestFileRead read = read_request_intent(*command.intent_json, "intent");
         if (!read.file)
         {
             out.usage = std::move(read.findings);
@@ -84,6 +100,9 @@ public:
 
     bool wait_flushed(std::chrono::milliseconds timeout) override { return events_.wait_written(timeout); }
 
+    void emit_prepare(const PrepareResult& result, std::optional<std::int64_t> id) { events_.prepare(result, id); }
+    void emit_status(const ExecutionStatus& status, std::optional<std::int64_t> id) { events_.status(status, id); }
+
 private:
     EventStream& events_;
 };
@@ -97,7 +116,7 @@ Serve::Serve(EventStream& events, LauncherEnd& end, ServeOptions options) :
     rt_opts.run = std::move(options.run);
     rt_opts.source_name = std::move(options.source_name);
     rt_opts.flush_limit = options.flush_limit;
-    rt_opts.trace_enabled = false;
+    rt_opts.trace_enabled = options.trace_enabled;
     rt_opts.refuse_fixed_registry = true;
     runtime_ = std::make_unique<ExecutionRuntime>(*sink_, end, std::move(rt_opts));
 }
@@ -124,9 +143,26 @@ void Serve::command(const ServeCommand& line)
         static_cast<void>(runtime_->start_run(std::move(submission)));
         return;
     }
+    if (*command.name == "prepare")
+    {
+        PrepareSpec spec;
+        spec.variant = line.variant;
+        spec.disable = line.disable;
+        spec.enable = line.enable;
+        spec.manual = line.manual;
+        sink_->emit_prepare(runtime_->prepare(spec), command.id);
+        return;
+    }
+    if (*command.name == "status")
+    {
+        sink_->emit_status(runtime_->status(), command.id);
+        return;
+    }
     if (command.is_stop())
     {
-        static_cast<void>(runtime_->stop_run(line.run.value_or(""), StopMode::Escalate, "stdin", command.id));
+        const StopMode mode = !line.force.has_value() ? StopMode::Escalate
+                              : (*line.force ? StopMode::Force : StopMode::Graceful);
+        static_cast<void>(runtime_->stop_run(line.run.value_or(""), mode, "stdin", command.id));
         return;
     }
     static_cast<void>(runtime_->send_time_command(line.run.value_or(""), command, "stdin"));
