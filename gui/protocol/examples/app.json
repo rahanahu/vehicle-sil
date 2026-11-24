@@ -6,7 +6,7 @@
   },
   "status": 200,
   "response": {
-    "vehicle_sil_gui": 3,
+    "vehicle_sil_gui": 4,
     "version": "<version>",
     "instance": "0123456789abcdef",
     "root": "/path/to/root",
@@ -21,7 +21,7 @@
         "formats": {
           "check": 1,
           "run": 2,
-          "events": 2,
+          "events": 4,
           "describe": 1,
           "test": 1,
           "timeline": 1,
@@ -55,6 +55,9 @@
           "request",
           "scenario-samples",
           "run-stop-at",
+          "serve",
+          "check-file-only",
+          "serve-prepare",
           "scenario-control",
           "scenario-time"
         ]

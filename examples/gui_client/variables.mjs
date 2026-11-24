@@ -161,13 +161,13 @@ async function main() {
     disable: [],
     start_paused: true,
   });
-  console.log(`started: session ${started?.id}`);
+  console.log(`started: session ${started?.run_id}`);
   // ready means connected to the Control Server. ECUs join later and the list grows with each one, so wait until
   // the ECU to write is in the list (if it never appears, the overall timeout ends the example)
   const variables = await until(
     client.variables.state,
     (v) =>
-      v.session === started?.id &&
+      v.session === started?.run_id &&
       v.status !== "unknown" &&
       v.status !== "connecting" &&
       (v.status !== "ready" ||
@@ -250,7 +250,7 @@ async function main() {
   client.time.resume();
   const ended = await until(
     client.session.session,
-    (s) => s?.id === started?.id && !s.launcher.running,
+    (s) => s?.id === started?.run_id && !s.launcher.running,
   );
   // Without stop_at_ms in the run request, we never get here: the timeout stops it
   expect(

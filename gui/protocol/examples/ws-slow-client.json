@@ -4,7 +4,7 @@
   "server": [
     {
       "type": "dropped",
-      "session": 1,
+      "run_id": "1",
       "reason": "slow-client",
       "log": {
         "Engine": 1000

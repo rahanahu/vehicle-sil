@@ -45,7 +45,7 @@ export const LOG_ROW_PX = 20;
 })
 export class LogView {
   /** 実行（セッション）の番号。変わったら、追従に戻る（前の実行の行を見せ続けない）。 */
-  readonly run = input<number | null>(null);
+  readonly run = input<string | null>(null);
   readonly lines = input.required<readonly LogLine[]>();
   /** 出どころごとの、持っている行と落とした行の数。 */
   readonly sources = input.required<Readonly<Record<string, LogSource>>>();
@@ -67,7 +67,7 @@ export class LogView {
 
   /** 見せている行: 追従している間は届いた行、やめている間は、やめた時点の行（実行が変わったら、その実行の行）。 */
   protected readonly visible = linkedSignal<
-    { follow: boolean; run: number | null; lines: readonly LogLine[] },
+    { follow: boolean; run: string | null; lines: readonly LogLine[] },
     readonly LogLine[]
   >({
     source: () => ({ follow: this.follow(), run: this.run(), lines: this.lines() }),

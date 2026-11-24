@@ -4,7 +4,7 @@
     "method": "POST",
     "path": "api/write",
     "body": {
-      "session": 1,
+      "run_id": "1",
       "writes": {
         "Engine": {
           "engine.demand": 40,
@@ -15,7 +15,7 @@
   },
   "status": 200,
   "response": {
-    "session_id": 1,
+    "run_id": "1",
     "operation": 1
   }
 }

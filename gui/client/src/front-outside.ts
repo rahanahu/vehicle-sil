@@ -53,7 +53,7 @@ export function entriesOf(answer: Connections): ConnectEntry[] {
 
 /** The counts of the `outside` events of one run. */
 interface Counts {
-  session: number;
+  run_id: string;
   networks: ReadonlyMap<string, { to: number; from: number }>;
 }
 
@@ -72,9 +72,9 @@ export function outsideRows(
     for (const message of batch) {
       if (message.type !== 'event' || message.event.event !== 'outside') continue;
       const { network, to_outside, from_outside } = message.event;
-      const networks = new Map(next?.session === message.session ? next.networks : []);
+      const networks = new Map(next?.run_id === message.run_id ? next.networks : []);
       networks.set(network, { to: to_outside, from: from_outside });
-      next = { session: message.session, networks };
+      next = { run_id: message.run_id, networks };
     }
     if (next !== counts.get()) counts.set(next);
   });
@@ -84,7 +84,7 @@ export function outsideRows(
       const session = low.session.session.get();
       if (!session || !isRunActive(session)) return [];
       const known = counts.get();
-      const of = known?.session === session.id ? known.networks : new Map();
+      const of = known?.run_id === session.id ? known.networks : new Map();
       return (session.launcherState?.outside ?? []).map((row) => {
         const count = of.get(row.network);
         return {

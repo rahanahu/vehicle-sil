@@ -5,12 +5,14 @@
     "path": "api/time",
     "body": {
       "command": "step",
-      "ms": 25
+      "ms": 25,
+      "run_id": "1",
+      "instance": "0123456789abcdef"
     }
   },
   "status": 200,
   "response": {
-    "session_id": 1,
+    "run_id": "1",
     "command": {
       "command": "step",
       "ms": 25

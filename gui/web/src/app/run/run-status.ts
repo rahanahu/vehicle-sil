@@ -21,6 +21,7 @@ import {
   FrontResult,
   FrontStatus,
   PHASES,
+  RunTarget,
   SessionView,
   isRunActive,
   phaseIndex,
@@ -88,7 +89,7 @@ export class RunStatus {
   private forceDialog: MatDialogRef<ForceStopDialog, boolean> | null = null;
 
   readonly session = input.required<SessionView | null>();
-  readonly currentTarget = input<() => { session: number; instance: string } | null>(() => null);
+  readonly currentTarget = input<() => RunTarget | null>(() => null);
   /** 実行の状態と結果（正面の口の `status`）。色、結果の文、異常終了かは、ここから決める。 */
   readonly status = input.required<FrontStatus>();
   /** 開始、停止、待たずに止めるを押せるか、押せない理由（正面の口の `controls`）。 */
@@ -114,7 +115,7 @@ export class RunStatus {
 
   readonly start = output();
   readonly stop = output();
-  readonly forceStop = output<{ session: number; instance: string }>();
+  readonly forceStop = output<RunTarget>();
   /** 結果（または異常終了）の詳しい表示へ移りたい。 */
   readonly showDetails = output();
 
@@ -123,11 +124,11 @@ export class RunStatus {
   private forceHadFocus = false;
 
   private readonly running = computed(() => isRunActive(this.session()));
-  private readonly stopRequests = computed(() =>
-    this.starting() || this.controls().stop.reason?.code === 'starting'
-      ? 0
-      : (this.session()?.stopRequests ?? 0),
-  );
+  private readonly stopRequests = computed(() => {
+    if (this.starting() || this.controls().stop.reason?.code === 'starting') return 0;
+    const confirmed = this.controls().stop.reason?.code === 'already-stopping' ? 1 : 0;
+    return Math.max(this.session()?.stopRequests ?? 0, confirmed);
+  });
 
   /** 開始を押せない理由（押せるなら null）: 正面の口の理由を先に、次にこの画面の入力の都合。 */
   protected readonly startBlocked = computed<string | null>(() => {
@@ -432,7 +433,7 @@ export class RunStatus {
       if (
         confirmed &&
         this.forceEnabled() &&
-        current?.session === target.session &&
+        current?.run_id === target.run_id &&
         current.instance === target.instance
       )
         this.forceStop.emit(target);

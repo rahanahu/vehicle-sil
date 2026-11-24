@@ -1,5 +1,5 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
-import { CheckResult, Intent, isRunActive } from '@vehicle-sil/gui-client';
+import { CheckResult, Intent, RunTarget, isRunActive } from '@vehicle-sil/gui-client';
 import { RunCommands } from '../core/session/run-commands';
 import { ServerConnection } from '../core/session/server-connection';
 
@@ -91,7 +91,7 @@ export class RunSession {
   }
 
   /** 待たずに止める（participant を強制終了する）。 */
-  forceStop(target?: { session: number; instance: string }): void {
+  forceStop(target?: RunTarget): void {
     this.commands.forceStop(target);
   }
 

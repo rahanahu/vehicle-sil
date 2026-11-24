@@ -9,7 +9,7 @@ describe('TimePanel: the step field', () => {
   let fixture: ComponentFixture<TimePanel>;
   let steps: number[];
   let targets: (RunTarget | null)[];
-  const firstRun = { session: 1, instance: 'server' };
+  const firstRun = { run_id: '1', instance: 'server' };
   const target = signal<RunTarget | null>(firstRun);
 
   beforeEach(async () => {
@@ -89,7 +89,7 @@ describe('TimePanel: the step field', () => {
 
   it('submits the target from the rendered form while a newer run is waiting to render', async () => {
     await type('25');
-    const secondRun = { session: 2, instance: 'server' };
+    const secondRun = { run_id: '2', instance: 'server' };
     target.set(secondRun);
     // The click happened before Angular rendered the new target.
     field().form!.requestSubmit();
@@ -154,7 +154,7 @@ describe('TimePanel: why an operation cannot be used', () => {
     failure.set(null);
     speeds.length = 0;
     const time = {
-      target: signal({ session: 1, instance: 'server' }),
+      target: signal({ run_id: '1', instance: 'server' }),
       simMs: signal(1000),
       speed: signal(1),
       actualSpeed: signal(1),

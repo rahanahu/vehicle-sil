@@ -83,12 +83,12 @@ The names that `src/index.ts` exports, by group. Parentheses list the members of
 
 ### Client
 
-| Kind     | Name                                                                                                                                                                                                                                                                                  |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Function | `createClient(options)`                                                                                                                                                                                                                                                               |
-| Type     | `ClientOptions` (`baseUrl`, `token`, `origin`, `http`, `socket`, `answerTimeoutMs`, `onError`)                                                                                                                                                                                        |
-| Type     | `GuiClient` (`connection`, `session`, `run`, `time`, `variables`, `app`, `limits`, `connect()`, `close()`, `loadApp()`, `configs()`, `config(file)`, `check()`, `describe()`, `saveConfig()`, `connections()`, `fetchSession()`, `dashboard(file)`, `scenarios(file)`, `recording()`) |
-| Constant | `DEFAULT_LIMITS`                                                                                                                                                                                                                                                                      |
+| Kind     | Name                                                                                                                                                                                                                                                                             |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Function | `createClient(options)`                                                                                                                                                                                                                                                          |
+| Type     | `ClientOptions` (`baseUrl`, `token`, `origin`, `http`, `socket`, `answerTimeoutMs`, `onError`)                                                                                                                                                                                   |
+| Type     | `GuiClient` (`connection`, `session`, `run`, `time`, `variables`, `app`, `limits`, `connect()`, `close()`, `loadApp()`, `configs()`, `config(file)`, `check()`, `describe()`, `saveConfig()`, `prepare()`, `connections()`, `dashboard(file)`, `scenarios(file)`, `recording()`) |
+| Constant | `DEFAULT_LIMITS`                                                                                                                                                                                                                                                                 |
 
 ### Front door
 
@@ -118,17 +118,17 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 
 ### Session copy
 
-| Kind     | Name                                                                                                                                                                               |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Type     | `ClientSession` (`session`, `currentTarget`, `currentInstance`, `ready`, `allowed`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
-| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`, `LauncherAnswer`                                      |
-| Function | `runOutcome`, `phaseIndex`, `isHolding`, `launcherAnswer`                                                                                                                          |
+| Kind     | Name                                                                                                                                                                                          |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Type     | `ClientSession` (`session`, `currentTarget`, `currentInstance`, `ready`, `allowed`, `runtime`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
+| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`, `LauncherAnswer`                                                 |
+| Function | `runOutcome`, `phaseIndex`, `isHolding`, `launcherAnswer`                                                                                                                                     |
 
-`ClientSession.allowed` is what the GUI server accepts now (`start`, `stop` and `force`, each with `ok`, a `reason` code and a `message`; the larger `rev` wins; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives). `launcherAnswer(launcherState, name)` reads what it says of one operation (`write`, `pause`, ...): `reason` (`null` when the launcher accepts it) and `caution`. A launcher that has not said (no `state` yet, or no entry for the operation) does not accept it (`unsupported`). The front door's `controls` and `variables.bind` read the launcher with it.
+`ClientSession.allowed` is what the GUI server accepts now (`start`, `stop`, `force` and `save`, each with `ok`, a `reason` code and a `message`; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives). `launcherAnswer(launcherState, name)` reads what it says of one operation (`write`, `pause`, ...): `reason` (`null` when the launcher accepts it) and `caution`. A launcher that has not said (no `state` yet, or no entry for the operation) does not accept it (`unsupported`). The front door's `controls` and `variables.bind` read the launcher with it.
 
-Server-provided session and variable revisions order snapshots across HTTP and WebSocket; older servers omit them, so cross-transport ordering is best effort. Revisions do not suppress replay, command answers, or terminal operation results.
+Ordered notifications (`session`, `event`, `allowed`, `runtime`, `variables`, `availability`, `operation`, `error`, `dropped`, `synced`) arrive over the single WebSocket stream ordered by `(instance, run_id, stream_seq)`. HTTP mutation endpoints (`api/run`, `api/stop-session`, `api/prepare`, `api/time`, `api/write`) return lightweight acknowledgements while state updates arrive on the WebSocket stream.
 
-The `currentTarget()` method returns the current `{session, instance}` pair, or `null` when it is unknown. `currentInstance()` returns the last authenticated server instance even if no run exists, and retains it while disconnected. On reconnect the client requests the retained replay from the beginning, so a restarted server cannot apply a cursor from another instance. An HTTP-only client can refresh its copy with `fetchSession()` after a server restart.
+The `currentTarget()` method returns the current `{run_id, instance}` pair, or `null` when it is unknown. `currentInstance()` returns the last authenticated server instance even if no run exists, and retains it while disconnected. On reconnect to the same instance and run, the client sends `{instance, run_id, after_stream_seq}` so the server resends only log events after that cursor; when the server instance changes, it starts fresh from the new `hello`.
 
 ### Run control
 
@@ -652,7 +652,7 @@ The `kind` of a `WriteError`:
 - Resend only once you know that the write was not applied.
 - This matters most for writes that add to a value (writing twice gives a different result). Writing the same value twice gives the same result.
 
-**Reconnection**: if the connection drops while you wait for a result, the summary after reconnecting (`hello`, `fetchSession()`) tells how it went on. The summary holds every open operation the server keeps, and every operation whose number is `operations_from_seq` or higher (of those the server receives: the operations of a scenario's own writes never come).
+**Reconnection**: if the connection drops while you wait for a result, the summary after reconnecting (`hello`) tells how it went on. The summary holds every open operation the server keeps, and every operation whose number is `operations_from_seq` or higher (of those the server receives: the operations of a scenario's own writes never come).
 
 | Your operation                                                     | What the library does                                                       |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |

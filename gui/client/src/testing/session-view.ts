@@ -15,7 +15,7 @@ export function sessionViewFrom(
   for (const next of later) {
     view = Array.isArray(next)
       ? applyEvents(view, next as readonly LauncherEvent[])
-      : applySummary(view, next as SessionSummary, true);
+      : applySummary(view, next as SessionSummary);
   }
   return view;
 }

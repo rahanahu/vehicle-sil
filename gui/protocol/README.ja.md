@@ -17,7 +17,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の API の、公開す
 
 ## バージョンと互換性
 
-API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバーは `GET api/app` のレスポンス、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
+API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバーは `GET api/app` のレスポンス、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
 
 | 変更 | バージョン | 読む側がすること |
 |---|---|---|
@@ -27,7 +27,6 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 - 無視するか通すものは、知らないフィールド、知らない `type`、知らないイベント（`event`）、知らない `code` と、値の集合が増えうるフィールド（`phase`、`state`、`result` など）の知らない値です。
 - バージョンが違うときは、待っても直らないので再接続しません。ライブラリは `api/app` で `ProtocolError`、`hello` で `session.incompatible` を立てて止まります。
 - **受信し直すもの**: WebSocket のメッセージが JSON として読めない、または `hello` と `session` の要約の中心のフィールド（`id`、`state`、`launcher`、`stop`）が読めないときは、何が抜けたかわからないので、再接続して `hello` から受信し直します。要約を正とします。続けて起きるたびに、再接続するまでの間隔を延ばします。
-- **頼んだときだけ変わる形**: 前の形のままでは重いものは、クライアントが認証のメッセージで頼んだときだけ形を変えます（`session_without_check`）。頼まないクライアントには、いままでの形で送ります。
 - ランチャーのイベント（`event` の中身）は、ランチャーの `run --events` の形そのままです。そのバージョン（`hello` のイベントの `vehicle_sil_events`）はランチャーが決めます（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「プログラムから使う」）。
 - ランチャーのオブジェクト（要約と `api/check` のチェックと実行の結果、指摘、ランチャーのイベント）は、キーをすべて中継します。クライアントのライブラリは、画面に要るキーに型を付け、ランチャーのオブジェクト全体を `raw` に残します（[gui/client/README.md](../client/README.ja.md#ランチャーのキーraw) の「ランチャーのキー（`raw`）」）。
 - エラーの `code` の名前は変えません（追加することはあります）。`message` は人向けの英語の 1 文で、文言は変わることがあります。プログラムは `code` で分けます。
@@ -62,7 +61,7 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 
 - **要約を正とします**。実行の要約（下の「要約（`session`）」）に、画面を作り直すのに必要なものを全部入れます。画面は `hello` と `session` を受信したら、手元の状態をその要約で置き換えます。
 - イベントは、ランチャーが書くたびに `event` で送ります。画面は `hello` の後に受信したイベントを要約に反映して進めます。
-- 再接続したとき（`hello` の後）に再送するのは、log の行（`from_seq` 以後で、サーバーが覚えている分）だけです。段階や participant のイベントは、要約に入っているので再送しません。
+- 再接続したとき（`hello` の後）に再送するのは、log の行（`after_stream_seq` より後で、サーバーが覚えている分）だけです。段階や participant のイベントは、要約に入っているので再送しません。
 - サーバーが自分で持つ状態は、ランチャーから受信したものと、サーバーがランチャーにしたこと（起動、停止の依頼）だけです。
 
 ## HTTP
@@ -85,18 +84,17 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 | `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: 文をそのファイルとして保存する。既定では、実行されるコマンドを変えない編集だけ（下の「文を保存する（`POST api/config`）」） | `save-config.json`、`error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{instance, session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
-| `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
-| `POST api/stop-session` `{session, instance, force}` | 対象の `{session}`、または 409 `session-changed` | — |
-| `POST api/time` `{command, ms, at_ms, value, id, session, instance}` | `{session_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
-| `POST api/write` `{session, instance, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
+| `POST api/stop-session` `{run_id, instance, force}` | 対象の `{instance, run_id}`、または 409 `session-changed` | `stop*.json` |
+| `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
+| `POST api/write` `{run_id, instance, writes, at_ms, late}` | `{run_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
 | `GET api/session` | `{instance, session, allowed, runtime}`（`session` は実行がなければ `null`。`allowed` は下の「サーバーが受け付けること（`allowed`）」） | `session-*.json` |
-| `POST api/prepare` `{file, variant, disable, enable, manual}` | `{instance, runtime}`: 条件を満たせば常駐ランチャーを準備し、そうでなければ `cold` と `reason` を返す | — |
+| `POST api/prepare` `{file, variant, disable, enable, manual}` | `{instance}`: 条件を満たせば常駐ランチャーを準備する（`runtime` の変化は WebSocket で届く） | — |
 | `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | 設定ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`） | `recording.json` |
-| `GET api/timeline/<session の id>` | シナリオの実行の時間の軸のファイル。ランチャーが書いたそのまま（オブジェクトで包まない） | — |
+| `GET api/timeline/<run_id>` | シナリオの実行の時間の軸のファイル。ランチャーが書いたそのまま（オブジェクトで包まない） | — |
 
 - `api/app` のレスポンスは、サーバーのバージョン、`instance`（起動ごとに変わる）、root、`initial_file`、ランチャー（`usable`、`problems`、`version --json` の内容）、変数を読み書きできるか（`variables`: `available`、できない理由 `reason`）、上限（`limits`）です。`limits` には `speed_min`、`speed_max`、`step_ms_max`、変数の `watches`、`watch_variables`、`watch_period_ms_min`、`watch_period_ms_max`、`writes_per_request`、`write_at_ms_max`、`write_timeout_s` などがあります。
 - `api/configs` の各ファイルは、`path`（root からの相対で `/` 区切り）、`modified`、`size`、`simulation`（先頭に `vehicle_sil_simulation` があるか）を持ちます。一覧の全体に `truncated` があります。
@@ -143,7 +141,7 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 
 ### 照合と開始（`api/check`、`api/run`）
 
-- **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
+- **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスは `{instance, run_id}` で、新しい実行の要約は WebSocket ストリームの `session` として届きます。
 - **照合のあとの開始**: `api/run` は、`disable`/`manual` の participant 名を保存済み構成と照合したうえで、起動時にランチャー自身の単一の `check` を実行します。照合が通らなければ（`result` が `passed` でなければ）実行は進まず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。セッションを有効にする前に断るので、止めるものはありません。例: `error-check-failed.json`。
 - **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`connect`（ネットワーク名から先への object）と `time_policy`（文字列）（上の「ネットワークを外につなぐ」）、`speed` と `start_paused`（`api/check` でも。ランチャーの照合が、時間とシナリオの規則に使います）です。`vehicle_sil_run_request` は `1` なら、`$schema` は文字列なら送れます（後者は捨てます）。キーの名前と値の形は要求ファイルと同じで、`file` が加わります。`scenario` は `api/scenarios` の一覧の名前で、構成ファイルのディレクトリからのパスではありません。サーバーは、各値の形（本文は 64 KiB まで。`api/check` は 6 MiB + 64 KiB まで）、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。要求ファイルについての所見は、そのファイルを「the request」と呼びます（一時ファイルは、読むときにはもうありません）。`scenario` のない `params` は断りません。どの要求ファイルでも、ランチャーは `params` をシナリオを動かすときだけ使い、それ以外では無視します。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
 - **選ばないことは、キーを書かないこと。** `null` は断ります（400 `invalid-field`）。実行をする側のキー（`control`、`timeline`、`log_dir` など）は知らないフィールドです（400 `invalid-field`）。サーバーが決めます。送る `scenario` は、`api/scenarios` が返す `path`（root からの相対）です。サーバーは、要求ファイルが読む基準である構成ファイルのディレクトリからの相対に直して書きます。`request` の feature がないランチャーは使えません（`api/app` の `launcher.problems` に出ます）。
@@ -174,21 +172,19 @@ API のバージョンは `vehicle_sil_gui`（今は 3）です。サーバー�
 
 レスポンスは `{file, stamp}` で、保存した中身の印です。保存は照合の順番を 1 回使います（照合と同じく 503 `check-busy`）。サーバーが古い中身について覚えたものは捨てます。説明は次の文の照合の前に取り直すので、保存したファイルの実行ファイルがそのとき説明を出します（`--allow-command-changes` では、新しいコマンドがそこで `--describe` つきで動きます）。`connect` には `api/connections` の一覧を取り直します。2 回目の印の比べは、照合と置き換えの間にほかのプログラムがファイルを変えられる時間を狭めますが、なくしはしません。例: `save-config.json`、`error-commands-changed.json`。
 
-### 停止（`api/stop`）
+### 停止（`api/stop-session`）
 
 GUI Client は `api/session` と `api/run` の成功応答に `instance` を必要とします。応答にない場合は操作を中断し、同じリリースの GUI サーバーを使うよう案内します。開始要求はサーバーに届いている場合があるため、再試行の前に現在の実行を確認してください。
 
-`api/stop-session` は `session` と `instance` を原子的に照合し、一致しなければ 409 `session-changed` を返して何もしません。`force` の意味は `api/stop` と同じです。GUI Client は対象を特定してからこの口を使い、開始の応答を失った場合や旧サーバーでは停止を送れなかったことを報告します。現在の実行を確認してから再度操作してください。
-
-本文は `{"force": boolean}` です。省略は `false` で、本文なしで `Content-Type` もないリクエストも `false` です。`force` 以外の欄（または null）は、ほかの口と同じく 400 `invalid-field` で断り、何も止めません。
+実行を止めるには、`POST api/stop-session` に `{"run_id": <文字列>, "instance": <サーバーの識別子>, "force": <真偽>}` を送ります（`force` は任意で、省略は `false`。現在の実行を直接止める場合 `instance` も任意）。`instance` は `api/run`、`api/session` の応答か WebSocket の `hello` にある識別子です。`instance` と `run_id` を原子的に照合し、一致しないか別の実行が動いている・始まりかけているときは 409 `session-changed` を返して何もしません。`run_id`、`instance`、`force` 以外の欄（または null）は、ほかの口と同じく 400 `invalid-field` で断り、何も止めません。
 
 | `force` | すること | すでに頼んであるとき |
 |---|---|---|
 | `false` | 順に止める（ランチャーの標準入力に `{"command":"stop"}`） | 何もしない |
 | `true` | 待たずに止める（まだ頼んでいなければ `stop` を 2 回、頼んであればもう 1 回） | 何もしない |
 
-- どちらも、実行がない、または終わっているときは 409 にせず、今の要約を返します（何度呼んでも同じ結果）。
-- 実行が始まりかけている間（`api/run` がレスポンスを返す前）の停止は、ランチャーが起動したところで渡します。レスポンスの要約は前の実行のもので、始まった実行の要約の `stop` に出ます。
+- 対象の実行がすでに終わっているときは 409 にせず、`{instance, run_id}` を返します（何度呼んでも同じ結果）。
+- GUI Client は把握している `run_id` と `instance` を付けて `api/stop-session` を送り、開始中の停止要求は開始の応答で実行が特定されるまで保持します。開始の応答を失った場合や対象が不明な場合は停止を送れなかったことを報告します。現在の実行を確認してから再度操作してください。
 - 止めた経過は、要約の `stop` と、ランチャーの `command` / `phase` のイベントで見えます。
 - 標準入力を読まないランチャーは、これでは止まりません（サーバーを止めると、シグナルで止めます）。
 
@@ -204,9 +200,9 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | `{"command": "run_until", "at_ms": <整数>}` | 0 から `limits.step_ms_max` |
 | `{"command": "speed", "value": <"max" or a number>}` | `speed` と同じ範囲 |
 
-どの本体にも `"id"`（0 から 2^53 までの整数）を付けられます。サーバーはそれをコマンドの行に入れてランチャーに渡し、ランチャーはその行に答える `command` イベントの `id` に返します（`id` のない行は `null`）。画面は、自分のコマンドへの答えを、ほかの画面やランチャーの標準入力のコマンドへの答えと見分けるのに使います。サーバーは `id` を読みません。レスポンスのコマンドにも `id` が入ります。そのような数でない `id` は 400 `invalid-field`です。
+どの本体にも `"id"`（0 から 2^53 までの整数）を付けられます。サーバーはそれをコマンドの行に入れてランチャーに渡し、ランチャーはその行に答える `command` イベントの `id` に返します（`id` のない行は `null`）。画面は、自分のコマンドへの答えを、ほかの画面やランチャーの標準入力のコマンドへの答えと見分けるのに使います。サーバーは `id` を読みません。レスポンスの `{run_id, command}` のコマンドにも `id` が入ります。そのような数でない `id` は 400 `invalid-field`です。
 
-特定の実行にコマンドを送るには、`session`（正の整数）と `instance`（`api/run`、`api/session` の応答か WebSocket の `hello` にあるサーバーの識別子）を両方指定します。サーバーはランチャーに書く直前にこの組を照合します。一致しない場合、実行がない場合、次の実行を開始中の場合は 409 `session-changed` を返します。2 つの値はランチャーへのコマンドや応答の `command` に含めません。片方だけの指定、不正な値、未知のフィールドは 400 `invalid-field` です。両方を省略すると、サーバーが処理した時点の実行にコマンドを送ります。
+特定の実行にコマンドを送るには、`run_id`（空でない文字列）と、任意で `instance`（`api/run`、`api/session` の応答か WebSocket の `hello` にあるサーバーの識別子）を指定します。サーバーはランチャーに書く直前にこの対象を照合します。一致しない場合、実行がない場合、次の実行を開始中の場合は 409 `session-changed` を返します。2 つの値はランチャーへのコマンドや応答の `command` に含めません。不正な値、未知のフィールドは 400 `invalid-field` です。両方を省略すると、サーバーが処理した時点の実行にコマンドを送ります。
 
 サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、レスポンスを待たずに返します。止まっているランチャーでリクエストが固まらないようにするためです。
 
@@ -242,7 +238,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 403 | `commands-changed` | `POST api/config`: 編集で実行されるコマンドが変わる、比べられない、または新しいファイルで、サーバーを `--allow-command-changes` なしで起動した（`detail` はランチャーの照合の `{result, commands, findings}`。新しいファイルでは `null`）。例: `error-commands-changed.json` |
 | 404 | `file-not-found` | `file` が root の下にない |
 | 404 | `not-found` | そういう API や画面のファイルはない |
-| 404 | `no-timeline` | `api/timeline/<session の id>`: その実行の時間の軸のファイルを、サーバーが持っていない（「シナリオの実行の時間の軸（`api/timeline`）」） |
+| 404 | `no-timeline` | `api/timeline/<run_id>`: その実行の時間の軸のファイルを、サーバーが持っていない（「シナリオの実行の時間の軸（`api/timeline`）」） |
 | 405 | `method-not-allowed` | 画面のファイルに `GET` 以外 |
 | 409 | `already-running` | `api/run`: 実行が動いている |
 | 409 | `starting` | `api/run`: 別の `api/run` が実行を始めている途中（ランチャーをまだ登録していない） |
@@ -288,15 +284,12 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 ### 認証のメッセージ
 
-接続したら最初に `{"type": "auth", "token": "...", "session": <id>, "from_seq": <n>, "session_without_check": true}` を送ります。
+接続したら最初に `{"type": "auth", "token": "...", "instance": "...", "run_id": "<id>", "after_stream_seq": <n>}` を送ります。
 
 | フィールド | 内容 |
 |---|---|
 | `token` | サーバーが表示した URL のトークン |
-| `session`、`from_seq` | 再接続で、持っている分を伝えるときだけ送る。0 以上の整数でなければ、ないものとして扱う |
-| `session_without_check` | 任意。`true` なら、この接続への `session` の通知の要約から `check` のフィールドを省く |
-
-`session_without_check` を頼んでも、`hello` の要約には `check` が入り、照合の結果は `check` のイベントで届くので、手元の値を使い続けます。照合の結果は大きく、実行の間に変わらないためです。例は `ws-without-check.json` です。
+| `instance`、`run_id`、`after_stream_seq` | 同じサーバーインスタンスと実行への再接続で、持っているストリーム位置を伝えるときだけ送る。今のインスタンスと実行に一致しなければ、ないものとして扱う |
 
 ### 閉じるコードと接続数の上限
 
@@ -317,13 +310,13 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 認証の後、サーバーは次の順に送ります。
 
-1. `hello`: `instance`、`session`（要約。なければ `null`）、`allowed`（実行があれば `session.allowed` と同じ。なければ、サーバーが受け付けること）、`replay`（`from_seq`: 再送の始まり。`null` は最初から）、`runtime`（`{mode, state, config, reason, message}`）。画面は状態をこの要約で作り直す。
-2. `dropped`（あれば）: `from_seq` 以後の log の行のうち、サーバーが覚えていないので送れない数（source ごと）。
-3. `event`: 覚えている log の行のうち `from_seq` 以後のものを、`seq` の順に。
-4. `synced`: `{session, last_seq}`。再送の終わり。
+1. `hello`: `instance`、`stream_seq`、`session`（要約。なければ `null`）、`allowed`（実行があれば `session.allowed` と同じ。なければ、サーバーが受け付けること）、`replay`（`after_stream_seq`: 再送の始まり。`null` は最初から）、`runtime`（`{mode, state, config, reason, message}`）。画面は状態をこの要約で作り直す。
+2. `dropped`（あれば）: `after_stream_seq` より後の log の行のうち、サーバーが覚えていないので送れない数（source ごと）。
+3. `event`: 覚えている log の行のうち `after_stream_seq` より後のものを、`stream_seq` と `seq` の順に。
+4. `synced`: `{stream_seq, run_id, last_seq}`。再送の終わり。
 5. 以後は、起きるたびに `event`、`session`、`allowed`、`runtime`、`error`、`dropped`、`resync`、`variables`、`values`、`operation`、`availability`。
 
-`session` の `id` が `hello` の要約と違う、または `from_seq` が今のセッションのものでないときは、最初からの再送になります（`replay.from_seq` が `null`）。
+`instance` や `run_id` が現在のインスタンスや `hello` の要約の `id` と違う、または `after_stream_seq` が今のセッションのものでないときは、最初からの再送になります（`replay.after_stream_seq` が `null`）。
 
 認証の後に画面が送れるのは、変数の `watch` と `unwatch` です（下の「ECU の変数」）。JSON のオブジェクトで `type` が文字列でないものは `error`（`code: invalid-message`）、知らない `type` は読み飛ばします。どちらでも接続は続きます。
 
@@ -332,26 +325,26 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | `type` | 内容 | 例 |
 |---|---|---|
 | `hello` | 上の 1 | `ws-*.json` の最初 |
-| `event` | `{session, event}`。ランチャーのイベントそのまま（サーバーが形を確認して通したもの） | `ws-pass.json`、`ws-log-dropped.json`、`ws-time.json`（時間のコマンド）、`ws-late.json`（遅れ） |
-| `synced` | `{session, last_seq}` | `ws-pass.json` |
-| `session` | `{session}`（要約） | `ws-pass.json`、`ws-without-check.json` |
-| `allowed` | `{session, allowed}`。サーバーが受け付けることが変わり、それを運ぶ `session` が続かない（下の「サーバーが受け付けること（`allowed`）」）。`session` は今の実行の id、なければ `null` | `ws-allowed.json` |
-| `runtime` | `{runtime}`。常駐ランチャーの状態（`mode`、`state`、`config`、`reason`、`message`）が変わった | — |
-| `error` | `{session, code, message, detail, problem_seq?}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
-| `dropped` | `{session, reason, log, at_least, events}`。この画面に送らなかったものの数 | `ws-dropped.json`、`ws-slow-client.json` |
+| `event` | `{stream_seq, run_id, event}`。ランチャーのイベントそのまま（サーバーが形を確認して通したもの） | `ws-pass.json`、`ws-log-dropped.json`、`ws-time.json`（時間のコマンド）、`ws-late.json`（遅れ） |
+| `synced` | `{stream_seq, run_id, last_seq}` | `ws-pass.json` |
+| `session` | `{stream_seq, session}`（要約） | `ws-pass.json` |
+| `allowed` | `{stream_seq, run_id, allowed}`。サーバーが受け付けることが変わり、それを運ぶ `session` が続かない（下の「サーバーが受け付けること（`allowed`）」）。`run_id` は今の実行の id、なければ `null` | `ws-allowed.json` |
+| `runtime` | `{stream_seq, runtime}`。常駐ランチャーの状態（`mode`、`state`、`config`、`reason`、`message`）が変わった | — |
+| `error` | `{stream_seq, run_id, code, message, detail}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
+| `dropped` | `{stream_seq, run_id, reason, log, at_least, events}`。この画面に送らなかったものの数 | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受信が遅く、落とせない通知まであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
-| `variables` | `{session, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形） | `ws-variables.json`、`ws-variables-failed.json` |
-| `values` | `{id, session, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」） | `ws-variables.json` |
-| `operation` | `{session, seq, state, done, peers}`。書き込みの結果が変わった（下の「ECU の変数」）。全部の接続へ送り、落とさない | `ws-variables.json` |
-| `availability` | `{session, rev, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | `ws-availability.json`（下の「利用状態」） |
+| `variables` | `{stream_seq, run_id, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形） | `ws-variables.json`、`ws-variables-failed.json` |
+| `values` | `{watch_id, run_id, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」。`stream_seq` の対象外） | `ws-variables.json` |
+| `operation` | `{stream_seq, run_id, seq, state, done, peers}`。書き込みの結果が変わった（下の「ECU の変数」）。全部の接続へ送り、落とさない | `ws-variables.json` |
+| `availability` | `{stream_seq, run_id, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | `ws-availability.json`（下の「利用状態」） |
 
-`session` を送るのは、次のときです。`session_without_check` を頼んだ接続には、`check` のフィールドがありません。
+`session` を送るのは、次のときです。
 
 - 実行を始めたとき、止めるよう頼んだとき。
 - 実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後のイベントの後）。
 - ランチャーが何も書かなくなったとき（`launcher.silent_s` が変わったとき）と、また書き始めたとき。
 
-`variables` を送るのは、実行が始まった直後（その `session` の通知のすぐ後）と、変わったときです。 `snapshot_rev` は session 要約だけの順序で、ランチャーのイベントや `allowed` の順序とは別です。変数要約の `rev` と利用状態の差分の `rev` は別の共通系列です。後の完全な変数要約には現在の利用状態が入り、差分は指定した participant だけを置き換えます。古い要約でも replay、ログ、コマンドの応答、確定済み書き込み結果は捨てません。旧サーバーにはこれらのフィールドがないため、HTTP と WebSocket の要約間の順序は最善を尽くす扱いです。旧クライアントは追加フィールドを無視できます。
+`variables` を送るのは、実行が始まった直後（その `session` の通知のすぐ後）と、変わったときです。WebSocket ストリームの順序付きの通知はすべてサーバーの `instance` 内で単調増加する `stream_seq` を持ち、`session`、`event`、`allowed`、`runtime`、`variables`、`availability`、`operation`、`error` がチャネルごとの別々の revision カウンタなしに 1 つの全順序を共有します。遅延サンプリングの `values` は `stream_seq` の対象外で、`{run_id, watch_id}` を持ちます。後の完全な変数要約には現在の利用状態が入り、差分は指定した participant だけを置き換えます。
 
 `dropped` のフィールドは次のとおりです（`ws-slow-client.json` の数は例）。画面は、その source のログのその位置に「ここで N 行が落ちた」を表示します。
 
@@ -397,9 +390,9 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `stop-escalated` | サーバーが終了するとき、ランチャーが時間内に止まらず、シグナルで止めるよう頼んだ |
 | `launcher-silent` | ランチャーのプロセスが動いているのに、結果の前に `--silent-after`（既定 5 秒）より長く 1 行も書かない |
 
-- `unauthorized`: `session` は `null` です。この後 4401 で閉じます。
-- `invalid-message`: `session` は `null` です。その接続にだけ送り、接続は続きます。
-- `invalid-watch`、`too-many-watches`: `session` は `null` で、`detail.id` に watch の id が入ります。その接続にだけ送り、接続は続きます。
+- `unauthorized`: `run_id` は `null` です。この後 4401 で閉じます。
+- `invalid-message`: `run_id` は `null` です。その接続にだけ送り、接続は続きます。
+- `invalid-watch`、`too-many-watches`: `run_id` は `null` で、`detail.id` に watch の id が入ります。その接続にだけ送り、接続は続きます。
 - `launcher-output`: JSON のオブジェクトでない、`event` がない、`seq` が 0 から 2^53 までの整数でない行です。`1e999` のような有限でない数を含む行も、ここに入ります。
 - `bad-event`: `t_ms` が 0 から 2^53 までの整数でない、`log_dropped` の `count` と `sources` の値が数でない、`state` の `rev` が 0 から 2^53 までの整数でない、または `allowed` がオブジェクトでない、`command` の `id` が `null` でも 0 から 2^53 までの整数でもない、を含みます。そのイベントは捨てます（中継も要約への反映もしません）。
 - `launcher-stderr`: 最初の 20 行はすぐに送ります。それより後は最後の 30 行だけを、実行が終わったときに送ります。間で落とした行があれば、その前に 1 つ送ります（`detail.skipped`: 落とした行の数）。
@@ -410,9 +403,8 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 | フィールド | 内容 |
 |---|---|
-| `id` | 実行の番号（サーバーの起動ごとに 1 から） |
-| `snapshot_rev` | 同じサーバーインスタンスと実行の中で増える、session 要約の取得順 |
-| `findings[].event_seq` | 保持された実行時 finding のランチャーイベント番号。同じインスタンスと実行の中で一意で、要約とライブ通知の照合に使う。旧サーバーにはなく、その場合の照合は最善を尽くす扱い |
+| `id` | 実行の識別子（`"1"` のような文字列。サーバーで始めた実行ごと） |
+| `run_t0_ms` | 実行が始まった時点のランチャーの基準 `t_ms`（cold 実行では `0`） |
 | `file`、`disable`、`manual`、`speed`、`start_paused` | 始めたときの指定 |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
 | `state` | `running` か `ended` |
@@ -433,8 +425,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `result` | `result` イベントの `result`（なければ `null`） |
 | `variables` | ECU の変数の機能の状態、participant ごとの変数、最近の操作（下の「ECU の変数」） |
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数 |
-| `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail, problem_seq}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
-| `problem_seq` | この実行で発生したサーバー診断の最大番号。省略された診断も含む。実行に属する `error` と要約の同じ診断は同じ番号を持ち、重複を除ける。旧サーバーにはない |
+| `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
 | `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
 
 フィールドごとの補足です。
@@ -443,7 +434,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - **`state`**: `ended` は、実行が終わり、その出力を読み終えた（または `output-left-open` で打ち切った）状態です。1 回ごとの（`cold`）実行では、プロセス終了から出力読了までの間（長くて 2 秒）、`api/session` で `launcher.running: false` と `running` が見えることがあります。常駐（`hot`）実行では、次の実行に備えてプロセスが生き残る場合、`launcher.running: false` とともに `launcher.process_alive: true` のまま `ended` になります。
 - **`launcher`**: `running` はこの実行がランチャー上でまだ継続中かを示し、止められるかどうかはこれで決めます（常駐ランチャーが次の実行のため生き残る場合でも、実行が終われば `false` になります）。`mode` は常駐の `"hot"` か 1 回ごとの `"cold"`、`process_alive` はランチャープロセス自体が生きているかを示します（旧サーバーでは `mode` と `process_alive` は省略されます）。終わったら `exit_code` が入ります（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数です（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`）。
 - **`time`**: 仮想時間 `sim_ms`、実際の速度 `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` です。途中から開いた画面も、これで今の時刻がわかります。一時停止しているか、その時刻、指定の速度は、`launcher_state` にあります（`paused`、`paused_at_ms`、`speed`）。一時停止している間、`time` は止まる前のものでありえます（ランチャーが次に見るまで `sim_ms` が前の時刻、`actual_speed` と `late_ms` が止まる前の値）。
-- **`check`**: participant の `required`、`enabled`、`variables` を含みます。`session_without_check` を頼んだ接続への `session` の通知には、このフィールドがありません（`hello` と HTTP のレスポンスにはあります）。
+- **`check`**: participant の `required`、`enabled`、`variables` を含みます。
 - **`last_command`**: `seq`、`command`、`source`、`accepted`、`message`、`reason`、`id`、受け付けた `step` の `ms` と `at_ms`、受け付けた `run_until` の `at_ms` です。`seq` で、新しいレスポンスか、前と同じレスポンスかがわかります。`state` より前のランチャーは `reason` と `id` を書きません。
 - **`launcher_state`**: ランチャーが書いた `state` イベントそのまま（[docs/ja/simulation-events.md](../../docs/ja/simulation-events.md) の `state`）に、その `seq` を付けたものです: `rev`、`phase`、`paused`、`paused_at_ms`（一時停止している時刻）、`speed`、`stop`、`allowed`（ランチャーが受け付けること: `pause`、`resume`、`step`、`speed`、`run_until`、`stop`、`write`。それぞれ `{ok, reason, message, caution}`）など。サーバーは変えません。`rev` は変わるたびに上がるので、画面は新しいものと、同じものがもう一度届いたのとを見分けられます。これは、ランチャーが書いた時点の答えです。`ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません。`state` の後のイベント（`command`、`time`）のほうが新しいことがあります。`state` のイベントは `event` の通知としても届きますが、要約が覚えるのは最後の 1 つだけなので、後から開いた画面は要約から読み、前のものは再送されません。機能 `state` のないランチャーは何も書かず、このフィールドは `null` です。
 - **`omitted_fields`**: `time`、`registry`、`last_command`、`participants` の各要素は、大きすぎて入れなかったフィールドがあれば、その名前の配列 `omitted_fields` を持ちます。participant では、後のイベントでそのフィールドが届けば消えます（例は `ws-large-fields.json`）。
@@ -461,7 +452,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 ## サーバーが受け付けること（`allowed`）
 
-`allowed` は `{rev, start, stop, force, save}` です。後の 4 つはそれぞれ `{ok, reason, message}` で（`save` には `caution` もあります）、`ok` はサーバーがいまそのリクエストを受け付けるか、`reason` は理由のコード（`ok` のときは `null`）、`message` は人に見せる英語の 1 文（`ok` のときは `null`）です。`session`（要約）と `allowed` のメッセージに入り、実行がないときにも読めるように、`hello` と `api/session` の答えの最上位にも入ります。画面は、`ok` でボタンを使えるようにし、`message` を出せば、自分の表を持たずに済みます。それでも送られた `api/run` は、`start` の理由と同じコードのエラーを返します（409 `already-running`、`starting`、503 `shutting-down`、`launcher-unusable`）。`api/stop` はエラーを返さず、いつも要約つきの 200 を返します（`stop` や `force` に理由があるときは何もしません）。そのため `stop` と `force` の理由は `allowed` にだけあります。それでも送られた `POST api/config` は、403 `save-disabled` か 503 `shutting-down` を返します。
+`allowed` は `{start, stop, force, save}` です。4 つはそれぞれ `{ok, reason, message}` で（`save` には `caution` もあります）、`ok` はサーバーがいまそのリクエストを受け付けるか、`reason` は理由のコード（`ok` のときは `null`）、`message` は人に見せる英語の 1 文（`ok` のときは `null`）です。`session`（要約）と `allowed` のメッセージに入り、実行がないときにも読めるように、`hello` と `api/session` の答えの最上位にも入ります。画面は、`ok` でボタンを使えるようにし、`message` を出せば、自分の表を持たずに済みます。それでも送られた `api/run` は、`start` の理由と同じコードのエラーを返します（409 `already-running`、`starting`、503 `shutting-down`、`launcher-unusable`）。`api/stop-session` は 200 `{instance, run_id}` か 409 `session-changed` を返します。それでも送られた `POST api/config` は、403 `save-disabled` か 503 `shutting-down` を返します。
 
 | フィールド | `reason` | いつ |
 |---|---|---|
@@ -479,10 +470,9 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 - `save` の `caution` は `null` か、保存はするが先に知っておくことがあるときの `{code, message}` です（ランチャーの `allowed` の `caution` と同じ形）。コードは `command-changes-allowed` だけです。サーバーを `--allow-command-changes` で起動したので、実行されるコマンドを変える編集と新しいファイルも保存します。画面は、保存のボタンの近くにメッセージを出します。1 つの編集を保存するかは、リクエスト（`POST api/config`）ごとに決め、`allowed` では決めません。
 
-- 当てはまる理由のうち、表の順で最初の 1 つだけを返します。実行を始めている途中は、`stop` と `force` は `ok` です。リクエストは待ち、ランチャーが始まったら効きます（「停止（`api/stop`）」）。
+- 当てはまる理由のうち、表の順で最初の 1 つだけを返します。実行を始めている途中は、`stop` と `force` は `ok` です。リクエストは待ち、ランチャーが始まったら効きます（「停止（`api/stop-session`）」）。
 - ランチャーが受け付けること（pause、step、speed、書き込み）はここにはありません。ランチャーが書いたままの `launcher_state` の `allowed` です。そこでの `ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません（一時停止中の `pause` も `ok`）。
-- **`rev`** はサーバー全体で 1 つの番号です。`allowed` の言うことが変わるたびに 1 上がり、`allowed` を運ぶどの場所（`hello`、`api/session`、要約、`allowed` のメッセージ）でも同じです。複数の場所から `allowed` を受ける画面は、`rev` の大きいほうを採ります。新しい実行が始まっても 0 に戻りません。サーバーを起動し直すと 1 から始まるので、`rev` を比べるのは同じ `instance`（`hello` の `instance`）の中だけです。`hello` を受けたら、その `allowed` に置き換えます。
-- **いつ送るか**: `allowed` は、`session` を送るたびに、そのときの値で付きます。変わったのに、それを運ぶ `session` が続かないときは、代わりに `allowed` のメッセージを送ります: 開始が始まった（`starting`）、開始に失敗して `start` が `ok` に戻った、サーバーが終わり始めた（`shutting-down`）。`session` がその変化を運ぶとき（実行を登録した、停止を頼んだ、実行が終わった）は、`allowed` のメッセージは送りません。`allowed` のメッセージは小さく、遅い接続でも落としません。このメッセージの種類を知らない読み手は無視し（「版と互換」）、`hello`、`api/session`、各要約の `allowed` は引き続き受けます。
+- **いつ送るか**: `allowed` は、`session` を送るたびに、そのときの値で付きます。変わったのに、それを運ぶ `session` が続かないときは、代わりに `allowed` のメッセージを送ります: 開始が始まった（`starting`）、開始に失敗して `start` が `ok` に戻った、サーバーが終わり始めた（`shutting-down`）。`session` がその変化を運ぶとき（実行を登録した、停止を頼んだ、実行が終わった）は、`allowed` のメッセージは送りません。`allowed` のメッセージは小さく、`stream_seq` を持ち、遅い接続でも落としません。このメッセージの種類を知らない読み手は無視し（「版と互換」）、`hello`、`api/session`、各要約の `allowed` は引き続き受けます。
 - 実行がなければ要約がないので、`hello`、`api/session`、`allowed` のメッセージの `allowed` がすべてです。
 - コードは増えることがあります。コードの意味は変わりません。
 
@@ -492,17 +482,16 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 ### 状態と一覧（要約の `variables`、`variables` の通知）
 
-`{"rev", "state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
+`{"state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
 
 | フィールド | 内容 |
 |---|---|
-| `rev` | 同じサーバーインスタンスと実行の中で、変数の完全な要約と利用状態の差分に共通する取得順 |
 | `state` | 変数の機能の状態（下の表）。値は増えることがある |
 | `reason` | `off`、`connecting`、`failed` の理由（人向けの英語の文。なければ `null`） |
 | `peers` | `[{"name", "connected", "variables": [...]}]`。Control Server が知っている participant（変数のないものも） |
 | `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum", "availability"}` |
 | `peers_omitted`、`variables_omitted` | 上限を超えたので入れていない participant と変数の数 |
-| `operations` | 操作（下の `operation` から `type` と `session` を除いたもの。サーバーが初めて見た順） |
+| `operations` | 操作（下の `operation` から `type`、`stream_seq`、`run_id` を除いたもの。サーバーが初めて見た順） |
 | `operations_from_seq` | サーバーが受け取る操作のうち、この番号（`seq`）以上のものは、全部 `operations` に入っている（0 なら、サーバーが見た操作の全部）。シナリオ自身の書き込みの操作は、サーバーに届かない（下の `operation`） |
 | `operations_open_omitted` | サーバーが覚えきれなかった未確定の操作の数（ふつうは 0） |
 
@@ -545,7 +534,7 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 | `inactive` | ECU のいまの構成では使っていない |
 
 - 要約の変数の `availability` は、いまの状態です。再接続した後の `hello` の要約には、そのときの状態が入っています。
-- `availability` の通知は `{"type": "availability", "session", "rev", "peers": {"<participant>": {"<変数>": "<状態>", ...}}}` です。状態が変わった participant ごとに、利用状態を報告する変数の全部の状態が入り、その participant について前に届いたものを置き換えます。短い間の変化はまとめて送り、変数を watch しているかによらず、全部の接続に送ります。
+- `availability` の通知は `{"type": "availability", "stream_seq", "run_id", "peers": {"<participant>": {"<変数>": "<状態>", ...}}}` です。状態が変わった participant ごとに、利用状態を報告する変数の全部の状態が入り、その participant について前に届いたものを置き換えます。短い間の変化はまとめて送り、変数を watch しているかによらず、全部の接続に送ります。
 - その変数が載った `variables` の通知（か `hello`）の後に届きます。上限で要約から外した participant と変数は入りません。
 - participant がシミュレーションから抜けても、Control Server との接続が切れても、状態は変わりません。ECU が最後に言ったままです（接続のことは `peers[].connected` と `state` が言います）。participant の新しいプロセスは、変数が宣言した状態から始まります。
 
@@ -567,7 +556,7 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 - 接続が切断されると、その接続の watch は全部なくなります（再接続したら送り直します）。
 - watch は実行をまたいで続きます。実行がないとき、変数の状態が `ready` と `ended` のどちらでもないとき、いまの実行にない変数（その分だけ）には、何も届きません。いまの実行にない名前を挙げてもエラーではありません（実行の前に watch できます）。
 
-サーバーは `{"type": "values", "id", "session", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <value>}}}}` を送ります。
+サーバーは `{"type": "values", "watch_id", "run_id", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <value>}}}}` を送ります。
 
 **いつ届くか**
 
@@ -616,17 +605,17 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 
 ### 書き込み（`api/write`、`operation`）
 
-`POST api/write` `{"session": <run id>, "instance": <server instance>, "writes": {"<peer>": {"<name>": <value>}}, "at_ms": <integer>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
+`POST api/write` `{"run_id": <run id>, "instance": <server instance>, "writes": {"<peer>": {"<name>": <value>}}, "at_ms": <integer>, "late": "reject" | "apply"}` → `{"run_id", "operation"}`
 
 | フィールド | 内容 |
 |---|---|
-| `session`（必須） | 書き込みを向ける実行の id（要約の `id`） |
+| `run_id`（必須） | 書き込みを向ける実行の id（要約の `id`） |
 | `instance`（任意） | `api/app`・`hello`・`api/run` のサーバー `instance`。指定されて一致しなければ 409 `session-changed` |
 | `writes` | 変数の型に合わせた値。1 回のリクエストは `limits.writes_per_request`（256）個まで |
 | `at_ms` | 反映する仮想時間（0 から `limits.write_at_ms_max`）。省くと次のステップ |
 | `late` | 届いたときにその時刻のステップがもう実行されていたときの扱い: `reject`（既定）か `apply` |
 
-- **`session` と `instance`**: 送られた `instance` が現在のサーバーの `instance` と違うとき、または `session` が動いている実行の id と違えば、409 `session-changed` で拒否し、何も書きません。空文字列や文字列でない `instance` は 400 `invalid-field` です。ある実行やサーバープロセスを見ながら送った書き込みが、切り替わり後に誤って書かれないようにするためです。拒否されたら、いまの実行の変数を見てから書き直します。
+- **`run_id` と `instance`**: 送られた `instance` が現在のサーバーの `instance` と違うとき、または `run_id` が動いている実行の id と違えば、409 `session-changed` で拒否し、何も書きません。空文字列や文字列でない `instance` は 400 `invalid-field` です。ある実行やサーバープロセスを見ながら送った書き込みが、切り替わり後に誤って書かれないようにするためです。拒否されたら、いまの実行の変数を見てから書き直します。
 - **`writes` の値**: `bool` は `true` / `false`、`integer` は整数（整数値の実数も可）、`real` は有限の数、`enum` は項目の値（数）か項目の名前（文字列）です。`min` と `max` があれば、その範囲（両端を含む）にします。
 - サーバーは、変数の一覧と照合して、合わないものを 400 で拒否します（`invalid-field`、`unknown-variable`、`not-writable`）。1 つでも合わなければ、全部を送りません。
 - **`at_ms`**: その時刻以後に始まる最初のステップで反映されます。
@@ -640,7 +629,7 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 - 一時停止してから書くときは、`at_ms` を止まっている時刻より後にします。その時刻のステップは、もう実行した ECU があるためです（ランチャーのルール: [docs/control-api.md](../../docs/ja/control-api.md)）。
 - 止まっている時刻そのもの（か、それより前）を指定した書き込みは、いったん `queued` になり、ECU の次のステップで `late` に確定します（`late: "apply"` なら、そのステップで反映されます）。
 
-`{"type": "operation", "session", "seq", "state", "done", "peers": {"<peer>": {"state", "applied_at_ms", "late", "reason", "applied_writes", "failed_write"}}}`
+`{"type": "operation", "stream_seq", "run_id", "seq", "state", "done", "peers": {"<peer>": {"state", "applied_at_ms", "late", "reason", "applied_writes", "failed_write"}}}`
 
 participant ごとの `state` は次のとおりです。
 
@@ -718,7 +707,7 @@ participant ごとの `state` は次のとおりです。
 | `steps` | 届いた手順（`index` の順。手順ごとに最後の状態） |
 | `steps_omitted` | 1000 手順を超えた数 |
 | `status`、`over_at_ms` | 結果の `scenario` から（結果が来るまで `null`） |
-| `timeline_url` | サーバーがその実行の時間の軸のファイルを配る所（`api/timeline/<session の id>`）。実行が終わるまでと、ファイルのない実行（下）では `null` |
+| `timeline_url` | サーバーがその実行の時間の軸のファイルを配る所（`api/timeline/<run_id>`）。実行が終わるまでと、ファイルのない実行（下）では `null` |
 
 - `steps[]` のフィールドはイベントと同じです。`text` と `message` は 1000 文字で切ります。
 - 結果が来たら、`steps` は結果の手順（`not_run` を含む）になります。
@@ -727,16 +716,16 @@ participant ごとの `state` は次のとおりです。
 
 ランチャーの `features` に `timeline` があると、サーバーはシナリオつきの実行のすべてに `--timeline <ファイル>` を付けます。ファイルはサーバーの一時ディレクトリに置きます。実行の結果の `result.scenario.timeline` と、ランチャーの `log` の行 `timeline: <ファイル>` が、そのファイルを指します（[docs/ja/simulation-run.md](../../docs/ja/simulation-run.md#シナリオの実行を時間の軸で記録する--timeline) の「シナリオの実行を時間の軸で記録する」）。`timeline` のないランチャーには `--timeline` を付けず、その実行には時間の軸がありません。
 
-- 実行が終わったら、ランチャーがファイルを全部書けていれば、サーバーはファイルを残します。ファイルが空でなく、結果に指摘 `timeline-write` がないことです。このとき、要約の `scenario.timeline_url` が `api/timeline/<session の id>` になります。
-- `GET api/timeline/<session の id>` は、ファイルを `application/json` で、`Content-Disposition: inline; filename="<シナリオの名前>.timeline.json"` を付けて返します。ほかの `api/` と同じく、トークンが要ります。残したファイルのない実行（シナリオがない、`timeline` のないランチャー、まだ動いている、ファイルを全部書けなかった、サーバーが出していない id、消えたファイル）は 404 `no-timeline` です。
+- 実行が終わったら、ランチャーがファイルを全部書けていれば、サーバーはファイルを残します。ファイルが空でなく、結果に指摘 `timeline-write` がないことです。このとき、要約の `scenario.timeline_url` が `api/timeline/<run_id>` になります。
+- `GET api/timeline/<run_id>` は、ファイルを `application/json` で、`Content-Disposition: inline; filename="<シナリオの名前>.timeline.json"` を付けて返します。ほかの `api/` と同じく、トークンが要ります。残したファイルのない実行（シナリオがない、`timeline` のないランチャー、まだ動いている、ファイルを全部書けなかった、サーバーが出していない id、消えたファイル）は 404 `no-timeline` です。
 - サーバーは、ファイルを書いた最後の 4 つの実行のファイルを残します。5 つ目を残すときに、いちばん古いものを消します。サーバーが止まるときに、全部を消します。
-- ファイルを図にするページは、トークンなしで `timeline/` に配ります（`timeline/`、`timeline/timeline.html`、`timeline/page.js`、`timeline/vehicle-sil-timeline.js`。最後のものは要素 `<vehicle-sil-timeline>` で、サーバーの画面も読めます）。`Host` の確かめとヘッダーは、画面のファイルと同じです。ページは、画面と同じ所からトークンを読み（URL の `#token=`、なければタブの sessionStorage の、`takeToken` と同じ鍵）、`Authorization: Bearer` で送ります。開くときは `timeline/?src=/api/timeline/<session の id>` です。
+- ファイルを図にするページは、トークンなしで `timeline/` に配ります（`timeline/`、`timeline/timeline.html`、`timeline/page.js`、`timeline/vehicle-sil-timeline.js`。最後のものは要素 `<vehicle-sil-timeline>` で、サーバーの画面も読めます）。`Host` の確かめとヘッダーは、画面のファイルと同じです。ページは、画面と同じ所からトークンを読み（URL の `#token=`、なければタブの sessionStorage の、`takeToken` と同じ鍵）、`Authorization: Bearer` で送ります。開くときは `timeline/?src=/api/timeline/<run_id>` です。
 
 ## 操作の記録（`api/recording`）
 
 GUI サーバーは、実行ごとに、自分を通した書き込み（`api/write`）のうち、反映されたもの（participant ごとの `operation` の `applied` と `applied_at_ms`）を覚えます。接続しているどの画面からの書き込みも、`api/write` を使うツールからの書き込みも対象です。`GET api/recording` は、それをシナリオの YAML にして返します（いまの実行か、終わった直後の実行。次の実行を始めるまで）。**サーバーはファイルを書きません**。画面がブラウザの保存として渡し、置き場所はブラウザで決めます。例は `recording.json` です。
 
-`{"recording": {"session_id", "file", "state", "available", "reason", "writes", "omitted", "steps", "yaml"}}`
+`{"recording": {"run_id", "file", "state", "available", "reason", "writes", "omitted", "steps", "yaml"}}`
 
 | フィールド | 内容 |
 |---|---|

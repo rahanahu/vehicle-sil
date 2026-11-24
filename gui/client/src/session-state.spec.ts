@@ -17,7 +17,8 @@ import {
 
 function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
   return {
-    id: 1,
+    id: '1',
+    run_t0_ms: 0,
     file: 'sim.yaml',
     disable: [],
     manual: [],
@@ -552,13 +553,26 @@ describe('applyEvents', () => {
       events({ event: 'finding', finding }, { event: 'result', result }),
     );
     expect(session.phase).toBe('ended');
-    expect(session.findings).toEqual([{ ...finding, event_seq: 0 }]);
+    expect(session.findings).toEqual([finding]);
     expect(session.check).toBe(result.check);
     expect(session.participants.map((p) => [p.name, p.state, p.exitCode])).toEqual([
       ['A', 'ended', 0],
       ['B', 'ended', 3],
       ['C', 'disabled', null],
     ]);
+  });
+
+  it('computes elapsedMs relative to run_t0_ms from run_start and summary', () => {
+    let session = sessionFromSummary(summary({ run_t0_ms: 5000, last_t_ms: 5150, last_seq: 1 }));
+    expect(session.runT0Ms).toBe(5000);
+    expect(session.elapsedMs).toBe(150);
+
+    session = applyEvents(emptySession(), [
+      { event: 'run_start', seq: 1, t_ms: 10000, id: 1, run: 'inst-2' },
+      { event: 'phase', seq: 2, t_ms: 10250, phase: 'running' },
+    ]);
+    expect(session.runT0Ms).toBe(10000);
+    expect(session.elapsedMs).toBe(250);
   });
 
   it('follows the steps of a scenario, then takes them all from the result', () => {
@@ -613,90 +627,6 @@ describe('applyEvents', () => {
     expect(session.scenario?.steps.map((s) => `${s.index} ${s.status}`)).toEqual([
       '1 passed',
       '2 failed',
-    ]);
-    const truncated = applySummary(
-      session,
-      summary({
-        scenario: { ...scenario, steps: [step(1, 'passed')], steps_omitted: 1 },
-        last_seq: session.lastSeq,
-      }),
-      true,
-      true,
-    );
-    expect(truncated.scenario?.steps.map((item) => item.index)).toEqual([1, 2]);
-    const old = applyEvents(
-      sessionFromSummary(summary({ scenario })),
-      events(
-        { event: 'scenario_step', step: step(1, 'running', { text: 'long text' }) },
-        { event: 'scenario_step', step: step(1001, 'running') },
-      ),
-    );
-    const refreshed = applySummary(
-      old,
-      summary({
-        scenario: {
-          ...scenario,
-          steps: [
-            step(1, 'failed', {
-              text: 'long... (5 more characters)',
-              message: 'failed during disconnect',
-            }),
-          ],
-          steps_omitted: 1,
-        },
-        last_seq: 5,
-      }),
-      true,
-      true,
-    );
-    expect(refreshed.scenario?.steps).toMatchObject([
-      { index: 1, status: 'failed', text: 'long text', message: 'failed during disconnect' },
-      { index: 1001, status: 'running' },
-    ]);
-    expect(refreshed.scenario?.stepsOmitted).toBe(0);
-    const latest = applyEvents(
-      old,
-      eventsFrom(7, [{ event: 'scenario_step', step: step(1001, 'failed') }]),
-    );
-    const delayed = applySummary(
-      latest,
-      summary({
-        scenario: { ...scenario, steps: [step(1, 'passed'), step(1001, 'running')] },
-        last_seq: 5,
-      }),
-      true,
-      true,
-    );
-    expect(delayed.scenario?.steps.map((item) => [item.index, item.status])).toEqual([
-      [1, 'passed'],
-      [1001, 'failed'],
-    ]);
-    const completed = {
-      result: 'passed',
-      findings: [],
-      participants: [],
-      check: null,
-      scenario: {
-        file: 'scenarios/a.yaml',
-        name: 'A',
-        status: 'passed',
-        over_at_ms: 10,
-        steps: [step(1, 'passed'), step(1001, 'passed')],
-      },
-    } as unknown as RunResult;
-    const ended = applySummary(
-      old,
-      summary({
-        scenario: { ...scenario, status: 'passed', steps: [step(1, 'passed')], steps_omitted: 1 },
-        result: completed,
-        last_seq: 5,
-      }),
-      true,
-      true,
-    );
-    expect(ended.scenario?.steps.map((item) => [item.index, item.status])).toEqual([
-      [1, 'passed'],
-      [1001, 'passed'],
     ]);
     const steps = [step(1, 'passed'), step(2, 'failed'), step(3, 'not_run')];
     const result = {
@@ -807,19 +737,6 @@ describe('applySummary', () => {
     ]);
   });
 
-  it('keeps an older summary from an answer from taking back the phase', () => {
-    const session = applyEvents(
-      emptySession(),
-      events({ event: 'phase', phase: 'running' }, { event: 'phase', phase: 'stopping' }),
-    );
-    const answered = applySummary(
-      session,
-      summary({ phase: 'running', last_seq: 0, stop: 'requested' }),
-    );
-    expect(answered.phase).toBe('stopping');
-    expect(answered.stopRequests).toBe(1);
-  });
-
   it('keeps the names of the fields the server left out, until an event brings them', () => {
     const session = sessionFromSummary(
       summary({
@@ -882,7 +799,6 @@ describe('applySummary', () => {
     const later = applySummary(
       asked,
       summary({ last_seq: 5, participants: [{ ...participant, stop_requested: false }] }),
-      true,
     );
     expect(later.participants[0].stopRequested).toBe(true);
     // After a reload (nothing held locally), from the server's flag
@@ -892,21 +808,7 @@ describe('applySummary', () => {
     expect(fresh.participants[0].stopRequested).toBe(true);
   });
 
-  it('does not take an older answer as running again, and keeps the notes of the newer state', () => {
-    const ended = sessionFromSummary(
-      summary({
-        state: 'ended',
-        last_seq: 9,
-        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
-        problems: [{ code: 'no-result', message: 'm' }],
-      }),
-    );
-    const late = applySummary(ended, summary({ last_seq: 4, stop: 'requested' }));
-    expect(late.launcher.running).toBe(false);
-    expect(late.problems.map((p) => p.code)).toEqual(['no-result']);
-  });
-
-  it('keeps a later identical live finding from an older unnumbered server', () => {
+  it('keeps a later identical live finding after an initial summary', () => {
     let session = sessionFromSummary(summary({ last_seq: 5, findings: [finding] }));
     session = applyEvents(session, eventsFrom(6, [{ event: 'finding', finding }]));
     expect(session.findings).toHaveLength(2);
@@ -916,48 +818,7 @@ describe('applySummary', () => {
     ]);
   });
 
-  it('keeps identical findings with different event sequences in their real order', () => {
-    const first = { ...finding, event_seq: 1 };
-    const third = { ...finding, event_seq: 3 };
-    let session = sessionFromSummary(summary({ last_seq: 3, findings: [third] }));
-    session = applyEvents(session, eventsFrom(1, [{ event: 'finding', finding: first }]));
-    expect(session.findings.map((item) => item.event_seq)).toEqual([1, 3]);
-    session = applySummary(session, summary({ last_seq: 3, findings: [third] }), true, true);
-    expect(session.findings.map((item) => item.event_seq)).toEqual([1, 3]);
-  });
-
-  it('merges previously live and disconnected findings without dropping or repeating them', () => {
-    const f0 = { ...finding, message: 'large finding omitted from the server' };
-    const f1 = { ...finding, message: 'finding while disconnected' };
-    let session = applyEvents(emptySession(), events({ event: 'finding', finding: f0 }));
-    session = applySummary(session, summary({ last_seq: 2, findings: [f1] }), true, true);
-    expect(session.findings.map((item) => item.message)).toEqual([f0.message, f1.message]);
-    session = applySummary(session, summary({ last_seq: 2, findings: [f1] }), true, true);
-    expect(session.findings.map((item) => item.message)).toEqual([f0.message, f1.message]);
-  });
-
-  it('does not roll back legacy HTTP after a shorter full log replay', () => {
-    let session = applyEvents(emptySession(), eventsFrom(20, [{ event: 'finding', finding }]));
-    session = { ...session, lastSeq: 3 };
-    session = applySummary(session, summary({ last_seq: 15, findings: [] }));
-    expect(session.findings.map((item) => item.message)).toEqual([finding.message]);
-  });
-
-  it('does not roll back a newer legacy hello projection when delayed HTTP follows', () => {
-    let session = applyEvents(emptySession(), eventsFrom(20, [{ event: 'finding', finding }]));
-    const second = { ...finding, message: 'finding during disconnect' };
-    session = applySummary(
-      session,
-      summary({ last_seq: 30, findings: [finding, second] }),
-      true,
-      true,
-    );
-    session = { ...session, lastSeq: 3 };
-    session = applySummary(session, summary({ last_seq: 25, findings: [finding] }));
-    expect(session.findings.map((item) => item.message)).toEqual([finding.message, second.message]);
-  });
-
-  it('merges a large scenario without tracking each step in the event sequence record', () => {
+  it('applies a large scenario result from a summary', () => {
     const steps = Array.from({ length: 12000 }, (_, index) => ({
       index: index + 1,
       line: null,
@@ -992,41 +853,9 @@ describe('applySummary', () => {
       session,
       eventsFrom(1, [{ event: 'scenario_step', step: { ...steps[1000], status: 'running' } }]),
     );
-    const positions = session.eventSeqs;
-    session = applyEvents(
-      session,
-      eventsFrom(2, [{ event: 'log', source: 'A', line: 'heartbeat' }]),
-    );
-    expect(session.eventSeqs).toBe(positions);
-    session = applySummary(session, summary({ scenario, result, last_seq: 2 }), true, true);
+    session = applySummary(session, summary({ scenario, result, last_seq: 2 }));
     expect(session.scenario?.steps).toHaveLength(12000);
     expect(session.scenario?.steps[1000].status).toBe('passed');
-    expect(Object.keys(session.eventSeqs ?? {})).not.toContain('scenario_step:1001');
-  });
-
-  it('takes only the launcher and the stop from an answer when the notifications bring the rest', () => {
-    const session = applyEvents(emptySession(), events({ event: 'phase', phase: 'running' }));
-    const finding = {
-      severity: 'error',
-      code: 'x',
-      file: null,
-      line: null,
-      participant: null,
-      network: null,
-      message: 'm',
-      detail: null,
-    };
-    const answered = applySummary(
-      session,
-      summary({ last_seq: 3, phase: 'stopping', stop: 'requested', findings: [finding] }),
-      false,
-      true,
-    );
-    expect(answered.findings).toEqual([]);
-    expect(answered.phase).toBe('running');
-    expect(answered.stopRequests).toBe(1);
-    const next = applyEvents(answered, eventsFrom(1, [{ event: 'finding', ...finding }]));
-    expect(next.findings).toHaveLength(1);
   });
 
   it('collects the parts it could not read, from summaries and events', () => {
@@ -1038,7 +867,7 @@ describe('applySummary', () => {
     expect(next.unreadable).toEqual(['result.participants', 'log.level']);
     expect(next.elapsedMs).toBe(0);
     // Replaced by the summary, which is correct at the time it arrives
-    expect(applySummary(next, summary({ last_seq: 2 }), true).unreadable).toEqual([]);
+    expect(applySummary(next, summary({ last_seq: 2 })).unreadable).toEqual([]);
   });
 
   it('counts the events whose seq is not after the last one', () => {
@@ -1086,7 +915,7 @@ describe('addDropped', () => {
     const session = applyEvents(emptySession(), events(...logs('A', 2)));
     const dropped = addDropped(session, {
       type: 'dropped',
-      session: 1,
+      run_id: '1',
       reason: 'not-kept',
       log: { A: 4, B: 1 },
       at_least: ['B'],
@@ -1112,7 +941,7 @@ describe('addDropped', () => {
     const dropped = (session: ReturnType<typeof emptySession>) =>
       addDropped(session, {
         type: 'dropped',
-        session: 1,
+        run_id: '1',
         reason: 'slow-client',
         log: { A: 2 },
         at_least: [],
@@ -1128,7 +957,7 @@ describe('addDropped', () => {
     let session = applyEvents(emptySession(), events(...logs('A', 3)));
     session = addDropped(session, {
       type: 'dropped',
-      session: 1,
+      run_id: '1',
       reason: 'slow-client',
       log: { A: 7 },
       at_least: [],
@@ -1147,18 +976,12 @@ describe('addDropped', () => {
 });
 
 describe('addProblem', () => {
-  it('places a delayed omitted diagnostic in its server sequence', () => {
-    const first = { code: 'x', message: 'first', problem_seq: 1 };
-    const third = { code: 'x', message: 'third', problem_seq: 3 };
+  it('appends diagnostics in stream order', () => {
     let session = sessionFromSummary(
-      summary({ problems: [first, third], problems_omitted: 1, problem_seq: 3 }),
+      summary({ problems: [{ code: 'x', message: 'first' }], problems_omitted: 0 }),
     );
-    session = addProblem(session, { code: 'x', message: 'second', problem_seq: 2 });
-    expect(session.problems.map((problem) => problem.message)).toEqual([
-      'first',
-      'second',
-      'third',
-    ]);
+    session = addProblem(session, { code: 'x', message: 'second' });
+    expect(session.problems.map((problem) => problem.message)).toEqual(['first', 'second']);
     expect(session.problemsOmitted).toBe(0);
   });
 
@@ -1383,17 +1206,5 @@ describe('addProblem', () => {
     );
     expect(isLauncherAlive(legacyRunning)).toBe(true);
     expect(isRunActive(legacyRunning)).toBe(true);
-
-    // Non-forced stale HTTP summary cannot revert an ended run back to running even without snapshot_rev
-    const staleAfterHotEnd = applySummary(
-      hotEnded,
-      summary({
-        state: 'running',
-        launcher: { running: false, exit_code: null, signal: null, silent_s: null },
-      }),
-    );
-    expect(staleAfterHotEnd.state).toBe('ended');
-    expect(isSessionRunning(staleAfterHotEnd)).toBe(false);
-    expect(isLauncherAlive(staleAfterHotEnd)).toBe(true);
   });
 });

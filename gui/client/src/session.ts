@@ -7,7 +7,6 @@ import {
   RuntimeStatus,
   ServerAllowed,
   ServerMessage,
-  SessionSummary,
   readServerMessage,
 } from './protocol';
 import {
@@ -15,8 +14,6 @@ import {
   addDropped,
   addProblem,
   applyEvents,
-  recoverReplayLogs,
-  type LogLine,
   applySummary,
   sessionFromSummary,
 } from './session-state';
@@ -46,7 +43,7 @@ export interface Notice {
 
 /** Identity of one run across all starts of the server. */
 export interface RunTarget {
-  session: number;
+  run_id: string;
   instance: string;
 }
 
@@ -54,7 +51,7 @@ export function sameRunTarget(left: RunTarget | null, right: RunTarget | null): 
   return (
     left !== null &&
     right !== null &&
-    left.session === right.session &&
+    left.run_id === right.run_id &&
     left.instance === right.instance
   );
 }
@@ -78,7 +75,7 @@ export interface ClientSession {
    * does not say. What the launcher accepts is `launcherState` of the session.
    */
   readonly allowed: Readable<ServerAllowed | null>;
-  /** Persistent launcher status reported on hello, runtime notifications, and prepare answers. */
+  /** Persistent launcher status reported on hello and runtime notifications. */
   readonly runtime: Readable<RuntimeStatus | null>;
   /** When an event was last applied (Date.now()). The starting point for advancing elapsed time with the clock. */
   readonly lastEventAt: Readable<number>;
@@ -111,20 +108,14 @@ export interface ClientSession {
   dismissNotice(id: number): void;
 }
 
-interface Adoption {
-  revision: number;
-  instance: string | null;
-  session: number | null;
-}
-
 /**
  * Copy of a session (one run of the launcher). Reads the notifications of the connection (Connection) and builds the
- * state from the server's summary and events.
+ * state from the server's single WebSocket stream (summary and events).
  *
  * - Rebuilds the state from the summary in hello (the summary is authoritative), then applies the events that follow
  *   (the resent log and new events).
- * - On every connect, puts into the authentication message where in the session it holds the server should resend
- *   from (resumeFields).
+ * - On every connect, puts into the authentication message where in the stream it holds the server should resend
+ *   from (`{instance, run_id, after_stream_seq}` via `resumeFields`).
  * - On a hello or session whose summary core is unreadable, marks itself not in sync and asks the connection to
  *   restart (receive again from hello).
  * - Passes unknown notifications and unknown events through without applying them (onMessages gets only the readable
@@ -134,13 +125,12 @@ interface Adoption {
  */
 export class SessionFeed implements ClientSession {
   private readonly rawListeners = new Set<
-    (batch: readonly unknown[], current: () => boolean, snapshotVersion: number) => void
+    (batch: readonly unknown[], current: () => boolean) => void
   >();
-  private snapshotVersion: () => number = () => 0;
   private instanceId: string | null = null;
-  private adoptionRevision = 0;
-  private instanceListener: (instance: string, current: () => boolean) => void = () => undefined;
-  private stopTarget: { session: number; instance: string } | null = null;
+  private lastStreamSeq = -1;
+  private resyncing = false;
+  private stopTarget: RunTarget | null = null;
   private readonly current: Writable<SessionView | null>;
   private readonly synced: Writable<boolean>;
   private readonly allowedValue: Writable<ServerAllowed | null>;
@@ -152,13 +142,6 @@ export class SessionFeed implements ClientSession {
   private readonly messageListeners = new Set<(batch: readonly ServerMessage[]) => void>();
   private noticeId = 0;
   private stoppedFlag = false;
-  private replayLogs: {
-    instance: string;
-    session: number;
-    logs: readonly LogLine[];
-    unseen: Set<number>;
-    notKept: Map<string, number>;
-  } | null = null;
 
   readonly session: Readable<SessionView | null>;
   readonly ready: Readable<boolean>;
@@ -172,6 +155,7 @@ export class SessionFeed implements ClientSession {
   constructor(
     private readonly connection: Connection,
     private readonly onError: ErrorSink = rethrowLater,
+    private readonly onInstance?: (instance: string) => void,
   ) {
     this.current = new Writable<SessionView | null>(null, Object.is, onError);
     this.synced = new Writable<boolean>(false, Object.is, onError);
@@ -206,15 +190,19 @@ export class SessionFeed implements ClientSession {
   }
 
   /**
-   * Fields to add to the authentication message: where in the session it holds the server should resend from. Called
+   * Fields to add to the authentication message: where in the stream it holds the server should resend from. Called
    * on every connect (after the call, the copy is not in sync until hello and the resent events have arrived). Used
    * only inside the library.
    */
-  resumeFields(): Pick<AuthMessage, 'session' | 'from_seq'> {
+  resumeFields(): Pick<AuthMessage, 'instance' | 'run_id' | 'after_stream_seq'> {
     this.synced.set(false);
-    // A replacement server may reuse a session ID, and older servers ignore instance guards.
-    // Request the retained replay from its beginning rather than send a cursor for a different run.
-    return {};
+    const session = this.current.get();
+    if (this.instanceId === null || session === null || this.lastStreamSeq < 0) return {};
+    return {
+      instance: this.instanceId,
+      run_id: session.id,
+      after_stream_seq: this.lastStreamSeq,
+    };
   }
 
   onMessages(listener: (batch: readonly ServerMessage[]) => void): () => void {
@@ -224,26 +212,9 @@ export class SessionFeed implements ClientSession {
     };
   }
 
-  /**
-   * Applies the summary in an HTTP answer without waiting for the notification (the answers to start, stop and
-   * fetchSession(); used inside the library). While the WebSocket is connected, takes only the launcher and the stop
-   * request for the same run (the rest arrives in notifications). A summary of an earlier run never brings back an old
-   * run over a new one.
-   */
-  onRawMessages(
-    listener: (batch: readonly unknown[], current: () => boolean, snapshotVersion: number) => void,
-  ): () => void {
+  onRawMessages(listener: (batch: readonly unknown[], current: () => boolean) => void): () => void {
     this.rawListeners.add(listener);
     return () => this.rawListeners.delete(listener);
-  }
-
-  onSnapshotVersion(read: () => number): void {
-    this.snapshotVersion = read;
-  }
-
-  /** Called before a new server's session can be published. */
-  onInstance(listener: (instance: string, current: () => boolean) => void): void {
-    this.instanceListener = listener;
   }
 
   /** Instance associated with the current session, or null if its origin is not known. */
@@ -253,69 +224,6 @@ export class SessionFeed implements ClientSession {
 
   currentTarget(): RunTarget | null {
     return this.stopTarget ? { ...this.stopTarget } : null;
-  }
-
-  adopt(
-    summary: SessionSummary | null,
-    instance: string,
-    resyncFrom?: string | null,
-  ): Adoption | null {
-    const switching = this.instanceId !== null && instance !== this.instanceId;
-    if (switching && (resyncFrom !== this.instanceId || this.connection.state.get() === 'open'))
-      return null;
-    const previous = switching ? null : this.current.get();
-    if (summary && previous && summary.id < previous.id) return null;
-    // A same-instance null summary preserves the run and any in-progress adoption.
-    if (!summary && instance === this.instanceId)
-      return {
-        revision: this.adoptionRevision,
-        instance,
-        session: previous?.id ?? null,
-      };
-    const revision = ++this.adoptionRevision;
-    const next = !summary
-      ? null
-      : previous?.id === summary.id
-        ? applySummary(previous, summary, false, this.connection.state.get() === 'open')
-        : sessionFromSummary(summary);
-    const changedInstance = instance !== this.instanceId;
-    this.instanceId = instance;
-    const adoption: Adoption = { revision, instance, session: next?.id ?? null };
-    this.stopTarget = next ? { session: next.id, instance } : null;
-    const notifySession = this.current.setDeferred(next);
-    const notifyAllowed = switching ? this.allowedValue.setDeferred(null) : () => undefined;
-    if (changedInstance) this.instanceListener(instance, () => this.isCurrent(revision));
-    // Each deferred notification drops itself if a nested update changed that value.
-    notifySession();
-    notifyAllowed();
-    if (!this.sameRun(adoption)) return null;
-    this.adoptAllowed(summary?.allowed ?? null);
-    return this.sameRun(adoption) ? adoption : null;
-  }
-
-  sameRun(adoption: Adoption): boolean {
-    return (
-      this.instanceId === adoption.instance && (this.current.get()?.id ?? null) === adoption.session
-    );
-  }
-
-  isCurrent(revision: number): boolean {
-    return revision === this.adoptionRevision;
-  }
-
-  /**
-   * Takes what the server accepts (an HTTP answer or a notification): the one with the larger `rev` wins (rev 0 is a
-   * server that does not number it: the newest arrival wins). Used inside the library.
-   */
-  adoptAllowed(allowed: ServerAllowed | null): void {
-    if (!allowed) return;
-    const current = this.allowedValue.get();
-    if (!current || allowed.rev === 0 || allowed.rev >= current.rev) this.allowedValue.set(allowed);
-  }
-
-  /** Updates the current persistent runtime status (from HTTP `prepare`/`session`). Used inside the library. */
-  adoptRuntime(runtime: RuntimeStatus | null): void {
-    this.runtimeValue.set(runtime);
   }
 
   report(message: string, count = 1): void {
@@ -328,7 +236,6 @@ export class SessionFeed implements ClientSession {
 
   /** Reads and applies a batch from the connection. */
   private receive(raw: readonly unknown[]): void {
-    const snapshotVersion = this.snapshotVersion();
     const epoch = this.connection.batchEpoch();
     let originInstance = this.instanceId;
     const currentOrigin = () =>
@@ -376,8 +283,6 @@ export class SessionFeed implements ClientSession {
         break;
       }
     }
-    let filtered = this.filterOlderRuns(batch, accepted);
-    if (filtered.staleHello && stop === null) stop = 'lost';
     // Make the requests to the connection before notifying subscribers. Set the stop flag before disconnecting (so a
     // connect() called from within the disconnect notification does not connect)
     if (stop === 'unauthorized' || stop === 'incompatible') {
@@ -390,9 +295,7 @@ export class SessionFeed implements ClientSession {
     }
     if (stop === 'lost') this.connection.restart();
     if (!currentOrigin()) return;
-    // A close subscriber can synchronously observe a later run on the same server.
-    filtered = this.filterOlderRuns(filtered.batch, filtered.raw);
-    this.apply(filtered.batch, filtered.raw, snapshotVersion, currentOrigin, (instance) => {
+    this.apply(batch, accepted, currentOrigin, (instance) => {
       originInstance = instance;
     });
     if (!currentOrigin()) return;
@@ -401,77 +304,28 @@ export class SessionFeed implements ClientSession {
     if (incompatible !== null) this.incompatibleValue.set(incompatible);
   }
 
-  /** Keep messages at or after the run already observed over HTTP, within each server instance. */
-  private filterOlderRuns(
-    batch: readonly ServerMessage[],
-    raw: readonly unknown[],
-  ): {
-    batch: ServerMessage[];
-    raw: unknown[];
-    staleHello: boolean;
-  } {
-    let instance = this.instanceId;
-    let floor = this.current.get()?.id ?? null;
-    let staleHello = false;
-    const selected: ServerMessage[] = [];
-    const selectedRaw: unknown[] = [];
-    batch.forEach((message, index) => {
-      if (message.type === 'hello') {
-        const id = message.session?.id ?? null;
-        if (instance === message.instance && floor !== null && (id === null || id < floor)) {
-          // Ask for a fresh snapshot, but keep later messages of the current run, including ACKs.
-          staleHello = true;
-          return;
-        }
-        if (instance !== message.instance) {
-          instance = message.instance;
-          floor = id;
-        } else if (id !== null) floor = id;
-      } else {
-        const id =
-          message.type === 'session'
-            ? message.session.id
-            : 'session' in message && typeof message.session === 'number'
-              ? message.session
-              : null;
-        if (id !== null && floor !== null && id < floor) return;
-        if (message.type === 'session' && (floor === null || message.session.id > floor))
-          floor = message.session.id;
-      }
-      selected.push(message);
-      selectedRaw.push(raw[index]);
-    });
-    return { batch: selected, raw: selectedRaw, staleHello };
-  }
-
   private apply(
     batch: readonly ServerMessage[],
     raw: readonly unknown[],
-    snapshotVersion: number,
     currentOrigin: () => boolean,
     commitOrigin: (instance: string | null) => void,
   ): void {
     if (batch.length === 0) return;
-    const revision = ++this.adoptionRevision;
     const before = this.current.get();
-    const originalInstance = this.instanceId;
-    let instance = originalInstance;
+    let instance = this.instanceId;
     let session = before;
-    let replayLogs =
-      this.replayLogs?.instance === instance && this.replayLogs?.session === session?.id
-        ? this.replayLogs
-        : null;
-    const unseenLogs = () =>
-      replayLogs?.logs.filter((line) => replayLogs?.unseen.has(line.seq)) ?? [];
+    let streamSeq = this.lastStreamSeq;
+    let resyncing = this.resyncing;
     let events: LauncherEvent[] = [];
     const notices: string[] = [];
+    const selectedBatch: ServerMessage[] = [];
+    const selectedRaw: unknown[] = [];
     let applied = false;
     let synced = this.synced.get();
     let allowedNow = this.allowedValue.get();
     let runtimeNow = this.runtimeValue.get();
-    const takeAllowed = (incoming: ServerAllowed | null | undefined, replace = false) => {
-      if (!incoming) return;
-      if (replace || !allowedNow || incoming.rev === 0 || incoming.rev >= allowedNow.rev) {
+    const takeAllowed = (incoming: ServerAllowed | null | undefined) => {
+      if (incoming) {
         allowedNow = incoming;
       }
     };
@@ -484,144 +338,162 @@ export class SessionFeed implements ClientSession {
       }
       events = [];
     };
-    for (const message of batch) {
+    for (let i = 0; i < batch.length; i++) {
+      const message = batch[i];
+      const rawMessage = raw[i];
+      if (
+        message.type !== 'hello' &&
+        message.type !== 'resync' &&
+        message.type !== 'values' &&
+        typeof message.stream_seq === 'number'
+      ) {
+        if (!replaying && message.stream_seq <= streamSeq) {
+          continue;
+        }
+        streamSeq = Math.max(streamSeq, message.stream_seq);
+      }
       if (message.type !== 'event') flush();
       switch (message.type) {
         case 'hello': {
-          // Rebuild the retained replay independently and recover client-only logs after synced.
           synced = false;
           replaying = true;
           const { session: summary, replay } = message;
-          // hello is authoritative (a server that restarted may number from the start again)
-          const staleSnapshot =
-            !!summary &&
-            instance === message.instance &&
-            session?.id === summary.id &&
-            session.snapshotRev != null &&
-            (summary.snapshot_rev == null || summary.snapshot_rev < session.snapshotRev);
-          takeAllowed(message.allowed ?? summary?.allowed ?? null, !staleSnapshot);
+          const sameInstance = instance !== null && instance === message.instance;
+          const sameRun = !!summary && sameInstance && session?.id === summary.id;
+          const deltaResume = sameRun && !resyncing && replay?.after_stream_seq != null;
+          resyncing = false;
+          if (typeof message.stream_seq === 'number') {
+            streamSeq = message.stream_seq;
+          } else if (!sameInstance) {
+            streamSeq = summary ? (summary.last_seq ?? 0) : -1;
+          } else if (summary) {
+            streamSeq = deltaResume
+              ? Math.max(streamSeq, summary.last_seq ?? 0)
+              : (summary.last_seq ?? 0);
+          } else {
+            streamSeq = -1;
+          }
+          takeAllowed(message.allowed ?? summary?.allowed ?? null);
           if (message.runtime !== undefined) {
             runtimeNow = message.runtime;
-          } else if (message.instance !== instance) {
+          } else if (!sameInstance) {
             runtimeNow = null;
           }
-          const sameRun = summary && instance === message.instance && session?.id === summary.id;
-          const resumed = sameRun && replay?.from_seq != null;
           instance = message.instance;
-          if (!sameRun) replayLogs = null;
           if (!summary) {
             session = null;
-          } else if (sameRun && session) {
-            const kept = applySummary(session, summary, true, true);
-            if (!resumed && instance) {
-              const logs = replayLogs
-                ? recoverReplayLogs(kept, unseenLogs(), replayLogs.notKept).logs
-                : kept.logs;
-              replayLogs = {
-                instance,
-                session: summary.id,
-                logs: logs.filter((line) => !line.gap || line.gap.launcher),
-                unseen: new Set(logs.map((line) => line.seq)),
-                notKept: new Map(),
-              };
-            }
-            session = resumed
-              ? kept
-              : { ...kept, lastSeq: -1, logs: [], logSources: {}, droppedMarks: 0 };
+          } else if (deltaResume && session) {
+            session = applySummary(session, summary);
           } else {
             session = sessionFromSummary(summary);
           }
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
           break;
         }
         case 'dropped': {
-          if (session && message.session === session.id) {
+          if (session && message.run_id === session.id) {
             session = addDropped(session, message);
-            if (message.reason === 'not-kept' && replayLogs) {
-              for (const [source, count] of Object.entries(message.log))
-                replayLogs.notKept.set(source, (replayLogs.notKept.get(source) ?? 0) + count);
-            }
+          } else if (session && message.run_id !== null) {
+            continue;
           }
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
           break;
         }
-        case 'synced':
-          if (
-            session &&
-            replayLogs &&
-            replayLogs.instance === instance &&
-            replayLogs.session === session.id
-          )
-            session = recoverReplayLogs(session, unseenLogs(), replayLogs.notKept);
-          replayLogs = null;
-          synced = true;
-          replaying = false;
+        case 'synced': {
+          if (message.run_id === null ? session === null : session?.id === message.run_id) {
+            synced = true;
+            replaying = false;
+          } else {
+            continue;
+          }
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
           break;
+        }
         case 'allowed':
+          if (message.run_id !== null && (!session || message.run_id !== session.id)) {
+            continue;
+          }
           takeAllowed(message.allowed);
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
           break;
         case 'runtime':
           runtimeNow = message.runtime;
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
           break;
         case 'session':
-          if (session?.id !== message.session.id) replayLogs = null;
           takeAllowed(message.session.allowed);
-          // The summary is authoritative: it arrives in the same order as events, so replace the state with the
-          // server's state at that point (keep the log)
           session =
             session?.id === message.session.id
-              ? applySummary(
-                  session,
-                  message.session,
-                  true,
-                  message.session.last_seq !== null &&
-                    (session.observedSeq ?? session.lastSeq) >= message.session.last_seq,
-                )
+              ? applySummary(session, message.session)
               : sessionFromSummary(message.session);
+          if (typeof message.stream_seq !== 'number' && message.session.last_seq !== null) {
+            streamSeq = Math.max(streamSeq, message.session.last_seq);
+          }
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
           break;
         case 'event':
-          if (session?.id === message.session) {
-            // A replayed line counts as received even if the display limit removes it later.
-            if (message.event.event === 'log' || message.event.event === 'log_dropped')
-              replayLogs?.unseen.delete(message.event.seq);
+          if (session?.id === message.run_id) {
             events.push(message.event);
+            if (typeof message.stream_seq !== 'number') {
+              streamSeq = Math.max(streamSeq, message.event.seq);
+            }
+            selectedBatch.push(message);
+            selectedRaw.push(rawMessage);
           }
           break;
         case 'error':
           if (message.code === 'unauthorized') {
             // Reported through rejected (receive disconnects)
-          } else if (session && message.session === session.id) {
-            const { code, message: text, skipped, problem_seq } = message;
+          } else if (session && message.run_id === session.id) {
+            const { code, message: text, skipped } = message;
             session = addProblem(session, {
               code,
               message: text,
               ...(skipped === undefined ? {} : { skipped }),
-              ...(problem_seq === undefined ? {} : { problem_seq }),
             });
-          } else {
+          } else if (message.run_id === null) {
             notices.push(message.message);
+          } else {
+            continue;
           }
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
           break;
         case 'resync':
           // Sent again shortly, starting with hello. Not in sync until then
           synced = false;
           replaying = true;
+          resyncing = true;
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
+          break;
+        default:
+          if (session !== null && 'run_id' in message && message.run_id !== session.id) {
+            continue;
+          }
+          selectedBatch.push(message);
+          selectedRaw.push(rawMessage);
           break;
       }
     }
     flush();
     const stale =
       (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
-    if (!currentOrigin() || !this.isCurrent(revision)) return;
+    if (!currentOrigin()) return;
+    const beforeInstance = this.instanceId;
     this.instanceId = instance;
+    this.lastStreamSeq = streamSeq;
+    this.resyncing = resyncing;
     commitOrigin(instance);
-    this.replayLogs =
-      replayLogs && replayLogs.session === session?.id && replayLogs.instance === instance
-        ? replayLogs
-        : null;
-    this.stopTarget = session && instance ? { session: session.id, instance } : null;
-    // HTTP can synchronously refresh this same run during a notification. It supersedes its own
-    // snapshot, but not the ordered WebSocket messages (which include command acknowledgements).
+    this.stopTarget = session && instance ? { run_id: session.id, instance } : null;
     const sessionId = session?.id ?? null;
-    const sameRun = () =>
+    const sameStream = () =>
       currentOrigin() &&
       this.instanceId === instance &&
       (this.current.get()?.id ?? null) === sessionId;
@@ -629,23 +501,30 @@ export class SessionFeed implements ClientSession {
     const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
     const notifyRuntime = this.runtimeValue.setDeferred(runtimeNow);
     const notifySynced = this.synced.setDeferred(synced);
-    if (instance && instance !== originalInstance) this.instanceListener(instance, sameRun);
+    if (instance !== null && instance !== beforeInstance) {
+      this.onInstance?.(instance);
+      if (!sameStream()) return;
+    }
     notifySession();
     notifyAllowed();
     notifyRuntime();
     notifySynced();
-    if (!sameRun()) return;
+    if (!sameStream()) return;
     for (const notice of notices) {
       this.notify(notice);
-      if (!sameRun()) return;
+      if (!sameStream()) return;
     }
     if (applied) this.receivedAt.set(Date.now());
-    if (!sameRun()) return;
+    if (!sameStream()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
-    if (!sameRun()) return;
-    callEach(this.rawListeners, [raw, sameRun, snapshotVersion], this.onError, sameRun);
-    if (!sameRun()) return;
-    callEach(this.messageListeners, [batch], this.onError, sameRun);
+    if (!sameStream()) return;
+    if (selectedRaw.length > 0) {
+      callEach(this.rawListeners, [selectedRaw, sameStream], this.onError, sameStream);
+    }
+    if (!sameStream()) return;
+    if (selectedBatch.length > 0) {
+      callEach(this.messageListeners, [selectedBatch], this.onError, sameStream);
+    }
   }
 
   private notify(message: string, count = 1): void {

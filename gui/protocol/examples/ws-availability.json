@@ -9,9 +9,9 @@
   "server": [
     {
       "type": "variables",
-      "session": 1,
+      "stream_seq": 1,
+      "run_id": "1",
       "variables": {
-        "rev": 1,
         "state": "connecting",
         "reason": null,
         "peers": [],
@@ -24,9 +24,9 @@
     },
     {
       "type": "variables",
-      "session": 1,
+      "stream_seq": 2,
+      "run_id": "1",
       "variables": {
-        "rev": 2,
         "state": "ready",
         "reason": null,
         "peers": [
@@ -174,8 +174,8 @@
     },
     {
       "type": "availability",
-      "session": 1,
-      "rev": 3,
+      "stream_seq": 3,
+      "run_id": "1",
       "peers": {
         "Engine": {
           "engine.demand": "inactive",
@@ -189,7 +189,8 @@
     },
     {
       "type": "operation",
-      "session": 1,
+      "stream_seq": 4,
+      "run_id": "1",
       "seq": 1,
       "state": "queued",
       "done": false,
@@ -206,7 +207,8 @@
     },
     {
       "type": "operation",
-      "session": 1,
+      "stream_seq": 5,
+      "run_id": "1",
       "seq": 1,
       "state": "applied",
       "done": true,
@@ -223,9 +225,9 @@
     },
     {
       "type": "variables",
-      "session": 1,
+      "stream_seq": 6,
+      "run_id": "1",
       "variables": {
-        "rev": 4,
         "state": "ended",
         "reason": null,
         "peers": [

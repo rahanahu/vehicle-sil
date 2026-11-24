@@ -9,12 +9,12 @@
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 3,
+      "vehicle_sil_gui": 4,
       "version": "<version>",
       "instance": "0123456789abcdef",
+      "stream_seq": 0,
       "session": null,
       "allowed": {
-        "rev": 1,
         "start": {
           "ok": true,
           "reason": null,
@@ -48,14 +48,15 @@
     },
     {
       "type": "synced",
-      "session": null,
+      "stream_seq": 0,
+      "run_id": null,
       "last_seq": null
     },
     {
       "type": "allowed",
-      "session": null,
+      "stream_seq": 1,
+      "run_id": null,
       "allowed": {
-        "rev": 2,
         "start": {
           "ok": false,
           "reason": "starting",
@@ -81,9 +82,9 @@
     },
     {
       "type": "allowed",
-      "session": null,
+      "stream_seq": 2,
+      "run_id": null,
       "allowed": {
-        "rev": 3,
         "start": {
           "ok": true,
           "reason": null,

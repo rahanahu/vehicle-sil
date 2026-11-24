@@ -9,7 +9,7 @@
   "server": [
     {
       "type": "error",
-      "session": null,
+      "run_id": null,
       "code": "unauthorized",
       "message": "the first message must be {\"type\":\"auth\",\"token\":...} with the token of the URL the server printed",
       "detail": null

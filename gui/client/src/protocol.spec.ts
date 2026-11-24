@@ -13,6 +13,7 @@ import {
   readOperationReport,
   readPrepareResponse,
   readRecording,
+  readRunResponse,
   readRuntimeStatus,
   readSavedConfig,
   readScenarioList,
@@ -35,8 +36,8 @@ const READERS: Record<string, (value: unknown) => unknown> = {
   'POST api/describe': readCheckResponse,
   'POST api/config': readSavedConfig,
   'POST api/connections': readConnections,
-  'POST api/run': readSessionResponse,
-  'POST api/stop': readSessionResponse,
+  'POST api/run': readRunResponse,
+  'POST api/stop-session': readRunResponse,
   'POST api/time': readTimeResponse,
   'GET api/session': readSessionResponse,
   'POST api/write': readWriteResponse,
@@ -80,8 +81,8 @@ describe('the readers accept every example of gui/protocol', () => {
     );
     expect(bodies.get('check-passed')?.sort()).toEqual(['disable', 'file']);
     expect(bodies.get('run')?.sort()).toEqual(['disable', 'file']);
-    expect(bodies.get('stop-force')).toEqual(['force']);
-    expect(bodies.get('time')?.sort()).toEqual(['command', 'ms']);
+    expect(bodies.get('stop-force')?.sort()).toEqual(['force', 'instance', 'run_id']);
+    expect(bodies.get('time')?.sort()).toEqual(['command', 'instance', 'ms', 'run_id']);
   });
 
   it('reads the lines the server skipped in the standard error, and the fields it left out', async () => {
@@ -97,7 +98,7 @@ describe('the readers accept every example of gui/protocol', () => {
     // Notice of lines dropped in between (a shape the examples lack: a launcher writing more than 50 lines to stderr)
     const gap = readServerMessage({
       type: 'error',
-      session: 1,
+      run_id: '1',
       code: 'launcher-stderr',
       message: 'the launcher wrote 7 more lines to its standard error here',
       detail: { skipped: 7 },
@@ -106,7 +107,7 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(
       readServerMessage({
         type: 'error',
-        session: 1,
+        run_id: '1',
         code: 'x',
         message: 'm',
         detail: { skipped: -1 },
@@ -129,9 +130,13 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(readSessionResponse(running?.response)?.participants[0].omitted_fields).toEqual([]);
   });
 
-  it('reads the launcher state and the stop request of a summary', async () => {
-    const summary = readSessionResponse(
+  it('reads the launcher state and the stop request of a summary, and the run acknowledgement', async () => {
+    const ack = readRunResponse(
       (await httpExamples()).find((example) => example.name === 'run')?.response,
+    );
+    expect(ack).toEqual({ instance: '0123456789abcdef', run_id: '1' });
+    const summary = readSessionResponse(
+      (await httpExamples()).find((example) => example.name === 'session-running')?.response,
     );
     expect(summary?.launcher.running).toBe(true);
     expect(summary?.stop).toBe('none');
@@ -154,15 +159,15 @@ describe('the readers accept every example of gui/protocol', () => {
       message: null,
       caution: null,
     });
-    // the allowed message carries the same shape, and its rev goes up with each change
+    // the allowed message carries the same shape, ordered by stream_seq
     const own = examples
       .find((example) => example.name === 'ws-allowed')
       ?.server.map((m) => readServerMessage(m));
-    const revs = (own ?? []).flatMap((m) =>
-      m?.type === 'hello' || m?.type === 'allowed' ? [m.allowed?.rev ?? 0] : [],
+    const seqs = (own ?? []).flatMap((m) =>
+      m?.type === 'hello' || m?.type === 'allowed' ? [m.stream_seq ?? 0] : [],
     );
-    expect(revs.length).toBe(3);
-    expect(revs.every((rev, i) => i === 0 || rev > (revs[i - 1] ?? 0))).toBe(true);
+    expect(seqs.length).toBe(3);
+    expect(seqs.every((seq, i) => i === 0 || seq > (seqs[i - 1] ?? 0))).toBe(true);
     const states = messages.flatMap((m) =>
       m?.type === 'event' && m.event.event === 'state' ? [m.event] : [],
     );
@@ -199,7 +204,7 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(commands.every((c) => c.id === null || Number.isInteger(c.id))).toBe(true);
     const answer = (await httpExamples()).find((example) => example.name === 'time')?.response;
     expect(readTimeResponse(answer).id).toBeNull();
-    expect(readTimeResponse({ session_id: 1, command: { command: 'pause', id: 7 } }).id).toBe(7);
+    expect(readTimeResponse({ run_id: '1', command: { command: 'pause', id: 7 } }).id).toBe(7);
   });
 
   it('reads the participants and states of an availability notification', async () => {
@@ -216,12 +221,12 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(
       readServerMessage({
         type: 'availability',
-        session: 3,
+        run_id: '3',
         peers: { Engine: { a: 'inactive', b: 'sometimes', c: 7 } },
       }),
     ).toEqual({
       type: 'availability',
-      session: 3,
+      run_id: '3',
       peers: { Engine: { a: 'inactive', b: 'active', c: 'active' } },
     });
   });
@@ -251,7 +256,7 @@ describe('the readers accept every example of gui/protocol', () => {
         // Fields of the messages the screen sends: the first message (AuthMessage) and variable watches (WatchMessage)
         const keys =
           (message as { type?: string }).type === 'auth'
-            ? ['type', 'token', 'session', 'from_seq', 'session_without_check']
+            ? ['type', 'token', 'instance', 'run_id', 'after_stream_seq']
             : ['type', 'id', 'variables', 'period_ms'];
         expect(
           Object.keys(message as object).every((key) => keys.includes(key)),
@@ -355,7 +360,7 @@ describe('the readers accept every example of gui/protocol', () => {
     if (hello?.type !== 'hello') return;
     expect(hello.session?.state).toBe('ended');
     expect(hello.session?.result?.result).toBe('passed');
-    expect(hello.replay?.from_seq).toBeNull();
+    expect(hello.replay?.after_stream_seq).toBeNull();
   });
 });
 
@@ -385,7 +390,7 @@ describe('the readers read summaries and events part by part', () => {
   it('reads an event whose loose fields are missing or of other types, and names them', () => {
     const read = readServerMessage({
       type: 'event',
-      session: 1,
+      run_id: '1',
       event: { event: 'participant', seq: 4, name: 'A', state: 'joined', signal: 9 },
     });
     expect(read).toMatchObject({
@@ -471,8 +476,8 @@ describe('the readers refuse what they cannot read', () => {
   });
 
   it('refuses a format version it does not know', () => {
-    expect(() => readServerMessage({ type: 'hello', vehicle_sil_gui: 2 })).toThrow(
-      /vehicle_sil_gui: expected format version 3/,
+    expect(() => readServerMessage({ type: 'hello', vehicle_sil_gui: 99 })).toThrow(
+      /vehicle_sil_gui: expected format version 4/,
     );
   });
 
@@ -563,7 +568,7 @@ describe('the readers refuse what they cannot read', () => {
 
     const helloMsg = readServerMessage({
       type: 'hello',
-      vehicle_sil_gui: 3,
+      vehicle_sil_gui: 4,
       instance: 'inst-1',
       session: null,
       allowed: null,
@@ -575,7 +580,6 @@ describe('the readers refuse what they cannot read', () => {
 
   it('reads variables summaries and operation reports strictly or leniently with Unreadable', () => {
     const rawVars = {
-      rev: -1,
       state: 123,
       reason: 45,
       peers: [
@@ -610,7 +614,6 @@ describe('the readers refuse what they cannot read', () => {
     const uVars = new Unreadable('variables');
     const lenientVars = readVariablesReport(rawVars, 'variables', uVars);
     expect(lenientVars).toEqual({
-      rev: null,
       state: 'unknown',
       reason: null,
       peers: [

@@ -60,7 +60,7 @@ export type VariablesStatus = Open<'unknown' | 'off' | 'connecting' | 'ready' | 
 /** List and state of the variables (of the current run). */
 export interface VariablesState {
   /** Which run they belong to (null without a run). */
-  session: number | null;
+  session: string | null;
   status: VariablesStatus;
   /** Why the API is unavailable or cannot connect (the server's English text). null if none. */
   reason: string | null;
@@ -161,7 +161,7 @@ export interface OperationPeer {
 
 /** Result of a write (operation). */
 export interface OperationView {
-  session: number;
+  session: string;
   /** Operation number (operation in the `api/write` answer). */
   seq: number;
   /**
@@ -195,7 +195,7 @@ export interface WriteOptions {
    * when refused or when no answer came). The number lets you follow the in-progress states (queued and so on) in
    * `operations`, so a widget can show "accepted, waiting to be applied" or know that it may send the next write.
    */
-  onAccepted?: (operation: { session: number; seq: number }) => void;
+  onAccepted?: (operation: { session: string; seq: number }) => void;
 }
 
 /**
@@ -332,11 +332,9 @@ const isObject = (value: unknown): value is Fields =>
 const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback);
 const numberOrNull = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
-const positionOrNull = (value: unknown) =>
-  Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null;
 
 /** Reads `variables` of a summary. Unreadable parts are skipped as if absent (additions are compatible). */
-export function readVariables(value: unknown, session: number | null): VariablesState {
+export function readVariables(value: unknown, session: string | null): VariablesState {
   const u = new Unreadable('variables');
   const summary = lenient(
     (v) => readVariablesReport(v, 'variables', u),
@@ -368,7 +366,7 @@ export function readVariables(value: unknown, session: number | null): Variables
 }
 
 /** Reads an `operation` notification (or one entry of operations in a summary). null if unreadable. */
-export function readOperation(value: unknown, session: number): OperationView | null {
+export function readOperation(value: unknown, session: string): OperationView | null {
   const u = new Unreadable('operation');
   const report = lenient((v, p) => readOperationReport(v, p, u), null, u)(value, 'operation');
   if (!report) return null;
@@ -514,7 +512,7 @@ interface Pending {
    * The run the write was aimed at (the run when it was written), and the operation number (null until the HTTP
    * answer).
    */
-  session: number;
+  session: string;
   seq: number | null;
   resolve: (operation: OperationView) => void;
   reject: (error: WriteError) => void;
@@ -566,21 +564,17 @@ function lost(seq: number, summary: Listed): WriteError | null {
 export interface VariablesLink {
   /** Sends if connected (does nothing otherwise; resume() sends what is needed on connect). */
   send(message: unknown): unknown;
-  onBatch(
-    listener: (
-      batch: readonly unknown[],
-      current?: () => boolean,
-      snapshotVersion?: number,
-    ) => void,
-  ): () => void;
+  onBatch(listener: (batch: readonly unknown[], current?: () => boolean) => void): () => void;
 }
+
+const runIdOf = (value: unknown): string | null =>
+  typeof value === 'string' && value.length > 0 ? value : null;
 
 /**
  * ECU variables: list and state, value watches, writes and their results. No framework needed.
  *
- * - List and state come from `variables` in hello and in HTTP summaries, and from `variables` notifications (`session`
- *   notifications do not carry them). When the run changes, they are unknown until that run's `variables`
- *   notification arrives.
+ * - List and state come from `variables` in hello and from `variables` notifications (`session` notifications do not
+ *   carry them). When the run changes, they are unknown until that run's `variables` notification arrives.
  * - Each variable goes into the subscription with the shortest interval requested for it (one subscription per
  *   interval). A changed subscription is resent with the same id (the server replaces it); after a reconnect, resume()
  *   resends them all.
@@ -591,9 +585,6 @@ export interface VariablesLink {
  */
 export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private instanceId: string | null = null;
-  private snapshotVersionValue = 0;
-  private snapshotIdentity: { instance: string | null; session: number } | null = null;
-  private serverRevision: { instance: string | null; session: number; rev: number } | null = null;
   private readonly stateValue: Writable<VariablesState>;
   private readonly operationsValue: Writable<readonly OperationView[]>;
   private readonly handles = new Set<Handle>();
@@ -634,9 +625,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     this.state = this.stateValue.readonly();
     this.operations = this.operationsValue.readonly();
     this.watchProblem = this.problemValue.readonly();
-    link.onBatch((batch, current, snapshotCurrent) =>
-      this.receive(batch, current, snapshotCurrent),
-    );
+    link.onBatch((batch, current) => this.receive(batch, current));
   }
 
   // --- Connection -----------------------------------------------------------------------------
@@ -670,14 +659,14 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
 
   // --- Notifications --------------------------------------------------------------------------
 
-  private receive(
-    batch: readonly unknown[],
-    current: () => boolean = () => true,
-    initialSnapshotVersion = this.snapshotVersionValue,
-  ): void {
-    let snapshotVersion = initialSnapshotVersion;
-    const snapshotCurrent = (session: number, rev: number | null) =>
-      this.isSnapshotCurrent(snapshotVersion, this.instanceId, session, rev);
+  onInstance(instance: string): void {
+    if (this.instanceId === instance) return;
+    const hadInstance = this.instanceId !== null;
+    this.instanceId = instance;
+    if (hadInstance) this.enter(null, true);
+  }
+
+  private receive(batch: readonly unknown[], current: () => boolean = () => true): void {
     const touched = new Set<string>();
     let touchedAll = false;
     let operations: OperationView[] | null = null;
@@ -692,31 +681,60 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     for (const message of batch) {
       if (!current()) return;
       if (!isObject(message)) continue;
-      const messageSession = message['session'];
-      const existingSession = this.stateValue.get().session;
-      if (
-        typeof messageSession === 'number' &&
-        existingSession !== null &&
-        messageSession < existingSession
-      )
-        continue;
       switch (message['type']) {
         case 'hello': {
           flush();
           if (!current()) return;
           const summary = message['session'];
-          this.adoptInstance(message['instance']);
+          const nextInstance = runIdOf(message['instance']);
+          const instanceChanged =
+            this.instanceId !== null && nextInstance !== null && this.instanceId !== nextInstance;
+          if (nextInstance !== null) this.instanceId = nextInstance;
+          if (instanceChanged) this.enter(null, true);
           if (!current()) return;
-          if (isObject(summary) && Number.isSafeInteger(summary['id'])) {
-            const id = summary['id'] as number;
-            const details = summary['variables'];
-            const rev = isObject(details) ? positionOrNull(details['rev']) : null;
-            const applied = this.adoptSummary(summary, current, () => snapshotCurrent(id, rev));
-            if (applied !== null && this.snapshotVersionValue === applied)
-              snapshotVersion = applied;
+          const id = isObject(summary) ? runIdOf(summary['id']) : null;
+          if (isObject(summary) && id !== null) {
+            const instance = this.instanceId;
+            if (id !== this.stateValue.get().session) {
+              this.enter(id);
+              if (!current()) return;
+            }
+            const sameIdentity = () =>
+              current() && this.instanceId === instance && this.stateValue.get().session === id;
+            const variables = summary['variables'];
+            if (sameIdentity() && variables !== undefined) {
+              let notifyOperations: () => void = () => undefined;
+              const listed: OperationView[] = [];
+              if (isObject(variables) && Array.isArray(variables['operations'])) {
+                let currentOps = this.operationsValue.get();
+                for (const entry of variables['operations']) {
+                  const operation = readOperation(entry, id);
+                  if (operation) {
+                    listed.push(operation);
+                    currentOps = this.withOperation(currentOps, operation);
+                  }
+                }
+                notifyOperations = this.prepareOperations(currentOps, listed, sameIdentity);
+              }
+              const next = readVariables(variables, id);
+              this.stateValue.set(next);
+              notifyOperations();
+              if (
+                sameIdentity() &&
+                this.stateValue.get() === next &&
+                isObject(variables) &&
+                Array.isArray(variables['operations'])
+              ) {
+                const fromSeq = variables['operations_from_seq'];
+                const openOmitted = variables['operations_open_omitted'];
+                this.forgetLost(id, {
+                  operations: listed,
+                  fromSeq: Number.isSafeInteger(fromSeq) ? (fromSeq as number) : null,
+                  openOmitted: typeof openOmitted === 'number' && openOmitted > 0,
+                });
+              }
+            }
           } else {
-            // A later run may already have been adopted during a synchronous session notification.
-            if (this.stateValue.get().session !== null) break;
             this.enter(null);
             if (!current()) return;
             this.stateValue.set({ ...NO_VARIABLES, status: 'off' });
@@ -726,16 +744,12 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         }
         case 'session': {
           const summary = message['session'];
-          const id = isObject(summary) ? summary['id'] : null;
-          const existing = this.stateValue.get().session;
-          if (typeof id === 'number' && existing !== null && id < existing) break;
+          const id = isObject(summary) ? runIdOf(summary['id']) : null;
           // Another run started: its variable notification (variables) follows. Unknown until then
-          if (Number.isSafeInteger(id) && id !== this.stateValue.get().session) {
+          if (id !== null && id !== this.stateValue.get().session) {
             flush();
             if (!current()) return;
-            const afterFlush = this.stateValue.get().session;
-            if (afterFlush !== null && (id as number) < afterFlush) break;
-            this.enter(id as number);
+            this.enter(id);
             if (!current()) return;
             if (this.stateValue.get().session !== id) break;
             touchedAll = true;
@@ -743,43 +757,32 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           break;
         }
         case 'variables': {
-          const id = message['session'];
-          if (!Number.isSafeInteger(id)) break;
+          const id = runIdOf(message['run_id']);
+          if (id === null) break;
           const details = message['variables'];
-          const rev = isObject(details) ? positionOrNull(details['rev']) : null;
           const existing = this.stateValue.get().session;
-          if (existing !== null && (id as number) < existing) break;
           if (id !== existing) {
             flush();
             if (!current()) return;
-            const afterFlush = this.stateValue.get().session;
-            if (afterFlush !== null && (id as number) < afterFlush) break;
-            if (afterFlush !== id) {
-              this.enter(id as number);
+            if (this.stateValue.get().session !== id) {
+              this.enter(id);
               if (!current()) return;
               if (this.stateValue.get().session !== id) break;
               touchedAll = true;
             }
           }
-          if (snapshotCurrent(id as number, rev)) {
-            const version = this.applySnapshot(
-              readVariables(details, id as number),
-              id as number,
-              rev,
-            );
-            if (this.snapshotVersionValue === version) snapshotVersion = version;
-          }
+          this.stateValue.set(readVariables(details, id));
           break;
         }
         case 'values': {
-          if (message['session'] !== this.stateValue.get().session) break;
+          if (runIdOf(message['run_id']) !== this.stateValue.get().session) break;
           this.takeValues(message, touched);
           break;
         }
         case 'operation': {
-          const id = message['session'];
-          if (id !== this.stateValue.get().session) break;
-          const operation = readOperation(message, id as number);
+          const id = runIdOf(message['run_id']);
+          if (id === null || id !== this.stateValue.get().session) break;
+          const operation = readOperation(message, id);
           if (operation) {
             operations = this.withOperation(operations ?? this.operationsValue.get(), operation);
             fresh.push(operation);
@@ -789,12 +792,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         case 'availability': {
           // Replaces the states of each participant listed. A disconnection changes nothing: the last states stay
           const id = this.stateValue.get().session;
-          if (message['session'] !== id || id === null) break;
-          const rev = positionOrNull(message['rev']);
-          if (!snapshotCurrent(id, rev)) break;
-          const version = this.markSnapshot(id, rev);
+          if (runIdOf(message['run_id']) !== id || id === null) break;
           if (this.takeAvailability(message['peers'])) touchedAll = true;
-          if (this.snapshotVersionValue === version) snapshotVersion = version;
           break;
         }
         case 'error': {
@@ -835,126 +834,12 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     return true;
   }
 
-  snapshotVersion(): number {
-    return this.snapshotVersionValue;
-  }
-
-  /** Compare server capture order when available; legacy peers use the local best-effort watermark. */
-  isSnapshotCurrent(
-    version: number,
-    instance: string | null,
-    session: number | null,
-    rev: number | null,
-  ): boolean {
-    if (session === null) return true;
-    const source = this.serverRevision;
-    if (source && source.instance === instance && source.session === session) {
-      return rev !== null && rev >= source.rev;
-    }
-    if (rev !== null) return true;
-    const identity = this.snapshotIdentity;
-    return (
-      !identity ||
-      identity.instance !== instance ||
-      identity.session !== session ||
-      this.snapshotVersionValue <= version
-    );
-  }
-
-  private markSnapshot(session: number, rev: number | null): number {
-    const version = ++this.snapshotVersionValue;
-    this.snapshotIdentity = { instance: this.instanceId, session };
-    if (rev !== null) this.serverRevision = { instance: this.instanceId, session, rev };
-    return version;
-  }
-
-  private applySnapshot(state: VariablesState, session: number, rev: number | null): number {
-    const version = this.markSnapshot(session, rev);
-    this.stateValue.set(state);
-    return version;
-  }
-
-  /** A reused numeric session on another server is a different run. */
-  adoptInstance(value: unknown): void {
-    if (typeof value !== 'string' || !value) return;
-    const changed = this.instanceId !== null && this.instanceId !== value;
-    this.instanceId = value;
-    if (changed) this.enter(null, true);
-  }
-
-  /** Applies a summary: an older snapshot can still carry a terminal write result. */
-  adoptSummary(
-    summary: unknown,
-    current: () => boolean = () => true,
-    snapshotCurrent: () => boolean = current,
-  ): number | null {
-    if (!isObject(summary) || !Number.isSafeInteger(summary['id']) || !current()) return null;
-    const id = summary['id'] as number;
-    const instance = this.instanceId;
-    const existing = this.stateValue.get().session;
-    if (existing !== null && id < existing) return null;
-    const variables = summary['variables'];
-    let applyState = snapshotCurrent();
-    if (id !== existing) {
-      const initial = this.enter(id);
-      if (!current()) return null;
-      if (this.stateValue.get() !== initial) applyState = applyState && snapshotCurrent();
-    }
-    // A callback from enter may have adopted a different run; its operations are a different namespace.
-    const sameIdentity = () =>
-      current() && this.instanceId === instance && this.stateValue.get().session === id;
-    if (!sameIdentity() || variables === undefined) return null;
-    applyState = applyState && snapshotCurrent();
-    let notifyOperations: () => void = () => undefined;
-    const listed: OperationView[] = [];
-    if (isObject(variables) && Array.isArray(variables['operations'])) {
-      let operations = this.operationsValue.get();
-      for (const entry of variables['operations']) {
-        const operation = readOperation(entry, id);
-        if (operation && (applyState || operation.done)) {
-          listed.push(operation);
-          operations = this.withOperation(operations, operation);
-        }
-      }
-      notifyOperations = this.prepareOperations(operations, listed, sameIdentity);
-    }
-    let next: VariablesState | null = null;
-    let appliedVersion: number | null = null;
-    if (applyState && snapshotCurrent() && sameIdentity()) {
-      next = readVariables(variables, id);
-      appliedVersion = this.applySnapshot(
-        next,
-        id,
-        isObject(variables) ? positionOrNull(variables['rev']) : null,
-      );
-    }
-    notifyOperations();
-    if (
-      !sameIdentity() ||
-      appliedVersion === null ||
-      this.snapshotVersionValue !== appliedVersion ||
-      !next ||
-      this.stateValue.get() !== next
-    )
-      return appliedVersion;
-    if (isObject(variables) && Array.isArray(variables['operations'])) {
-      const fromSeq = variables['operations_from_seq'];
-      const openOmitted = variables['operations_open_omitted'];
-      this.forgetLost(id, {
-        operations: listed,
-        fromSeq: Number.isSafeInteger(fromSeq) ? (fromSeq as number) : null,
-        openOmitted: typeof openOmitted === 'number' && openOmitted > 0,
-      });
-    }
-    return appliedVersion;
-  }
-
   /**
-   * With the summary after a reconnect (or from api/session), settles as "no answer came" (lost) the writes waiting for
+   * With the summary after a reconnect, settles as "no answer came" (lost) the writes waiting for
    * a result that will no longer arrive. For writes whose number is not known yet (before the HTTP answer), the summary
    * is kept and checked the same way once the number is known.
    */
-  private forgetLost(session: number, summary: Listed): void {
+  private forgetLost(session: string, summary: Listed): void {
     for (const pending of [...this.pending]) {
       if (pending.session !== session) continue;
       if (pending.seq === null) {
@@ -971,7 +856,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
    * are dropped with their memory, so they do not keep growing as the variables change from run to run). Writes
    * waiting for the previous run's result are failed, since the result will not come.
    */
-  private enter(session: number | null, force = false): VariablesState {
+  private enter(session: string | null, force = false): VariablesState {
     if (!force && session === this.stateValue.get().session) return this.stateValue.get();
     // Clear every observable part before notifying any subscriber. A subscriber can synchronously
     // fetch the new run, so it must never observe or revive the previous run's values or schema.
@@ -1176,7 +1061,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         new WriteError('refused', 'there is no run to write to', 'not-running'),
       );
     }
-    const body: Fields = { session, writes };
+    const body: Fields = { run_id: session, writes };
     if (options.instance !== undefined) body['instance'] = options.instance;
     if (options.atMs !== undefined) body['at_ms'] = options.atMs;
     if (options.late !== undefined) body['late'] = options.late;
@@ -1211,8 +1096,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         }
         const answer = outcome.body;
         const seq = isObject(answer) ? answer['operation'] : null;
-        const answered = isObject(answer) ? answer['session_id'] : null;
-        if (!Number.isSafeInteger(seq) || !Number.isSafeInteger(answered)) {
+        const answered = isObject(answer) ? runIdOf(answer['run_id']) : null;
+        if (!Number.isSafeInteger(seq) || answered === null) {
           this.settle(
             pending,
             new WriteError(

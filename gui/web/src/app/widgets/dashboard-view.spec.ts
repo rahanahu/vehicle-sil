@@ -53,11 +53,11 @@ const variable = (name: string, fields: object = {}) => ({
 
 const hello = {
   type: 'hello',
-  vehicle_sil_gui: 3,
+  vehicle_sil_gui: 4,
   version: '0.1.0',
   instance: 'x',
   session: {
-    id: 1,
+    id: '1',
     state: 'running',
     launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
     stop: 'none',

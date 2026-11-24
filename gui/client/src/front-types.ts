@@ -10,12 +10,12 @@ import type {
   Finding,
   OutsideState,
   Recording,
+  RunAck,
   RunEnd,
   RuntimeStatus,
   ScenarioFile,
   ScenarioStatus,
   ScenarioStep,
-  SessionSummary,
 } from './protocol';
 import type { ValueCondition, WriteBlock, WriteStatus } from './variable-state';
 import type { VariableRef, VariableValue } from './variables';
@@ -232,12 +232,12 @@ export interface FrontRun {
   /** Starts a run of `file` (default: the start-up file). Rejects with `check-failed` and the findings if the check refuses it. */
   start(
     intent?: Intent,
-    options?: { file?: string; onStarted?: (session: SessionSummary) => void },
+    options?: { file?: string; onStarted?: (started: RunAck) => void },
   ): Promise<void>;
   /** Stops in order. Works whatever the state of the connection (the request is sent if the network is up). */
   stop(): Promise<void>;
   /** Stops without waiting for the participants. */
-  forceStop(target?: { session: number; instance: string }): Promise<void>;
+  forceStop(target?: RunTarget): Promise<void>;
 }
 
 /**
@@ -317,7 +317,7 @@ export interface Front {
     disable?: string[];
     enable?: string[];
     manual?: string[];
-  }): Promise<RuntimeStatus>;
+  }): Promise<RuntimeStatus | null>;
   /** Lists the configuration files under the server root (`GET api/configs`). */
   configs(): Promise<ConfigList>;
   /** Returns applied writes recorded in the current or last run as scenario YAML (`GET api/recording`). */

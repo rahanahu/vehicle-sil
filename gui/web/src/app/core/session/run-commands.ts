@@ -1,5 +1,11 @@
 import { Injectable, computed, inject } from '@angular/core';
-import { ActionError, CheckResult, Intent, OperationName } from '@vehicle-sil/gui-client';
+import {
+  ActionError,
+  CheckResult,
+  Intent,
+  OperationName,
+  RunTarget,
+} from '@vehicle-sil/gui-client';
 import { GUI_FRONT, lastOperation, readableSignal } from './gui-client';
 
 /**
@@ -55,7 +61,7 @@ export class RunCommands {
   }
 
   /** 待たずに止める（participant を強制終了する）。 */
-  forceStop(target?: { session: number; instance: string }): void {
+  forceStop(target?: RunTarget): void {
     this.send('force_stop', () => this.front.run.forceStop(target));
   }
 

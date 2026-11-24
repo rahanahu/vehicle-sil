@@ -64,8 +64,6 @@ export type Severity = Open<'error' | 'warning' | 'note'>;
 
 /** A finding of the check or the run. message and detail are shown in English, unchanged. */
 export interface Finding extends FromLauncher {
-  /** Launcher event sequence on a finding kept by a GUI server, when available. */
-  event_seq?: number;
   severity: Severity;
   code: string;
   file: string | null;
@@ -85,9 +83,6 @@ export function severityRank(severity: Severity): number {
 export const readFinding = (value: unknown, path: string, u?: Unreadable): Finding => {
   const f = object(value, path);
   return withRaw(f, {
-    ...(Number.isSafeInteger(f['event_seq']) && (f['event_seq'] as number) >= 0
-      ? { event_seq: f['event_seq'] as number }
-      : {}),
     severity: field(f, path, 'severity', string),
     code: field(f, path, 'code', lenient(string, '', u)),
     file: field(f, path, 'file', soft(nullable(string), null, u)),
@@ -804,6 +799,7 @@ export type LauncherEvent =
       file: string | null;
       arguments: string[];
     })
+  | (EventBase & { event: 'run_start'; id: number | null; run: string | null })
   | (EventBase & { event: 'phase'; phase: Phase })
   | (EventBase & { event: 'check'; check: CheckResult | null })
   | (EventBase & { event: 'registry'; uri: string | null })
@@ -1126,6 +1122,13 @@ function readEventFields(
         pid: field(f, path, 'pid', soft(nullable(integer), null, u)),
         file: field(f, path, 'file', soft(nullable(string), null, u)),
         arguments: field(f, path, 'arguments', soft(items(string, u), [], u)),
+      };
+    case 'run_start':
+      return {
+        ...base,
+        event: kind,
+        id: field(f, path, 'id', soft(nullable(integer), null, u)),
+        run: field(f, path, 'run', soft(nullable(string), null, u)),
       };
     case 'phase':
       return { ...base, event: kind, phase: field(f, path, 'phase', string) };

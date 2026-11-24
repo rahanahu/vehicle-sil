@@ -4,19 +4,21 @@
     {
       "type": "auth",
       "token": "<token>",
-      "session": 1,
-      "from_seq": 20
+      "instance": "0123456789abcdef",
+      "run_id": "1",
+      "after_stream_seq": 20
     }
   ],
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 3,
+      "vehicle_sil_gui": 4,
       "version": "<version>",
       "instance": "0123456789abcdef",
+      "stream_seq": 2144,
       "session": {
-        "snapshot_rev": 1,
-        "id": 1,
+        "id": "1",
+        "run_t0_ms": 0,
         "file": "flood.yaml",
         "disable": [],
         "manual": [],
@@ -447,7 +449,6 @@
           "outside": []
         },
         "allowed": {
-          "rev": 5,
           "start": {
             "ok": true,
             "reason": null,
@@ -888,10 +889,8 @@
         },
         "problems": [],
         "problems_omitted": 0,
-        "problem_seq": 0,
         "scenario": null,
         "variables": {
-          "rev": 1,
           "state": "off",
           "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
           "peers": [],
@@ -903,7 +902,6 @@
         }
       },
       "allowed": {
-        "rev": 5,
         "start": {
           "ok": true,
           "reason": null,
@@ -927,7 +925,7 @@
         }
       },
       "replay": {
-        "from_seq": 20
+        "after_stream_seq": 20
       },
       "runtime": {
         "mode": "cold",
@@ -939,7 +937,7 @@
     },
     {
       "type": "dropped",
-      "session": 1,
+      "run_id": "1",
       "reason": "not-kept",
       "log": {
         "Engine": 100
@@ -949,7 +947,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 20,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 20,
@@ -960,7 +959,8 @@
     },
     {
       "type": "synced",
-      "session": 1,
+      "stream_seq": 2144,
+      "run_id": "1",
       "last_seq": 2143
     }
   ]

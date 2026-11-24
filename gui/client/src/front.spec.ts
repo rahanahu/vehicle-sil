@@ -95,8 +95,7 @@ const commandEvent = (
   ...more,
 });
 
-const serverAllowed = (rev: number, start: object, stop: object = ok) => ({
-  rev,
+const serverAllowed = (_rev: number, start: object, stop: object = ok) => ({
   start,
   stop,
   force: stop,
@@ -114,8 +113,8 @@ const alreadyRunning = {
   message: 'a simulation is running: stop it before starting another',
 };
 
-const summary = (more: Record<string, unknown> = {}, id = 1) => ({
-  id,
+const summary = (more: Record<string, unknown> = {}, id: string | number = '1') => ({
+  id: String(id),
   file: 'sim.yaml',
   state: 'running',
   launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
@@ -128,9 +127,9 @@ const summary = (more: Record<string, unknown> = {}, id = 1) => ({
 
 /** Events get a rising seq (an event whose seq is not after the last one is dropped). */
 let lastSeq = 0;
-const event = (e: unknown, session = 1) => ({
+const event = (e: unknown, session: string | number = '1') => ({
   type: 'event',
-  session,
+  run_id: String(session),
   event: { ...(e as object), seq: ++lastSeq },
 });
 
@@ -225,7 +224,7 @@ describe('the front door', () => {
     await rig.deliver(
       {
         type: 'hello',
-        vehicle_sil_gui: 3,
+        vehicle_sil_gui: 4,
         version: '0.1.0',
         instance: 'x',
         session: summary(),
@@ -234,7 +233,7 @@ describe('the front door', () => {
       },
       event(state),
       event(timeEvent(30, 500)),
-      { type: 'synced', session: 1, last_seq: 40 },
+      { type: 'synced', run_id: '1', last_seq: 40 },
     );
     return rig;
   }
@@ -346,14 +345,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: null,
           allowed: serverAllowed(1, startOk, notRunning),
           replay: null,
         },
-        { type: 'synced', session: null, last_seq: null },
+        { type: 'synced', run_id: null, last_seq: null },
       );
       const { front } = rig;
       expect(front.status.get()).toMatchObject({
@@ -379,17 +378,17 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: null,
           allowed: serverAllowed(1, startOk, notRunning),
           replay: null,
         },
-        { type: 'synced', session: null, last_seq: null },
+        { type: 'synced', run_id: null, last_seq: null },
       );
       expect(rig.front.controls.get().start.ok).toBe(true);
-      await rig.deliver({ type: 'allowed', session: null, allowed: serverAllowed(2, starting) });
+      await rig.deliver({ type: 'allowed', run_id: null, allowed: serverAllowed(2, starting) });
       expect(rig.front.controls.get().start).toEqual({
         ok: false,
         reason: { code: 'starting', message: starting.message },
@@ -401,7 +400,7 @@ describe('the front door', () => {
       expect(rig.front.controls.get().force_stop.reason?.code).toBe('starting');
       await rig.deliver({
         type: 'allowed',
-        session: null,
+        run_id: null,
         allowed: serverAllowed(3, startOk, notRunning),
       });
       expect(rig.front.controls.get().start.ok).toBe(true);
@@ -415,20 +414,21 @@ describe('the front door', () => {
       expect(rig.front.controls.get().resume.ok).toBe(true);
     });
 
-    it('does not let an older allowed replace a newer one', async () => {
+    it('does not let an older allowed stream_seq replace a newer one after synced', async () => {
       const rig = await open();
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
+          stream_seq: 5,
           session: null,
           allowed: serverAllowed(5, startOk, notRunning),
           replay: null,
         },
-        { type: 'allowed', session: null, allowed: serverAllowed(4, alreadyRunning) },
-        { type: 'synced', session: null, last_seq: null },
+        { type: 'synced', stream_seq: 5, run_id: null, last_seq: null },
+        { type: 'allowed', stream_seq: 4, run_id: null, allowed: serverAllowed(4, alreadyRunning) },
       );
       expect(rig.front.controls.get().start.ok).toBe(true);
     });
@@ -697,7 +697,7 @@ describe('the front door', () => {
       const rig = await open();
       await rig.deliver({
         type: 'error',
-        session: null,
+        run_id: null,
         code: 'unauthorized',
         message: 'the token is wrong',
         detail: null,
@@ -813,7 +813,7 @@ describe('the front door', () => {
       let done = false;
       const pause = rig.front.time.pause().then(() => (done = true));
       const body = rig.timeBody();
-      expect(body).toMatchObject({ command: 'pause', session: 1, instance: 'x' });
+      expect(body).toMatchObject({ command: 'pause', run_id: '1', instance: 'x' });
       expect(Number.isSafeInteger(body.id)).toBe(true);
       // Another page's pause (another id) and a stdin line (no id) are not our answer
       await rig.deliver(
@@ -824,233 +824,6 @@ describe('the front door', () => {
       await rig.deliver(event(commandEvent(62, 'pause', body.id)));
       await pause;
       expect(done).toBe(true);
-    });
-
-    it('keeps launcher events, logs and command answers when HTTP responds first', async () => {
-      const rig = await running();
-      const pause = rig.front.time.pause();
-      const id = rig.timeBody().id;
-      const finding = { severity: 'error', code: 'x', message: 'one' };
-      rig.socket.send(event({ event: 'finding', ...finding }));
-      rig.socket.send(event(timeEvent(60, 100)));
-      rig.socket.send(event({ event: 'log', t_ms: 61, source: 'ECU', line: 'kept' }));
-      rig.socket.send(event(commandEvent(62, 'pause', id)));
-      const refresh = rig.front.low.fetchSession();
-      rig.http.expectOne('api/session').flush({
-        instance: 'x',
-        session: summary({
-          snapshot_rev: 2,
-          last_seq: lastSeq,
-          time: { sim_ms: 200, actual_speed: 1 },
-          findings: [finding],
-        }),
-      });
-      await refresh;
-      await vi.advanceTimersByTimeAsync(BATCH_MS);
-      await expect(pause).resolves.toBeUndefined();
-      const session = rig.front.low.session.session.get();
-      expect(session?.simMs).toBe(100);
-      expect(session?.findings.map((item) => item.message)).toEqual(['one']);
-      expect(session?.logs.map((line) => line.line)).toContain('kept');
-    });
-
-    it('keeps a large complete result when an HTTP summary was trimmed', async () => {
-      const rig = await running();
-      const result = {
-        vehicle_sil_run: 2,
-        result: 'passed',
-        end: 'completed',
-        ok: true,
-        message: 'x'.repeat(4 * 1024 * 1024 + 1),
-        errors: 0,
-        warnings: 0,
-        notes: 0,
-        participants: [
-          {
-            name: 'Engine',
-            required: true,
-            enabled: true,
-            manual: false,
-            ended: 'exited',
-            exit_code: 0,
-            signal: null,
-          },
-        ],
-        findings: [],
-      };
-      expect(JSON.stringify(result).length).toBeGreaterThan(4 * 1024 * 1024);
-      expect(JSON.stringify(result).length).toBeLessThan(16 * 1024 * 1024);
-      rig.socket.send(event({ event: 'result', t_ms: 70, result }));
-      const refresh = rig.front.low.fetchSession();
-      rig.http.expectOne('api/session').flush({
-        instance: 'x',
-        session: summary({
-          snapshot_rev: 2,
-          last_seq: lastSeq,
-          result: {
-            vehicle_sil_run: 2,
-            result: 'passed',
-            end: 'completed',
-            ok: true,
-            errors: 0,
-            warnings: 0,
-            notes: 0,
-          },
-        }),
-      });
-      await refresh;
-      await vi.advanceTimersByTimeAsync(BATCH_MS);
-      await rig.deliver({
-        type: 'session',
-        session: summary({
-          snapshot_rev: 3,
-          last_seq: lastSeq,
-          result: {
-            vehicle_sil_run: 2,
-            result: 'passed',
-            end: 'completed',
-            ok: true,
-            errors: 0,
-            warnings: 0,
-            notes: 0,
-          },
-        }),
-      });
-      const received = rig.front.low.session.session.get()?.result;
-      expect(received?.participants[0]?.name).toBe('Engine');
-      expect(received?.message.length).toBe(result.message.length);
-    });
-
-    it('delivers ACK and values when a notice subscriber refreshes the same run', async () => {
-      const rig = await running();
-      const ref = { peer: 'Engine', name: 'engine.demand' };
-      const watch = rig.front.low.variables.watch([ref], { history: 10 });
-      const pause = rig.front.time.pause();
-      const id = rig.timeBody().id;
-      let invoked = false;
-      const unsubscribe = rig.front.low.session.notices.subscribe(() => {
-        if (invoked) return;
-        invoked = true;
-        void rig.front.low.fetchSession();
-        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary() });
-      });
-      await rig.deliver(
-        {
-          type: 'error',
-          session: null,
-          code: 'too-many-watches',
-          message: 'too many watches',
-          detail: { id: 1 },
-        },
-        {
-          type: 'values',
-          id: 1,
-          session: 1,
-          sim_ms: 20,
-          paused: false,
-          peers: { Engine: { sample_ms: 20, values: { 'engine.demand': 4 } } },
-        },
-        event(commandEvent(62, 'pause', id)),
-      );
-      await expect(pause).resolves.toBeUndefined();
-      expect(invoked).toBe(true);
-      expect(watch.history(ref)).toEqual([{ sampleMs: 20, value: 4 }]);
-      expect(rig.front.low.variables.watchProblem.get()?.code).toBe('too-many-watches');
-      unsubscribe();
-    });
-
-    it('does not deliver old-run messages when a notice subscriber adopts a newer run', async () => {
-      const rig = await running();
-      const ref = { peer: 'Engine', name: 'engine.demand' };
-      const watch = rig.front.low.variables.watch([ref], { history: 10 });
-      const pause = rig.front.time.pause().catch((error: unknown) => error);
-      const id = rig.timeBody().id;
-      let invoked = false;
-      const unsubscribe = rig.front.low.session.notices.subscribe(() => {
-        if (invoked) return;
-        invoked = true;
-        void rig.front.low.fetchSession();
-        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary({}, 2) });
-      });
-      await rig.deliver(
-        {
-          type: 'error',
-          session: null,
-          code: 'too-many-watches',
-          message: 'too many watches',
-          detail: { id: 1 },
-        },
-        {
-          type: 'values',
-          id: 1,
-          session: 1,
-          sim_ms: 20,
-          paused: false,
-          peers: { Engine: { sample_ms: 20, values: { 'engine.demand': 4 } } },
-        },
-        event(commandEvent(62, 'pause', id)),
-      );
-      expect(await pause).toMatchObject({ code: 'not-running' });
-      expect(rig.front.low.session.session.get()?.id).toBe(2);
-      expect(watch.history(ref)).toEqual([]);
-      unsubscribe();
-    });
-
-    it('keeps replayed logs and ACK when a buffered hello has an older snapshot revision', async () => {
-      const rig = await running();
-      const pause = rig.front.time.pause();
-      const id = rig.timeBody().id;
-      const old = summary({
-        snapshot_rev: 1,
-        launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: 5 },
-      });
-      rig.socket.send({
-        type: 'hello',
-        vehicle_sil_gui: 3,
-        version: '0.1.0',
-        instance: 'x',
-        session: old,
-        replay: null,
-      });
-      rig.socket.send(event({ event: 'log', source: 'Engine', line: 'replayed line', t_ms: 90 }));
-      rig.socket.send(event(commandEvent(62, 'pause', id)));
-      rig.socket.send({ type: 'synced', session: 1, last_seq: 99 });
-      const refresh = rig.front.low.fetchSession();
-      rig.http
-        .expectOne('api/session')
-        .flush({ instance: 'x', session: summary({ snapshot_rev: 2 }) });
-      await refresh;
-      await vi.advanceTimersByTimeAsync(BATCH_MS);
-      await expect(pause).resolves.toBeUndefined();
-      expect(rig.front.low.session.session.get()?.launcher.silentSeconds).toBeNull();
-      expect(
-        rig.front.low.session.session.get()?.logs.some((line) => line.line === 'replayed line'),
-      ).toBe(true);
-      expect(rig.front.low.session.ready.get()).toBe(true);
-    });
-
-    it('keeps a newer run acknowledgement after a buffered older hello', async () => {
-      const rig = await running();
-      const refresh = rig.front.low.fetchSession();
-      rig.http.expectOne('api/session').flush({ instance: 'x', session: summary({}, 2) });
-      await refresh;
-      const pause = rig.front.time.pause();
-      const id = rig.timeBody().id;
-      await rig.deliver(
-        {
-          type: 'hello',
-          vehicle_sil_gui: 3,
-          version: '0.1.0',
-          instance: 'x',
-          session: summary(),
-          replay: null,
-        },
-        { type: 'synced', session: 1, last_seq: 0 },
-        event(commandEvent(62, 'pause', id), 2),
-      );
-      await expect(pause).resolves.toBeUndefined();
-      expect(rig.front.low.session.session.get()?.id).toBe(2);
-      expect(rig.front.low.connection.state.get()).toBe('closed');
     });
 
     it('delivers an acknowledgement buffered before the socket closes', async () => {
@@ -1068,26 +841,9 @@ describe('the front door', () => {
       const id = rig.timeBody().id;
       await rig.deliver(event(commandEvent(62, 'pause', id)), {
         type: 'session',
-        session: { id: 'invalid' },
+        session: { id: '' },
       });
       await expect(pause).resolves.toBeUndefined();
-    });
-
-    it('delivers an acknowledgement when a session subscriber refreshes the same run', async () => {
-      const rig = await running();
-      const pause = rig.front.time.pause();
-      const id = rig.timeBody().id;
-      let invoked = false;
-      const unsubscribe = rig.front.low.session.session.subscribe(() => {
-        if (invoked) return;
-        invoked = true;
-        void rig.front.low.fetchSession();
-        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary() });
-      });
-      await rig.deliver(event(commandEvent(62, 'pause', id)));
-      await expect(pause).resolves.toBeUndefined();
-      expect(invoked).toBe(true);
-      unsubscribe();
     });
 
     it('sends ids that differ between commands', async () => {
@@ -1157,14 +913,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: null,
           allowed: serverAllowed(1, startOk, notRunning),
           replay: null,
         },
-        { type: 'synced', session: null, last_seq: null },
+        { type: 'synced', run_id: null, last_seq: null },
       );
       expect(rig.front.controls.get().step.ok).toBe(false);
       await expect(rig.front.time.step(10)).rejects.toMatchObject({
@@ -1329,14 +1085,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: summary(),
           allowed: serverAllowed(3, alreadyRunning),
           replay: null,
         },
-        { type: 'synced', session: 1, last_seq: 40 },
+        { type: 'synced', run_id: '1', last_seq: 40 },
       );
       const notYet = {
         ok: false,
@@ -1354,14 +1110,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: null,
           allowed: serverAllowed(1, startOk, notRunning),
           replay: null,
         },
-        { type: 'synced', session: null, last_seq: null },
+        { type: 'synced', run_id: null, last_seq: null },
       );
       void rig.front.run.start(undefined, { file: 'sim.yaml' }).catch(() => undefined);
       await expect(rig.front.run.start(undefined, { file: 'sim.yaml' })).rejects.toMatchObject({
@@ -1376,14 +1132,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: null,
           allowed: serverAllowed(1, startOk, notRunning),
           replay: null,
         },
-        { type: 'synced', session: null, last_seq: null },
+        { type: 'synced', run_id: null, last_seq: null },
       );
       const misspelt = { scenaro: 'drive' } as unknown as Parameters<typeof rig.front.run.start>[0];
       await expect(rig.front.run.start(misspelt, { file: 'sim.yaml' })).rejects.toMatchObject({
@@ -1421,7 +1177,7 @@ describe('the front door', () => {
       expect(rig.front.status.get().link).toBe('offline');
       const first = rig.front.run.stop();
       const second = rig.front.run.stop();
-      rig.http.expectOne('api/stop-session').flush({ session: summary({ stop: 'requested' }) });
+      rig.http.expectOne('api/stop-session').flush({ instance: 'x', run_id: '1' });
       await Promise.all([first, second]);
       rig.http.expectNone('api/stop-session');
     });
@@ -1434,13 +1190,12 @@ describe('the front door', () => {
       const unsubscribe = rig.front.status.subscribe((status) => {
         if (status.problem || switched) return;
         switched = true;
-        void rig.front.low.fetchSession();
-        rig.http.expectOne('api/session').flush({ instance: 'x', session: summary({}, 2) });
+        void rig.deliver({ type: 'session', session: summary({}, 2) });
       });
       const stop = rig.front.run.stop();
       const request = rig.http.expectOne('api/stop-session');
-      expect(request.request.body).toMatchObject({ session: 1, instance: 'x' });
-      request.flush({ session: summary({ stop: 'requested' }) });
+      expect(request.request.body).toMatchObject({ run_id: '1', instance: 'x' });
+      request.flush({ instance: 'x', run_id: '1' });
       await stop;
       unsubscribe();
     });
@@ -1449,20 +1204,20 @@ describe('the front door', () => {
       const rig = await running();
       const start1 = rig.front.run.start({}, { file: 'sim.yaml' });
       const stop1 = rig.front.run.stop();
-      rig.http.expectOne('api/run').flush({ instance: 'x', session: summary({}, 2) });
+      rig.http.expectOne('api/run').flush({ instance: 'x', run_id: '2' });
       await start1;
       await rig.turn();
       const request1 = rig.http.expectOne('api/stop-session');
       const start2 = rig.front.run.start({}, { file: 'sim.yaml' });
       const stop2 = rig.front.run.stop();
-      rig.http.expectOne('api/run').flush({ instance: 'x', session: summary({}, 3) });
+      rig.http.expectOne('api/run').flush({ instance: 'x', run_id: '3' });
       await start2;
       await rig.turn();
       const request2 = rig.http.expectOne('api/stop-session');
-      expect(request1.request.body).toMatchObject({ session: 2, instance: 'x' });
-      expect(request2.request.body).toMatchObject({ session: 3, instance: 'x' });
-      request1.flush({ session: summary({ stop: 'requested' }, 2) });
-      request2.flush({ session: summary({ stop: 'requested' }, 3) });
+      expect(request1.request.body).toMatchObject({ run_id: '2', instance: 'x' });
+      expect(request2.request.body).toMatchObject({ run_id: '3', instance: 'x' });
+      request1.flush({ instance: 'x', run_id: '2' });
+      request2.flush({ instance: 'x', run_id: '3' });
       await Promise.all([stop1, stop2]);
     });
 
@@ -1471,13 +1226,13 @@ describe('the front door', () => {
       await rig.deliver({ type: 'session', session: summary({ stop: 'requested' }) });
       const start = rig.front.run.start({}, { file: 'sim.yaml' });
       expect(rig.front.controls.get().force_stop.ok).toBe(false);
-      await expect(rig.front.run.forceStop({ session: 1, instance: 'x' })).rejects.toMatchObject({
+      await expect(rig.front.run.forceStop({ run_id: '1', instance: 'x' })).rejects.toMatchObject({
         code: 'starting',
       });
       rig.http.expectNone('api/stop-session');
-      rig.http.expectOne('api/run').flush({ instance: 'x', session: summary({}, 2) });
+      rig.http.expectOne('api/run').flush({ instance: 'x', run_id: '2' });
       await start;
-      await expect(rig.front.run.forceStop({ session: 1, instance: 'x' })).rejects.toMatchObject({
+      await expect(rig.front.run.forceStop({ run_id: '1', instance: 'x' })).rejects.toMatchObject({
         code: 'session-changed',
       });
       rig.http.expectNone('api/stop-session');
@@ -1487,7 +1242,7 @@ describe('the front door', () => {
       const rig = await running();
       const stop = rig.front.run.stop();
       expect(rig.front.controls.get().stop.reason?.code).toBe('busy');
-      rig.http.expectOne('api/stop-session').flush({ session: summary({ stop: 'requested' }) });
+      rig.http.expectOne('api/stop-session').flush({ instance: 'x', run_id: '1' });
       await stop;
       expect(rig.front.status.get().run).toBe('stopping');
       expect(rig.front.controls.get().force_stop.ok).toBe(true);
@@ -1503,11 +1258,11 @@ describe('the front door', () => {
       expect(rig.front.controls.get().stop.ok).toBe(true);
       const secondStop = rig.front.run.stop();
       const secondRequest = rig.http.expectOne('api/stop-session');
-      expect(secondRequest.request.body).toMatchObject({ session: 2, instance: 'x' });
-      firstRequest.flush({ session: summary({ stop: 'requested' }) });
+      expect(secondRequest.request.body).toMatchObject({ run_id: '2', instance: 'x' });
+      firstRequest.flush({ instance: 'x', run_id: '1' });
       await firstStop;
       expect(rig.front.controls.get().stop.reason?.code).toBe('busy');
-      secondRequest.flush({ session: summary({ stop: 'requested' }, 2) });
+      secondRequest.flush({ instance: 'x', run_id: '2' });
       await secondStop;
     });
 
@@ -1516,14 +1271,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: null,
           allowed: serverAllowed(1, startOk, notRunning),
           replay: null,
         },
-        { type: 'synced', session: null, last_seq: null },
+        { type: 'synced', run_id: null, last_seq: null },
       );
       const start = rig.front.run.start(
         { speed: 'max', start_paused: true, disable: ['Logger'] },
@@ -1538,7 +1293,7 @@ describe('the front door', () => {
         start_paused: true,
         disable: ['Logger'],
       });
-      request.flush({ instance: 'x', session: summary() });
+      request.flush({ instance: 'x', run_id: '1' });
       await start;
       expect(rig.front.status.get().run).not.toBe('none');
     });
@@ -1553,19 +1308,19 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: ended,
           allowed: serverAllowed(2, startOk, notRunning),
           replay: null,
         },
-        { type: 'synced', session: 1, last_seq: 0 },
+        { type: 'synced', run_id: '1', last_seq: 0 },
       );
       // A run that is over (without the launcher's end event it reads as crashed): both are what a wait for the end tests
       expect(['ended', 'crashed']).toContain(rig.front.status.get().run);
       const start = rig.front.run.start({}, { file: 'sim.yaml' });
-      rig.http.expectOne('api/run').flush({ instance: 'x', session: summary({}, 2) });
+      rig.http.expectOne('api/run').flush({ instance: 'x', run_id: '2' });
       await start;
       // `until(status, s => s.run === 'ended')` after `await start()` waits for the new run, not for the old one
       expect(['ended', 'crashed']).not.toContain(rig.front.status.get().run);
@@ -1577,14 +1332,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: null,
           allowed: serverAllowed(1, startOk, notRunning),
           replay: null,
         },
-        { type: 'synced', session: null, last_seq: null },
+        { type: 'synced', run_id: null, last_seq: null },
       );
       const start = rig.front.run.start(
         {
@@ -1613,7 +1368,7 @@ describe('the front door', () => {
         connect: { ETH_EXT: 'eth0' },
         time_policy: 'free',
       });
-      request.flush({ instance: 'x', session: summary() });
+      request.flush({ instance: 'x', run_id: '1' });
       await start;
     });
 
@@ -1995,7 +1750,7 @@ describe('the front door', () => {
         };
         const hello = (save: object) => ({
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: null,
@@ -2004,7 +1759,7 @@ describe('the front door', () => {
         });
         await rig.deliver(hello({ ...startOk, caution }), {
           type: 'synced',
-          session: null,
+          run_id: null,
           last_seq: null,
         });
         expect(rig.front.controls.get().save).toEqual({ ok: true, reason: null, caution });
@@ -2016,7 +1771,7 @@ describe('the front door', () => {
         };
         await rig.deliver({
           type: 'allowed',
-          session: null,
+          run_id: null,
           allowed: { ...serverAllowed(2, startOk, notRunning), save: disabled },
         });
         expect(rig.front.controls.get().save).toEqual({
@@ -2210,14 +1965,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: summary({ launcher_state: { ...stateEvent(4, { outside: [row()] }), seq: 14 } }),
           allowed: serverAllowed(3, alreadyRunning),
           replay: null,
         },
-        { type: 'synced', session: 1, last_seq: 40 },
+        { type: 'synced', run_id: '1', last_seq: 40 },
       );
       expect(rig.front.outside.get().map((o) => o.network)).toEqual(['ETH_EXT']);
     });
@@ -2229,11 +1984,11 @@ describe('the front door', () => {
     await rig.deliver(
       {
         type: 'hello',
-        vehicle_sil_gui: 3,
+        vehicle_sil_gui: 4,
         version: '0.1.0',
         instance: 'x',
         session: {
-          id: 1,
+          id: '1',
           state: 'running',
           launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
           stop: 'none',
@@ -2268,7 +2023,7 @@ describe('the front door', () => {
         replay: null,
       },
       event(state),
-      { type: 'synced', session: 1, last_seq: null },
+      { type: 'synced', run_id: '1', last_seq: null },
     );
     return rig;
   }
@@ -2284,10 +2039,10 @@ describe('the front door', () => {
       const request = rig.http.expectOne('api/write');
       expect(request.request.body).toMatchObject({ writes: { Engine: { 'engine.offset': 50 } } });
       expect(variable.get().writing).toBe(true);
-      request.flush({ session_id: 1, operation: 4 });
+      request.flush({ run_id: '1', operation: 4 });
       await rig.deliver({
         type: 'operation',
-        session: 1,
+        run_id: '1',
         seq: 4,
         state: 'applied',
         done: true,
@@ -2311,7 +2066,7 @@ describe('the front door', () => {
       expect(before.availability).toBe('active');
       await rig.deliver({
         type: 'availability',
-        session: 1,
+        run_id: '1',
         peers: { Engine: { 'engine.offset': 'inactive' } },
       });
       const after = variable.get();
@@ -2341,14 +2096,14 @@ describe('the front door', () => {
       await rig.deliver(
         {
           type: 'hello',
-          vehicle_sil_gui: 3,
+          vehicle_sil_gui: 4,
           version: '0.1.0',
           instance: 'x',
           session: summary(),
           allowed: serverAllowed(3, alreadyRunning),
           replay: null,
         },
-        { type: 'synced', session: 1, last_seq: null },
+        { type: 'synced', run_id: '1', last_seq: null },
       );
       const variable = rig.front.variable({ peer: 'Engine', name: 'engine.offset' });
       const write = variable.write(1).catch((e: unknown) => e as ActionError);
@@ -2461,7 +2216,7 @@ describe('the front door', () => {
       const rig = await open();
       await rig.deliver({
         type: 'hello',
-        vehicle_sil_gui: 3,
+        vehicle_sil_gui: 4,
         version: '0.1.0',
         instance: 'i1',
         session: null,
@@ -2474,12 +2229,13 @@ describe('the front door', () => {
       const prepPromise = rig.front.prepare({ file: 'b.yaml' });
       const prepReq = rig.http.expectOne('api/prepare');
       expect(prepReq.request.body).toEqual({ file: 'b.yaml' });
-      prepReq.flush({
-        instance: 'i1',
+      prepReq.flush({ instance: 'i1' });
+      await rig.deliver({
+        type: 'runtime',
         runtime: { mode: 'hot', state: 'ready', config: 'b.yaml', reason: null, message: null },
       });
       const rt = await prepPromise;
-      expect(rt).toMatchObject({ mode: 'hot', state: 'ready', config: 'b.yaml' });
+      expect(rt).toMatchObject({ mode: 'hot', state: 'idle' });
       expect(rig.front.runtime.get()).toMatchObject({ state: 'ready', config: 'b.yaml' });
 
       await rig.deliver({
@@ -2519,58 +2275,18 @@ describe('the front door', () => {
       rig.http.expectOne('api/recording').flush({ recording: null });
       expect(await recPromise).toBeNull();
 
-      let capturedId: number | null = null;
+      let capturedId: string | null = null;
       const startPromise = rig.front.run.start(
         { stop_at_ms: 100 },
-        { file: 'simulation.yaml', onStarted: (s) => (capturedId = s.id) },
+        { file: 'simulation.yaml', onStarted: (s) => (capturedId = s.run_id) },
       );
       const runReq = rig.http.expectOne('api/run');
       runReq.flush({
         instance: 'i1',
-        session: {
-          snapshot_rev: 1,
-          id: 42,
-          file: 'simulation.yaml',
-          disable: [],
-          manual: [],
-          speed: null,
-          start_paused: false,
-          started_at: '2026-01-01T00:00:00.000Z',
-          ended_at: null,
-          state: 'running',
-          launcher: {
-            pid: 123,
-            running: true,
-            mode: 'cold',
-            process_alive: true,
-            exit_code: null,
-            signal: null,
-            silent_s: null,
-          },
-          stop: 'none',
-          phase: null,
-          last_seq: null,
-          last_t_ms: null,
-          time: null,
-          check: null,
-          registry: null,
-          participants: [],
-          participants_omitted: 0,
-          findings: [],
-          findings_omitted: 0,
-          last_command: null,
-          launcher_state: null,
-          allowed: null,
-          result: null,
-          log: {},
-          problems: [],
-          problems_omitted: 0,
-          scenario: null,
-          variables: null,
-        },
+        run_id: '42',
       });
       await startPromise;
-      expect(capturedId).toBe(42);
+      expect(capturedId).toBe('42');
     });
   });
 });

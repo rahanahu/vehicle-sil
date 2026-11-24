@@ -9,12 +9,13 @@
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 3,
+      "vehicle_sil_gui": 4,
       "version": "<version>",
       "instance": "0123456789abcdef",
+      "stream_seq": 40044,
       "session": {
-        "snapshot_rev": 1,
-        "id": 1,
+        "id": "1",
+        "run_t0_ms": 0,
         "file": "large-result.yaml",
         "disable": [],
         "manual": [],
@@ -385,8 +386,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "flood finding 0",
-            "event_seq": 28
+            "message": "flood finding 0"
           },
           {
             "severity": "note",
@@ -395,8 +395,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "flood finding 1",
-            "event_seq": 29
+            "message": "flood finding 1"
           }
         ],
         "findings_omitted": 39000,
@@ -466,7 +465,6 @@
           "outside": []
         },
         "allowed": {
-          "rev": 5,
           "start": {
             "ok": true,
             "reason": null,
@@ -522,23 +520,19 @@
             "message": "more findings than 1000 (or 1048576 bytes): later ones are shown now, but not kept for a screen opened later",
             "detail": {
               "what": "findings"
-            },
-            "problem_seq": 1
+            }
           },
           {
             "code": "kept-limit",
             "message": "the launcher's result is larger than 4194304 bytes: only its short plain fields are kept for a screen opened later",
             "detail": {
               "what": "result"
-            },
-            "problem_seq": 2
+            }
           }
         ],
         "problems_omitted": 0,
-        "problem_seq": 2,
         "scenario": null,
         "variables": {
-          "rev": 1,
           "state": "off",
           "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
           "peers": [],
@@ -550,7 +544,6 @@
         }
       },
       "allowed": {
-        "rev": 5,
         "start": {
           "ok": true,
           "reason": null,
@@ -574,7 +567,7 @@
         }
       },
       "replay": {
-        "from_seq": null
+        "after_stream_seq": null
       },
       "runtime": {
         "mode": "cold",
@@ -586,7 +579,8 @@
     },
     {
       "type": "synced",
-      "session": 1,
+      "stream_seq": 40044,
+      "run_id": "1",
       "last_seq": 40043
     }
   ]

@@ -134,7 +134,7 @@ async function main() {
     }
   });
   const started = await client.run.start(intent);
-  console.log(`started: session ${started?.id}`);
+  console.log(`started: session ${started?.run_id}`);
   setTimeout(
     () => finish(1, `no result after ${timeoutS} s`),
     timeoutS * 1000,
@@ -143,7 +143,7 @@ async function main() {
   // The launcher has ended (with or without a result)
   const ended = await until(
     client.session.session,
-    (s) => s?.id === started?.id && !s.launcher.running,
+    (s) => s?.id === started?.run_id && !s.launcher.running,
   );
   for (const finding of ended.findings)
     console.log(`finding: ${finding.severity} ${finding.message}`);

@@ -48,7 +48,7 @@ export function createWaveforms(client: GuiClient, options: WatchOptions = {}): 
       if (active !== feed || closed) return;
       historyTarget = client.session.currentTarget();
       const current =
-        historyTarget && historyTarget.session === client.variables.state.get().session;
+        historyTarget && historyTarget.run_id === client.variables.state.get().session;
       series.set(
         next.map((ref) => ({ ref: { ...ref }, points: current && feed ? feed.history(ref) : [] })),
       );
@@ -66,7 +66,7 @@ export function createWaveforms(client: GuiClient, options: WatchOptions = {}): 
         // The session is notified before the raw variable messages clear their projection.
         if (
           target?.instance !== historyTarget?.instance ||
-          target?.session !== historyTarget?.session
+          target?.run_id !== historyTarget?.run_id
         )
           return series.get().map(({ ref }) => ({ ref, points: [] }));
         return series.get();

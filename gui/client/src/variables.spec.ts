@@ -58,16 +58,16 @@ const holdingState = {
   outside: [],
 };
 
-const summary = (id: number, variables?: unknown) => ({
-  id,
+const summary = (id: string | number, variables?: unknown) => ({
+  id: String(id),
   state: 'running',
   launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
   stop: 'none',
   ...(variables === undefined ? {} : { variables }),
 });
-const hello = (id: number | null, variables?: unknown) => ({
+const hello = (id: string | number | null, variables?: unknown) => ({
   type: 'hello',
-  vehicle_sil_gui: 3,
+  vehicle_sil_gui: 4,
   version: '0.1.0',
   instance: 'x',
   session: id === null ? null : summary(id, variables),
@@ -111,11 +111,12 @@ const values = (
   simMs: number,
   paused: boolean,
   peers: Record<string, unknown>,
-  session = 1,
+  session: string | number = '1',
 ) => ({
   type: 'values',
   id,
-  session,
+  watch_id: id,
+  run_id: String(session),
   sim_ms: simMs,
   paused,
   peers,
@@ -126,9 +127,15 @@ const engine = (sampleMs: number, demand: unknown, speed?: unknown) => ({
     values: { 'engine.demand': demand, ...(speed === undefined ? {} : { 'engine.speed': speed }) },
   },
 });
-const operation = (seq: number, state: string, done: boolean, peer: object = {}, session = 1) => ({
+const operation = (
+  seq: number,
+  state: string,
+  done: boolean,
+  peer: object = {},
+  session: string | number = '1',
+) => ({
   type: 'operation',
-  session,
+  run_id: String(session),
   seq,
   state,
   done,
@@ -138,7 +145,7 @@ const operation = (seq: number, state: string, done: boolean, peer: object = {},
 describe('readOperation', () => {
   it('says which writes took effect, and null for what is absent or not a position', () => {
     const peers = (p: object) =>
-      readOperation(operation(3, 'rejected', true, p), 1)?.peers['Engine'];
+      readOperation(operation(3, 'rejected', true, p), '1')?.peers['Engine'];
     expect(peers({ applied_writes: 1, failed_write: 1 })).toMatchObject({
       appliedWrites: 1,
       failedWrite: 1,
@@ -163,11 +170,11 @@ describe('variables', () => {
     expect(client.variables.state.get()).toMatchObject({ session: null, status: 'off' });
     await deliver(hello(1, { ...ready(), state: 'connecting' }));
     expect(client.variables.state.get()).toMatchObject({
-      session: 1,
+      session: '1',
       status: 'connecting',
       peers: [{}],
     });
-    await deliver({ type: 'variables', session: 1, variables: ready() });
+    await deliver({ type: 'variables', run_id: '1', variables: ready() });
     const state = client.variables.state.get();
     expect(state.status).toBe('ready');
     expect(state.peers[0].variables[0]).toEqual({
@@ -188,17 +195,17 @@ describe('variables', () => {
     // Another run started: unknown until its variables arrive
     await deliver({ type: 'session', session: summary(2) });
     expect(client.variables.state.get()).toMatchObject({
-      session: 2,
+      session: '2',
       status: 'unknown',
       peers: [],
     });
     await deliver({
       type: 'variables',
-      session: 2,
+      run_id: '2',
       variables: { state: 'off', reason: 'no control server' },
     });
     expect(client.variables.state.get()).toMatchObject({
-      session: 2,
+      session: '2',
       status: 'off',
       reason: 'no control server',
     });
@@ -224,10 +231,10 @@ describe('variables', () => {
         ],
         variables_omitted: 3,
       },
-      4,
+      '4',
     );
     expect(state).toEqual({
-      session: 4,
+      session: '4',
       status: 'later-state',
       reason: null,
       peers: [
@@ -388,7 +395,7 @@ describe('variables', () => {
     await deliver({ type: 'session', session: summary(2) });
     expect(long.history(ENGINE)).toEqual([]);
     await deliver(
-      { type: 'variables', session: 2, variables: ready() },
+      { type: 'variables', run_id: '2', variables: ready() },
       values(1, 5, false, engine(0, 9), 2),
     );
     expect(long.history(ENGINE)).toEqual([{ sampleMs: 0, value: 9 }]);
@@ -402,186 +409,26 @@ describe('variables', () => {
     expect(again.history(ENGINE).length).toBe(3);
   });
 
-  it.each([
-    ['state', false],
-    ['state', true],
-    ['operations', false],
-    ['operations', true],
-  ] as const)(
-    'finishes the new instance reset when %s subscribers fetch the same instance (summary: %s)',
-    async (source, withSummary) => {
-      const { client, deliver, http, socket } = setup();
-      await deliver(hello(1, ready([listed(1, 'queued', false)])));
-      const watch = client.variables.watch([ENGINE], { history: 10 });
-      await deliver(values(1, 10, false, engine(10, 4)));
-      expect(watch.history(ENGINE)).toHaveLength(1);
-      socket().fail();
-      let invoked = false;
-      const unsubscribe = client.variables[source].subscribe(() => {
-        if (invoked) return;
-        invoked = true;
-        void client.fetchSession();
-        http
-          .expectOne('api/session')
-          .flush({ instance: 'new-server', session: withSummary ? summary(1, ready()) : null });
-      });
-      const refreshed = client.fetchSession();
-      http.expectOne('api/session').flush({ instance: 'new-server', session: summary(1, ready()) });
-      await refreshed;
-      unsubscribe();
-      expect(invoked).toBe(true);
-      expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
-      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
-      expect(client.variables.operations.get()).toEqual([]);
-      expect(watch.value(ENGINE)).toBeUndefined();
-      expect(watch.history(ENGINE)).toEqual([]);
-      expect(watch.values.get()).toEqual({});
-      client.close();
-    },
-  );
-
-  it.each([
-    ['state', 'session'],
-    ['state', 'variables'],
-    ['operations', 'session'],
-    ['operations', 'variables'],
-  ] as const)(
-    'keeps a synchronously fetched ready state when %s notifies during %s',
-    async (source, kind) => {
-      const { client, http, deliver } = setup();
-      await deliver(hello(1, ready([listed(1, 'queued', false)])));
-      let fetched = false;
-      const unsubscribe = client.variables[source].subscribe(() => {
-        if (fetched) return;
-        fetched = true;
-        void client.fetchSession();
-        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
-      });
-      const message =
-        kind === 'session'
-          ? { type: 'session', session: summary(2) }
-          : { type: 'variables', session: 2, variables: { ...ready(), state: 'connecting' } };
-      await deliver(message, { type: 'session', session: summary(2) });
-      expect(fetched).toBe(true);
-      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
-      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
-      unsubscribe();
-      client.close();
-    },
-  );
-
-  it.each(['state', 'operations'] as const)(
-    'keeps a synchronously fetched ready state when instance changes through %s',
-    async (source) => {
-      const { client, http, deliver } = setup();
-      await deliver(hello(1, ready([listed(1, 'queued', false)])));
-      let fetched = false;
-      const unsubscribe = client.variables[source].subscribe(() => {
-        if (fetched) return;
-        fetched = true;
-        void client.fetchSession();
-        http
-          .expectOne('api/session')
-          .flush({ instance: 'new-server', session: summary(2, ready()) });
-      });
-      await deliver({ ...hello(2), instance: 'new-server' });
-      expect(fetched).toBe(true);
-      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
-      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
-      unsubscribe();
-      client.close();
-    },
-  );
-
-  it.each(['state', 'operations'] as const)(
-    'keeps a fresh ready snapshot over an older hello and variables after %s reentry',
-    async (source) => {
-      const { client, http, deliver } = setup();
-      await deliver(hello(1, ready([listed(1, 'queued', false)])));
-      let fetched = false;
-      const unsubscribe = client.variables[source].subscribe(() => {
-        if (fetched) return;
-        fetched = true;
-        void client.fetchSession();
-        http
-          .expectOne('api/session')
-          .flush({ instance: 'new-server', session: summary(2, ready([], { reason: 'fresh' })) });
-      });
-      const old = { ...ready(), state: 'connecting', reason: 'older' };
-      await deliver(
-        { ...hello(2, old), instance: 'new-server' },
-        { type: 'variables', session: 2, variables: old },
-      );
-      expect(fetched).toBe(true);
-      expect(client.variables.state.get()).toMatchObject({
-        session: 2,
-        status: 'ready',
-        reason: 'fresh',
-      });
-      unsubscribe();
-      client.close();
-    },
-  );
-
-  it.each(['session', 'state'] as const)(
-    'settles an applied summary operation despite an older reentrant GET from %s',
-    async (source) => {
-      const { client, http, deliver } = setup();
-      await deliver(hello(1, ready()));
-      const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
-      http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
-      let fetched = false;
-      const readOld = () => {
-        if (fetched) return;
-        fetched = true;
-        void client.fetchSession();
-        http
-          .expectOne('api/session')
-          .flush({ instance: 'x', session: summary(1, ready([], { reason: 'fresh' })) });
-      };
-      const unsubscribe =
-        source === 'session'
-          ? client.session.session.subscribe(readOld)
-          : client.variables.state.subscribe(readOld);
-      const refresh = client.fetchSession();
-      http.expectOne('api/session').flush({
-        instance: 'x',
-        session: summary(1, ready([listed(7, 'applied', true)], { reason: 'older' })),
-      });
-      await refresh;
-      await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
-      expect(fetched).toBe(true);
-      expect(client.variables.state.get()).toMatchObject({
-        session: 1,
-        status: 'ready',
-        reason: 'fresh',
-      });
-      unsubscribe();
-      client.close();
-    },
-  );
-
   it('does not merge an older hello operation into a newer run with the same sequence', async () => {
     const { client, http, deliver } = setup();
     let written: Promise<unknown> | null = null;
     let started = false;
     const unsubscribe = client.variables.state.subscribe((state) => {
-      if (started || state.session !== 1) return;
+      if (started || state.session !== '2') return;
       started = true;
-      void client.fetchSession();
-      http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
       written = client.variables.write({ Engine: { 'engine.demand': 40 } });
-      http.expectOne('api/write').flush({ session_id: 2, operation: 7 });
+      http.expectOne('api/write').flush({ run_id: '2', operation: 7 });
     });
     await deliver(
       hello(1, ready([listed(7, 'rejected', true)])),
       { type: 'session', session: summary(2) },
+      { type: 'variables', run_id: '2', variables: ready() },
       operation(7, 'applied', true, { applied_at_ms: 20 }, 2),
     );
     expect(started).toBe(true);
-    await expect(written).resolves.toMatchObject({ session: 2, seq: 7, state: 'applied' });
+    await expect(written).resolves.toMatchObject({ session: '2', seq: 7, state: 'applied' });
     expect(client.variables.operations.get()).toMatchObject([
-      { session: 2, seq: 7, state: 'applied' },
+      { session: '2', seq: 7, state: 'applied' },
     ]);
     unsubscribe();
     client.close();
@@ -594,251 +441,18 @@ describe('variables', () => {
     const request = http.expectOne('api/run');
     let answered = false;
     const unsubscribe = client.session.session.subscribe((session) => {
-      if (answered || session?.id !== 2) return;
+      if (answered || session?.id !== '2') return;
       answered = true;
-      request.flush({ instance: 'x', session: summary(2) });
+      request.flush({ instance: 'x', run_id: '2' });
     });
     await deliver(
       { type: 'session', session: summary(2) },
-      { type: 'variables', session: 2, variables: ready() },
+      { type: 'variables', run_id: '2', variables: ready() },
     );
     await started;
     expect(answered).toBe(true);
-    expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
+    expect(client.variables.state.get()).toMatchObject({ session: '2', status: 'ready' });
     expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
-    unsubscribe();
-    client.close();
-  });
-
-  it('rejects a buffered older WebSocket snapshot after a newer HTTP snapshot', async () => {
-    const { client, http, socket, deliver } = setup();
-    await deliver(hello(1, { ...ready(), rev: 1, state: 'connecting' }));
-    socket().send({
-      type: 'variables',
-      session: 1,
-      variables: { ...ready(), rev: 2, state: 'connecting' },
-    });
-    const refresh = client.fetchSession();
-    http
-      .expectOne('api/session')
-      .flush({ instance: 'x', session: summary(1, { ...ready(), rev: 3 }) });
-    await refresh;
-    await vi.advanceTimersByTimeAsync(BATCH_MS);
-    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
-    client.close();
-  });
-
-  it.each(['old-first', 'new-first'] as const)(
-    'orders overlapping same-run HTTP snapshots by server revision (%s)',
-    async (order) => {
-      const http = new FakeHttp();
-      const client = createClient({
-        baseUrl: 'http://127.0.0.1:8765/',
-        token: 'secret',
-        http: http.transport,
-        socket: new FakeWebSockets().factory,
-      });
-      const old = client.fetchSession();
-      const oldRequest = http.expectOne('api/session');
-      const newer = client.fetchSession();
-      const newRequest = http.expectOne('api/session');
-      const answerOld = () =>
-        oldRequest.flush({
-          instance: 'x',
-          session: summary(1, { ...ready(), rev: 1, state: 'connecting' }),
-        });
-      const answerNew = () =>
-        newRequest.flush({ instance: 'x', session: summary(1, { ...ready(), rev: 2 }) });
-      if (order === 'old-first') {
-        answerOld();
-        answerNew();
-      } else {
-        answerNew();
-        answerOld();
-      }
-      await Promise.all([old, newer]);
-      expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
-      client.close();
-    },
-  );
-
-  it.each(['delta-first', 'snapshot-first'] as const)(
-    'orders availability deltas and HTTP snapshots by server revision (%s)',
-    async (order) => {
-      const { client, http, deliver } = setup();
-      const schema = (availability: string) => ({
-        ...ready(),
-        peers: [
-          {
-            name: 'Engine',
-            connected: true,
-            variables: [{ ...ready().peers[0].variables[0], availability }],
-          },
-        ],
-      });
-      await deliver(hello(1, { ...schema('active'), rev: 1 }));
-      const refresh = client.fetchSession();
-      const request = http.expectOne('api/session');
-      if (order === 'delta-first') {
-        await deliver({
-          type: 'availability',
-          session: 1,
-          rev: 3,
-          peers: { Engine: { 'engine.demand': 'inactive' } },
-        });
-        request.flush({ instance: 'x', session: summary(1, { ...schema('active'), rev: 2 }) });
-      } else {
-        request.flush({ instance: 'x', session: summary(1, { ...schema('inactive'), rev: 3 }) });
-        await deliver({
-          type: 'availability',
-          session: 1,
-          rev: 2,
-          peers: { Engine: { 'engine.demand': 'active' } },
-        });
-      }
-      await refresh;
-      expect(client.variables.state.get().availability.get('Engine')?.get('engine.demand')).toBe(
-        'inactive',
-      );
-      client.close();
-    },
-  );
-
-  it('compares variable revisions only within the same run and instance', async () => {
-    const { client, http, deliver } = setup();
-    await deliver(hello(1, { ...ready(), rev: 100 }));
-    const refresh = client.fetchSession();
-    http
-      .expectOne('api/session')
-      .flush({ instance: 'x', session: summary(2, { ...ready(), rev: 1 }) });
-    await refresh;
-    expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
-    await deliver({ ...hello(1, { ...ready(), rev: 1 }), instance: 'new-instance' });
-    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
-    client.close();
-  });
-
-  it.each(['hello', 'variables'] as const)(
-    'keeps a newer %s snapshot when enter synchronously reads an older one',
-    async (kind) => {
-      const { client, http, deliver } = setup();
-      await deliver(hello(1, { ...ready(), rev: 1 }));
-      let fetched = false;
-      const unsubscribe = client.variables.state.subscribe((state) => {
-        if (fetched || state.session !== 2 || state.status !== 'unknown') return;
-        fetched = true;
-        void client.fetchSession();
-        http.expectOne('api/session').flush({
-          instance: 'x',
-          session: summary(2, { ...ready(), rev: 1, state: 'connecting' }),
-        });
-      });
-      if (kind === 'hello') {
-        await deliver(hello(2, { ...ready(), rev: 2 }));
-      } else {
-        await deliver(
-          { type: 'variables', session: 2, variables: { ...ready(), rev: 2 } },
-          { type: 'session', session: summary(2) },
-        );
-      }
-      expect(fetched).toBe(true);
-      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
-      unsubscribe();
-      client.close();
-    },
-  );
-
-  it('keeps a newer WebSocket variables snapshot over an older pending HTTP response', async () => {
-    const { client, http, deliver } = setup();
-    const connecting = { ...ready(), state: 'connecting' };
-    await deliver(hello(1, connecting));
-    const old = client.fetchSession();
-    const response = http.expectOne('api/session');
-    await deliver({ type: 'variables', session: 1, variables: ready() });
-    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
-    response.flush({ instance: 'x', session: summary(1, connecting) });
-    await old;
-    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
-    client.close();
-  });
-
-  it.each(['old-first', 'new-first'] as const)(
-    'keeps the newer run with overlapping HTTP-only requests (%s)',
-    async (order) => {
-      const http = new FakeHttp();
-      const client = createClient({
-        baseUrl: 'http://127.0.0.1:8765/',
-        token: 'secret',
-        http: http.transport,
-        socket: new FakeWebSockets().factory,
-      });
-      const old = client.fetchSession();
-      const oldRequest = http.expectOne('api/session');
-      const newer = client.fetchSession();
-      const newRequest = http.expectOne('api/session');
-      const answerOld = () =>
-        oldRequest.flush({
-          instance: 'x',
-          session: summary(1, { ...ready(), state: 'connecting' }),
-        });
-      const answerNew = () => newRequest.flush({ instance: 'x', session: summary(2, ready()) });
-      if (order === 'old-first') {
-        answerOld();
-        answerNew();
-      } else {
-        answerNew();
-        answerOld();
-      }
-      await Promise.all([old, newer]);
-      expect(client.session.currentTarget()).toEqual({ instance: 'x', session: 2 });
-      expect(client.variables.state.get()).toMatchObject({ session: 2, status: 'ready' });
-      expect(client.variables.state.get().peers[0]?.variables[0]?.name).toBe('engine.demand');
-      client.close();
-    },
-  );
-
-  it('does not let an old instance response replace a new instance with the same run id', async () => {
-    const http = new FakeHttp();
-    const client = createClient({
-      baseUrl: 'http://127.0.0.1:8765/',
-      token: 'secret',
-      http: http.transport,
-      socket: new FakeWebSockets().factory,
-    });
-    const initial = client.fetchSession();
-    http.expectOne('api/session').flush({ instance: 'old', session: summary(1, ready()) });
-    await initial;
-    const old = client.fetchSession();
-    const oldRequest = http.expectOne('api/session');
-    const newer = client.fetchSession();
-    http
-      .expectOne('api/session')
-      .flush({ instance: 'new', session: summary(1, ready([], { reason: 'new' })) });
-    oldRequest.flush({ instance: 'old', session: summary(1, { ...ready(), state: 'connecting' }) });
-    await Promise.all([old, newer]);
-    expect(client.session.currentTarget()).toEqual({ instance: 'new', session: 1 });
-    expect(client.variables.state.get()).toMatchObject({
-      session: 1,
-      status: 'ready',
-      reason: 'new',
-    });
-    client.close();
-  });
-
-  it('keeps a terminal operation from a hello after a same-run refresh', async () => {
-    const { client, http, deliver } = setup();
-    await deliver(hello(1, ready()));
-    const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
-    let fetched = false;
-    const unsubscribe = client.session.session.subscribe(() => {
-      if (fetched) return;
-      fetched = true;
-      void client.fetchSession();
-      http.expectOne('api/session').flush({ instance: 'x', session: summary(1, ready()) });
-    });
-    await deliver(hello(1, ready([listed(7, 'applied', true)])));
-    await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
     unsubscribe();
     client.close();
   });
@@ -862,143 +476,11 @@ describe('variables', () => {
     expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 8 }]);
   });
 
-  it('ignores buffered notifications from a run older than one already read over HTTP', async () => {
-    const { client, http, deliver } = setup();
-    await deliver(hello(1, ready()));
-    const watch = client.variables.watch([ENGINE], { history: 10 });
-    const refresh = client.fetchSession();
-    http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
-    await refresh;
-    await deliver(
-      { type: 'session', session: summary(1, ready()) },
-      { type: 'variables', session: 1, variables: ready() },
-      values(1, 10, false, engine(10, 4), 1),
-      operation(7, 'applied', true, {}, 1),
-      values(1, 20, false, engine(20, 8), 2),
-    );
-    expect(client.session.session.get()?.id).toBe(2);
-    expect(client.variables.state.get().session).toBe(2);
-    expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 8 }]);
-    expect(client.variables.operations.get()).toEqual([]);
-    client.close();
-  });
-
-  it.each(['variables', 'empty-hello'] as const)(
-    'keeps a newer run write when an older %s precedes it in the same batch',
-    async (older) => {
-      const { client, http, deliver } = setup();
-      if (older === 'variables') await deliver(hello(1, ready()));
-      let written: Promise<unknown> | null = null;
-      let started = false;
-      const unsubscribe = client.session.session.subscribe((session) => {
-        if (session?.id !== 2 || started) return;
-        started = true;
-        void client.fetchSession();
-        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
-        written = client.variables.write({ Engine: { 'engine.demand': 40 } });
-        http.expectOne('api/write').flush({ session_id: 2, operation: 7 });
-      });
-      const old =
-        older === 'variables' ? { type: 'variables', session: 1, variables: ready() } : hello(null);
-      await deliver(
-        old,
-        { type: 'session', session: summary(2) },
-        operation(7, 'applied', true, { applied_at_ms: 20 }, 2),
-      );
-      expect(written).not.toBeNull();
-      await expect(written).resolves.toMatchObject({ session: 2, seq: 7, state: 'applied' });
-      expect(client.variables.state.get().session).toBe(2);
-      unsubscribe();
-      client.close();
-    },
-  );
-
-  it.each(['session', 'variables'] as const)(
-    'does not re-enter an older run after %s flush notifies a subscriber',
-    async (kind) => {
-      const { client, http, deliver } = setup();
-      await deliver(hello(1, ready()));
-      let refreshed = false;
-      const unsubscribe = client.variables.operations.subscribe((operations) => {
-        if (refreshed || operations.length === 0) return;
-        refreshed = true;
-        void client.fetchSession();
-        http.expectOne('api/session').flush({ instance: 'x', session: summary(3, ready()) });
-      });
-      const older =
-        kind === 'session'
-          ? { type: 'session', session: summary(2) }
-          : { type: 'variables', session: 2, variables: ready() };
-      await deliver(operation(7, 'queued', false), older, { type: 'session', session: summary(3) });
-      expect(refreshed).toBe(true);
-      expect(client.session.session.get()?.id).toBe(3);
-      expect(client.variables.state.get()).toMatchObject({ session: 3, status: 'ready' });
-      unsubscribe();
-      client.close();
-    },
-  );
-
-  it.each(['event', 'summary'] as const)(
-    'settles an applied write before its %s operation list notifies a run switch',
-    async (source) => {
-      const { client, http, deliver } = setup();
-      await deliver(hello(1, ready()));
-      const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
-      http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
-      let switched = false;
-      const unsubscribe = client.variables.operations.subscribe((operations) => {
-        if (switched || !operations.some((operation) => operation.done)) return;
-        switched = true;
-        void client.fetchSession();
-        http.expectOne('api/session').flush({ instance: 'x', session: summary(2, ready()) });
-      });
-      if (source === 'event') {
-        await deliver(operation(7, 'applied', true, { applied_at_ms: 20 }));
-      } else {
-        const refresh = client.fetchSession();
-        http
-          .expectOne('api/session')
-          .flush({ instance: 'x', session: summary(1, ready([listed(7, 'applied', true)])) });
-        await refresh;
-      }
-      await expect(written).resolves.toMatchObject({ session: 1, seq: 7, state: 'applied' });
-      expect(switched).toBe(true);
-      expect(client.variables.state.get().session).toBe(2);
-      unsubscribe();
-      client.close();
-    },
-  );
-
   it('accepts a smaller session id after the server instance changes', async () => {
     const { client, deliver } = setup();
     await deliver(hello(9, ready()));
     await deliver({ ...hello(1, ready()), instance: 'new-server' });
-    expect(client.variables.state.get()).toMatchObject({ session: 1, status: 'ready' });
-    client.close();
-  });
-
-  it('keeps values and write results when a session subscriber fetches the same run', async () => {
-    const { client, http, deliver } = setup();
-    await deliver(hello(1, ready()));
-    const watch = client.variables.watch([ENGINE], { history: 10 });
-    const written = client.variables.write({ Engine: { 'engine.demand': 40 } });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
-    let invoked = false;
-    const unsubscribe = client.session.session.subscribe(() => {
-      if (invoked) return;
-      invoked = true;
-      void client.fetchSession();
-      http.expectOne('api/session').flush({ instance: 'x', session: summary(1, ready()) });
-    });
-    await deliver(
-      { type: 'session', session: summary(1) },
-      values(1, 20, false, engine(20, 4)),
-      operation(7, 'applied', true, { applied_at_ms: 20 }),
-    );
-    expect(invoked).toBe(true);
-    expect(watch.history(ENGINE)).toEqual([{ sampleMs: 20, value: 4 }]);
-    await expect(written).resolves.toMatchObject({ seq: 7, state: 'applied' });
-    unsubscribe();
+    expect(client.variables.state.get()).toMatchObject({ session: '1', status: 'ready' });
     client.close();
   });
 
@@ -1011,19 +493,19 @@ describe('variables', () => {
     );
     const request = http.expectOne('api/write');
     expect(request.request.body).toEqual({
-      session: 1,
+      run_id: '1',
       writes: { Engine: { 'engine.demand': 40 } },
       at_ms: 100,
       late: 'apply',
     });
-    request.flush({ session_id: 1, operation: 7 });
+    request.flush({ run_id: '1', operation: 7 });
     await deliver(operation(7, 'sent', false), operation(7, 'queued', false));
     expect(client.variables.operations.get().map((o) => o.state)).toEqual(['queued']);
     await deliver(
       operation(7, 'applied', true, { applied_at_ms: 100, late: true, applied_writes: 1 }),
     );
     await expect(first).resolves.toEqual({
-      session: 1,
+      session: '1',
       seq: 7,
       state: 'applied',
       done: true,
@@ -1041,7 +523,7 @@ describe('variables', () => {
     // The result arrived before the HTTP answer
     const second = client.variables.write({ Engine: { 'engine.demand': 41 } });
     await deliver(operation(8, 'applied', true, { applied_at_ms: 110 }));
-    http.expectOne('api/write').flush({ session_id: 1, operation: 8 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 8 });
     await expect(second).resolves.toMatchObject({ seq: 8, state: 'applied' });
     // A settled operation is not set back by an old state arriving late
     await deliver(operation(8, 'queued', false));
@@ -1060,8 +542,8 @@ describe('variables', () => {
       { Engine: { 'engine.demand': 40 } },
       { onAccepted: (operation) => accepted.push(operation) },
     );
-    http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
-    expect(accepted).toEqual([{ session: 1, seq: 7 }]);
+    http.expectOne('api/write').flush({ run_id: '1', operation: 7 });
+    expect(accepted).toEqual([{ session: '1', seq: 7 }]);
     await deliver(operation(7, 'applied', true, { applied_at_ms: 100 }));
     await expect(taken).resolves.toMatchObject({ seq: 7 });
     // Not called for a refused write. Even if the callback throws, the write goes ahead
@@ -1084,10 +566,10 @@ describe('variables', () => {
         },
       },
     );
-    http.expectOne('api/write').flush({ session_id: 1, operation: 8 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 8 });
     await deliver(operation(8, 'applied', true, { applied_at_ms: 110 }));
     await expect(throwing).resolves.toMatchObject({ seq: 8 });
-    expect(accepted).toEqual([{ session: 1, seq: 7 }]);
+    expect(accepted).toEqual([{ session: '1', seq: 7 }]);
     expect(errors).toHaveLength(1);
   });
 
@@ -1107,7 +589,7 @@ describe('variables', () => {
     });
 
     const failed = client.variables.write({ Engine: { 'engine.demand': 1 } });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 3 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 3 });
     const caught = failed.catch((e: unknown) => e);
     await deliver(operation(3, 'rejected', true, { reason: 'the setter failed' }));
     const error = (await caught) as WriteError;
@@ -1119,7 +601,7 @@ describe('variables', () => {
 
     // No answer came: unknown whether it was applied (with the last known state attached)
     const silent = client.variables.write({ Engine: { 'engine.demand': 2 } }, { timeoutMs: 3000 });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 4 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 4 });
     const waited = silent.catch((e: unknown) => e);
     await deliver(operation(4, 'queued', false));
     await vi.advanceTimersByTimeAsync(3000);
@@ -1141,12 +623,12 @@ describe('variables', () => {
 
     // The run changed while waiting, or the client was closed
     const old = client.variables.write({ Engine: { 'engine.demand': 4 } });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 5 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 5 });
     const replaced = old.catch((e: unknown) => e);
     await deliver({ type: 'session', session: summary(2) });
     expect(await replaced).toMatchObject({ kind: 'no-answer' });
     const open = client.variables.write({ Engine: { 'engine.demand': 5 } });
-    http.expectOne('api/write').flush({ session_id: 2, operation: 6 });
+    http.expectOne('api/write').flush({ run_id: '2', operation: 6 });
     const closed = open.catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(0);
     client.close();
@@ -1158,7 +640,7 @@ describe('variables', () => {
     const { client, http, socket, deliver } = setup();
     await deliver(hello(1, ready()));
     const write = client.variables.write({ Engine: { 'engine.demand': 40 } });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 9 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 9 });
     socket().fail(); // The result notification was missed
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
@@ -1183,17 +665,17 @@ describe('variables', () => {
       .write({ Engine: { 'engine.demand': 2 } }, { onAccepted: (o) => accepted.push(o) })
       .catch((e: unknown) => e);
     const request = http.expectOne('api/write');
-    expect(request.request.body).toMatchObject({ session: 1 });
+    expect(request.request.body).toMatchObject({ run_id: '1' });
     // The next run started before the answer
     await deliver({ type: 'session', session: summary(2) });
     expect(await write).toMatchObject({ kind: 'no-answer' });
     // A late answer for the previous run: not counted as accepted
-    request.flush({ session_id: 1, operation: 3 });
+    request.flush({ run_id: '1', operation: 3 });
     await vi.advanceTimersByTimeAsync(0);
     expect(accepted).toEqual([]);
     // The next write is aimed at the new run
     const next = client.variables.write({ Engine: { 'engine.demand': 3 } }).catch(() => undefined);
-    expect(http.expectOne('api/write').request.body).toMatchObject({ session: 2 });
+    expect(http.expectOne('api/write').request.body).toMatchObject({ run_id: '2' });
     client.close();
     await next;
   });
@@ -1204,13 +686,13 @@ describe('variables', () => {
     const lost = client.variables
       .write({ Engine: { 'engine.demand': 40 } })
       .catch((e: unknown) => e);
-    http.expectOne('api/write').flush({ session_id: 1, operation: 3 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 3 });
     await deliver(operation(3, 'queued', false));
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
     // A write sent before the reconnect has a higher number than the operations in the summary
     const newer = client.variables.write({ Engine: { 'engine.demand': 41 } });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 80 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 80 });
     socket().open();
     // Meanwhile 3 settled and more operations followed than the server puts in a summary: 3 is not in the summary and
     // is older than the boundary (40)
@@ -1237,7 +719,7 @@ describe('variables', () => {
       (o) => (outcome = o),
       (e: unknown) => (outcome = e),
     );
-    http.expectOne('api/write').flush({ session_id: 1, operation: 1 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
     await deliver(operation(1, 'queued', false));
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
@@ -1247,11 +729,6 @@ describe('variables', () => {
     for (let seq = 9; seq <= 40; seq++) kept.push(listed(seq, 'applied', true));
     const again = ready(kept, { operations_from_seq: 9, operations_open_omitted: 0 });
     await deliver(hello(1, again));
-    expect(outcome).toBe('waiting');
-    // The same with the api/session summary (fetchSession)
-    client.fetchSession().catch(() => undefined);
-    http.expectOne('api/session').flush({ session: summary(1, again) });
-    await vi.advanceTimersByTimeAsync(0);
     expect(outcome).toBe('waiting');
     await deliver(operation(1, 'applied', true));
     await expect(write).resolves.toMatchObject({ seq: 1, state: 'applied' });
@@ -1265,12 +742,12 @@ describe('variables', () => {
       (o) => (first = o),
       (e: unknown) => (first = e),
     );
-    http.expectOne('api/write').flush({ session_id: 1, operation: 2 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 2 });
     const second = client.variables.write(
       { Engine: { 'engine.demand': 2 } },
       { timeoutMs: Infinity },
     );
-    http.expectOne('api/write').flush({ session_id: 1, operation: 3 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 3 });
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
@@ -1293,7 +770,7 @@ describe('variables', () => {
     const write = client.variables
       .write({ Engine: { 'engine.demand': 40 } }, { timeoutMs: Infinity })
       .catch((e: unknown) => e);
-    http.expectOne('api/write').flush({ session_id: 1, operation: 1 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
     const kept = [listed(5, 'queued', false), listed(6, 'queued', false)];
     await deliver(hello(1, ready(kept, { operations_from_seq: 5, operations_open_omitted: 4 })));
     const error = (await write) as WriteError;
@@ -1322,9 +799,9 @@ describe('variables', () => {
     // Reconnected before the answer: 3 settled and left the summary, 4 settled and is in the summary, 5 is unsettled
     const kept = [listed(4, 'applied', true), listed(5, 'queued', false)];
     await deliver(hello(1, ready(kept, { operations_from_seq: 4, operations_open_omitted: 0 })));
-    requests[0].flush({ session_id: 1, operation: 3 });
-    requests[1].flush({ session_id: 1, operation: 4 });
-    requests[2].flush({ session_id: 1, operation: 5 });
+    requests[0].flush({ run_id: '1', operation: 3 });
+    requests[1].flush({ run_id: '1', operation: 4 });
+    requests[2].flush({ run_id: '1', operation: 5 });
     expect(await gone).toMatchObject({ kind: 'no-answer' });
     expect(await done).toMatchObject({ seq: 4, state: 'applied' });
     expect(accepted).toEqual([3, 4, 5]);
@@ -1341,7 +818,7 @@ describe('variables', () => {
     await deliver(
       ...messages,
       operation(5, 'applied', true, {}, 99),
-      { type: 'operation', session: 1 },
+      { type: 'operation', run_id: '1' },
       'junk',
     );
     const kept = client.variables.operations.get();
@@ -1363,14 +840,14 @@ describe('variables', () => {
       result: null,
       launcher_state: holdingState,
     };
-    await deliver(hello(1), { type: 'synced', session: 1, last_seq: 0 });
+    await deliver(hello(1), { type: 'synced', run_id: '1', last_seq: 0 });
     expect(isHolding(client.session.session.get())).toBe(false);
-    await deliver({ ...hello(1), session: standing }, { type: 'synced', session: 1, last_seq: 0 });
+    await deliver({ ...hello(1), session: standing }, { type: 'synced', run_id: '1', last_seq: 0 });
     expect(isHolding(client.session.session.get())).toBe(true);
     // The first step has begun (a resume, a step): the launcher's next state says so
     await deliver({
       type: 'event',
-      session: 1,
+      run_id: '1',
       event: {
         event: 'state',
         t_ms: 0,
@@ -1434,7 +911,7 @@ describe('variables: what the review found', () => {
         () => (outcomes[name] = 'applied'),
         (e: WriteError) => (outcomes[name] = e.kind),
       );
-      http.expectOne('api/write').flush({ session_id: 1, operation: ++seq });
+      http.expectOne('api/write').flush({ run_id: '1', operation: ++seq });
       return seq;
     };
     const forever = start('forever', Infinity);
@@ -1459,7 +936,7 @@ describe('variables: what the review found', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(outcomes['open']).toBe('closed');
     expect(await flying).toMatchObject({ kind: 'closed' });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 999 }); // A late answer is no longer used
+    http.expectOne('api/write').flush({ run_id: '1', operation: 999 }); // A late answer is no longer used
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -1467,7 +944,7 @@ describe('variables: what the review found', () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));
     const write = client.variables.write({ Engine: { 'engine.demand': 1 } });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 5 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 5 });
     await deliver(operation(5, 'applied', true), { type: 'session', session: summary(2) });
     await expect(write).resolves.toMatchObject({ seq: 5, state: 'applied' });
     expect(client.variables.operations.get()).toEqual([]); // The new run's operations start empty
@@ -1496,7 +973,7 @@ describe('variables: what the review found', () => {
     // changing)
     await deliver(
       { type: 'session', session: summary(2) },
-      { type: 'variables', session: 2, variables: ready() },
+      { type: 'variables', run_id: '2', variables: ready() },
     );
     expect(all.history({ peer: 'Engine', name: 'v7' })).toEqual([]);
     await deliver(values(1, 10, false, engine(0, 3), 2));
@@ -1597,7 +1074,7 @@ describe('variables: what the review found', () => {
     expect(client.variables.watchProblem.get()).toBeNull();
     await deliver({
       type: 'error',
-      session: null,
+      run_id: null,
       code: 'too-many-watches',
       message: 'a connection has at most 16 watches',
       detail: { id: 1 },
@@ -1628,7 +1105,7 @@ describe('variables: what the review found', () => {
       result: null,
       launcher_state: holdingState,
     };
-    await deliver({ ...hello(1), session: standing }, { type: 'synced', session: 1, last_seq: 0 });
+    await deliver({ ...hello(1), session: standing }, { type: 'synced', run_id: '1', last_seq: 0 });
     expect(isHolding(client.session.session.get())).toBe(true);
     const dead = { ...standing, launcher: { ...standing.launcher, running: false, exit_code: 70 } };
     await deliver({ type: 'session', session: dead });
