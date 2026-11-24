@@ -409,11 +409,16 @@ def command_line(command: dict, *, run_id: str | None = None) -> bytes:
     return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
 
 
-def stop_command_line(run_id: str | None = None) -> bytes:
+def stop_command_line(run_id: str | None = None, *, force: bool | None = None) -> bytes:
     """The line written to the launcher's standard input to ask the current run to stop."""
-    if run_id is None:
+    if run_id is None and force is None:
         return b'{"command":"stop"}\n'
-    return (json.dumps({"command": "stop", "run": run_id}, separators=(",", ":")) + "\n").encode()
+    payload: dict[str, object] = {"command": "stop"}
+    if run_id is not None:
+        payload["run"] = run_id
+    if force is not None:
+        payload["force"] = force
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
 
 
 def request_text(intent: dict) -> str:
@@ -549,6 +554,14 @@ def serve_prepare_command(
         payload["enable"] = list(enable)
     if manual:
         payload["manual"] = list(manual)
+    if command_id is not None:
+        payload["id"] = command_id
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+
+
+def serve_status_command(command_id: int | None = None) -> bytes:
+    """Builds the NDJSON `status` command written to `vehicle_sil_launch serve` stdin."""
+    payload: dict[str, object] = {"command": "status"}
     if command_id is not None:
         payload["id"] = command_id
     return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
