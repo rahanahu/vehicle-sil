@@ -28,6 +28,8 @@ class Hub;
 
 namespace vehicle_sil::launch {
 
+struct ExecutionStatus;
+
 /// The version of the JSON that format_run_json() writes (its "vehicle_sil_run" key).
 inline constexpr int kRunFormat = 2;
 
@@ -94,14 +96,10 @@ struct RunReport
 /// The report as JSON (format kRunFormat), with the check's JSON as "check".
 [[nodiscard]] std::string format_run_json(const RunReport& report);
 
-/// The members of the event "result" (EventStream::result()): the same object as the member
-/// "result" of a compact JSON object.
-[[nodiscard]] std::string format_result_event(const RunReport& report);
-
-/// serve: the members of a run's event "result": {"launcher_ends":<bool>,"result":{...}} (the
-/// run's window puts "run" first). `launcher_ends`: the launcher ends after this result (no
-/// "idle" follows).
-[[nodiscard]] std::string format_result_event(const RunReport& report, bool launcher_ends);
+/// serve: the members of a run's event "result": {"launcher_ends":<bool>[,"status":{...}],"result":{...}}
+/// (the run's window puts "run" first). `launcher_ends`: the launcher ends after this result.
+[[nodiscard]] std::string format_result_event(const RunReport& report, bool launcher_ends,
+                                              const ExecutionStatus* status = nullptr);
 
 /// The JSON of `vehicle_sil_launch <command> --json` when the launcher itself failed unexpectedly
 /// (`message`): the form of the command's result (`run`: "vehicle_sil_run"; else the check's),

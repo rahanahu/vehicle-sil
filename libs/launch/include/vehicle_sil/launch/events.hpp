@@ -32,11 +32,7 @@ struct ExecutionStatus;
 struct PrepareResult;
 
 /// The version of the events (hello's "vehicle_sil_events").
-inline constexpr int kEventsFormat = 2;
-/// The version of the events of `serve` (its hello's "vehicle_sil_events"): the lines of
-/// kEventsFormat, each run's between its "run_start" and its "result" with "run", and the
-/// launcher's own lines ("idle", the refused commands) between the runs.
-inline constexpr int kServeEventsFormat = 3;
+inline constexpr int kEventsFormat = 4;
 /// The version of `version --json` (its "vehicle_sil_launch").
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
@@ -214,20 +210,16 @@ public:
     EventStream& operator=(const EventStream&) = delete;
 
     /// The first event. `file`: the configuration file as given, or "" (null) if unknown.
-    void hello(long pid, const std::string& file, const std::vector<std::string>& arguments);
-    /// serve: the first event, as above with kServeEventsFormat and "launcher": the launcher's
-    /// instance (16 hexadecimal digits; each run ID begins with it).
+    /// `launcher`: the launcher's instance (16 hexadecimal digits; each run ID begins with it).
     void hello(long pid, const std::string& file, const std::vector<std::string>& arguments, const std::string& launcher);
-    /// serve: "idle": the launcher holds nothing of a run any more and takes the next run command.
-    void idle();
     /// serve: a command of standard input that the launcher refused itself (not a run's: no
     /// "run"): the members of command() and "asked_run", the run the command named (null if it
     /// named none).
     void refused(const runner::Command& command, std::string_view source, const std::optional<std::string>& asked_run);
     /// serve: reply to {"command":"prepare"} (no "run").
     void prepare(const PrepareResult& result, std::optional<std::int64_t> id);
-    /// serve: reply to {"command":"status"} (no "run").
-    void status(const ExecutionStatus& status, std::optional<std::int64_t> id);
+    /// serve: spontaneous status transition or reply to {"command":"status"} (no "run").
+    void status(const ExecutionStatus& status, std::optional<std::int64_t> id = std::nullopt);
     /// serve: opens the window of the run `run` (see above) and writes its "run_start" with "id",
     /// the run command's number (null without one). The window is open until its result() or
     /// until it is destroyed; it may outlive this object (it shares the stream's state).

@@ -22,8 +22,7 @@ bool whole_number(const std::string& text, std::int64_t& value)
     return parsed.ec == std::errc{} && parsed.ptr == end;
 }
 
-/// parse_command(), and with `serve` parse_serve_command() (which it fills but for `command`).
-std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
+std::optional<ServeCommand> parse(std::string_view line, bool single_run)
 {
     if (!line.empty() && line.back() == '\r')
     {
@@ -34,13 +33,14 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
     {
         return std::nullopt;
     }
-    runner::Command out;
+    ServeCommand serve;
+    runner::Command& out = serve.command;
     const std::string kExpected = "write one JSON object per line, such as {\"command\":\"stop\"}";
     if (line[first] != '{')
     {
         out.message = "the line is not a JSON object: " + kExpected;
         out.reason = runner::reason::kInvalidCommand;
-        return out;
+        return serve;
     }
     try
     {
@@ -51,7 +51,7 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
         {
             out.message = "the line is not a JSON object: " + kExpected;
             out.reason = runner::reason::kInvalidCommand;
-            return out;
+            return serve;
         }
         const auto node = tree.find_child(root, ryml::csubstr("command", 7));
         if (node == ryml::NONE || !tree.has_val(node) || tree.is_container(node) || !tree.is_val_quoted(node))
@@ -59,7 +59,7 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
             out.message = std::string(node == ryml::NONE ? "the object has no \"command\"" : "\"command\" is not a string") +
                           ": " + kExpected;
             out.reason = runner::reason::kInvalidCommand;
-            return out;
+            return serve;
         }
         out.name = config::detail::to_string(tree.val(node));
         const auto scalar = [&](const char* key) -> std::optional<std::pair<std::string, bool>> {
@@ -70,7 +70,6 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
             }
             return std::pair{config::detail::to_string(tree.val(n)), tree.is_val_quoted(n)};
         };
-        // serve: a string that is not empty, if the key is there; false: it is there, and not that.
         const auto text = [&](const char* key, std::string& value, bool& given) {
             given = tree.find_child(root, ryml::to_csubstr(key)) != ryml::NONE;
             if (!given)
@@ -85,7 +84,6 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
             value = got->first;
             return true;
         };
-        if (serve != nullptr)
         {
             // The run it is for, before anything else: a refusal of it says the run too.
             std::string run;
@@ -95,11 +93,11 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                 out.message = "\"run\" must be the ID of the run the command is for, as a string, as the event run_start "
                               "gave it, such as {\"command\":\"stop\",\"run\":\"<run ID>\"}";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
             if (given)
             {
-                serve->run = std::move(run);
+                serve.run = std::move(run);
             }
         }
         // The sender's number, before the arguments: a refusal for them says it too.
@@ -114,29 +112,29 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                               " (the sender's number for the command, written back in its command event), such as "
                               "{\"command\":\"pause\",\"id\":1}; leave it out if no answer is looked for";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
             out.id = value;
         }
-        if (serve != nullptr && *out.name == "run")
+        if (*out.name == "run" && !single_run)
         {
             bool request_given = false;
             bool timeline_given = false;
-            if (!text("request", serve->request, request_given))
+            if (!text("request", serve.request, request_given))
             {
                 out.message = "run: \"request\" must be the path of a file as a string, such as "
                               "{\"command\":\"run\",\"request\":\"bench.json\",\"timeline\":\"timeline.json\"}; leave it out "
                               "for none";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
-            if (!text("timeline", serve->timeline, timeline_given))
+            if (!text("timeline", serve.timeline, timeline_given))
             {
                 out.message = "run: \"timeline\" must be the path of a file as a string, such as "
                               "{\"command\":\"run\",\"request\":\"bench.json\",\"timeline\":\"timeline.json\"}; leave it out "
                               "for none";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
             const auto intent_node = tree.find_child(root, ryml::csubstr("intent", 6));
             if (intent_node != ryml::NONE)
@@ -145,30 +143,30 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                 {
                     out.message = "run: cannot give both \"request\" and \"intent\"; choose one";
                     out.reason = runner::reason::kInvalidArgument;
-                    return out;
+                    return serve;
                 }
                 if (!tree.is_map(intent_node))
                 {
                     out.message = "run: \"intent\" must be a JSON object with run request fields; leave it out for none";
                     out.reason = runner::reason::kInvalidArgument;
-                    return out;
+                    return serve;
                 }
                 std::string emitted = ryml::emitrs_json<std::string>(tree, intent_node);
                 if (const auto brace = emitted.find('{'); brace != std::string::npos)
                 {
                     emitted.erase(0, brace);
                 }
-                serve->intent_json = std::move(emitted);
+                serve.intent_json = std::move(emitted);
             }
         }
-        else if (serve != nullptr && *out.name == "prepare")
+        else if (*out.name == "prepare" && !single_run)
         {
             if (tree.find_child(root, ryml::csubstr("config", 6)) != ryml::NONE)
             {
                 out.message =
                     "prepare: \"config\" cannot be changed in serve; start a new serve process for another configuration file";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
             std::string variant;
             bool variant_given = false;
@@ -177,15 +175,15 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                 out.message =
                     "prepare: \"variant\" must be the name of a variant as a non-empty string; leave it out for none";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
             if (variant_given)
             {
-                serve->variant = std::move(variant);
+                serve.variant = std::move(variant);
             }
             for (const auto& [key, target] :
-                 {std::pair{"disable", &serve->disable}, std::pair{"enable", &serve->enable},
-                  std::pair{"manual", &serve->manual}})
+                 {std::pair{"disable", &serve.disable}, std::pair{"enable", &serve.enable},
+                  std::pair{"manual", &serve.manual}})
             {
                 const auto arr = tree.find_child(root, ryml::to_csubstr(key));
                 if (arr == ryml::NONE)
@@ -196,7 +194,7 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                 {
                     out.message = std::string("prepare: \"") + key + "\" must be a JSON array of non-empty participant names";
                     out.reason = runner::reason::kInvalidArgument;
-                    return out;
+                    return serve;
                 }
                 for (auto child = tree.first_child(arr); child != ryml::NONE; child = tree.next_sibling(child))
                 {
@@ -206,24 +204,24 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                         out.message =
                             std::string("prepare: \"") + key + "\" must be a JSON array of non-empty participant names";
                         out.reason = runner::reason::kInvalidArgument;
-                        return out;
+                        return serve;
                     }
                     target->push_back(config::detail::to_string(tree.val(child)));
                 }
             }
         }
-        else if (serve != nullptr && *out.name == "stop")
+        else if (*out.name == "stop")
         {
             if (tree.find_child(root, ryml::csubstr("force", 5)) != ryml::NONE)
             {
                 const auto force = scalar("force");
                 if (!force || force->second || (force->first != "true" && force->first != "false"))
                 {
-                    out.message = "stop: \"force\" must be true or false; leave it out to escalate";
+                    out.message = "stop: \"force\" must be true or false; leave it out for false";
                     out.reason = runner::reason::kInvalidArgument;
-                    return out;
+                    return serve;
                 }
-                serve->force = (force->first == "true");
+                serve.force = (force->first == "true");
             }
         }
         else if (*out.name == "step")
@@ -236,7 +234,7 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                 out.message = "step needs \"ms\", a whole number of milliseconds of virtual time from 1 to " +
                               std::to_string(config::kMaxMillis) + ", such as {\"command\":\"step\",\"ms\":100}";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
             out.ms = value;
         }
@@ -251,7 +249,7 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                               "milliseconds from 0 to " +
                               std::to_string(config::kMaxMillis) + ", such as {\"command\":\"run_until\",\"at_ms\":5000}";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
             out.at_ms = value;
         }
@@ -263,7 +261,7 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
                 out.message = "speed needs \"value\", a number of simulation seconds per wall-clock second from 0.000001 "
                               "to 1000000 or \"max\", such as {\"command\":\"speed\",\"value\":1}";
                 out.reason = runner::reason::kInvalidArgument;
-                return out;
+                return serve;
             }
         }
     }
@@ -271,42 +269,37 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
     {
         out.message = "the line is not valid JSON: " + kExpected;
         out.reason = runner::reason::kInvalidCommand;
-        return out;
+        return serve;
     }
     static constexpr std::string_view kNames[] = {"stop", "pause", "resume", "step", "run_until", "speed"};
     static constexpr std::string_view kServeNames[] = {"run", "prepare", "status"};
     if (std::find(std::begin(kNames), std::end(kNames), *out.name) == std::end(kNames) &&
-        (serve == nullptr || std::find(std::begin(kServeNames), std::end(kServeNames), *out.name) == std::end(kServeNames)))
+        (single_run || std::find(std::begin(kServeNames), std::end(kServeNames), *out.name) == std::end(kServeNames)))
     {
         // The name as far as it is worth showing.
         const std::string shown = out.name->size() > 64 ? out.name->substr(0, 64) + "..." : *out.name;
         out.message = "unknown command '" + shown + "': the commands are " +
-                      (serve != nullptr ? "run, prepare, status, " : "") + "stop, pause, resume, step, run_until and speed";
+                      (!single_run ? "run, prepare, status, " : "") + "stop, pause, resume, step, run_until and speed";
         out.reason = runner::reason::kUnknownCommand;
-        return out;
+        return serve;
     }
     runner::Command accepted = runner::Command::make(std::move(*out.name), out.id);
     accepted.ms = out.ms;
     accepted.speed = out.speed;
     accepted.at_ms = out.at_ms;
-    return accepted;
+    serve.command = std::move(accepted);
+    return serve;
 }
 
 } // namespace
 
-std::optional<runner::Command> parse_command(std::string_view line) { return parse(line, nullptr); }
-
-std::optional<ServeCommand> parse_serve_command(std::string_view line)
+std::optional<runner::Command> parse_command(std::string_view line)
 {
-    ServeCommand out;
-    std::optional<runner::Command> command = parse(line, &out);
-    if (!command)
-    {
-        return std::nullopt;
-    }
-    out.command = std::move(*command);
-    return out;
+    std::optional<ServeCommand> parsed = parse(line, true);
+    return parsed ? std::optional<runner::Command>(std::move(parsed->command)) : std::nullopt;
 }
+
+std::optional<ServeCommand> parse_serve_command(std::string_view line) { return parse(line, false); }
 
 void CommandInput::append(std::string_view bytes)
 {
@@ -353,28 +346,14 @@ void CommandInput::finish()
 
 void CommandInput::too_long(const runner::Command& command)
 {
-    if (on_serve_)
-    {
-        ServeCommand serve;
-        serve.command = command;
-        on_serve_(serve);
-    }
-    else
-    {
-        on_command_(command);
-    }
+    ServeCommand serve;
+    serve.command = command;
+    on_command_(serve);
 }
 
 void CommandInput::line(std::string_view text)
 {
-    if (on_serve_)
-    {
-        if (auto command = parse_serve_command(text))
-        {
-            on_serve_(*command);
-        }
-    }
-    else if (auto command = parse_command(text))
+    if (auto command = parse(text, single_run_))
     {
         on_command_(*command);
     }

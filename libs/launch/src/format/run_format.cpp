@@ -374,20 +374,17 @@ std::string format_run_json(const RunReport& report)
     return out;
 }
 
-std::string format_result_event(const RunReport& report)
-{
-    vehicle_sil::json::JsonWriter w(true);
-    w.begin_object();
-    detail::write_run_json(w, "result", report);
-    w.end_object();
-    return w.take();
-}
-
-std::string format_result_event(const RunReport& report, bool launcher_ends)
+std::string format_result_event(const RunReport& report, bool launcher_ends, const ExecutionStatus* status)
 {
     vehicle_sil::json::JsonWriter w(true);
     w.begin_object();
     w.boolean("launcher_ends", launcher_ends);
+    if (status != nullptr)
+    {
+        w.begin_object("status");
+        detail::write_status_members(w, *status);
+        w.end_object();
+    }
     detail::write_run_json(w, "result", report);
     w.end_object();
     return w.take();

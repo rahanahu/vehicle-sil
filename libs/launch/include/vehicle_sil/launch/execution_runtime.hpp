@@ -17,7 +17,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -47,10 +46,6 @@ inline constexpr const char* kLauncherEnding = "launcher-ending";
 inline constexpr const char* kNotPrepared = "not-prepared";
 /// A run or prepare command after the launcher became contaminated.
 inline constexpr const char* kContaminated = "contaminated";
-/// A result query for a run that has not completed yet.
-inline constexpr const char* kRunInProgress = "run-in-progress";
-/// A result query for a run ID that is not retained (never existed or evicted).
-inline constexpr const char* kRunNotFound = "run-not-found";
 } // namespace serve_reason
 
 /// A new launcher instance: 16 lowercase hexadecimal digits of a random 64-bit number. A run ID is
@@ -118,7 +113,8 @@ private:
 /// Launcher-axis lifecycle state.
 enum class LauncherState
 {
-    Idle,
+    Unprepared,
+    ColdOnly,
     Preparing,
     Ready,
     Running,
@@ -154,7 +150,7 @@ struct ExecutionStatus
 {
     std::string instance{};
     std::uint64_t status_rev = 0;
-    LauncherState launcher_state = LauncherState::Idle;
+    LauncherState launcher_state = LauncherState::Unprepared;
     std::string config{};
     HotEligibility eligibility{};
     LauncherAllowed launcher_allowed{};
@@ -173,6 +169,7 @@ struct PrepareSpec
     std::vector<std::string> disable{};
     std::vector<std::string> enable{};
     std::vector<std::string> manual{};
+    std::optional<std::int64_t> command_id{};
 };
 
 struct PrepareResult
@@ -199,23 +196,21 @@ struct RunSubmission
 {
     RunIntent intent{};
     config::RequestOrigin origin{};
+    std::string request_file{};
+    std::optional<std::string> intent_json{};
     std::string timeline{};
     std::optional<std::int64_t> command_id{};
     std::vector<config::Finding> pre_usage{};
-    /// Optional per-submission hook (used by Serve adapter for ServeOptions::prepare / prepare_serve_run),
-    /// invoked inside start_run() under mutex_ after gate check and ++seq_, before end_.publish().
-    std::function<PreparedRun(const RunRequest& base, const std::string& run_id)> prepare_run{};
     std::string source = "api";
 };
 
 [[nodiscard]] PreparedRun prepare_execution_run(const RunRequest& base, const RunSubmission& submission,
-                                                const std::string& run_id);
+                                                const std::string& run_id, bool single_run = false);
 
 enum class StopMode
 {
     Graceful, ///< Idempotent raise_to(source, stop_level::kGraceful)
     Force,    ///< Idempotent raise_to(source, stop_level::kForce)
-    Escalate, ///< Backward-compatible bare stop: kNone->kGraceful, kGraceful->kForce, >=kForce stays kForce
 };
 
 struct CommandReply
@@ -226,17 +221,6 @@ struct CommandReply
     std::string message{};
     std::optional<std::string> run_id{};
     int stop_requests = 0;
-};
-
-struct ResultQuery
-{
-    bool ok = false;
-    /// "", "run-in-progress", "run-not-found"
-    std::string reason{};
-    std::string run_id{};
-    bool launcher_ends = false;
-    /// Bounded to last completed run; ended_control_server and timeline_record already released.
-    std::shared_ptr<const RunReport> report{};
 };
 
 /// How the launcher ends (ExecutionRuntime::run_loop()).
@@ -251,18 +235,17 @@ struct ExecutionRuntimeOptions
 {
     using RunFunction =
         std::function<RunReport(const RunRequest& request, const runner::RunObservers& observers, const RunLent& lent)>;
-    using PrepareFunction =
-        std::function<PreparedRun(const RunRequest& base, const RunSubmission& submission, const std::string& run_id)>;
 
     RunRequest base{};
     std::string instance{};
     RunFunction run{};
-    PrepareFunction prepare{};
     std::function<std::string(int source)> source_name{};
     std::chrono::milliseconds flush_limit{5000};
     /// Injected by caller (e.g. tools/launch/main.cpp) so libs/launch never links vehicle_sil::trace.
     bool trace_enabled = false;
     bool refuse_fixed_registry = true;
+    /// Exit automatically after 1 Run's result(launcher_ends: true) is written (`serve --once`).
+    bool single_run = false;
 };
 
 /// Transport-agnostic lifecycle sink for ExecutionRuntime.
@@ -271,22 +254,28 @@ class ExecutionSink
 {
 public:
     virtual ~ExecutionSink() = default;
-    /// Called only on Launcher-axis transitions (outside ExecutionRuntime::mutex_).
-    virtual void on_status(const ExecutionStatus& status) = 0;
-    /// Called under ExecutionRuntime::mutex_ before busy_ = false (ordering idle before next run_start).
-    virtual void on_idle() = 0;
+    /// Called on Launcher-axis transitions (and on explicit status queries) under
+    /// ExecutionRuntime::mutex_. Must be noexcept and non-blocking (leaf lock only).
+    virtual void on_status(const ExecutionStatus& status,
+                           std::optional<std::int64_t> command_id = std::nullopt) noexcept = 0;
+    /// Called under ExecutionRuntime::mutex_ when prepare() completes or is refused. Must be
+    /// noexcept and non-blocking (leaf lock only).
+    virtual void on_prepare(const PrepareResult& /*result*/,
+                            std::optional<std::int64_t> /*command_id*/ = std::nullopt) noexcept
+    {
+    }
     virtual void on_refused(const runner::Command& command, std::string_view source,
                             const std::optional<std::string>& asked_run) = 0;
     virtual std::unique_ptr<RunEventSink> open_run(const std::string& run_id,
                                                    std::optional<std::int64_t> command_id) = 0;
     virtual bool finish_run(RunEventSink& window, const RunReport& report, bool launcher_ends,
-                            const std::function<bool()>& give_up) = 0;
+                            const ExecutionStatus& status, const std::function<bool()>& give_up) = 0;
     [[nodiscard]] virtual bool closed() const = 0;
     virtual bool wait_flushed(std::chrono::milliseconds timeout) = 0;
 };
 
 /// Transport-agnostic resident execution runtime: manages Prepare, Run, Stop, Time commands,
-/// Status, Results, and independent Shutdown over a single RunEventSink per run.
+/// Status, and independent Shutdown over a single RunEventSink per run.
 class ExecutionRuntime
 {
 public:
@@ -302,7 +291,7 @@ public:
     [[nodiscard]] CommandReply send_time_command(const std::string& run_id, const runner::Command& command,
                                                  std::string_view source = "api");
     [[nodiscard]] ExecutionStatus status() const;
-    [[nodiscard]] ResultQuery result(const std::optional<std::string>& run_id = std::nullopt) const;
+    [[nodiscard]] ExecutionStatus report_status(std::optional<std::int64_t> command_id = std::nullopt) const;
 
     void request_shutdown(int stop_source);
     [[nodiscard]] ExecutionEnd run_loop();
@@ -314,7 +303,6 @@ private:
     [[nodiscard]] ExecutionStatus snapshot_locked(runner::RunControls* controls) const;
     void refuse_locked(const runner::Command& command, std::string_view source, const char* reason,
                        std::string message, const std::optional<std::string>& asked_run);
-    void drain_statuses_locked(std::unique_lock<std::mutex>& lock);
     void flush();
 
     ExecutionSink& sink_;
@@ -323,13 +311,10 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable changed_;
-    std::deque<ExecutionStatus> pending_statuses_{};
-    bool status_emitting_ = false;
     std::string config_;
-    bool has_prepared_ = false;
     HotEligibility eligibility_{};
     ConfigMetadata metadata_{};
-    LauncherState state_ = LauncherState::Idle;
+    LauncherState state_ = LauncherState::Unprepared;
     std::uint64_t status_rev_ = 0;
     int in_flight_prepare_ = 0;
 
@@ -343,8 +328,6 @@ private:
 
     std::optional<std::string> active_run_id_{};
     std::optional<std::string> last_run_id_{};
-    bool last_launcher_ends_ = false;
-    std::shared_ptr<const RunReport> last_result_{};
 };
 
 } // namespace vehicle_sil::launch

@@ -5,6 +5,7 @@
 #include "vehicle_sil/launch/execution_runtime.hpp"
 
 #include "vehicle_sil/launch/error_result.hpp"
+#include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>
@@ -91,28 +92,68 @@ const char* launcher_state_name(LauncherState state) noexcept
 {
     switch (state)
     {
-    case LauncherState::Idle: return "idle";
+    case LauncherState::Unprepared: return "unprepared";
+    case LauncherState::ColdOnly: return "cold_only";
     case LauncherState::Preparing: return "preparing";
     case LauncherState::Ready: return "ready";
     case LauncherState::Running: return "running";
     case LauncherState::Ending: return "ending";
     case LauncherState::Contaminated: return "contaminated";
     }
-    return "idle";
+    return "unprepared";
 }
 
-PreparedRun prepare_execution_run(const RunRequest& base, const RunSubmission& submission, const std::string& run_id)
+PreparedRun prepare_execution_run(const RunRequest& base, const RunSubmission& submission, const std::string& run_id,
+                                  bool single_run)
 {
     PreparedRun out;
+    out.request = base;
     if (!submission.pre_usage.empty())
     {
-        out.request = base;
         out.usage = submission.pre_usage;
         return out;
     }
-    out.request = base;
-    out.request.intent = submission.intent;
-    out.request.origin = submission.origin;
+    if (!submission.request_file.empty() && submission.intent_json.has_value())
+    {
+        out.usage.push_back(config::Finding{
+            config::Severity::Error, "usage", "run: cannot give both \"request\" and \"intent\"; choose one", 0, "", ""});
+        return out;
+    }
+    if (!submission.request_file.empty())
+    {
+        std::string text;
+        if (const std::string problem = read_request_file_text(process::path_from_utf8(submission.request_file), text);
+            !problem.empty())
+        {
+            config::Finding finding{
+                config::Severity::Error, "usage", "run: request " + submission.request_file + ": " + problem, 0, "", ""};
+            finding.file = submission.request_file;
+            out.usage.push_back(std::move(finding));
+            return out;
+        }
+        RequestFileRead read = read_request_file(text, submission.request_file);
+        if (!read.file)
+        {
+            out.usage = std::move(read.findings);
+            return out;
+        }
+        out.request = with_request_file(base, *read.file, false);
+    }
+    else if (submission.intent_json.has_value())
+    {
+        RequestFileRead read = read_request_intent(*submission.intent_json, "intent");
+        if (!read.file)
+        {
+            out.usage = std::move(read.findings);
+            return out;
+        }
+        out.request = with_request_file(base, *read.file, false);
+    }
+    else
+    {
+        out.request.intent = submission.intent;
+        out.request.origin = submission.origin;
+    }
     if (out.request.intent.connect.empty())
     {
         out.request.host.tool_directory.clear();
@@ -120,12 +161,12 @@ PreparedRun prepare_execution_run(const RunRequest& base, const RunSubmission& s
     out.request.host.timeline = submission.timeline;
     if (!base.host.log_dir.empty())
     {
-        out.request.host.log_dir = base.host.log_dir / process::path_from_utf8(run_id);
+        out.request.host.log_dir = single_run ? base.host.log_dir : (base.host.log_dir / process::path_from_utf8(run_id));
     }
     if (out.request.host.control)
     {
         out.request.host.control->run_id = run_id;
-        out.request.host.control->run_id_required = true;
+        out.request.host.control->run_id_required = !single_run;
     }
     out.usage = validate_request(out.request, RequestCommand::Run);
     return out;
@@ -153,17 +194,14 @@ ExecutionRuntime::ExecutionRuntime(ExecutionSink& sink, LauncherEnd& end, Execut
             return run_file(request, observers, lent);
         };
     }
-    if (!options_.prepare)
-    {
-        options_.prepare = prepare_execution_run;
-    }
     if (!options_.source_name)
     {
         options_.source_name = default_source_name;
     }
     if (!end_.requested() && !sink_.closed())
     {
-        sink_.on_idle();
+        const std::lock_guard lock(mutex_);
+        sink_.on_status(snapshot_locked(nullptr));
     }
 }
 
@@ -173,21 +211,8 @@ ExecutionRuntime::~ExecutionRuntime()
     std::unique_lock lock(mutex_);
     ending_ = true;
     changed_.notify_all();
-    while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0 || status_emitting_ ||
-           !pending_statuses_.empty())
+    while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0)
     {
-        if (!status_emitting_ && !pending_statuses_.empty())
-        {
-            try
-            {
-                drain_statuses_locked(lock);
-            }
-            catch (...)
-            {
-                pending_statuses_.clear();
-            }
-            continue;
-        }
         changed_.wait(lock);
     }
 }
@@ -225,11 +250,11 @@ LauncherAllowed ExecutionRuntime::allowed_locked() const
     {
         out.run = blocked_allowed(serve_reason::kNotPrepared, "no configuration has been prepared for this launcher");
     }
-    else if (options_.trace_enabled)
+    else if (options_.trace_enabled && !options_.single_run)
     {
         out.run = blocked_allowed("trace-enabled", "serve does not run with VEHICLE_SIL_TRACE set");
     }
-    else if (has_prepared_ && !eligibility_.eligible)
+    else if (state_ == LauncherState::ColdOnly)
     {
         const char* const reason =
             !eligibility_.reason.empty() ? eligibility_.reason.c_str() : serve_reason::kNotPrepared;
@@ -264,68 +289,41 @@ void ExecutionRuntime::refuse_locked(const runner::Command& command, std::string
     sink_.on_refused(refused_command(command, reason, std::move(message)), source, asked_run);
 }
 
-void ExecutionRuntime::drain_statuses_locked(std::unique_lock<std::mutex>& lock)
-{
-    if (status_emitting_)
-    {
-        return;
-    }
-    status_emitting_ = true;
-    struct EmitGuard
-    {
-        ExecutionRuntime& self;
-        std::unique_lock<std::mutex>& lock;
-
-        ~EmitGuard()
-        {
-            if (!lock.owns_lock())
-            {
-                lock.lock();
-            }
-            self.status_emitting_ = false;
-            self.changed_.notify_all();
-        }
-    } guard{*this, lock};
-
-    while (!pending_statuses_.empty())
-    {
-        ExecutionStatus next = std::move(pending_statuses_.front());
-        pending_statuses_.pop_front();
-        lock.unlock();
-        sink_.on_status(next);
-        lock.lock();
-    }
-}
-
 PrepareResult ExecutionRuntime::prepare(const PrepareSpec& spec)
 {
     std::unique_lock lock(mutex_);
     if (state_ == LauncherState::Contaminated)
     {
-        return PrepareResult{false,
-                             serve_reason::kContaminated,
-                             "the launcher is contaminated after an earlier run and cannot prepare",
-                             snapshot_locked(nullptr),
-                             {},
-                             {}};
+        PrepareResult res{false,
+                          serve_reason::kContaminated,
+                          "the launcher is contaminated after an earlier run and cannot prepare",
+                          snapshot_locked(nullptr),
+                          {},
+                          {}};
+        sink_.on_prepare(res, spec.command_id);
+        return res;
     }
     if (ending_ || end_.requested() || sink_.closed())
     {
-        return PrepareResult{false,
-                             serve_reason::kLauncherEnding,
-                             "the launcher has been asked to end and takes no prepare any more",
-                             snapshot_locked(current_ != nullptr ? current_->controls.get() : nullptr),
-                             {},
-                             {}};
+        PrepareResult res{false,
+                          serve_reason::kLauncherEnding,
+                          "the launcher has been asked to end and takes no prepare any more",
+                          snapshot_locked(current_ != nullptr ? current_->controls.get() : nullptr),
+                          {},
+                          {}};
+        sink_.on_prepare(res, spec.command_id);
+        return res;
     }
     if (busy_ || state_ == LauncherState::Preparing || state_ == LauncherState::Running || in_flight_prepare_ > 0)
     {
-        return PrepareResult{false,
-                             serve_reason::kBusy,
-                             "a run or prepare is already under way",
-                             snapshot_locked(current_ != nullptr ? current_->controls.get() : nullptr),
-                             {},
-                             {}};
+        PrepareResult res{false,
+                          serve_reason::kBusy,
+                          "a run or prepare is already under way",
+                          snapshot_locked(current_ != nullptr ? current_->controls.get() : nullptr),
+                          {},
+                          {}};
+        sink_.on_prepare(res, spec.command_id);
+        return res;
     }
 
     const std::string target_config = spec.config.empty() ? config_ : spec.config;
@@ -372,41 +370,34 @@ PrepareResult ExecutionRuntime::prepare(const PrepareSpec& spec)
                 }
                 else
                 {
-                    self.state_ = LauncherState::Idle;
-                    self.has_prepared_ = true;
+                    self.state_ = LauncherState::ColdOnly;
                     self.eligibility_ = HotEligibility{false, "config-unreadable", "prepare failed"};
                     self.metadata_ = ConfigMetadata{};
                 }
                 ++self.status_rev_;
-                self.pending_statuses_.push_back(self.snapshot_locked(nullptr));
+                self.sink_.on_status(self.snapshot_locked(nullptr));
                 self.changed_.notify_all();
-                try
-                {
-                    self.drain_statuses_locked(lock);
-                }
-                catch (...)
-                {
-                }
                 return;
             }
             self.changed_.notify_all();
         }
     } guard{*this, lock};
 
-    pending_statuses_.push_back(snapshot_locked(nullptr));
-    drain_statuses_locked(lock);
+    sink_.on_status(snapshot_locked(nullptr));
     lock.unlock();
 
+    const bool effective_trace = options_.trace_enabled && !options_.single_run;
+    const bool effective_refuse_fixed = options_.refuse_fixed_registry && !options_.single_run;
     CheckOptions check_opts;
     check_opts.file_only = true;
     check_opts.refuse_fixed_registry = false;
-    check_opts.trace_enabled = options_.trace_enabled;
+    check_opts.trace_enabled = effective_trace;
     Checked checked = check_file(req, check_opts);
     ConfigMetadata metadata = extract_metadata(checked);
     HotEligibility eligibility =
-        options_.refuse_fixed_registry
+        effective_refuse_fixed
             ? checked.hot_eligibility
-            : evaluate_hot_eligibility(checked, options_.trace_enabled, options_.refuse_fixed_registry);
+            : evaluate_hot_eligibility(checked, effective_trace, effective_refuse_fixed);
 
     lock.lock();
     if (ending_ || end_.requested() || sink_.closed())
@@ -417,39 +408,30 @@ PrepareResult ExecutionRuntime::prepare(const PrepareSpec& spec)
         guard.active = false;
         changed_.notify_all();
         ExecutionStatus ending_status = snapshot_locked(nullptr);
-        pending_statuses_.push_back(ending_status);
-        drain_statuses_locked(lock);
-        if (state_ == LauncherState::Contaminated)
-        {
-            ending_status = snapshot_locked(nullptr);
-        }
-        return PrepareResult{false,
-                             serve_reason::kLauncherEnding,
-                             "the launcher has been asked to end while preparing",
-                             std::move(ending_status),
-                             {},
-                             {}};
+        PrepareResult res{false,
+                          serve_reason::kLauncherEnding,
+                          "the launcher has been asked to end while preparing",
+                          std::move(ending_status),
+                          {},
+                          {}};
+        sink_.on_prepare(res, spec.command_id);
+        return res;
     }
 
     config_ = target_config;
     options_.base.host.config = target_config;
-    has_prepared_ = true;
     eligibility_ = std::move(eligibility);
     metadata_ = metadata;
-    state_ = eligibility_.eligible ? LauncherState::Ready : LauncherState::Idle;
+    state_ = eligibility_.eligible ? LauncherState::Ready : LauncherState::ColdOnly;
     ++status_rev_;
     --in_flight_prepare_;
     guard.active = false;
     changed_.notify_all();
     ExecutionStatus done_status = snapshot_locked(nullptr);
-    pending_statuses_.push_back(done_status);
-    drain_statuses_locked(lock);
-    if (ending_ || state_ == LauncherState::Ending || state_ == LauncherState::Contaminated)
-    {
-        done_status = snapshot_locked(nullptr);
-    }
-    return PrepareResult{
+    PrepareResult res{
         true, "", "", std::move(done_status), std::move(metadata), std::move(checked.findings)};
+    sink_.on_prepare(res, spec.command_id);
+    return res;
 }
 
 CommandReply ExecutionRuntime::start_run(RunSubmission submission)
@@ -478,7 +460,7 @@ CommandReply ExecutionRuntime::start_run(RunSubmission submission)
         const std::string msg =
             "a run is under way" +
             (current_ != nullptr ? " (" + current_->id + ")" : std::string{}) +
-            ": wait for its result and the event idle, then send run again (nothing is queued)";
+            ": wait for its result, then send run again (nothing is queued)";
         refuse_locked(run_cmd, submission.source, serve_reason::kBusy, msg, std::nullopt);
         return CommandReply{false, false, serve_reason::kBusy, msg, std::nullopt, 0};
     }
@@ -488,13 +470,13 @@ CommandReply ExecutionRuntime::start_run(RunSubmission submission)
         refuse_locked(run_cmd, submission.source, serve_reason::kNotPrepared, msg, std::nullopt);
         return CommandReply{false, false, serve_reason::kNotPrepared, msg, std::nullopt, 0};
     }
-    if (options_.trace_enabled)
+    if (options_.trace_enabled && !options_.single_run)
     {
         const std::string msg = "serve does not run with VEHICLE_SIL_TRACE set";
         refuse_locked(run_cmd, submission.source, "trace-enabled", msg, std::nullopt);
         return CommandReply{false, false, "trace-enabled", msg, std::nullopt, 0};
     }
-    if (has_prepared_ && !eligibility_.eligible)
+    if (state_ == LauncherState::ColdOnly)
     {
         const char* const reason =
             !eligibility_.reason.empty() ? eligibility_.reason.c_str() : serve_reason::kNotPrepared;
@@ -508,8 +490,7 @@ CommandReply ExecutionRuntime::start_run(RunSubmission submission)
     run->id = options_.instance + "-" + std::to_string(++seq_);
     try
     {
-        run->prepared = submission.prepare_run ? submission.prepare_run(options_.base, run->id)
-                                               : options_.prepare(options_.base, submission, run->id);
+        run->prepared = prepare_execution_run(options_.base, submission, run->id, options_.single_run);
     }
     catch (const std::exception& e)
     {
@@ -539,9 +520,8 @@ CommandReply ExecutionRuntime::start_run(RunSubmission submission)
     end_.publish(stops);
     handed_ = std::move(run);
     std::string started_id = *active_run_id_;
-    pending_statuses_.push_back(snapshot_locked(current_->controls.get()));
+    sink_.on_status(snapshot_locked(current_->controls.get()));
     changed_.notify_all();
-    drain_statuses_locked(lock);
     return CommandReply{true, false, "", "", std::move(started_id), 0};
 }
 
@@ -551,7 +531,7 @@ CommandReply ExecutionRuntime::stop_run(const std::string& run_id, StopMode mode
     const runner::Command stop_cmd = runner::Command::make("stop", command_id);
 
     const std::lock_guard lock(mutex_);
-    if (run_id.empty())
+    if (run_id.empty() && !options_.single_run)
     {
         const std::string msg =
             "stop needs \"run\", the ID of the run it is for, as the event run_start gave it (serve runs one "
@@ -559,14 +539,21 @@ CommandReply ExecutionRuntime::stop_run(const std::string& run_id, StopMode mode
         refuse_locked(stop_cmd, source, serve_reason::kRunRequired, msg, std::nullopt);
         return CommandReply{false, false, serve_reason::kRunRequired, msg, std::nullopt, 0};
     }
-    if (current_ == nullptr || current_->id != run_id)
+    if (current_ == nullptr || (!run_id.empty() && current_->id != run_id))
     {
+        if (options_.single_run && current_ == nullptr)
+        {
+            end_.mark(runner::stop_source::kStopCommand);
+        }
+        const std::string asked = run_id.empty() ? (last_run_id_.value_or("1")) : run_id;
         const std::string msg =
-            "the run " + run_id + " is not the current run" +
+            "the run " + asked + " is not the current run" +
             (current_ == nullptr ? std::string(" (no run is under way)") : " (that is " + current_->id + ")") +
             ": it has ended, or is not of this launcher; the command is for no run";
-        refuse_locked(stop_cmd, source, serve_reason::kRunChanged, msg, run_id);
-        return CommandReply{false, false, serve_reason::kRunChanged, msg, run_id, 0};
+        const std::optional<std::string> asked_opt =
+            run_id.empty() ? std::nullopt : std::optional<std::string>(run_id);
+        refuse_locked(stop_cmd, source, serve_reason::kRunChanged, msg, asked_opt);
+        return CommandReply{false, false, serve_reason::kRunChanged, msg, asked_opt, 0};
     }
     ActiveRun& run = *current_;
     const runner::Command applied = run.controls->time().apply(stop_cmd, source, [&run, mode] {
@@ -575,13 +562,6 @@ CommandReply ExecutionRuntime::stop_run(const std::string& run_id, StopMode mode
         {
         case StopMode::Graceful: static_cast<void>(run.stops.raise_to(stop_src, runner::stop_level::kGraceful)); break;
         case StopMode::Force: static_cast<void>(run.stops.raise_to(stop_src, runner::stop_level::kForce)); break;
-        case StopMode::Escalate:
-        {
-            const int cur = run.stops.count();
-            static_cast<void>(run.stops.raise_to(
-                stop_src, cur < runner::stop_level::kGraceful ? runner::stop_level::kGraceful : runner::stop_level::kForce));
-            break;
-        }
         }
     });
     return CommandReply{applied.accepted, applied.pending, applied.reason, applied.message, run.id, run.stops.count()};
@@ -603,7 +583,7 @@ CommandReply ExecutionRuntime::send_time_command(const std::string& run_id, cons
         return stop_run(run_id, StopMode::Graceful, source, command.id);
     }
     const std::lock_guard lock(mutex_);
-    if (run_id.empty())
+    if (run_id.empty() && !options_.single_run)
     {
         const std::string msg =
             command.name.value_or("command") +
@@ -612,14 +592,17 @@ CommandReply ExecutionRuntime::send_time_command(const std::string& run_id, cons
         refuse_locked(command, source, serve_reason::kRunRequired, msg, std::nullopt);
         return CommandReply{false, false, serve_reason::kRunRequired, msg, std::nullopt, 0};
     }
-    if (current_ == nullptr || current_->id != run_id)
+    if (current_ == nullptr || (!run_id.empty() && current_->id != run_id))
     {
+        const std::string asked = run_id.empty() ? (last_run_id_.value_or("1")) : run_id;
         const std::string msg =
-            "the run " + run_id + " is not the current run" +
+            "the run " + asked + " is not the current run" +
             (current_ == nullptr ? std::string(" (no run is under way)") : " (that is " + current_->id + ")") +
             ": it has ended, or is not of this launcher; the command is for no run";
-        refuse_locked(command, source, serve_reason::kRunChanged, msg, run_id);
-        return CommandReply{false, false, serve_reason::kRunChanged, msg, run_id, 0};
+        const std::optional<std::string> asked_opt =
+            run_id.empty() ? std::nullopt : std::optional<std::string>(run_id);
+        refuse_locked(command, source, serve_reason::kRunChanged, msg, asked_opt);
+        return CommandReply{false, false, serve_reason::kRunChanged, msg, asked_opt, 0};
     }
     const runner::Command applied = current_->controls->time().apply(command, source);
     return CommandReply{
@@ -632,27 +615,17 @@ ExecutionStatus ExecutionRuntime::status() const
     return snapshot_locked(current_ != nullptr ? current_->controls.get() : nullptr);
 }
 
-ResultQuery ExecutionRuntime::result(const std::optional<std::string>& run_id) const
+ExecutionStatus ExecutionRuntime::report_status(std::optional<std::int64_t> command_id) const
 {
     const std::lock_guard lock(mutex_);
-    if (active_run_id_.has_value() && (!run_id.has_value() || *run_id == *active_run_id_))
-    {
-        return ResultQuery{false, serve_reason::kRunInProgress, *active_run_id_, false, nullptr};
-    }
-    if (!last_result_)
-    {
-        return ResultQuery{false, serve_reason::kRunNotFound, run_id.value_or(""), false, nullptr};
-    }
-    if (run_id.has_value() && last_run_id_ != *run_id)
-    {
-        return ResultQuery{false, serve_reason::kRunNotFound, *run_id, false, nullptr};
-    }
-    return ResultQuery{true, "", last_run_id_.value_or(""), last_launcher_ends_, last_result_};
+    ExecutionStatus snap = snapshot_locked(current_ != nullptr ? current_->controls.get() : nullptr);
+    sink_.on_status(snap, command_id);
+    return snap;
 }
 
 void ExecutionRuntime::request_shutdown(int stop_source)
 {
-    std::unique_lock lock(mutex_);
+    const std::lock_guard lock(mutex_);
     end_.mark(stop_source);
     ending_ = true;
     if (current_ != nullptr)
@@ -667,14 +640,13 @@ void ExecutionRuntime::request_shutdown(int stop_source)
         }));
         current_->controls->publish();
     }
-    if (state_ == LauncherState::Idle || state_ == LauncherState::Ready)
+    if (state_ == LauncherState::Unprepared || state_ == LauncherState::ColdOnly || state_ == LauncherState::Ready)
     {
         state_ = LauncherState::Ending;
         ++status_rev_;
-        pending_statuses_.push_back(snapshot_locked(nullptr));
+        sink_.on_status(snapshot_locked(nullptr));
     }
     changed_.notify_all();
-    drain_statuses_locked(lock);
 }
 
 void ExecutionRuntime::flush()
@@ -715,26 +687,9 @@ ExecutionEnd ExecutionRuntime::run_loop()
                 {
                     state_ = LauncherState::Ending;
                     ++status_rev_;
-                    pending_statuses_.push_back(snapshot_locked(nullptr));
+                    sink_.on_status(snapshot_locked(nullptr));
                 }
                 changed_.notify_all();
-                while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0 || status_emitting_ ||
-                       !pending_statuses_.empty())
-                {
-                    if (!status_emitting_ && !pending_statuses_.empty())
-                    {
-                        try
-                        {
-                            drain_statuses_locked(lock);
-                        }
-                        catch (...)
-                        {
-                            pending_statuses_.clear();
-                        }
-                        continue;
-                    }
-                    changed_.wait(lock);
-                }
                 const bool quiet = end_.source() == runner::stop_source::kEndOfInput && !input_ended_in_run_;
                 lock.unlock();
                 flush();
@@ -773,7 +728,7 @@ ExecutionEnd ExecutionRuntime::run_loop()
             RunLent lent;
             lent.controls = run->controls.get();
             lent.events = run->window.get();
-            lent.refuse_fixed_registry = options_.refuse_fixed_registry;
+            lent.refuse_fixed_registry = options_.refuse_fixed_registry && !options_.single_run;
             try
             {
                 report = options_.run(run->prepared.request, observers, lent);
@@ -801,86 +756,98 @@ ExecutionEnd ExecutionRuntime::run_loop()
             current_ = nullptr; // a command for it is refused from now on
         }
         end_.withdraw(); // no signal reaches its stop requests any more
-        const bool end_before_result = end_.requested() || sink_.closed();
-        const bool ends = contaminated || end_before_result;
-        const int requests = end_.count();
-        const bool wrote = sink_.finish_run(
-            *run->window, report, ends,
-            [this, requests] { return end_.count() > std::min(requests, runner::stop_level::kGraceful); });
-        const bool output_failed = !wrote || sink_.closed();
-        if (output_failed && !end_.requested())
-        {
-            end_.mark(runner::stop_source::kOutputClosed);
-        }
 
-        // Release heavy/process-bound handles before storing bounded last_result_.
+        // Step 1: release per-Run handles and ActiveRun before transitioning state and clearing busy_.
+        const int run_stops = stops->count();
+        const int first_stop = stops->first();
         report.ended_control_server.reset();
         if (report.run)
         {
             report.run->scenario.timeline_record.reset();
         }
-        auto stored_report = std::make_shared<const RunReport>(std::move(report));
-        std::string finished_id = run->id;
+        std::unique_ptr<RunEventSink> window = std::move(run->window);
+        std::string finished_id = std::move(run->id);
+        if (!contaminated)
+        {
+            run.reset();
+        }
 
+        // Step 2: under mutex_, re-check ending_, finalize state_ and busy_ = false, and take settled status.
+        bool end_before_result = false;
+        bool ends = false;
+        ExecutionStatus settled_status;
+        {
+            const std::lock_guard lock(mutex_);
+            end_before_result = ending_ || end_.requested() || sink_.closed();
+            ends = contaminated || options_.single_run || end_before_result;
+            last_run_id_ = std::move(finished_id);
+            active_run_id_.reset();
+            if (ends)
+            {
+                ending_ = true;
+                state_ = contaminated ? LauncherState::Contaminated : LauncherState::Ending;
+                if (contaminated)
+                {
+                    contaminated_run_ = std::move(run);
+                }
+            }
+            else
+            {
+                state_ = eligibility_.eligible ? LauncherState::Ready : LauncherState::Unprepared;
+                busy_ = false;
+            }
+            ++status_rev_;
+            settled_status = snapshot_locked(nullptr);
+            changed_.notify_all();
+        }
+
+        // Step 3: enqueue and flush result embedding the settled ExecutionStatus.
+        const int requests = end_.count() + (options_.single_run ? run_stops : 0);
+        const bool wrote = sink_.finish_run(
+            *window, report, ends, settled_status,
+            [this, requests, run_stops] {
+                const int now = end_.count() + (options_.single_run ? run_stops : 0);
+                return now > std::min(requests, runner::stop_level::kGraceful);
+            });
+        const bool output_failed = !wrote || sink_.closed();
+        if (output_failed && !end_.requested())
+        {
+            end_.mark(runner::stop_source::kOutputClosed);
+        }
+        if (!contaminated)
+        {
+            window.reset();
+        }
         if (ends || output_failed)
         {
-            if (!contaminated)
             {
-                run.reset();
+                const std::lock_guard lock(mutex_);
+                ending_ = true;
+                if (state_ != LauncherState::Ending && state_ != LauncherState::Contaminated)
+                {
+                    state_ = LauncherState::Ending;
+                    ++status_rev_;
+                    sink_.on_status(snapshot_locked(nullptr));
+                }
+                changed_.notify_all();
             }
-            std::unique_lock lock(mutex_);
-            ending_ = true;
+            if (options_.single_run)
+            {
+                const bool interrupted =
+                    report.result() == RunResult::Interrupted ||
+                    (first_stop != 0 && first_stop != runner::stop_source::kStopCommand);
+                const int code = contaminated ? kExitContaminated
+                               : output_failed ? (interrupted ? kExitInterrupted : ecu_executable::kExitSetupFailed)
+                               : interrupted   ? kExitInterrupted
+                                               : report.exit_code();
+                return {code, contaminated};
+            }
             const bool quiet =
                 end_before_result && end_.source() == runner::stop_source::kEndOfInput && !input_ended_in_run_;
             const int code = end_before_result
                                  ? (quiet ? (contaminated ? kExitContaminated : 0) : kExitInterrupted)
-                                 : (contaminated ? kExitContaminated : kExitInterrupted);
-            state_ = contaminated ? LauncherState::Contaminated : LauncherState::Ending;
-            ++status_rev_;
-            last_result_ = std::move(stored_report);
-            last_run_id_ = std::move(finished_id);
-            last_launcher_ends_ = ends;
-            active_run_id_.reset();
-            if (contaminated)
-            {
-                contaminated_run_ = std::move(run);
-            }
-            pending_statuses_.push_back(snapshot_locked(nullptr));
-            changed_.notify_all();
-            while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0 || status_emitting_ ||
-                   !pending_statuses_.empty())
-            {
-                if (!status_emitting_ && !pending_statuses_.empty())
-                {
-                    try
-                    {
-                        drain_statuses_locked(lock);
-                    }
-                    catch (...)
-                    {
-                        pending_statuses_.clear();
-                    }
-                    continue;
-                }
-                changed_.wait(lock);
-            }
+                                 : (contaminated ? kExitContaminated : (output_failed ? kExitInterrupted : 0));
             return {code, contaminated};
-        }
-
-        run.reset();
-        {
-            std::unique_lock lock(mutex_);
-            last_result_ = std::move(stored_report);
-            last_run_id_ = std::move(finished_id);
-            last_launcher_ends_ = false;
-            active_run_id_.reset();
-            state_ = (has_prepared_ && eligibility_.eligible) ? LauncherState::Ready : LauncherState::Idle;
-            ++status_rev_;
-            sink_.on_idle();
-            busy_ = false;
-            pending_statuses_.push_back(snapshot_locked(nullptr));
-            changed_.notify_all();
-            drain_statuses_locked(lock);
         }
     }
 }

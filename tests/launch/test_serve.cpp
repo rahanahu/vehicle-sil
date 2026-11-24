@@ -190,6 +190,8 @@ struct JsonLine
     std::optional<bool> accepted;
     std::optional<bool> launcher_ends;
     std::optional<std::int64_t> id;
+    std::optional<std::string> launcher_state;
+    std::optional<std::string> status_launcher_state;
     std::optional<std::string> result_status;
 };
 
@@ -208,6 +210,11 @@ JsonLine parse_line(const std::string& raw)
     out.accepted = json_bool(top_field(raw, "accepted"));
     out.launcher_ends = json_bool(top_field(raw, "launcher_ends"));
     out.id = json_int(top_field(raw, "id"));
+    out.launcher_state = json_string(top_field(raw, "launcher_state"));
+    if (const auto st = top_field(raw, "status"); st && !st->empty() && st->front() == '{')
+    {
+        out.status_launcher_state = json_string(top_field(*st, "launcher_state"));
+    }
     if (const auto res = top_field(raw, "result"); res && !res->empty() && res->front() == '{')
     {
         out.result_status = json_string(top_field(*res, "result"));
@@ -222,7 +229,19 @@ public:
     {
         EventStreamOptions options;
         options.heartbeat = 0ms;
-        options.now_ms = [n = std::make_shared<std::atomic<std::int64_t>>(0)]() { return n->fetch_add(1); };
+        options.now_ms = [s = state_, n = std::make_shared<std::atomic<std::int64_t>>(0)]() {
+            std::function<void()> hook;
+            {
+                const std::lock_guard lock(s->mutex);
+                hook = std::move(s->on_next_emit);
+                s->on_next_emit = {};
+            }
+            if (hook)
+            {
+                hook();
+            }
+            return n->fetch_add(1);
+        };
         stream_ = std::make_unique<EventStream>(
           [s = state_](std::string_view bytes) {
               EventWrite out;
@@ -295,6 +314,12 @@ public:
         return state_->lines.size();
     }
 
+    void set_on_next_emit(std::function<void()> fn)
+    {
+        const std::lock_guard lock(state_->mutex);
+        state_->on_next_emit = std::move(fn);
+    }
+
 private:
     struct State
     {
@@ -303,6 +328,7 @@ private:
         std::string buffer;
         std::vector<JsonLine> lines;
         std::string closed_reason;
+        std::function<void()> on_next_emit;
     };
     std::shared_ptr<State> state_;
     std::unique_ptr<EventStream> stream_;
@@ -313,6 +339,16 @@ ServeCommand cmd(std::string_view json)
     auto parsed = parse_serve_command(json);
     CHECK(parsed.has_value());
     return *parsed;
+}
+
+RunSubmission submission_of(const ServeCommand& c)
+{
+    RunSubmission sub;
+    sub.command_id = c.command.id;
+    sub.request_file = c.request;
+    sub.timeline = c.timeline;
+    sub.intent_json = c.intent_json;
+    return sub;
 }
 
 RunReport passed_report(const std::string& file = "sim.yaml")
@@ -400,7 +436,7 @@ TEST_CASE(serve_prepare_run_applies_request_log_dir_timeline_and_control_binding
     base.host.control = control;
 
     ServeCommand c = cmd(std::string(R"({"command":"run","request":")") + req_path.generic_string() + R"("})");
-    const PreparedRun prepared = prepare_serve_run(base, c, "deadbeef01234567-3");
+    const PreparedRun prepared = prepare_execution_run(base, submission_of(c), "deadbeef01234567-3");
     CHECK(prepared.usage.empty());
     CHECK(prepared.request.intent.start_paused);
     CHECK(prepared.request.intent.speed.has_value());
@@ -414,13 +450,13 @@ TEST_CASE(serve_prepare_run_applies_request_log_dir_timeline_and_control_binding
     const std::filesystem::path scen_req = dir / "scen_req.json";
     write_text(scen_req, R"({"vehicle_sil_run_request":1,"scenario":"s.yaml"})");
     ServeCommand c_tl = cmd(std::string(R"({"command":"run","request":")") + scen_req.generic_string() + R"(","timeline":"out.tl.json"})");
-    const PreparedRun with_tl = prepare_serve_run(base, c_tl, "deadbeef01234567-4");
+    const PreparedRun with_tl = prepare_execution_run(base, submission_of(c_tl), "deadbeef01234567-4");
     CHECK(with_tl.usage.empty());
     CHECK(with_tl.request.host.timeline == "out.tl.json");
 
     // Missing request file yields usage finding.
     ServeCommand missing = cmd(R"({"command":"run","request":"no_such_request.json"})");
-    const PreparedRun bad = prepare_serve_run(base, missing, "deadbeef01234567-5");
+    const PreparedRun bad = prepare_execution_run(base, submission_of(missing), "deadbeef01234567-5");
     CHECK(!bad.usage.empty());
     CHECK(bad.usage.front().code == "usage");
 }
@@ -456,7 +492,7 @@ TEST_CASE(serve_sequential_runs_numbering_busy_and_idle_eof)
     Serve serve(cap.stream(), end, std::move(options));
     auto done = std::async(std::launch::async, [&] { return serve.run(); });
 
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
     serve.command(cmd(R"({"command":"run","id":10})"));
     const JsonLine rs1 = cap.wait_for([](const JsonLine& l) { return l.event == "run_start"; });
     CHECK(rs1.run == instance + "-1");
@@ -477,8 +513,8 @@ TEST_CASE(serve_sequential_runs_numbering_busy_and_idle_eof)
     const JsonLine res1 = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == instance + "-1"; });
     CHECK(res1.launcher_ends == false);
     CHECK(res1.result_status == "passed");
+    CHECK(res1.status_launcher_state == "unprepared");
     const std::size_t after_res1 = static_cast<std::size_t>(res1.seq) + 1;
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, after_res1);
 
     // Next run gets sequence 2 (not 3).
     serve.command(cmd(R"({"command":"run","id":12})"));
@@ -492,7 +528,7 @@ TEST_CASE(serve_sequential_runs_numbering_busy_and_idle_eof)
     gate_cv.notify_all();
     const JsonLine res2 = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == instance + "-2"; });
     CHECK(res2.launcher_ends == false);
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, static_cast<std::size_t>(res2.seq) + 1);
+    CHECK(res2.status_launcher_state == "unprepared");
 
     serve.end_of_input();
     const ServeEnd ended = done.get();
@@ -540,7 +576,7 @@ TEST_CASE(serve_refuses_stale_and_untargeted_stdin_commands)
     Serve serve(cap.stream(), end, std::move(options));
     auto done = std::async(std::launch::async, [&] { return serve.run(); });
 
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
 
     // (d) stop while idle -> run-changed
     serve.command(cmd(R"({"command":"stop","run":"1111222233334444-1","id":1})"));
@@ -571,7 +607,7 @@ TEST_CASE(serve_refuses_stale_and_untargeted_stdin_commands)
     }
     gate_cv.notify_all();
     const JsonLine res1 = cap.wait_for([](const JsonLine& l) { return l.event == "result"; });
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, static_cast<std::size_t>(res1.seq) + 1);
+    CHECK(res1.status_launcher_state == "unprepared");
 
     // Run 2 starts; stale stop/pause/speed for Run 1 must all be refused and never touch Run 2.
     serve.command(cmd(R"({"command":"run","id":20})"));
@@ -597,7 +633,7 @@ TEST_CASE(serve_refuses_stale_and_untargeted_stdin_commands)
     gate_cv.notify_all();
     const JsonLine res2 = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == instance + "-2"; });
     CHECK(run2_stops == 0);
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, static_cast<std::size_t>(res2.seq) + 1);
+    CHECK(res2.status_launcher_state == "unprepared");
 
     serve.end_of_input();
     CHECK(done.get().code == 0);
@@ -618,7 +654,10 @@ TEST_CASE(serve_window_drops_events_after_result_and_tags_state_and_log_dropped)
     w1->phase(Phase::Ended);
     w1->registry("silkit://late");
     w1.reset();
-    cap.stream().idle();
+    ExecutionStatus st;
+    st.instance = instance;
+    st.launcher_state = LauncherState::Unprepared;
+    cap.stream().status(st);
     CHECK(cap.stream().wait_written(2000ms));
 
     const auto lines = cap.lines();
@@ -655,14 +694,6 @@ TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
     options.instance = instance;
     options.base.host.config = "sim.yaml";
     options.base.host.stdin_commands = true;
-    // Inject a signal inside prepare() right before Serve::install() publishes run->stops:
-    // LauncherEnd::request() sees run_ == nullptr, marks end_, then install() publishes and hands
-    // the run to Serve::run(), which must re-check end_.requested() and stop the run before starting.
-    options.prepare = [&](const RunRequest& base, const ServeCommand& c, const std::string& run_id) {
-        PreparedRun out = prepare_serve_run(base, c, run_id);
-        end.request(2); // SIGINT while run_ is still nullptr
-        return out;
-    };
     options.run = [&](const RunRequest&, const RunObservers& obs, const RunLent& lent) {
         seen_stops = lent.controls->stops().count();
         close_cut_val = obs.close_cut(0);
@@ -673,7 +704,12 @@ TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
     Serve serve(cap.stream(), end, std::move(options));
     auto done = std::async(std::launch::async, [&] { return serve.run(); });
 
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
+    // Inject a signal when open_run() emits run_start inside ExecutionRuntime::start_run() right
+    // before end_.publish(&run->stops): LauncherEnd::request() sees run_ == nullptr, marks end_,
+    // then start_run() publishes and hands the run to run_loop(), which re-checks end_.requested()
+    // and stops the run before calling options_.run().
+    cap.set_on_next_emit([&] { end.request(2); });
     serve.command(cmd(R"({"command":"run","id":1})"));
 
     const ServeEnd ended = done.get();
@@ -682,7 +718,7 @@ TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
     CHECK(seen_stops >= 1);
     CHECK(close_cut_val);
 
-    // Result must have launcher_ends: true and no idle after it.
+    // Result must have launcher_ends: true and nothing after it.
     const auto lines = cap.lines();
     bool saw_res = false;
     for (const auto& l : lines)
@@ -694,7 +730,7 @@ TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
         }
         else if (saw_res)
         {
-            CHECK(l.event != "idle");
+            CHECK(false);
         }
     }
     CHECK(saw_res);
@@ -729,11 +765,11 @@ TEST_CASE(serve_close_cut_ignores_first_run_stop_and_cuts_on_second_or_launcher_
 
     Serve serve(cap.stream(), end, std::move(options));
     auto done = std::async(std::launch::async, [&] { return serve.run(); });
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
     serve.command(cmd(R"({"command":"run","id":1})"));
     const JsonLine res = cap.wait_for([](const JsonLine& l) { return l.event == "result"; });
     CHECK(res.launcher_ends == false);
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; }, static_cast<std::size_t>(res.seq) + 1);
+    CHECK(res.status_launcher_state == "unprepared");
     serve.end_of_input();
     CHECK(done.get().code == 0);
 
@@ -764,7 +800,7 @@ TEST_CASE(serve_contamination_not_closed_ms_and_exception_end_launcher_at_once)
         };
         Serve serve(cap.stream(), end, std::move(options));
         auto done = std::async(std::launch::async, [&] { return serve.run(); });
-        cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+        cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
         serve.command(cmd(R"({"command":"run","id":1})"));
         const ServeEnd ended = done.get();
         CHECK(ended.code == kExitContaminated);
@@ -793,7 +829,7 @@ TEST_CASE(serve_contamination_not_closed_ms_and_exception_end_launcher_at_once)
         };
         Serve serve(cap.stream(), end, std::move(options));
         auto done = std::async(std::launch::async, [&] { return serve.run(); });
-        cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+        cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
         serve.command(cmd(R"({"command":"run","id":1})"));
         const ServeEnd ended = done.get();
         CHECK(ended.code == kExitContaminated);
@@ -803,7 +839,7 @@ TEST_CASE(serve_contamination_not_closed_ms_and_exception_end_launcher_at_once)
         CHECK(lines.back().launcher_ends == true);
     }
 
-    // Case 3 (H1/H2/M1): run sent BEFORE Serve::run() still orders idle before run_start,
+    // Case 3 (H1/H2/M1): run sent BEFORE Serve::run() still orders initial status before run_start,
     // and EOF right after contaminated result does not overwrite kExitContaminated with 0.
     {
         CaptureStream cap;
@@ -831,7 +867,8 @@ TEST_CASE(serve_contamination_not_closed_ms_and_exception_end_launcher_at_once)
         const auto lines = cap.lines();
         CHECK(lines.size() >= 4);
         CHECK(lines[0].event == "hello");
-        CHECK(lines[1].event == "idle");
+        CHECK(lines[1].event == "status");
+        CHECK(lines[1].launcher_state == "unprepared");
         CHECK(lines[2].event == "run_start");
         CHECK(lines.back().event == "result");
         CHECK(lines.back().launcher_ends == true);
@@ -865,7 +902,7 @@ TEST_CASE(serve_contamination_not_closed_ms_and_exception_end_launcher_at_once)
         };
         Serve serve(cap.stream(), end, std::move(options));
         auto done = std::async(std::launch::async, [&] { return serve.run(); });
-        cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+        cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
         serve.command(cmd(R"({"command":"run","id":1})"));
         {
             std::unique_lock lock(mu);
@@ -920,7 +957,7 @@ TEST_CASE(serve_eof_during_run_and_output_closed_return_interrupted)
 
     Serve serve(cap.stream(), end, std::move(options));
     auto done = std::async(std::launch::async, [&] { return serve.run(); });
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
     serve.command(cmd(R"({"command":"run","id":1})"));
     {
         std::unique_lock lock(mu);
@@ -1075,7 +1112,7 @@ TEST_CASE(serve_prepare_run_handles_inline_intent_with_and_without_format_versio
 
     // Without vehicle_sil_run_request (optional for inline intent).
     ServeCommand c1 = cmd(R"({"command":"run","intent":{"speed":2,"scenario":"drive.yaml"}})");
-    const PreparedRun p1 = prepare_serve_run(base, c1, "0011223344556677-1");
+    const PreparedRun p1 = prepare_execution_run(base, submission_of(c1), "0011223344556677-1");
     CHECK(p1.usage.empty());
     CHECK(!p1.request.intent.start_paused);
     CHECK(p1.request.intent.speed == std::optional<std::optional<double>>(std::optional<double>(2.0)));
@@ -1085,19 +1122,19 @@ TEST_CASE(serve_prepare_run_handles_inline_intent_with_and_without_format_versio
 
     // With explicit vehicle_sil_run_request: 1.
     ServeCommand c2 = cmd(R"({"command":"run","intent":{"vehicle_sil_run_request":1,"start_paused":true,"strict":true}})");
-    const PreparedRun p2 = prepare_serve_run(base, c2, "0011223344556677-2");
+    const PreparedRun p2 = prepare_execution_run(base, submission_of(c2), "0011223344556677-2");
     CHECK(p2.usage.empty());
     CHECK(p2.request.intent.start_paused);
     CHECK(p2.request.intent.strict);
 
     // Wrong vehicle_sil_run_request version or unknown key yields usage finding.
     ServeCommand c_bad_ver = cmd(R"({"command":"run","intent":{"vehicle_sil_run_request":2}})");
-    const PreparedRun p_bad_ver = prepare_serve_run(base, c_bad_ver, "0011223344556677-3");
+    const PreparedRun p_bad_ver = prepare_execution_run(base, submission_of(c_bad_ver), "0011223344556677-3");
     CHECK(!p_bad_ver.usage.empty());
     CHECK(p_bad_ver.usage.front().code == "usage");
 
     ServeCommand c_bad_key = cmd(R"({"command":"run","intent":{"bogus":1}})");
-    const PreparedRun p_bad_key = prepare_serve_run(base, c_bad_key, "0011223344556677-4");
+    const PreparedRun p_bad_key = prepare_execution_run(base, submission_of(c_bad_key), "0011223344556677-4");
     CHECK(!p_bad_key.usage.empty());
     CHECK(p_bad_key.usage.front().code == "usage");
 }
@@ -1143,21 +1180,22 @@ TEST_CASE(serve_executes_prepare_status_stop_force_and_inline_intent)
 
     Serve serve(cap.stream(), end, std::move(options));
     auto done = std::async(std::launch::async, [&] { return serve.run(); });
-    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
 
-    // 1. status while idle (no unsolicited status events emitted prior to this).
+    // 1. status while unprepared.
     serve.command(cmd(R"({"command":"status","id":1})"));
-    const JsonLine st1 = cap.wait_for([](const JsonLine& l) { return l.event == "status"; });
+    const JsonLine st1 = cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.id == 1; });
     CHECK(st1.id == 1);
     CHECK(!st1.run.has_value());
-    CHECK(json_string(top_field(st1.raw, "launcher_state")) == "idle");
+    CHECK(json_string(top_field(st1.raw, "launcher_state")) == "unprepared");
 
-    // 2. prepare while idle -> ready, eligible: true, file_sha256 populated.
+    // 2. prepare while unprepared -> ready, eligible: true, file_sha256 populated.
     serve.command(cmd(R"({"command":"prepare","id":2})"));
     const JsonLine prep1 = cap.wait_for([](const JsonLine& l) { return l.event == "prepare"; });
     CHECK(prep1.id == 2);
     CHECK(prep1.accepted == true);
     CHECK(!prep1.run.has_value());
+    CHECK(prep1.status_launcher_state == "ready");
 
     // 3. run with inline intent; verify status during run and stop with force=false twice (stays 1).
     serve.command(cmd(R"({"command":"run","id":3,"intent":{"start_paused":true}})"));
@@ -1176,11 +1214,11 @@ TEST_CASE(serve_executes_prepare_status_stop_force_and_inline_intent)
     CHECK(prep_busy.accepted == false);
     CHECK(prep_busy.reason == serve_reason::kBusy);
 
-    // Two stop commands with force: false MUST stay at count == 1 (idempotent Graceful).
+    // Two stop commands with force: false (or omitted) MUST stay at count == 1 (idempotent Graceful).
     const std::string run_id = instance + "-1";
     serve.command(cmd(std::string(R"({"command":"stop","run":")") + run_id + R"(","force":false,"id":6})"));
     cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 6; });
-    serve.command(cmd(std::string(R"({"command":"stop","run":")") + run_id + R"(","force":false,"id":7})"));
+    serve.command(cmd(std::string(R"({"command":"stop","run":")") + run_id + R"(","id":7})"));
     cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 7; });
     {
         const std::lock_guard lock(mu);
@@ -1189,18 +1227,50 @@ TEST_CASE(serve_executes_prepare_status_stop_force_and_inline_intent)
     cv.notify_all();
 
     const JsonLine run1_res = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == run_id; });
-    cap.wait_for([&](const JsonLine& l) { return l.event == "idle" && l.seq > run1_res.seq; });
+    CHECK(run1_res.status_launcher_state == "ready");
     CHECK(seen_start_paused);
     CHECK_EQ(seen_stop_count, 1);
 
-    // Invalid inline intent emits usage result and returns to idle.
+    // Invalid inline intent emits usage result and returns to ready.
     serve.command(cmd(R"({"command":"run","id":8,"intent":{"unknown_key":1}})"));
     const JsonLine bad_res = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == instance + "-2"; });
     CHECK(bad_res.result_status == "usage");
     CHECK(bad_res.launcher_ends == false);
-    cap.wait_for([&](const JsonLine& l) { return l.event == "idle" && l.seq > bad_res.seq; });
+    CHECK(bad_res.status_launcher_state == "ready");
 
     serve.end_of_input();
     const ServeEnd ended = done.get();
     CHECK_EQ(ended.code, 0);
+}
+
+TEST_CASE(serve_single_run_exits_zero_after_one_run_with_launcher_ends_true)
+{
+    CaptureStream cap;
+    LauncherEnd end;
+    const std::string instance = "1122334455667788";
+    cap.stream().hello(100, "sim.yaml", {"serve", "--once", "sim.yaml"}, instance);
+
+    ServeOptions options;
+    options.instance = instance;
+    options.base.host.config = "sim.yaml";
+    options.base.host.stdin_commands = true;
+    options.single_run = true;
+    options.run = [](const RunRequest&, const RunObservers&, const RunLent& lent) {
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
+
+    serve.command(cmd(R"({"command":"run","id":1})"));
+    const ServeEnd ended = done.get();
+    CHECK_EQ(ended.code, 0);
+    CHECK(!ended.at_once);
+
+    const auto lines = cap.lines();
+    CHECK(lines.back().event == "result");
+    CHECK(lines.back().launcher_ends == true);
+    CHECK(lines.back().status_launcher_state == "ending");
 }
