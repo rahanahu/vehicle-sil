@@ -39,7 +39,7 @@ ConfigMetadata extract_metadata(const Checked& checked)
 {
     ConfigMetadata metadata;
     metadata.variants = checked.variants;
-    metadata.file_sha256 = checked.file_sha256.value_or("");
+    metadata.file_sha256 = checked.file_sha256;
     if (checked.config)
     {
         const config::SimulationConfig& config = *checked.config;
@@ -404,8 +404,8 @@ PrepareResult ExecutionRuntime::prepare(const PrepareSpec& spec)
     Checked checked = check_file(req, check_opts);
     ConfigMetadata metadata = extract_metadata(checked);
     HotEligibility eligibility =
-        (options_.refuse_fixed_registry && checked.hot_eligibility)
-            ? *checked.hot_eligibility
+        options_.refuse_fixed_registry
+            ? checked.hot_eligibility
             : evaluate_hot_eligibility(checked, options_.trace_enabled, options_.refuse_fixed_registry);
 
     lock.lock();

@@ -40,13 +40,11 @@ struct Checked : config::CheckReport
 {
     /// --scenario: the scenario file that was read and checked.
     std::optional<scenario::ScenarioCheck> scenario{};
-    /// Populated only when CheckOptions::file_only is true: lowercase hex FIPS 180-4 SHA-256
-    /// of the raw configuration file bytes if read, or empty string if unreadable/not read.
-    /// std::nullopt when CheckOptions::file_only is false.
-    std::optional<std::string> file_sha256{};
-    /// Populated only when CheckOptions::file_only is true.
-    /// std::nullopt when CheckOptions::file_only is false.
-    std::optional<HotEligibility> hot_eligibility{};
+    /// Lowercase hex FIPS 180-4 SHA-256 of the raw configuration file bytes if read, or empty
+    /// string if unreadable/not read (e.g. --text-from-stdin).
+    std::string file_sha256{};
+    /// Resident-launcher eligibility evaluated for this configuration.
+    HotEligibility hot_eligibility{};
 };
 
 /// Evaluates resident-launcher eligibility from a Checked report.

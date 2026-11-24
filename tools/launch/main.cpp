@@ -1012,23 +1012,21 @@ void write_usage_stderr(const std::vector<config::Finding>& errors)
 /// answer. `file`: the configuration file if the arguments name one, else "" (null in the JSON).
 /// `variants`: the variants the file defines, if it was read (the JSON lists what --variant takes).
 int usage_error(const std::vector<config::Finding>& errors, bool json, launch::CommandKind command, const std::string& file,
-                launch::EventStream* events, const std::vector<std::string>& variants = {}, bool serve_ends = false,
-                bool file_only = false)
+                launch::EventStream* events, const std::vector<std::string>& variants = {}, bool serve_ends = false)
 {
     write_usage_stderr(errors);
     if (events != nullptr)
     {
         return finish_events(*events, launch::usage_run_report(file, errors, variants), cli::kExitUsage, serve_ends);
     }
-    return json ? write_or_fail(launch::format_usage_json(command, file, errors, variants, file_only), cli::kExitUsage)
+    return json ? write_or_fail(launch::format_usage_json(command, file, errors, variants), cli::kExitUsage)
                 : cli::kExitUsage;
 }
 
 int usage_error(const std::string& message, bool json, launch::CommandKind command, const std::string& file, launch::EventStream* events,
-                bool serve_ends = false, bool file_only = false)
+                bool serve_ends = false)
 {
-    return usage_error({config::Finding{config::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events, {}, serve_ends,
-                       file_only);
+    return usage_error({config::Finding{config::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events, {}, serve_ends);
 }
 
 /// The arguments that are no option or an option's value (as cli::Args reads them), for a usage
@@ -1352,13 +1350,8 @@ int check(const cli::Args& args)
     const launch::Checked report = launch::check_file(request, options);
     if (report.usage)
     {
-        if (options.file_only && args.flag("json"))
-        {
-            write_usage_stderr(report.findings);
-            return write_or_fail(launch::format_json(report), cli::kExitUsage);
-        }
-        return usage_error(report.findings, args.flag("json"), launch::CommandKind::Check, file, nullptr, report.variants, false,
-                           options.file_only);
+        write_usage_stderr(report.findings);
+        return args.flag("json") ? write_or_fail(launch::format_json(report), cli::kExitUsage) : cli::kExitUsage;
     }
     return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), launch::check_exit_code(report));
 }
@@ -1586,9 +1579,17 @@ int serve(const cli::Args& args, launch::EventStream* events, const std::string&
 {
     if (vehicle_sil::trace::enabled())
     {
-        throw cli::UsageError("serve does not run with VEHICLE_SIL_TRACE set: tracing keeps per-run trace rings in the "
-                              "resident launcher and grows memory with every run; trace one run with `vehicle_sil_launch "
-                              "run` instead (unset VEHICLE_SIL_TRACE to use serve)");
+        const auto& pos = args.positionals();
+        const std::string file = pos.size() == 2 ? pos[1] : std::string{};
+        return usage_error({config::Finding{config::Severity::Error,
+                                            "trace-enabled",
+                                            "serve does not run with VEHICLE_SIL_TRACE set: tracing keeps per-run trace rings in the "
+                                            "resident launcher and grows memory with every run; trace one run with `vehicle_sil_launch "
+                                            "run` instead (unset VEHICLE_SIL_TRACE to use serve)",
+                                            0,
+                                            "",
+                                            ""}},
+                           false, launch::CommandKind::Run, file, events, {}, true);
     }
     for (const char* perRun : {"scenario", "variant", "param", "speed", "strict", "start-paused", "stop-at-ms",
                                "late-tolerance-ms", "disable", "enable", "manual", "connect", "time-policy", "request"})
@@ -1917,7 +1918,6 @@ int main(int argc, char** argv)
     }
     bool json = false;
     bool events = false;
-    bool file_only = false;
     for (const auto& argument : arguments)
     {
         if (argument == "--")
@@ -1934,7 +1934,6 @@ int main(int argc, char** argv)
         }
         json = json || argument == "--json";
         events = events || argument == "--events";
-        file_only = file_only || argument == "--file-only";
     }
     // The command and the file, for a usage error's JSON.
     const std::vector<std::string> positionals = positional_arguments(arguments);
@@ -2011,13 +2010,13 @@ int main(int argc, char** argv)
         if (args.positionals().empty())
         {
             code = usage_error("no command: give check <file>, run <file>, serve <file>, test <file>, connections <file> or version", json,
-                               command, file, stream, isServe, file_only);
+                               command, file, stream, isServe);
         }
         else if (args.positionals().front() != "check" && !isRun && !isServe && !isTest && !isConnections)
         {
             code = usage_error("unknown command '" + args.positionals().front() +
                                    "': the commands are check, run, serve, test, connections and version",
-                               json, command, file, stream, isServe, file_only);
+                               json, command, file, stream, isServe);
         }
         else
         {
@@ -2026,11 +2025,11 @@ int main(int argc, char** argv)
     }
     catch (const cli::UsageError& e)
     {
-        code = usage_error(e.what(), json, command, file, stream, isServe, file_only);
+        code = usage_error(e.what(), json, command, file, stream, isServe);
     }
     catch (const RequestFileError& e)
     {
-        code = usage_error(e.findings, json, command, file, stream, {}, isServe, file_only);
+        code = usage_error(e.findings, json, command, file, stream, {}, isServe);
     }
     catch (const std::exception& e)
     {

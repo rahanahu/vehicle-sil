@@ -400,31 +400,27 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     Checked report;
     report.file = host.config;
     report.strict = intent.strict;
-    const auto finalize_file_only = [&options](Checked& out) {
-        if (!options.file_only)
-        {
-            return;
-        }
-        if (!out.file_sha256)
-        {
-            out.file_sha256 = std::string{};
-        }
+    const auto finalize = [&options](Checked& out) {
         config::sort_findings(out.findings);
-        out.hot_eligibility = evaluate_hot_eligibility(out, options.trace_enabled, /*refuse_fixed_registry=*/true);
+        if (!out.hot_eligibility.eligible && out.hot_eligibility.reason.empty())
+        {
+            out.hot_eligibility =
+                evaluate_hot_eligibility(out, options.trace_enabled, /*refuse_fixed_registry=*/true);
+        }
     };
     // Known without the file.
     if (auto invalid = validate_timing(request); !invalid.empty())
     {
         report.usage = true;
         report.findings = std::move(invalid);
-        finalize_file_only(report);
+        finalize(report);
         return report;
     }
     if (auto conflicts = config::override_conflicts(overrides); !conflicts.empty())
     {
         report.usage = true;
         report.findings = std::move(conflicts);
-        finalize_file_only(report);
+        finalize(report);
         return report;
     }
     std::string text;
@@ -437,10 +433,10 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             report.commands = config::CommandsCompared::NotCompared;
             report.findings.push_back(config::commands_not_compared(host.compare_commands, config::kCheckedTextUnreadable));
         }
-        finalize_file_only(report);
+        finalize(report);
         return report;
     }
-    if (options.file_only && !host.config_from_stdin)
+    if (!host.config_from_stdin)
     {
         report.file_sha256 = detail::sha256_hex(text);
     }
@@ -456,7 +452,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     {
         report.usage = true;
         report.findings = std::move(read.override_errors);
-        finalize_file_only(report);
+        finalize(report);
         return report;
     }
     report.findings = std::move(read.findings);
@@ -480,11 +476,13 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         {
             on_time_lock(report.time_lock);
         }
+        const HotEligibility hot =
+            evaluate_hot_eligibility(report, options.trace_enabled, /*refuse_fixed_registry=*/true);
         if (options.refuse_fixed_registry &&
-            (report.config->registry_uri.has_value() || config::waits_for_manual(*report.config)))
+            (hot.reason == "fixed-registry" || hot.reason == "manual-participants"))
         {
             // serve: before any executable is looked for or described, so nothing is started.
-            const bool written = report.config->registry_uri.has_value();
+            const bool written = hot.reason == "fixed-registry";
             config::Finding finding{config::Severity::Error, "usage",
                                     std::string("serve does not run a configuration whose registry listens at a fixed address (") +
                                       (written ? "registry_uri: " + *report.config->registry_uri
@@ -499,9 +497,10 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             usage.strict = report.strict;
             usage.variants = std::move(report.variants);
             usage.file_sha256 = std::move(report.file_sha256);
+            usage.hot_eligibility = hot;
             usage.usage = true;
             usage.findings = {std::move(finding)};
-            finalize_file_only(usage);
+            finalize(usage);
             return usage;
         }
     }
@@ -515,7 +514,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     }
     if (!report.config || options.file_only)
     {
-        finalize_file_only(report);
+        finalize(report);
         return report;
     }
     const std::optional<std::string> listen = environment_value(kListenOnNetworkVariable);
@@ -696,8 +695,10 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             usage.file = std::move(report.file);
             usage.strict = report.strict;
             usage.variants = std::move(report.variants);
+            usage.file_sha256 = std::move(report.file_sha256);
             usage.usage = true;
             usage.findings = std::move(wrong);
+            finalize(usage);
             return usage;
         }
     }
@@ -716,7 +717,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             report.findings.push_back(unused_request_params(request.origin.file, unused, "this run has no scenario"));
         }
     }
-    config::sort_findings(report.findings);
+    finalize(report);
     return report;
 }
 

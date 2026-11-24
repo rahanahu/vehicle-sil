@@ -30,8 +30,7 @@ enum class CommandKind {
 [[nodiscard]] std::string
 format_usage_json(CommandKind command, const std::string &file,
                   const std::vector<config::Finding> &errors,
-                  const std::vector<std::string> &variants = {},
-                  bool file_only = false);
+                  const std::vector<std::string> &variants = {});
 
 /// The same as the report of `run --events`, whose result event says "usage".
 [[nodiscard]] RunReport
