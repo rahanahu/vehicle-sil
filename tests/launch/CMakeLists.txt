@@ -264,7 +264,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_eth_sensor_ecu vehicle_sil_eth_display_ecu)
   endif()
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
-    PREFIX launch_run LABELS integration launch TIMEOUT 300 ${_vehicle_sil_tsan_processors}
+    PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS
       availability
@@ -357,7 +357,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_launch_connect_tools vehicle_sil_ethernet_bridge_it_ecu
                    vehicle_sil_fake_pcap sil-kit-registry)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
-    PREFIX launch_run LABELS integration launch TIMEOUT 300 ${_vehicle_sil_tsan_processors}
+    PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS
       connect_bus_off
@@ -408,11 +408,11 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
                    -DSCRIPT=${PROJECT_SOURCE_DIR}/scripts/trace-report.py
                    -DPYTHON=${VEHICLE_SIL_J1939_CODEGEN_PYTHON}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/trace_files.cmake)
-  set_tests_properties(launch_run.trace_files PROPERTIES LABELS "integration;launch" TIMEOUT 300 ${_vehicle_sil_tsan_processors})
+  set_tests_properties(launch_run.trace_files PROPERTIES LABELS "integration;launch" TIMEOUT 300)
   # The example of the docs with a participant started by hand: its registry is at 8500, the port
   # of such a run, which the docs show. Builds in other working trees on this machine take turns.
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
-    PREFIX launch_run LABELS integration launch TIMEOUT 300 ${_vehicle_sil_tsan_processors}
+    PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS manual
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
@@ -424,7 +424,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   # Alone: it says that an idle simulation is not late at speed 1 within the default tolerance,
   # which is a bound on real time (the other scenarios have bounds on one side only).
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
-    PREFIX launch_run LABELS integration launch TIMEOUT 300 ${_vehicle_sil_tsan_processors}
+    PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS on_time
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
@@ -444,6 +444,25 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   set_tests_properties(launch_run.paused_failures launch_run.stall PROPERTIES COST 8)
   set_tests_properties(launch_run.scenario_failures launch_run.timeout launch_run.control
                        launch_run.connect_nothing_received launch_run.timeline PROPERTIES COST 6)
+  # Under TSan, throttle concurrency (PROCESSORS 2) only on genuinely CPU/multi-ECU-heavy
+  # scenarios; sleep/timeout-bound and short CLI scenarios use 1 slot so CI cores stay busy.
+  if(_vehicle_sil_tsan_processors)
+    set_tests_properties(
+      launch_run.docs
+      launch_run.traffic
+      launch_run.scenario_time_commands_same
+      launch_run.scenario_failures
+      launch_run.scenario_samples
+      launch_run.scenario_wave
+      launch_run.timeline
+      launch_run.connect_time_locked
+      launch_run.connect_speed
+      launch_run.connect_roundtrip
+      launch_run.paused_failures
+      launch_run.events_slow
+      launch_run.events_stalled
+      PROPERTIES ${_vehicle_sil_tsan_processors})
+  endif()
 endif()
 
 # The run of vehicle_sil_launch as a library, whose hub the caller keeps from the start window on:

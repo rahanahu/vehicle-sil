@@ -316,7 +316,7 @@ TEST_CASE(check_parallel_live_mixed_outcomes_match_sequential_byte_for_byte)
                "    command: [" + helper + ", --sleep-ms, \"30\", --out, " + yaml_quote(ecu_json("GoodMedium", 20, "BusA", 2)) + "]\n"
                "    step_ms: 20\n");
 
-    const std::chrono::milliseconds timeout = vehicle_sil::test::scaled_timeout(500ms);
+    const std::chrono::milliseconds timeout = vehicle_sil::test::scaled_timeout(250ms);
     RunRequest request;
     request.host.config = process::utf8_from_path(config_path);
     request.host.describe_timeout = timeout;

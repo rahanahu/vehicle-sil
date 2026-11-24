@@ -26,9 +26,10 @@ set_tests_properties(lin.boundary_check_rejects_silkit PROPERTIES
                      PASS_REGULAR_EXPRESSION "fixture\\.hpp: silkit/")
 
 # LIN: schedule, frames, checksums, diagnostic frames, sleep and wakeup with SIL Kit LIN in
-# virtual time (in-process registry), through vehicle_sil::lin_silkit.
+# virtual time (in-process registry), through vehicle_sil::lin_silkit. All cases assert
+# wall-clock independence (no wall-clock pacing bounds).
 vehicle_sil_add_harness_tests(vehicle_sil_lin_tests
-  PREFIX lin LABELS unit lin TIMEOUT 120 RUN_SERIAL "wall_clock|every_speed"
+  PREFIX lin LABELS unit lin TIMEOUT 120
   SOURCES
     test_lin_cluster.cpp
     test_lin_protocol.cpp

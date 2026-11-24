@@ -907,3 +907,82 @@ TEST_CASE(participant_start_takes_a_virtual_time_run_aborted_before_its_first_st
     }
     CHECK(finalState == std::optional(orch::ParticipantState::Shutdown));
 }
+
+TEST_CASE(participant_stop_after_a_start_timeout_returns_without_waiting_for_shutdown_timeout)
+{
+    // A coordinated participant whose start() timed out before Running (nobody started the
+    // simulation): SIL Kit ignores Stop() before Running, so stop() must not stall for the full
+    // shutdown_timeout (5 s by default, 15 s here) before returning.
+    InProcessRegistry registry;
+    const auto shutdownTimeout = unit::scaled_timeout(15s);
+    {
+        ParticipantRuntimeOptions options{"TimedOut", registry.uri};
+        options.lifecycle_mode = LifecycleMode::Coordinated;
+        options.virtual_time = VirtualTimeOptions{10ms, std::nullopt};
+        options.shutdown_timeout = shutdownTimeout;
+        ParticipantRuntime runtime(options);
+        runtime.set_step_handler([](SimTime, SimDuration) {});
+
+        bool timedOut = false;
+        try
+        {
+            runtime.start(50ms);
+        }
+        catch (const StartTimeoutError&)
+        {
+            timedOut = true;
+        }
+        CHECK(timedOut);
+
+        const auto before = std::chrono::steady_clock::now();
+        runtime.stop("start timed out");
+        const auto took = std::chrono::steady_clock::now() - before;
+        CHECK(runtime.stop_requested());
+        const auto bound = unit::scaled_timeout(1s);
+        if (took >= bound)
+        {
+            throw vehicle_sil::unit::Failure(
+                "stop() after a start timeout took "
+                + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count())
+                + " ms (shutdown_timeout " + std::to_string(shutdownTimeout.count()) + " ms), expected under "
+                + std::to_string(bound.count()) + " ms");
+        }
+    }
+    {
+        // With an asynchronous CommunicationReady handler (a controller's start window) and no
+        // peers starting the simulation, stop() also bounds its pre-Running wait instead of
+        // waiting out shutdown_timeout.
+        ParticipantRuntimeOptions options{"TimedOutAsync", registry.uri};
+        options.lifecycle_mode = LifecycleMode::Coordinated;
+        options.virtual_time = VirtualTimeOptions{10ms, std::nullopt};
+        options.shutdown_timeout = shutdownTimeout;
+        ParticipantRuntime runtime(options);
+        runtime.set_step_handler([](SimTime, SimDuration) {});
+        runtime.set_communication_ready_handler_async([] {});
+
+        bool timedOut = false;
+        try
+        {
+            runtime.start(50ms);
+        }
+        catch (const StartTimeoutError&)
+        {
+            timedOut = true;
+        }
+        CHECK(timedOut);
+
+        const auto before = std::chrono::steady_clock::now();
+        runtime.stop("start timed out");
+        const auto took = std::chrono::steady_clock::now() - before;
+        CHECK(runtime.stop_requested());
+        const auto bound = unit::scaled_timeout(2s);
+        if (took >= bound)
+        {
+            throw vehicle_sil::unit::Failure(
+                "stop() with async CommunicationReady after a start timeout took "
+                + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count())
+                + " ms (shutdown_timeout " + std::to_string(shutdownTimeout.count()) + " ms), expected under "
+                + std::to_string(bound.count()) + " ms");
+        }
+    }
+}

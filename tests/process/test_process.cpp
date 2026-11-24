@@ -405,7 +405,7 @@ TEST_CASE(run_captured_time_limit_ends_what_the_process_started)
     vehicle_sil::process::CaptureOptions options;
     // The helper sleeps for 10 minutes; before the limit ends it, it has to start the grandchild
     // and write its ID, which takes longer on a slow machine (scaled).
-    options.timeout = scaled_timeout(2s);
+    options.timeout = scaled_timeout(800ms);
     const auto captured =
         vehicle_sil::process::run_captured(kHelper, {"--spawn-sleeper", pidFile, "--sleep-ms", "600000"}, options);
     CHECK(!captured.exit_code.has_value());

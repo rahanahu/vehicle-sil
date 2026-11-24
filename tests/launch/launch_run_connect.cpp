@@ -1169,7 +1169,7 @@ void connect_device_shared_later(const Options& base)
         }
     }
     // Gone again within 3 s: the run is not stopped.
-    const fs::path dir = connect_dir(o, "device_shared_gone", "# run-option --stop-at-ms 7000\n", talker(o), {{"Talker", "talk CAN"}});
+    const fs::path dir = connect_dir(o, "device_shared_gone", "# run-option --stop-at-ms 4000\n", talker(o), {{"Talker", "talk CAN"}});
     Live live(o, dir, {"run", "--events", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
                           "--connect", "CAN=virtual:1", "sim.yaml"});
     live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});

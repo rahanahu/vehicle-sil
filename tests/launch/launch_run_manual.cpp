@@ -316,7 +316,7 @@ void manual_frozen(const Options& o)
         // stepping depends on how far it got (logged), and both must end on the stop.
         // No stop_at_ms: if Late got to its first steps before it was frozen, the simulation must not
         // end before the stop command.
-        const fs::path dir = hand_dir(o, "frozen", hand_config(o, "# run-option --participant-stop-timeout-ms 3000\n", late_participant(o)),
+        const fs::path dir = hand_dir(o, "frozen", hand_config(o, "# run-option --participant-stop-timeout-ms 1000\n", late_participant(o)),
                                       {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
         Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
@@ -326,7 +326,7 @@ void manual_frozen(const Options& o)
         ByHand lateByHand(json_text(lateEvent, "command_line"), json_text(lateEvent, "working_directory"));
         live.wait_for({"\"name\":\"Late\"", "\"state\":\"joined\""});
         lateByHand.freeze();
-        std::this_thread::sleep_for(2000ms);
+        std::this_thread::sleep_for(500ms);
         const bool runningBeforeStop = !events_with(live.lines(), {"\"phase\":\"running\""}).empty();
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
@@ -363,7 +363,7 @@ void manual_frozen(const Options& o)
         // ended: an error, so the stopped run failed), and the launcher closes its connection to it
         // (on Windows a TCP connection: closing a local-domain socket to a process that stands
         // still may never return there, docs/dependencies.md).
-        const fs::path dir = hand_dir(o, "frozen_running", hand_config(o, "# run-option --participant-stop-timeout-ms 3000\n", late_participant(o)),
+        const fs::path dir = hand_dir(o, "frozen_running", hand_config(o, "# run-option --participant-stop-timeout-ms 1000\n", late_participant(o)),
                                       {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
         Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
@@ -374,7 +374,7 @@ void manual_frozen(const Options& o)
         live.wait_for({"\"phase\":\"running\""});
         std::this_thread::sleep_for(300ms);
         lateByHand.freeze();
-        std::this_thread::sleep_for(2000ms);
+        std::this_thread::sleep_for(500ms);
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
         lateByHand.thaw();

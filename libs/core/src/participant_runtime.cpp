@@ -619,6 +619,24 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
     // One deadline for the Error (deliver_stop()) and the Shutdown below.
     const auto deadline = std::chrono::steady_clock::now() + options_.shutdown_timeout;
     deliver_stop(true, deadline); // this participant ends now: no waiting for a first step
+    // Before Running (and with no failure pending), SIL Kit ignores Stop(), so deliver_stop()
+    // sent nothing and waiting out shutdown_timeout would only stall until the participant is
+    // destroyed. When an asynchronous CommunicationReady handler is registered (a controller's
+    // start window), wait briefly while lifecycle/peer activity continues so an in-flight start
+    // can open and complete the window, reach Running, and shut down peers cleanly; break early
+    // once the lifecycle goes idle before Running.
+    const auto pre_running_without_stop = [this] {
+        return !stop_delivered_.load(std::memory_order_acquire) && !has_failed()
+               && !failed_before_start_.load(std::memory_order_acquire);
+    };
+    if (pre_running_without_stop() && !communication_ready_)
+    {
+        return;
+    }
+    const auto read_activity = [this] {
+        const std::lock_guard lock(peers_mutex_);
+        return std::pair{peer_generation_, wake_generation_};
+    };
     // The lifecycle proceeds to Shutdown on its own after Stop(), in both modes and from Error.
     const auto done = *lifecycle_done_; // own copy: wait_until_finished() may use it meanwhile
     try
@@ -629,6 +647,9 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
         // Kit takes one such wait at a time), and the lifecycle stays in Shutdown. Shutdown then
         // ends the wait too. Otherwise only the future does: a normal stop still waits for the
         // replies, which make sure the others got this participant's last messages.
+        constexpr auto kIdlePreRunningLimit = std::chrono::milliseconds(500);
+        auto lastActivityGen = read_activity();
+        auto lastActivityAt = std::chrono::steady_clock::now();
         while (!final_state())
         {
             const auto now = std::chrono::steady_clock::now();
@@ -644,6 +665,19 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
             else if (std::chrono::steady_clock::now() >= deadline)
             {
                 break;
+            }
+            else if (pre_running_without_stop())
+            {
+                const auto gen = read_activity();
+                if (gen != lastActivityGen)
+                {
+                    lastActivityGen = gen;
+                    lastActivityAt = std::chrono::steady_clock::now();
+                }
+                else if (std::chrono::steady_clock::now() - lastActivityAt >= kIdlePreRunningLimit)
+                {
+                    break;
+                }
             }
         }
     }

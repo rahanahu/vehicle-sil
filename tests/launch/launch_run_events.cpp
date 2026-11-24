@@ -792,7 +792,7 @@ void events_stalled(const Options& o)
     // way and its reader stalled before then (scaled: that takes longer on a slow machine).
     {
         std::vector<std::string> args = kRun;
-        args.insert(args.begin() + 1, {"--timeout-ms", std::to_string(scaled_timeout(5s).count())});
+        args.insert(args.begin() + 1, {"--timeout-ms", std::to_string(scaled_timeout(2s).count())});
         Stalled run(o, args, checks);
         checks.expect(run.participants_gone(60s), "--timeout-ms ends the run while the reader does not read");
         // Gone here includes a process that is ending but that the launcher cannot reap yet (its
@@ -841,7 +841,7 @@ void events_stalled(const Options& o)
     }
     // The limit itself: the launcher gives the reader up, stops the run and says why.
     {
-        Stalled run(o, {"run", "--events", "--events-stall-ms", "1500", "--log-dir", "logs", "sim.yaml"}, checks, false);
+        Stalled run(o, {"run", "--events", "--events-stall-ms", "1000", "--log-dir", "logs", "sim.yaml"}, checks, false);
         const auto held = std::chrono::steady_clock::now();
         const bool ended = run.live->process().wait_for(scaled_timeout(30s)).has_value();
         const long long after = ms_since(held);
@@ -852,7 +852,7 @@ void events_stalled(const Options& o)
                           std::to_string(after) + " ms");
         checks.expect(gone, "it has ended the participants");
         const std::string err = run.live->err();
-        checks.expect(contains(err, "vehicle_sil_launch: cannot write the events (their reader has not read for 1500 ms") &&
+        checks.expect(contains(err, "vehicle_sil_launch: cannot write the events (their reader has not read for 1000 ms") &&
                           contains(err, "stopping the run"),
                       "it says why on stderr:\n" + err);
         check_cut_events(lines);
