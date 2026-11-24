@@ -26,9 +26,9 @@ from typing import Any
 from .allowed import Facts, Numbered, allowed as allowed_of, project_run_facts
 from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT, STEP_MS_MAX
 
-EVENTS_FORMAT = 2  # the `vehicle_sil_events` of hello that this server reads
+EVENTS_FORMAT = 4  # the `vehicle_sil_events` of hello that this server reads
 SHARED_LOG = "*"  # the source key of the log shared by the sources after Limits.log_sources
-ENVELOPE = ("event", "seq", "t_ms")  # what is removed from an event when its fields are kept in the summary
+ENVELOPE = ("event", "seq", "t_ms", "run")  # what is removed from an event when its fields are kept in the summary
 MAX_COUNT = 2 ** 53  # seq and t_ms: integers that JavaScript reads exactly
 # The fields of a small event that the summary keeps however large the event is (the others are left out of
 # the summary when the event is larger than Limits.small_bytes, and named in `omitted_fields`).
@@ -128,6 +128,8 @@ def _shape_problem(event: dict) -> str | None:
     kind = event["event"]
     if kind == "hello":
         return None if _int_or_none(event.get("pid")) else "pid is not an integer"
+    if kind == "run_start":
+        return None if isinstance(event.get("run"), str) and bool(event.get("run")) else "run is not a string"
     if kind == "phase":
         return None if isinstance(event.get("phase"), str) else "phase is not a string"
     if kind == "check":
@@ -302,6 +304,9 @@ class Session:
         self._stderr_lines = 0
         self._stderr_last: deque[str] = deque(maxlen=self.limits.stderr_last)
         self.hello_seen = False
+        self.run_id: str | None = None
+        self.run_t0_ms: int | None = None
+        self._stream_run = False
         self._logs: dict[str, _Log] = {}
         self._log_bytes = 0
         self._limit_reported: set[str] = set()
@@ -331,21 +336,14 @@ class Session:
             return [self.message(), *fn()]
         return fn()
 
-    def feed_line(self, line: str) -> list[dict]:
-        """Takes one line of the launcher's standard output; returns the messages for the screens."""
-        try:
-            event = json.loads(line, parse_constant=_no_constant, parse_float=_finite)
-        except (ValueError, RecursionError):
-            event = None
-        if not isinstance(event, dict) or not isinstance(event.get("event"), str):
-            return self._with_silence(lambda: self.problem(
-                "launcher-output",
-                "the launcher wrote a line that is not an event (a JSON object with \"event\"): "
-                "the line is ignored; if it repeats, the launcher and this GUI do not match",
-                self._cut(line),
-            ))
-        size = len(line.encode("utf-8", "surrogatepass"))
-        return self._with_silence(lambda: self._feed_event(event, size, detail=line))
+    def bad_line(self, line: str) -> list[dict]:
+        """Records a non-event line from the launcher's standard output as a launcher-output problem."""
+        return self._with_silence(lambda: self.problem(
+            "launcher-output",
+            "the launcher wrote a line that is not an event (a JSON object with \"event\"): "
+            "the line is ignored; if it repeats, the launcher and this GUI do not match",
+            self._cut(line),
+        ))
 
     def feed_event(self, event: dict, size: int) -> list[dict]:
         """Takes one already-parsed event dict and its UTF-8 byte size; returns the messages for the screens."""
@@ -370,13 +368,16 @@ class Session:
                                 f"the launcher wrote seq {seq} after {self.last_seq}: the event is ignored "
                                 "(events must come in order)", problem_detail())
         out: list[dict] = []
-        expected = 0 if self.last_seq is None else self.last_seq + 1
-        if seq != expected:
-            missing = f"seq {expected}" if seq == expected + 1 else f"seq {expected} to {seq - 1}"
-            out += self.problem("seq-gap", f"events are missing: {missing} never came from the launcher",
-                                {"expected": expected, "got": seq})
         kind = event["event"]
-        if not self.hello_seen and kind != "hello":
+        if not self.hello_seen and kind == "run_start":
+            self._stream_run = True
+        if not self._stream_run:
+            expected = 0 if self.last_seq is None else self.last_seq + 1
+            if seq != expected:
+                missing = f"seq {expected}" if seq == expected + 1 else f"seq {expected} to {seq - 1}"
+                out += self.problem("seq-gap", f"events are missing: {missing} never came from the launcher",
+                                    {"expected": expected, "got": seq})
+        if not self.hello_seen and kind not in ("hello", "run_start"):
             out += self.problem("no-hello", f"the first event is '{self._cut(kind)}', not 'hello'", None)
         self.hello_seen = True
         self.last_seq = seq
@@ -404,6 +405,11 @@ class Session:
                                     f"reads format {EVENTS_FORMAT}: what it shows may be wrong; use a GUI of the "
                                     "same vehicle-sil version as the launcher",
                                     {"vehicle_sil_events": version if _is_int(version) else None})
+        elif kind == "run_start":
+            if isinstance(event.get("run"), str):
+                self.run_id = event["run"]
+            if _is_count(event.get("t_ms")):
+                self.run_t0_ms = event["t_ms"]
         elif kind == "log":
             self._keep_log(event, size)
         elif kind == "log_dropped":
@@ -448,13 +454,13 @@ class Session:
                 out += self._limit(kind, f"the launcher wrote a phase name longer than {self.limits.small_bytes} "
                                          "characters: it is shown now, but not kept for a screen opened later")
         elif kind == "time":
-            kept = self._small(kind, event, None)
+            kept = self._small(kind, {k: v for k, v in event.items() if k != "run"}, None)
             self.time = kept if kept is not None else self.time
         elif kind == "state":
             # Only the last one is kept (the launcher writes one whenever what it accepts changes); with its seq
             # and rev, so that a screen tells a new one from the same one sent again in a later summary.
             if size <= self.limits.state_bytes:
-                self.launcher_state = {k: v for k, v in event.items() if k not in ("event", "t_ms")}
+                self.launcher_state = {k: v for k, v in event.items() if k not in ("event", "t_ms", "run")}
             else:
                 out += self._limit("state", f"the launcher's state is larger than {self.limits.state_bytes} "
                                             "bytes: it is shown now, but not kept for a screen opened later")
@@ -463,7 +469,7 @@ class Session:
             self.registry = kept if kept is not None else self.registry
         elif kind == "command":
             # with its seq: a screen tells a new answer from the same one sent again in a later summary
-            kept = self._small(kind, {k: v for k, v in event.items() if k not in ("event", "t_ms")}, None)
+            kept = self._small(kind, {k: v for k, v in event.items() if k not in ("event", "t_ms", "run", "asked_run")}, None)
             self.last_command = kept if kept is not None else self.last_command
         elif kind in ("participant", CONTROL_EVENT):
             name = event["name"]

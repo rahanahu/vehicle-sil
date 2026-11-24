@@ -20,8 +20,7 @@ The values are not taken from the stream: they are read, together with the time,
 screen watches them (variables.Variables.refresh), as often as the screens ask and no more. A stream of values
 comes as fast as the simulation runs, and what waits in it (in the connection's buffers, which this side cannot
 bound) would be old by the time it is read; a read gives the latest sample at that moment, whatever the
-simulation's speed. A control server without GetSnapshot (an older launcher) is not used: the connection ends
-for good, with the reason (TOO_OLD).
+simulation's speed.
 
 The token of the run is in a file that only this user can read (credentials_file), never in an argument, an
 event or a message: every text that comes from the control server is cleaned of it before it is shown.
@@ -32,41 +31,44 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
-import importlib.util
 import logging
-import math
-import os
-import re
-import secrets
-import shutil
-import sys
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from vehicle_sil_control.grpc_helpers import (
+    ADDRESS,
+    PROTO,
+    REASON_METADATA,
+    REASON_RUN_CHANGED,
+    ROLE_LINE,
+    RUN_METADATA,
+    STUBS_VARIABLE,
+    check_loopback_address as check_address,
+    credentials_file,
+    decode_proto_snapshot_values,
+    enum_name,
+    import_stubs,
+    proto_target_fields,
+    redact_token,
+    remove_file as remove,
+    repository,
+    resolve_stubs_directory,
+    to_proto_value,
+    trailing_reason,
+)
+
 from .source import AVAILABILITY, OperationInfo, PeerInfo, Sink, SnapshotInfo, SourceError, TargetInfo, TimeInfo
 
 FEATURE = "control-server"  # of vehicle_sil_launch version --json: run --control and the event below
 EVENT = "control_server"  # {"address", "tls", "credentials"}: where the run's control server listens
-STUBS_VARIABLE = "VEHICLE_SIL_CONTROL_STUBS"
-RUN_METADATA = "vehicle-sil-run"
-REASON_METADATA = "vehicle-sil-reason"
-REASON_RUN_CHANGED = "run-changed"
 SCENARIO_CLIENT = "scenario"  # the client of a scenario's writes (fixed: docs/control-api.md)
-PROTO = Path("vehicle_sil") / "control" / "v1" / "control.proto"
-ROLE_LINE = "operator vehicle-sil-gui {token}\n"  # reads, writes and time; not the stop (that goes by stdin)
-ADDRESS = re.compile(r"127\.0\.0\.1:(\d{1,5})")  # what `--control 0` gives: nothing else is connected to
 RECONNECT_MIN_S, RECONNECT_MAX_S = 0.2, 2.0
 MAX_MESSAGE = 64 * 1024 * 1024  # one peer with the most variables the launcher takes
 OPERATIONS_WAITING = 4096  # operations read and not yet taken by the event loop
 CLOSE_WAIT_S = 2.0
 SYNC_TIMEOUT_S = 10.0  # for the control server to send what there is, once connected; then the connection is ended
-PROBE_TIMEOUT_S = 2.0
-PROBE_PEER = "vehicle-sil-gui-probe"  # no peer's name: a GetSnapshot for it is answered without values
-TOO_OLD = ("the vehicle_sil_launch of this run is too old for this GUI server: its control server cannot give "
-           "the time and the values of one moment, so the variables cannot be read")
 
 log = logging.getLogger("vehicle_sil_gui")
 
@@ -84,13 +86,6 @@ class Library:
 
 _library: Library | Unavailable | None = None
 _library_lock = threading.Lock()
-
-
-def repository() -> Path | None:
-    """The repository this file is in, when it is run from one (an editable install)."""
-    parents = Path(__file__).resolve().parents  # <root>/gui/server/src/vehicle_sil_gui/control.py
-    root = parents[4] if len(parents) > 4 else None
-    return root if root is not None and (root / "proto" / PROTO).is_file() else None
 
 
 def load() -> Library:
@@ -115,110 +110,14 @@ def _load() -> Library:
         raise Unavailable(f"this GUI server has no gRPC ({type(e).__name__}: {e}): run it from the vehicle-sil "
                           "repository after `uv sync` (which installs grpcio, protobuf and grpcio-tools)") from None
     stubs, made = _stubs_directory()
-    if str(stubs) not in sys.path:
-        sys.path.insert(0, str(stubs))
-    try:
-        pb = importlib.import_module("vehicle_sil.control.v1.control_pb2")
-        rpc = importlib.import_module("vehicle_sil.control.v1.control_pb2_grpc")
-    except Exception as e:  # stubs made for another grpcio or protobuf raise their own errors
-        raise Unavailable(f"the Control API stubs in {stubs} cannot be loaded ({type(e).__name__}: {e}): make them "
-                          "again with `python -m vehicle_sil_control.generate` (docs/control-api.md)") from None
-    finally:
-        if made:  # the modules are loaded and nothing reads the files again
-            if str(stubs) in sys.path:
-                sys.path.remove(str(stubs))
-            shutil.rmtree(stubs, ignore_errors=True)
+    pb, rpc = import_stubs(stubs, made, error_cls=Unavailable)
     return Library(grpc, pb, rpc)
-
-
-def _generate_stubs(root: Path, out: Path) -> None:
-    path = root / "python" / "vehicle_sil_control" / "generate.py"
-    spec = importlib.util.spec_from_file_location("_vehicle_sil_control_generate", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    module.generate(root / "proto", out)
 
 
 def _stubs_directory() -> tuple[Path, bool]:
     """Where the stubs are, and whether this call made the directory (a temporary one, which the caller removes
     once the stubs are imported)."""
-    explicit = os.environ.get(STUBS_VARIABLE)
-    if explicit:
-        if not (Path(explicit) / PROTO.with_name("control_pb2.py")).is_file():
-            raise Unavailable(f"{STUBS_VARIABLE}={explicit} has no {PROTO.with_name('control_pb2.py')}: make the "
-                              "stubs with `python -m vehicle_sil_control.generate --out <directory>`")
-        return Path(explicit), False
-    root = repository()
-    generated = root / "python" / "vehicle_sil_control" / "_generated" if root is not None else None
-    if root is not None:
-        out = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-stubs-"))
-        try:
-            _generate_stubs(root, out)
-            return out, True
-        except ImportError:
-            shutil.rmtree(out, ignore_errors=True)
-        except Exception as e:
-            shutil.rmtree(out, ignore_errors=True)
-            log.warning("making the Control API stubs failed (%s)", e)
-    if generated is not None and (generated / PROTO.with_name("control_pb2.py")).is_file():
-        return generated, False
-    where = "this GUI server does not run from the vehicle-sil repository, which has the proto file they are " \
-            "made from" if root is None else "grpcio-tools is not installed (`uv sync` installs it)"
-    raise Unavailable(f"the Control API stubs are missing ({where}): run the GUI server from the repository after "
-                      "`uv sync`, or make the stubs there with `python -m vehicle_sil_control.generate --out "
-                      f"<directory>` and set {STUBS_VARIABLE} to that directory")
-
-
-def credentials_file() -> tuple[Path, str]:
-    """A new file with one credential for this server, readable by this user only (POSIX: mode 0600, made so;
-    Windows: the user's temporary directory, with the access rights of that directory), and its token. The
-    caller removes it (remove) once the launcher has read it, and in any case when the run ends."""
-    token = secrets.token_urlsafe(32)
-    fd, name = tempfile.mkstemp(prefix="vehicle-sil-gui-control-", suffix=".txt")
-    try:
-        with os.fdopen(fd, "w", encoding="ascii", newline="\n") as f:
-            f.write(ROLE_LINE.format(token=token))
-    except BaseException:
-        remove(Path(name))
-        raise
-    return Path(name), token
-
-
-def remove(path: Path | None) -> bool:
-    """Removes the file; whether it is gone (or there was none)."""
-    if path is None:
-        return True
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False  # held open by another program (Windows): the caller tries again later
-    return True
-
-
-def check_address(address: object) -> str:
-    """The address of a control_server event, if it is where `--control 0` listens (127.0.0.1 and a port).
-    ValueError otherwise: the token is sent nowhere else."""
-    m = ADDRESS.fullmatch(address) if isinstance(address, str) else None
-    if m is None or not 0 < int(m.group(1)) <= 65535:
-        raise ValueError("the launcher's control_server event names an address that is not 127.0.0.1:<port>")
-    return address
-
-
-def _count(target, name: str) -> int | None:
-    """An optional count of a TargetResult: None when the server did not set it, and with stubs older than the
-    field (VEHICLE_SIL_CONTROL_STUBS made from an earlier proto file)."""
-    try:
-        return getattr(target, name) if target.HasField(name) else None
-    except ValueError:
-        return None
-
-
-class _TooOld(Exception):
-    """The control server has no GetSnapshot."""
+    return resolve_stubs_directory(root=repository(), error_cls=Unavailable, allow_package_generated=False)
 
 
 class _Snapshot:
@@ -234,20 +133,7 @@ class _Snapshot:
         self.count = len(self._values)
 
     def decode(self, types: list[str]) -> list:
-        out = []
-        for value, type_ in zip(self._values, types):
-            if type_ == "real":
-                x = value.d
-                out.append(x if math.isfinite(x) else None)
-            elif type_ == "bool":
-                out.append(value.b)
-            elif type_:
-                out.append(value.i)
-            else:
-                kind = value.WhichOneof("kind")
-                x = getattr(value, kind) if kind else None
-                out.append(None if isinstance(x, float) and not math.isfinite(x) else x)
-        return out
+        return decode_proto_snapshot_values(self._values, types)
 
 
 class GrpcSource:
@@ -290,7 +176,6 @@ class GrpcSource:
         self._synced = False
         self._dropped = False
         self._lost: tuple[str, bool] | None = None
-        self._probed = False  # the control server is known to have GetSnapshot
 
     # ------------------------------------------------------------ the event loop's side
 
@@ -365,12 +250,7 @@ class GrpcSource:
         if at_ns is not None:
             request.at_ns = at_ns
         for peer, name, value in writes:
-            if isinstance(value, bool):
-                request.writes.add(peer=peer, name=name, value=pb.Value(b=value))
-            elif isinstance(value, int):
-                request.writes.add(peer=peer, name=name, value=pb.Value(i=value))
-            else:
-                request.writes.add(peer=peer, name=name, value=pb.Value(d=value))
+            request.writes.add(peer=peer, name=name, value=to_proto_value(value, pb))  # type: ignore[arg-type]
         return (await self._unary(self._stub.Write, request, timeout_s)).seq
 
     _NO_DEFAULT = object()
@@ -430,20 +310,7 @@ class GrpcSource:
         return SourceError("refused", text)
 
     def _clean(self, text: str) -> str:
-        return text.replace(self._token, "<token>") if self._token else text
-
-    @staticmethod
-    def _trailing_reason(err) -> str | None:
-        metadata = getattr(err, "trailing_metadata", None)
-        if not callable(metadata):
-            return None
-        for entry in metadata() or ():
-            key, val = entry[0], entry[1]
-            if isinstance(key, bytes):
-                key = key.decode("utf-8", errors="ignore")
-            if key.lower() == REASON_METADATA:
-                return val.decode("utf-8", errors="ignore") if isinstance(val, bytes) else str(val)
-        return None
+        return redact_token(text, self._token)
 
     def _take(self) -> None:
         """On the loop: passes on what the reader has read since the last time."""
@@ -503,32 +370,21 @@ class GrpcSource:
         return PeerInfo(p.participant, p.incarnation, p.connected, variables)
 
     def _declared(self, v) -> str | None:
-        """The state a VariableInfo starts with; None: it does not report (UNSPECIFIED, and stubs older than the
-        field)."""
-        value = getattr(v, "availability", 0)
-        return self._state(value) if value else None
+        """The state a VariableInfo starts with; None: it does not report (UNSPECIFIED)."""
+        return self._state(v.availability) if v.availability else None
 
     def _state(self, value: int) -> str:
         """An Availability of the Control API as the screens name it. One this side does not know is shown as in
         use, as a variable that does not report."""
-        try:
-            name = self._pb.Availability.Name(value)[len("AVAILABILITY_"):].lower()
-        except ValueError:
-            return "active"
+        name = enum_name(self._pb.Availability, value, "AVAILABILITY_", default="active")
         return name if name in AVAILABILITY else "active"
 
     def _operation(self, o) -> OperationInfo:
         pb = self._pb
-        targets = []
-        for t in o.targets:
-            try:
-                status = pb.TargetStatus.Name(t.status)[len("TARGET_STATUS_"):].lower()
-            except ValueError:
-                status = "unknown"
-            if status == "unspecified":
-                status = "unknown"
-            targets.append(TargetInfo(t.peer, status, t.applied_at_ns if t.HasField("applied_at_ns") else None,
-                                      t.late, t.reason, _count(t, "applied_writes"), _count(t, "failed_write")))
+        targets = [
+            TargetInfo(*proto_target_fields(t, pb, unspecified_as_unknown=True))
+            for t in o.targets
+        ]
         return OperationInfo(o.seq, o.done, targets)
 
     # ------------------------------------------------------------ the reader thread
@@ -582,13 +438,16 @@ class GrpcSource:
             reason, fatal, synced = "the control server ended the connection", False, False
             silent = threading.Event()
             try:
-                request = pb.WatchRequest(values=False, events=False, operations=True, time=True)
-                if "availability" in request.DESCRIPTOR.fields_by_name:  # not in stubs older than it
-                    request.availability = True
                 # Not the operations of the scenario's own writes: they can be one per step, and nothing here
                 # uses them.
-                if "operation_clients_excluded" in request.DESCRIPTOR.fields_by_name:  # not in stubs older than it
-                    request.operation_clients_excluded.append(SCENARIO_CLIENT)
+                request = pb.WatchRequest(
+                    values=False,
+                    events=False,
+                    operations=True,
+                    time=True,
+                    availability=True,
+                    operation_clients_excluded=[SCENARIO_CLIENT],
+                )
                 call = self._stub.Watch(request, metadata=self._metadata)
                 with self._cond:
                     self._call = call
@@ -605,14 +464,14 @@ class GrpcSource:
                     watchdog.cancel()
             except grpc.RpcError as e:
                 code = e.code()
-                trailing_reason = self._trailing_reason(e)
+                reason_meta = trailing_reason(e)
                 fatal = code in fatal_codes or (
-                    code == grpc.StatusCode.FAILED_PRECONDITION and trailing_reason == REASON_RUN_CHANGED
+                    code == grpc.StatusCode.FAILED_PRECONDITION and reason_meta == REASON_RUN_CHANGED
                 )
                 reason = f"the control server at {self._address} "
                 if silent.is_set():
                     reason += f"did not send its state in {SYNC_TIMEOUT_S:g} s"
-                elif code == grpc.StatusCode.FAILED_PRECONDITION and trailing_reason == REASON_RUN_CHANGED:
+                elif code == grpc.StatusCode.FAILED_PRECONDITION and reason_meta == REASON_RUN_CHANGED:
                     reason += "switched away from this run (run-changed)"
                 elif code in (grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED):
                     reason += f"refused this GUI server ({code.name}: {e.details()})"
@@ -620,9 +479,6 @@ class GrpcSource:
                     reason += "cannot be reached"
                 else:
                     reason += f"ended the connection ({code.name}: {e.details()})"
-            except _TooOld:
-                reason, fatal = TOO_OLD, True
-                call.cancel()
             except Exception as e:  # the channel was closed under the call, or a message this side cannot read
                 reason = f"reading from the control server failed ({type(e).__name__}: {e})"
             if synced:
@@ -644,27 +500,12 @@ class GrpcSource:
                     return
             delay = min(delay * 2, RECONNECT_MAX_S)
 
-    def _probe(self) -> None:
-        """_TooOld when the control server has no GetSnapshot. Any other failure says nothing (the next connection
-        asks again)."""
-        grpc = self._grpc
-        try:
-            self._stub.GetSnapshot(self._pb.GetSnapshotRequest(peers=[PROBE_PEER]), timeout=PROBE_TIMEOUT_S,
-                                   metadata=self._metadata)
-        except grpc.RpcError as e:
-            if e.code() == grpc.StatusCode.UNIMPLEMENTED:
-                raise _TooOld() from None
-            return
-        self._probed = True
-
     def _follow(self, call, watchdog: threading.Timer) -> bool:
         """Reads the stream to its end; whether it got as far as the first full state."""
         synced = False
         dropped_seen = 0
         for update in call:
             kind = update.WhichOneof("kind")
-            if kind == "initial_done" and not self._probed:
-                self._probe()  # before the variables are called ready: they cannot be read without GetSnapshot
             with self._cond:
                 if update.dropped > dropped_seen:
                     dropped_seen = update.dropped

@@ -28,14 +28,14 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, RunFacts, allowed as allowed_of, allowed_save, allowed_start, project_run_facts
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, FEATURE_CHECK_FILE_ONLY,
+from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME,
                        NO_CONNECTION, REQUEST_FIELDS,
                        FEATURE_RUN_STOP_AT, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, TEXT_FIELDS,
                        InvalidRequest, Launcher,
                        check_command, check_connect, check_disable, check_enable, check_fields, check_manual,
                        check_network, check_params, check_run_millis, check_speed, check_strict, check_name_list, check_time_command, check_time_policy,
                        check_variant, connections_command, describe_command, hide_request,
-                       hide_request_in_event, hide_request_in_line, save_check_command, text_check_command,
+                       hide_request_in_event, save_check_command, text_check_command,
                        with_participant_timeouts, write_request_file)
 from . import client_files
 from .config_save import (check_text, check_unchanged, decide, existing_file, new_file, replace_file, save_request,
@@ -44,7 +44,7 @@ from .descriptions import Descriptions
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .refusal import Refused
-from .runtime import LauncherRuntime, OneShotRuntime, RunHandle, RunSpec, ServeRuntime
+from .runtime import LauncherRuntime, RunHandle, RunSpec, ServeRuntime
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session, check_timing
 from .source import Source
@@ -281,17 +281,6 @@ class _PreStartGate:
             self.failed_check = check
             self.decision.set()
 
-    def inspect_line(self, line: str | None) -> None:
-        if self.decision.is_set() or line is None or not line.strip():
-            return
-        text = hide_request_in_line(line, self.request_path) if self.request_path is not None else line
-        try:
-            ev = json.loads(text)
-        except (ValueError, RecursionError):
-            return
-        if isinstance(ev, dict):
-            self.inspect_event(ev)
-
     def inspect_event(self, ev: dict) -> None:
         if self.decision.is_set():
             return
@@ -354,7 +343,6 @@ class _RunSink:
             if gate.discard:
                 return
             gate.buffer.append(("stdout", line))
-            gate.inspect_line(line)
             return
         run, session = self._run, self._run.session
         if line is None:
@@ -366,8 +354,9 @@ class _RunSink:
                 messages.append(session.message())
             self._server.hub.broadcast(messages)
         elif line.strip():
-            text = hide_request_in_line(line, run.request) if run.request is not None else line
-            self._server.relay(session, text, run)
+            raw = hide_request(line, run.request) if run.request is not None else line
+            text = raw if isinstance(raw, str) else line
+            self._server.hub.broadcast(session.bad_line(text))
 
     def on_stderr_line(self, line: str) -> None:
         if not line:
@@ -1223,7 +1212,7 @@ class GuiServer:
             cached_names = self._names.get((config.relative, variant))
             if cached_names and cached_names[0] == checked_stamp:
                 known_participants = cached_names[1]
-            elif FEATURE_CHECK_FILE_ONLY in self.launcher.features:
+            else:
                 base = await self.runtime.inspect_config(
                     config.relative,
                     variant=variant,
@@ -1236,7 +1225,7 @@ class GuiServer:
                     known_networks = base.networks
                 if checked_sha256 is None:
                     checked_sha256 = base.file_sha256
-        if known_networks is None and FEATURE_CHECK_FILE_ONLY not in self.launcher.features:
+        if known_networks is None:
             cached_nets = self._networks.get((config.relative, variant))
             if cached_nets and cached_nets[0] == checked_stamp:
                 known_networks = cached_nets[1]
@@ -1875,20 +1864,6 @@ class GuiServer:
                 elif m["event"]["event"] == "state" and run.session.launcher_mode == "hot":
                     self._push_allowed()
         return sent
-
-    def relay(self, session: Session, line: str, run: Run | None = None) -> None:
-        """One line of the launcher's events: into the summary and to the screens. Nothing that goes wrong with
-        one line stops the reading: the line becomes a bad-event problem, and the next line is read."""
-        try:
-            messages = session.feed_line(line)
-            if self._dispatch_messages(session, messages, run):
-                return
-            error: str = "a message for the screens could not be made of it"
-        except Exception as e:  # a shape the checks did not foresee
-            log.exception("reading an event")
-            error = type(e).__name__
-        self.hub.broadcast(session.problem("bad-event", f"the server could not pass on an event ({error}): it is "
-                                                        "ignored", session._cut(line)))
 
     def relay_event(self, session: Session, event: dict, size: int, run: Run | None = None) -> None:
         """One already-parsed launcher event: into the summary and to the screens."""

@@ -4,15 +4,48 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import os
 import re
 import shutil
 import sys
-import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from vehicle_sil_control.protocol import (
+    CONNECTIONS_FIELDS,
+    DESCRIBE_FIELDS,
+    INTENT_FIELDS,
+    MAX_ID,
+    NO_CONNECTION,
+    REQUEST_FIELDS,
+    REQUEST_VERSION_KEY,
+    TEXT_FIELDS,
+    TIME_COMMANDS,
+    InvalidRequest,
+    check_connect,
+    check_disable,
+    check_enable,
+    check_fields,
+    check_manual,
+    check_name_list,
+    check_network,
+    check_params,
+    check_run_millis,
+    check_speed,
+    check_strict,
+    check_time_command,
+    check_time_policy,
+    check_variant,
+    command_line,
+    request_text,
+    serve_prepare_command,
+    serve_run_command,
+    serve_status_command,
+    speed_argument,
+    stop_command_line,
+    write_request_file,
+)
 
 from . import __version__, process
 
@@ -34,8 +67,6 @@ VERSION_TIMEOUT_S = 10
 SPEED_MIN = 0.000001
 SPEED_MAX = 1000000.0
 STEP_MS_MAX = 10 ** 12
-TIME_COMMANDS = ("pause", "resume", "step", "run_until", "speed")
-MAX_ID = 2 ** 53  # the largest id of a time command (an integer that JavaScript reads exactly)
 # The control links (the launcher's side of the ECUs' variables): the event that says, once per started participant
 # before the simulation runs, where its link stands ({"name", "state", "variables" | "version"}). The states
 # (connected, no_hello, version_mismatch, not_offered, none) are passed on as they are: the server does not read
@@ -51,9 +82,6 @@ SCENARIO_STEP_EVENT = "scenario_step"
 # --timeline <file> writes what the scenario wrote and saw to that file after the run.
 FEATURE_TIMELINE = "timeline"
 FEATURE_RUN_STOP_AT = "run-stop-at"
-FEATURE_SERVE = "serve"
-FEATURE_CHECK_FILE_ONLY = "check-file-only"
-FEATURE_SERVE_PREPARE = "serve-prepare"
 
 
 class LauncherNotFound(Exception):
@@ -168,284 +196,6 @@ def find(explicit: str | None) -> Path:
 # ---------------------------------------------------------------- the command lines
 
 
-class InvalidRequest(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-# What the browser may send: `file` (the configuration file, which this server resolves) and the keys of the request
-# file (schema/run-request.schema.json), with the names and value forms of that file. The keys of the launcher's side
-# (control, timeline, log_dir, events, stdin) are not in the list: this server decides them.
-REQUEST_VERSION_KEY = "vehicle_sil_run_request"
-INTENT_FIELDS = ("scenario", "variant", "params", "disable", "enable", "manual", "strict", "connect", "time_policy")
-# `$schema` is the editor's key of a request file: read and dropped, as the launcher does.
-REQUEST_FIELDS = ("file", "$schema", REQUEST_VERSION_KEY, *INTENT_FIELDS, "speed", "start_paused", "stop_at_ms", "late_tolerance_ms")
-# POST api/check with `text` (the unsaved text of the file, checked as that file): the configuration only, so of the
-# intent only what chooses which configuration is checked. A scenario, the participants to leave out or start by
-# hand, the connections and the time are choices of a run, which a run makes from the saved file.
-TEXT_FIELDS = ("file", "$schema", REQUEST_VERSION_KEY, "variant", "strict", "text")
-# POST api/describe: the file and its variant, whose executables are described again.
-DESCRIBE_FIELDS = ("file", "variant")
-# POST api/connections: the configuration file and the one network to list (the one the user opened).
-CONNECTIONS_FIELDS = ("file", "network")
-# The target of `connect` that keeps a network on SIL Kit only: it needs no list.
-NO_CONNECTION = "none"
-# The launcher's features `connect`, `connections` and `time-policy` are not in REQUIRED_FEATURES: every launcher with
-# `request` has them (the launcher's features are only added, and these came before `request`, on every OS).
-# `timeline` is the only feature of the always-printed ones that the server still asks per run (see FEATURE_TIMELINE).
-
-
-def check_fields(endpoint: str, body: dict, allowed: tuple[str, ...]) -> None:
-    """Refuses a body with a field the endpoint does not take (a field that is ignored, misspelled or not
-    supported, would leave the sender believing it had an effect), a field that is null (the request file has no
-    null: a field that is not wanted is left out) and a request format that is not 1."""
-    unknown = sorted(k for k in body if k not in allowed)
-    if unknown:
-        raise InvalidRequest("invalid-field", f"{endpoint} takes no {', '.join(repr(k) for k in unknown)}: "
-                                              f"the fields it takes are {', '.join(allowed)}")
-    nulls = sorted(k for k, v in body.items() if v is None and k != "file")
-    if nulls:
-        raise InvalidRequest("invalid-field", f"{endpoint} takes no null: leave out {', '.join(repr(k) for k in nulls)} "
-                                              "to choose nothing")
-    if "$schema" in body and not isinstance(body["$schema"], str):
-        raise InvalidRequest("invalid-field", "$schema must be a text (the path or URL of the schema), or left out")
-    version = body.get(REQUEST_VERSION_KEY)
-    if REQUEST_VERSION_KEY in body and (isinstance(version, bool) or version != 1):
-        raise InvalidRequest("invalid-field", f"{REQUEST_VERSION_KEY} must be 1 (the format of the request file) or "
-                                              "left out")
-
-
-def check_variant(variant: object) -> str | None:
-    """The variant of the request (None: none). Whether the file has it, the launcher's check says."""
-    if variant is None:
-        return None
-    if not isinstance(variant, str) or not variant:
-        raise InvalidRequest("invalid-field", "variant must be the name of a variant of the file (a non-empty "
-                                              "string), or left out")
-    return variant
-
-
-def check_params(params: object) -> dict:
-    """The params of the request: {name: value} of the scenario's parameters (a string, a number or true/false).
-    Whether the scenario has them, and what a name or a value may be, the launcher says."""
-    if params is None:
-        return {}
-    if not isinstance(params, dict):
-        raise InvalidRequest("invalid-field", 'params must be an object of parameter name to value, e.g. '
-                                              '{"idle_rpm": 650}')
-    for name, value in params.items():
-        ok = isinstance(value, (str, bool, int)) or (isinstance(value, float) and math.isfinite(value))
-        if not ok:
-            raise InvalidRequest("invalid-field", f"params {name!r} must be a string, a number or true or false")
-    return dict(params)
-
-
-def check_strict(strict: object) -> bool:
-    if strict is None:
-        return False
-    if not isinstance(strict, bool):
-        raise InvalidRequest("invalid-field", "strict must be true or false")
-    return strict
-
-
-def check_connect(connect: object) -> dict[str, str]:
-    """The connect of the request: {network: target}. Whether the file has such a network and the target is one that
-    the launcher takes, the launcher says; whether this server passes the target of a network of the file on, the
-    lists of POST api/connections say (GuiServer._check_targets)."""
-    if connect is None:
-        return {}
-    if not isinstance(connect, dict) or not all(isinstance(n, str) and n and isinstance(t, str)
-                                                for n, t in connect.items()):
-        raise InvalidRequest("invalid-field", 'connect must be an object of network name to target, e.g. '
-                                              '{"ETH_EXT": "enp3s0"}: a target that POST api/connections lists, or '
-                                              '"none" for SIL Kit only')
-    return dict(connect)
-
-
-def check_time_policy(policy: object) -> str | None:
-    """The time_policy of the request. Which values there are, and what they do, the launcher says."""
-    if policy is None:
-        return None
-    if not isinstance(policy, str) or not policy:
-        raise InvalidRequest("invalid-field", 'time_policy must be the name of a time policy that the launcher '
-                                              'takes (a string, e.g. "free"), or left out')
-    return policy
-
-
-def check_network(network: object) -> str:
-    """The network of POST api/connections: a name (which ones the file has, its last check says)."""
-    if not isinstance(network, str) or not network:
-        raise InvalidRequest("invalid-field", 'network must be the name of a network of the file (a non-empty '
-                                              'string), e.g. {"file": "simulation.yaml", "network": "ETH_EXT"}')
-    return network
-
-
-def check_run_millis(body: dict, key: str, minimum: int) -> int | None:
-    if key not in body:
-        return None
-    value = body[key]
-    if type(value) is not int or not minimum <= value <= STEP_MS_MAX:
-        raise InvalidRequest("invalid-field", f"{key} must be an integer from {minimum} to {STEP_MS_MAX}")
-    return value
-
-
-def check_speed(speed: object) -> float | str | None:
-    if speed is None or speed == "max":
-        return speed
-    # Compared before any conversion: an integer of 400 digits is out of range, not an overflow.
-    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not SPEED_MIN <= speed <= SPEED_MAX:
-        raise InvalidRequest("invalid-field", f"speed must be \"max\" or a number from {SPEED_MIN:f} to "
-                                              f"{SPEED_MAX:.0f} (1 is real time)")
-    return float(speed)
-
-
-def check_disable(disable: object, known: list[str]) -> list[str]:
-    """The names of the request's disable: each must be a participant of the check result of the file."""
-    return _check_names("disable", disable, known)
-
-
-def check_manual(manual: object, known: list[str]) -> list[str]:
-    """The names of the request's manual (the user starts them): participants of the check result of the file.
-    (A name that is also in disable is the launcher's to refuse.)"""
-    return _check_names("manual", manual, known)
-
-
-def check_enable(enable: object) -> list[str]:
-    """The names of the request's enable (taken in although the file disables them): which names the file has is
-    the launcher's to say."""
-    return _check_names("enable", enable, None)
-
-
-def check_name_list(key: str, value: object) -> list[str]:
-    """Validates a participant name list shape without checking known names."""
-    return _check_names(key, value, None)
-
-
-def _check_names(key: str, value: object, known: list[str] | None) -> list[str]:
-    if value is None:
-        return []
-    if not isinstance(value, list) or not all(isinstance(n, str) and n for n in value):
-        raise InvalidRequest("invalid-field", f"{key} must be a list of participant names")
-    unknown = [n for n in value if known is not None and n not in known]
-    if unknown:
-        raise InvalidRequest("unknown-participant",
-                             f"no participant named {', '.join(repr(n) for n in unknown)} in this file: the "
-                             f"participants are {', '.join(known or []) or 'none'}")
-    if len(set(value)) != len(value):
-        raise InvalidRequest("invalid-field", f"{key} names a participant twice")
-    return list(value)
-
-
-def speed_argument(speed: float | str) -> str:
-    """A speed as --speed and the speed command take it: max, or the shortest decimal that is the number (2, 0.5,
-    1e-06), never rounded (f"{x:g}" would make 1.2345678 into 1.23457)."""
-    if speed == "max":
-        return "max"
-    text = repr(float(speed))
-    return text[:-2] if text.endswith(".0") else text
-
-
-def check_time_command(body: dict) -> dict:
-    """The command of POST api/time after its run target has been removed: {"command": "pause" | "resume"},
-    {"command": "step", "ms": <1 to 10^12>}, {"command": "run_until", "at_ms": <0 to 10^12>} or
-    {"command": "speed", "value": <a speed or "max">}, each with an
-    optional "id" (a whole number from 0 to 2^53: the launcher's `command` event answering it has the same id).
-    Other keys are refused (they would be ignored by the launcher, and a typo should not pass silently)."""
-    name = body.get("command")
-    if name not in TIME_COMMANDS:
-        raise InvalidRequest("invalid-field", f"command must be one of {', '.join(TIME_COMMANDS)} (to stop, use "
-                                              "POST api/stop)")
-    allowed = {"command", "id", *({"step": ("ms",), "run_until": ("at_ms",), "speed": ("value",)}.get(name, ()))}
-    extra = sorted(k for k in body if k not in allowed)
-    if extra:
-        raise InvalidRequest("invalid-field", f"{name} takes no {', '.join(extra)}: send "
-                                              f"{_time_example(name)}")
-    request = {}
-    if "id" in body:
-        number = body["id"]
-        if isinstance(number, bool) or not isinstance(number, int) or not 0 <= number <= MAX_ID:
-            raise InvalidRequest("invalid-field", f"id must be a whole number from 0 to {MAX_ID} (the launcher's "
-                                                  "answer carries it back): leave it out, or send "
-                                                  f"{_time_example(name, 7)}")
-        request["id"] = number
-    if name == "step":
-        ms = body.get("ms")
-        if isinstance(ms, bool) or not isinstance(ms, int) or not 1 <= ms <= STEP_MS_MAX:
-            raise InvalidRequest("invalid-field", f"step needs ms, a whole number of milliseconds of virtual time "
-                                                  f"from 1 to {STEP_MS_MAX}: send {_time_example(name)}")
-        return {"command": name, "ms": ms, **request}
-    if name == "run_until":
-        at_ms = body.get("at_ms")
-        if isinstance(at_ms, bool) or not isinstance(at_ms, int) or not 0 <= at_ms <= STEP_MS_MAX:
-            raise InvalidRequest("invalid-field", f"run_until needs at_ms, the virtual time to stand still at, a whole "
-                                                  f"number of milliseconds from 0 to {STEP_MS_MAX}: send "
-                                                  f"{_time_example(name)}")
-        return {"command": name, "at_ms": at_ms, **request}
-    if name == "speed":
-        value = body.get("value")
-        if value is None:
-            raise InvalidRequest("invalid-field", f"speed needs value: send {_time_example(name)}")
-        return {"command": name, "value": "max" if value == "max" else check_speed(value), **request}
-    return {"command": name, **request}
-
-
-def _time_example(name: str, id: int | None = None) -> str:
-    text = {"step": '{"command":"step","ms":100}', "run_until": '{"command":"run_until","at_ms":5000}',
-            "speed": '{"command":"speed","value":1}'}.get(name, f'{{"command":"{name}"}}')
-    return text if id is None else f'{text[:-1]},"id":{id}}}'
-
-
-
-def command_line(command: dict, *, run_id: str | None = None) -> bytes:
-    """The line written to the launcher's standard input for a command that check_time_command accepted."""
-    if command["command"] == "speed":
-        value = command["value"]
-        text = '"max"' if value == "max" else speed_argument(value)
-        number = f',"id":{command["id"]}' if "id" in command else ""
-        run_part = f',"run":{json.dumps(run_id)}' if run_id is not None else ""
-        return f'{{"command":"speed","value":{text}{number}{run_part}}}\n'.encode()
-    payload = {**command, "run": run_id} if run_id is not None else command
-    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
-
-
-def stop_command_line(run_id: str | None = None, *, force: bool | None = None) -> bytes:
-    """The line written to the launcher's standard input to ask the current run to stop."""
-    if run_id is None and force is None:
-        return b'{"command":"stop"}\n'
-    payload: dict[str, object] = {"command": "stop"}
-    if run_id is not None:
-        payload["run"] = run_id
-    if force is not None:
-        payload["force"] = force
-    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
-
-
-def request_text(intent: dict) -> str:
-    """The text of the request file for an intent that the check_* functions accepted (the keys of
-    schema/run-request.schema.json): the version first, then the intent's keys as given."""
-    return json.dumps({REQUEST_VERSION_KEY: 1, **intent}, ensure_ascii=False, indent=2) + "\n"
-
-
-def write_request_file(intent: dict) -> Path:
-    """A new request file for this run or check, readable by this user only (POSIX: mode 0600, made so; Windows:
-    the user's temporary directory, with the access rights of that directory). The caller removes it
-    (control.remove) when the launcher is done with it."""
-    try:
-        data = request_text(intent).encode("utf-8")
-    except UnicodeEncodeError:
-        raise InvalidRequest("invalid-field", "a text of the request is not valid Unicode (it has a lone surrogate "
-                                              "such as \\ud800): send the text as UTF-8") from None
-    fd, name = tempfile.mkstemp(prefix="vehicle-sil-gui-request-", suffix=".json")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-    except BaseException:
-        Path(name).unlink(missing_ok=True)
-        raise
-    return Path(name)
-
-
 def check_command(launcher: Launcher, file: str, request: Path) -> list[str]:
     """request: the file that write_request_file made (everything that the browser chose is in it)."""
     return launcher.prefix + ["check", "--json", "--request", str(request), "--", file]
@@ -504,67 +254,15 @@ def connections_command(launcher: Launcher, file: str, network: str) -> list[str
     return launcher.prefix + ["connections", "--json", "--network", network, "--", file]
 
 
-def run_command(launcher: Launcher, file: str, request: Path, control_credentials: Path | None = None,
-                timeline: Path | None = None) -> list[str]:
-    """request: as check_command's. control_credentials: start the launcher's control server (the ECUs' variables)
-    on a free port of 127.0.0.1, with the credentials of that file (a token is never an argument: arguments are in
-    the hello event and in the list of processes). timeline: the file that the launcher writes the scenario's
-    timeline to (only with a scenario in the request, and a launcher with FEATURE_TIMELINE)."""
-    argv = launcher.prefix + ["run", "--events", "--stdin-commands"]
-    if timeline is not None:
-        argv += ["--timeline", str(timeline)]
-    if control_credentials is not None:
-        argv += ["--control", "0", "--control-credentials", str(control_credentials)]
-    return argv + ["--request", str(request), "--", file]
-
-
-def serve_command(launcher: Launcher, file: str, control_credentials: Path | None = None) -> list[str]:
-    """Builds the `vehicle_sil_launch serve` invocation for resident execution."""
+def serve_command(launcher: Launcher, file: str, control_credentials: Path | None = None,
+                  *, once: bool = False) -> list[str]:
+    """Builds the `vehicle_sil_launch serve` (or `serve --once`) invocation."""
     argv = launcher.prefix + ["serve"]
+    if once:
+        argv.append("--once")
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
     return argv + ["--", file]
-
-
-def serve_run_command(request: Path, timeline: Path | None = None, command_id: int | None = None) -> bytes:
-    """Builds the NDJSON `run` command written to `vehicle_sil_launch serve` stdin."""
-    payload: dict[str, object] = {"command": "run", "request": str(request)}
-    if timeline is not None:
-        payload["timeline"] = str(timeline)
-    if command_id is not None:
-        payload["id"] = command_id
-    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
-
-
-def serve_prepare_command(
-    *,
-    variant: str | None = None,
-    disable: Sequence[str] = (),
-    enable: Sequence[str] = (),
-    manual: Sequence[str] = (),
-    command_id: int | None = None,
-) -> bytes:
-    """Builds the NDJSON `prepare` command written to `vehicle_sil_launch serve` stdin."""
-    payload: dict[str, object] = {"command": "prepare"}
-    if variant is not None:
-        payload["variant"] = variant
-    if disable:
-        payload["disable"] = list(disable)
-    if enable:
-        payload["enable"] = list(enable)
-    if manual:
-        payload["manual"] = list(manual)
-    if command_id is not None:
-        payload["id"] = command_id
-    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
-
-
-def serve_status_command(command_id: int | None = None) -> bytes:
-    """Builds the NDJSON `status` command written to `vehicle_sil_launch serve` stdin."""
-    payload: dict[str, object] = {"command": "status"}
-    if command_id is not None:
-        payload["id"] = command_id
-    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
 
 
 def with_participant_timeouts(argv: list[str], start_timeout_ms: int, stop_timeout_ms: int) -> list[str]:
@@ -631,17 +329,6 @@ def hide_request(value: object, path: Path, said: str = REQUEST_NAME) -> object:
                 else:
                     dst[k] = item
     return root
-
-
-def hide_request_in_line(line: str, path: Path) -> str:
-    """One line of the launcher's events, with hide_request applied when it names the request file."""
-    name = str(path)
-    if name not in line and json.dumps(name)[1:-1] not in line:
-        return line
-    try:
-        return json.dumps(hide_request(json.loads(line), path), ensure_ascii=False, separators=(",", ":"))
-    except (ValueError, RecursionError):
-        return hide_request(line, path)
 
 
 def _contains_text(value: object, needle: str) -> bool:
