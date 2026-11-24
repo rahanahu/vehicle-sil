@@ -131,6 +131,10 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
       }, storage);
       const requestUrls: string[] = [];
       page.context().on('request', (request) => requestUrls.push(request.url()));
+      if (storage === 'available') {
+        await page.clock.install();
+        await page.clock.resume();
+      }
       await page.goto(server.url);
       await page.evaluate(() => {
         window.dispatchEvent(
@@ -210,11 +214,33 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         });
         await page.locator('app-io-row').filter({ hasText: 'ecu.connected' }).hover();
         await page.getByRole('button', { name: 'Add ecu.connected to waveforms' }).click();
-        // Hold the lock past one attempt's timeout, then make no further selection changes.
-        await page.waitForTimeout(3500);
+        // Hold the lock past one attempt's timeout so it aborts, then release and advance past the
+        // retry delay without making any further selection changes.
+        await expect
+          .poll(() =>
+            page.evaluate(
+              async () =>
+                (await navigator.locks.query()).pending.filter(
+                  (lock) => lock.name === 'vehicle-sil-workbench-wave-head',
+                ).length,
+            ),
+          )
+          .toBe(1);
+        await page.clock.fastForward(3_000);
+        await expect
+          .poll(() =>
+            page.evaluate(
+              async () =>
+                (await navigator.locks.query()).pending.filter(
+                  (lock) => lock.name === 'vehicle-sil-workbench-wave-head',
+                ).length,
+            ),
+          )
+          .toBe(0);
         await page.evaluate(() =>
           (window as typeof window & { releaseWaveLock: () => void }).releaseWaveLock(),
         );
+        await page.clock.fastForward(1_000);
         await expect
           .poll(
             () =>
@@ -257,7 +283,13 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
             { current: instance, name: `test.${rejected}` },
           );
           await expect.poll(() => attempts).toBe(1);
-          await page.waitForTimeout(4500);
+          await page.evaluate(() =>
+            navigator.locks.request('vehicle-sil-workbench-wave-head', () => undefined),
+          );
+          await page.clock.fastForward(4_500);
+          await page.evaluate(() =>
+            navigator.locks.request('vehicle-sil-workbench-wave-head', () => undefined),
+          );
           expect(attempts).toBe(1);
           await page.unroute('**/api/app');
         }
@@ -295,14 +327,15 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         }, instance);
         expect(heldRequests).toBe(1);
         // Another tab must be able to acquire the shared lock even if this response never arrives.
-        const acquired = await page.evaluate(() =>
-          Promise.race([
-            navigator.locks.request('vehicle-sil-workbench-wave-head', () => true),
-            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000)),
-          ]),
+        const acquired = page.evaluate(() =>
+          navigator.locks.request('vehicle-sil-workbench-wave-head', () => true),
         );
-        releaseHeld!();
-        expect(acquired).toBe(true);
+        await page.clock.fastForward(3_000);
+        try {
+          expect(await acquired).toBe(true);
+        } finally {
+          releaseHeld!();
+        }
         await page.unroute('**/api/app');
       }
       // Some browsers block sessionStorage or do not copy it into the new tab. The child must
@@ -544,6 +577,8 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         // An old tab whose instance key was never created receives a late hello after the new
         // instance has claimed the head. Its authoritative app recheck must reject the claim.
         const stale = await page.context().newPage();
+        await stale.clock.install();
+        await stale.clock.resume();
         let appReplies = 0;
         let staleSocket: WebSocketRoute | undefined;
         let currentHello = '';
@@ -603,6 +638,16 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           });
           bus.close();
         }, oldInstance);
+        await expect.poll(() => failures, { timeout: RUN_TIMEOUT }).toBeGreaterThanOrEqual(1);
+        await stale.evaluate(() =>
+          navigator.locks.request('vehicle-sil-workbench-wave-head', () => undefined),
+        );
+        await stale.clock.fastForward(1_000);
+        await expect.poll(() => failures, { timeout: RUN_TIMEOUT }).toBeGreaterThanOrEqual(2);
+        await stale.evaluate(() =>
+          navigator.locks.request('vehicle-sil-workbench-wave-head', () => undefined),
+        );
+        await stale.clock.fastForward(2_000);
         await expect.poll(() => failures, { timeout: RUN_TIMEOUT }).toBeGreaterThanOrEqual(3);
         await stale.unroute('**/api/app');
         staleSocket!.send(currentHello);

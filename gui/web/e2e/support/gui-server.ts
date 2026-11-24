@@ -65,8 +65,21 @@ async function stop(server: ChildProcess): Promise<void> {
     return;
   }
   if (!groupAlive(pid)) return;
-  process.kill(-pid, 'SIGTERM');
   const deadline = Date.now() + scaled(15_000);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), Math.max(0, deadline - Date.now()));
+  timer.unref();
+  const exited =
+    server.exitCode === null && server.signalCode === null
+      ? once(server, 'exit', { signal: ac.signal }).catch(() => undefined)
+      : Promise.resolve();
+  try {
+    process.kill(-pid, 'SIGTERM');
+    await exited;
+  } finally {
+    ac.abort();
+    clearTimeout(timer);
+  }
   while (groupAlive(pid) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

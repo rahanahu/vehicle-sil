@@ -527,23 +527,45 @@ test('timeline element: an older load that answers late is not shown over a newe
     `<vehicle-sil-timeline id="t"></vehicle-sil-timeline>`,
     RECORD,
   );
-  let answered = false;
+  let markRequested!: () => void;
+  const requested = new Promise<void>((resolve) => {
+    markRequested = resolve;
+  });
+  let releaseSlow!: () => void;
+  const slowGate = new Promise<void>((resolve) => {
+    releaseSlow = resolve;
+  });
+  let markFulfilled!: () => void;
+  const fulfilled = new Promise<void>((resolve) => {
+    markFulfilled = resolve;
+  });
   await page.route(`${ORIGIN}/slow.json`, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    answered = true;
+    markRequested();
+    await slowGate;
     await route
       .fulfill({ body: readFileSync(join(REFERENCES, 'motions.timeline.json')) })
       .catch(() => undefined); // the element may have stopped the request
+    markFulfilled();
   });
   await page.goto(`${ORIGIN}/test.html`);
   const el = page.locator('#t');
   await set(page, 't', { src: 'slow.json' });
-  await set(page, 't', {
-    data: readFileSync(join(REFERENCES, 'fails_beside.timeline.json'), 'utf8'),
-  });
-  await expect(el.getByTestId('failure')).toBeVisible();
-  await expect.poll(() => answered).toBe(true);
-  await page.waitForTimeout(200);
+  await requested;
+  try {
+    await set(page, 't', {
+      data: readFileSync(join(REFERENCES, 'fails_beside.timeline.json'), 'utf8'),
+    });
+    await expect(el.getByTestId('failure')).toBeVisible();
+  } finally {
+    releaseSlow();
+  }
+  await fulfilled;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   await expect(el.getByTestId('failure')).toBeVisible();
   expect((await events(page)).map(([, type]) => type)).toEqual(['load']);
   expect(problems).toEqual([]);
@@ -625,11 +647,29 @@ test('timeline element: moved while it loads, it loads again and shows the file 
   page,
 }) => {
   const problems = await serve(page, `<div id="a"></div><div id="b"></div>`, RECORD);
+  let requests = 0;
+  let markFirstRequested!: () => void;
+  const firstRequested = new Promise<void>((resolve) => {
+    markFirstRequested = resolve;
+  });
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let markFirstFulfilled!: () => void;
+  const firstFulfilled = new Promise<void>((resolve) => {
+    markFirstFulfilled = resolve;
+  });
   await page.route(`${ORIGIN}/slow.json`, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const n = ++requests;
+    if (n === 1) {
+      markFirstRequested();
+      await firstGate;
+    }
     await route
       .fulfill({ body: readFileSync(join(REFERENCES, 'motions.timeline.json')) })
       .catch(() => undefined); // the element stopped the first request
+    if (n === 1) markFirstFulfilled();
   });
   await page.goto(`${ORIGIN}/test.html`);
   await page.evaluate(() => {
@@ -641,11 +681,22 @@ test('timeline element: moved while it loads, it loads again and shows the file 
     el.src = 'slow.json';
     document.getElementById('a')!.append(el);
   });
+  await firstRequested;
   await expect(page.locator('#t')).toHaveAttribute('aria-busy', 'true');
-  await page.evaluate(() => document.getElementById('b')!.append(document.getElementById('t')!));
-  await expect(page.locator('#t').getByTestId('passed')).toBeVisible();
-  await expect(page.locator('#t')).not.toHaveAttribute('aria-busy', 'true');
-  await page.waitForTimeout(400);
+  try {
+    await page.evaluate(() => document.getElementById('b')!.append(document.getElementById('t')!));
+    await expect(page.locator('#t').getByTestId('passed')).toBeVisible();
+    await expect(page.locator('#t')).not.toHaveAttribute('aria-busy', 'true');
+  } finally {
+    releaseFirst();
+  }
+  await firstFulfilled;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   expect((await events(page)).map(([, type]) => type)).toEqual(['load']);
   expect(problems).toEqual([]);
 });
