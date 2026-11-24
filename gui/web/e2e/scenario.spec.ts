@@ -120,14 +120,14 @@ test('saves the writes of a run as a scenario', async ({ page }) => {
   const session = await waitForVariables(page, target, 'Engine', RUN_TIMEOUT);
   const write = await page.request.post(new URL('api/write', target.base).href, {
     headers: { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin },
-    data: { session, writes: { Engine: { 'engine.demand': 30 } } },
+    data: { run_id: session, writes: { Engine: { 'engine.demand': 30 } } },
   });
   expect(write.status(), await write.text()).toBe(200);
   await expect(card.getByTestId('recording-count')).toContainText('1 件', { timeout: RUN_TIMEOUT });
   const download = page.waitForEvent('download');
   await card.getByTestId('recording-save').click();
   const file = await download;
-  expect(file.suggestedFilename()).toMatch(/^forever-run\d+\.yaml$/);
+  expect(file.suggestedFilename()).toMatch(/^forever-run.+\.yaml$/);
   const text = await readFile(await file.path(), 'utf8');
   expect(text).toContain('vehicle_sil_scenario: 1');
   expect(text).toContain('Engine.engine.demand: 30.0');

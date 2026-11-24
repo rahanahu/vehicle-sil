@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test';
 import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
 import { RUN_TIMEOUT, WORDS, choose, start, startButton, stopButton } from './support/run-page';
+import { stopRun } from './support/variables-page';
 
 test('a network is connected outside only when chosen, says so before each start, and shows its row while it runs', async ({
   page,
@@ -148,10 +149,7 @@ test('a network is connected outside only when chosen, says so before each start
     await expect(select).toHaveValue('none');
     await expect(page.getByTestId('connect-summary')).toHaveCount(0);
   } finally {
-    await page.request.post(new URL('api/stop', server.url).href, {
-      headers: { Authorization: `Bearer ${server.token}`, Origin: new URL(server.url).origin },
-      data: { force: true },
-    });
+    await stopRun(page, { base: new URL('/', server.url).href, token: server.token });
     await page.close();
     await server.stop();
   }

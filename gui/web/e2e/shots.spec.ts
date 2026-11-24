@@ -14,6 +14,7 @@ import {
   startButton,
   stopButton,
 } from './support/run-page';
+import { stopRun } from './support/variables-page';
 
 const directory = process.env['VEHICLE_SIL_GUI_SHOTS'];
 /** 撮る画面の言語（VEHICLE_SIL_GUI_SHOTS_LANGUAGE、ja か en。既定は ja）。 */
@@ -81,10 +82,7 @@ test.describe('screenshots', () => {
         }
       } finally {
         // 動いている実行は、待たずに止めてからサーバーを止める（止まらない筋書きもあるので）
-        await page.request.post(new URL('api/stop', server.url).href, {
-          headers: { Authorization: `Bearer ${server.token}`, Origin: new URL(server.url).origin },
-          data: { force: true },
-        });
+        await stopRun(page, { base: new URL('/', server.url).href, token: server.token });
         await page.close();
         await server.stop();
       }

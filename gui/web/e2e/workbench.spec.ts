@@ -61,7 +61,7 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
     try {
       let socket: WebSocketRoute | undefined;
       let variables:
-        | { session: number; variables: { peers: { name: string }[]; [key: string]: unknown } }
+        | { run_id: string; variables: { peers: { name: string }[]; [key: string]: unknown } }
         | undefined;
       if (storage === 'blocked') {
         await page.routeWebSocket(/\/ws$/, (client) => {
@@ -160,7 +160,7 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         socket!.send(
           JSON.stringify({
             type: 'variables',
-            session: complete.session,
+            run_id: complete.run_id,
             variables: { ...complete.variables, state: 'connecting', peers: [] },
           }),
         );
@@ -168,7 +168,7 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         socket!.send(
           JSON.stringify({
             type: 'variables',
-            session: complete.session,
+            run_id: complete.run_id,
             variables: {
               ...complete.variables,
               peers: complete.variables.peers.filter((p) => p.name === 'Dashboard'),
@@ -181,7 +181,7 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
         socket!.send(
           JSON.stringify({
             type: 'variables',
-            session: complete.session,
+            run_id: complete.run_id,
             variables: complete.variables,
           }),
         );
@@ -398,7 +398,7 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           bus.postMessage({
             kind: 'history',
             instance: 'old-server',
-            session: 1,
+            session: '1',
             histories: [
               [key, Array.from({ length: 600 }, (_, i) => ({ sampleMs: i - 600, value: 999999 }))],
             ],
@@ -406,13 +406,13 @@ for (const storage of ['available', 'blocked', 'corrupt'] as const) {
           bus.postMessage({
             kind: 'selection',
             instance: 'old-server',
-            session: 1,
+            session: '1',
             entries: [{ key, trace: null, revision: 9999, actor: 'old' }],
           });
           bus.postMessage({
             kind: 'selection',
             instance: currentInstance,
-            session: 0,
+            session: '0',
             entries: [
               {
                 key: JSON.stringify(['Engine', 'test.marker']),
@@ -754,15 +754,14 @@ test('workbench shows the active stop time and restores the next run input', asy
     await expect(draft).toHaveCount(0);
     send({
       ...running,
-      snapshot_rev: running.snapshot_rev + 1,
       check: null,
       stop_at_ms: 10000,
     });
     await expect(page.getByText('Stop at (ms): 10000', { exact: true })).toBeVisible();
-    send({ ...summary('ended'), snapshot_rev: running.snapshot_rev + 2 });
+    send({ ...summary('ended') });
     await expect(draft).toHaveValue('4321');
 
-    send({ ...running, id: running.id + 1 });
+    send({ ...running, id: '2' });
     await expect(page.getByText('Stop at (ms): No limit', { exact: true })).toBeVisible();
   } finally {
     await server.stop();
@@ -795,7 +794,7 @@ test('workbench shows the overall failure when the scenario passed', async ({ pa
       readFileSync(join(REPOSITORY, 'gui/protocol/examples/session-ended.json'), 'utf8'),
     );
     const session = example.response.session;
-    session.id = 1000;
+    session.id = '1000';
     session.result = {
       ...session.result,
       result: 'failed',

@@ -3,7 +3,7 @@
 // 本物のランチャーで動かす e2e（e2e/real/）も、ここの startGuiServer でサーバーを起動する（support/real-server.ts）。
 import { ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -31,7 +31,9 @@ export const GUI_PORT = Number(process.env['VEHICLE_SIL_GUI_E2E_PORT']);
 /** 構成ファイルを選べる範囲: 流し直すランチャーの録りがある構成ファイル。 */
 export const REPOSITORY = resolve(__dirname, '../../../..');
 export const CONFIGS = resolve(REPOSITORY, 'gui/server/tests/configs');
-export const REPLAY_LAUNCHER = resolve(REPOSITORY, 'gui/server/tests/replay_launcher.py');
+const STUB_LAUNCHER = resolve(REPOSITORY, 'gui/server/tests/stub_launcher.py');
+const LEGACY_REPLAY_LAUNCHER = resolve(REPOSITORY, 'gui/server/tests/replay_launcher.py');
+export const REPLAY_LAUNCHER = existsSync(STUB_LAUNCHER) ? STUB_LAUNCHER : LEGACY_REPLAY_LAUNCHER;
 
 /** 試験が読むトークン（process.env に置くと、試験を動かすプロセスに渡る）。 */
 export function guiToken(): string {

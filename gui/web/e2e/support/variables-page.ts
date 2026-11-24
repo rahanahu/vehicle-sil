@@ -37,10 +37,24 @@ export async function timeCommand(page: Page, target: Target, command: string): 
 
 /** 画面を通さずに、待たずに止めて、終わるまで待つ。 */
 export async function stopRun(page: Page, target: Target, timeout = scaled(20_000)): Promise<void> {
-  await page.request.post(new URL('api/stop', target.base).href, {
-    headers: headers(target),
-    data: { force: true },
+  const current = await page.request.get(new URL('api/session', target.base).href, {
+    headers: { Authorization: `Bearer ${target.token}` },
   });
+  expect(current.status()).toBe(200);
+  const currentBody = (await current.json()) as {
+    instance: string;
+    session: { id: string; state: string } | null;
+  };
+  if (currentBody.session?.state === 'running') {
+    await page.request.post(new URL('api/stop-session', target.base).href, {
+      headers: headers(target),
+      data: {
+        run_id: currentBody.session.id,
+        instance: currentBody.instance,
+        force: true,
+      },
+    });
+  }
   await expect
     .poll(
       async () => {
@@ -58,15 +72,15 @@ export async function stopRun(page: Page, target: Target, timeout = scaled(20_00
 /**
  * 画面を通さずに書く前に、変数が書ける状態になるまで待つ: いまの実行の変数の状態が `ready` で、`peer` が
  * つながって変数を出している（実行を始めた直後は `connecting` で、書くと 409 `variables-not-ready`）。
- * いまの実行の番号を返す。
+ * いまの実行の識別子を返す。
  */
 export async function waitForVariables(
   page: Page,
   target: Target,
   peer: string,
   timeout = scaled(20_000),
-): Promise<number> {
-  let id = 0;
+): Promise<string> {
+  let id = '';
   await expect
     .poll(
       async () => {
@@ -75,7 +89,7 @@ export async function waitForVariables(
         });
         const body = (await response.json()) as {
           session: {
-            id: number;
+            id: string;
             variables: {
               state: string;
               peers: { name: string; connected: boolean; variables: unknown[] }[];
@@ -86,7 +100,7 @@ export async function waitForVariables(
         const found = variables?.peers.find((p) => p.name === peer);
         const ready = found?.connected && found.variables.length > 0;
         const listed = !found ? 'not listed' : ready ? 'connected' : 'not connected';
-        id = body.session?.id ?? 0;
+        id = body.session?.id ?? '';
         return `${variables?.state ?? 'no run'}, ${peer} ${listed}`;
       },
       { timeout, message: `the variables of ${peer} did not become writable` },

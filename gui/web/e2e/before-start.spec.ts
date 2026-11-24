@@ -4,6 +4,7 @@
 import { expect, test } from '@playwright/test';
 import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
 import { RUN_TIMEOUT, WORDS, choose, result, start } from './support/run-page';
+import { stopRun } from './support/variables-page';
 
 const CONTROL_FEATURES =
   'events,stdin-commands,request,stdin-run-until,check-variables,speed,start-paused,run-stop-at,manual-participants,scenario,time-commands,control-links,control-server,state';
@@ -59,17 +60,14 @@ test('started paused with a control server: it waits before the first step, and 
     expect((await sent).postDataJSON()).toEqual({
       command: 'resume',
       id: expect.any(Number),
-      session,
+      run_id: session,
       instance: expect.any(String),
     });
     await expect(result(page, session).getByTestId('result')).toContainText('成功', {
       timeout: RUN_TIMEOUT,
     });
   } finally {
-    await page.request.post(new URL('api/stop', server.url).href, {
-      headers: { Authorization: `Bearer ${server.token}`, Origin: new URL(server.url).origin },
-      data: { force: true },
-    });
+    await stopRun(page, { base: new URL('/', server.url).href, token: server.token });
     await page.close();
     await server.stop();
   }

@@ -106,20 +106,20 @@ export async function choose(page: Page, file: string, language: Language = 'ja'
   await expect(page.getByRole('button', { name: WORDS[language].recheck })).toBeEnabled();
 }
 
-/** 始めて、サーバーが付けたセッションの番号を返す。 */
-export async function start(page: Page): Promise<number> {
+/** 始めて、サーバーが付けた実行の識別子を返す。 */
+export async function start(page: Page): Promise<string> {
   await expect(startButton(page)).not.toHaveAttribute('aria-disabled', 'true');
   await expect(startButton(page)).toHaveAttribute('data-armed', 'true');
   const response = page.waitForResponse((r) => r.url().endsWith('/api/run'));
   await startButton(page).click();
   const answer = await response;
   expect(answer.status()).toBe(200);
-  return ((await answer.json()) as { session: { id: number } }).session.id;
+  return ((await answer.json()) as { run_id: string }).run_id;
 }
 
 /** サーバーの要約の、試験が見る部分。 */
 export interface ServerSession {
-  id: number;
+  id: string;
   state: string;
   stop: string;
   launcher: { running: boolean };
@@ -140,7 +140,14 @@ export async function serverSession(page: Page): Promise<ServerSession | null> {
  * 前の試験の後始末と、画面に偽の通知を差し込んだ試験の後始末に使う。
  */
 export async function stopOnServer(page: Page, options: { force?: boolean } = {}): Promise<void> {
-  const session = await serverSession(page);
+  const current = await page.request.get('api/session', {
+    headers: { Authorization: `Bearer ${guiToken()}` },
+  });
+  expect(current.status()).toBe(200);
+  const { instance, session } = (await current.json()) as {
+    instance: string;
+    session: ServerSession | null;
+  };
   if (!session || session.state !== 'running') return;
   const headers = { Authorization: `Bearer ${guiToken()}`, Origin: new URL(page.url()).origin };
   const ended = async () => (await serverSession(page))?.state !== 'running';
@@ -152,7 +159,10 @@ export async function stopOnServer(page: Page, options: { force?: boolean } = {}
           [true, RUN_TIMEOUT],
         ] as const);
   for (const [force, timeout] of passes) {
-    await page.request.post('api/stop', { headers, data: { force } });
+    await page.request.post('api/stop-session', {
+      headers,
+      data: { run_id: session.id, instance, force },
+    });
     try {
       await expect.poll(ended, { timeout }).toBe(true);
       return;
@@ -162,7 +172,7 @@ export async function stopOnServer(page: Page, options: { force?: boolean } = {}
   }
 }
 
-export function result(page: Page, session: number) {
+export function result(page: Page, session: string) {
   return page.locator(`[data-testid="result-card"][data-session="${session}"]`);
 }
 

@@ -86,7 +86,7 @@ test('stopping a real run that does not end by itself', async ({ page }) => {
   await expect.poll(simSeconds, { timeout: RUN_TIMEOUT }).toBeGreaterThan(first);
   const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop-session'));
   await press(stopButton(page));
-  expect((await stop).postDataJSON()).toEqual({ session, instance, force: false });
+  expect((await stop).postDataJSON()).toEqual({ run_id: session, instance, force: false });
   await expect(result(page, session)).toContainText('操作で停止', { timeout: RUN_TIMEOUT });
   await expect(result(page, session).getByTestId('result')).toHaveAttribute('data-tone', 'neutral');
   await expect(result(page, session)).toContainText('停止の命令');

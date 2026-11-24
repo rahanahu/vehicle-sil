@@ -178,7 +178,7 @@ The response is `{file, stamp}`, with the stamp of the saved content. A save tak
 
 The GUI Client requires an `instance` in successful `api/session` and `api/run` responses. If it is missing, the operation fails with a message to use the GUI server from the same release. A start request may already have reached the server. Check the current run before retrying.
 
-To stop a run, use `POST api/stop-session` with `{"run_id": <string>, "instance": <server instance>, "force": <boolean>}` (`force` is optional; if omitted, it is `false`; `instance` is optional when stopping the current run directly). `instance` is the identifier in the `api/run` or `api/session` answer or the WebSocket hello. If the instance differs, or another run is current or starting, it returns 409 `session-changed` and sends no stop. The check and the stop are made together, before another request can change the current run. A field other than `run_id`, `instance` and `force` (or a null) is refused with 400 `invalid-field` and nothing is stopped, as for the other endpoints.
+To stop a run, use `POST api/stop-session` with `{"run_id": <string>, "instance": <server instance>, "force": <boolean>}` (`force` is optional; if omitted, it is `false`). `instance` is the identifier in the `api/run` or `api/session` answer or the WebSocket hello. If the instance differs, or another run is current or starting, it returns 409 `session-changed` and sends no stop. The check and the stop are made together, before another request can change the current run. A field other than `run_id`, `instance` and `force` (or a null) is refused with 400 `invalid-field` and nothing is stopped, as for the other endpoints.
 
 | `force` | What it does | If a stop is already requested |
 |---|---|---|
