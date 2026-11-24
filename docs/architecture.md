@@ -71,7 +71,7 @@ vehicle-sil/
 ├── libs/control_grpc/ vehicle_sil::control_grpc  gRPC layer of the Control API (ControlServer for clients; only with VEHICLE_SIL_BUILD_CONTROL_SERVER)
 ├── libs/trace/       vehicle_sil::trace  Profiling trace of steps and writes, taken when VEHICLE_SIL_TRACE is set (standard library only; internal)
 ├── proto/            Control API definition (vehicle_sil/control/v1/control.proto)
-├── python/vehicle_sil_control/ Python client and CLI for the Control API, helpers that run `vehicle_sil_launch run --control` as a child process
+├── python/vehicle_sil_control/ Python client and CLI for the Control API, helpers that run `vehicle_sil_launch run --control` or `serve` as a child process
 ├── bridges/common/  run_bridge(), shared by the bridge executables (stopping, monitoring loop, stop order, exit codes; internal)
 ├── bridges/can/     CanBridge (shared by the CAN bridges) and ExternalPortAdapter (a target of its own) (portable; internal)
 ├── bridges/vector-xl/ Vector XL CAN Bridge (channel selection and arguments everywhere; XL backend and executable for Windows only)

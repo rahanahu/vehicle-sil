@@ -16,6 +16,7 @@ The Control API is a gRPC API for controlling and monitoring a running simulatio
 | Declaring variables in ECU code | [ECU variables](#ecu-variables) |
 | gRPC calls and the matching Python methods, CLI commands and roles | [List of calls](#list-of-calls) |
 | The Python client | [Python](#python) |
+| Running several simulations in one launcher (`Serve`, `RunHandle`) | [Run sequentially in one launcher (`Serve`, `RunHandle`)](#run-sequentially-in-one-launcher-serve-runhandle) |
 | Reading the time and values as of the same instant | [Read time and values together (`snapshot()`)](#read-time-and-values-together-snapshot) |
 | Using it from the command line | [CLI](#cli) |
 | Status codes and exceptions | [Errors](#errors) |
@@ -101,7 +102,7 @@ Each run has an ID that the launcher gives it: an opaque string. Compare it for 
 | Topic | Details |
 |---|---|
 | How a client learns the ID | `run` of `PingReply` (`Ping`). With `serve`, the launcher's events tell it too (see [simulation-events.md](simulation-events.md)). |
-| How a call names the run | The metadata `vehicle-sil-run: <ID>`. In Python, `Control(address, run=<ID>)` or `Control.for_current_run(address)` (see [Python](#python)). |
+| How a call names the run | The metadata `vehicle-sil-run: <ID>`. In Python, `Control(address, run=<ID>)`, `Control.for_current_run(address)`, or `run.control()` from `Serve` (see [Python](#python)). |
 | A call that names another run | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` in the trailing metadata is `run-changed`. Nothing of the call reaches the ECUs or the time. |
 | A call that names no run, with `vehicle_sil_launch run` | Served, as before runs had IDs. |
 | A call that names no run, with `vehicle_sil_launch serve` (one launcher, one run after another; see [simulation-run.md](simulation-run.md)) | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` is `run-required`. |
@@ -481,6 +482,50 @@ If the launcher ends without printing a result, or the run ends before the await
 
 If you start the launcher yourself, `control_address(lines)` returns `address` of the first `control_server` event in the event lines (strings or dicts).
 
+### Run sequentially in one launcher (`Serve`, `RunHandle`)
+
+`Serve` runs `vehicle_sil_launch serve <file>` as a resident child process for sequential runs on one configuration file (see "[Running sequentially in one launcher (`vehicle_sil_launch serve`)](simulation-run.md#running-sequentially-in-one-launcher-vehicle_sil_launch-serve)" and "[Resident launcher (`serve`)](simulation-events.md#resident-launcher-serve)"). Like `Launch`, `Serve` and `RunHandle` use only the standard library; gRPC is imported only when you call `run.control()`.
+
+Unlike `Launch`, each `runner.start(...)` returns a `RunHandle` with its own run ID (`run.id`) and starts a fresh run at virtual time 0 with no state carried over from earlier runs. `run.control()` connects a `Control` already bound to `run.id`. Restrictions of `serve` apply (`VEHICLE_SIL_TRACE`, fixed `registry_uri`, and `manual` participants are refused; see "[Restrictions of `serve`](simulation-run.md#restrictions-of-serve)").
+
+```python
+from vehicle_sil_control import Serve
+
+with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulation.yaml", control=True) as runner:
+    prep = runner.prepare()
+    with runner.start(start_paused=True, stop_at_ms=500) as run:
+        with run.control() as c:   # bound to run.id; an earlier Control raises ControlError ("run-changed")
+            c.sim.wait_paused()
+            c.sim.resume()
+        print(run.wait()["result"])
+    with runner.start(scenario="scenarios/smoke.yaml") as run2:
+        print(run2.wait()["result"])
+```
+
+In `Serve(launcher, config, *, control=False, address="0", credentials=None, tls_cert=None, tls_key=None, audit_log=None, log_dir=None, timeout_ms=None, describe_timeout_ms=None, participant_start_timeout_ms=None, participant_stop_timeout_ms=None, events_stall_ms=None, arguments=(), cwd=None, stderr=None, keep_logs=True, startup_timeout=30.0)`, `address`, `credentials`, `tls_cert`, `tls_key` and `audit_log` require `control=True`.
+
+| `Serve` member | Details |
+|---|---|
+| `hello`, `instance` | The initial `hello` event and its `launcher` instance ID. |
+| `pid`, `returncode`, `events` | The child PID, exit code (`None` while running), and stream-wide events. |
+| `prepare(*, variant=None, disable=(), enable=(), manual=(), timeout=30.0)` | Sends `prepare` and returns the `prepare` reply (`accepted`, `status`, `metadata`, `findings`). |
+| `status(timeout=30.0)` | Sends `status` and returns the current `status` event. |
+| `start(*, request=None, intent=None, ..., timeline=None, timeout=60.0)` | Starts one run and returns a `RunHandle`. Pass at most one of `request`, `intent`, or per-run keyword arguments (`variant`, `params`, `scenario`, `disable`, `enable`, `manual`, `connect`, `time_policy`, `speed`, `start_paused`, `strict`, `stop_at_ms`, `late_tolerance_ms`). An oversized inline intent automatically falls back to a temporary request file and cleans it up. |
+| `close(timeout=60.0)` | Closes stdin to request an orderly exit, waits for the child process, joins reader threads, and removes any remaining temporary request files. |
+
+| `RunHandle` member | Details |
+|---|---|
+| `id`, `run_id` | The opaque run ID assigned by the launcher. |
+| `address` | Where this run's Control Server listens (waits for this run's `control_server` event). |
+| `events`, `result`, `launcher_ends` | Events for this run, the `result` dict once finished, and whether the launcher ends with this run. |
+| `wait_for_event(event, timeout=60.0, after=None, **keys)` | Waits for the first matching event of this run. |
+| `control(**options)` | Returns `Control(run.address, run=run.id, **options)`. Passing `run=...` raises `TypeError`. |
+| `send(command)` | Sends a stdin command targeted at this run (`"run": run.id`). |
+| `stop(force=None)` | Sends `stop` for this run (`False` graceful, `True` forced, `None` escalate). |
+| `wait(timeout=120.0)` | Waits for this run's `result`, and (when `not launcher_ends`) for the launcher to return to `idle`. |
+
+Leaving `with runner.start(...)` stops only that run (`force=False`) and waits for `idle`, keeping `Serve` alive for the next run. If a run ends with `launcher_ends: true` (for example exit code 6 when contaminated), `Serve` cannot start further runs; leaving `with Serve(...)` closes the resident launcher. When a command is refused, times out, or the launcher fails to start (including `VEHICLE_SIL_TRACE`), `ServeError` (a subclass of `LaunchError`) is raised with `reason` when available.
+
 ### Connect, read and write (`Control`)
 
 To connect from another computer to a launcher that uses TLS and tokens, do the same (see [Authentication](#authentication) above). For how to make the certificates and what the messages mean when a connection fails, see [howto/multi-pc.md](howto/multi-pc.md).
@@ -687,6 +732,7 @@ Writes during a scenario have the `reason` `scenario-running`.
 |---|---|
 | `ControlError` | A call failed. |
 | `LaunchError` | The launcher ended without printing a result, or the run ended before the awaited event arrived. |
+| `ServeError` | A resident `serve` command (`prepare`, `start`, `status`) was refused or timed out, or the resident launcher failed at startup or ended unexpectedly. |
 | `ControlWarning` | `peers()` was called while the server cannot read the simulation state. |
 
 ## Limitations

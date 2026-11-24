@@ -78,6 +78,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `ControlServer` | `control_grpc/server.hpp` |
 | Python のクライアント | `python/vehicle_sil_control/client.py` |
 | ランチャーを起動する補助 | `python/vehicle_sil_control/launcher.py` |
+| 常駐ランチャー（`serve`）を扱う補助 | `python/vehicle_sil_control/serve.py` |
 
 - テスト: `tests/control_server`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）
 - `ctest -R`: `^control_server\.`
@@ -86,6 +87,8 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `test_launcher.py` | ランチャーの Control Server（認証、TLS、役割、監査も） |
 | `test_python_client.py` | Python のクライアントと CLI |
+| `test_serve_unit.py` | モックした子プロセス入出力による `Serve` と `RunHandle` の単体テスト（`scripts/verify-python.py` でも実行） |
+| `test_serve_client.py` | 実プロセスの `vehicle_sil_launch serve` と gRPC に対する `Serve` と `RunHandle` のテスト（`tests/serve/serve_support.py` は故障注入テスト基盤として分離） |
 | `control_server.example_write_before_start`、`control_server.example_pause_and_step` | `examples/launch_control` |
 | `test_guide_operate_signals.py` | ガイド `docs/howto/operate-signals.md` と、例、CLI、標準入力のコマンドの照合（印は「[ドキュメントの例とテスト](code-map-testing.md#ドキュメントの例とテスト)」） |
 
@@ -214,10 +217,11 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - `TimeCommands` の `hold_before_start()`、`inspect()`、`wait_paused()`
 - `ServerOptions::external_hub`
 - `python/vehicle_sil_control/launcher.py`
+- `python/vehicle_sil_control/serve.py`（公開 API の `Serve` / `RunHandle` は `tests/serve/serve_support.py` と分離したままにする）
 
 合わせて直すドキュメント:
 
-- [control-api.md](control-api.md) の「ランチャーに接続する」（始まる前に書く、標準入力とクライアントのコマンド、認証）
+- [control-api.md](control-api.md) の「ランチャーに接続する」と [control-api.md](control-api.md#python) の「Python」（`Launch`、`Serve`、`RunHandle`、`Control`）（始まる前に書く、標準入力とクライアントのコマンド、認証）
 - [simulation-config.md](simulation-config.md): 引数の表
 - [simulation-events.md](simulation-events.md): イベント `control_server`、`command` の `source` と `at_ms`、`features` の `control-server`（`kControlServerFeature`）
 - [internals/control.md](internals/control.md) の「ランチャーの Control Server」（スレッド、標準入力とクライアントのコマンドの順序、開始前に止めること、終わり方）
@@ -231,7 +235,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 テスト:
 
-- `control_server.launcher`、`control_server.example_write_before_start`、`control_server.example_pause_and_step`
+- `control_server.launcher`、`control_server.serve_unit`、`control_server.serve_client`、`control_server.example_write_before_start`、`control_server.example_pause_and_step`
 - `^launch\.`（`TimeCommands`）
 - `launch_run.time_usage`（引数のエラー）
 

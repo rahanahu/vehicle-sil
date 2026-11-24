@@ -16,6 +16,7 @@ Control API は、実行中のシミュレーションを外から操作・監�
 | ECU のコードでの変数の宣言 | [ECU の変数](#ecu-の変数) |
 | gRPC の呼び出しと、Python、CLI、ロールの対応 | [呼び出しの一覧](#呼び出しの一覧) |
 | Python のクライアント | [Python](#python) |
+| 1 つのランチャーで順に実行する（`Serve`、`RunHandle`） | [1 つのランチャーで順に実行する（`Serve`、`RunHandle`）](#1-つのランチャーで順に実行するserverunhandle) |
 | 時刻と値を同じ瞬間のものとして読む | [時刻と値をまとめて読む（`snapshot()`）](#時刻と値をまとめて読むsnapshot) |
 | コマンドラインから使う | [CLI](#cli) |
 | 状態コードと例外 | [エラー](#エラー) |
@@ -101,7 +102,7 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 | 項目 | 内容 |
 |---|---|
 | クライアントが ID を知る方法 | `PingReply` の `run`（`Ping`）。`serve` では、ランチャーのイベントにもあります（[simulation-events.md](simulation-events.md)）。 |
-| 呼び出しで実行を名乗る方法 | メタデータ `vehicle-sil-run: <ID>`。Python では `Control(address, run=<ID>)` か `Control.for_current_run(address)` です（[Python](#python)）。 |
+| 呼び出しで実行を名乗る方法 | メタデータ `vehicle-sil-run: <ID>`。Python では `Control(address, run=<ID>)`、`Control.for_current_run(address)`、または `Serve` の `run.control()` です（[Python](#python)）。 |
 | 別の実行を名乗る呼び出し | `FAILED_PRECONDITION` で断ります。trailing metadata の `vehicle-sil-reason` は `run-changed` です。呼び出しの中身は ECU にも時刻にも届きません。 |
 | 実行を名乗らない呼び出し（`vehicle_sil_launch run`） | 受けます（実行に ID がなかったころと同じです）。 |
 | 実行を名乗らない呼び出し（`vehicle_sil_launch serve`。1 つのランチャーが実行を 1 つずつ順に行う。[simulation-run.md](simulation-run.md)） | `FAILED_PRECONDITION` で断ります。`vehicle-sil-reason` は `run-required` です。 |
@@ -481,6 +482,50 @@ with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulati
 
 自分でランチャーを起動するときは、`control_address(lines)` が、イベントの行（文字列か dict）から最初の `control_server` の `address` を返します。
 
+### 1 つのランチャーで順に実行する（`Serve`、`RunHandle`）
+
+`Serve` は、`vehicle_sil_launch serve <file>` を常駐の子プロセスとして起動し、1 つの設定ファイルで実行を順に行います（[simulation-run.md](simulation-run.md#1-つのランチャーで順に実行するvehicle_sil_launch-serve) の「1 つのランチャーで順に実行する（`vehicle_sil_launch serve`）」と [simulation-events.md](simulation-events.md#常駐ランチャーserve) の「常駐ランチャー（`serve`）」）。`Launch` と同じく、`Serve` と `RunHandle` は標準ライブラリだけを使い、gRPC は `run.control()` を呼んだときにだけ読み込みます。
+
+`Launch` と違い、`runner.start(...)` は実行ごとの実行 ID（`run.id`）を持つ `RunHandle` を返し、前の実行の状態を持ち越さず仮想時刻 0 から新しい実行を始めます。`run.control()` は、あらかじめ `run.id` に結びつけた `Control` を返します。`serve` の制限がそのまま当てはまります（`VEHICLE_SIL_TRACE`、固定の `registry_uri`、`manual` の participant は拒否されます。[simulation-run.md](simulation-run.md#serve-の制限) の「`serve` の制限」）。
+
+```python
+from vehicle_sil_control import Serve
+
+with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulation.yaml", control=True) as runner:
+    prep = runner.prepare()
+    with runner.start(start_paused=True, stop_at_ms=500) as run:
+        with run.control() as c:   # bound to run.id; an earlier Control raises ControlError ("run-changed")
+            c.sim.wait_paused()
+            c.sim.resume()
+        print(run.wait()["result"])
+    with runner.start(scenario="scenarios/smoke.yaml") as run2:
+        print(run2.wait()["result"])
+```
+
+`Serve(launcher, config, *, control=False, address="0", credentials=None, tls_cert=None, tls_key=None, audit_log=None, log_dir=None, timeout_ms=None, describe_timeout_ms=None, participant_start_timeout_ms=None, participant_stop_timeout_ms=None, events_stall_ms=None, arguments=(), cwd=None, stderr=None, keep_logs=True, startup_timeout=30.0)` では、`address`、`credentials`、`tls_cert`、`tls_key`、`audit_log` を指定するには `control=True` が必要です。
+
+| `Serve` のメンバー | 内容 |
+|---|---|
+| `hello`、`instance` | 初めの `hello` イベントと、その `launcher` インスタンス ID です。 |
+| `pid`、`returncode`、`events` | 子プロセスの PID、終了コード（実行中は `None`）、ストリーム全体のイベントです。 |
+| `prepare(*, variant=None, disable=(), enable=(), manual=(), timeout=30.0)` | `prepare` を送り、`prepare` の応答（`accepted`、`status`、`metadata`、`findings`）を返します。 |
+| `status(timeout=30.0)` | `status` を送り、現在の `status` イベントを返します。 |
+| `start(*, request=None, intent=None, ..., timeline=None, timeout=60.0)` | 実行を 1 つ始めて `RunHandle` を返します。`request`、`intent`、実行ごとのキーワード引数（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`connect`、`time_policy`、`speed`、`start_paused`、`strict`、`stop_at_ms`、`late_tolerance_ms`）は最大 1 つだけ渡せます。大きすぎるインラインのインテントは自動で一時要求ファイルに切り替え、後で削除します。 |
+| `close(timeout=60.0)` | 標準入力を閉じて順序どおりの終了を求め、子プロセスと読み取りスレッドの終了を待ち、残った一時要求ファイルを削除します。 |
+
+| `RunHandle` のメンバー | 内容 |
+|---|---|
+| `id`、`run_id` | ランチャーが付けた不透明な実行 ID です。 |
+| `address` | この実行の Control Server のアドレスです（この実行の `control_server` イベントを待って返します）。 |
+| `events`、`result`、`launcher_ends` | この実行のイベント一覧、終了後の `result` の dict、この実行でランチャーが終わるかどうかです。 |
+| `wait_for_event(event, timeout=60.0, after=None, **keys)` | この実行のイベントから、キーの値が合う最初のイベントを待ちます。 |
+| `control(**options)` | `Control(run.address, run=run.id, **options)` を返します。`run=...` を渡すと `TypeError` になります。 |
+| `send(command)` | この実行宛ての標準入力コマンド（`"run": run.id`）を送ります。 |
+| `stop(force=None)` | この実行の `stop` を送ります（`False` で順序どおり、`True` で強制、`None` で段階上げ）。 |
+| `wait(timeout=120.0)` | この実行の `result` を待ち、`launcher_ends` が偽ならランチャーが `idle` に戻るまで待ちます。 |
+
+`with runner.start(...)` を抜けると、その実行だけを止めて（`force=False`）`idle` を待ち、`Serve` は次の実行のために生かしたままにします。`launcher_ends: true`（たとえば汚染時の終了コード 6）で終わった後は、次の実行を始められません。`with Serve(...)` を抜けると常駐ランチャーを閉じます。コマンドが拒否されたとき、時間切れのとき、または起動に失敗したとき（`VEHICLE_SIL_TRACE` を含む）は、`ServeError`（`LaunchError` のサブクラス）を上げ、理由があれば `reason` に設定します。
+
 ### 接続して読み書きする（`Control`）
 
 別の PC から、TLS とトークンを付けたランチャー（上の「認証」）にも、同じように接続します（証明書の作り方と、接続できないときのメッセージは [howto/multi-pc.md](howto/multi-pc.md)）。
@@ -687,6 +732,7 @@ python -m vehicle_sil_control stop
 |---|---|
 | `ControlError` | 呼び出しが失敗しました。 |
 | `LaunchError` | ランチャーが結果を出力せずに終わったか、待つイベントが来ないまま実行が終わりました。 |
+| `ServeError` | 常駐 `serve` のコマンド（`prepare`、`start`、`status`）が拒否・時間切れになったか、常駐ランチャーが起動失敗または予期せず終了しました。 |
 | `ControlWarning` | `peers()` を呼んだとき、Server がシミュレーションの状態を読めていません。 |
 
 ## 制限

@@ -236,8 +236,15 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
         if not s.run([python, "-m", "vehicle_sil_control.generate", "--out", str(stubs)]):
             return False
         return all([
+            s.run([python, "-S", "-c",
+                   "import vehicle_sil_control as c; "
+                   "from vehicle_sil_control import Serve, RunHandle, ServeError, Launch, LaunchError, control_address; "
+                   "print('stdlib-only ok')"]),
             s.run([python, "-c", "import vehicle_sil_control as c; c.Control; print('imported', c.__name__)"]),
-            s.run([python, "-c", "import test_python_client, test_launcher, test_guide_operate_signals"], cwd=ROOT / "tests" / "control_server"),
+            s.run([python, "-c",
+                   "import test_python_client, test_launcher, test_guide_operate_signals, test_serve_unit, test_serve_client"],
+                  cwd=ROOT / "tests" / "control_server"),
+            s.run([python, "-m", "unittest", "-v", "test_serve_unit"], cwd=ROOT / "tests" / "control_server"),
             s.run([python, "-m", "vehicle_sil_control", "--help"]),
             s.run([python, "-m", "py_compile", "examples/launch_control/write_and_read.py"]),
             s.run([python, "examples/launch_control/write_before_start.py", "--help"]),

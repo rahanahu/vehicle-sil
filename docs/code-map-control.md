@@ -78,6 +78,7 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 | `ControlServer` | `control_grpc/server.hpp` |
 | Python client | `python/vehicle_sil_control/client.py` |
 | Helper that starts the launcher | `python/vehicle_sil_control/launcher.py` |
+| Helper for the resident launcher (`serve`) | `python/vehicle_sil_control/serve.py` |
 
 - Tests: `tests/control_server` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`)
 - `ctest -R`: `^control_server\.`
@@ -86,6 +87,8 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 |---|---|
 | `test_launcher.py` | The launcher's Control Server (also authentication, TLS, roles and auditing) |
 | `test_python_client.py` | The Python client and CLI |
+| `test_serve_unit.py` | `Serve` and `RunHandle` unit tests with mocked child streams (also run by `scripts/verify-python.py`) |
+| `test_serve_client.py` | `Serve` and `RunHandle` against live `vehicle_sil_launch serve` and gRPC (keeps `tests/serve/serve_support.py` isolated as a fault-injection test harness) |
 | `control_server.example_write_before_start`, `control_server.example_pause_and_step` | `examples/launch_control` |
 | `test_guide_operate_signals.py` | Compares the guide `docs/howto/operate-signals.md` with the example, the CLI and the stdin commands (for the markers, see "[Documentation examples and tests](code-map-testing.md#documentation-examples-and-tests)") |
 
@@ -214,10 +217,11 @@ Where to change:
 - `hold_before_start()`, `inspect()` and `wait_paused()` of `TimeCommands`
 - `ServerOptions::external_hub`
 - `python/vehicle_sil_control/launcher.py`
+- `python/vehicle_sil_control/serve.py` (keep public `Serve` / `RunHandle` separate from `tests/serve/serve_support.py`)
 
 Documentation to update:
 
-- "[Connect to the launcher](control-api.md#connect-to-the-launcher)" in [control-api.md](control-api.md) (writing before the start, stdin and client commands, authentication)
+- "[Connect to the launcher](control-api.md#connect-to-the-launcher)" and "[Python](control-api.md#python)" (`Launch`, `Serve`, `RunHandle`, `Control`) in [control-api.md](control-api.md) (writing before the start, stdin and client commands, authentication)
 - [simulation-config.md](simulation-config.md): the table of arguments
 - [simulation-events.md](simulation-events.md): the `control_server` event, `source` and `at_ms` of `command`, `control-server` of `features` (`kControlServerFeature`)
 - "[The launcher's Control Server (`vehicle_sil_launch run --control`)](internals/control.md#the-launchers-control-server-vehicle_sil_launch-run---control)" in [internals/control.md](internals/control.md) (threads, the order of stdin and client commands, pausing before the start, how the run ends)
@@ -231,7 +235,7 @@ Rules:
 
 Tests:
 
-- `control_server.launcher`, `control_server.example_write_before_start`, `control_server.example_pause_and_step`
+- `control_server.launcher`, `control_server.serve_unit`, `control_server.serve_client`, `control_server.example_write_before_start`, `control_server.example_pause_and_step`
 - `^launch\.` (`TimeCommands`)
 - `launch_run.time_usage` (argument errors)
 
