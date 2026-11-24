@@ -205,8 +205,10 @@ def test_a_control_server_without_the_snapshot_is_not_used(fake) -> None:
         _, reason, fatal = await sink.until("lost")
         assert fatal and reason == control.TOO_OLD and "cannot give the time and the values" in reason
         assert "synced" not in sink.kinds()  # never called ready
-        await asyncio.sleep(0.5)
-        assert server.calls.count("Watch") == 1  # and not connected to again
+        assert source._thread_done is not None and source._thread is not None
+        await asyncio.wait_for(source._thread_done.wait(), timeout=scaled(2.0))
+        await asyncio.to_thread(source._thread.join, scaled(2.0))
+        assert server.calls.count("Watch") == 1 and not source._thread.is_alive()  # and not connected to again
         await source.close()
         assert not source._thread.is_alive()
     asyncio.run(main())
@@ -224,7 +226,9 @@ def test_a_wrong_token_is_refused_for_good_and_never_shown(fake) -> None:
         with pytest.raises(SourceError) as e:
             await source.write([("Engine", "engine.demand", 1.0)], None, "reject", 2)
         assert e.value.kind == "refused" and TOKEN not in str(e.value)
-        await asyncio.sleep(0.5)
+        assert source._thread_done is not None and source._thread is not None
+        await asyncio.wait_for(source._thread_done.wait(), timeout=scaled(2.0))
+        await asyncio.to_thread(source._thread.join, scaled(2.0))
         assert server.calls.count("Watch") == 1 and not source._thread.is_alive()  # it does not try again
         await source.close()
     asyncio.run(main())
@@ -424,3 +428,117 @@ def test_close_respects_close_wait_s_when_reader_is_stuck(fake, monkeypatch) -> 
         source._thread.join(timeout=2.0)
         assert not source._thread.is_alive()
     asyncio.run(main())
+
+
+def test_close_while_reader_waits_for_taken_has_no_lost_wakeup(fake, monkeypatch) -> None:
+    """Closing while _read_loop transitions from _follow() into the _taken wait wakes immediately under _cond."""
+    server = fake(token=TOKEN)
+
+    async def main() -> None:
+        # 1) close() arrives while _read_loop is blocked waiting for _taken_flag (simulating a delayed _take()).
+        source = control.GrpcSource(library(), server.address, TOKEN)
+        sink = Sink()
+        take_called = asyncio.Event()
+
+        def hold_take() -> None:
+            # Take pending state without setting _taken_flag so _read_loop stays parked in _cond.wait_for.
+            with source._cond:
+                source._scheduled = False
+                source._lost = None
+            take_called.set()
+
+        monkeypatch.setattr(source, "_follow", lambda call, watchdog: (_ for _ in ()).throw(RuntimeError("drop")))
+        monkeypatch.setattr(source, "_take", hold_take)
+        source.start(sink)
+        await asyncio.wait_for(take_called.wait(), timeout=scaled(2.0))
+        began = time.monotonic()
+        await source.close()
+        elapsed = time.monotonic() - began
+        assert not source._thread.is_alive()
+        assert elapsed < scaled(0.2)
+
+        # 2) close() arrives right after _follow() returns, before _read_loop acquires _cond to clear _taken_flag.
+        source2 = control.GrpcSource(library(), server.address, TOKEN)
+        after_follow = asyncio.Event()
+        proceed = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def gated_follow(call, watchdog) -> bool:
+            loop.call_soon_threadsafe(after_follow.set)
+            proceed.wait(timeout=5.0)
+            return False
+
+        monkeypatch.setattr(source2, "_follow", gated_follow)
+        source2.start(Sink())
+        await asyncio.wait_for(after_follow.wait(), timeout=scaled(2.0))
+        close_task = asyncio.create_task(source2.close())
+        while not source2._closed:
+            await asyncio.sleep(0)
+        began = time.monotonic()
+        proceed.set()
+        await asyncio.wait_for(close_task, timeout=scaled(2.0))
+        elapsed = time.monotonic() - began
+        assert not source2._thread.is_alive()
+        assert elapsed < scaled(0.2)
+    asyncio.run(main())
+
+
+def test_close_from_other_loop_wakes_without_sleep_polling_or_blocking_loop(fake, monkeypatch) -> None:
+    """Closing a GrpcSource on a different event loop uses wrap_future/to_thread with zero asyncio.sleep polling
+    and without blocking the caller's event loop during thread.join()."""
+    server = fake(token=TOKEN)
+    source = control.GrpcSource(library(), server.address, TOKEN)
+
+    async def start_on_loop_a() -> None:
+        sink = Sink()
+        source.start(sink)
+        await sink.until("synced")
+
+    # Start on loop A, then close loop A while the reader thread is still running.
+    asyncio.run(start_on_loop_a())
+    assert source._thread is not None and source._thread.is_alive()
+
+    # Add a brief delay after _notify_thread_done() so close() must run thread.join() while loop B stays responsive.
+    real_notify = source._notify_thread_done
+
+    def slow_os_exit() -> None:
+        real_notify()
+        time.sleep(0.08)
+
+    monkeypatch.setattr(source, "_notify_thread_done", slow_os_exit)
+
+    async def close_on_loop_b() -> None:
+        sleeps: list[float] = []
+        real_sleep = asyncio.sleep
+        ticks = 0
+        worst_gap = 0.0
+
+        async def ticker() -> None:
+            nonlocal ticks, worst_gap
+            while True:
+                before = time.monotonic()
+                await real_sleep(0.005)
+                worst_gap = max(worst_gap, time.monotonic() - before)
+                ticks += 1
+
+        async def spy_sleep(delay, *args, **kwargs):
+            sleeps.append(delay)
+            return await real_sleep(delay, *args, **kwargs)
+
+        probe = asyncio.create_task(ticker())
+        monkeypatch.setattr(asyncio, "sleep", spy_sleep)
+        try:
+            began = time.monotonic()
+            await source.close()
+            elapsed = time.monotonic() - began
+        finally:
+            monkeypatch.setattr(asyncio, "sleep", real_sleep)
+            probe.cancel()
+            await asyncio.gather(probe, return_exceptions=True)
+
+        assert sleeps == [], f"cross-loop close() must not sleep-poll: {sleeps}"
+        assert not source._thread.is_alive()
+        assert elapsed < scaled(1.0)
+        assert ticks >= 2 and worst_gap < scaled(0.07), (ticks, worst_gap)
+
+    asyncio.run(close_on_loop_b())
