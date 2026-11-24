@@ -182,6 +182,7 @@ jobs:
         id: cpp-hash
         run: |
           trees=$(git rev-parse \
+            HEAD:.github/workflows/ci.yml \
             HEAD:CMakeLists.txt \
             HEAD:CMakePresets.json \
             HEAD:.gitmodules \
@@ -361,7 +362,7 @@ jobs:
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-${{ matrix.preset }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-${{ matrix.preset }}-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -467,7 +468,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-${{ matrix.preset }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -544,7 +545,7 @@ jobs:
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-linux-clang-tsan-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-linux-clang-tsan-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -564,7 +565,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-clang-tsan-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
       - name: Warn on PR TSan failure
         if: failure() && github.event_name == 'pull_request'
         run: |
@@ -658,7 +659,7 @@ jobs:
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-linux-oldest-cmake-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-linux-oldest-cmake-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -680,7 +681,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-oldest-cmake-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -791,7 +792,7 @@ jobs:
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-windows-mingw-release-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-windows-mingw-release-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -820,7 +821,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-windows-mingw-release-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

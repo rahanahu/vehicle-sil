@@ -175,16 +175,28 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
     def test_ccache_uses_content_hash_and_skips_save_on_exact_hit(self):
         self.assertEqual(JOBS["changes"]["outputs"]["cpp_hash"], "${{ steps.cpp-hash.outputs.hash }}")
         expected_jobs = {
-            "linux": "ccache-${{ matrix.preset }}-",
-            "linux-tsan": "ccache-linux-clang-tsan-",
-            "linux-oldest-cmake": "ccache-linux-oldest-cmake-",
-            "windows": "ccache-windows-mingw-release-",
+            "linux": (
+                "ccache-${{ matrix.preset }}-",
+                "ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+            ),
+            "linux-tsan": (
+                "ccache-linux-clang-tsan-",
+                "ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+            ),
+            "linux-oldest-cmake": (
+                "ccache-linux-oldest-cmake-",
+                "ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+            ),
+            "windows": (
+                "ccache-windows-mingw-release-",
+                "ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-"
+                "${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}",
+            ),
         }
-        for job_name, prefix in expected_jobs.items():
+        for job_name, (prefix, expected_key) in expected_jobs.items():
             steps = JOBS[job_name]["steps"]
             restore = next(s for s in steps if s.get("id") == "ccache-restore")
             self.assertTrue(str(restore.get("uses", "")).startswith("actions/cache/restore@"), job_name)
-            expected_key = f"{prefix}${{{{ needs.changes.outputs.cpp_hash }}}}"
             self.assertEqual(restore["with"]["key"], expected_key, job_name)
             self.assertEqual(restore["with"]["restore-keys"], prefix, job_name)
 
@@ -206,8 +218,8 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
     def test_cpp_hash_paths_exist_and_produce_hex_digest(self):
         step = next(s for s in JOBS["changes"]["steps"] if s.get("id") == "cpp-hash")
         paths = re.findall(r"HEAD:([^\s\\)]+)", step["run"])
-        self.assertGreaterEqual(len(paths), 12)
-        for required in ("CMakeLists.txt", "CMakePresets.json", ".gitmodules", "libs", "tests"):
+        self.assertGreaterEqual(len(paths), 13)
+        for required in (".github/workflows/ci.yml", "CMakeLists.txt", "CMakePresets.json", ".gitmodules", "libs", "tests"):
             self.assertIn(required, paths)
         for rel in paths:
             self.assertTrue((ROOT / rel).exists(), f"cpp-hash path missing on HEAD: {rel}")
