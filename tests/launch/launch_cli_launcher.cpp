@@ -638,6 +638,9 @@ void usage(const Options& o)
         expect_code(help, 0, "vehicle_sil_launch --help");
         require(lf(help.standard_output).rfind("usage: vehicle_sil_launch check [--json]", 0) == 0 && help.standard_error.empty() &&
                     contains(help.standard_output, "[--time-policy realtime|free] [--request <file>]\n") &&
+                    contains(lf(help.standard_output),
+                             "[--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
+                             "                                [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n") &&
                     contains(help.standard_output, "\n  --time-policy realtime|free the time of a run that is connected outside"),
                 "--help wrote:\n" + help.standard_output + help.standard_error);
     }

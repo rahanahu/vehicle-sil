@@ -323,7 +323,7 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual([f for f in findings_of(result) if f[1].startswith("variable-map")], [])
 
     def test_a_snapshot_has_the_time_and_the_values_of_one_moment(self):
-        step = ms(10)  # the engine's step and sample period; the controller steps at 5 ms
+        step = ms(10)  # the engine's step and both ECUs' default sample period; the controller steps at 5 ms
         throttle_at = {0: 20.0}  # the engine's step -> the throttle from then on (20 % as it starts)
 
         def engine_speed(at):
@@ -337,14 +337,14 @@ class LauncherTest(unittest.TestCase):
             return rpm
 
         def check_pair(snap, now):
-            """The reply is of the moment `now`: the time, and the values of the last steps before
-            it (or of the steps at it), the engine's speed being the model's at its sample's time."""
+            """The reply is of the moment `now`: the time, and the values of the last sample before
+            it (or of the sample at it), the engine's speed being the model's at its sample's time."""
             self.assertTrue(snap.consistent)
             self.assertEqual((snap.time.now, snap.time.paused), (now, True))
             engine, dashboard = snap.values["Engine"], snap.values["Dashboard"]
             last_before = ((now - 1) // step) * step
             self.assertIn(engine.time, (last_before, (now // step) * step))
-            self.assertIn(dashboard.time, (now - ms(5), now))
+            self.assertIn(dashboard.time, (last_before, (now // step) * step))
             self.assertEqual(engine.values["engine.speed"], engine_speed(engine.time))
 
         with self.launch("snapshot", stop_at_ms=600_000, start_paused=True) as launch:

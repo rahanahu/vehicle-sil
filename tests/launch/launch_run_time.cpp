@@ -426,8 +426,19 @@ void state_on_arrival(const Options& o)
         const std::size_t after = at({"\"event\":\"command\"", "\"id\":" + next + "}"}, sent);
         require(sent < time && time < after && after < lines.size(),
                 "command " + id + ", the time event that stands still at " + std::to_string(ms) + " ms, command " + next + ":\n" + all);
-        // The states the command and the arrival made (none, if the simulation was there before the
-        // command's state was put together: the state before the command said paused, and still does).
+        std::size_t prev_state = lines.size();
+        for (std::size_t i = 0; i < sent; ++i)
+        {
+            if (contains(lines[i], stateEvent))
+            {
+                prev_state = i;
+            }
+        }
+        require(prev_state < sent, "a state before command " + id + ":\n" + all);
+        const std::int64_t prev_rev = std::stoll(value_of(lines[prev_state], "rev"));
+        // The states the command and the arrival made: 1 paused state at `ms` if the simulation
+        // arrived before Tell::~Tell() ran (sub-ms step/run_until), or 2 states (going, then
+        // paused at `ms` after the time event) otherwise.
         std::vector<std::size_t> states;
         for (std::size_t i = sent; i < after; ++i)
         {
@@ -436,17 +447,22 @@ void state_on_arrival(const Options& o)
                 states.push_back(i);
             }
         }
-        if (states.empty())
+        if (states.size() == 1)
         {
+            require(says_paused(lines[states[0]]) && value_of(lines[states[0]], "paused_at_ms") == std::to_string(ms),
+                    "after command " + id + ": the single arrival state says paused at " + std::to_string(ms) + " ms:\n" + all);
+            require(std::stoll(value_of(lines[states[0]], "rev")) == prev_rev + 1,
+                    "the single arrival state increments rev by 1:\n" + all);
             return;
         }
         // It goes (the command's state), then it stands still (the look's state, after the look's time
         // event): one change each, so the rev goes up by one.
         require(states.size() == 2 && !says_paused(lines[states[0]]) && states[0] < time && says_paused(lines[states[1]]) &&
-                    time < states[1],
+                    value_of(lines[states[1]], "paused_at_ms") == std::to_string(ms) && time < states[1],
                 "after command " + id + ": a state that goes, the time event at " + std::to_string(ms) +
                     " ms, a state that says paused:\n" + all);
-        require(std::stoll(value_of(lines[states[1]], "rev")) == std::stoll(value_of(lines[states[0]], "rev")) + 1,
+        require(std::stoll(value_of(lines[states[0]], "rev")) == prev_rev + 1 &&
+                    std::stoll(value_of(lines[states[1]], "rev")) == prev_rev + 2,
                 "the state that says paused is the next one (rev) after the state that goes:\n" + all);
     };
     arrival("1", 30, "2");

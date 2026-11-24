@@ -25,8 +25,6 @@
 #include "vehicle_sil/runner/stop_requests.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
-#include <silkit/services/orchestration/string_utils.hpp>
-
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -45,8 +43,6 @@
 namespace vehicle_sil::launch {
 namespace {
 
-namespace orch = SilKit::Services::Orchestration;
-
 constexpr const char* kSource = "control_server";
 
 /// Nanoseconds as whole milliseconds, rounded up (the controller stands still only at whole ones).
@@ -54,47 +50,6 @@ std::int64_t ceil_ms(std::int64_t ns)
 {
     constexpr std::int64_t kNs = 1'000'000;
     return ns / kNs + (ns % kNs > 0 ? 1 : 0);
-}
-
-/// The time as the server reports it, read from the controller (under TimeCommands' mutex).
-control_grpc::TimeView view_of(SimulationController& c, bool holding)
-{
-    control_grpc::TimeView v;
-    v.available = true;
-    const TimeState s = c.time_state();
-    v.speed = s.speed;
-    if (holding)
-    {
-        // Before the first step: it stands still at 0, and has not started.
-        v.paused = true;
-        return v;
-    }
-    v.now = s.now;
-    v.pause_target = s.pause_target;
-    const auto state = c.runtime().state();
-    const bool finished = c.runtime().started() && has_finished(PeerStatus{state});
-    // One answer from two looks: a simulation that ended between them stands still nowhere (as
-    // time_state() says of one that had ended before).
-    v.paused = s.paused && !finished;
-    v.running = !finished && state == orch::ParticipantState::Running;
-    v.ended = finished;
-    if (finished)
-    {
-        // Where it ended, as the result's sim_ms counts it.
-        v.now = std::max(v.now, c.runtime().now());
-    }
-    return v;
-}
-
-std::vector<std::pair<std::string, std::string>> participants_of(SimulationController& c)
-{
-    std::vector<std::pair<std::string, std::string>> out;
-    for (const auto& name : c.required_participants())
-    {
-        const auto status = c.runtime().peer_status(name);
-        out.emplace_back(name, status.state ? orch::to_string(*status.state) : std::string());
-    }
-    return out;
 }
 
 class LaunchTimeControl final : public control_grpc::TimeControl
@@ -106,13 +61,13 @@ public:
         // The last look, as the controller goes: what the server reports from then on is where the
         // run ended (the result's sim_ms), not the last time someone happened to look.
         commands_->set_on_detach([this](SimulationController& c) {
-            control_grpc::TimeView v = view_of(c, false);
+            control_grpc::TimeView v = control_grpc::detail::time_view_of(c, false);
             v.now = std::max(v.now, c.runtime().now()); // as the result's sim_ms
             v.paused = false;
             v.pause_target.reset();
             v.running = false;
             v.ended = true;
-            auto participants = participants_of(c);
+            auto participants = control_grpc::detail::simulation_participants_of(c);
             auto left = FailureCheck::left_participant(c);
             const std::lock_guard lock(mutex_);
             last_view_ = v;
@@ -166,7 +121,7 @@ public:
         v.available = true;
         // Kept under TimeCommands' mutex too: a later look never loses to an earlier one.
         const auto stage = commands->inspect([&](SimulationController& c, bool holding) {
-            v = view_of(c, holding);
+            v = control_grpc::detail::time_view_of(c, holding);
             const std::lock_guard lock(mutex_);
             last_view_ = v;
         });
@@ -248,7 +203,7 @@ public:
         }
         std::vector<std::pair<std::string, std::string>> out;
         const auto stage = commands->inspect([&](SimulationController& c, bool) {
-            out = participants_of(c);
+            out = control_grpc::detail::simulation_participants_of(c);
             const std::lock_guard lock(mutex_);
             last_participants_ = out;
         });
