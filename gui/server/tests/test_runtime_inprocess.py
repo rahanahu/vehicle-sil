@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-from conftest import CONFIGS, is_ended, is_synced, is_variables
+from conftest import is_ended, is_synced, is_variables
 from fake_runtime import FakeRun, FakeRuntime, default_check_result, in_process_gui
 
 from vehicle_sil_gui.refusal import Refused
@@ -32,13 +31,13 @@ def test_full_run_lifecycle_and_request_cleanup(tmp_path: Path) -> None:
             sock = await app.client.ws()
             await sock.until(is_synced)
             status, body = await app.client.post("api/run", {"file": "simple.yaml"})
-            assert status == 200 and body["session"]["state"] == "running"
+            assert status == 200 and body == {"instance": app.server.instance, "run_id": f"{app.server.instance}-1"}
             run = app.runtime.runs[0]
             assert run.started.is_set()
             request_file = run.spec.request
             assert request_file.is_file()
 
-            run.emit("hello", vehicle_sil_events=2, pid=run.pid, file="simple.yaml")
+            run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
             run.emit("phase", phase="running")
             run.emit("time", sim_ms=500, actual_speed=1.0, late_steps=0, max_late_ms=0, slipped_ms=0, late_ms=0)
             run.emit("state", rev=1, paused=False, running=True, paused_at_ms=None, speed="max", allowed={})
@@ -61,23 +60,25 @@ def test_stop_and_force_stop_and_idempotency(tmp_path: Path) -> None:
 
     async def main() -> None:
         async with in_process_gui(root) as app:
-            status, _ = await app.client.post("api/run", {"file": "simple.yaml"})
+            status, started1 = await app.client.post("api/run", {"file": "simple.yaml"})
             assert status == 200
+            target1 = {"run_id": started1["run_id"], "instance": started1["instance"]}
             run1 = app.runtime.runs[0]
 
-            s1, _ = await app.client.post("api/stop", {})
-            s2, _ = await app.client.post("api/stop", {})  # duplicate non-force stop sends nothing
-            s3, _ = await app.client.post("api/stop", {"force": True})
-            s4, _ = await app.client.post("api/stop", {"force": True})  # already forced
+            s1, _ = await app.client.post("api/stop-session", target1)
+            s2, _ = await app.client.post("api/stop-session", target1)  # duplicate non-force stop sends nothing
+            s3, _ = await app.client.post("api/stop-session", {**target1, "force": True})
+            s4, _ = await app.client.post("api/stop-session", {**target1, "force": True})  # already forced
             assert (s1, s2, s3, s4) == (200, 200, 200, 200)
             assert run1.stops == [1, 1]
             await run1.finish(returncode=0)
 
             # A fresh run stopped immediately with force=True receives 2 stop commands at once.
-            status, _ = await app.client.post("api/run", {"file": "simple.yaml"})
+            status, started2 = await app.client.post("api/run", {"file": "simple.yaml"})
             assert status == 200
+            target2 = {"run_id": started2["run_id"], "instance": started2["instance"]}
             run2 = app.runtime.runs[1]
-            status, _ = await app.client.post("api/stop", {"force": True})
+            status, _ = await app.client.post("api/stop-session", {**target2, "force": True})
             assert status == 200 and run2.stops == [2]
             await run2.finish(returncode=0)
 
@@ -91,21 +92,25 @@ def test_stop_not_delivered_when_input_closed(tmp_path: Path) -> None:
         async with in_process_gui(root) as app:
             sock = await app.client.ws()
             await sock.until(is_synced)
-            status, _ = await app.client.post("api/run", {"file": "simple.yaml"})
+            status, started = await app.client.post("api/run", {"file": "simple.yaml"})
             assert status == 200
             run = app.runtime.runs[0]
             run.input_open = False
 
-            status, body = await app.client.post("api/stop", {})
-            assert status == 200 and body["session"]["stop"] == "requested"
+            status, body = await app.client.post(
+                "api/stop-session", {"run_id": started["run_id"], "instance": started["instance"]},
+            )
+            assert status == 200 and body == started
             await sock.until(_is_problem("stop-not-delivered"))
+            _, sess = await app.client.get("api/session")
+            assert sess["session"]["stop"] == "requested"
             await run.finish(returncode=1)
             await sock.close()
 
     asyncio.run(main())
 
 
-def test_stop_while_starting_delivers_before_first_event_and_stop_session_rejects(tmp_path: Path) -> None:
+def test_stop_session_rejects_during_startup_and_wrong_targets(tmp_path: Path) -> None:
     root = _simple_config(tmp_path)
 
     async def main() -> None:
@@ -117,29 +122,31 @@ def test_stop_while_starting_delivers_before_first_event_and_stop_session_reject
 
             # api/stop-session during startup is rejected with 409 session-changed and writes no stop.
             st_targeted, err_targeted = await app.client.post(
-                "api/stop-session", {"session": 1, "instance": app.server.instance},
+                "api/stop-session", {"run_id": f"{app.server.instance}-1", "instance": app.server.instance},
             )
             assert st_targeted == 409 and err_targeted["error"]["code"] == "session-changed"
 
-            # Plain api/stop during startup queues stop on start.
-            st_plain, plain_body = await app.client.post("api/stop", {})
-            assert st_plain == 200 and plain_body == {"session": None}
-
             runtime.start_gate.set()
             st_run, run_body = await start_task
-            assert st_run == 200 and run_body["session"]["stop"] == "requested"
+            assert st_run == 200
             run = runtime.runs[0]
-            assert run.stops == [1]
+            assert run.stops == []
 
-            # Wrong session / wrong instance on api/stop-session is rejected after start too.
+            # Wrong run_id / wrong instance on api/stop-session is rejected after start too.
             st_wrong_sid, err_wrong_sid = await app.client.post(
-                "api/stop-session", {"session": 999, "instance": app.server.instance},
+                "api/stop-session", {"run_id": f"{app.server.instance}-999", "instance": app.server.instance},
             )
             st_wrong_inst, err_wrong_inst = await app.client.post(
-                "api/stop-session", {"session": run_body["session"]["id"], "instance": "wrong"},
+                "api/stop-session", {"run_id": run_body["run_id"], "instance": "wrong"},
             )
             assert st_wrong_sid == 409 and err_wrong_sid["error"]["code"] == "session-changed"
             assert st_wrong_inst == 409 and err_wrong_inst["error"]["code"] == "session-changed"
+            assert run.stops == []
+
+            st_ok, stop_body = await app.client.post(
+                "api/stop-session", {"run_id": run_body["run_id"], "instance": app.server.instance},
+            )
+            assert st_ok == 200 and stop_body == run_body
             assert run.stops == [1]
 
             await run.finish(returncode=0)
@@ -158,7 +165,7 @@ def test_time_commands_order_and_input_errors(tmp_path: Path) -> None:
 
             st, run_body = await app.client.post("api/run", {"file": "simple.yaml"})
             assert st == 200
-            sid = run_body["session"]["id"]
+            rid = run_body["run_id"]
             run = app.runtime.runs[0]
 
             cmds = [
@@ -169,13 +176,13 @@ def test_time_commands_order_and_input_errors(tmp_path: Path) -> None:
                 {"command": "run_until", "at_ms": 500, "id": 5},
             ]
             for c in cmds:
-                st, _ = await app.client.post("api/time", c)
-                assert st == 200
+                st, ans = await app.client.post("api/time", c)
+                assert st == 200 and ans == {"run_id": rid, "command": c}
             assert run.time_commands == cmds
 
-            # Targeted time command for wrong session/instance -> 409 session-changed.
+            # Targeted time command for wrong run_id/instance -> 409 session-changed.
             st, err = await app.client.post("api/time", {
-                "command": "pause", "session": sid + 1, "instance": app.server.instance,
+                "command": "pause", "run_id": f"{rid}-stale", "instance": app.server.instance,
             })
             assert st == 409 and err["error"]["code"] == "session-changed"
 
@@ -398,7 +405,7 @@ def test_prestart_gate_buffered_exit_does_not_push_intermediate_allowed(tmp_path
     root = _simple_config(tmp_path)
 
     def on_start(run: _GatedFakeRun) -> None:
-        run.emit("hello", vehicle_sil_events=2, pid=run.pid, file="simple.yaml")
+        run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
         run.emit("check", check=default_check_result("simple.yaml"))
         run.emit("log", source="Dashboard", line="before crash")
         run.emit_stderr("dying on purpose")
@@ -413,18 +420,16 @@ def test_prestart_gate_buffered_exit_does_not_push_intermediate_allowed(tmp_path
 
             st, body = await app.client.post("api/run", {"file": "simple.yaml"})
             assert st == 200
-            assert body["session"]["state"] == "running"
-            assert body["session"]["allowed"]["rev"] == 3
+            assert body == {"instance": app.server.instance, "run_id": f"{app.server.instance}-1"}
 
             await runtime.runs[0].finish(returncode=70, process_exited=False)
             await sock.until(is_ended)
 
             allowed_frames = [m for m in sock.received if m["type"] == "allowed"]
-            assert [(m["allowed"]["rev"], m["allowed"]["start"]["reason"]) for m in allowed_frames] == [
-                (2, "starting"),
-            ]
+            assert [m["allowed"]["start"]["reason"] for m in allowed_frames] == ["starting"]
             sessions = [m["session"] for m in sock.received if m["type"] == "session"]
-            assert [(s["state"], s["allowed"]["rev"]) for s in sessions] == [("running", 3), ("ended", 5)]
+            assert [s["state"] for s in sessions] == ["running", "ended"]
+            assert sessions[0]["allowed"]["start"]["reason"] == "already-running"
             assert sessions[-1]["allowed"]["start"]["ok"] is True
             assert sessions[-1]["allowed"]["stop"]["reason"] == "not-running"
             assert sessions[-1]["allowed"]["force"]["reason"] == "not-running"
@@ -438,7 +443,7 @@ def test_prestart_gate_buffered_finish_preserves_ended_allowed_and_allows_next_r
 
     def on_start(run: _GatedFakeRun) -> None:
         async def drive() -> None:
-            run.emit("hello", vehicle_sil_events=2, pid=run.pid, file="simple.yaml")
+            run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
             run.emit("check", check=default_check_result("simple.yaml"))
             run.emit_stderr("dying immediately")
             run.exit_process(70)
@@ -456,28 +461,27 @@ def test_prestart_gate_buffered_finish_preserves_ended_allowed_and_allows_next_r
 
             st, body = await app.client.post("api/run", {"file": "simple.yaml"})
             assert st == 200
-            assert body["session"]["state"] == "running"
+            r1 = f"{app.server.instance}-1"
+            r2 = f"{app.server.instance}-2"
+            assert body == {"instance": app.server.instance, "run_id": r1}
 
             await sock.until(is_ended)
 
             # Start a second run and wait for it to end as a deterministic WS FIFO fence: any
             # trailing frame from run 1 would arrive before run 2's frames without needing a sleep.
             st2, body2 = await app.client.post("api/run", {"file": "simple.yaml"})
-            assert st2 == 200 and body2["session"]["id"] == 2
-            await sock.until(lambda m: m.get("type") == "session" and m["session"]["id"] == 2
+            assert st2 == 200 and body2["run_id"] == r2
+            await sock.until(lambda m: m.get("type") == "session" and m["session"]["id"] == r2
                              and m["session"]["state"] == "ended")
 
             allowed_frames = [m for m in sock.received if m["type"] == "allowed"]
-            assert [(m["allowed"]["rev"], m["allowed"]["start"]["reason"]) for m in allowed_frames] == [
-                (2, "starting"),
-                (6, "starting"),
-            ]
+            assert [m["allowed"]["start"]["reason"] for m in allowed_frames] == ["starting", "starting"]
             sessions = [m["session"] for m in sock.received if m["type"] == "session"]
-            assert [(s["id"], s["state"], s["allowed"]["rev"]) for s in sessions] == [
-                (1, "running", 3),
-                (1, "ended", 5),
-                (2, "running", 7),
-                (2, "ended", 9),
+            assert [(s["id"], s["state"]) for s in sessions] == [
+                (r1, "running"),
+                (r1, "ended"),
+                (r2, "running"),
+                (r2, "ended"),
             ]
             for ended_session in (sessions[1], sessions[3]):
                 ended_allowed = ended_session["allowed"]
@@ -494,7 +498,7 @@ def test_shutdown_waits_for_prestart_gate_buffered_finish_and_cleanup(tmp_path: 
 
     def on_start(run: _GatedFakeRun) -> None:
         async def drive() -> None:
-            run.emit("hello", vehicle_sil_events=2, pid=run.pid, file="simple.yaml")
+            run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
             run.emit("check", check=default_check_result("simple.yaml"))
             run.exit_process(70)
             await run.finish(returncode=70, process_exited=False)
@@ -543,7 +547,7 @@ def test_prestart_gate_buffers_and_replays_parsed_events(tmp_path: Path) -> None
     root = _simple_config(tmp_path)
 
     def on_start(run: _GatedFakeRun) -> None:
-        run.emit_event("hello", vehicle_sil_events=2, pid=run.pid, file="simple.yaml")
+        run.emit_event("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
         run.emit_event("check", check=default_check_result("simple.yaml"))
         run.emit_event("log", source="Engine", line="via event")
 
@@ -553,7 +557,7 @@ def test_prestart_gate_buffers_and_replays_parsed_events(tmp_path: Path) -> None
             sock = await app.client.ws()
             await sock.until(is_synced)
             st, body = await app.client.post("api/run", {"file": "simple.yaml"})
-            assert st == 200 and body["session"]["state"] == "running"
+            assert st == 200 and body == {"instance": app.server.instance, "run_id": f"{app.server.instance}-1"}
             run = runtime.runs[0]
             run.emit_event("result", result={"vehicle_sil_run": 2, "result": "passed", "end": "completed", "ok": True})
             await run.finish(returncode=0)

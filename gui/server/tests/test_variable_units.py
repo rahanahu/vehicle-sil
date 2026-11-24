@@ -160,7 +160,7 @@ def test_paused_is_what_one_read_says_of_the_time_and_the_values(monkeypatch) ->
         v, source, _ = make()
         v.on_time(running(90))
         v.on_synced()
-        assert message(v) == {"type": "values", "id": 1, "session": 7, "sim_ms": 90, "paused": False, "peers": {}}
+        assert message(v) == {"type": "values", "id": 1, "watch_id": 1, "run_id": "7", "sim_ms": 90, "paused": False, "peers": {}}
         # While it runs: the values with the time they were read with (they are not older than it).
         source.time, source.values["Engine"] = running(80), sample(80, 8, rpm=80)
         await v.refresh({"Engine"})
@@ -829,7 +829,7 @@ def test_operations_are_told_once_per_change_and_summed_up() -> None:
     v.on_operations([op(1, False, ("Engine", "queued"), ("Body", "disconnected"))])
     v.on_operations([op(1, True, ("Engine", "applied", 30 * MS + 5, False, "", 2), ("Body", "applied", 40 * MS, True))])
     assert [m["state"] for m in sent] == ["sent", "sent", "queued", "applied"]
-    assert sent[-1] == {"type": "operation", "session": 7, "seq": 1, "state": "applied", "done": True, "peers": {
+    assert sent[-1] == {"type": "operation", "run_id": "7", "seq": 1, "state": "applied", "done": True, "peers": {
         "Engine": {"state": "applied", "applied_at_ms": 30, "late": False, "reason": None, "applied_writes": 2,
                    "failed_write": None},
         "Body": {"state": "applied", "applied_at_ms": 40, "late": True, "reason": None, "applied_writes": None,
@@ -841,7 +841,7 @@ def test_operations_are_told_once_per_change_and_summed_up() -> None:
         assert sent[-1]["state"] == state
         if state == "rejected":  # the counts pass through as they came
             assert (sent[-1]["peers"]["A"]["applied_writes"], sent[-1]["peers"]["A"]["failed_write"]) == (1, 1)
-    assert v.summary()["operations"] == [{k: x for k, x in m.items() if k not in ("type", "session")}
+    assert v.summary()["operations"] == [{k: x for k, x in m.items() if k not in ("type", "run_id")}
                                          for m in (sent[3], sent[-1])]
 
 
@@ -866,7 +866,7 @@ def test_operations_are_kept_up_to_a_limit_open_ones_last_and_get_their_end_with
         # the run ends: what is still open will not get a result
         del sent[:]
         await v.close()
-        assert sent[0] == {"type": "operation", "session": 7, "seq": 4, "state": "mixed", "done": True, "peers": {
+        assert sent[0] == {"type": "operation", "run_id": "7", "seq": 4, "state": "mixed", "done": True, "peers": {
             "Engine": {"state": "unknown", "applied_at_ms": None, "late": False,
                        "reason": "the run ended before the result came", "applied_writes": None, "failed_write": None},
             "Body": {"state": "applied", "applied_at_ms": 0, "late": False, "reason": None, "applied_writes": None,
@@ -915,7 +915,7 @@ def test_a_write_taken_while_the_run_ends_gets_its_end() -> None:
         source.write_gate.set()  # the source took it, but the run is over: no result will come
         assert await writing == 1
         await closing
-        assert sent == [{"type": "operation", "session": 7, "seq": 1, "state": "unknown", "done": True, "peers": {
+        assert sent == [{"type": "operation", "run_id": "7", "seq": 1, "state": "unknown", "done": True, "peers": {
             "Engine": {"state": "unknown", "applied_at_ms": None, "late": False,
                        "reason": "the run ended before the result came", "applied_writes": None, "failed_write": None}}}]
         assert [o["seq"] for o in v.summary()["operations"]] == [1]

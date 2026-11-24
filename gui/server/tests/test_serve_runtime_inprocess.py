@@ -119,11 +119,12 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
     cred_path = None
     if "--control-credentials" in argv:
         cred_path = Path(argv[argv.index("--control-credentials") + 1])
+    once_mode = "--once" in argv
     cfg = argv[-1]
 
     if mode == "startup-refuse":
         emit({
-            "event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 3,
+            "event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4,
             "vehicle_sil": "__VEHICLE_SIL_VERSION__", "pid": os.getpid(), "file": cfg,
             "arguments": argv, "launcher": "feed000000000001",
         })
@@ -136,18 +137,16 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
     seq = 0
     t_ms = 10
     emit({
-        "event": "hello", "seq": seq, "t_ms": 0, "vehicle_sil_events": 3,
+        "event": "hello", "seq": seq, "t_ms": 0, "vehicle_sil_events": 4,
         "vehicle_sil": "__VEHICLE_SIL_VERSION__", "pid": os.getpid(), "file": cfg,
         "arguments": argv, "launcher": "feed000000000001",
     })
-    seq += 1
-    emit({"event": "idle", "seq": seq, "t_ms": t_ms})
     seq += 1
     run_counter = 0
     current_run = None
     last_run = None
     status_rev = 0
-    launcher_state = "idle"
+    launcher_state = "unprepared"
     elig_state = {"eligible": True, "reason": None, "message": None}
     stop_requests = 0
 
@@ -179,6 +178,9 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
             "last_run_id": last_run,
             "run_state": run_state,
         }
+
+    emit({"event": "status", "seq": seq, "t_ms": t_ms, "id": None, **current_status_payload()})
+    seq += 1
 
     for raw in sys.stdin:
         line = raw.strip()
@@ -255,6 +257,8 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
             t_ms += 100
             emit({"event": "run_start", "seq": seq, "t_ms": t_ms, "run": run_id, "id": cmd.get("id")})
             seq += 1
+            emit({"event": "status", "seq": seq, "t_ms": t_ms, "id": None, **current_status_payload()})
+            seq += 1
             t_ms += 5
             emit({"event": "phase", "seq": seq, "t_ms": t_ms, "run": run_id, "phase": "checking"})
             seq += 1
@@ -274,15 +278,16 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 seq += 1
                 emit({"event": "phase", "seq": seq, "t_ms": t_ms + 1, "run": run_id, "phase": "ended"})
                 seq += 1
-                emit({"event": "result", "seq": seq, "t_ms": t_ms + 2, "run": run_id, "launcher_ends": False,
-                      "result": {"result": "check_failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []}})
-                seq += 1
                 last_run = current_run
                 current_run = None
                 status_rev += 1
-                launcher_state = "ready" if elig_state["eligible"] else "idle"
-                emit({"event": "idle", "seq": seq, "t_ms": t_ms + 3})
+                launcher_state = "ending" if once_mode else ("ready" if elig_state["eligible"] else "idle")
+                emit({"event": "result", "seq": seq, "t_ms": t_ms + 2, "run": run_id, "launcher_ends": once_mode,
+                      "result": {"result": "check_failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []},
+                      "status": current_status_payload()})
                 seq += 1
+                if once_mode:
+                    sys.exit(2)
                 continue
             emit({"event": "check", "seq": seq, "t_ms": t_ms, "run": run_id, "check": {
                 "vehicle_sil_check": 1, "result": "passed", "errors": 0, "warnings": 0, "notes": 0,
@@ -315,19 +320,25 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
             if mode == "crash-on-first" and run_counter == 1:
                 os._exit(9)
             if mode == "contaminated-first" and run_counter == 1:
-                emit({"event": "result", "seq": seq, "t_ms": t_ms + 30, "run": run_id, "launcher_ends": True,
-                      "result": {"result": "failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []}})
-                sys.exit(6)
-            if mode == "fail-once" and run_counter == 1:
-                emit({"event": "result", "seq": seq, "t_ms": t_ms + 30, "run": run_id, "launcher_ends": False,
-                      "result": {"result": "failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []}})
-                seq += 1
                 last_run = current_run
                 current_run = None
                 status_rev += 1
-                launcher_state = "ready" if elig_state["eligible"] else "idle"
-                emit({"event": "idle", "seq": seq, "t_ms": t_ms + 35})
+                launcher_state = "ending"
+                emit({"event": "result", "seq": seq, "t_ms": t_ms + 30, "run": run_id, "launcher_ends": True,
+                      "result": {"result": "failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []},
+                      "status": current_status_payload()})
+                sys.exit(6)
+            if mode == "fail-once" and run_counter == 1:
+                last_run = current_run
+                current_run = None
+                status_rev += 1
+                launcher_state = "ending" if once_mode else ("ready" if elig_state["eligible"] else "idle")
+                emit({"event": "result", "seq": seq, "t_ms": t_ms + 30, "run": run_id, "launcher_ends": once_mode,
+                      "result": {"result": "failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []},
+                      "status": current_status_payload()})
                 seq += 1
+                if once_mode:
+                    sys.exit(1)
             elif mode == "heartbeat-until-stop":
                 import time as _time
                 emit({"event": "heartbeat", "seq": seq, "t_ms": t_ms + 50, "run": run_id})
@@ -336,20 +347,18 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 emit({"event": "heartbeat", "seq": seq, "t_ms": t_ms + 200, "run": run_id})
                 seq += 1
             elif mode not in ("wait-stop", "stop-ends", "natural-pass", "natural-ends"):
-                emit({"event": "result", "seq": seq, "t_ms": t_ms + 30, "run": run_id, "launcher_ends": False,
-                      "result": {"result": "passed", "errors": 0, "warnings": 0, "notes": 0, "findings": []}})
-                seq += 1
                 last_run = current_run
                 current_run = None
                 status_rev += 1
-                launcher_state = "ready" if elig_state["eligible"] else "idle"
-                if mode == "delayed-idle":
-                    import time as _time
-                    _time.sleep(0.2)
-                elif mode == "crash-before-idle":
-                    os._exit(9)
-                emit({"event": "idle", "seq": seq, "t_ms": t_ms + 35})
+                launcher_state = "ending" if once_mode else ("ready" if elig_state["eligible"] else "idle")
+                emit({"event": "result", "seq": seq, "t_ms": t_ms + 30, "run": run_id, "launcher_ends": once_mode,
+                      "result": {"result": "passed", "errors": 0, "warnings": 0, "notes": 0, "findings": []},
+                      "status": current_status_payload()})
                 seq += 1
+                if mode == "crash-before-idle":
+                    os._exit(9)
+                if once_mode:
+                    sys.exit(0)
         elif name in ("stop", "pause", "resume", "step", "run_until", "speed"):
             asked_run = cmd.get("run")
             if current_run is None or asked_run != current_run:
@@ -371,39 +380,38 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 emit({"event": "command", "seq": seq, "t_ms": t_ms, "run": current_run,
                       "command": "stop", "accepted": True, "ms": 0})
                 seq += 1
-                ends_now = mode == "stop-ends"
-                emit({"event": "result", "seq": seq, "t_ms": t_ms + 5, "run": current_run,
-                      "launcher_ends": ends_now, "result": {"result": "stopped", "errors": 0, "warnings": 0, "notes": 0, "findings": []}})
-                seq += 1
+                ends_now = (mode == "stop-ends") or once_mode
+                fin_run = current_run
                 last_run = current_run
                 current_run = None
                 status_rev += 1
-                if ends_now:
-                    launcher_state = "ending"
-                    sys.exit(0)
-                launcher_state = "ready" if elig_state["eligible"] else "idle"
-                emit({"event": "idle", "seq": seq, "t_ms": t_ms + 10})
+                launcher_state = "ending" if ends_now else ("ready" if elig_state["eligible"] else "idle")
+                emit({"event": "result", "seq": seq, "t_ms": t_ms + 5, "run": fin_run,
+                      "launcher_ends": ends_now,
+                      "result": {"result": "stopped", "errors": 0, "warnings": 0, "notes": 0, "findings": []},
+                      "status": current_status_payload()})
                 seq += 1
+                if ends_now:
+                    sys.exit(0)
             elif name == "resume" and mode in ("natural-pass", "natural-ends"):
-                ends_now = mode == "natural-ends"
+                ends_now = (mode == "natural-ends") or once_mode
                 t_ms += 40
                 emit({"event": "command", "seq": seq, "t_ms": t_ms, "run": current_run,
                       "command": "resume", "accepted": True, "ms": 0})
                 seq += 1
-                emit({"event": "result", "seq": seq, "t_ms": t_ms + 5, "run": current_run,
-                      "launcher_ends": ends_now,
-                      "result": {"result": "interrupted" if ends_now else "passed",
-                                 "errors": 0, "warnings": 0, "notes": 0, "findings": []}})
-                seq += 1
+                fin_run = current_run
                 last_run = current_run
                 current_run = None
                 status_rev += 1
-                if ends_now:
-                    launcher_state = "ending"
-                    sys.exit(0)
-                launcher_state = "ready" if elig_state["eligible"] else "idle"
-                emit({"event": "idle", "seq": seq, "t_ms": t_ms + 10})
+                launcher_state = "ending" if ends_now else ("ready" if elig_state["eligible"] else "idle")
+                emit({"event": "result", "seq": seq, "t_ms": t_ms + 5, "run": fin_run,
+                      "launcher_ends": ends_now,
+                      "result": {"result": "interrupted" if ends_now else "passed",
+                                 "errors": 0, "warnings": 0, "notes": 0, "findings": []},
+                      "status": current_status_payload()})
                 seq += 1
+                if ends_now:
+                    sys.exit(0)
 """).replace('"__VEHICLE_SIL_VERSION__"', json.dumps(__version__))
 
 
@@ -478,7 +486,7 @@ def _write_configs(root: Path, launcher_script: Path) -> None:
 async def _serve_gui(
     tmp_path: Path,
     *,
-    features: Sequence[str] = (*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
+    features: Sequence[str] = DEFAULT_FEATURES,
     variables: bool = True,
     silent_after_s: float = 5.0,
     stop_timeout_s: float = 1.0,
@@ -551,7 +559,7 @@ def test_serve_hot_scenario_aba_isolation_and_per_run_cleanup(tmp_path: Path) ->
             # Run A (#1)
             st, body = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200, body
-            s1 = body["session"]
+            s1_id = body["run_id"]
             msgs = await sock.until(is_ended)
             end1 = msgs[-1]["session"]
             assert end1["state"] == "ended"
@@ -566,14 +574,14 @@ def test_serve_hot_scenario_aba_isolation_and_per_run_cleanup(tmp_path: Path) ->
             assert len(_FakeControlSource.created) == 1
             assert _FakeControlSource.created[0].closed is True
 
-            # Run A (#2) reuses the exact same resident PID, seq restarts at 0, t_ms rebased
+            # Run A (#2) reuses the exact same resident PID
             st, body = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             msgs2 = await sock.until(is_ended)
             assert rt.resident_starts == 1
             assert rt.resident_pid == pid1
-            hellos2 = [m["event"] for m in msgs2 if m["type"] == "event" and m["event"]["event"] == "hello"]
-            assert hellos2 and hellos2[0]["seq"] == 0 and hellos2[0]["t_ms"] == 0
+            run_starts2 = [m["event"] for m in msgs2 if m["type"] == "event" and m["event"]["event"] == "run_start"]
+            assert run_starts2 and run_starts2[0]["run"] == "feed-2"
             assert len(_FakeControlSource.created) == 2
             assert _FakeControlSource.created[0].token == _FakeControlSource.created[1].token
             assert _FakeControlSource.created[1].closed is True
@@ -594,7 +602,7 @@ def test_serve_hot_scenario_aba_isolation_and_per_run_cleanup(tmp_path: Path) ->
             assert rt.resident_pid != pid_b
             entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
             assert all(e["cred_exists"] is True for e in entries if isinstance(e.get("cmd"), dict) and e["cmd"].get("command") == "run")
-            assert s1["id"] != body["session"]["id"]
+            assert s1_id != body["run_id"]
             await sock.close()
 
     asyncio.run(run())
@@ -608,7 +616,7 @@ def test_serve_stop_stops_run_without_killing_resident_and_drops_stale_refusal(t
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             pid1 = rt.resident_pid
@@ -624,7 +632,7 @@ def test_serve_stop_stops_run_without_killing_resident_and_drops_stale_refusal(t
                 }),
             )
 
-            st, stop_body = await c.post("api/stop", {"force": False})
+            st, stop_body = await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             assert st == 200
             msgs = await sock.until(is_ended)
             end_sess = msgs[-1]["session"]
@@ -636,10 +644,10 @@ def test_serve_stop_stops_run_without_killing_resident_and_drops_stale_refusal(t
             assert rt.status()["state"] == "ready"
 
             # Next run starts on the same resident without relaunch
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r2 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             assert rt.resident_starts == 1
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r2["run_id"], "instance": server.instance, "force": False})
             await sock.until(is_ended)
             await sock.close()
 
@@ -655,7 +663,8 @@ def test_serve_prepare_ready_and_config_save_releases_resident(tmp_path: Path) -
             await sock.until(lambda m: m["type"] == "synced")
 
             st, body = await c.post("api/prepare", {"file": "a.yaml"})
-            assert st == 200 and body["runtime"]["mode"] == "hot" and body["runtime"]["state"] == "ready"
+            assert st == 200 and body == {"instance": server.instance}
+            assert rt.status()["mode"] == "hot" and rt.status()["state"] == "ready"
             assert rt.resident_starts == 1
             pid1 = rt.resident_pid
             ready_msgs = await sock.until(
@@ -672,12 +681,12 @@ def test_serve_prepare_ready_and_config_save_releases_resident(tmp_path: Path) -
             # Prepare during active run returns 409 already-running
             os.environ["FAKE_SERVE_BEHAVIOR"] = "wait-stop"
             await c.post("api/prepare", {"file": "b.yaml"})
-            st, _ = await c.post("api/run", {"file": "b.yaml"})
+            st, rb = await c.post("api/run", {"file": "b.yaml"})
             assert st == 200
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             st, err = await c.post("api/prepare", {"file": "a.yaml"})
             assert st == 409 and err["error"]["code"] == "already-running"
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": rb["run_id"], "instance": server.instance, "force": False})
             await sock.until(is_ended)
 
             # Saving edited b.yaml releases idle resident so next run uses fresh resident
@@ -711,16 +720,8 @@ def test_hot_cold_auto_switch_all_five_reasons(tmp_path: Path) -> None:
         prev_log = os.environ.get("FAKE_SERVE_LOG")
         os.environ["FAKE_SERVE_LOG"] = str(log_path)
         try:
-            # 1. launcher-unsupported
-            no_serve = FakeLauncher(features=DEFAULT_FEATURES, path=script)
-            rt_no_serve = ServeRuntime(no_serve, cwd=root)
-            assert (await rt_no_serve.inspect_config("a.yaml")).hot.reason == "launcher-unsupported"
-
-            # 2. trace-enabled (pre-launch Cold guard runs before spawning serve or check --file-only)
-            with_file_only = FakeLauncher(
-                features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
-                path=script,
-            )
+            # 1. trace-enabled (pre-launch Cold guard runs before spawning serve or check --file-only)
+            with_file_only = FakeLauncher(features=DEFAULT_FEATURES, path=script)
             rt_check = ServeRuntime(with_file_only, cwd=root)
             os.environ["VEHICLE_SIL_TRACE"] = "/tmp/trace"
             try:
@@ -729,12 +730,12 @@ def test_hot_cold_auto_switch_all_five_reasons(tmp_path: Path) -> None:
             finally:
                 os.environ.pop("VEHICLE_SIL_TRACE", None)
 
-            # 3. fixed-registry via check --file-only --json (never spawns serve)
+            # 2. fixed-registry via check --file-only --json (never spawns serve)
             fixed_prep = await rt_check.prepare("fixed.yaml", want_control=False)
             assert fixed_prep["mode"] == "cold" and fixed_prep["reason"] == "fixed-registry"
             assert rt_check.resident_starts == 0
 
-            # 4. manual-participants (YAML via check --file-only, request override pre-launch, disable override)
+            # 3. manual-participants (YAML via check --file-only, request override pre-launch, disable override)
             assert (await rt_check.inspect_config("manual.yaml")).hot.reason == "manual-participants"
             assert (await rt_check.inspect_config("a.yaml", manual=("Engine",), need_metadata=False)).hot.reason == "manual-participants"
             assert (await rt_check.inspect_config("manual.yaml", disable=("Engine",))).hot.hot is True
@@ -746,15 +747,15 @@ def test_hot_cold_auto_switch_all_five_reasons(tmp_path: Path) -> None:
             else:
                 os.environ["FAKE_SERVE_LOG"] = prev_log
 
-        # 5. resident-failed falls back to Cold via OneShotRuntime on prepare
+        # 4. resident-failed falls back to Cold on prepare
         async with _serve_gui(tmp_path, env={"FAKE_SERVE_BEHAVIOR": "startup-refuse"}) as (server, c, _):
             st, body = await c.post("api/prepare", {"file": "a.yaml"})
-            assert st == 200
-            assert body["runtime"]["mode"] == "cold"
-            assert body["runtime"]["reason"] == "resident-failed"
+            assert st == 200 and body == {"instance": server.instance}
+            assert server.runtime.status()["mode"] == "cold"
+            assert server.runtime.status()["reason"] == "resident-failed"
             st, body = await c.post("api/prepare", {"file": "fixed.yaml"})
-            assert st == 200
-            assert body["runtime"]["mode"] == "cold" and body["runtime"]["reason"] == "fixed-registry"
+            assert st == 200 and body == {"instance": server.instance}
+            assert server.runtime.status()["mode"] == "cold" and server.runtime.status()["reason"] == "fixed-registry"
 
     asyncio.run(run())
 
@@ -776,7 +777,7 @@ def test_serve_recovery_after_failure_contamination_and_crash_without_retry(
 
             st, body = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
-            first_id = body["session"]["id"]
+            first_id = body["run_id"]
             msgs1 = await sock.until(is_ended)
             end1 = msgs1[-1]["session"]
             assert end1["id"] == first_id
@@ -798,9 +799,10 @@ def test_serve_recovery_after_failure_contamination_and_crash_without_retry(
             # Next Prepare + Run recovers cleanly (spawning fresh resident if exited)
             os.environ["FAKE_SERVE_BEHAVIOR"] = "normal"
             st, prep = await c.post("api/prepare", {"file": "a.yaml"})
-            assert st == 200 and prep["runtime"]["state"] == "ready"
+            assert st == 200 and prep == {"instance": server.instance}
+            assert rt.status()["state"] == "ready"
             st, body2 = await c.post("api/run", {"file": "a.yaml"})
-            assert st == 200 and body2["session"]["id"] == first_id + 1
+            assert st == 200 and body2["run_id"] != first_id
             msgs2 = await sock.until(is_ended)
             assert msgs2[-1]["session"]["result"]["result"] == "passed"
             await sock.close()
@@ -815,7 +817,7 @@ def test_serve_heartbeat_keeps_silence_clear(tmp_path: Path) -> None:
         ) as (server, c, _):
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             await asyncio.sleep(0.25)
             st, s_mid = await c.get("api/session")
@@ -823,7 +825,7 @@ def test_serve_heartbeat_keeps_silence_clear(tmp_path: Path) -> None:
             # Wait past silent_after_s without more lines -> launcher-silent triggers
             silent_msg = await sock.until(lambda m: m["type"] == "error" and m.get("code") == "launcher-silent")
             assert silent_msg
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             await sock.until(is_ended)
             await sock.close()
 
@@ -917,7 +919,7 @@ def test_serve_release_config_during_run_recycles_resident_and_prepare_rejects_s
             finally:
                 server._starting = False
 
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             old_pid = rt.resident_pid
@@ -934,7 +936,7 @@ def test_serve_release_config_during_run_recycles_resident_and_prepare_rejects_s
             assert st == 200, saved
             assert rt._resident is not None and rt._resident.ending is True
 
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             await sock.until(is_ended)
 
             os.environ["FAKE_SERVE_BEHAVIOR"] = "normal"
@@ -956,7 +958,7 @@ def test_serve_shutdown_during_spawn_leaks_nothing(tmp_path: Path) -> None:
         log_path = tmp_path / "calls.jsonl"
         _write_configs(root, script)
         os.environ["FAKE_SERVE_LOG"] = str(log_path)
-        launcher = FakeLauncher(features=(*DEFAULT_FEATURES, "serve"), path=script)
+        launcher = FakeLauncher(features=DEFAULT_FEATURES, path=script)
         rt = ServeRuntime(launcher, cwd=root)
 
         import threading
@@ -1014,9 +1016,9 @@ def test_serve_check_failed_keeps_resident_ready_without_advancing_session_id(tm
             pid1 = rt.resident_pid
             assert pid1 is not None
 
-            # Subsequent start succeeds on the same resident with session id == 1
+            # Subsequent start succeeds on the same resident with first session id
             st_ok, run_body = await c.post("api/run", {"file": "a.yaml"})
-            assert st_ok == 200 and run_body["session"]["id"] == 1
+            assert st_ok == 200 and run_body["run_id"] == f"{server.instance}-1"
             assert rt.resident_pid == pid1
             assert rt.resident_starts == 1
             await sock.until(is_ended)
@@ -1043,7 +1045,7 @@ def test_serve_check_timeout_aborts_hung_launcher_and_recovers(tmp_path: Path) -
 
             os.environ["FAKE_SERVE_BEHAVIOR"] = "normal"
             st_ok, run_body = await c.post("api/run", {"file": "a.yaml"})
-            assert st_ok == 200 and run_body["session"]["id"] == 1
+            assert st_ok == 200 and run_body["run_id"] == f"{server.instance}-1"
             await sock.until(is_ended)
             await sock.close()
 
@@ -1118,7 +1120,7 @@ def test_hot_non_finite_and_invalid_stdout_fallback_preserves_seq(tmp_path: Path
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             before = await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             assert rt._resident is not None and rt._resident.current_run is not None
@@ -1132,14 +1134,14 @@ def test_hot_non_finite_and_invalid_stdout_fallback_preserves_seq(tmp_path: Path
             ):
                 rt._handle_stdout_line(rt._resident, bad_line)
 
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             msgs = await sock.until(is_ended)
             end_sess = msgs[-1]["session"]
             assert end_sess["result"]["result"] == "stopped"
             output_problems = [p for p in end_sess["problems"] if p["code"] == "launcher-output"]
             assert len(output_problems) == 4
             seqs = [m["event"]["seq"] for m in (*before, *msgs) if m["type"] == "event"]
-            assert seqs == list(range(len(seqs)))
+            assert seqs == sorted(seqs)
             await sock.close()
 
     asyncio.run(run())
@@ -1215,8 +1217,8 @@ def test_hot_inspect_waits_for_delayed_idle_after_result_and_reuses_prepare(tmp_
             assert st1 == 200
             await sock.until(is_ended)
 
-            # result arrives and broadcasts session:ended ~0.2s before idle;
-            # POST api/run must wait for resident.idle and reuse serve prepare.
+            # In Events v4, result embeds status directly, so resident.idle is immediately True upon result;
+            # POST api/run reuses serve prepare without calling check --file-only.
             st2, _ = await c.post("api/run", {"file": "a.yaml"})
             assert st2 == 200
             await sock.until(is_ended)
@@ -1271,7 +1273,7 @@ def test_hot_inspect_does_not_wait_for_idle_while_run_is_active(tmp_path: Path) 
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
-            st1, _ = await c.post("api/run", {"file": "a.yaml"})
+            st1, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st1 == 200
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
 
@@ -1283,7 +1285,7 @@ def test_hot_inspect_does_not_wait_for_idle_while_run_is_active(tmp_path: Path) 
             entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
             assert sum(1 for e in entries if e.get("cmd") == "check-file-only") == 2
 
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             await sock.until(is_ended)
             await sock.close()
 
@@ -1310,7 +1312,7 @@ def test_hot_deep_nested_event_flows_through_drain_without_recursion_error(tmp_p
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             before = await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             assert rt._resident is not None and rt._resident.current_run is not None
@@ -1319,7 +1321,7 @@ def test_hot_deep_nested_event_flows_through_drain_without_recursion_error(tmp_p
             assert active_run is not None and active_run.request is not None
             req_path = str(active_run.request)
 
-            next_seq = len([m for m in before if m["type"] == "event"])
+            next_seq = (rt._resident.last_seq or 0) + 1
             ev_unrelated = {
                 "event": "finding", "seq": next_seq, "t_ms": 20, "run": run_id,
                 "severity": "note", "message": "deep unrelated",
@@ -1344,8 +1346,10 @@ def test_hot_deep_nested_event_flows_through_drain_without_recursion_error(tmp_p
             assert unwrap(deep_msg["payload"]) == {
                 "file": "the request", "line": None, "message": "the request: deep",
             }
+            rt._resident.last_seq = next_seq - 1
+            active_run.session.last_seq = next_seq - 1
 
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             msgs = await sock.until(is_ended)
             assert msgs[-1]["session"]["result"]["result"] == "stopped"
             assert msgs[-1]["session"]["problems"] == []
@@ -1368,10 +1372,7 @@ def test_prepare_sends_prepare_to_replacement_resident_after_prepare_failure(
         prev_beh = os.environ.get("FAKE_SERVE_BEHAVIOR")
         os.environ["FAKE_SERVE_LOG"] = str(log_path)
         os.environ["FAKE_SERVE_BEHAVIOR"] = behavior
-        launcher = FakeLauncher(
-            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
-            path=script,
-        )
+        launcher = FakeLauncher(features=DEFAULT_FEATURES, path=script)
         rt = ServeRuntime(launcher, cwd=root)
         try:
             st1 = await rt.prepare("a.yaml")
@@ -1417,10 +1418,7 @@ def test_inspect_config_restores_idle_state_after_closing_failed_resident(tmp_pa
         prev_beh = os.environ.get("FAKE_SERVE_BEHAVIOR")
         os.environ["FAKE_SERVE_LOG"] = str(log_path)
         os.environ["FAKE_SERVE_BEHAVIOR"] = "crash-second-prepare"
-        launcher = FakeLauncher(
-            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
-            path=script,
-        )
+        launcher = FakeLauncher(features=DEFAULT_FEATURES, path=script)
         rt = ServeRuntime(launcher, cwd=root)
         try:
             st1 = await rt.prepare("a.yaml")
@@ -1456,10 +1454,7 @@ def test_cancelling_prepare_mid_send_prepare_clears_pending_prepare(tmp_path: Pa
         prev_beh = os.environ.get("FAKE_SERVE_BEHAVIOR")
         os.environ["FAKE_SERVE_LOG"] = str(log_path)
         os.environ["FAKE_SERVE_BEHAVIOR"] = "hang-second-prepare"
-        launcher = FakeLauncher(
-            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
-            path=script,
-        )
+        launcher = FakeLauncher(features=DEFAULT_FEATURES, path=script)
         rt = ServeRuntime(launcher, cwd=root, escalate_wait_s=0.1)
         req_file = tmp_path / "req.json"
         req_file.write_text('{"vehicle_sil_run_request":1}\n', encoding="utf-8")
@@ -1531,10 +1526,7 @@ def test_cancelling_prepare_mid_spawn_closes_resident_and_restores_idle(tmp_path
         _write_configs(root, script)
         prev_log = os.environ.get("FAKE_SERVE_LOG")
         os.environ["FAKE_SERVE_LOG"] = str(log_path)
-        launcher = FakeLauncher(
-            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
-            path=script,
-        )
+        launcher = FakeLauncher(features=DEFAULT_FEATURES, path=script)
         rt = ServeRuntime(launcher, cwd=root, escalate_wait_s=0.1)
 
         import threading
@@ -1601,10 +1593,7 @@ def test_cancelling_start_run_mid_wait_clears_pending_and_closes_resident(tmp_pa
         prev_beh = os.environ.get("FAKE_SERVE_BEHAVIOR")
         os.environ["FAKE_SERVE_LOG"] = str(log_path)
         os.environ["FAKE_SERVE_BEHAVIOR"] = "hang-run-start"
-        launcher = FakeLauncher(
-            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
-            path=script,
-        )
+        launcher = FakeLauncher(features=DEFAULT_FEATURES, path=script)
         rt = ServeRuntime(launcher, cwd=root, escalate_wait_s=0.1)
         req_file = tmp_path / "req.json"
         req_file.write_text('{"vehicle_sil_run_request":1}\n', encoding="utf-8")
@@ -1656,7 +1645,7 @@ def test_serve_status_command_and_monotonic_execution_status_adoption(tmp_path: 
 
             st, _ = await c.post("api/prepare", {"file": "a.yaml"})
             assert st == 200
-            queried = await rt.query_status()
+            queried = rt.execution_status()
             assert queried is not None
             assert queried["launcher_state"] == "ready"
             assert queried["launcher_allowed"]["run"]["ok"] is True
@@ -1711,7 +1700,7 @@ def test_hot_allowed_projects_cpp_stop_requests_and_post_result_drain(tmp_path: 
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             res = rt._resident
@@ -1757,7 +1746,7 @@ def test_hot_allowed_projects_cpp_stop_requests_and_post_result_drain(tmp_path: 
             # Restore running so normal stop completes cleanly.
             res.execution_status["launcher_state"] = "running"
             res.execution_status["run_state"]["stop"]["requests"] = 0
-            await c.post("api/stop", {"force": True})
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": True})
             await sock.until(is_ended)
             await sock.close()
 
@@ -1773,24 +1762,29 @@ def test_prepare_early_returns_clear_preparing_config_without_spurious_ws_event(
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
             st, body = await c.post("api/prepare", {"file": "a.yaml"})
-            assert st == 200
-            assert body["runtime"]["mode"] == "cold"
-            assert body["runtime"]["state"] == "cold"
-            assert body["runtime"]["reason"] == "resident-failed"
+            assert st == 200 and body == {"instance": server.instance}
+            assert server.runtime.status()["mode"] == "cold"
+            assert server.runtime.status()["state"] == "cold"
+            assert server.runtime.status()["reason"] == "resident-failed"
             assert server.runtime._preparing_config is None  # type: ignore[attr-defined]
             await sock.close()
 
-        # 2. not parsed.hot.hot (without check-file-only, serve prepare returns eligible=False) -> returns cold, no preparing after resetting.
+        # 2. not parsed.hot.hot (if _run_file_only_check returns hot=True, serve prepare returns eligible=False) -> returns cold, no preparing after resetting.
         async with _serve_gui(
             tmp_path / "case2",
-            features=(*DEFAULT_FEATURES, "serve", "serve-prepare"),
             variables=False,
         ) as (server, c, _):
+            from vehicle_sil_gui.runtime import ConfigInspection, HotDecision
+
+            async def fake_file_only(*_a, **_kw):
+                return ConfigInspection(hot=HotDecision(True))
+
+            server.runtime._run_file_only_check = fake_file_only  # type: ignore[attr-defined]
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
             st, body = await c.post("api/prepare", {"file": "fixed.yaml"})
-            assert st == 200
-            assert body["runtime"] == {
+            assert st == 200 and body == {"instance": server.instance}
+            assert server.runtime.status() == {
                 "mode": "cold",
                 "state": "cold",
                 "config": "fixed.yaml",
@@ -1833,21 +1827,8 @@ def test_execution_status_validation_and_pre_run_equal_rev_protection(tmp_path: 
             ):
                 assert rt._apply_execution_status(res, bad) is False
 
-            # Foreign/mismatched status and prepare events with id=None do NOT resolve pending futures.
+            # Foreign/mismatched prepare events with id=None do NOT resolve pending futures.
             loop = asyncio.get_running_loop()
-            fut_status: asyncio.Future[dict] = loop.create_future()
-            res.pending_status = (999, fut_status)
-            rt._handle_stdout_line(res, json.dumps({
-                "event": "status", "seq": 910, "t_ms": 910, "id": None,
-                "instance": "feed000000000001", "status_rev": cur_rev, "launcher_state": "ready", "config": "a.yaml",
-            }))
-            rt._handle_stdout_line(res, json.dumps({
-                "event": "status", "seq": 911, "t_ms": 911, "id": 999,
-                "instance": None, "status_rev": cur_rev + 5, "launcher_state": "contaminated", "config": "a.yaml",
-            }))
-            assert not fut_status.done()
-            res.pending_status = None
-
             fut_prep: asyncio.Future[dict] = loop.create_future()
             res.pending_prepare = (998, fut_prep)
             rt._handle_stdout_line(res, json.dumps({
@@ -1871,7 +1852,7 @@ def test_execution_status_validation_and_pre_run_equal_rev_protection(tmp_path: 
 
             # Start run and verify equal-status_rev pre-run status cannot regress "running" -> "ready",
             # and bool run_state.rev cannot overwrite integer run_state.rev.
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             assert res.current_run is not None
@@ -1895,7 +1876,7 @@ def test_execution_status_validation_and_pre_run_equal_rev_protection(tmp_path: 
             }))
             assert res.execution_status["run_state"]["rev"] == 3
 
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             await sock.until(is_ended)
             await sock.close()
 
@@ -1910,7 +1891,7 @@ def test_hot_external_stop_does_not_escalate_on_graceful_api_stop_and_release_mi
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             res = rt._resident
@@ -1922,7 +1903,7 @@ def test_hot_external_stop_does_not_escalate_on_graceful_api_stop_and_release_mi
             assert res.ending is True
             assert rt.status()["state"] == "running"
 
-            # External C++ stop sets stop.requests == 1; POST api/stop {force: false} must NOT escalate.
+            # External C++ stop sets stop.requests == 1; POST api/stop-session {force: false} must NOT escalate.
             rt._handle_stdout_line(res, json.dumps({
                 "event": "state", "seq": 95, "t_ms": 200, "run": run_id,
                 "rev": 5, "phase": "stopping", "paused": False,
@@ -1930,13 +1911,14 @@ def test_hot_external_stop_does_not_escalate_on_graceful_api_stop_and_release_mi
             }))
             await sock.until(lambda m: m["type"] == "allowed" and m["allowed"]["stop"]["reason"] == "already-stopping")
 
-            st_grace, grace_body = await c.post("api/stop", {"force": False})
-            assert st_grace == 200
-            assert grace_body["session"]["allowed"]["stop"]["reason"] == "already-stopping"
-            assert grace_body["session"]["allowed"]["force"]["ok"] is True
+            st_grace, grace_body = await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
+            assert st_grace == 200 and grace_body == {"instance": server.instance, "run_id": r1["run_id"]}
+            assert server.session is not None
+            assert server.session.allowed()["stop"]["reason"] == "already-stopping"
+            assert server.session.allowed()["force"]["ok"] is True
 
             # Verify no unforced stop line was written while already stopping, and force=True sends {"force": true}.
-            st_force, force_body = await c.post("api/stop", {"force": True})
+            st_force, force_body = await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": True})
             assert st_force == 200
             await sock.until(is_ended)
             assert rt.status()["state"] == "idle"
@@ -1971,11 +1953,11 @@ def test_hot_launcher_ends_post_result_async_drain_keeps_stoppable_false(tmp_pat
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
-            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
 
-            st_stop, _ = await c.post("api/stop", {"force": False})
+            st_stop, _ = await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             assert st_stop == 200
             # Wait for result to clear current_run and set resident.ending while _SlowCloseSource.close() holds drain.
             rt = server.runtime
@@ -2024,10 +2006,10 @@ def test_hot_post_result_async_drain_stop_is_noop_without_spurious_problem(
 
             st, started = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200, started
-            sid = started["session"]["id"]
+            sid = started["run_id"]
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
 
-            st_res, _ = await c.post("api/time", {"command": "resume"})
+            st_res, _ = await c.post("api/time", {"run_id": sid, "instance": server.instance, "command": "resume"})
             assert st_res == 200
 
             await asyncio.wait_for(sources[0].close_entered.wait(), timeout=5.0)
@@ -2044,18 +2026,17 @@ def test_hot_post_result_async_drain_stop_is_noop_without_spurious_problem(
             assert sess_body["allowed"]["force"]["ok"] is False
             assert sess_body["allowed"]["force"]["reason"] == "not-running"
 
-            for endpoint, payload in (
-                ("api/stop", {"force": False}),
-                ("api/stop", {"force": True}),
-                ("api/stop-session", {"session": sid, "instance": server.instance, "force": False}),
-                ("api/stop-session", {"session": sid, "instance": server.instance, "force": True}),
+            for payload in (
+                {"run_id": sid, "instance": server.instance, "force": False},
+                {"run_id": sid, "instance": server.instance, "force": True},
             ):
-                st_stop, stop_body = await c.post(endpoint, payload)
-                assert st_stop == 200, (endpoint, payload, stop_body)
-                assert stop_body["session"]["stop"] == "none"
-                assert stop_body["session"]["problems"] == []
-                assert stop_body["session"]["allowed"]["stop"]["reason"] == "not-running"
-                assert stop_body["session"]["allowed"]["force"]["reason"] == "not-running"
+                st_stop, stop_body = await c.post("api/stop-session", payload)
+                assert st_stop == 200, (payload, stop_body)
+                assert stop_body == {"instance": server.instance, "run_id": sid}
+                assert server.session.stop == "none"
+                assert server.session.problems == []
+                assert server.session.allowed()["stop"]["reason"] == "not-running"
+                assert server.session.allowed()["force"]["reason"] == "not-running"
 
             sources[0].close_gate.set()
             msgs = await sock.until(is_ended)

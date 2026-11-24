@@ -21,7 +21,7 @@ def gui(tmp_path_factory) -> Iterator[Gui]:
         yield g
 
 API = [("GET", "api/app"), ("GET", "api/configs"), ("GET", "api/session"), ("POST", "api/check"),
-       ("POST", "api/run"), ("POST", "api/stop"), ("POST", "api/time"), ("GET", "api/dashboard"),
+       ("POST", "api/run"), ("POST", "api/stop-session"), ("POST", "api/time"), ("GET", "api/dashboard"),
        ("GET", "api/scenarios"), ("GET", "api/recording"), ("GET", "api/config"), ("POST", "api/describe")]
 
 
@@ -70,7 +70,7 @@ def test_changes_need_the_servers_own_origin(gui: Gui) -> None:
     async def main(c: Client) -> None:
         for origin in (None, "null", "http://evil.example", f"http://127.0.0.1:{gui.port + 1}",
                        f"https://127.0.0.1:{gui.port}", "http://127.0.0.1:4200", f"http://localhost:{gui.port}"):
-            for path in ("api/check", "api/run", "api/stop", "api/time"):
+            for path in ("api/check", "api/run", "api/stop-session", "api/time"):
                 status, body = await c.post(path, {"file": "simulation.yaml"}, origin=origin)
                 assert status == 403 and body["error"]["code"] == "forbidden-origin", (origin, path)
             if origin is not None:  # a GET from another page is refused too

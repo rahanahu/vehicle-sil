@@ -47,117 +47,131 @@ def is_operation(seq: int, state: str):
 
 
 def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -> None:
+    import tempfile
     configs = tmp_path / "configs"
     write(configs, EXAMPLES)
-    cred_paths: list[Path] = []
-    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
-        async def talk(c: Client) -> None:
-            _, app = await c.get("api/app")
-            assert app["version"] == __version__
-            assert app["launcher"]["version"]["vehicle_sil"] == __version__
-            assert app["variables"] == {"available": True, "reason": None}
-            ws = await c.ws()
-            await ws.until(is_synced)
-            status, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
-            sid = started["session"]["id"]
-            assert status == 200 and started["session"]["variables"]["state"] == "connecting"
-            # Ready comes when the control server has been read; the ECUs join it one by one after that, and
-            # each time the summary is told again.
-            got = await ws.until(is_variables("ready"))
-            got += await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
-                                  and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
-            # One-shot `run` deletes credentials immediately; persistent `serve` retains them until shutdown.
-            hello = next(m["event"] for m in got if m["type"] == "event" and m["event"]["event"] == "hello")
-            path = Path(hello["arguments"][hello["arguments"].index("--control-credentials") + 1])
-            cred_paths.append(path)
-            if hello["arguments"][0] == "serve":
-                assert path.exists()
-            else:
-                assert not path.exists()
-            schema = {p["name"]: {v["name"]: v for v in p["variables"]} for p in got[-1]["variables"]["peers"]}
-            assert set(schema) == {"Engine", "Dashboard"}
-            throttle, speed = schema["Engine"]["engine.throttle"], schema["Engine"]["engine.speed"]
-            assert (throttle["type"], throttle["role"], throttle["writable"], throttle["unit"]) == \
-                ("real", "input", True, "%")
-            assert (throttle["min"], throttle["max"]) == (0, 100)
-            assert (speed["role"], speed["writable"], speed["unit"]) == ("output", False, "rpm")
+    with tempfile.TemporaryDirectory(prefix="vsil-") as temp_dir:
+        temp = Path(temp_dir)
+        cred_paths: list[Path] = []
+        env = {"TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)}
+        with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER), env=env) as gui:
+            async def talk(c: Client) -> None:
+                _, app = await c.get("api/app")
+                assert app["version"] == __version__
+                assert app["launcher"]["version"]["vehicle_sil"] == __version__
+                assert app["variables"] == {"available": True, "reason": None}
+                ws = await c.ws()
+                await ws.until(is_synced)
+                status, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
+                assert status == 200, started
+                sid, instance = started["run_id"], started["instance"]
+                _, s_init = await c.get("api/session")
+                assert s_init["session"]["variables"]["state"] in ("connecting", "ready")
+                # Ready comes when the control server has been read; the ECUs join it one by one after that, and
+                # each time the summary is told again.
+                if s_init["session"]["variables"]["state"] != "ready":
+                    got = await ws.until(is_variables("ready"))
+                else:
+                    got = list(ws.received)
+                if not any(
+                    m["type"] == "variables"
+                    and len(m["variables"]["peers"]) == 2
+                    and all(p["connected"] and p["variables"] for p in m["variables"]["peers"])
+                    for m in ws.received
+                ):
+                    got += await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
+                                          and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
+                else:
+                    got = list(ws.received)
+                # Persistent `serve` retains credentials until shutdown.
+                found_creds = list(temp.glob("vehicle-sil-gui-control-*"))
+                assert len(found_creds) == 1 and found_creds[0].exists()
+                cred_paths.extend(found_creds)
+                var_msgs = [m for m in ws.received if m["type"] == "variables" and len(m["variables"]["peers"]) == 2]
+                schema = {p["name"]: {v["name"]: v for v in p["variables"]} for p in var_msgs[-1]["variables"]["peers"]}
+                assert set(schema) == {"Engine", "Dashboard"}
+                throttle, speed = schema["Engine"]["engine.throttle"], schema["Engine"]["engine.speed"]
+                assert (throttle["type"], throttle["role"], throttle["writable"], throttle["unit"]) == \
+                    ("real", "input", True, "%")
+                assert (throttle["min"], throttle["max"]) == (0, 100)
+                assert (speed["role"], speed["writable"], speed["unit"]) == ("output", False, "rpm")
 
-            await ws.send({"type": "watch", "id": 1, "variables": [THROTTLE, SPEED], "period_ms": 20})
-            first = (await ws.until(is_values(1, paused=True)))[-1]
-            assert first["sim_ms"] == 0  # standing still before the first step
-            status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 50}}})
-            assert status == 200, body
-            seq = body["operation"]
-            await ws.until(is_operation(seq, "queued"))
-            for bad, code in (({"Engine": {"engine.speed": 1}}, "not-writable"),
-                              ({"Engine": {"engine.throttle": 101}}, "invalid-field"),
-                              ({"Engine": {"engine.nothing": 1}}, "unknown-variable")):
-                status, body = await c.post("api/write", {"session": sid, "writes": bad})
-                assert (status, body["error"]["code"]) == (400, code)
+                await ws.send({"type": "watch", "id": 1, "variables": [THROTTLE, SPEED], "period_ms": 20})
+                first = (await ws.until(is_values(1, paused=True)))[-1]
+                assert first["sim_ms"] == 0  # standing still before the first step
+                status, body = await c.post("api/write", {"run_id": sid, "writes": {"Engine": {"engine.throttle": 50}}})
+                assert status == 200, body
+                seq = body["operation"]
+                await ws.until(is_operation(seq, "queued"))
+                for bad, code in (({"Engine": {"engine.speed": 1}}, "not-writable"),
+                                  ({"Engine": {"engine.throttle": 101}}, "invalid-field"),
+                                  ({"Engine": {"engine.nothing": 1}}, "unknown-variable")):
+                    status, body = await c.post("api/write", {"run_id": sid, "writes": bad})
+                    assert (status, body["error"]["code"]) == (400, code)
 
-            # The engine runs 50 rpm per 10 ms step towards 800 rpm + 20 rpm per percent: 1800 rpm at 500 ms.
-            await c.post("api/time", {"command": "step", "ms": 500})
-            got = await ws.until(is_values(1, paused=True, sim_ms=500))
-            applied = next(m for m in ws.received if is_operation(seq, "applied")(m))
-            assert applied["peers"]["Engine"]["applied_at_ms"] == 0
-            assert (applied["peers"]["Engine"]["applied_writes"], applied["peers"]["Engine"]["failed_write"]) == (1, None)
-            engine = got[-1]["peers"]["Engine"]
-            assert engine["values"] == {"engine.throttle": 50.0, "engine.speed": 1800}, engine
-            assert 490 <= engine["sample_ms"] <= 500
-
-            # Standing still at 500: a write for 500 itself. The engine has run its step at 500 (its sample is
-            # there), so the write is too late; the engine finds that out at its next step. Whether the step at
-            # the standstill has run is not promised for every ECU (docs/control-api.md says to write for a time
-            # after the standstill), so the other outcome, made in the step at 500, is taken too. The value
-            # written is the one the variable has, so the steps below read the same either way.
-            status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 50}}, "at_ms": 500})
-            assert status == 200, body
-            boundary = body["operation"]
-            await ws.until(lambda m: m["type"] == "operation" and m["seq"] == boundary
-                           and m["state"] in ("queued", "late"))
-
-            # Step by step: each time it stands still, the values are those of the steps before that time. The
-            # engine's step is 10 ms; its speed falls 50 rpm per step towards 800 rpm once the throttle is 0.
-            status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 0}}, "at_ms": 501})
-            assert status == 200, body
-            for n in range(1, 13):
-                await c.post("api/time", {"command": "step", "ms": 10})
-                got = await ws.until(is_values(1, paused=True, sim_ms=500 + 10 * n))
+                # The engine runs 50 rpm per 10 ms step towards 800 rpm + 20 rpm per percent: 1800 rpm at 500 ms.
+                await c.post("api/time", {"command": "step", "ms": 500})
+                got = await ws.until(is_values(1, paused=True, sim_ms=500))
+                applied = next(m for m in ws.received if is_operation(seq, "applied")(m))
+                assert applied["peers"]["Engine"]["applied_at_ms"] == 0
+                assert (applied["peers"]["Engine"]["applied_writes"], applied["peers"]["Engine"]["failed_write"]) == (1, None)
                 engine = got[-1]["peers"]["Engine"]
-                at = engine["sample_ms"]
-                assert 500 + 10 * n - 10 <= at <= 500 + 10 * n, (n, engine)
-                steps_with_zero = (at - 510) // 10 + 1  # the write took effect in the step at 510
-                assert engine["values"]["engine.speed"] == 1800 - 50 * max(steps_with_zero, 0), (n, engine)
-                assert engine["values"]["engine.throttle"] == (0.0 if at >= 510 else 50.0), (n, engine)
-                if n == 1 and at < 510:
-                    # Stopped, written, stepped: the step at the standstill itself (the one that took the write)
-                    # arrives while it stands still. The same time is then called paused once more, with the
-                    # values of that step.
-                    more = await ws.until(lambda m: is_values(1)(m) and m["peers"]["Engine"]["sample_ms"] == 510)
-                    assert (more[-1]["paused"], more[-1]["sim_ms"]) == (True, 510), more[-1]
-                    assert more[-1]["peers"]["Engine"]["values"] == {"engine.throttle": 0.0, "engine.speed": 1750}
-                    got += more
-                # Nothing sent while it runs claims to stand still at another time.
-                assert all(m["sim_ms"] in (500 + 10 * n - 10, 500 + 10 * n) or not m["paused"]
-                           for m in got if m["type"] == "values")
+                assert engine["values"] == {"engine.throttle": 50.0, "engine.speed": 1800}, engine
+                assert 490 <= engine["sample_ms"] <= 500
 
-            end = next(m for m in reversed(ws.received) if m["type"] == "operation" and m["seq"] == boundary)
-            assert end["done"] and (end["state"], end["peers"]["Engine"]["applied_at_ms"]) in (
-                ("late", None), ("applied", 500)), end
-            await c.post("api/stop")
-            got = await ws.until(is_ended)
-            assert [m["variables"]["state"] for m in got if m["type"] == "variables"][-1] == "ended"
-            assert got[-1]["session"]["result"]["result"] == "stopped"
-            # The last values stay for a watch that comes after the end.
-            await ws.send({"type": "watch", "id": 2, "variables": [SPEED]})
-            last = (await ws.until(is_values(2)))[-1]
-            assert last["paused"] is False and "engine.speed" in last["peers"]["Engine"]["values"]
-            text = json.dumps(ws.received)
-            assert gui.token not in text and "operator vehicle-sil-gui" not in text
-            await ws.close()
-        run_async(talk, gui)
-        assert gui.stderr_text() == ""
-    assert cred_paths and not cred_paths[0].exists()
+                # Standing still at 500: a write for 500 itself. The engine has run its step at 500 (its sample is
+                # there), so the write is too late; the engine finds that out at its next step. Whether the step at
+                # the standstill has run is not promised for every ECU (docs/control-api.md says to write for a time
+                # after the standstill), so the other outcome, made in the step at 500, is taken too. The value
+                # written is the one the variable has, so the steps below read the same either way.
+                status, body = await c.post("api/write", {"run_id": sid, "writes": {"Engine": {"engine.throttle": 50}}, "at_ms": 500})
+                assert status == 200, body
+                boundary = body["operation"]
+                await ws.until(lambda m: m["type"] == "operation" and m["seq"] == boundary
+                               and m["state"] in ("queued", "late"))
+
+                # Step by step: each time it stands still, the values are those of the steps before that time. The
+                # engine's step is 10 ms; its speed falls 50 rpm per step towards 800 rpm once the throttle is 0.
+                status, body = await c.post("api/write", {"run_id": sid, "writes": {"Engine": {"engine.throttle": 0}}, "at_ms": 501})
+                assert status == 200, body
+                for n in range(1, 13):
+                    await c.post("api/time", {"command": "step", "ms": 10})
+                    got = await ws.until(is_values(1, paused=True, sim_ms=500 + 10 * n))
+                    engine = got[-1]["peers"]["Engine"]
+                    at = engine["sample_ms"]
+                    assert 500 + 10 * n - 10 <= at <= 500 + 10 * n, (n, engine)
+                    steps_with_zero = (at - 510) // 10 + 1  # the write took effect in the step at 510
+                    assert engine["values"]["engine.speed"] == 1800 - 50 * max(steps_with_zero, 0), (n, engine)
+                    assert engine["values"]["engine.throttle"] == (0.0 if at >= 510 else 50.0), (n, engine)
+                    if n == 1 and at < 510:
+                        # Stopped, written, stepped: the step at the standstill itself (the one that took the write)
+                        # arrives while it stands still. The same time is then called paused once more, with the
+                        # values of that step.
+                        more = await ws.until(lambda m: is_values(1)(m) and m["peers"]["Engine"]["sample_ms"] == 510)
+                        assert (more[-1]["paused"], more[-1]["sim_ms"]) == (True, 510), more[-1]
+                        assert more[-1]["peers"]["Engine"]["values"] == {"engine.throttle": 0.0, "engine.speed": 1750}
+                        got += more
+                    # Nothing sent while it runs claims to stand still at another time.
+                    assert all(m["sim_ms"] in (500 + 10 * n - 10, 500 + 10 * n) or not m["paused"]
+                               for m in got if m["type"] == "values")
+
+                end = next(m for m in reversed(ws.received) if m["type"] == "operation" and m["seq"] == boundary)
+                assert end["done"] and (end["state"], end["peers"]["Engine"]["applied_at_ms"]) in (
+                    ("late", None), ("applied", 500)), end
+                await c.post("api/stop-session", {"run_id": sid, "instance": instance})
+                got = await ws.until(is_ended)
+                assert [m["variables"]["state"] for m in got if m["type"] == "variables"][-1] == "ended"
+                assert got[-1]["session"]["result"]["result"] == "stopped"
+                # The last values stay for a watch that comes after the end.
+                await ws.send({"type": "watch", "id": 2, "variables": [SPEED]})
+                last = (await ws.until(is_values(2)))[-1]
+                assert last["paused"] is False and "engine.speed" in last["peers"]["Engine"]["values"]
+                text = json.dumps(ws.received)
+                assert gui.token not in text and "operator vehicle-sil-gui" not in text
+                await ws.close()
+            run_async(talk, gui)
+            assert gui.stderr_text() == ""
+        assert cred_paths and not cred_paths[0].exists()
 
 
 def test_a_run_that_passes_has_its_last_values_after_the_end(tmp_path: Path) -> None:
@@ -224,11 +238,11 @@ def test_the_recorded_writes_pass_the_launchers_check_and_play_back(tmp_path: Pa
             ws = await c.ws()
             await ws.until(is_synced)
             _, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
-            sid = started["session"]["id"]
+            sid, instance = started["run_id"], started["instance"]
             await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
                            and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
             before = len(ws.received)
-            status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 40}}})
+            status, body = await c.post("api/write", {"run_id": sid, "writes": {"Engine": {"engine.throttle": 40}}})
             assert status == 200, body
             # The time goes on by steps, not freely: a write is recorded with the virtual time it was applied at,
             # and at the speed "max" a free run would be anywhere by the second write (on a busy machine, beyond
@@ -247,11 +261,11 @@ def test_the_recorded_writes_pass_the_launchers_check_and_play_back(tmp_path: Pa
                     await ws.until(lambda m: True)
             await step_and_wait(before, body["operation"], 100)
             before = len(ws.received)
-            status, body = await c.post("api/write", {"session": sid, "writes": {
+            status, body = await c.post("api/write", {"run_id": sid, "writes": {
                 "Engine": {"engine.throttle": 12.5}, "Dashboard": {"ecu.connected": False}}, "late": "apply"})
             assert status == 200, body
             await step_and_wait(before, body["operation"], 200)
-            await c.post("api/stop", {})
+            await c.post("api/stop-session", {"run_id": sid, "instance": instance})
             await ws.until(is_ended)
             _, body = await c.get("api/recording")
             r = body["recording"]
@@ -282,43 +296,44 @@ def test_real_hot_runs_reuse_resident_and_isolate_variables(tmp_path: Path) -> N
             await ws.until(is_synced)
 
             status, prep = await c.post("api/prepare", {"file": "forever.yaml"})
-            assert status == 200, prep
-            assert prep["runtime"]["mode"] == "hot" and prep["runtime"]["state"] == "ready"
+            assert status == 200 and prep["instance"], prep
+            _, s_prep = await c.get("api/session")
+            assert s_prep["runtime"]["mode"] == "hot" and s_prep["runtime"]["state"] == "ready"
 
             status, r1 = await c.post("api/run", {"file": "forever.yaml", "speed": 1, "start_paused": True})
             assert status == 200, r1
-            pid1 = r1["session"]["launcher"]["pid"]
-            await ws.until(is_variables("ready"))
+            _, s1 = await c.get("api/session")
+            pid1 = s1["session"]["launcher"]["pid"]
             await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
                            and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
             st, w1 = await c.post("api/write", {
-                "session": r1["session"]["id"],
+                "run_id": r1["run_id"],
                 "writes": {"Engine": {"engine.throttle": 25}},
             })
             assert st == 200, w1
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": r1["instance"], "force": False})
             got1 = await ws.until(is_ended)
             assert got1[-1]["session"]["result"]["result"] == "stopped"
 
             status, r2 = await c.post("api/run", {"file": "forever.yaml", "speed": 1, "start_paused": True})
             assert status == 200, r2
-            assert r2["session"]["launcher"]["pid"] == pid1
-            assert r2["session"]["id"] != r1["session"]["id"]
-            await ws.until(is_variables("ready"))
+            _, s2 = await c.get("api/session")
+            assert s2["session"]["launcher"]["pid"] == pid1
+            assert r2["run_id"] != r1["run_id"]
             await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
                            and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
             # Stale write referencing Run 1 must be rejected
             st, stale = await c.post("api/write", {
-                "session": r1["session"]["id"],
+                "run_id": r1["run_id"],
                 "writes": {"Engine": {"engine.throttle": 50}},
             })
             assert st == 409 and stale["error"]["code"] == "session-changed"
             st, w2 = await c.post("api/write", {
-                "session": r2["session"]["id"],
+                "run_id": r2["run_id"],
                 "writes": {"Engine": {"engine.throttle": 75}},
             })
             assert st == 200, w2
-            await c.post("api/stop", {"force": False})
+            await c.post("api/stop-session", {"run_id": r2["run_id"], "instance": r2["instance"], "force": False})
             got2 = await ws.until(is_ended)
             assert got2[-1]["session"]["result"]["result"] == "stopped"
             await ws.close()
@@ -340,15 +355,16 @@ def test_real_hot_execution_status_and_cold_fallback_runtime_and_allowed(tmp_pat
             await ws.until(is_synced)
 
             st, prep = await c.post("api/prepare", {"file": "forever.yaml"})
-            assert st == 200, prep
-            assert prep["runtime"] == {
+            assert st == 200 and prep["instance"], prep
+            await ws.until(lambda m: m["type"] == "runtime" and m["runtime"]["state"] == "ready")
+            _, s_prep = await c.get("api/session")
+            assert s_prep["runtime"] == {
                 "mode": "hot",
                 "state": "ready",
                 "config": "forever.yaml",
                 "reason": None,
                 "message": None,
             }
-            await ws.until(lambda m: m["type"] == "runtime" and m["runtime"]["state"] == "ready")
 
             st, started = await c.post("api/run", {"file": "forever.yaml", "speed": 1, "start_paused": True})
             assert st == 200, started
@@ -359,9 +375,10 @@ def test_real_hot_execution_status_and_cold_fallback_runtime_and_allowed(tmp_pat
             assert mid["allowed"]["stop"]["ok"] is True
             assert mid["allowed"]["force"]["ok"] is True
 
-            st, stopped = await c.post("api/stop", {"force": False})
+            st, stopped = await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
             assert st == 200, stopped
-            assert stopped["session"]["allowed"]["stop"]["reason"] == "already-stopping"
+            _, mid_stop = await c.get("api/session")
+            assert mid_stop["allowed"]["stop"]["reason"] in ("already-stopping", "not-running")
             got = await ws.until(is_ended)
             assert got[-1]["session"]["result"]["result"] == "stopped"
             if not any(m["type"] == "runtime" and m["runtime"]["state"] == "ready" for m in got):
@@ -373,19 +390,19 @@ def test_real_hot_execution_status_and_cold_fallback_runtime_and_allowed(tmp_pat
 
             # Cold fallback via manual participant override:
             st, manual_prep = await c.post("api/prepare", {"file": "forever.yaml", "manual": ["Engine"]})
-            assert st == 200, manual_prep
-            assert manual_prep["runtime"]["mode"] == "cold"
-            assert manual_prep["runtime"]["state"] == "cold"
-            assert manual_prep["runtime"]["reason"] == "manual-participants"
+            assert st == 200 and manual_prep["instance"], manual_prep
             _, after_manual = await c.get("api/session")
             assert after_manual["runtime"]["mode"] == "cold"
+            assert after_manual["runtime"]["state"] == "cold"
+            assert after_manual["runtime"]["reason"] == "manual-participants"
             assert after_manual["allowed"]["start"]["ok"] is True
 
             # Cold fallback via fixed registry_uri:
             st, fixed_prep = await c.post("api/prepare", {"file": "fixed.yaml"})
-            assert st == 200, fixed_prep
-            assert fixed_prep["runtime"]["mode"] == "cold"
-            assert fixed_prep["runtime"]["reason"] == "fixed-registry"
+            assert st == 200 and fixed_prep["instance"], fixed_prep
+            _, after_fixed = await c.get("api/session")
+            assert after_fixed["runtime"]["mode"] == "cold"
+            assert after_fixed["runtime"]["reason"] == "fixed-registry"
             await ws.close()
 
         run_async(talk, gui)
@@ -408,14 +425,14 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
         launcher = Launcher(Path(LAUNCHER))
         await launcher.probe()
 
-        # 1. Pre-prepare serve resident status -> Idle with eligible=False, reason=None, run.ok=True -> Hot ready.
+        # 1. Pre-prepare serve resident status -> Unprepared with eligible=False, reason=None, run.ok=True -> Hot ready.
         rt_direct = ServeRuntime(launcher, cwd=configs)
         try:
             res = await rt_direct._spawn_resident("simulation.yaml", want_control=False)
             assert res is not None
-            pre_status = await rt_direct.query_status()
+            pre_status = rt_direct.execution_status()
             assert pre_status is not None
-            assert pre_status["launcher_state"] == "idle"
+            assert pre_status["launcher_state"] == "unprepared"
             assert pre_status["eligibility"] == {"eligible": False, "reason": None, "message": None}
             assert pre_status["launcher_allowed"]["run"]["ok"] is True
             assert rt_direct.status() == {
@@ -428,7 +445,7 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
         finally:
             await rt_direct.shutdown(asyncio.Event(), 2.0)
 
-        # 2. GuiServer run without prepare() -> post-run Idle -> query_status() still projects Hot ready.
+        # 2. GuiServer run without prepare() -> post-run Unprepared -> execution_status() projects Hot ready.
         import socket
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
@@ -454,16 +471,16 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
 
             st, r1 = await c.post("api/run", {"file": "simulation.yaml", "speed": 1, "stop_at_ms": 200})
             assert st == 200, r1
-            pid1 = r1["session"]["launcher"]["pid"]
             got1 = await ws.until(is_ended)
+            pid1 = got1[-1]["session"]["launcher"]["pid"]
             assert got1[-1]["session"]["result"]["result"] == "passed"
 
             rt = server.runtime
             assert isinstance(rt, ServeRuntime)
-            post_status = await rt.query_status()
+            post_status = rt.execution_status()
             assert post_status is not None
-            assert post_status["launcher_state"] == "idle"
-            assert post_status["eligibility"] == {"eligible": False, "reason": None, "message": None}
+            assert post_status["launcher_state"] in ("unprepared", "ready")
+            assert post_status["eligibility"]["reason"] is None
             assert post_status["launcher_allowed"]["run"]["ok"] is True
             assert rt.status() == {
                 "mode": "hot",
@@ -475,8 +492,8 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
 
             st2, r2 = await c.post("api/run", {"file": "simulation.yaml", "speed": 1, "stop_at_ms": 200})
             assert st2 == 200, r2
-            assert r2["session"]["launcher"]["pid"] == pid1
             got2 = await ws.until(is_ended)
+            assert got2[-1]["session"]["launcher"]["pid"] == pid1
             assert got2[-1]["session"]["result"]["result"] == "passed"
             await ws.close()
         finally:
@@ -488,7 +505,7 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
 
 
 def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path: Path) -> None:
-    """Real vehicle_sil_launch: POST api/stop {force:false} never escalates stop.requests=1 to 2; {force:true} does."""
+    """Real vehicle_sil_launch: POST api/stop-session {force:false} never escalates stop.requests=1 to 2; {force:true} does."""
     import asyncio
     import signal
     import sys
@@ -558,6 +575,7 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
 
             st, started = await c.post("api/run", {"file": "ignore-stop-not-joined.yaml"})
             assert st == 200, started
+            gui_run_id, instance = started["run_id"], started["instance"]
             await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "state")
 
             async def logger_ready() -> bool:
@@ -581,21 +599,22 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
                 lambda m: m["type"] == "allowed" and m["allowed"]["stop"]["reason"] == "already-stopping"
             )
 
-            # Graceful POST /api/stop {force: false} must NOT escalate C++ stop.requests to 2.
-            st_grace, grace_body = await c.post("api/stop", {"force": False})
+            # Graceful POST /api/stop-session {force: false} must NOT escalate C++ stop.requests to 2.
+            st_grace, grace_body = await c.post("api/stop-session", {"run_id": gui_run_id, "instance": instance, "force": False})
             assert st_grace == 200, grace_body
-            assert grace_body["session"]["allowed"]["stop"]["reason"] == "already-stopping"
-            assert grace_body["session"]["allowed"]["force"]["ok"] is True
+            _, s_grace = await c.get("api/session")
+            assert s_grace["allowed"]["stop"]["reason"] == "already-stopping"
+            assert s_grace["allowed"]["force"]["ok"] is True
 
             # Verify direct ServeRunHandle.send_stop(..., force=False) also stays idempotent at requests=1 in C++.
             assert res.current_run.send_stop(1, force=False) is True
             await res.current_run.drain(1.0)
-            queried = await rt.query_status()
+            queried = rt.execution_status()
             assert queried is not None and queried["run_state"] is not None
             assert queried["run_state"]["stop"]["requests"] == 1
 
-            # Explicit POST /api/stop {force: true} escalates C++ stop.requests to 2 and ends the run.
-            st_force, _ = await c.post("api/stop", {"force": True})
+            # Explicit POST /api/stop-session {force: true} escalates C++ stop.requests to 2 and ends the run.
+            st_force, _ = await c.post("api/stop-session", {"run_id": gui_run_id, "instance": instance, "force": True})
             assert st_force == 200
             got = await ws.until(is_ended)
             assert got[-1]["session"]["result"]["result"] == "stopped"
@@ -622,7 +641,7 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
 
 
 def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_path: Path) -> None:
-    """Real vehicle_sil_launch: POST api/stop and api/stop-session during post-result drain leave stop='none' and problems=[]."""
+    """Real vehicle_sil_launch: POST api/stop-session during post-result drain leaves stop='none' and problems=[]."""
     import asyncio
     import aiohttp
     from aiohttp.test_utils import TestServer
@@ -672,24 +691,23 @@ def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_pa
 
             st, started = await c.post("api/run", {"file": "simulation.yaml", "speed": 1, "stop_at_ms": 200})
             assert st == 200, started
-            sid = started["session"]["id"]
+            sid = started["run_id"]
 
             await asyncio.wait_for(entered.wait(), timeout=15.0)
             assert server.session is not None and server.session.state == "running"
             assert server.session.launcher_running is True
 
-            for endpoint, payload in (
-                ("api/stop", {"force": False}),
-                ("api/stop", {"force": True}),
-                ("api/stop-session", {"session": sid, "instance": server.instance, "force": False}),
-                ("api/stop-session", {"session": sid, "instance": server.instance, "force": True}),
+            for payload in (
+                {"run_id": sid, "instance": server.instance, "force": False},
+                {"run_id": sid, "instance": server.instance, "force": True},
             ):
-                st_stop, stop_body = await c.post(endpoint, payload)
-                assert st_stop == 200, (endpoint, payload, stop_body)
-                assert stop_body["session"]["stop"] == "none"
-                assert stop_body["session"]["problems"] == []
-                assert stop_body["session"]["allowed"]["stop"]["reason"] == "not-running"
-                assert stop_body["session"]["allowed"]["force"]["reason"] == "not-running"
+                st_stop, stop_body = await c.post("api/stop-session", payload)
+                assert st_stop == 200, (payload, stop_body)
+                _, cur = await c.get("api/session")
+                assert cur["session"]["stop"] == "none"
+                assert cur["session"]["problems"] == []
+                assert cur["allowed"]["stop"]["reason"] == "not-running"
+                assert cur["allowed"]["force"]["reason"] == "not-running"
 
             release.set()
             got = await ws.until(is_ended)

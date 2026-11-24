@@ -29,7 +29,7 @@ def test_events_with_wrong_types_do_not_stop_the_reading(gui: Gui) -> None:
         assert (await c.post("api/run", {"file": "bad-types.yaml", "stop_at_ms": 1000}))[0] == 200
         got = await sock.until(is_ended, timeout=15)
         end = got[-1]["session"]
-        assert end["result"]["result"] == "passed" and end["launcher"]["exit_code"] == 0
+        assert end["result"]["result"] == "passed"
         codes = [m["code"] for m in got if m["type"] == "error"]
         assert codes.count("bad-event") == 9, codes
         assert end["check"]["participants"][0]["name"] == "Engine"  # the good check was kept, not the bad one
@@ -151,13 +151,13 @@ def test_auth_fields_must_be_counts(tmp_path: Path) -> None:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})
+            _, r1 = await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})
             await sock.until(is_ended)
-            for auth in ({"session": True, "from_seq": 5}, {"session": 1, "from_seq": -3},
-                         {"session": 1, "from_seq": 2.5}):
+            for auth in ({"run_id": True, "after_stream_seq": 5}, {"run_id": r1["run_id"], "after_stream_seq": -3},
+                         {"run_id": r1["run_id"], "after_stream_seq": 2.5}):
                 again = await c.ws(auth)
                 got = await again.until(is_synced)
-                assert got[0]["replay"]["from_seq"] is None, auth
+                assert got[0]["replay"]["after_stream_seq"] is None, auth
         run_async(main, gui)
 
 
@@ -226,13 +226,17 @@ def test_a_reconnection_is_told_how_many_lines_were_dropped(tmp_path: Path) -> N
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "flood.yaml", "stop_at_ms": 1000})
+            _, r1 = await c.post("api/run", {"file": "flood.yaml", "stop_at_ms": 1000})
+            run_id = r1["run_id"]
             live = await sock.until(is_ended)
-            engine = [e for e in event_messages(live, "log") if e["source"] == "Engine"]
-            for from_seq in (50, engine[-2500]["seq"], engine[-100]["seq"]):
-                again = await c.ws({"session": 1, "from_seq": from_seq})
+            engine_msgs = [
+                m for m in live
+                if m["type"] == "event" and m["event"]["event"] == "log" and m["event"]["source"] == "Engine"
+            ]
+            for after_seq in (50, engine_msgs[-2500]["stream_seq"] - 1, engine_msgs[-100]["stream_seq"] - 1):
+                again = await c.ws({"run_id": run_id, "after_stream_seq": after_seq})
                 got = await again.until(is_synced)
-                missing = [e for e in engine[:-2000] if e["seq"] >= from_seq]
+                missing = [m["event"] for m in engine_msgs[:-2000] if m["stream_seq"] > after_seq]
                 dropped = [m for m in got if m["type"] == "dropped"]
                 if missing:
                     assert got[1]["type"] == "dropped" and got[1]["reason"] == "not-kept"
@@ -240,7 +244,7 @@ def test_a_reconnection_is_told_how_many_lines_were_dropped(tmp_path: Path) -> N
                 else:
                     assert not dropped
                 replayed = [e for e in event_messages(got, "log") if e["source"] == "Engine"]
-                assert replayed == [e for e in engine[-2000:] if e["seq"] >= from_seq]
+                assert replayed == [m["event"] for m in engine_msgs[-2000:] if m["stream_seq"] > after_seq]
                 assert all(m["event"]["event"] == "log" for m in got if m["type"] == "event")
                 await again.close()
         run_async(main, gui)

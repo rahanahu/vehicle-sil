@@ -45,8 +45,7 @@ jobs:
   # - Only the browser GUI changed (gui/web, gui/client, gui/timeline, gui/protocol/examples, examples/gui_client,
   #   examples/gui_starter): gui, gui-server and python (plus linux-gcc-debug when a changed file is in `cpp_reads_gui`).
   #   When gui/server or gui/protocol/dashboard.schema.json changes without C++-tested docs, linux-gcc-control runs
-  #   scoped to `^(launch\.shared_values|schema\.)` plus the real-launcher GUI tests (which already run
-  #   record_launcher.py --compare), skipping linux-gcc-debug.
+  #   scoped to `^(launch\.shared_values|schema\.)` plus the real-launcher GUI tests, skipping linux-gcc-debug.
   # - Only non-GUI scripts (the `non_gui_scripts` allowlist) changed: python plus linux-gcc-debug and Windows
   #   scoped to `^(scripts|template)\.` (plus `^launch_run\.trace_files$` when scripts/trace-report.py changes),
   #   skipping gui, gui-server, linux-tsan and linux-gcc-control.
@@ -110,7 +109,7 @@ jobs:
           debug_reads_docs='^docs/(simulation-(config|check|run|events)|scenario|ecu-executable|j1939-guide|howto/[^/]+)\.md$'
           # The guides that the control server's tests (tests/control_server) hold against the examples.
           control_reads='^docs/howto/(first-ecu|operate-signals)\.md$'
-          # Files under gui/ that C++ build/tests read (tests/launch/test_shared_values.cpp, CMakeLists.txt, record_launcher.py, test_real_*.py).
+          # Files under gui/ that C++ build/tests read (tests/launch/test_shared_values.cpp, CMakeLists.txt, test_real_*.py).
           cpp_reads_gui='^gui/(server/|protocol/dashboard\.schema\.json$|client/src/(client|protocol/server)\.ts$|web/src/app/run/(speed-picker|run-page)\.ts$)'
           # Allowlist of scripts/ and script unit tests never executed or imported by gui/gui-server jobs.
           # Scripts shared with GUI jobs (verify-gui.py, verify-web.py, web_i18n.py, busy_machine.py, run-gui.py,
@@ -453,16 +452,13 @@ jobs:
         run: |
           cmake --preset linux-gcc-release -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON -DVEHICLE_SIL_TEST_FETCHCONTENT=ON -DCMAKE_C_FLAGS_DEBUG=-g1 -DCMAKE_CXX_FLAGS_DEBUG=-g1
           python3 scripts/verify.py linux-gcc-release --no-configure --tests '^fetchcontent\.template$' --tag ci-fetchcontent
-      # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): linux-gcc-control compares
-      # every case (including the control server) inside test_real_launcher.py; here we smoke-check a non-control
-      # build (version --json omitting control-server/scenario-control/scenario-time via control-scenario-passes,
-      # plus check and run).
-      - name: The GUI's recordings against this launcher
+      # The GUI's Events v4 contract against a non-control launcher build (linux-gcc-control runs the full
+      # test_real_launcher.py and test_real_variables.py suites).
+      - name: The GUI's Events v4 contract against this launcher
         if: matrix.preset == 'linux-gcc-debug' && needs.changes.outputs.ctest_filter == ''
         run: >-
-          python3 gui/server/tests/record_launcher.py
-          --launcher build/linux-gcc-debug/tools/launch/vehicle_sil_launch
-          --compare version check-simulation run-simulation control-scenario-passes
+          VEHICLE_SIL_GUI_LAUNCHER=build/linux-gcc-debug/tools/launch/vehicle_sil_launch
+          uv run --no-sync pytest gui/server/tests/test_real_launcher.py -k test_real_launcher_events_v4_contract_and_stub_parity
       # The Python client's tests and the examples of examples/launch_control are added only where CMake finds a
       # Python with grpcio and grpcio-tools (here the uv environment); without one they would be left out silently.
       - name: The control server's Python tests were run

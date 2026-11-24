@@ -4,8 +4,8 @@
 Steps, in order:
 
   sync    uv sync --locked (fails when uv.lock does not match the pyproject.toml files)
-  server  uv run pytest gui/server/tests: the GUI server against the stand-in launcher that replays
-          what the real one wrote (gui/server/tests/replay_launcher.py) (API, WebSocket, security,
+  server  uv run pytest gui/server/tests: the GUI server against the stand-in launcher
+          (gui/server/tests/stub_launcher.py) (API, WebSocket, security,
           stopping, and the comparison of gui/protocol/examples); JUnit XML in build/logs/<tag>-server.xml
   web     scripts/verify-web.py --json: npm ci, format, lint, unit tests, build and e2e of gui/web and gui/client; its steps
           are listed under this one, with their logs
@@ -23,8 +23,8 @@ Steps, in order:
 
 --skip-server leaves out the server step only (CI runs it in a job of its own, at the same time as the others).
 
-With a real launcher, the server step also runs gui/server/tests/test_real_launcher.py, which records every case of
-the stand-in launcher again with the real one and compares (gui/server/tests/record_launcher.py --compare), and test_real_variables.py, which reads and writes the
+With a real launcher, the server step also runs gui/server/tests/test_real_launcher.py, which checks the Events v4
+contract against the real launcher, and test_real_variables.py, which reads and writes the
 variables of the example ECUs through the GUI server (a launcher built with its control server); without one,
 those tests are skipped and say why.
 
