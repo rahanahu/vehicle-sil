@@ -97,7 +97,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 合わせて直す所は、[CHANGELOG.md](../../CHANGELOG.md) に書いてあります。
 
-- `pyproject.toml`、`gui/server/pyproject.toml`（`uv lock` は、`uv.lock` に PEP 440 の形 `0.2.0rc1` で書きます）
+- `pyproject.toml`、`python/pyproject.toml`、`gui/server/pyproject.toml`（`uv lock` は、`uv.lock` に PEP 440 の形 `0.2.0rc1` で書きます）
 - `python/vehicle_sil_control/__init__.py` と `gui/server/src/vehicle_sil_gui/__init__.py` の `__version__`
 - `template/get_tools.py`
 - `template/CMakeLists.txt` の `GIT_TAG`

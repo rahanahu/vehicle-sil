@@ -251,7 +251,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--launcher <path>` | `vehicle_sil_launch` のパス（`.py` で終わるパスは、この Python で実行する） |
 | `--web <dir>` | 自分の画面を配信する: そのビルドの出力のディレクトリ（`index.html` があること）。既定はサンプルの画面（「[`--web` で配信するファイル](#--web-で配信するファイル)」） |
 | `--dev-origin <origin>` | 画面の開発サーバー（`ng serve`、Vite など。`http://127.0.0.1:<port>` の形だけ）からのリクエストも受け付ける（「[開発サーバーを使う](#開発サーバーを使う)」） |
-| `--json` | URL の代わりに `{"vehicle_sil_gui": 3, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき） |
+| `--json` | URL の代わりに `{"vehicle_sil_gui": 4, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき） |
 | `--stop-timeout <seconds>` | 終了するとき、実行中のシミュレーションが止まるのを待ち、ランチャーにシグナルを送るまでの時間。既定ではランチャーの終了を待つ |
 | `--participant-start-timeout-ms <ms>` | 起動時に必須 participant を待つ実時間（既定 30000 ms） |
 | `--participant-stop-timeout-ms <ms>` | ランチャーが participant の停止を段階ごとに待つ実時間（既定 10000 ms） |
@@ -370,7 +370,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - **文の保存**: 画面は構成ファイルの文を保存できます（`POST api/config`）。既定では、サーバーが保存するのは、実行されるコマンドを変えない編集だけです。ランチャーが文を照合して保存したファイルと比べ（`check --compare-commands`）、ランチャーが `"same"` と言ったときだけ保存します（ネットワーク、その写像、`external` の編集）。サーバー自身は YAML を比べず、比べられないものは保存しません。書くのは根の中の構成ファイルだけです。`GET api/configs` がシミュレーションの構成として出す、いまあるファイルを、画面が読んだ印で、同じディレクトリーの新しいファイルから置き換えます。ほかに書くファイルは、すべて一時ディレクトリーの中です。`--no-save` では何も保存しません。`--allow-command-changes` では、実行されるコマンドを変える編集も保存し、新しいファイルも作ります（ダッシュボードのファイルと、`scenarios` ディレクトリーの中は除く）。そのとき、トークンを持つ人は、あなたとして任意のコマンドを実行できます。構成ファイルに保存すれば、次の照合で `--describe` つきで起動するからです。`--web` で出した画面とそのパネルのコードも同じ origin で動くので、これに含まれます。既定のままでも、トークンを持つ人は、画面の一覧に出る構成ファイルのうちランチャーが比べない所（ネットワーク、`external`、`params`、コメント、照合が失敗する文）を書き換えられ、サーバーは前の中身の控えを残しません。見るだけに使うとき、またはトークンがほかの人に見えうるときは、`--no-save` で起動してください。`--allow-command-changes` のとき、サーバーは起動時に標準エラーにそう出し、API の `allowed.save` が同じ注意を画面に渡します（[gui/protocol/README.md](../../gui/protocol/README.ja.md#文を保存するpost-apiconfig) の「文を保存する」）。
 - **ECU の変数**: ランチャーの Control Server（127.0.0.1 の空いているポート）から読み書きします。
   - ランチャーのプロセスごとに新しいトークンを作り、自分だけが読めるファイル（一時ディレクトリの `vehicle-sil-gui-control-*.txt`。POSIX では権限 0600）でランチャーに渡します。
-  - 1 回の実行のために起動したランチャー（`vehicle_sil_launch run`）: ファイルは、ランチャーが読んだ後（Control Server が待ち受けを始めたとき）に消し、実行の終了時にも消します。
+  - 1 回の実行のために起動したランチャー（`vehicle_sil_launch serve --once`）: ファイルは、ランチャーが読んだ後（Control Server が待ち受けを始めたとき）に消し、実行の終了時にも消します。
   - 常駐するランチャー（`vehicle_sil_launch serve`。`POST api/prepare` で準備します）: ランチャーは実行を始めるたびにファイルを読み直すので、ファイルはそのランチャーが動いている間は残り、ランチャーが終わったとき（設定ファイルが変わったとき、失敗したとき、GUI サーバーが止まるとき）に消します。
   - このトークンは、ランチャーの引数、イベント、画面への通知、エラーの文のどこにも出しません。同じ PC のほかのプロセスは、このトークンなしでは Control Server を使えません。
   - GUI サーバーが接続するのは、ランチャーが通知した `127.0.0.1:<port>` だけです。
@@ -378,7 +378,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - **ネットワークを外につなぐ**: `connect` の先（ファイルのネットワークを実機のバスにつなぐ先）は、そのファイルのそのネットワークの直近の `POST api/connections` が、ちょうど同じ文字列で使えると一覧に載せ、その後にファイルが変わっていないときだけ、ランチャーに渡ります。実行は、ランチャーを起こす直前に照らします（そうでなければ 400 `target-not-listed`。`none` に一覧は要りません）。こうして画面が送る先は、ランチャーがこのコンピューターで見つけたデバイスだけで、一覧は画面が尋ねたネットワークの分だけ作ります。構成ファイルに書かれたブリッジ（`role: bridge`。`enable` や variant で取り込めます）は、ファイルのほかのコマンドと同じくファイルの中身で、照らしません（[gui/protocol/README.ja.md](../../gui/protocol/README.ja.md#ネットワークを外につなぐconnecttime_policyapiconnections) の「ネットワークを外につなぐ」）。
 - **シナリオ**: シナリオ（設定ファイルの隣の `scenarios` の `.yaml` / `.yml`）は、その一覧にあるものだけをランチャーに渡します。`..`、絶対パス、NUL、長すぎる名前、`.` で始まる名前、シンボリックリンク（ファイルも、`scenarios` とその上のディレクトリも）は一覧に入らず、指定しても拒否します。保存するシナリオの YAML は、サーバーが文字列として返すだけで、ファイルを書きません。
 - **ダッシュボードのファイルとカスタムパネル**: ダッシュボードのファイル（設定ファイルの隣の `.dashboard.yaml`）とカスタムパネル（`panels/` の `.js` / `.mjs`）は、設定ファイルと同じく root の中のものだけを読み、配信します。ダッシュボードのファイルは YAML の安全な読み方で、大きさと入れ子と値の数に上限を設け、別名（`*name`）を使わせません。パネルは同じ origin から配信するので、CSP（`script-src 'self'`）は緩めません。パネルのモジュールの URL には、トークンの代わりに起動ごとの別の乱数が入ります（「[カスタムパネル](#カスタムパネル)」）。
-- **時間の軸のファイル**: シナリオの実行のファイルは、サーバーの一時ディレクトリ（POSIX では自分だけが読める）に置き、トークンを付けたときだけ配り（`api/timeline/<session の id>`）、サーバーが止まるときに消します。`timeline/` の時間の軸のページは、画面のファイルと同じく、トークンなしで配ります。ページは、画面がトークンを持つ所からトークンを読みます（「[シナリオの実行の時間の軸](#シナリオの実行の時間の軸)」）。トークンをアドレスに入れることはありません。
+- **時間の軸のファイル**: シナリオの実行のファイルは、サーバーの一時ディレクトリ（POSIX では自分だけが読める）に置き、トークンを付けたときだけ配り（`api/timeline/<run_id>`）、サーバーが止まるときに消します。`timeline/` の時間の軸のページは、画面のファイルと同じく、トークンなしで配ります。ページは、画面がトークンを持つ所からトークンを読みます（「[シナリオの実行の時間の軸](#シナリオの実行の時間の軸)」）。トークンをアドレスに入れることはありません。
 - **画面のファイル**: 画面は、起動した人が指定したディレクトリ（`--web`。なければサンプルの画面）の中のファイルだけを配信します（「[`--web` で配信するファイル](#--web-で配信するファイル)」）。その画面は、同じ origin で、トークンを持って動き、GUI でできることを全部できます（`--allow-command-changes` では、あなたとして任意のコマンドを実行することも含みます）。`--web` には、自分が信頼する画面だけを渡します（root と同じく、人からもらったものは先に読みます）。
 - **同時の実行**: 実行は、サーバー 1 つにつき一度に 1 つです。同時に開始を頼まれても、開始するのは 1 つだけです。サーバーを 2 つ起動すれば、実行も 2 つ動きます。
 
@@ -439,12 +439,14 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 
 | リクエスト | すること |
 |---|---|
-| `POST api/run` の `speed`、`start_paused` | ランチャーの `--speed`、`--start-paused` |
-| `POST api/time` `{"command": "pause"}`、`{"command": "resume"}` | 一時停止、再開 |
-| `POST api/time` `{"command": "step", "ms": <ms>}` | ステップ実行（一時停止している間だけ。ランチャーがステップ幅の倍数に切り上げる） |
-| `POST api/time` `{"command": "speed", "value": <number or "max">}` | 速度の変更（一時停止はそのまま） |
+| `POST api/run` の `speed`、`start_paused` | ランチャーの `--speed`、`--start-paused`（成功時は `{instance, run_id}` の Ack を返し、照合失敗時は前の実行画面を消さずに同期で `422 check-failed` を返します） |
+| `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "pause"}` または `"resume"` | 一時停止、再開（`{run_id, command}` の Ack を返す） |
+| `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "step", "ms": <ms>}` | ステップ実行（一時停止している間だけ。ランチャーがステップ幅の倍数に切り上げ、`{run_id, command}` の Ack を返す） |
+| `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "speed", "value": <number or "max">}` | 速度の変更（一時停止はそのまま。`{run_id, command}` の Ack を返す） |
+| `POST api/stop-session` `{"force": <bool>, "run_id": "<run_id>", "instance": "<instance>"}` | 指定した実行の停止（`{instance, run_id}` の Ack を返す。非ターゲットの `POST api/stop` は廃止） |
+| `POST api/prepare` `{"file": ...}` | 常駐ランチャーの準備（`{instance}` の Ack を返す） |
 
-`api/time` は、ほかの API と同じ検査（トークン、`Host`、`Origin`、JSON の本文）を通ります。サーバーはコマンドをランチャーの標準入力に 1 行で書いてすぐ返し、ランチャーの応答は待ちません（止まっているランチャーでリクエストが固まらないように。入力を読まないランチャーでも、長くて約 2 秒で返ります）。受け付けたかどうかは、ランチャーの `command` のイベントで届きます。コマンドには `id`（0 から 2^53 までの整数）を付けられ、ランチャーはその答えの `command` のイベントに同じ `id` を返すので、画面は、ほかのコマンドへの答えと見分けられます。形とエラーの `code` は [gui/protocol/README.md](../../gui/protocol/README.ja.md) にあります。
+`api/time` は、ほかの API と同じ検査（トークン、`Host`、`Origin`、JSON の本文）を通ります。サーバーはコマンドをランチャーの標準入力に 1 行で書いて `{run_id, command}` をすぐ返し、ランチャーの応答は待ちません（止まっているランチャーでリクエストが固まらないように。入力を読まないランチャーでも、長くて約 2 秒で返ります）。状態の更新は `(instance, run_id, stream_seq)`（`run_id` は `"<instance>-<n>"`）で番号付けされた単一の WebSocket ストリームで届きます（再接続の差分ログ再生は `auth` の `{token, instance, run_id, after_stream_seq}` と `hello.replay.after_stream_seq` を使い、`GET api/session` は静止読み取りエンドポイントとして残ります）。受け付けたかどうかは、ランチャーの `command` のイベントで届きます。コマンドには `id`（0 から 2^53 までの整数）を付けられ、ランチャーはその答えの `command` のイベントに同じ `id` を返すので、画面は、ほかのコマンドへの答えと見分けられます。形とエラーの `code` は [gui/protocol/README.md](../../gui/protocol/README.ja.md) にあります。
 
 ## シナリオ
 
@@ -472,13 +474,13 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 
 | 項目 | 内容 |
 |---|---|
-| ページ | GUI サーバーの `timeline/`（`gui/timeline` の `timeline.html`、`page.js`、`vehicle-sil-timeline.js`。ビルド済みの道具の圧縮ファイルでは GUI の中にあります）。リンクは `timeline/?src=/api/timeline/<session の id>&lang=<ja か en>` です。ページは要素 `<vehicle-sil-timeline>` 1 つで、この要素は自分の画面にも置けます（「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）。 |
-| ファイル | `GET api/timeline/<session の id>`（ほかの API と同じく、トークンが要ります）。サーバーは、ファイルを書いた最後の 4 つのシナリオの実行のファイルを、自分の一時ディレクトリ（`vehicle-sil-gui-timelines-*`）に置き、止まるときに消します。ファイルがなくなった実行は、ページが 404 `no-timeline` と言います。 |
+| ページ | GUI サーバーの `timeline/`（`gui/timeline` の `timeline.html`、`page.js`、`vehicle-sil-timeline.js`。ビルド済みの道具の圧縮ファイルでは GUI の中にあります）。リンクは `timeline/?src=/api/timeline/<run_id>&lang=<ja か en>` です。ページは要素 `<vehicle-sil-timeline>` 1 つで、この要素は自分の画面にも置けます（「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）。 |
+| ファイル | `GET api/timeline/<run_id>`（ほかの API と同じく、トークンが要ります）。サーバーは、ファイルを書いた最後の 4 つのシナリオの実行のファイルを、自分の一時ディレクトリ（`vehicle-sil-gui-timelines-*`）に置き、止まるときに消します。ファイルがなくなった実行は、ページが 404 `no-timeline` と言います。 |
 | `timeline` のないランチャー | サーバーは `--timeline` を渡さず、カードにリンクは出ません。 |
 | トークン | リンクにトークンは入れません。新しいタブは、GUI のタブの `sessionStorage`（GUI がトークンを持つ所）の写しを持って始まり、ページはそこからトークンを読んで `Authorization: Bearer` で送ります。ほかの開き方（アドレスのコピー、ブックマーク、ブラウザによっては中ボタンなど、開いたタブとのつながりのない開き方）ではトークンがなく、ページがそう言います（HTTP 401）。リンクを左クリックで開くか、サーバーが表示したアドレスの `#token=<トークン>` を、ページのアドレスの末尾に付けてください。ページはそれを読んでアドレスから消し、ファイルを読み込みます。 |
 
-- ファイルは、最後の 4 つの実行より前のものと、サーバーが止まった後には残りません。残したいときは、それまでにトークンを付けて `api/timeline/<session の id>` を取るか、自分で `vehicle_sil_launch run --scenario <シナリオ> --timeline <ファイル>` で実行します。
-- サーバーの API は、要約の `scenario.timeline_url` と `GET api/timeline/<session の id>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオの実行の時間の軸apitimeline) の「シナリオの実行の時間の軸（`api/timeline`）」）、ライブラリでは、セッションのコピーの `scenario` の `timelineUrl` です。
+- ファイルは、最後の 4 つの実行より前のものと、サーバーが止まった後には残りません。残したいときは、それまでにトークンを付けて `api/timeline/<run_id>` を取るか、自分で `vehicle_sil_launch run --scenario <シナリオ> --timeline <ファイル>` で実行します。
+- サーバーの API は、要約の `scenario.timeline_url` と `GET api/timeline/<run_id>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオの実行の時間の軸apitimeline) の「シナリオの実行の時間の軸（`api/timeline`）」）、ライブラリでは、セッションのコピーの `scenario` の `timelineUrl` です。
 - 「シナリオ」のカードには「時間の軸をここに表示」もあります。同じ時間の軸を、要素でカードの中に出します（「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）。
 
 ### 操作をシナリオとして保存する
@@ -518,7 +520,7 @@ steps:
 - 保存したファイルを `scenarios/` に置けば、そのまま照合を通り、「シナリオ」で実行できます（ECU ごとにステップの時刻が違うので、同じ書き込みでも ECU ごとに手順が分かれることがあります）。
 - 確認する手順は、エディターで追加します。
 - 名前に `.` がある participant の変数は、シナリオで指定できない（最初の `.` までが participant の名前）ので入れません。入らなかった数はカードに、理由はファイルの先頭のコメントに表示されます。
-- サーバーの API は `GET api/recording`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「操作の記録」）、ライブラリでは `client.recording()` です。
+- サーバーの API は `GET api/recording`（記録したシナリオの YAML とともに `run_id` を返します。[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「操作の記録」）、ライブラリでは `client.recording()` です。
 
 ## ECU の変数
 
@@ -526,11 +528,11 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 
 | 項目 | 内容 |
 |---|---|
-| 開始 | ランチャーが Control Server を持てば、GUI サーバーはランチャー（`run`。常駐するランチャーなら `serve`）を `--control 0 --control-credentials <file>` 付きで起動し、ランチャーのイベント `control_server` が通知したアドレスへ接続します。 |
+| 開始 | ランチャーが Control Server を持てば、GUI サーバーはランチャー（`serve --once`。常駐するランチャーなら `serve`）を `--control 0 --control-credentials <file>` 付きで起動し、ランチャーのイベント `control_server` が通知したアドレスへ接続します。 |
 | 状態 | 変数の機能の状態（`off`、`connecting`、`ready`、`failed`、`ended`）と理由は、要約の `variables` と `variables` の通知で届きます。 |
 | 一覧 | participant ごとの変数（名前、型、役割、単位、範囲、刻み幅、説明、列挙の項目、書き込めるか）です。 |
-| 値 | 画面が変数を選んで watch すると、選んだ間隔（20 ms 以上）で最後の値が届きます。 |
-| 書き込み | `POST api/write` に、書き込み先の実行の id（`session`）を付けて送ります。 |
+| 値 | 画面が変数を選んで watch すると、選んだ間隔（20 ms 以上）で最後の値が `stream_seq` の外の遅延 `values` フレーム（`{id, watch_id, run_id}`）として届きます。 |
+| 書き込み | `POST api/write` に、書き込み先の `run_id`（と任意の `instance`）を付けて送り、`{run_id, operation}` を受け取ります。 |
 | 終了の後 | 状態は `ended` になり、最後に読めた値が残ります（次の実行を開始するまで）。 |
 
 - **接続できないとき**: 接続できなくても、切断されても、実行はそのまま続きます。変数だけが `connecting` か `failed` になり、切断されたときは自動で再接続します。
@@ -540,7 +542,7 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
   - ちょうど `sim_ms` に始まるステップの値は、止まっている間に後から届くことがあり、そのときは同じ時刻の通知がもう 1 回届きます。
   - 動いている間は偽です。前提と制限は、[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「ECU の変数」に書いてあります。
   - `GetSnapshot` を持たない古いランチャーでは、変数の機能は `failed`（理由つき）になります。
-- **書き込みの検査**: サーバーは、`session` が実行中の実行のものでなければ拒否します（`session-changed`。実行が替わる間に送った書き込みを、次の実行に書き込まないため）。シナリオを実行している実行にも書き込めません（`scenario-running`）。サーバーが、変数の一覧と照合して型と範囲を確認してから、ランチャーに渡します。
+- **書き込みの検査**: サーバーは、`run_id`（または `instance`）が実行中の実行のものでなければ拒否します（`session-changed`。実行が替わる間に送った書き込みを、次の実行に書き込まないため）。シナリオを実行している実行にも書き込めません（`scenario-running`）。サーバーが、変数の一覧と照合して型と範囲を確認してから、ランチャーに渡します。
 - **書き込みの結果**: 結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が拒否した（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。シナリオ自身の書き込みの結果は届きません。
 
 | 調べたいこと | 読む所 |
@@ -728,7 +730,7 @@ ECU が宣言したのではない変数は、ECU ごとに、アプリの変数
 
 - 書き込みの状態はコンポーネントでなく変数ごとに持つので、同じ変数を 2 つのコンポーネントに置いても重ねて送らず、絞り込みでコンポーネントが作り直されても、送っている途中・失敗の通知は残ります。
 - 実行が替わると、前の実行の状態と「送った値」は消えます。
-- 書き込みは、そのときの実行に向けて送り（`api/write` の `session`）、サーバーに着く前に実行が替わっていれば、次の実行には書き込まれません。
+- 書き込みは、そのときの実行に向けて送り（`api/write` の `run_id`）、サーバーに着く前に実行が替わっていれば、次の実行には書き込まれません。
 
 **ECU がいま使っていない変数**: ECU が、ある変数をいま使っていないと知らせたとき（たとえば設定のため）、コンポーネントの枠に `data-availability="inactive"` が付き、値と操作が薄く表示され、見出しにその旨が出ます（小さな印。title は「この ECU はいま使っていません」。読み上げでは操作の説明と一緒に読まれます）。表示だけの情報です。操作は止まらず、書き込みはほかの変数と同じように送られ、値も届き続けます。まだ分からない変数は、ふつうに表示します。
 
@@ -1268,7 +1270,7 @@ declare module 'react' {
 - `examples/ecu_main` の例の ECU に合わせて書いてあります。自分の ECU に使うには、`variable` 属性を書き換えます（やり方はガイドにあります）。
 - `main.js` は、「[自分の画面を作る](#自分の画面を作る)」の「自分のスクリプト」の層です。`watch` で作った自分の表示、操作の失敗を扱う自分のボタンがあります。
 - 使い方は、その README にあります。
-- `scripts/verify-web.py` が、記録を再生するランチャーと偽の Control Server を相手に、`--web` で配信したこのテンプレートをブラウザで動かして確認します（e2e の `starter.spec.ts`）。
+- `scripts/verify-web.py` が、スタブランチャー（`gui/server/tests/stub_launcher.py`）と偽の Control Server を相手に、`--web` で配信したこのテンプレートをブラウザで動かして確認します（e2e の `starter.spec.ts`）。
 
 ### 画面のないツールから使う
 
@@ -1376,7 +1378,7 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 |---|---|
 | サーバーのテスト | `scripts/verify-gui.py` |
 | 画面のテスト | `scripts/verify-web.py`（`verify-gui.py` が呼びます） |
-| 最小の例 `examples/gui_client/` を、記録を再生するランチャーで動かすテスト | `scripts/verify-gui.py` |
+| 最小の例 `examples/gui_client/` を、スタブランチャーで動かすテスト | `scripts/verify-gui.py` |
 | ライブラリのテスト | `verify-web.py` の `client` の手順 |
 | ライブラリを 1 つにまとめる | `verify-web.py` の `bundle` の手順 |
 | パッケージ | `verify-web.py` の `package` の手順 |
@@ -1385,70 +1387,24 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 
 サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(seconds)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map-testing.md](code-map-testing.md#待ち時間と倍率) の「テストの名前と実行方法」の「待ち時間と倍率」）。
 
-### 記録を再生するランチャー
+### スタブランチャーとプロセス内のランタイムハーネス
 
-テストは、ランチャーの代わりに、本物のランチャーの出力の記録を再生するランチャー（`gui/server/tests/replay_launcher.py`）を使います。
+テストごとに C++ のランチャーを起動する代わりに、GUI のテストはプロセス内の Events v4 ランタイムハーネス（`gui/server/tests/fake_runtime.py`）と決定論的な Events v4 シナリオのスタブランチャー（`gui/server/tests/stub_launcher.py`）を使います。
 
 | 項目 | 内容 |
 |---|---|
-| 記録（`gui/server/tests/recordings/`） | `gui/server/tests/configs/` の設定ファイルを、本物のランチャーと ecu_main の例の ECU で動かしたときの、イベントの行、標準エラー、終了コード、`check --json`、`version --json` と、テストが書くコマンド（停止、時間のコマンド）の位置です。 |
-| 記録の選び方 | 同じ引数の記録が複数あるときは、来たコマンドで記録を選びます。 |
-| 記録のない引数やコマンド（記録より遅れて来たコマンドも） | 何を記録すればよいかを標準エラーに書いて終わり、そのテストは失敗します。 |
-| 本物では起こせないこと（壊れた行、異常終了、遅れる、読まない、止まらないなど） | 設定ファイルの `# replay-fault:` の行（または `REPLAY_FAULT`）で、記録を変えて再生します。 |
+| プロセス内のランタイムハーネス（`gui/server/tests/fake_runtime.py`） | `LauncherRuntime` と `RunHandle` の境界をプロセス内で実装し、サーバーの単体・統合テストが子プロセスを起動せずに Events v4（`vehicle_sil_events: 4`）のライフサイクル、`LauncherState` の遷移、`prepare` / `status` / `result` イベント、時刻と停止のコマンドを決定論的に動かせるようにします。 |
+| 決定論的なシナリオのスタブランチャー（`gui/server/tests/stub_launcher.py`） | `gui/server/tests/configs/` の設定ファイルに対する `vehicle_sil_launch`（`version --json`、`check --json`、`connections --json`、`serve`、`serve --once`）の軽量な代役で、サブプロセスと Playwright の e2e テストが使います。 |
+| 故障注入 | 設定ファイルの `# replay-fault:` の行（または `REPLAY_FAULT`）で、プロトコル、プロセス、タイミングの異常（壊れた行、異常終了、遅れ、標準入力を読まない、止まらないなど）を注入します。 |
 
-- 記録のないコマンドが来たことは、サーバーのテストの `gui_server` と e2e の起動側が、再生するランチャーの書いた報告のファイルが空かどうかで確認します。
-- 再生するランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になります）。
-- 変数のテストは、`REPLAY_FEATURES` に `control-server` を追加し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を起動させて行います。変数の `--describe` の出力は、偽の Control Server の値の作り方に合わせて置き換えます。`REPLAY_VARIABLES=more` で、コンポーネントの種類がそろう変数を追加します。
+- スタブランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になります）。
+- 変数のテストは、`REPLAY_FEATURES` に `control-server` を追加し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を起動させて行います。変数の `--describe` の出力は、偽の Control Server の値の作り方に合わせています。`REPLAY_VARIABLES=more` で、コンポーネントの種類がそろう変数を追加します。
 - GUI サーバーの中の変数の取得元（`vehicle_sil_gui/source.py` の `Source`）は差し替えられ、順序のテスト（`test_variable_units.py`）は、決めたとおりに応答する取得元を使います。
-- 再生するランチャーでも GUI を動かせます。
+- スタブランチャーでも GUI を動かせます。
 
   ```sh
-  uv run vehicle-sil-gui --launcher gui/server/tests/replay_launcher.py gui/server/tests/configs/simulation.yaml
+  uv run vehicle-sil-gui --launcher gui/server/tests/stub_launcher.py gui/server/tests/configs/simulation.yaml
   ```
-
-### 記録を本物と比較する
-
-記録が本物と合うかは、次のコマンドで確認します。
-
-```sh
-python3 gui/server/tests/record_launcher.py --launcher build/<preset>/tools/launch/vehicle_sil_launch --compare
-```
-
-- Linux で、隣にビルドした ecu_main の例の ECU を使います。CI の linux-gcc-release でも実行します。
-- Control Server なしでビルドしたランチャーでは、それが必要な場面を省き、`version --json` の features もその機能を除いて比較し、そのことを表示します。
-- 実行が実時間に遅れた場面（負荷の高い PC）は 3 回まで記録し直し、要約の行に表示します。
-- 必須 participant の失敗で異常停止した実行では、遅れたステップが停止時に未開始だった 1 つだけの場合に限り、比較から警告を除きます。ほかの遅れは記録し直し、警告の欠落や重複は比較の失敗にします。
-- ネットワークを外につなぐ場面は、偽のドライバーの上に作ったブリッジの隣のランチャーで走らせます（CMake のターゲット `vehicle_sil_launch_connect_tools` と `vehicle_sil_fake_pcap`）。それらがなければ、その場面を省き、そのことを表示します。ネットワークの一覧は、自分だけのネットワーク名前空間（`unshare -rn`）で記録し、一覧にあなたの PC のインターフェースが入らないようにします。
-
-| 比較するもの | 内容 |
-|---|---|
-| イベントの順 | 時刻、外部バスのカウント、ログ、log_dropped の数と位置は除きます。 |
-| ランチャーが決める値 | 指摘の code、コマンドを受け付けたかと `ms`、participant の状態と終了コード、結果の `result` / `simulation` / `interrupted_by` と指摘の code、照合の結果と指摘の code、シナリオの手順の状態、`version --json` の features |
-| キーと型 | すべての種類のイベントと、その中のオブジェクトと配列のすべての要素のキーと型 |
-| そのほか | 書いたコマンド、終了コード、標準エラーの有無 |
-
-- イベントの順では、ほかのイベントの間に並ぶ participant のイベントは、participant どうしの並びを問いません。同じ participant の状態の順は比較します。
-- 外部バスのカウントは、ブリッジの開始後に届き、最後の値が結果と一致することと、記録と新しい実行に同じネットワークが現れることを確認します。
-- 記録するときには、本物の行が `event`、`seq`、`t_ms` で始まり、`seq` が 0 から 1 ずつ増え、`t_ms` が戻らないことも確認します。
-
-### 記録し直す
-
-ランチャーが変わったら、`--compare` が示す場面を記録し直します。
-
-```sh
-python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <case>...
-```
-
-- 場面を書かなければ全部を記録します。手元のパス、利用者の名前、ホスト名、トークンは決まった印に置き換え、残っていれば書きません。
-- `git diff gui/server/tests/recordings` で、変わった所を読みます。
-
-| 変わった所 | 対処 |
-|---|---|
-| 時刻（`gap_ms`、`time` の `sim_ms`）、時刻とログの行の数、ログの文の中の時刻（Dashboard の `t=… ms`） | 記録するたびに変わってよいものです。 |
-| イベントの順、キー、型、指摘の code、コマンドを受け付けたか、終了コード | ランチャーの動作が変わったので、GUI が使う所なら GUI を直します。 |
-
-- 設定ファイルを変えたときも記録し直します（記録は設定ファイルの内容と組で、変わっていればテストが失敗して通知します）。
-- テストが新しい引数やコマンドを使うときは、`record_launcher.py` の `CASES` に場面を追加して記録します。
 
 ### 本物のランチャーで確認する
 
@@ -1456,7 +1412,8 @@ python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <cas
 
 | テスト | 確認すること |
 |---|---|
-| `gui/server/tests/test_real_launcher.py` | 記録が、いまの本物の出力と合うか（上の `record_launcher.py --compare`） |
+| `gui/server/tests/test_real_launcher.py` | 本物のランチャーの Events v4（`serve` と `serve --once`）および `check --json` の契約が GUI サーバーと一通り動くか |
+| `test_real_text_check.py` | 保存していない構成ファイルの文の照合とコマンドの比較（`--text-from-stdin`、`--write-descriptions`、`--compare-commands`）が本物のランチャーで動くか |
 | `test_real_variables.py`（Control Server を持つランチャーのとき） | 変数の読み書きと、保存したシナリオが本物の照合を通って実行できること、例 `examples/gui_client/variables.mjs` |
 | 画面の e2e（`gui/web/e2e/real/`） | 変数の画面で Engine のスロットルに書き込んで回転数が変わること、例のダッシュボードのファイルのとおりに並び、カスタムパネルが回転数を表示すること |
 

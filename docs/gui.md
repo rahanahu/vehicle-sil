@@ -243,7 +243,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--launcher <path>` | The path of `vehicle_sil_launch` (a path that ends in `.py` is run with this Python) |
 | `--web <dir>` | Serve your own screen: its build output directory (must contain `index.html`). Default: the sample screens (see "[Files served with `--web`](#files-served-with---web)") |
 | `--dev-origin <origin>` | Also accept requests from the screen's development server (`ng serve`, Vite and others; only of the form `http://127.0.0.1:<port>`) (see "[Use a development server](#use-a-development-server)") |
-| `--json` | Print `{"vehicle_sil_gui": 3, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
+| `--json` | Print `{"vehicle_sil_gui": 4, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
 | `--stop-timeout <seconds>` | On exit, how long to wait for a running simulation to stop before signaling the launcher. By default the server waits for the launcher to finish |
 | `--participant-start-timeout-ms <ms>` | Wall-clock wait for required participants during startup (default 30000 ms) |
 | `--participant-stop-timeout-ms <ms>` | Launcher’s wall-clock wait per participant shutdown stage (default 10000 ms) |
@@ -362,7 +362,7 @@ The GUI server can start processes (the launcher starts the commands in the conf
 - **Saving a text**: a screen can save the text of a configuration file (`POST api/config`). By default, the server saves only an edit that keeps the commands that run: the launcher's check of the text compares it with the saved file (`check --compare-commands`), and the server saves only when the launcher says `"same"` (an edit of the networks, of their mapping or of `external`). The server compares no YAML itself, and saves nothing that cannot be compared. It writes only configuration files under the root: an existing one that `GET api/configs` lists as a simulation configuration, with the stamp that the screen read, through a new file in the same directory that replaces it. Every other file that it writes is in a temporary directory. `--no-save` saves nothing. With `--allow-command-changes`, the server also saves an edit that changes the commands that run, and makes new files (not dashboard files, nor in a `scenarios` directory). Anyone with the token can then run any command as you: they save it in a configuration file, and it starts with `--describe` at the next check. This includes the code of a screen served with `--web` and of its panels, which run on the same origin. Even by default, anyone with the token can rewrite what the launcher does not compare in the configuration files that the screen lists (the networks, `external`, `params`, comments, and a text whose check fails), and the server keeps no copy of the old content: when you use the GUI only to look, or others may see the token, start it with `--no-save`. With `--allow-command-changes`, the server says so on its standard error when it starts, and `allowed.save` of the API carries the same caution for the screen (see "Saving a text" in [gui/protocol/README.md](../gui/protocol/README.md#saving-a-text-post-apiconfig)).
 - **ECU variables**: the server reads and writes them through the launcher's Control Server (a free port on 127.0.0.1).
   - For each launcher process, the server creates a new token and passes it to the launcher in a file that only you can read (`vehicle-sil-gui-control-*.txt` in the temporary directory; mode 0600 on POSIX).
-  - A launcher started for one run (`vehicle_sil_launch run`): the file is deleted after the launcher has read it (when the Control Server starts listening), and again when the run ends.
+  - A launcher started for one run (`vehicle_sil_launch serve --once`): the file is deleted after the launcher has read it (when the Control Server starts listening), and again when the run ends.
   - A persistent launcher (`vehicle_sil_launch serve`, prepared with `POST api/prepare`): the launcher reads the file again at the start of each of its runs, so the file stays while that launcher runs and is deleted when it exits (when the configuration changes, when it fails, or when the GUI server stops).
   - This token appears nowhere in the launcher's arguments, in events, in notifications to the screen or in error messages. Other processes on the same computer cannot use the Control Server without it.
   - The GUI server connects only to the `127.0.0.1:<port>` that the launcher reported.
@@ -370,7 +370,7 @@ The GUI server can start processes (the launcher starts the commands in the conf
 - **Scenarios**: the server passes to the launcher only scenarios in its list (`.yaml` / `.yml` in `scenarios` next to the configuration file). `..`, absolute paths, NUL, names that are too long, names that start with `.`, and symbolic links (files, and `scenarios` and the directories above it) are not listed and are rejected if requested. For a scenario to save, the server only returns the YAML as a string; it writes no file.
 - **Connecting a network outside**: a target of `connect` (where a network of the file is connected to a real bus) reaches the launcher only if the last `POST api/connections` of that network of that file listed it as usable, written exactly so, and the file has not changed since; a run compares right before it starts the launcher (otherwise 400 `target-not-listed`; `none` needs no list). So a target that the screen sends can only be a device that the launcher found on this computer, and the list is made only for the network that the screen asks about. A bridge written in the configuration file (`role: bridge`, which `enable` or a variant may take in) is part of the file's contents, like any other command in it, and is not compared (see "Connecting a network outside" in [gui/protocol/README.md](../gui/protocol/README.md#connecting-a-network-outside-connect-time_policy-apiconnections)).
 - **Dashboard files and custom panels**: the server reads and serves dashboard files (`.dashboard.yaml` next to the configuration file) and custom panels (`.js` / `.mjs` in `panels/`) only from inside the root, as for configuration files. Dashboard files are read with YAML's safe loader, with limits on size, nesting and number of values, and aliases (`*name`) are not allowed. Panels are served from the same origin, so the CSP (`script-src 'self'`) is not relaxed. Panel module URLs carry a random value created at each start instead of the token (see "[Custom panels](#custom-panels)").
-- **Timeline files**: the files of scenario runs are in a temporary directory of the server (on POSIX, readable by you only), served only with the token (`api/timeline/<session id>`), and removed when the server stops. The timeline page at `timeline/` is served without the token, as the screen's files are; it reads the token where the screens keep it (see "[Timeline of a scenario run](#timeline-of-a-scenario-run)"). The token is never part of its address.
+- **Timeline files**: the files of scenario runs are in a temporary directory of the server (on POSIX, readable by you only), served only with the token (`api/timeline/<run_id>`), and removed when the server stops. The timeline page at `timeline/` is served without the token, as the screen's files are; it reads the token where the screens keep it (see "[Timeline of a scenario run](#timeline-of-a-scenario-run)"). The token is never part of its address.
 - **Screen files**: the server serves only the files in the directory the person who started it named (`--web`; otherwise the sample screens) (see "[Files served with `--web`](#files-served-with---web)"). That screen runs on the same origin with the token and can do everything the GUI can (with `--allow-command-changes`, that includes running any command as you). Give `--web` only screens you trust (as with the root, read what you received from others first).
 - **Concurrent runs**: one server runs one run at a time. If several starts are requested at the same time, only one starts. Two servers can run two runs.
 
@@ -431,12 +431,14 @@ While the run is paced at a numeric speed (not as fast as possible), the screen 
 
 | Request | What it does |
 |---|---|
-| `speed` and `start_paused` of `POST api/run` | The launcher's `--speed` and `--start-paused` |
-| `POST api/time` `{"command": "pause"}`, `{"command": "resume"}` | Pause, resume |
-| `POST api/time` `{"command": "step", "ms": <ms>}` | Step (only while paused; the launcher rounds up to a multiple of the time step) |
-| `POST api/time` `{"command": "speed", "value": <number or "max">}` | Change the speed (a pause stays a pause) |
+| `speed` and `start_paused` of `POST api/run` | The launcher's `--speed` and `--start-paused` (returns `{instance, run_id}` Ack on success, or synchronous `422 check-failed` on check failure without clearing the prior run screen) |
+| `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "pause"}` or `"resume"` | Pause, resume (returns `{run_id, command}` Ack) |
+| `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "step", "ms": <ms>}` | Step (only while paused; the launcher rounds up to a multiple of the time step; returns `{run_id, command}` Ack) |
+| `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "speed", "value": <number or "max">}` | Change the speed (a pause stays a pause; returns `{run_id, command}` Ack) |
+| `POST api/stop-session` `{"force": <bool>, "run_id": "<run_id>", "instance": "<instance>"}` | Stop the named run (returns `{instance, run_id}` Ack; non-targeted `POST api/stop` is removed) |
+| `POST api/prepare` `{"file": ...}` | Prepare the resident launcher (returns `{instance}` Ack) |
 
-`api/time` passes the same checks as the rest of the API (token, `Host`, `Origin`, JSON body). The server writes the command as one line to the launcher's stdin and returns at once, without waiting for the launcher's answer (so a request never hangs on a stuck launcher; even with a launcher that does not read its input, it returns within about 2 seconds). Whether the command was accepted arrives in the launcher's `command` event. A command may carry an `id` (a whole number from 0 to 2^53); the launcher returns it in the `command` event that answers it, so a screen can tell that answer from the answers to other commands. For the shapes and the error `code`s, see [gui/protocol/README.md](../gui/protocol/README.md).
+`api/time` passes the same checks as the rest of the API (token, `Host`, `Origin`, JSON body). The server writes the command as one line to the launcher's stdin and returns `{run_id, command}` at once, without waiting for the launcher's answer (so a request never hangs on a stuck launcher; even with a launcher that does not read its input, it returns within about 2 seconds). State updates arrive on the single WebSocket stream numbered by `(instance, run_id, stream_seq)` (`run_id` is `"<instance>-<n>"`; reconnect delta log replay uses `auth` `{token, instance, run_id, after_stream_seq}` and `hello.replay.after_stream_seq`, while `GET api/session` remains a stationary read endpoint). Whether the command was accepted arrives in the launcher's `command` event. A command may carry an `id` (a whole number from 0 to 2^53); the launcher returns it in the `command` event that answers it, so a screen can tell that answer from the answers to other commands. For the shapes and the error `code`s, see [gui/protocol/README.md](../gui/protocol/README.md).
 
 ## Scenarios
 
@@ -464,13 +466,13 @@ When the launcher's `features` have `timeline`, the GUI server records the timel
 
 | Item | Details |
 |---|---|
-| Page | `timeline/` of the GUI server (`timeline.html`, `page.js` and `vehicle-sil-timeline.js` of `gui/timeline`; the tools archive has them inside the GUI). The link is `timeline/?src=/api/timeline/<session id>&lang=<ja or en>`. The page is one element `<vehicle-sil-timeline>`, which you can also put on your own screen (see "[Putting a timeline on your own screen](#putting-a-timeline-on-your-own-screen)"). |
-| File | `GET api/timeline/<session id>` (with the token, as every API request). The server keeps the files of the last 4 scenario runs that wrote one, in a temporary directory of its own (`vehicle-sil-gui-timelines-*`), and removes them when it stops. If the file of a run is gone, the page says 404 `no-timeline`. |
+| Page | `timeline/` of the GUI server (`timeline.html`, `page.js` and `vehicle-sil-timeline.js` of `gui/timeline`; the tools archive has them inside the GUI). The link is `timeline/?src=/api/timeline/<run_id>&lang=<ja or en>`. The page is one element `<vehicle-sil-timeline>`, which you can also put on your own screen (see "[Putting a timeline on your own screen](#putting-a-timeline-on-your-own-screen)"). |
+| File | `GET api/timeline/<run_id>` (with the token, as every API request). The server keeps the files of the last 4 scenario runs that wrote one, in a temporary directory of its own (`vehicle-sil-gui-timelines-*`), and removes them when it stops. If the file of a run is gone, the page says 404 `no-timeline`. |
 | Launcher without `timeline` | The server does not give `--timeline`, and the card has no link. |
 | Token | The link carries no token. The new tab starts with a copy of the GUI tab's `sessionStorage`, where the GUI keeps its token, and the page sends it with `Authorization: Bearer`. A page opened another way (a copied address, a bookmark, a link opened without an opener, such as with the middle button in some browsers) has no token and says so (HTTP 401). Open it with a left click on the link, or add `#token=<token>` from the address the server printed to the end of the page's address: the page reads it, removes it from the address and loads the file. |
 
-- The files are not kept beyond the last 4 runs or after the server stops. To keep one, fetch `api/timeline/<session id>` with the token before then, or run the scenario with `vehicle_sil_launch run --scenario <scenario> --timeline <file>` yourself.
-- The server API is `scenario.timeline_url` of the summary and `GET api/timeline/<session id>` (see "Timeline of a scenario run (`api/timeline`)" in [gui/protocol/README.md](../gui/protocol/README.md#timeline-of-a-scenario-run-apitimeline)); in the library, `timelineUrl` of the session copy's `scenario`.
+- The files are not kept beyond the last 4 runs or after the server stops. To keep one, fetch `api/timeline/<run_id>` with the token before then, or run the scenario with `vehicle_sil_launch run --scenario <scenario> --timeline <file>` yourself.
+- The server API is `scenario.timeline_url` of the summary and `GET api/timeline/<run_id>` (see "Timeline of a scenario run (`api/timeline`)" in [gui/protocol/README.md](../gui/protocol/README.md#timeline-of-a-scenario-run-apitimeline)); in the library, `timelineUrl` of the session copy's `scenario`.
 - The **Scenario** card also has **Show the timeline here**, which shows the same timeline inside the card with the element (see "[Putting a timeline on your own screen](#putting-a-timeline-on-your-own-screen)").
 
 ### Save your actions as a scenario
@@ -510,7 +512,7 @@ steps:
 - Put the saved file in `scenarios/`, and it passes the check as is and can be run from **Scenario** (ECUs have different step times, so the same writes may become separate steps per ECU).
 - Add checking steps in an editor.
 - Variables of a participant whose name contains `.` cannot be addressed in a scenario (everything up to the first `.` is the participant name), so they are left out. The card shows how many were left out, and the comments at the top of the file say why.
-- The server API is `GET api/recording` (see "Recording actions (`api/recording`)" in [gui/protocol/README.md](../gui/protocol/README.md#recording-actions-apirecording)); in the library, `client.recording()`.
+- The server API is `GET api/recording` (returns `run_id` along with the recorded scenario YAML; see "Recording actions (`api/recording`)" in [gui/protocol/README.md](../gui/protocol/README.md#recording-actions-apirecording)); in the library, `client.recording()`.
 
 ## ECU variables
 
@@ -518,11 +520,11 @@ The GUI reads and writes the variables that ECUs declare (see "ECU variables" in
 
 | Item | Details |
 |---|---|
-| Start | If the launcher has a Control Server, the GUI server starts the launcher (`run`, or `serve` for a persistent launcher) with `--control 0 --control-credentials <file>` and connects to the address that the launcher's `control_server` event reports. |
+| Start | If the launcher has a Control Server, the GUI server starts the launcher (`serve --once`, or `serve` for a persistent launcher) with `--control 0 --control-credentials <file>` and connects to the address that the launcher's `control_server` event reports. |
 | State | The state of the variable feature (`off`, `connecting`, `ready`, `failed`, `ended`) and its reason arrive in `variables` of the summary and in the `variables` notification. |
 | List | The variables of each participant (name, type, role, unit, range, value increment, description, enum items, whether writable). |
-| Values | When the screen watches selected variables, their last values arrive at the chosen period (20 ms or more). |
-| Writes | Sent to `POST api/write` with the id of the target run (`session`). |
+| Values | When the screen watches selected variables, their last values arrive at the chosen period (20 ms or more) as delayed `values` frames carrying `{id, watch_id, run_id}` outside `stream_seq`. |
+| Writes | Sent to `POST api/write` with the target `run_id` (and optional `instance`), returning `{run_id, operation}`. |
 | After the end | The state becomes `ended`, and the last values read remain (until the next run starts). |
 
 - **If the connection fails**: whether the server cannot connect or the connection drops, the run continues. Only the variables become `connecting` or `failed`; after a disconnection, the server reconnects automatically.
@@ -532,7 +534,7 @@ The GUI reads and writes the variables that ECUs declare (see "ECU variables" in
   - The values of a step that starts exactly at `sim_ms` may arrive later while paused; in that case, another notification for the same time arrives.
   - While the run runs, `paused` is false. For the assumptions and limits, see "ECU variables" in [gui/protocol/README.md](../gui/protocol/README.md#ecu-variables).
   - With an older launcher that has no `GetSnapshot`, the variable feature is `failed` (with a reason).
-- **Checks on writes**: the server rejects a write whose `session` does not belong to the running run (`session-changed`; so a write sent while one run ends and the next starts is not written to the next run). A run that is running a scenario cannot be written either (`scenario-running`). The server checks type and range against the variable list before passing the write to the launcher.
+- **Checks on writes**: the server rejects a write whose `run_id` (or `instance`) does not belong to the running run (`session-changed`; so a write sent while one run ends and the next starts is not written to the next run). A run that is running a scenario cannot be written either (`scenario-running`). The server checks type and range against the variable list before passing the write to the launcher.
 - **Results of writes**: results (operations) reach every screen as queued (`queued`), applied (`applied`, with the time of the step), too late (`late`), refused by the ECU (`rejected`, `invalid`) and so on. Results are never dropped. An operation with no result by the end of the run is completed as `unknown`. The results of a scenario's own writes do not come.
 
 | To find | See |
@@ -720,7 +722,7 @@ When reading values keeps failing (the Control Server does not answer before its
 
 - The write state belongs to the variable, not the widget. Placing the same variable in 2 widgets does not send twice, and in-flight and failure notices survive when filtering recreates the widgets.
 - When the run changes, the previous run's state and sent value disappear.
-- A write is sent to the run current at that moment (`session` of `api/write`). If the run changes before the write reaches the server, it is not written to the next run.
+- A write is sent to the run current at that moment (`run_id` of `api/write`). If the run changes before the write reaches the server, it is not written to the next run.
 
 **A variable the ECU does not use now**: when an ECU reports that it does not use a variable (for example because of its configuration), the widget's frame gets `data-availability="inactive"`, its value and controls are dimmed, and its heading says so (a small mark whose title is "Not used by this ECU now"; screen readers also hear it with the control's description). This is information only: the controls stay enabled and a write is sent as for any other variable, and values keep arriving. A variable whose availability is not known yet is shown as usual.
 
@@ -1260,7 +1262,7 @@ declare module 'react' {
 - It is written for the example ECUs of `examples/ecu_main`. To use your own, change the `variable` attributes (the guide shows how).
 - `main.js` is the layer "a script of your own" of "[Build your own screen](#build-your-own-screen)": a display of your own made with `watch`, and a button of your own that handles the failure of its operation.
 - Its README explains how to use it.
-- `scripts/verify-web.py` serves this template with `--web` and runs it in a browser, against the replay launcher and a fake Control Server (the end-to-end test `starter.spec.ts`).
+- `scripts/verify-web.py` serves this template with `--web` and runs it in a browser, against the stub launcher (`gui/server/tests/stub_launcher.py`) and a fake Control Server (the end-to-end test `starter.spec.ts`).
 
 ### Use from tools without a screen
 
@@ -1368,7 +1370,7 @@ Directories and tests for developing the GUI itself.
 |---|---|
 | Server tests | `scripts/verify-gui.py` |
 | Screen tests | `scripts/verify-web.py` (`verify-gui.py` calls it) |
-| A test that runs the minimal example `examples/gui_client/` with the replay launcher | `scripts/verify-gui.py` |
+| A test that runs the minimal example `examples/gui_client/` with the stub launcher | `scripts/verify-gui.py` |
 | Library tests | The `client` stage of `verify-web.py` |
 | Bundling the library into one file | The `bundle` stage of `verify-web.py` |
 | Package | The `package` stage of `verify-web.py` |
@@ -1377,70 +1379,24 @@ Directories and tests for developing the GUI itself.
 
 The server tests wait for what should happen with `wait_until` and `Socket.until` in `conftest.py`. Any other wait limit you write goes through `scaled(seconds)`. All of them are multiplied by the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for the rules, see "Timeouts and the scale factor" under "Test names and how to run tests" in [code-map-testing.md](code-map-testing.md#timeouts-and-the-scale-factor)).
 
-### The replay launcher
+### The stub launcher and in-process runtime harness
 
-Instead of the launcher, the tests use a launcher that replays recordings of the real launcher's output (`gui/server/tests/replay_launcher.py`).
+Instead of starting the C++ launcher in every test, the GUI test suite uses an in-process Events v4 runtime harness (`gui/server/tests/fake_runtime.py`) and a deterministic Events v4 scenario launcher stub (`gui/server/tests/stub_launcher.py`).
 
 | Item | Details |
 |---|---|
-| Recordings (`gui/server/tests/recordings/`) | For the configuration files in `gui/server/tests/configs/`, run with the real launcher and the ECUs of the ecu_main example: the event lines, stderr, the exit code, `check --json`, `version --json`, and the positions of the commands that the tests write (stop, time commands). |
-| Choosing a recording | When there are several recordings for the same arguments, the commands that arrive choose the recording. |
-| Arguments or commands without a recording (including a command that comes later than in the recording) | The replay launcher writes to stderr what to record and exits; that test fails. |
-| What the real launcher cannot be made to do (broken lines, abnormal exit, lateness, not reading, not stopping and so on) | A `# replay-fault:` line in the configuration file (or `REPLAY_FAULT`) changes the recording as it is replayed. |
+| In-process runtime harness (`gui/server/tests/fake_runtime.py`) | Implements the `LauncherRuntime` and `RunHandle` boundary in-process so server unit and integration tests can drive Events v4 (`vehicle_sil_events: 4`) lifecycles, `LauncherState` transitions, `prepare` / `status` / `result` events, and time/stop commands deterministically without child processes. |
+| Deterministic scenario launcher stub (`gui/server/tests/stub_launcher.py`) | A lightweight stand-in for `vehicle_sil_launch` (`version --json`, `check --json`, `connections --json`, `serve` and `serve --once`) over the configuration files in `gui/server/tests/configs/`, used by subprocess and Playwright end-to-end tests. |
+| Fault injection | A `# replay-fault:` line in the configuration file (or `REPLAY_FAULT`) injects protocol, process, or timing faults (broken lines, abnormal exit, lateness, not reading stdin, not stopping and so on). |
 
-- The server tests' `gui_server` and the end-to-end tests' startup code check whether a command without a recording arrived: they look at whether the report file written by the replay launcher is empty.
-- By default, the replay launcher stands in for a launcher without a Control Server (variables show **Not available**).
-- Variable tests add `control-server` to `REPLAY_FEATURES` and have it start a fake Control Server (`gui/server/tests/fake_control.py`; gRPC). The `--describe` output of the variables is replaced to match how the fake Control Server produces values. `REPLAY_VARIABLES=more` adds variables that cover every widget kind.
+- By default, the stub launcher stands in for a launcher without a Control Server (variables show **Not available**).
+- Variable tests add `control-server` to `REPLAY_FEATURES` and have it start a fake Control Server (`gui/server/tests/fake_control.py`; gRPC). The `--describe` output of the variables matches how the fake Control Server produces values. `REPLAY_VARIABLES=more` adds variables that cover every widget kind.
 - The GUI server's source of variables (`Source` in `vehicle_sil_gui/source.py`) can be replaced; the ordering tests (`test_variable_units.py`) use a source that answers as scripted.
-- You can also run the GUI with the replay launcher.
+- You can also run the GUI with the stub launcher.
 
   ```sh
-  uv run vehicle-sil-gui --launcher gui/server/tests/replay_launcher.py gui/server/tests/configs/simulation.yaml
+  uv run vehicle-sil-gui --launcher gui/server/tests/stub_launcher.py gui/server/tests/configs/simulation.yaml
   ```
-
-### Compare recordings with the real launcher
-
-To check that the recordings match the real launcher, run:
-
-```sh
-python3 gui/server/tests/record_launcher.py --launcher build/<preset>/tools/launch/vehicle_sil_launch --compare
-```
-
-- It runs on Linux and uses the ECUs of the ecu_main example built next to the launcher. CI also runs it in linux-gcc-release.
-- With a launcher built without a Control Server, it skips the cases that need one, compares the features of `version --json` without that feature, and says so.
-- A case whose run fell behind real time (on a heavily loaded computer) is recorded again up to 3 times, and the summary line says so.
-- When a required participant fails and the run aborts, the comparison excludes a warning only if the sole late step was still unstarted at the abort. Other late steps still trigger a retry; a missing or duplicate warning fails the comparison.
-- The cases that connect a network outside run the launcher next to the bridges built on the fake drivers (the CMake targets `vehicle_sil_launch_connect_tools` and `vehicle_sil_fake_pcap`); without them, it skips those cases and says so. It records the list of a network in a network namespace of its own (`unshare -rn`), so that the list holds no interface of your computer.
-
-| What is compared | Details |
-|---|---|
-| Order of events | Times, outside counts, logs, and the number and position of log_dropped are excluded. |
-| Values the launcher decides | Finding codes, whether commands were accepted and their `ms`, participant states and exit codes, `result` / `simulation` / `interrupted_by` of the result and its finding codes, the check result and its finding codes, the states of scenario steps, the features of `version --json` |
-| Keys and types | The keys and types of every kind of event, and of every object and array element in them |
-| Other | The commands written, the exit code, whether there is stderr output |
-
-- In the order of events, participant events among other events may come in any order relative to each other. The order of the states of one participant is compared.
-- For outside counts, the comparison checks that the bridge started first, the last counts match the result, and the same networks appear in the recording and the new run.
-- When recording, it also checks that the real lines begin with `event`, `seq` and `t_ms`, that `seq` increases by 1 from 0, and that `t_ms` never goes back.
-
-### Re-record
-
-When the launcher changes, record again the cases that `--compare` points out.
-
-```sh
-python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <case>...
-```
-
-- Without cases, it records all of them. Local paths, user names, host names and tokens are replaced with fixed markers; if any remain, the recording is not written.
-- Read what changed with `git diff gui/server/tests/recordings`.
-
-| What changed | What to do |
-|---|---|
-| Times (`gap_ms`, `sim_ms` of `time`), the number of time and log lines, times in log text (`t=… ms` of Dashboard) | These may change with every recording. |
-| Order of events, keys, types, finding codes, whether commands were accepted, exit codes | The launcher's behavior changed. Where the GUI uses it, fix the GUI. |
-
-- Record again also when you change a configuration file (a recording is paired with the contents of its configuration file; if they differ, a test fails and tells you).
-- When a test uses new arguments or commands, add a case to `CASES` in `record_launcher.py` and record it.
 
 ### Verify with the real launcher
 
@@ -1448,7 +1404,8 @@ python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <cas
 
 | Test | What it checks |
 |---|---|
-| `gui/server/tests/test_real_launcher.py` | That the recordings match the current real output (`record_launcher.py --compare` above) |
+| `gui/server/tests/test_real_launcher.py` | That the real launcher's Events v4 (`serve` and `serve --once`) and `check --json` contract work end-to-end with the GUI server |
+| `test_real_text_check.py` | Unsaved configuration text check and command comparison (`--text-from-stdin`, `--write-descriptions`, `--compare-commands`) with the real launcher |
 | `test_real_variables.py` (with a launcher that has a Control Server) | Reading and writing variables, that a saved scenario passes the real check and runs, and the example `examples/gui_client/variables.mjs` |
 | Screen end-to-end tests (`gui/web/e2e/real/`) | That writing the Engine throttle on the Variables screen changes the engine speed, that the example dashboard file's layout is followed, and that the custom panel shows the engine speed |
 

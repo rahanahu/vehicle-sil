@@ -20,7 +20,7 @@
 |---|---|
 | `launch.*` | 設定ファイルの読み込みと照合のルール、人向けと JSON の出力（プロセスを起動しない）。この名前を 4 つの試験の実行ファイルが持つ: `tests/config`、`tests/scenario`、`tests/runner`（それぞれ自分のライブラリだけをリンクし、ディレクトリの名前を 2 つめのラベルに持つ: `-L config`、`-L scenario`、`-L runner`）と `tests/launch`（残り） |
 | `launch_cli.*` | `vehicle_sil_launch check` を実行ファイルとして動かす |
-| `launch_run.*` | `vehicle_sil_launch run` を実行ファイルとして動かす |
+| `launch_run.*` | `vehicle_sil_launch run` と `vehicle_sil_launch serve --once` を実行ファイルとして動かす |
 | `config.*` | `libs/config` の境界（ヘッダーとソースが何を include してよいか） |
 | `runner.*` | `libs/runner` の境界（公開ヘッダーが SIL Kit に届かないこと。`libs/launch` を include しないこと） |
 | `scenario.*` | `libs/scenario` の境界（ヘッダーとソースが何を include してよいか） |
@@ -160,16 +160,16 @@
 
 | 名前 | 場所 |
 |---|---|
-| `check_file()`、`Checked`（`--file-only` 時の `file_sha256` と `hot_eligibility` を含む）、`HotEligibility`、`evaluate_hot_eligibility()`、`--scenario`（`format_text()` と `format_json()`） | `launch/checked.hpp` |
+| `check_file()`、`Checked`（常に `file_sha256` と `hot_eligibility` を含む）、`HotEligibility`、`evaluate_hot_eligibility()`、`--scenario`（`format_text()` と `format_json()`） | `launch/checked.hpp` |
 | ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `executable_status()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_config_stdin()`（`check --text-from-stdin`）、`read_scenario_file()`、`files_beside()`、`environment_value()`。`check_file()` が participant の `--describe` の出力を取るところ（`DescribeSource`: `describe_by_running()`、またはプロセスを起動しない `describe_from_saved()`）と、保存した説明のファイル（`read_saved_descriptions()`、`write_saved_descriptions()`、`executable_stamp()`） | `launch/probe.hpp` |
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（backend ごとに各ブリッジに 1 回だけ聞く。`prefix_targets()` が `--connect` の受ける値にする）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`check_requested()`（`--request`: 要求ファイルの先が一覧にあるか。backend と名前で比べる。ファイルを読み構成に合わせて切るのは、要求ファイルの行の関数）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()`、その結果（`RunReport`。書くのは `format_run_text()` と `format_run_json()`）、実行が借りるもの（`RunLent`）、実行から見た Control Server（`ControlEndpoint`） | `launch/run.hpp` |
-| `ExecutionRuntime`、`ExecutionSink`、`ExecutionStatus`、`LauncherState`、`ConfigMetadata`、`LauncherEnd`、`ExecutionEnd`: Prepare、Run、Stop、時刻命令、Status、Results、Shutdown を管理するトランスポート非依存の常駐実行ランタイム | `launch/execution_runtime.hpp` |
-| `Serve`（`ExecutionRuntime` 上で `vehicle_sil_launch serve` を実装する薄い NDJSON アダプター）と `prepare_serve_run()` | `launch/serve.hpp` |
+| `ExecutionRuntime`、`ExecutionSink`、`ExecutionStatus`、`LauncherState`、`ConfigMetadata`、`LauncherEnd`、`ExecutionEnd`: 常駐 `serve` と 1 回実行 `serve --once` の両方で Prepare、Run、Stop、時刻命令、自発的な `status` イベント、`prepare` と `result` に内包する遷移後の `status`、Shutdown を管理するトランスポート非依存の実行ランタイム | `launch/execution_runtime.hpp` |
+| `Serve`（`ExecutionRuntime` 上で `vehicle_sil_launch serve` と `serve --once` を実装する薄い NDJSON アダプター） | `launch/serve.hpp` |
 | check、run、test が何を頼まれたかを、値にしたもの: `RunRequest`。2 つの部分に分かれる。`RunIntent`（利用者のもの: variant、パラメーター、利用者が書いたとおりのシナリオ、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、速さ、`--start-paused`、`--strict`）と `RunHost`（呼ぶ側のもの: 利用者が書いたとおりのファイル、道具とログの場所、`--describe` と実行の期限、利用者が書いたとおりのタイムラインのファイル、求められた Control Server（アドレスとファイルの名前）、標準入力の命令を求めているか）。`validate_request()`（純粋）が、一緒には使えない欄の規則（`--param` と `--timeline` にはシナリオが要る、`--start-paused` をシナリオと使う、続ける手段なしに使う）を、code が `usage` の指摘として持つ。`check_file()`、`run_file()`、`test_file()`（`TestOptions::request`）がこれを受け、名前からパスを作る。`CheckOptions` に残るのは、頼まれたことではないものだけ（`file_only`、`params_for_many`、`fastest_by_default`）。`tools/launch/main.cpp` の `read_request()` と `run()` が、誤りを報告する順に引数を読み、3 か所で `validate_request()` を呼んで最初の指摘を断る（`--request` があるときは、全部の引数を読んだ後に 1 度）。プロセスなしの試験は `tests/launch/test_request.cpp`（規則と、check と計画が欄ごとに読むもの） | `launch/request.hpp`、`src/request/request.cpp` |
 | `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` と `read_request_intent()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`config/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`config/check.hpp`。実体は `check_report.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request/request_read.cpp`、`src/request/request.cpp` |
 | `RunEventSink`（`RunEvents` を `phase()`、`check()`、`command()`、`state()` で広げた実行ごとのイベントのインターフェース。`run_file()` と `RunLent::events` がこれを使います） | `launch/run_sink.hpp` |
-| `EventStream`（`run --events` のイベントを書き、`RunEventSink` を実装します） | `launch/events.hpp` |
+| `EventStream`（`serve` と `serve --once` の Events v4（`vehicle_sil_events: 4`）ストリームを書き、`RunEventSink` を実装します） | `launch/events.hpp` |
 | `parse_command()` と `CommandInput`（`--stdin-commands` のコマンドを読む） | `launch/command_input.hpp` |
 | 記録とシナリオの結果から `run --timeline` のファイルを作る `format_timeline_json()` | `launch/timeline_format.hpp` |
 
@@ -185,7 +185,7 @@
 | 照合の出力 | `src/format/check_format.cpp` |
 | 間違ったコマンドラインや内部の誤りの結果（JSON、結果のイベント） | `src/format/error_result.cpp` |
 | `run_file()`: 照合、実行が自分で作る操作盤と Control Server、`Runner` の 2 つの段、タイムラインのファイル | `src/usecases/run_file.cpp` |
-| `ExecutionRuntime`: 2 軸のランチャー・実行状態機械、`prepare()`、`start_run()`、`stop_run()`、`send_time_command()`、`status()`、`result()`、`request_shutdown()`、`run_loop()` | `src/usecases/execution_runtime.cpp` |
+| `ExecutionRuntime`: 明示的な `LauncherState`（`unprepared`、`cold_only`、`preparing`、`ready`、`running`、`ending`、`contaminated`）と実行状態機械、`prepare()`、`start_run()`、`stop_run()`、`send_time_command()`、`status()`、`request_shutdown()`、`run_loop()` | `src/usecases/execution_runtime.cpp` |
 | `Serve`: `ServeCommand` と `EventStream` を `ExecutionRuntime` に接続する NDJSON アダプター | `src/usecases/serve.cpp` |
 | `--stdin-commands` と `serve` のコマンドを読む（`parse_command()`、`parse_serve_command()`、`prepare`、`status`、`stop.force`、インライン `intent`） | `src/endpoints/command_input.cpp` |
 | コマンドラインと、標準入力・標準出力のスレッド | `tools/launch/main.cpp` |
@@ -293,8 +293,8 @@
 - `examples/ecu_main/simulation.live.yaml`（GUI で操作するための設定ファイル。速度と停止時刻は実行時に選択）: `simulation.yaml` と participant、ネットワークが同じであることを、`launch_run.live` が確認します。
 - テンプレートの同じファイルは、`template.check_and_run` が確認します。
 - ビルドのディレクトリの `simulation.live.dashboard.yaml` は、CMake が `simulation.dashboard.yaml` をコピーしたものです。
-- GUI のテストが再生する、ランチャーの出力の記録（`gui/server/tests/recordings/`）: `gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>` で記録し直します。
-- 記録と本物のランチャーの不整合は、`scripts/verify-gui.py --launcher <path>` が見つけます。
+- GUI のテストが使う決定論的な Events v4 シナリオのスタブランチャー（`gui/server/tests/stub_launcher.py`）とプロセス内のランタイムハーネス（`gui/server/tests/fake_runtime.py`）。
+- 本物のランチャーの Events v4（`serve` と `serve --once`）と `check --json` の契約は、`scripts/verify-gui.py --launcher <path>` が確認します。
 
 照合の方法と、エラーのある例の置き場所は、「[ドキュメントの例とテスト](code-map-testing.md#ドキュメントの例とテスト)」にあります。
 
@@ -338,7 +338,7 @@
 更新するコードとファイル:
 
 - `schema/run-request.schema.json` と、そのコピー `template/schema/run-request.schema.json`（`schema.files_and_launcher` がキーをランチャーと突き合わせます）
-- GUI サーバーが受けて書く欄（`gui/server/src/vehicle_sil_gui/launcher.py` の `INTENT_FIELDS` と `request_text()`。[GUI の地図](code-map-gui.md#ランチャーへの要求と接続先)）
+- Python SDK と GUI サーバーが受けて書く欄（`python/vehicle_sil_control/protocol.py` の `INTENT_FIELDS` と `request_text()`。`gui/server/src/vehicle_sil_gui/launcher.py` が再公開します。[GUI の地図](code-map-gui.md#ランチャーへの要求と接続先)）
 
 更新するドキュメント:
 
@@ -379,7 +379,7 @@
 - スキーマは、ランチャーが読むファイルを拒否してはいけません（スキーマで拒否できないエラーは、`check` が報告します）。
 - 迷う所は緩くし、`test_schemas.py` の見本に、通る形と失敗する形を追加します。
 - 例とテンプレートの YAML（`examples/`、`template/`）を追加するときは、1 行目に `# yaml-language-server: $schema=<スキーマへの相対パス>` を書きます。
-- 既にある例の先頭のコメントは、行数を変えません。指摘と手順の行番号が、ドキュメントの出力と、GUI のテストが再生する記録に出ているためです。
+- 既にある例の先頭のコメントは、行数を変えません。指摘と手順の行番号が、ドキュメントの出力と GUI のテストに出ているためです。
 
 テスト:
 
@@ -448,11 +448,11 @@
 
 ### イベント、標準入力のコマンド、`version --json`
 
-GUI が消費するイベントやコマンドを変える場合は、[GUI の実装とテスト](code-map-gui.md#guiserverguiprotocolguiclientguiweb)、[実行の送受信](#実行の送受信traffic) にある録画とプロトコルの例も確認する。
+GUI が消費するイベントやコマンドを変える場合は、[GUI の実装とテスト](code-map-gui.md#guiserverguiprotocolguiclientguiweb)、[実行の送受信](#実行の送受信traffic) にあるスタブランチャーとプロトコルの例も確認する。
 
 変える場所:
 
-- `run --events` のイベント、`--stdin-commands` のコマンド、`version --json`（`libs/launch/src/format/events.cpp`、`libs/launch/src/endpoints/command_input.cpp`、`tools/launch/main.cpp`）
+- `serve` と `serve --once` の Events v4 ストリーム、`--stdin-commands` と `serve` のコマンド、`version --json`（`libs/launch/src/format/events.cpp`、`libs/launch/src/endpoints/command_input.cpp`、`tools/launch/main.cpp`）
 - `result` イベントの中身: `libs/launch/src/format/run_format.cpp` の `format_result_event()`（`EventStream::result()` は、書かれたものを受け取ります）。時刻のコマンドか stop の `command` イベント: `TimeCommands::apply()` が、渡された関数（`TimeCommands::OnCommand`。`main.cpp` は `EventStream::command()` を渡します）を呼びます。`phase` イベント: `RunControls::set_phase()` が、操作盤に渡された関数（`RunControls::Observers`。`main.cpp` は `EventStream::phase()` を渡し、自分で操作盤を作る run は `RunLent::events`（`RunEventSink`）に書きます）を呼びます
 
 合わせて直すドキュメント:
@@ -570,7 +570,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 - `run` の出力例（`launch_run.docs`、`launch_run.scenario` などが照合する `simulation-run.md`、`scenario.md`、`simulation-config.md`、`simulation-events.md`、`howto/first-ecu.md`、`howto/scenario-tests.md` のブロック）
 - `features` の `run-traffic`
 - [internals/control.md](internals/control.md) の「ランチャーが受け取るサンプル」
-- GUI の録画（`gui/server/tests/recordings/`）と `gui/protocol/examples/`
+- GUI のスタブランチャー（`gui/server/tests/stub_launcher.py`）、プロセス内のランタイムハーネス（`gui/server/tests/fake_runtime.py`）、`gui/protocol/examples/`
 
 守ること:
 

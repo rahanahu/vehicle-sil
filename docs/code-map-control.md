@@ -39,8 +39,8 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 
 | Test | Details | Other labels |
 |---|---|---|
-| `control_server.python_client` | Runs the Python client and CLI against `vehicle_sil_launch run --control` | |
-| `control_server.launcher` | Runs `vehicle_sil_launch run --control` with the ECUs of `examples/ecu_main` | `integration` |
+| `control_server.python_client` | Runs the Python client and CLI against `vehicle_sil_launch serve --once --control` | |
+| `control_server.launcher` | Runs `vehicle_sil_launch serve --once --control` with the ECUs of `examples/ecu_main` | `integration` |
 | `control_server.example_write_before_start`, `control_server.example_pause_and_step` | Runs `examples/launch_control` | `examples` |
 | `control_server.guide_operate_signals` | Compares the marked blocks of the guide [Read and write signals from outside](howto/operate-signals.md) with the output of the same example, the CLI and the stdin commands | `examples` |
 
@@ -76,9 +76,12 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 | Name | Location |
 |---|---|
 | `ControlServer` | `control_grpc/server.hpp` |
+| Python SDK package (`dependencies = []`, `python -S` safe) | `python/pyproject.toml` |
 | Python client | `python/vehicle_sil_control/client.py` |
-| Helper that starts the launcher | `python/vehicle_sil_control/launcher.py` |
-| Helper for the resident launcher (`serve`) | `python/vehicle_sil_control/serve.py` |
+| Pure Events v4 protocol validation and command builders (shared with `gui/server`) | `python/vehicle_sil_control/protocol.py` |
+| Lazy gRPC stub discovery, metadata, redaction, error and proto conversion helpers (shared with `gui/server`) | `python/vehicle_sil_control/grpc_helpers.py` |
+| 1-run helper over `vehicle_sil_launch serve --once` (`Launch`) | `python/vehicle_sil_control/launcher.py` |
+| Helper for the resident or single-run launcher (`Serve`, `RunHandle`) | `python/vehicle_sil_control/serve.py` |
 
 - Tests: `tests/control_server` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`)
 - `ctest -R`: `^control_server\.`
@@ -88,7 +91,7 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 | `test_launcher.py` | The launcher's Control Server (also authentication, TLS, roles and auditing) |
 | `test_python_client.py` | The Python client and CLI |
 | `test_serve_unit.py` | `Serve` and `RunHandle` unit tests with mocked child streams (also run by `scripts/verify-python.py`) |
-| `test_serve_client.py` | `Serve` and `RunHandle` against live `vehicle_sil_launch serve` and gRPC (keeps `tests/serve/serve_support.py` isolated as a fault-injection test harness) |
+| `test_serve_client.py` | `Serve` and `RunHandle` against live `vehicle_sil_launch serve` and gRPC (`tests/serve/serve_support.py` wraps `vehicle_sil_control.Serve` with fault-injection `send_raw` and `/proc` RSS measurement) |
 | `control_server.example_write_before_start`, `control_server.example_pause_and_step` | `examples/launch_control` |
 | `test_guide_operate_signals.py` | Compares the guide `docs/howto/operate-signals.md` with the example, the CLI and the stdin commands (for the markers, see "[Documentation examples and tests](code-map-testing.md#documentation-examples-and-tests)") |
 
@@ -216,8 +219,9 @@ Where to change:
 - `launch::ControlEndpoint` (`launch/run.hpp`); `run_file()` in `libs/launch/src/usecases/run_file.cpp` makes the Server before the check (`make_control_server_of_run()` in `src/run_control_server.hpp`), starts it between `Runner::prepare()` and `Runner::run()`, and ends it when it returns; the caller destroys it after the result (`RunReport::ended_control_server`). `RunLent::control_endpoint` lends a server of the caller's own instead (the tests')
 - `hold_before_start()`, `inspect()` and `wait_paused()` of `TimeCommands`
 - `ServerOptions::external_hub`
-- `python/vehicle_sil_control/launcher.py`
-- `python/vehicle_sil_control/serve.py` (keep public `Serve` / `RunHandle` separate from `tests/serve/serve_support.py`)
+- `python/pyproject.toml`, `python/vehicle_sil_control/protocol.py` and `python/vehicle_sil_control/grpc_helpers.py` (shared with `gui/server`)
+- `python/vehicle_sil_control/launcher.py` (`Launch` over `serve --once`)
+- `python/vehicle_sil_control/serve.py` (`Serve` / `RunHandle` over Events v4; `tests/serve/serve_support.py` wraps `Serve` for fault injection)
 
 Documentation to update:
 

@@ -181,7 +181,7 @@
 | 利用者が読む 1 つのファイル | `gui/timeline/vehicle-sil-timeline.js`。`gui/timeline/bundle.js` が `messages.js`、`timeline.css`、`viewer.js` から作る（`gui/web` で `npm run bundle:timeline`。古いと `npm run test:timeline` が落ちる）。型は `gui/timeline/vehicle-sil-timeline.d.ts`（手で書く。クラスと合わせる） |
 | 時間の軸のページ | `gui/timeline/timeline.html` と `page.js`: 要素 1 つと、ページが足すもの（`?src=`、`?lang=`、`#token=`、落とした・選んだファイル、埋め込んだファイル）。利用者の最小のページは `gui/timeline/example.html` |
 | 文言（英語と日本語） | `gui/timeline/messages.js`: 要素とページが出す文言のすべてを、鍵ごとに両方の言語で（鍵は単体テストが確かめる。`viewer.js` と `page.js` の単語の並んだ文字列は、lint が断る）。ページは、要素の `load.*` の文を、要素の `messages` のプロパティで自分の言い方（`pageLoad.*`）にする |
-| GUI サーバー: シナリオの実行に付ける `--timeline`、残すファイル、配るページとファイル | `gui/server/src/vehicle_sil_gui/timelines.py`、`server.py` の `_start()`、`_keep_timeline()`、`get_timeline()`、`get_timeline_page()` |
+| GUI サーバー: シナリオの実行に付ける `--timeline`、残すファイル、配るページとファイル | `gui/server/src/vehicle_sil_gui/timelines.py`、`server.py` の `_start()`、`_keep_timeline()`、`get_timeline()`（`GET /api/timeline/<run_id>`）、`get_timeline_page()` |
 | サンプルの画面のリンク「時間の軸」 | `gui/web/src/app/run/scenario-panel.ts` の `ScenarioPanel` と `timelinePageUrl()` |
 | サンプルの画面の中の時間の軸（Angular の手本） | `gui/web/src/app/run/timeline-view.ts` の `TimelineView` |
 | npm パッケージとツールの圧縮ファイルの中の要素 | `gui/client/pack.mjs`（`@vehicle-sil/gui-client/timeline`）、`scripts/package.py` の `TIMELINE_ELEMENT`（`client/`） |
@@ -209,7 +209,7 @@
 - `launch_run.timeline`（本物のランチャー）: 2 回実行して同じ、速度を変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数
 - `schema.files_and_launcher`
 - 基準のファイルと、ページの試験用のファイル `gui/timeline/tests/fixtures/`（基準のファイルにない形。`tests/schema/test_schemas.py` がスキーマに通ることを確かめる）でページを確かめるもの: `gui/timeline/tests/viewer.test.js`（読み込み、モデル、配置。Node で。`gui/web` で `npm run test:timeline`）と `gui/web/e2e/timeline.spec.ts`（ブラウザで開いたページ）、`gui/web/e2e/timeline-element.spec.ts`（利用者のページの上の要素: 素の例、1 つのページに 2 つ、すべてのプロパティと事象、CSS が中に入らず外に出ないこと、インラインのスタイルを許さない CSP）。CTest にはありません。`scripts/verify-web.py` が回します（`--e2e-grep 'timeline page'`、`--e2e-grep 'timeline element'`）。
-- GUI サーバーの部分: `gui/server/tests/test_timelines.py`（機能のあるランチャーとないランチャーでの引数、トークンのあるときとないときのファイルとページ、残すファイルの数）。記録 `run-scenario-*-timeline`（`--timeline` を付けて記録したもの。`record_launcher.py --compare` が本物のランチャーと比べる）を使います。GUI のリンクから開くページと、サンプルの画面の中の要素は `gui/web/e2e/timeline-link.spec.ts`（`--e2e-grep 'timeline'`）。画面のテンプレートの中は `gui/web/e2e/starter.spec.ts`。
+- GUI サーバーの部分: `gui/server/tests/test_timelines.py`（機能のあるランチャーとないランチャーでの引数、トークンのあるときとないときのファイルとページ、`run_id` ごとに残すファイルの数）。`gui/server/tests/fake_runtime.py` と `gui/server/tests/stub_launcher.py` を使います。GUI のリンクから開くページと、サンプルの画面の中の要素は `gui/web/e2e/timeline-link.spec.ts`（`--e2e-grep 'timeline'`）。画面のテンプレートの中は `gui/web/e2e/starter.spec.ts`。
 
 ### シナリオをまとめて実行する
 

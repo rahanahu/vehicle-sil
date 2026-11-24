@@ -840,4 +840,4 @@ participant の `log` の終わりの側には、保証がありません。part
 - gRPC で変数を読み書きし、時間を操作する → [control-api.md](control-api.md)
 - ブラウザの GUI と、その開発 → [gui.md](gui.md)
 
-ブラウザの GUI のテストは、この出力を記録したもの（`gui/server/tests/recordings/`）を再生します。ランチャーの出力を変えたら、`python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> --compare` で比べ、違う場面を記録し直します（[gui.md](gui.md) の「開発」）。
+ブラウザの GUI のテストは、Events v4 のシナリオランチャースタブ（`gui/server/tests/stub_launcher.py`）とインプロセス契約検証（`gui/server/tests/fake_runtime.py`）を使います。ランチャーの出力を変えたら、スタブと検証器を合わせ、`python3 scripts/verify-gui.py --launcher <vehicle_sil_launch>` で実際のランチャーと照合します（[gui.md](gui.md) の「開発」）。

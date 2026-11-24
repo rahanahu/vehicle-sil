@@ -82,22 +82,22 @@ e2e を直している間は、次の引数で絞れます。
 
 ```sh
 uv run vehicle-sil-gui --no-browser --json --port 8765 --dev-origin http://127.0.0.1:4200 \
-  --launcher ../server/tests/replay_launcher.py --root ../server/tests/configs   # GUI サーバー
+  --launcher ../server/tests/stub_launcher.py --root ../server/tests/configs   # GUI サーバー
 npm start                                                                     # 画面（127.0.0.1:4200）
 ```
 
-- GUI サーバーは、本物のランチャーの出力の記録を再生するランチャー（`gui/server/tests/replay_launcher.py`。docs/gui.md の「開発」）を使います。
-- 画面では、`gui/server/tests/configs/` の設定ファイル（記録のあるもの）を選べます。
+- GUI サーバーは、本物のランチャーの Events v4 の出力を模倣するスタブランチャー（`gui/server/tests/stub_launcher.py`。docs/gui.md の「開発」）を使います。
+- 画面では、`gui/server/tests/configs/` の設定ファイルを選べます。
 - ブラウザでは、サーバーが表示する `dev_url`（トークンつき）を開きます。
 
 ### e2e のテスト
 
 e2e のテストは、GUI サーバーを自分で起動し、終わったら止めます。
 
-| コマンド                         | 起動するもの                             | 起動するコード               |
-| -------------------------------- | ---------------------------------------- | ---------------------------- |
-| `npm run e2e`、`npm run e2e:dev` | GUI サーバーと、記録を再生するランチャー | `e2e/support/gui-server.ts`  |
-| `npm run e2e:real`               | GUI サーバーと、本物のランチャー         | `e2e/support/real-server.ts` |
+| コマンド                         | 起動するもの                   | 起動するコード               |
+| -------------------------------- | ------------------------------ | ---------------------------- |
+| `npm run e2e`、`npm run e2e:dev` | GUI サーバーとスタブランチャー | `e2e/support/gui-server.ts`  |
+| `npm run e2e:real`               | GUI サーバーと本物のランチャー | `e2e/support/real-server.ts` |
 
 - ポートは、実行ごとに OS が選ぶ空いているポートです（開発サーバーも同じ）。
 - `npm run e2e:real` の設定ファイルは、`gui/server/tests/real_configs.py` が一時ディレクトリに書きます。`scripts/verify-gui.py --launcher <path>` が、この e2e を実行します。

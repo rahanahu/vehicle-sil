@@ -55,7 +55,7 @@ In this build, `vehicle_sil_launch` has `--control`, and `features` in `vehicle_
 ## Connect to the launcher
 
 ```sh
-vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simulation.yaml
+vehicle_sil_launch run --stdin-commands --start-paused --control 0 simulation.yaml
 ```
 
 With `--control <address>`, the launcher starts the Control Server. `<address>` is one of these:
@@ -447,13 +447,13 @@ export PYTHONPATH=$PWD/python
 | Topic | Details |
 |---|---|
 | Python version | 3.11 or later. |
-| Versions and dependencies | `pyproject.toml` at the repository root (the `control` group) and `uv.lock` (see "Python (uv)" in [build.md](build.md#python-uv)). |
+| Versions and dependencies | `python/pyproject.toml` (`dependencies = []`, `python -S` safe; shares pure Events v4 protocol validation `protocol.py` and lazy gRPC helpers `grpc_helpers.py` with `gui/server`), `pyproject.toml` at the repository root (the `control` group) and `uv.lock` (see "Python (uv)" in [build.md](build.md#python-uv)). |
 | Without uv | Install with `pip install grpcio grpcio-tools protobuf`. |
 | Without uv (MSYS2 UCRT64) | Install with `pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools`. |
 
 ### Start the launcher (`Launch`)
 
-`Launch` starts the launcher as a child process. It runs `vehicle_sil_launch run --events --stdin-commands --control <address>` and reads the events on a separate thread. It uses only the standard library and needs no gRPC.
+`Launch` starts the launcher as a 1-run child process. It runs `vehicle_sil_launch serve --once --control <address>`, sends the initial `{"command":"run", ...}` on standard input, and reads the Events v4 (`vehicle_sil_events: 4`) stream on a separate thread. It uses only the standard library and needs no gRPC.
 
 ```python
 from vehicle_sil_control import Control, Launch, ms
@@ -484,9 +484,9 @@ If you start the launcher yourself, `control_address(lines)` returns `address` o
 
 ### Run sequentially in one launcher (`Serve`, `RunHandle`)
 
-`Serve` runs `vehicle_sil_launch serve <file>` as a resident child process for sequential runs on one configuration file (see "[Running sequentially in one launcher (`vehicle_sil_launch serve`)](simulation-run.md#running-sequentially-in-one-launcher-vehicle_sil_launch-serve)" and "[Resident launcher (`serve`)](simulation-events.md#resident-launcher-serve)"). Like `Launch`, `Serve` and `RunHandle` use only the standard library; gRPC is imported only when you call `run.control()`.
+`Serve` runs `vehicle_sil_launch serve <file>` (or `serve --once <file>` when `once=True`) as a child process speaking Events v4 (`vehicle_sil_events: 4`) for sequential runs on one configuration file (see "[Running sequentially in one launcher (`vehicle_sil_launch serve`)](simulation-run.md#running-sequentially-in-one-launcher-vehicle_sil_launch-serve)" and "[Resident launcher (`serve`)](simulation-events.md#resident-launcher-serve)"). Like `Launch`, `Serve` and `RunHandle` use only the standard library; gRPC is imported only when you call `run.control()`.
 
-Unlike `Launch`, each `runner.start(...)` returns a `RunHandle` with its own run ID (`run.id`) and starts a fresh run at virtual time 0 with no state carried over from earlier runs. `run.control()` connects a `Control` already bound to `run.id`. Restrictions of `serve` apply (`VEHICLE_SIL_TRACE`, fixed `registry_uri`, and `manual` participants are refused; see "[Restrictions of `serve`](simulation-run.md#restrictions-of-serve)").
+Unlike `Launch`, each `runner.start(...)` returns a `RunHandle` with its own run ID (`run.id`) and starts a fresh run at virtual time 0 with no state carried over from earlier runs. `run.control()` connects a `Control` already bound to `run.id`. Restrictions of multi-run `serve` apply (`VEHICLE_SIL_TRACE`, fixed `registry_uri`, and `manual` participants are refused unless `once=True`; see "[Restrictions of `serve`](simulation-run.md#restrictions-of-serve)").
 
 ```python
 from vehicle_sil_control import Serve
@@ -502,7 +502,7 @@ with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulatio
         print(run2.wait()["result"])
 ```
 
-In `Serve(launcher, config, *, control=False, address="0", credentials=None, tls_cert=None, tls_key=None, audit_log=None, log_dir=None, timeout_ms=None, describe_timeout_ms=None, participant_start_timeout_ms=None, participant_stop_timeout_ms=None, events_stall_ms=None, arguments=(), cwd=None, stderr=None, keep_logs=True, startup_timeout=30.0)`, `address`, `credentials`, `tls_cert`, `tls_key` and `audit_log` require `control=True`.
+In `Serve(launcher, config, *, once=False, control=False, address="0", credentials=None, tls_cert=None, tls_key=None, audit_log=None, log_dir=None, timeout_ms=None, describe_timeout_ms=None, participant_start_timeout_ms=None, participant_stop_timeout_ms=None, events_stall_ms=None, arguments=(), cwd=None, stderr=None, keep_logs=True, startup_timeout=30.0)`, `address`, `credentials`, `tls_cert`, `tls_key` and `audit_log` require `control=True`.
 
 | `Serve` member | Details |
 |---|---|
@@ -517,14 +517,14 @@ In `Serve(launcher, config, *, control=False, address="0", credentials=None, tls
 |---|---|
 | `id`, `run_id` | The opaque run ID assigned by the launcher. |
 | `address` | Where this run's Control Server listens (waits for this run's `control_server` event). |
-| `events`, `result`, `launcher_ends` | Events for this run, the `result` dict once finished, and whether the launcher ends with this run. |
+| `events`, `result`, `status`, `launcher_ends` | Events for this run, the `result` dict and embedded settled `status` (`ExecutionStatus`) once finished, and whether the launcher ends with this run. |
 | `wait_for_event(event, timeout=60.0, after=None, **keys)` | Waits for the first matching event of this run. |
 | `control(**options)` | Returns `Control(run.address, run=run.id, **options)`. Passing `run=...` raises `TypeError`. |
 | `send(command)` | Sends a stdin command targeted at this run (`"run": run.id`). |
-| `stop(force=None)` | Sends `stop` for this run (`False` graceful, `True` forced, `None` escalate). |
-| `wait(timeout=120.0)` | Waits for this run's `result`, and (when `not launcher_ends`) for the launcher to return to `idle`. |
+| `stop(force=None)` | Sends `stop` for this run (`False` graceful, `True` forced, `None` default graceful). |
+| `wait(timeout=120.0)` | Waits for this run's Events v4 `result` event (which embeds the settled `status`, with no separate `idle` event). |
 
-Leaving `with runner.start(...)` stops only that run (`force=False`) and waits for `idle`, keeping `Serve` alive for the next run. If a run ends with `launcher_ends: true` (for example exit code 6 when contaminated), `Serve` cannot start further runs; leaving `with Serve(...)` closes the resident launcher. When a command is refused, times out, or the launcher fails to start (including `VEHICLE_SIL_TRACE`), `ServeError` (a subclass of `LaunchError`) is raised with `reason` when available.
+Leaving `with runner.start(...)` stops only that run (`force=False`) and waits for its `result` (which carries the settled `status`), keeping `Serve` alive for the next run (unless `once=True` or `launcher_ends` is true). If a run ends with `launcher_ends: true` (for example exit code 6 when contaminated, or a single run with `once=True`), `Serve` cannot start further runs; leaving `with Serve(...)` closes the resident launcher. When a command is refused, times out, or the launcher fails to start (including `VEHICLE_SIL_TRACE` without `once=True`, reported with `reason="trace-enabled"`), `ServeError` (a subclass of `LaunchError`) is raised with `reason` when available.
 
 ### Connect, read and write (`Control`)
 
@@ -570,7 +570,7 @@ with Control.for_current_run("127.0.0.1:8510", token=token) as c:   # the run th
 | `run` | The ID the `Control` is bound to, or `None`. |
 | `current_run()` | The ID of the run the server belongs to now (`PingReply.run`; empty if none). Never rejected for the run: compare it with `run` to see whether the `Control` still reaches its run. |
 
-Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. Making a `Control` does not connect. At its first call or watch, `Control` asks the server's release with one `Ping`. Another release is refused with `ControlError` (`code` `FAILED_PRECONDITION`): `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher`. A server that does not report its release (a 0.1.0 launcher, or one built before this check) is refused the same way: `the control server does not report its vehicle-sil release (...); this vehicle_sil_control is <Y>: use the vehicle_sil_control that came with the launcher`. Stubs generated before the client knew the fields (`vehicle_sil`, `run`) are refused before any call, with a message that says to run `python -m vehicle_sil_control.generate` again. A `Ping` that fails (the server is not there yet) is tried again at the next call.
+Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. Making a `Control` does not connect. At its first call or watch, `Control` asks the server's release with one `Ping`. Another release is refused with `ControlError` (`code` `FAILED_PRECONDITION`): `the control server is vehicle-sil <X>; this vehicle_sil_control is <Y>: use the vehicle_sil_control of the same release as the launcher`. A `Ping` that fails (the server is not there yet) is tried again at the next call.
 
 ### Rules for writes
 
@@ -613,7 +613,7 @@ Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. M
 | `builtin` | Whether vehicle-sil added the variable (true) or the application declared it (false). |
 | `source` | For a variable to which the variable map of the configuration file (`participants[].variables`) applies, its name in the executable. Empty if no mapping applies. |
 
-- The server decides `builtin` by the name: true if the name starts with `ecu.`, `peer.` or `j1939.`. If the application declares a variable whose name starts with `j1939.`, that variable is true as well.
+- The server decides `builtin` by the name: true if the name starts with `ecu.`, `peer.`, `j1939.`, `can.`, `lin.` or `eth.`. If the application declares a variable whose name starts with `j1939.`, that variable is true as well.
 
 For a peer with a variable map, these are after mapping:
 

@@ -20,7 +20,7 @@ For scenario, timeline or batch changes, see the [scenario change checklists](co
 |---|---|
 | `launch.*` | Loading of configuration files, the check rules, human-readable and JSON output (starts no processes). Four test executables carry the name: `tests/config`, `tests/scenario` and `tests/runner` (each links only its own library, and has its name as a second label: `-L config`, `-L scenario`, `-L runner`) and `tests/launch` (the rest) |
 | `launch_cli.*` | Runs `vehicle_sil_launch check` as an executable |
-| `launch_run.*` | Runs `vehicle_sil_launch run` as an executable |
+| `launch_run.*` | Runs `vehicle_sil_launch run` and `vehicle_sil_launch serve --once` as an executable |
 | `config.*` | The boundary of `libs/config` (what its headers and sources may include) |
 | `runner.*` | The boundary of `libs/runner` (the public headers reach no SIL Kit; it includes nothing of `libs/launch`) |
 | `scenario.*` | The boundary of `libs/scenario` (what its headers and sources may include) |
@@ -160,16 +160,16 @@ Public headers:
 
 | Name | Location |
 |---|---|
-| `check_file()`, `Checked` (with `--file-only` `file_sha256` and `hot_eligibility`), `HotEligibility`, `evaluate_hot_eligibility()`, and `--scenario` (`format_text()`, `format_json()`) | `launch/checked.hpp` |
+| `check_file()`, `Checked` (always carrying `file_sha256` and `hot_eligibility`), `HotEligibility`, `evaluate_hot_eligibility()`, and `--scenario` (`format_text()`, `format_json()`) | `launch/checked.hpp` |
 | What the launcher asks the computer it runs on: `find_executable()` and `executable_status()` (a participant's executable), `find_tool()` and `bridge_tools()` (a bridge), `run_tool()` (one run of `--describe` or of a bridge's list), `read_config_file()`, `read_config_stdin()` (`check --text-from-stdin`), `read_scenario_file()`, `files_beside()`, `environment_value()`; where `check_file()` takes a participant's `--describe` output from (`DescribeSource`: `describe_by_running()`, or `describe_from_saved()`, which starts no process), and the file of saved descriptions (`read_saved_descriptions()`, `write_saved_descriptions()`, `executable_stamp()`) | `launch/probe.hpp` |
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once for each backend; `prefix_targets()` gives a value that `--connect` takes), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `check_requested()` (`--request`: whether the request file's targets are in the lists, by backend and name; the file is read and cut to the configuration by the functions of the request-file row), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()`, its result (`RunReport`; `format_run_text()` and `format_run_json()` write it), what a run borrows (`RunLent`) and the control server as the run sees it (`ControlEndpoint`) | `launch/run.hpp` |
-| `ExecutionRuntime`, `ExecutionSink`, `ExecutionStatus`, `LauncherState`, `ConfigMetadata`, `LauncherEnd`, `ExecutionEnd`: transport-agnostic resident launcher runtime managing Prepare, Run, Stop, Time commands, Status, Results, and Shutdown | `launch/execution_runtime.hpp` |
-| `Serve` (thin NDJSON adapter over `ExecutionRuntime` for `vehicle_sil_launch serve`) and `prepare_serve_run()` | `launch/serve.hpp` |
+| `ExecutionRuntime`, `ExecutionSink`, `ExecutionStatus`, `LauncherState`, `ConfigMetadata`, `LauncherEnd`, `ExecutionEnd`: transport-agnostic runtime managing Prepare, Run, Stop, Time commands, spontaneous `status` events, embedded post-transition `status` in `prepare` and `result`, and Shutdown for both resident `serve` and single-run `serve --once` | `launch/execution_runtime.hpp` |
+| `Serve` (thin NDJSON adapter over `ExecutionRuntime` for `vehicle_sil_launch serve` and `serve --once`) | `launch/serve.hpp` |
 | What a check, a run or a test is asked to do, as a value: `RunRequest` in two parts, `RunIntent` (the user's: variant, parameters, scenario as named, `--disable`, `--enable`, `--manual`, `--connect`, `--time-policy`, speed, `--start-paused`, `--strict`) and `RunHost` (the caller's: the file as named, where the tools and the logs are, the `--describe` and run limits, the timeline's file as named, the control server that is asked for (its address and the names of its files), whether standard-input commands are asked for). `validate_request()` (pure) holds the rules about fields that do not go together (`--param` and `--timeline` need a scenario, `--start-paused` with a scenario or without a way to go on), as findings of code `usage`; `check_file()`, `run_file()` and `test_file()` (in `TestOptions::request`) take it and make the paths of the names; `CheckOptions` has only what is not asked for (`file_only`, `params_for_many`, `fastest_by_default`). `read_request()` and `run()` in `tools/launch/main.cpp` read the arguments in the order their mistakes are reported in and call `validate_request()` at 3 points, refusing the first finding (with `--request`, once after every argument is read). Tested without a process in `tests/launch/test_request.cpp` (the rules, and what the check and the plan read of each field) | `launch/request.hpp`, `src/request/request.cpp` |
 | The request file of `--request` (the intent as JSON): `read_request_file()` and `read_request_intent()` read its text (pure; the one reader of the format, built on `YamlReader` so that an unknown key and a key written twice read as in the other files), `with_request_file()` lays the arguments over it field by field and `merge_connect()` does so for `connect`. `RunRequest::origin` (`RequestOrigin` in `config/config.hpp`: the file's name, the keys and the networks whose value is the file's) is what the messages of `validate_request()` and `time_lock_findings()` name the file from. `connect_for_config()` (`config/check.hpp`, in `check_report.cpp`) leaves out the file's networks that the configuration lacks (`connect-network-unused`); `check_file()` reads the file's scenario from the directory of the configuration file. `probe.cpp` reads the file (`read_request_file_text()`); `tools/launch/main.cpp` only names it (`read_request_argument()`). Tested without a process in `tests/launch/test_request_file.cpp`, with the launcher in `launch_cli.request`, `launch_cli.connect` and `launch_run.connect_request` | `launch/request.hpp`, `src/request/request_read.cpp`, `src/request/request.cpp` |
 | `RunEventSink`, the per-run event interface that extends `RunEvents` with `phase()`, `check()`, `command()` and `state()` (`run_file()` and `RunLent::events` use this interface) | `launch/run_sink.hpp` |
-| `EventStream`, which writes the events of `run --events` and implements `RunEventSink` | `launch/events.hpp` |
+| `EventStream`, which writes the Events v4 (`vehicle_sil_events: 4`) stream of `serve` and `serve --once` and implements `RunEventSink` | `launch/events.hpp` |
 | `parse_command()` and `CommandInput`, which read the commands of `--stdin-commands` | `launch/command_input.hpp` |
 | `format_timeline_json()`, which writes the file of `run --timeline` from the record and the scenario's result | `launch/timeline_format.hpp` |
 
@@ -185,7 +185,7 @@ Implementation:
 | The check output | `src/format/check_format.cpp` |
 | The result of a wrong command line or an internal error (JSON, result event) | `src/format/error_result.cpp` |
 | `run_file()`: the check, the run's own controls and control server, the `Runner`'s two stages, the timeline file | `src/usecases/run_file.cpp` |
-| `ExecutionRuntime`: 2-axis launcher/run state machine, `prepare()`, `start_run()`, `stop_run()`, `send_time_command()`, `status()`, `result()`, `request_shutdown()`, and `run_loop()` | `src/usecases/execution_runtime.cpp` |
+| `ExecutionRuntime`: explicit `LauncherState` (`unprepared`, `cold_only`, `preparing`, `ready`, `running`, `ending`, `contaminated`) and run state machine, `prepare()`, `start_run()`, `stop_run()`, `send_time_command()`, `status()`, `request_shutdown()`, and `run_loop()` | `src/usecases/execution_runtime.cpp` |
 | `Serve`: NDJSON adapter mapping `ServeCommand` and `EventStream` onto `ExecutionRuntime` | `src/usecases/serve.cpp` |
 | Reading the commands of `--stdin-commands` and `serve` (`parse_command()`, `parse_serve_command()`, `prepare`, `status`, `stop.force`, inline `intent`) | `src/endpoints/command_input.cpp` |
 | The command line, and the stdin and stdout threads | `tools/launch/main.cpp` |
@@ -293,8 +293,8 @@ Code and files to update:
 - `examples/ecu_main/simulation.live.yaml` (the configuration file for working from the GUI; the run chooses the speed and stop time): `launch_run.live` confirms that it has the same participants and networks as `simulation.yaml`.
 - `template.check_and_run` checks the template's file of the same name.
 - `simulation.live.dashboard.yaml` in the build directory is a copy of `simulation.dashboard.yaml` made by CMake.
-- The recordings of launcher output that the GUI tests replay (`gui/server/tests/recordings/`): record them again with `gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>`.
-- `scripts/verify-gui.py --launcher <path>` finds mismatches between the recordings and the real launcher.
+- The deterministic Events v4 scenario launcher stub (`gui/server/tests/stub_launcher.py`) and in-process runtime harness (`gui/server/tests/fake_runtime.py`) used by the GUI tests.
+- `scripts/verify-gui.py --launcher <path>` verifies the real launcher's Events v4 (`serve` and `serve --once`) and `check --json` contract against the GUI server.
 
 For how the blocks are compared and where the examples with errors are placed, see "[Documentation examples and tests](code-map-testing.md#documentation-examples-and-tests)".
 
@@ -338,7 +338,7 @@ Where to change:
 Code and files to update:
 
 - `schema/run-request.schema.json` and its copy `template/schema/run-request.schema.json` (`schema.files_and_launcher` compares the keys with the launcher)
-- The fields that the GUI server accepts and writes (`INTENT_FIELDS` and `request_text()` in `gui/server/src/vehicle_sil_gui/launcher.py`; see [the GUI map](code-map-gui.md#launcher-request-and-targets))
+- The fields that the Python SDK and the GUI server accept and writes (`INTENT_FIELDS` and `request_text()` in `python/vehicle_sil_control/protocol.py`, re-exported by `gui/server/src/vehicle_sil_gui/launcher.py`; see [the GUI map](code-map-gui.md#launcher-request-and-targets))
 
 Documentation to update:
 
@@ -379,7 +379,7 @@ Rules:
 - The schema must not reject a file that the launcher reads (`check` reports the errors that the schema cannot reject).
 - Where in doubt, make the schema loose, and add a passing and a failing form to the samples in `test_schemas.py`.
 - When you add an example or template YAML file (`examples/`, `template/`), write `# yaml-language-server: $schema=<relative path to the schema>` on line 1.
-- Do not change the number of lines of the comments at the top of existing examples. The line numbers of findings and steps appear in the output in the documentation and in the recordings that the GUI tests replay.
+- Do not change the number of lines of the comments at the top of existing examples. The line numbers of findings and steps appear in the output in the documentation and in the GUI tests.
 
 Tests:
 
@@ -448,11 +448,11 @@ Tests:
 
 ### Events, stdin commands, `version --json`
 
-When changing events or commands consumed by the GUI, also check [GUI implementation and tests](code-map-gui.md#guiserver-guiprotocol-guiclient-guiweb) and the recordings and protocol examples listed under [Run traffic](#run-traffic-traffic).
+When changing events or commands consumed by the GUI, also check [GUI implementation and tests](code-map-gui.md#guiserver-guiprotocol-guiclient-guiweb) and the stub launcher and protocol examples listed under [Run traffic](#run-traffic-traffic).
 
 Where to change:
 
-- The events of `run --events`, the commands of `--stdin-commands`, `version --json` (`libs/launch/src/format/events.cpp`, `libs/launch/src/endpoints/command_input.cpp`, `tools/launch/main.cpp`)
+- The Events v4 stream of `serve` and `serve --once`, the commands of `--stdin-commands` and `serve`, `version --json` (`libs/launch/src/format/events.cpp`, `libs/launch/src/endpoints/command_input.cpp`, `tools/launch/main.cpp`)
 - The members of the event `result`: `format_result_event()` in `libs/launch/src/format/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command or a stop: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`). The event `phase`: `RunControls::set_phase()` calls the function the controls were given (`RunControls::Observers`; `main.cpp` passes `EventStream::phase()`, and a run that makes its own controls writes to `RunLent::events` via `RunEventSink`)
 
 Documentation to update:
@@ -570,7 +570,7 @@ Documentation to update:
 - The `run` output examples in `simulation-run.md`, `scenario.md`, `simulation-config.md`, `simulation-events.md`, `howto/first-ecu.md` and `howto/scenario-tests.md` (the blocks that `launch_run.docs`, `launch_run.scenario` and others compare)
 - `run-traffic` in `features`
 - "[Samples the launcher receives (`RunSamples`)](internals/control.md#samples-the-launcher-receives-runsamples)" in [internals/control.md](internals/control.md)
-- The GUI's recordings (`gui/server/tests/recordings/`) and `gui/protocol/examples/`
+- The GUI's stub launcher (`gui/server/tests/stub_launcher.py`), in-process runtime harness (`gui/server/tests/fake_runtime.py`) and `gui/protocol/examples/`
 
 Rules:
 
