@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from conftest import (CONFIGS, REPLAY, Client, Gui, alive, gui_server, is_ended, is_state, is_synced, run_async, scaled, wait_until,
                       without_variables)
+from vehicle_sil_gui import __version__
 
 POSIX = sys.platform != "win32"
 
@@ -77,6 +78,8 @@ def is_command(name: str, accepted: bool) -> Callable[[dict], bool]:
 def test_a_run_that_passes(tmp_path: Path) -> None:
     async def main(c: Client) -> None:
         status, app = await c.get("api/app")
+        assert app["version"] == __version__
+        assert app["launcher"]["version"]["vehicle_sil"] == __version__
         assert app["launcher"]["usable"] and app["initial_file"] is None
         got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"], "speed": 2, "stop_at_ms": 1000})
         seqs = [e["seq"] for e in events(got)]
@@ -307,7 +310,7 @@ def test_the_launchers_words_do_not_name_the_temporary_request_file(tmp_path: Pa
                         "        print(json.dumps(chk))\n"
                         "    else:\n"
                         "        print(json.dumps({'event': 'hello', 'seq': 0, 't_ms': 0, 'vehicle_sil_events': 2, "
-                        "'vehicle_sil': '0.3.0', 'pid': os.getpid(), 'file': a[-1], 'arguments': a}))\n"
+                        f"'vehicle_sil': {__version__!r}, 'pid': os.getpid(), 'file': a[-1], 'arguments': a}}))\n"
                         "        print(json.dumps({'event': 'result', 'seq': 1, 't_ms': 1, 'result': "
                         "{'vehicle_sil_run': 2, 'result': 'usage', 'ok': False, 'errors': 1, 'check': chk}}))\n"
                         "    sys.stderr.write('error: ' + p + ', line 5: bad\\n')\n"

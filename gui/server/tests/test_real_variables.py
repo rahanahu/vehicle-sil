@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from conftest import Client, gui_server, is_ended, is_synced, is_variables, run_async
 from real_configs import examples_dir, usable, write
+from vehicle_sil_gui import __version__
 
 LAUNCHER = os.environ.get("VEHICLE_SIL_GUI_LAUNCHER")
 EXAMPLES = examples_dir(LAUNCHER)
@@ -52,6 +53,8 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
     with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
         async def talk(c: Client) -> None:
             _, app = await c.get("api/app")
+            assert app["version"] == __version__
+            assert app["launcher"]["version"]["vehicle_sil"] == __version__
             assert app["variables"] == {"available": True, "reason": None}
             ws = await c.ws()
             await ws.until(is_synced)

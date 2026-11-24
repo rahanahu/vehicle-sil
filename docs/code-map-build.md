@@ -51,7 +51,7 @@ Scripts for development and CI. For the list, see "Verification and scripts" in 
 | `tests/scripts/test_verify_common.py` | `scripts/verify_common.py`: shared paths, stdio reconfiguration, usage errors, path formatting, `--tag` checks, ANSI line cleaning, process group helpers and `verify*.py` imports/`--help` |
 | `tests/scripts/test_hotspots.py` | `scripts/hotspots.py`: the signals (size, churn, stack, parallel), what counts as a lower layer and as independent work, what is left out (merged, closed, stale), what it says it could not observe, a path that is not in HEAD, and a failing, hanging or odd `gh` (the test is not run on Windows) |
 | `tests/scripts/test_trace_report.py` | `scripts/trace-report.py`: on made-up traces, the participant that completes each step last, the synchronization time, the launcher's hold, each write's round trip, and the exit codes |
-| `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 license staging and Windows `--build-only` export |
+| `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 license staging, Windows `--build-only` export, and `version --sync` |
 | `tests/template/test_get_tools.py` | `package.py template`, `version` |
 
 - `ctest -R`: `^template\.get_tools`, `^scripts\.`
@@ -101,8 +101,10 @@ Where to change:
 - `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`
 - `template/get_tools.py`
 - `GIT_TAG` in `template/CMakeLists.txt`
-- The version in `template/README.md`
+- The version in `template/README.md` and `template/README.ja.md`
 - The heading `## [<version>] - Unreleased` in `CHANGELOG.md`
+
+After updating the root `CMakeLists.txt`, `scripts/package.py version --sync` updates the files above (except `CHANGELOG.md`) and runs `uv lock --offline` when `uv.lock` needs updating (`--dry-run` previews without writing).
 
 At a release:
 
@@ -112,7 +114,7 @@ At a release:
 
 Tests:
 
-- `scripts/package.py version` (and `template.get_tools`) finds mismatches.
+- `scripts/package.py version` (or `--check`; and `template.get_tools`) finds mismatches, including `uv.lock`.
 - `--expect v<version>` (the release workflow) also rejects a heading without a date.
 
 ### Publish the client library to npm

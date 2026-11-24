@@ -21,10 +21,12 @@ from pathlib import Path
 import pytest
 from conftest import (CONFIGS, CONTROL_FEATURES, REPLAY, REPOSITORY, Client, gui_server, is_ended, is_state, is_synced, manual_pages,
                       run_async)
+from vehicle_sil_gui import __version__
 
 DIRECTORY = Path(__file__).resolve().parents[2] / "protocol" / "examples"
 UPDATE = os.environ.get("UPDATE_PROTOCOL_EXAMPLES") == "1"
 POSIX = sys.platform != "win32"
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:-(?:rc|beta|alpha)\.\d+)?$")
 
 EXAMPLES = {
     "app", "configs", "session-none", "session-running", "session-ended", "check-passed", "check-disabled",
@@ -164,6 +166,15 @@ class Normalizer:
                                for name, numbers in found.items()}
         if isinstance(value, dict):
             out = {k: self(v, k) for k, v in value.items()}
+            if "vehicle_sil_gui" in out and isinstance(out.get("version"), str):
+                assert out["version"] == __version__, out
+                out["version"] = "<version>"
+            if "vehicle_sil" in out and isinstance(out["vehicle_sil"], str):
+                if "vehicle_sil_launch" in out:
+                    assert out["vehicle_sil"] == __version__, out
+                else:
+                    assert SEMVER_RE.fullmatch(out["vehicle_sil"]), out["vehicle_sil"]
+                out["vehicle_sil"] = "<version>"
             if isinstance(out.get("snapshot_rev"), int):
                 out["snapshot_rev"] = self._revisions["snapshot_rev"][out["snapshot_rev"]]
             if ((key == "variables" and "state" in out and "operations" in out)
