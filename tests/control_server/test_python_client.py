@@ -119,28 +119,64 @@ class LaunchedTest(unittest.TestCase):
         self.assertEqual(watched, listed)
         self.assertTrue(all(p.has_agent and p.simulation_state == "Running" for p in listed.values()))
 
-        # A watcher in the background.
+        # A watcher in the background. Wait for its initial snapshot before writing so it is
+        # subscribed on the server before the write and run_until below take place.
         seen = []
+        seen_lock = threading.Lock()
+        ready = threading.Event()
         stop = threading.Event()
+        seq_box = [None]
+        watch_error = []
 
         def enough():
+            target_seq = seq_box[0]
             return (any(isinstance(u, Peer) for u in seen)
                     and any(isinstance(u, Values) for u in seen)
-                    and any(isinstance(u, Operation) and u.done for u in seen)
+                    and target_seq is not None
+                    and any(isinstance(u, Operation) and u.seq == target_seq and u.done for u in seen)
                     and any(isinstance(u, EventInfo) and "claimed" in u.text for u in seen))
 
+        watcher_client = Control(self.address)
+
         def watch():
-            with Control(self.address) as w:
-                for u in w.watch():
-                    seen.append(u)
-                    if stop.is_set() or enough():
-                        break
+            try:
+                with watcher_client:
+                    for u in watcher_client.watch():
+                        with seen_lock:
+                            seen.append(u)
+                            if u == ("initial_done",):
+                                ready.set()
+                            done = stop.is_set() or enough()
+                        if done:
+                            break
+            except Exception as e:
+                with seen_lock:
+                    watch_error.append(e)
+            finally:
+                ready.set()
 
         watcher = threading.Thread(target=watch, daemon=True)
+
+        def close_watcher():
+            stop.set()
+            watcher_client.close()
+            if watcher.is_alive():
+                watcher.join(scaled(2))
+
+        self.addCleanup(close_watcher)
         watcher.start()
+        self.assertTrue(ready.wait(scaled(10)), "watcher did not finish its initial snapshot in time")
+        with seen_lock:
+            error = watch_error[0] if watch_error else None
+            has_initial = ("initial_done",) in seen
+        if error is not None:
+            raise error
+        self.assertTrue(has_initial, "watcher ended before initial_done")
 
         # Schedule a write at 100 ms, make sure it is queued, then run.
         seq = c.write({"Engine": {"engine.throttle": 80.0}}, at=ms(100))
+        with seen_lock:
+            seq_box[0] = seq
         op = c.wait(seq, until="queued")
         self.assertEqual({t.status for t in op.targets}, {"queued"})
         self.assertEqual((op.target("Engine").applied_writes, op.target("Engine").failed_write), (None, None))
@@ -180,13 +216,23 @@ class LaunchedTest(unittest.TestCase):
         # A refused call raises ControlError (an operation that an agent refuses is a result instead).
         with self.assertRaises(ControlError):
             c.write({})
-        stop.set()
         watcher.join(scaled(10))
+        timed_out = watcher.is_alive()
+        if timed_out:
+            stop.set()
+            watcher_client.close()
+            watcher.join(scaled(2))
+        with seen_lock:
+            error = watch_error[0] if watch_error else None
+            snapshot = list(seen)
+        if error is not None:
+            raise error
         self.assertFalse(watcher.is_alive())
-        self.assertTrue(any(isinstance(u, Peer) for u in seen))
-        self.assertTrue(any(isinstance(u, Values) for u in seen))
-        self.assertTrue(any(isinstance(u, Operation) and u.seq == seq and u.done for u in seen))
-        self.assertTrue(any(isinstance(u, EventInfo) and "claimed" in u.text for u in seen))
+        self.assertTrue(any(isinstance(u, Peer) for u in snapshot))
+        self.assertTrue(any(isinstance(u, Values) for u in snapshot))
+        self.assertTrue(any(isinstance(u, Operation) and u.seq == seq and u.done for u in snapshot))
+        self.assertTrue(any(isinstance(u, EventInfo) and "claimed" in u.text for u in snapshot))
+        self.assertFalse(timed_out)
 
     def test_b_cli(self):
         self.assertIn("Engine\tconnected", self.cli("peers"))
