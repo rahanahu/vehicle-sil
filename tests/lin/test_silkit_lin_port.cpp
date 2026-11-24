@@ -445,6 +445,58 @@ TEST_CASE(silkit_lin_port_close_waits_for_in_flight_callback_without_deadlock)
     CHECK_EQ(controller.handler_count(), 0u);
 }
 
+TEST_CASE(silkit_lin_port_destroy_immediately_after_close_while_callback_exits_is_safe)
+{
+    // Regression test for UAF if leave_callback() notified callback_cv_ after unlocking
+    // callback_mutex_: destroy a heap-allocated SilKitLinPort immediately on close() return
+    // while an unlocked callback thread exits its listener.
+    constexpr int kRounds = 32;
+    for (int round = 0; round < kRounds; ++round)
+    {
+        FakeLinController controller;
+        auto port = std::make_unique<SilKitLinPort>(controller, LinRole::Master);
+
+        std::promise<void> entered;
+        std::promise<void> release;
+        auto enteredFuture = entered.get_future();
+        auto releaseFuture = release.get_future().share();
+
+        struct BarrierListener final : LinPortListener
+        {
+            std::promise<void>& entered;
+            std::shared_future<void> release;
+            BarrierListener(std::promise<void>& e, std::shared_future<void> r) : entered(e), release(std::move(r)) {}
+            void on_header(SimTime, LinId) override {}
+            void on_response(SimTime, const LinFrame&, LinResultStatus) override
+            {
+                entered.set_value();
+                release.wait();
+            }
+            void on_go_to_sleep(SimTime) override {}
+            void on_wakeup(SimTime) override {}
+        } listener(entered, releaseFuture);
+
+        port->set_listener(&listener);
+
+        std::thread cbThread([&] { controller.deliver_frame_status_unlocked(make_status_event(0x10)); });
+        CHECK(enteredFuture.wait_for(scaled_timeout(5s)) == std::future_status::ready);
+
+        std::thread destroyThread([&] {
+            port->close();
+            port.reset();
+        });
+        // Wait until close() has removed the handler and is waiting on callback_cv_, then let
+        // the callback exit and immediately race with port.reset().
+        CHECK(vehicle_sil::unit::eventually([&] { return controller.handler_count() == 0u; }, 5s));
+        release.set_value();
+
+        destroyThread.join();
+        cbThread.join();
+        CHECK(!port);
+        CHECK_EQ(controller.handler_count(), 0u);
+    }
+}
+
 TEST_CASE(silkit_lin_port_concurrent_open_close_and_callbacks_are_race_free)
 {
     constexpr int kRounds = 24;

@@ -186,13 +186,12 @@ bool SilKitLinPort::enter_callback() noexcept
 
 void SilKitLinPort::leave_callback() noexcept
 {
-    bool notify = false;
-    {
-        const std::lock_guard lock(callback_mutex_);
-        --in_flight_callbacks_;
-        notify = (in_flight_callbacks_ == 0) && closed_.load(std::memory_order_acquire);
-    }
-    if (notify)
+    // Notify while holding callback_mutex_ so close_locked() cannot observe
+    // in_flight_callbacks_ == 0 and allow ~SilKitLinPort() to destroy callback_cv_
+    // before notify_all() finishes.
+    const std::lock_guard lock(callback_mutex_);
+    --in_flight_callbacks_;
+    if (in_flight_callbacks_ == 0 && closed_.load(std::memory_order_acquire))
     {
         callback_cv_.notify_all();
     }
