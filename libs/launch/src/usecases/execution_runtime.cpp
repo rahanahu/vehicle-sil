@@ -848,7 +848,7 @@ ExecutionEnd ExecutionRuntime::run_loop()
             {
                 const bool interrupted =
                     report.result() == RunResult::Interrupted ||
-                    (first_stop != 0 && first_stop != runner::stop_source::kStopCommand);
+                    (first_stop != 0 && runner::stop_kind(first_stop) != runner::StopKind::Operator);
                 const int code = contaminated ? kExitContaminated
                                : output_failed ? (interrupted ? kExitInterrupted : ecu_executable::kExitSetupFailed)
                                : interrupted   ? kExitInterrupted

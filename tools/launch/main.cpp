@@ -1693,6 +1693,14 @@ int test(const cli::Args& args)
     {
         throw cli::UsageError("--file-only is for check, not for test");
     }
+    if (args.flag("events"))
+    {
+        throw cli::UsageError("--events is not for test: use vehicle_sil_launch serve --once or vehicle_sil_launch serve");
+    }
+    if (args.has("events-stall-ms"))
+    {
+        throw cli::UsageError("--events-stall-ms is for serve, not for test");
+    }
     if (args.flag("once"))
     {
         throw cli::UsageError("--once is for serve, not for test");
@@ -1718,7 +1726,7 @@ int test(const cli::Args& args)
             }
         }
     }
-    for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
+    for (const char* runOnly : {"log-dir", "stdin-commands", "speed", "start-paused", "manual", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"})
     {
         if (args.has(runOnly) || args.flag(runOnly))

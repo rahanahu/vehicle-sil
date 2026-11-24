@@ -1160,3 +1160,40 @@ TEST_CASE(execution_runtime_single_run_allows_trace_and_fixed_registry_and_exits
     CHECK(f1->status.launcher_state == LauncherState::Ending);
     CHECK(!rt.start_run(RunSubmission{}).accepted);
 }
+
+TEST_CASE(execution_runtime_single_run_preserves_operator_stop_exit_codes_for_control_stop)
+{
+    for (const bool with_incomplete_scenario : {false, true})
+    {
+        MockExecutionSink sink;
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = with_incomplete_scenario ? "aabbccddeeff0012" : "aabbccddeeff0011";
+        opts.base.host.config = "sim.yaml";
+        opts.single_run = true;
+        opts.run = [with_incomplete_scenario](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            lent.controls->set_phase(Phase::Running);
+            lent.controls->stops().request(stop_source::kControlStop);
+            lent.controls->set_phase(Phase::Ended);
+            RunReport report = passed_report();
+            report.run->end.simulation = SimulationEnd::Interrupted;
+            report.run->end.interrupted_by = std::string(stop_source_name(stop_source::kControlStop));
+            report.run->end.interrupted_kind = StopKind::Operator;
+            if (with_incomplete_scenario)
+            {
+                report.run->scenario.result.emplace();
+                report.run->scenario.result->status = scenario::ScenarioStatus::Incomplete;
+            }
+            return report;
+        };
+
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+        const CommandReply started = rt.start_run(RunSubmission{});
+        CHECK(started.accepted);
+
+        const ExecutionEnd ended = loop_future.get();
+        CHECK_EQ(ended.code, with_incomplete_scenario ? kExitIncomplete : 0);
+        CHECK(!ended.at_once);
+    }
+}
