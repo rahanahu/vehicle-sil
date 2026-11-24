@@ -57,7 +57,7 @@ Run on your computer what the change can break; leave the full matrix of presets
 | Change | Run on your computer |
 |---|---|
 | Any change (the default) | One preset and the tests of what you touched: `scripts/verify.py linux-gcc-debug --tests '<regular expression>'` (add `--targets <target>` and `-L <label>` or `--no-build` to stay narrow) |
-| Concurrency, threads, state transitions or time | Run the touched tests also with `linux-gcc-release` (`-O3`) and `linux-clang-tsan` using `--repeat`, and check the pull request's `linux-tsan` check before merging (`all checks` does not wait for it) |
+| Concurrency, threads, state transitions or time | Run the touched tests also with `linux-gcc-release` (`-O3`) and `linux-clang-tsan` using `--repeat`, and confirm `linux (linux-clang-tsan)` has `conclusion == "success"` via `gh run view --json jobs` before merging (`all checks` does not wait for it) |
 | A public header or a class or function template that many targets include | Build the touched targets with `linux-clang-tsan`: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
 | What the launcher prints or counts (findings, events, `run` output), or the documentation that copies it | `^launch`, `^multi_host\.`, `^schema\.` and `^template\.` (the ECU project template), which compare the documentation (see [Documentation examples and tests](#documentation-examples-and-tests)) |
 | Launcher output that the GUI replays (`gui/server/tests/recordings/`), or the Control API | `scripts/verify.py linux-gcc-control --tests '^control'`, then `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
@@ -111,6 +111,12 @@ A scenario that needs a fixed port shown in the documentation (such as 8500 for 
 ### Timeouts and the scale factor
 
 Wait for something that is expected to happen with `eventually(condition, limit)` (`test_harness.hpp`) or with a mechanism that signals that it happened. Do not sleep for a fixed time and assume that things have progressed.
+
+Common timing-test anti-patterns to avoid:
+
+- Fixed `sleep` / `waitForTimeout` or unbounded spin loops: use events, barriers, condition variables, or `vi.useFakeTimers()` in Vitest instead.
+- Sampling-period mismatches: align simulation step size and `sample_period` with the assertion window so periodic samples do not race step boundaries.
+- Waiting on deferred UI with a timer: in Playwright E2E, scroll `@defer` placeholders into view before asserting on deferred content.
 
 Wait limits are multiplied by a scale factor.
 

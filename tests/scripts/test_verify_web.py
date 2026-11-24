@@ -702,6 +702,36 @@ class VerifyGuiFilteringTest(unittest.TestCase):
         # Waits before server (index 1), example (index 3), real (index 4); NOT before sync (0) or web (2)
         self.assertEqual(waited, ["before:1", "before:3", "before:4"])
 
+    def test_stale_launcher_prints_non_fatal_warning(self) -> None:
+        fake_root = self.dir / "repo"
+        src_file = fake_root / "libs" / "launch" / "src" / "run.cpp"
+        src_file.parent.mkdir(parents=True)
+        src_file.write_text("// edited\n", encoding="utf-8")
+        # Make launcher strictly older than src_file
+        os.utime(self.launcher, (1_700_000_000, 1_700_000_000))
+        os.utime(src_file, (1_700_000_100, 1_700_000_100))
+
+        self.assertEqual(verify_gui_mod.stale_launcher_source(self.launcher, fake_root), src_file)
+
+        with mock.patch.object(verify_gui_mod, "ROOT", fake_root):
+            code, out, err, ran, _ = self._run_main(
+                ["--skip-server", "--skip-web", "--no-sync", "--no-wait", "--launcher", str(self.launcher)]
+            )
+        self.assertEqual(code, 0, err + out)
+        self.assertEqual([name for name, _ in ran], ["real"])
+        self.assertIn("warning: launcher", err)
+        self.assertIn("libs/launch/src/run.cpp", err)
+
+        # Fresh launcher (newer than source) produces no stale warning
+        os.utime(self.launcher, (1_700_000_200, 1_700_000_200))
+        self.assertIsNone(verify_gui_mod.stale_launcher_source(self.launcher, fake_root))
+        with mock.patch.object(verify_gui_mod, "ROOT", fake_root):
+            code2, out2, err2, _ran2, _ = self._run_main(
+                ["--skip-server", "--skip-web", "--no-sync", "--no-wait", "--launcher", str(self.launcher)]
+            )
+        self.assertEqual(code2, 0, err2 + out2)
+        self.assertNotIn("warning: launcher", err2)
+
 
 if __name__ == "__main__":
     unittest.main()

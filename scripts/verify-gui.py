@@ -116,6 +116,30 @@ def clean_lines(text: str) -> list[str]:
     return verify_common.clean_lines(text, LINE_CHARS)
 
 
+def stale_launcher_source(launcher: Path, root: Path | None = None) -> Path | None:
+    """Return the newest source file under libs/ or tools/launch/ newer than `launcher`, or None."""
+    base_root = ROOT if root is None else root
+    try:
+        newest_mtime = launcher.stat().st_mtime
+    except OSError:
+        return None
+    newest_path: Path | None = None
+    for base in (base_root / "libs", base_root / "tools" / "launch"):
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            try:
+                if not path.is_file():
+                    continue
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime > newest_mtime:
+                newest_mtime = mtime
+                newest_path = path
+    return newest_path
+
+
 stop_group = verify_common.stop_group
 
 
@@ -241,8 +265,18 @@ def main() -> int:
     if uv is None:
         die_usage("uv is not on PATH: install it (https://docs.astral.sh/uv/), then run this again")
 
-    if launcher is not None and not Path(launcher).is_file():
-        die_usage(f"--launcher {launcher}: no such file (build/<preset>/tools/launch/vehicle_sil_launch)")
+    if launcher is not None:
+        launcher_path = Path(launcher)
+        if not launcher_path.is_file():
+            die_usage(f"--launcher {launcher}: no such file (build/<preset>/tools/launch/vehicle_sil_launch)")
+        stale = stale_launcher_source(launcher_path)
+        if stale is not None:
+            print(
+                f"verify-gui: warning: launcher {launcher} is older than {rel(stale)}; "
+                "rebuild it before trusting real-launcher tests",
+                file=sys.stderr,
+                flush=True,
+            )
     if args.no_sync:
         venv = Path(os.environ.get("UV_PROJECT_ENVIRONMENT") or ROOT / ".venv")
         if not venv.is_dir():

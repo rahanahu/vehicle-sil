@@ -57,7 +57,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 | 変更 | 手元で実行するもの |
 |---|---|
 | どの変更でも（既定） | 1 つのプリセットと、触ったもののテスト: `scripts/verify.py linux-gcc-debug --tests '<正規表現>'`（`--targets <target>` と `-L <label>` や `--no-build` でさらに絞れる） |
-| 並行性、スレッド、状態遷移、時間 | 触ったテストを `linux-gcc-release`（`-O3`）と `linux-clang-tsan` でも `--repeat` 付きで実行し、マージ前にプルリクエストの `linux-tsan` チェックを確認する（`all checks` は待たない） |
+| 並行性、スレッド、状態遷移、時間 | 触ったテストを `linux-gcc-release`（`-O3`）と `linux-clang-tsan` でも `--repeat` 付きで実行し、マージ前に `gh run view --json jobs` で `linux (linux-clang-tsan)` の `conclusion == "success"` を確かめる（`all checks` は待たない） |
 | 多くのターゲットが含む公開ヘッダーや、クラス・関数テンプレート | 触ったターゲットを `linux-clang-tsan` でビルドする: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
 | ランチャーが出力・計数するもの（所見、イベント、`run` の出力）と、それを写したドキュメント | `^launch`、`^multi_host\.`、`^schema\.`、`^template\.`（ECU のプロジェクトテンプレート）。ドキュメントと照合します（[ドキュメントの例とテスト](#ドキュメントの例とテスト)） |
 | GUI が再生するランチャーの出力（`gui/server/tests/recordings/`）、または Control API | `scripts/verify.py linux-gcc-control --tests '^control'`、続けて `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
@@ -111,6 +111,12 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 ### 待ち時間と倍率
 
 起きるはずのことは、`eventually(条件, 上限)`（`test_harness.hpp`）か、起きたことを通知する手段で待ちます。決まった時間だけ眠って「進んだはず」としません。
+
+避けるべきタイミングテストのパターン:
+
+- 固定時間の `sleep` / `waitForTimeout` や上限のないスピンループ: イベント、バリア、条件変数、Vitest では `vi.useFakeTimers()` を使う。
+- サンプリング周期のずれ: ステップ幅と `sample_period` を確認区間に合わせ、周期サンプルがステップ境界と競合しないようにする。
+- 遅延描画をタイマーで待つ: Playwright の E2E では、固定待ちの代わりに `@defer` のプレースホルダーをビューポートにスクロールしてから検証する。
 
 待ちの上限には倍率が掛かります。
 
