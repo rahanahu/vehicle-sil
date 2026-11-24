@@ -33,7 +33,7 @@ flowchart LR
 |---|---|---|
 | ECU と SIL Kit | バス（CAN、LIN、イーサネット）と仮想時間の同期を、SIL Kit が運びます。 | — |
 | ECU の変数とランチャー | ECU の変数（Control Agent）を、SIL Kit の publish/subscribe でランチャーの Hub に送信します。 | [internals/control.md](internals/control.md) |
-| Python、CLI とランチャー | 外からの操作を、ランチャーの Control Server（`run --control`）が Control API（gRPC）で受信します。 | [control-api.md](control-api.md) |
+| Python、CLI とランチャー | 外からの操作を、ランチャーの Control Server（`run --control` または `serve --control`）が Control API（gRPC）で受信します。 | [control-api.md](control-api.md) |
 | GUI サーバーとランチャー | 別のプロセスの GUI サーバー（`gui/server`）が、ランチャーを起動し、Control API のクライアントとしてブラウザの画面に中継します。 | [gui.md](gui.md) |
 | Vector XL CAN Bridge と実機の CAN | ブリッジが、実時間で接続します。 | [bridges.md](bridges.md) |
 | イーサネットのブリッジと外のイーサネット | `vehicle_sil_ethernet_bridge` が、SIL Kit の Ethernet と外のイーサネットの間でフレームを転送します（外部のインターフェースは、Linux の TAP デバイス、packet ソケット、libpcap と、Windows の Npcap です）。 | [ethernet-bridge.md](ethernet-bridge.md) |
@@ -71,7 +71,7 @@ vehicle-sil/
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（クライアント向けの ControlServer。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
 ├── libs/trace/       vehicle_sil::trace  ステップと書き込みのプロファイリングのトレース。VEHICLE_SIL_TRACE のときに取る（標準ライブラリーだけ。内部用）
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
-├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、`vehicle_sil_launch run --control` や `serve` を子プロセスで動かす助け
+├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、共有の Events v4 プロトコルと gRPC の助け、`vehicle_sil_launch serve`（または `serve --once`）を子プロセスで動かす助け
 ├── bridges/common/  ブリッジの実行ファイルが共有する run_bridge()（止め方、監視のループ、止める順、終了コード。内部用）
 ├── bridges/can/     CAN ブリッジが共有する CanBridge と、別ターゲットの ExternalPortAdapter（移植可能、内部用）
 ├── bridges/vector-xl/ Vector XL CAN Bridge（チャネルの選択と引数はどこでも、XL バックエンドと実行ファイルは Windows 専用）
@@ -146,11 +146,11 @@ vehicle-sil/
 | `vehicle_sil_sim_controller`（実行ファイル） | — | system controller の CLI です。 | — | — |
 | `vehicle_sil::process`（内部用） | — | 子プロセスを起動して管理します（下の段落）。 | `ChildProcess`（出力をログファイルへ）、`run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）、`Process`（標準出力と標準エラーを行ごとに渡す。作業ディレクトリ、止める要求、起動したプロセスとそのグループ（Windows ではジョブ）の全部のプロセスの終了） | — |
 | `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | 設定ファイルの読み込み、照合、シミュレーション全体の実行をするランチャーの本体です。 | `--describe` の JSON の読み込み、照合のルール（プロセスを起動しない関数）、実行（registry と `SimulationController` をプロセスの中に持ち、participant を子プロセスで動かす。実行の判定はプロセスを起動しない関数）、人向けと JSON の出力 | [simulation-config.md](simulation-config.md) |
-| `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil_launch check` と `vehicle_sil_launch run` で、`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のビルドでは `run --control` の Control Server も持ちます。 | — | [simulation-config.md](simulation-config.md)、[simulation-check.md](simulation-check.md)、[simulation-run.md](simulation-run.md) |
+| `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil_launch check`、`vehicle_sil_launch run`、`vehicle_sil_launch serve`（`serve --once`）で、`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のビルドでは `run --control` と `serve --control` の Control Server も持ちます。 | — | [simulation-config.md](simulation-config.md)、[simulation-check.md](simulation-check.md)、[simulation-run.md](simulation-run.md) |
 | `vehicle_sil::control` | 利用者向け | ECU の Control Agent と、Control Server の中核の `Hub` です。 | `vehicle_sil::control::Agent`（型・範囲・単位つきの変数の公開、外からの書き込みを仮想時刻を指定してステップの中で反映、固定容量のキュー。ECU が持って動かし、`Ecu::input()`、`output()` で変数を宣言する）、`Hub`、`wire` | [internals/control.md](internals/control.md) |
 | `vehicle_sil::control_silkit` | 利用者向け | Control Agent と `Hub` の間を SIL Kit の publish/subscribe で運ぶ層で、`ecu_main()` で作った ECU と `vehicle_sil_launch run` が使い、gRPC は不要です。 | `vehicle_sil::control_silkit::AgentTransport`、`HubTransport` | [internals/control.md](internals/control.md) |
 | `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | `control.proto` から生成したコード（`control_grpc` の内部）です。 | — | — |
-| `vehicle_sil::control_grpc`（同上） | 利用者向け | Control API（gRPC）の Server（クライアント向け。ECU の Agent は SIL Kit の `vehicle_sil::control_silkit` で接続します）で、`vehicle_sil_launch run --control` が使います。 | `vehicle_sil::control_grpc::ControlServer`、`time_control_of()`、認証（TLS、トークン、役割） | [control-api.md](control-api.md) |
+| `vehicle_sil::control_grpc`（同上） | 利用者向け | Control API（gRPC）の Server（クライアント向け。ECU の Agent は SIL Kit の `vehicle_sil::control_silkit` で接続します）で、`vehicle_sil_launch run --control` と `serve --control` が使います。 | `vehicle_sil::control_grpc::ControlServer`、`time_control_of()`、認証（TLS、トークン、役割） | [control-api.md](control-api.md) |
 | `vehicle_sil::bridge_runtime`（内部用） | — | ブリッジの実行ファイルが準備の後に呼ぶ `vehicle_sil::bridge_runtime::run_bridge()` で、プラットフォームに依存しません。 | 止める要求の受け方（シグナル、Windows のコンソールを閉じたとき）、監視のループ（participant の状態の判定、外の側の失敗、警告、監視の行）、止める順（統計を SIL Kit の participant の停止より先に出す）、終了コード、`BridgeHooks`（ブリッジごとの部分を渡す） | [bridges.md](bridges.md) |
 | `vehicle_sil::can_bridge_core` | — | CAN ブリッジのうち、外部の側に依存しない部分で、プラットフォームに依存しません。 | `vehicle_sil::can_bridge::CanBridge` など、`ExternalCanPort` | — |
 | `vehicle_sil::can_external` | `vehicle_sil::can_bridge_core`、`vehicle_sil::can`、`vehicle_sil::can_silkit` | 外部 CAN ポートの上にプロトコルスタックを直接載せるための `ExternalPortAdapter`。CAN ブリッジはリンクしません。プラットフォームに依存しません。 | `vehicle_sil::can_bridge::ExternalPortAdapter`（外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする） | — |
@@ -286,7 +286,8 @@ flowchart TB
   - `RunControls`: 実行が借りるもの（停止の要求、時刻の命令）と、実行が自分で作るものです。
 
   イベントの受け口（`RunLent::events`、`RunEventSink`）は `run_file()` のものです。照合は `run_file()` が自分で書きます。段階と状態は、自前の操作盤のときは `run_file()` が書き、貸した操作盤では呼び手の観察者が書きます。実行には、実行の知っているインターフェース（`RunEvents`）だけを渡します。
-- 照合・実行・テストが何を頼まれるかは、1 つの値 `RunRequest`（`launch/request.hpp`）です。2 つの部分から成ります。利用者の選択（`RunIntent`）と、呼び出し側の指定（`RunHost`。ツールとログの場所、上限、Control Server や標準入力のコマンドを求めるか）です。`check_file()`、`run_file()`、`test_file()` がこれを受け取ります。コマンドラインと要求ファイルは、これを埋める 2 つの方法です。`validate_request()`（純粋）が、一緒には成り立たない欄のルールを置く唯一の場所です。`tools/launch` は引数を欄に写すだけなので、そこでの `cli::UsageError` は引数の形の誤りを意味し、意味のルールには使いません。
+- `ExecutionRuntime`（`launch/execution_runtime.hpp`）は、常駐の複数回実行 `vehicle_sil_launch serve` と 1 回実行 `vehicle_sil_launch serve --once` の両方を、共通の Events v4（`vehicle_sil_events: 4`）ストリームで動かします。明示的な `LauncherState`（`unprepared`、`cold_only`、`preparing`、`ready`、`running`、`ending`、`contaminated`）を持ち、遷移で自発的な `status` イベントを出し、確定した遷移後の `status` を `prepare` と `result` に内包します。人やスクリプト向けの `vehicle_sil_launch run` は `run_file()` を直接呼びます。
+- 照合・実行・テストが何を頼まれるかは、1 つの値 `RunRequest`（`launch/request.hpp`）です。2 つの部分から成ります。利用者の選択（`RunIntent`）と、呼び出し側の指定（`RunHost`。ツールとログの場所、上限、Control Server や標準入力のコマンドを求めるか）です。`check_file()`、`run_file()`、`test_file()` がこれを受け取ります。コマンドラインと要求ファイルは、これを埋める 2 つの方法です。`check_file()` と `check --json` は常に `file_sha256` と `hot_eligibility`（`VEHICLE_SIL_TRACE` のときは `"trace-enabled"`）を出します。`validate_request()`（純粋）が、一緒には成り立たない欄のルールを置く唯一の場所です。`tools/launch` は引数を欄に写すだけなので、そこでの `cli::UsageError` は引数の形の誤りを意味し、意味のルールには使いません。
 - `--request <file>` は、意図を JSON のファイルから読みます（`schema/run-request.schema.json`）。形式の読み手は 1 つ（`read_request_file()`）で、引数は欄ごとにファイルに勝ちます。値がファイルから来たときは、メッセージがファイルの名前を挙げます。
 - `--connect` が足すブリッジの印は計画にあります（`RunMember::outside`。参加者ごとに `RunMember` が 1 つ）。`ParticipantConfig` はファイルが書いたことだけを持ちます。刻みの計画は、ブリッジを足す前の、ファイルの構成で作ります。
 - 実行が見たものは、部分に分かれた `RunOutcome` です（`setup`、`start`、`end`、`control`、`scenario`、`close`、続いて `timing`、`participants` ほか）。JSON の出力の形とは別です。JSON は `format_run_json()` が書き、結果の判定は `assess_run()` が行います。実行が終わった理由は、結果の `end_reason()` です（`EndReason`。stopped と interrupted のどちらかは、最初に止めるよう頼んだものが決めます。参加者の終わりを待つ間に来た操作者の停止は、必須の参加者の終わりを打ち切ったときのほかは、シミュレーションの終わり方を変えません）。終了コードと、結果が成功かどうかは、1 つの表（`libs/launch/src/format/exit_codes.hpp`。`RunReport::exit_code()`、`RunReport::ok()`、`check_exit_code()`、`ConnectionsReport::exit_code()` が使う）から決まります。人に見せる 1 文は `RunReport::message()` で、`libs/launch/src/format/run_report.cpp` の `RunReport::result()` の隣にあります。
@@ -299,10 +300,10 @@ flowchart TB
 flowchart LR
     screen["画面"] -->|"選択"| server["GUI サーバー<br>形、大きさ、パス、connect の対象"]
     server -->|"書く"| file["一時の要求ファイル"]
-    file -->|"--request"| launcher["vehicle_sil_launch<br>照合と実行のルール"]
+    file -->|"--request / serve run"| launcher["vehicle_sil_launch<br>照合と実行のルール"]
 ```
 
-- GUI サーバーは、画面の選択を要求ファイルに書き（利用者だけが読める。ランチャーが終わったら削除）、`--request` を付けて `check` か `run` を起動します。そのために、ほかのランチャーのオプションは組み立てません。
+- GUI サーバーは、画面の選択を要求ファイルに書き（利用者だけが読める。照合や実行が終わったら削除）、`check --json` には `--request` を付け、実行は常駐の `vehicle_sil_launch serve`（または `VEHICLE_SIL_TRACE`、固定の `registry_uri`、`manual` の participant を使うときの 1 回実行 `vehicle_sil_launch serve --once`）に Events v4（`vehicle_sil_events: 4`）ストリーム上で `{"command":"run","request":"<file>"}` として渡します。利用者の選択のために、ほかのランチャーのオプションは組み立てません。
 - サーバーが確かめるのは、欄の形と大きさ、パスがルートの下にあること、`connect` の対象が `POST api/connections` で使えると挙げられたものであること（`target-not-listed`）だけです。意味のルール（機種がある、participant がある、欄が一緒に成り立つ）はすべてランチャーの照合のもので、サーバーはその指摘を見せます。
 - `POST api/connections` は、ファイルの 1 つのネットワークについて `connections --json` を走らせ、使える対象を覚えます。この一覧が、あとの照合や実行が名指しできるものなので、画面は、ランチャーがこの計算機で見つけていない機器を渡せません。
 

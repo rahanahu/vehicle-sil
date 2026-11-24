@@ -840,4 +840,4 @@ If `serve` fails at startup (usage error, including `VEHICLE_SIL_TRACE` without 
 - Reading and writing variables and controlling time over gRPC → [control-api.md](control-api.md)
 - The browser GUI and its development → [gui.md](gui.md)
 
-The tests of the browser GUI replay recordings of this output (`gui/server/tests/recordings/`). If you change the launcher's output, compare with `python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> --compare` and record the scenes that differ again (see "Development" in [gui.md](gui.md#development)).
+The tests of the browser GUI use an Events v4 scenario launcher stub (`gui/server/tests/stub_launcher.py`) and in-process contract validator (`gui/server/tests/fake_runtime.py`). If you change the launcher's output, update the stub and validator to match and verify against the real launcher with `python3 scripts/verify-gui.py --launcher <vehicle_sil_launch>` (see "Development" in [gui.md](gui.md#development)).

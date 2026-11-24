@@ -39,8 +39,8 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 | テスト | 内容 | ほかのラベル |
 |---|---|---|
-| `control_server.python_client` | Python のクライアントと CLI を、`vehicle_sil_launch run --control` に対して動かす | |
-| `control_server.launcher` | `vehicle_sil_launch run --control` と `examples/ecu_main` の ECU を動かす | `integration` |
+| `control_server.python_client` | Python のクライアントと CLI を、`vehicle_sil_launch serve --once --control` に対して動かす | |
+| `control_server.launcher` | `vehicle_sil_launch serve --once --control` と `examples/ecu_main` の ECU を動かす | `integration` |
 | `control_server.example_write_before_start`、`control_server.example_pause_and_step` | `examples/launch_control` を動かす | `examples` |
 | `control_server.guide_operate_signals` | ガイド [信号を外から操作する](howto/operate-signals.md) の印つきのブロックを、同じ例、CLI、標準入力のコマンドの出力と照合する | `examples` |
 
@@ -76,9 +76,12 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | 名前 | 場所 |
 |---|---|
 | `ControlServer` | `control_grpc/server.hpp` |
+| Python SDK パッケージ（`dependencies = []`、`python -S` 対応） | `python/pyproject.toml` |
 | Python のクライアント | `python/vehicle_sil_control/client.py` |
-| ランチャーを起動する補助 | `python/vehicle_sil_control/launcher.py` |
-| 常駐ランチャー（`serve`）を扱う補助 | `python/vehicle_sil_control/serve.py` |
+| 純粋な Events v4 プロトコル検証とコマンド構築（`gui/server` と共有） | `python/vehicle_sil_control/protocol.py` |
+| 遅延 gRPC スタブ探索、メタデータ、秘匿、エラー・proto 変換ヘルパー（`gui/server` と共有） | `python/vehicle_sil_control/grpc_helpers.py` |
+| `vehicle_sil_launch serve --once` ベースの 1 回実行補助（`Launch`） | `python/vehicle_sil_control/launcher.py` |
+| 常駐・1 回実行ランチャー（`Serve`、`RunHandle`）を扱う補助 | `python/vehicle_sil_control/serve.py` |
 
 - テスト: `tests/control_server`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）
 - `ctest -R`: `^control_server\.`
@@ -88,7 +91,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `test_launcher.py` | ランチャーの Control Server（認証、TLS、役割、監査も） |
 | `test_python_client.py` | Python のクライアントと CLI |
 | `test_serve_unit.py` | モックした子プロセス入出力による `Serve` と `RunHandle` の単体テスト（`scripts/verify-python.py` でも実行） |
-| `test_serve_client.py` | 実プロセスの `vehicle_sil_launch serve` と gRPC に対する `Serve` と `RunHandle` のテスト（`tests/serve/serve_support.py` は故障注入テスト基盤として分離） |
+| `test_serve_client.py` | 実プロセスの `vehicle_sil_launch serve` と gRPC に対する `Serve` と `RunHandle` のテスト（`tests/serve/serve_support.py` は `vehicle_sil_control.Serve` を故障注入 `send_raw` と `/proc` RSS 計測で包みます） |
 | `control_server.example_write_before_start`、`control_server.example_pause_and_step` | `examples/launch_control` |
 | `test_guide_operate_signals.py` | ガイド `docs/howto/operate-signals.md` と、例、CLI、標準入力のコマンドの照合（印は「[ドキュメントの例とテスト](code-map-testing.md#ドキュメントの例とテスト)」） |
 
@@ -216,8 +219,9 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - `launch::ControlEndpoint`（`launch/run.hpp`）。`libs/launch/src/usecases/run_file.cpp` の `run_file()` が、照合の前に Server を作り（`src/run_control_server.hpp` の `make_control_server_of_run()`）、`Runner::prepare()` と `Runner::run()` の間で起動し、戻るときに終えます。破棄は、呼ぶ側が結果の後に行います（`RunReport::ended_control_server`）。`RunLent::control_endpoint` は、呼ぶ側の自分のサーバーを代わりに貸すためのものです（試験が使います）
 - `TimeCommands` の `hold_before_start()`、`inspect()`、`wait_paused()`
 - `ServerOptions::external_hub`
-- `python/vehicle_sil_control/launcher.py`
-- `python/vehicle_sil_control/serve.py`（公開 API の `Serve` / `RunHandle` は `tests/serve/serve_support.py` と分離したままにする）
+- `python/pyproject.toml`、`python/vehicle_sil_control/protocol.py`、`python/vehicle_sil_control/grpc_helpers.py`（`gui/server` と共有）
+- `python/vehicle_sil_control/launcher.py`（`serve --once` を使う `Launch`）
+- `python/vehicle_sil_control/serve.py`（Events v4 の `Serve` / `RunHandle`。`tests/serve/serve_support.py` は故障注入用に `Serve` を包む）
 
 合わせて直すドキュメント:
 

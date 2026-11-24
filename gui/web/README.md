@@ -82,22 +82,22 @@ Run these in 2 terminals:
 
 ```sh
 uv run vehicle-sil-gui --no-browser --json --port 8765 --dev-origin http://127.0.0.1:4200 \
-  --launcher ../server/tests/replay_launcher.py --root ../server/tests/configs   # GUI server
+  --launcher ../server/tests/stub_launcher.py --root ../server/tests/configs   # GUI server
 npm start                                                                     # screens (127.0.0.1:4200)
 ```
 
-- The GUI server uses the replay launcher (`gui/server/tests/replay_launcher.py`; see "Development" in docs/gui.md), which replays recordings of the real launcher's output.
-- On the screen, you can choose the configuration files in `gui/server/tests/configs/` (the ones that have recordings).
+- The GUI server uses the stub launcher (`gui/server/tests/stub_launcher.py`; see "Development" in docs/gui.md), which simulates the real launcher's Events v4 output.
+- On the screen, you can choose the configuration files in `gui/server/tests/configs/`.
 - In the browser, open the `dev_url` (with the token) that the server prints.
 
 ### End-to-end tests
 
 The end-to-end tests start the GUI server themselves and stop it when they finish.
 
-| Command                          | What it starts                         | Code that starts it          |
-| -------------------------------- | -------------------------------------- | ---------------------------- |
-| `npm run e2e`, `npm run e2e:dev` | The GUI server and the replay launcher | `e2e/support/gui-server.ts`  |
-| `npm run e2e:real`               | The GUI server and the real launcher   | `e2e/support/real-server.ts` |
+| Command                          | What it starts                       | Code that starts it          |
+| -------------------------------- | ------------------------------------ | ---------------------------- |
+| `npm run e2e`, `npm run e2e:dev` | The GUI server and the stub launcher | `e2e/support/gui-server.ts`  |
+| `npm run e2e:real`               | The GUI server and the real launcher | `e2e/support/real-server.ts` |
 
 - Each run uses free ports that the OS picks (the development server too).
 - For `npm run e2e:real`, `gui/server/tests/real_configs.py` writes the configuration files to a temporary directory. `scripts/verify-gui.py --launcher <path>` runs these end-to-end tests.

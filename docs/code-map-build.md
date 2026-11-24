@@ -97,7 +97,7 @@ Where to change:
 
 [CHANGELOG.md](../CHANGELOG.md) lists the places to update with it:
 
-- `pyproject.toml`, `gui/server/pyproject.toml` (`uv lock` then writes the PEP 440 form, `0.2.0rc1`, in `uv.lock`)
+- `pyproject.toml`, `python/pyproject.toml`, `gui/server/pyproject.toml` (`uv lock` then writes the PEP 440 form, `0.2.0rc1`, in `uv.lock`)
 - `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`
 - `template/get_tools.py`
 - `GIT_TAG` in `template/CMakeLists.txt`
