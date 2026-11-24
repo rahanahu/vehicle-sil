@@ -129,11 +129,11 @@ def _make_fake_cmake_ctest(bin_dir: Path, cmake_calls: Path, ctest_calls: Path) 
             encoding="utf-8")
     else:
         cmake_sh = bin_dir / "cmake"
-        cmake_sh.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {cmake_calls!s}\nexit 0\n", encoding="utf-8")
+        cmake_sh.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{cmake_calls!s}\"\nexit 0\n", encoding="utf-8")
         cmake_sh.chmod(0o755)
         ctest_sh = bin_dir / "ctest"
         ctest_sh.write_text(
-            f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {ctest_calls!s}\necho '100% tests passed out of 1'\nexit 0\n",
+            f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{ctest_calls!s}\"\necho '100% tests passed out of 1'\nexit 0\n",
             encoding="utf-8")
         ctest_sh.chmod(0o755)
 
@@ -144,6 +144,7 @@ def test_ctest_filters_and_no_build() -> None:
                 if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)}
 
     # 1. -L, -LE, -E forwarded to ctest alongside --tests
+    # Avoid '^' in the test regex: cmd.exe strips unquoted '^' when running a fake ctest.bat on Windows.
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         bin_dir = tmp / "bin"
@@ -153,7 +154,7 @@ def test_ctest_filters_and_no_build() -> None:
         env = {**base_env, "PATH": str(bin_dir) + os.pathsep + base_env.get("PATH", "")}
         run = subprocess.run(
             [sys.executable, str(VERIFY), preset, "--tag", "test-filters", "--no-configure",
-             "--tests", "^launch", "-E", "slow", "-L", "config", "-LE", "integration"],
+             "--tests", "launch_run", "-E", "slow", "-L", "config", "-LE", "integration"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=env,
         )
         check(run.returncode == 0, f"verify.py filters exited {run.returncode}: {run.stdout}\n{run.stderr}")
@@ -161,7 +162,7 @@ def test_ctest_filters_and_no_build() -> None:
         check(len(ctest_lines) == 1, f"expected 1 ctest call, got {ctest_lines}")
         if ctest_lines:
             line = ctest_lines[0]
-            for token in ("-R ^launch", "-E slow", "-L config", "-LE integration"):
+            for token in ("-R launch_run", "-E slow", "-L config", "-LE integration"):
                 check(token in line, f"ctest call missing {token!r}: {line}")
 
     # 2. --no-build skips both configure and build (cmake is never invoked)
