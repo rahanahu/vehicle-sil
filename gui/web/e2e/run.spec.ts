@@ -397,18 +397,48 @@ async function centre(locator: Locator): Promise<{ x: number; y: number }> {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
+/** 次の POST /api/run を応答前に止め、送信中と応答直後の操作を順に試せるようにする。 */
+async function holdNextRun(page: Page) {
+  let markSent!: () => void;
+  const sent = new Promise<void>((resolve) => {
+    markSent = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    '**/api/run',
+    async (route) => {
+      markSent();
+      await gate;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  return { sent, release };
+}
+
 test('a double click on start starts one run and does not stop it', async ({ page }) => {
   await choose(page, 'forever.yaml');
   await expect(startButton(page)).toHaveAttribute('data-armed', 'true');
   const actions = recordActions(page);
   // 利用者の速い続けての押し（ダブルクリックの 2 回目、3 回目）: 応答の前後にまたがる
   const at = await centre(startButton(page));
+  const { sent, release } = await holdNextRun(page);
   const reply = page.waitForResponse((r) => r.url().endsWith('/api/run'));
-  for (let i = 0; i < 5; i++) {
+  try {
     await page.mouse.click(at.x, at.y);
-    await page.waitForTimeout(100);
+    await sent;
+    // 応答待ちの間の 2 回目
+    await page.mouse.click(at.x, at.y);
+  } finally {
+    release();
   }
   const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
+  await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
+  // 応答直後（保護期間中）の 3 回目
+  await page.mouse.click(at.x, at.y);
   // 実行時刻が進み、停止せず同じセッションが続く
   await expect(page.getByTestId('sim-time')).toHaveText(/^(?!0\.000 s)\d+\.\d{3} s$/, {
     timeout: RUN_TIMEOUT,
@@ -422,12 +452,20 @@ test('repeated Enter on start starts one run and does not stop it', async ({ pag
   await expect(startButton(page)).toHaveAttribute('data-armed', 'true');
   const actions = recordActions(page);
   await startButton(page).focus();
+  const { sent, release } = await holdNextRun(page);
   const reply = page.waitForResponse((r) => r.url().endsWith('/api/run'));
-  for (let i = 0; i < 5; i++) {
+  try {
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(100);
+    await sent;
+    // 応答待ちの間の 2 回目
+    await page.keyboard.press('Enter');
+  } finally {
+    release();
   }
   const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
+  await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
+  // 応答直後（保護期間中）の 3 回目
+  await page.keyboard.press('Enter');
   await expect(page.getByTestId('sim-time')).toHaveText(/^(?!0\.000 s)\d+\.\d{3} s$/, {
     timeout: RUN_TIMEOUT,
   });
@@ -481,20 +519,15 @@ test('a click meant for stop as the run ends does not start a new run', async ({
     }),
   );
   await expect(page.getByTestId('outcome')).toContainText('成功');
-  // 利用者は、止めようとして同じ位置を押し続ける。もう一度実行できるようになった後も、少し押し続ける
-  let after = 0;
-  for (let i = 0; i < 100 && after < 4; i++) {
-    await page.mouse.click(at.x, at.y);
-    const startable =
-      (await startButton(page).getAttribute('aria-disabled')) !== 'true' &&
-      (await startButton(page).getAttribute('data-armed')) !== 'false';
-    if (startable) after++;
-    await page.waitForTimeout(100);
-  }
-  expect(after).toBe(4);
+  // 利用者は、止めようとして同じ位置を押す（開始が保護中の間と、押せるようになった後の両方）
+  await page.mouse.click(at.x, at.y);
+  await expect(startButton(page)).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(startButton(page)).toHaveAttribute('data-armed', 'true');
+  for (let i = 0; i < 4; i++) await page.mouse.click(at.x, at.y);
+  // A server round trip after the clicks: a request a click had sent would be recorded by now
+  expect((await serverSession(page))?.id).toBe(session);
   expect(actions).not.toContain('run');
   expect(actions).not.toContain('stop');
-  expect((await serverSession(page))?.id).toBe(session);
   await stopOnServer(page);
 });
 

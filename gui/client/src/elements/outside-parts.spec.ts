@@ -4,7 +4,7 @@ import { fakeFront } from './fake-front';
 import type { FakeFront } from './fake-front';
 import { pageIntent } from './index';
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const settle = () => vi.advanceTimersByTimeAsync(0);
 
 async function mount<K extends 'vsil-connect' | 'vsil-outside'>(
   tag: K,
@@ -70,7 +70,7 @@ const options = (select: HTMLSelectElement) =>
   [...select.options].map((o) => [o.value, o.textContent, o.disabled]);
 
 /** Longer than the part waits for the page intent to settle before it checks. */
-const settleCheck = () => new Promise((resolve) => setTimeout(resolve, 300));
+const settleCheck = () => vi.advanceTimersByTimeAsync(300);
 
 /** A promise and the functions that end it. */
 function deferred<T>() {
@@ -94,9 +94,12 @@ const choose = (select: HTMLSelectElement, value: string) => {
 const lines = (part: HTMLElement, list: string) =>
   [...part.querySelectorAll(`.${list} li`)].map((li) => li.textContent);
 
+beforeEach(() => vi.useFakeTimers());
+
 afterEach(() => {
   document.body.replaceChildren();
   pageIntent.update({ connect: undefined, time_policy: undefined, scenario: '' });
+  vi.useRealTimers();
 });
 
 describe('<vsil-connect>', () => {
