@@ -1,0 +1,18 @@
+# vehicle-sil-control: the Python client of the vehicle-sil Control API and the resident launcher
+# (a member of the uv workspace of the repository root).
+# Standard library only at import time (`python -S`); gRPC is imported lazily for Control API calls.
+
+[project]
+name = "vehicle-sil-control"
+version = "0.3.0"
+description = "Python client of the vehicle-sil Control API and resident launcher"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""

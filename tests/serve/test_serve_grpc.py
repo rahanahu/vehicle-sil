@@ -41,13 +41,12 @@ class ServeGrpcAcceptanceTest(unittest.TestCase):
 
         with Serve(self.launch, cfg, arguments=["--control", address, "--control-audit-log", str(audit_path)]) as srv:
             # --- Run 1 ---
-            before1 = srv.ready()
-            cid1 = srv.run(req_paused)
-            run1 = srv.run_started(cid1, after=before1)["run"]
-            cs1 = srv.wait_for(lambda e: e.get("event") == "control_server" and e.get("run") == run1, "control_server 1")
+            srv.ready()
+            run1_h = srv.start(request=req_paused)
+            run1 = run1_h.id
+            cs1 = run1_h.wait_for_event("control_server")
             self.assertEqual(cs1["address"], address)
-            srv.wait_for(lambda e: e.get("event") == "state" and e.get("run") == run1 and e.get("holding") is True,
-                         "holding run 1")
+            run1_h.wait_for_event("state", holding=True)
 
             old_explicit = Control(address, run=run1)
             old_bound = Control.for_current_run(address)
@@ -60,19 +59,17 @@ class ServeGrpcAcceptanceTest(unittest.TestCase):
                 self.assertGreater(op1, 0)
                 # #7(b): gRPC Stop ends Run 1 only; launcher stays alive.
                 old_bound.sim.stop("test stop run 1")
-                res1 = srv.result_of(run1)
-                self.assertFalse(res1["launcher_ends"])
-                self.assertEqual(res1["result"]["result"], "stopped")
-                after1 = srv.wait_idle(after=res1)
+                res1 = run1_h.wait()
+                self.assertFalse(run1_h.launcher_ends)
+                self.assertEqual(res1["result"], "stopped")
 
                 # --- Run 2 on the exact same fixed address ---
-                cid2 = srv.run(req_paused)
-                run2 = srv.run_started(cid2, after=after1)["run"]
+                run2_h = srv.start(request=req_paused)
+                run2 = run2_h.id
                 self.assertNotEqual(run1, run2)
-                cs2 = srv.wait_for(lambda e: e.get("event") == "control_server" and e.get("run") == run2, "control_server 2")
+                cs2 = run2_h.wait_for_event("control_server")
                 self.assertEqual(cs2["address"], address)
-                srv.wait_for(lambda e: e.get("event") == "state" and e.get("run") == run2 and e.get("holding") is True,
-                             "holding run 2")
+                run2_h.wait_for_event("state", holding=True)
 
                 # Unbound client: Ping / current_run works and reports run2; every other call -> run-required.
                 self.assertEqual(unbound.current_run(), run2)
@@ -109,10 +106,9 @@ class ServeGrpcAcceptanceTest(unittest.TestCase):
                 with Control.for_current_run(address) as cur:
                     self.assertEqual(cur.run, run2)
                     cur.sim.resume()
-                res2 = srv.result_of(run2)
-                self.assertFalse(res2["launcher_ends"])
-                self.assertEqual(res2["result"]["result"], "passed")
-                srv.wait_idle(after=res2)
+                res2 = run2_h.wait()
+                self.assertFalse(run2_h.launcher_ends)
+                self.assertEqual(res2["result"], "passed")
             finally:
                 old_explicit.close()
                 old_bound.close()
@@ -139,23 +135,20 @@ class ServeGrpcAcceptanceTest(unittest.TestCase):
         creds = scratch.write("creds.txt", f"admin alice {tok1}\n")
 
         with Serve(self.launch, cfg, arguments=["--control", address, "--control-credentials", str(creds)]) as srv:
-            before1 = srv.ready()
-            cid1 = srv.run(req_paused)
-            run1 = srv.run_started(cid1, after=before1)["run"]
-            srv.wait_for(lambda e: e.get("event") == "state" and e.get("run") == run1 and e.get("holding") is True,
-                         "holding run 1")
+            srv.ready()
+            run1_h = srv.start(request=req_paused)
+            run1 = run1_h.id
+            run1_h.wait_for_event("state", holding=True)
             with Control(address, token=tok1, run=run1) as c1:
                 c1.sim.resume()
-            res1 = srv.result_of(run1)
-            self.assertEqual(res1["result"]["result"], "passed")
-            after1 = srv.wait_idle(after=res1)
+            res1 = run1_h.wait()
+            self.assertEqual(res1["result"], "passed")
 
             # Rotate credentials before Run 2.
             creds.write_text(f"admin bob {tok2}\n", encoding="utf-8")
-            cid2 = srv.run(req_paused)
-            run2 = srv.run_started(cid2, after=after1)["run"]
-            srv.wait_for(lambda e: e.get("event") == "state" and e.get("run") == run2 and e.get("holding") is True,
-                         "holding run 2")
+            run2_h = srv.start(request=req_paused)
+            run2 = run2_h.id
+            run2_h.wait_for_event("state", holding=True)
 
             # Old token is rejected with UNAUTHENTICATED.
             with Control(address, token=tok1, run=run2) as old_tok:
@@ -166,9 +159,8 @@ class ServeGrpcAcceptanceTest(unittest.TestCase):
             # New token succeeds.
             with Control(address, token=tok2, run=run2) as c2:
                 c2.sim.resume()
-            res2 = srv.result_of(run2)
-            self.assertEqual(res2["result"]["result"], "passed")
-            srv.wait_idle(after=res2)
+            res2 = run2_h.wait()
+            self.assertEqual(res2["result"], "passed")
 
             srv.close_input()
             self.assertEqual(srv.wait(), EXIT_IDLE_EOF)

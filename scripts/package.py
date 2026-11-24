@@ -283,7 +283,7 @@ def uv_lock_problems(version: str) -> list[str]:
         return [f"uv.lock could not be parsed: {e}"]
     packages = {pkg.get("name"): pkg.get("version") for pkg in data.get("package", []) if isinstance(pkg, dict)}
     problems = []
-    for name in ("vehicle-sil-dev", "vehicle-sil-gui"):
+    for name in ("vehicle-sil-dev", "vehicle-sil-gui", "vehicle-sil-control"):
         got = packages.get(name)
         if got is None:
             problems.append(f"uv.lock has no package {name!r} (expected {want})")
@@ -297,6 +297,7 @@ def version_problems(version: str, release: bool = False) -> list[str]:
     checks = [
         ("pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
         ("gui/server/pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
+        ("python/pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
         ("python/vehicle_sil_control/__init__.py", r'(?m)^__version__ = "([^"]*)"', '{}'),
         ("template/get_tools.py", r'(?m)^VERSION = "([^"]*)"', '{}'),
         ("gui/server/src/vehicle_sil_gui/__init__.py", r'(?m)^__version__ = "([^"]*)"', '{}'),
@@ -328,6 +329,7 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
     targets = [
         ("pyproject.toml", r'(?m)^(version = )"[^"]*"', '"{}"'),
         ("gui/server/pyproject.toml", r'(?m)^(version = )"[^"]*"', '"{}"'),
+        ("python/pyproject.toml", r'(?m)^(version = )"[^"]*"', '"{}"'),
         ("python/vehicle_sil_control/__init__.py", r'(?m)^(__version__ = )"[^"]*"', '"{}"'),
         ("gui/server/src/vehicle_sil_gui/__init__.py", r'(?m)^(__version__ = )"[^"]*"', '"{}"'),
         ("template/get_tools.py", r'(?m)^(VERSION = )"[^"]*"', '"{}"'),
@@ -367,7 +369,9 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
             print(f"error: {e}", file=sys.stderr)
         return 1
 
-    pyproject_changed = any(rel in ("pyproject.toml", "gui/server/pyproject.toml") for rel, _ in updates)
+    pyproject_changed = any(
+        rel in ("pyproject.toml", "gui/server/pyproject.toml", "python/pyproject.toml") for rel, _ in updates
+    )
     need_uv_lock = (ROOT / "uv.lock").is_file() and (bool(uv_lock_problems(version)) or pyproject_changed)
 
     if dry_run:

@@ -79,7 +79,7 @@ class ServeClientTest(unittest.TestCase):
         with Serve(LAUNCH, cfg, control=True, startup_timeout=scaled(30.0)) as runner:
             self.assertEqual(len(runner.instance), 16)
             st0 = runner.status(timeout=scaled(30.0))
-            self.assertEqual(st0["launcher_state"], "idle")
+            self.assertEqual(st0["launcher_state"], "unprepared")
 
             prep = runner.prepare(timeout=scaled(30.0))
             self.assertTrue(prep["accepted"])
@@ -201,7 +201,7 @@ class ServeClientTest(unittest.TestCase):
             self.assertEqual(run1.result["result"], "stopped")
             self.assertFalse(run1.launcher_ends)
             self.assertIsNone(runner.returncode)
-            self.assertIn(runner.status(timeout=scaled(30.0))["launcher_state"], ("idle", "ready"))
+            self.assertIn(runner.status(timeout=scaled(30.0))["launcher_state"], ("unprepared", "ready"))
 
             with runner.start(stop_at_ms=200, timeout=scaled(60.0)) as run2:
                 self.assertTrue(run2.id.startswith(f"{runner.instance}-"))

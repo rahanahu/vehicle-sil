@@ -319,7 +319,7 @@ class ServeBasicAcceptanceTest(unittest.TestCase):
         with Serve(self.launch, cfg) as srv:
             srv.ready()
             st0 = srv.status(id=1)
-            self.assertEqual(st0["launcher_state"], "idle")
+            self.assertEqual(st0["launcher_state"], "unprepared")
             self.assertIsNone(st0["active_run_id"])
 
             prep = srv.prepare(id=2)
@@ -346,13 +346,11 @@ class ServeBasicAcceptanceTest(unittest.TestCase):
             self.assertEqual(refused["reason"], "invalid-argument")
 
             # Next accepted run gets -2 (sequence not advanced by refusal) and stops cleanly with force=false.
-            paused_before = srv.ready()
-            r2_id = srv.run(intent={"start_paused": True})
-            r2_start = srv.run_started(r2_id, after=paused_before)
-            r2 = r2_start["run"]
+            srv.ready()
+            run2 = srv.start(intent={"start_paused": True})
+            r2 = run2.id
             self.assertTrue(r2.endswith("-2"), r2)
-            srv.wait_for(lambda e: e.get("event") == "state" and e.get("run") == r2 and e.get("paused") is True,
-                         "paused state")
+            run2.wait_for_event("state", paused=True)
             st_running = srv.status(id=60)
             self.assertEqual(st_running["launcher_state"], "running")
             self.assertEqual(st_running["active_run_id"], r2)
@@ -361,16 +359,16 @@ class ServeBasicAcceptanceTest(unittest.TestCase):
             self.assertFalse(prep_busy["accepted"])
             self.assertEqual(prep_busy["reason"], "busy")
 
-            srv.stop(r2, force=False, id=62)
-            srv.stop(r2, force=False, id=63)
-            res2 = srv.result_of(r2)
-            self.assertEqual(res2["result"]["result"], "stopped")
-            srv.ready()
+            run2.stop(force=False, id=62)
+            run2.stop(force=False, id=63)
+            res2 = run2.wait()
+            self.assertEqual(res2["result"], "stopped")
+            self.assertEqual(run2.status["launcher_state"], "ready")
 
             srv.close_input()
             self.assertEqual(srv.wait(), EXIT_IDLE_EOF)
             self.assertEqual(srv.bad_lines, [])
-            self.assertEqual(stream_problems(srv.snapshot(), allow_replies=True), [])
+            self.assertEqual(stream_problems(srv.snapshot()), [])
 
 
 if __name__ == "__main__":

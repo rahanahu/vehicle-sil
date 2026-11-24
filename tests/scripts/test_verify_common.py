@@ -40,6 +40,19 @@ class VerifyCommonTest(unittest.TestCase):
         self.assertEqual(verify_common.ROOT, ROOT)
         self.assertEqual(verify_common.LOG_DIR, ROOT / "build" / "logs")
 
+    def test_scripts_tests_synced_between_cmake_and_verify_python(self) -> None:
+        scripts_dir = ROOT / "tests" / "scripts"
+        on_disk = sorted(p.name for p in scripts_dir.glob("test_*.py"))
+        cmake_text = (scripts_dir / "CMakeLists.txt").read_text(encoding="utf-8")
+        verify_py_text = (ROOT / "scripts" / "verify-python.py").read_text(encoding="utf-8")
+        for name in on_disk:
+            self.assertIn(name, cmake_text, f"{name} is missing from tests/scripts/CMakeLists.txt")
+            self.assertIn(
+                f"tests/scripts/{name}",
+                verify_py_text,
+                f"tests/scripts/{name} is missing from scripts/verify-python.py",
+            )
+
     def test_cli_help_exits_zero(self) -> None:
         env = {k: v for k, v in os.environ.items()
                if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)}

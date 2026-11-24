@@ -21,7 +21,7 @@ dependencies = []
 # tools/j1939_codegen (vehicle_sil_add_j1939_codec() runs it at build time).
 codegen = ["pyyaml>=6.0.3"]
 # python/vehicle_sil_control: the client and CLI, and the generation of its gRPC stubs.
-control = ["grpcio>=1.85.0", "grpcio-tools>=1.85.0", "protobuf>=7.35.1"]
+control = ["vehicle-sil-control", "grpcio>=1.85.0", "grpcio-tools>=1.85.0", "protobuf>=7.35.1"]
 # gui/server: the browser GUI's server (vehicle-sil-gui, a member of this workspace) and its tests.
 gui = ["vehicle-sil-gui[variables]", "pytest>=9.2.0", "pytest-xdist>=3.8.0"]
 # tests/schema: the JSON Schemas of the configuration and of a scenario (schema/) against the examples and the launcher.
@@ -38,7 +38,8 @@ package = false
 default-groups = ["dev"]
 
 [tool.uv.workspace]
-members = ["gui/server"]
+members = ["gui/server", "python"]
 
 [tool.uv.sources]
+vehicle-sil-control = { workspace = true }
 vehicle-sil-gui = { workspace = true }

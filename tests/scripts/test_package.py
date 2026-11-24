@@ -229,6 +229,7 @@ class PackageVersionSyncTest(unittest.TestCase):
         "CHANGELOG.md",
         "pyproject.toml",
         "gui/server/pyproject.toml",
+        "python/pyproject.toml",
         "python/vehicle_sil_control/__init__.py",
         "gui/server/src/vehicle_sil_gui/__init__.py",
         "template/get_tools.py",
@@ -277,14 +278,16 @@ class PackageVersionSyncTest(unittest.TestCase):
             self.assertEqual(package_mod.uv_lock_problems("0.4.0-rc.1"), [])
             (tree / "uv.lock").write_text(
                 'version = 1\n\n[[package]]\nname = "vehicle-sil-dev"\nversion = "0.4.0rc1"\n\n'
-                '[[package]]\nname = "vehicle-sil-gui"\nversion = "0.4.0rc1"\n',
+                '[[package]]\nname = "vehicle-sil-gui"\nversion = "0.4.0rc1"\n\n'
+                '[[package]]\nname = "vehicle-sil-control"\nversion = "0.4.0rc1"\n',
                 encoding="utf-8",
             )
             self.assertEqual(package_mod.uv_lock_problems("0.4.0-rc.1"), [])
-            self.assertEqual(len(package_mod.uv_lock_problems("0.4.0")), 2)
+            self.assertEqual(len(package_mod.uv_lock_problems("0.4.0")), 3)
 
             (tree / "uv.lock").write_text(
-                'version = 1\n\n[[package]]\nname = "vehicle-sil-dev"\nversion = "0.4.0"\n',
+                'version = 1\n\n[[package]]\nname = "vehicle-sil-dev"\nversion = "0.4.0"\n\n'
+                '[[package]]\nname = "vehicle-sil-control"\nversion = "0.4.0"\n',
                 encoding="utf-8",
             )
             problems = package_mod.uv_lock_problems("0.4.0")
@@ -325,7 +328,8 @@ class PackageVersionSyncTest(unittest.TestCase):
             pep = package_mod.pep440_version(ver)
             lock_text = (
                 f'version = 1\n\n[[package]]\nname = "vehicle-sil-dev"\nversion = "{pep}"\n\n'
-                f'[[package]]\nname = "vehicle-sil-gui"\nversion = "{pep}"\n'
+                f'[[package]]\nname = "vehicle-sil-gui"\nversion = "{pep}"\n\n'
+                f'[[package]]\nname = "vehicle-sil-control"\nversion = "{pep}"\n'
             )
             (tree / "uv.lock").write_text(lock_text, encoding="utf-8", newline="\n")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")

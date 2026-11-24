@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""`vehicle_sil_launch serve` as a resident child process (standard library only).
+"""`vehicle_sil_launch serve` as a resident child process speaking Events v4 (standard library only).
 
     with Serve("build/.../vehicle_sil_launch", "simulation.yaml", control=True) as runner:
         prep = runner.prepare()
@@ -22,17 +22,21 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from .launcher import LaunchError, _why
+from .protocol import (
+    MAX_COMMAND_ID,
+    MAX_COMMAND_LINE,
+    REASON_TRACE_ENABLED,
+    REQUEST_VERSION,
+    encode_ndjson,
+    validate_name_sequence,
+)
 
 if TYPE_CHECKING:
     from .client import Control
-
-MAX_COMMAND_ID: int = 1 << 53
-MAX_COMMAND_LINE: int = 64 * 1024
-REQUEST_VERSION: int = 1
 
 
 class ServeError(LaunchError):
@@ -45,30 +49,17 @@ class ServeError(LaunchError):
 
 def _encode_ndjson(payload: Mapping[str, Any]) -> bytes:
     try:
-        text = json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
+        return encode_ndjson(payload)
     except (TypeError, ValueError) as exc:
         raise ServeError(f"invalid command payload: {exc}") from exc
-    return text.encode("ascii")
-
-
-def _validate_name_sequence(seq: Sequence[str], name: str) -> List[str]:
-    if isinstance(seq, (str, bytes)):
-        raise TypeError(f"{name} must be a sequence of participant names, not {type(seq).__name__}")
-    out: List[str] = []
-    for item in seq:
-        if not isinstance(item, str) or not item:
-            raise ValueError(f"{name} elements must be non-empty strings")
-        out.append(item)
-    return out
 
 
 def _startup_failure_reason(result_event: Mapping[str, Any]) -> Optional[str]:
     res = result_event.get("result") or {}
     findings = list(res.get("findings") or []) + list((res.get("check") or {}).get("findings") or [])
     for finding in findings:
-        msg = finding.get("message") or ""
-        if "VEHICLE_SIL_TRACE" in msg:
-            return "trace-enabled"
+        if finding.get("code") == REASON_TRACE_ENABLED:
+            return REASON_TRACE_ENABLED
     reason = res.get("result")
     return reason if isinstance(reason, str) else None
 
@@ -79,11 +70,12 @@ class RunHandle:
     def __init__(self, serve: "Serve", run_id: str, run_start_event: dict) -> None:
         self._serve = serve
         self._id = run_id
+        self.start_event: dict = run_start_event
         self._events: List[dict] = [run_start_event]
         self._result_event: Optional[dict] = None
         self.result: Optional[dict] = None
+        self.status: Optional[dict] = None
         self.launcher_ends: Optional[bool] = None
-        self._idle_after_result: bool = False
 
     @property
     def id(self) -> str:
@@ -92,6 +84,11 @@ class RunHandle:
     @property
     def run_id(self) -> str:
         return self._id
+
+    @property
+    def result_event(self) -> Optional[dict]:
+        with self._serve._changed:
+            return self._result_event
 
     @property
     def events(self) -> List[dict]:
@@ -109,8 +106,11 @@ class RunHandle:
         with self._serve._changed:
             while True:
                 for e in self._events:
-                    if (e.get("seq", -1) > after_seq and e.get("event") == event
-                            and all(e.get(k) == v for k, v in keys.items())):
+                    if (
+                        e.get("seq", -1) > after_seq
+                        and e.get("event") == event
+                        and all(e.get(k) == v for k, v in keys.items())
+                    ):
                         return e
                 if self._result_event is not None or self._serve._ended:
                     why = _why(self._result_event) if self._result_event is not None else "its events ended"
@@ -146,8 +146,8 @@ class RunHandle:
             raise ServeError("command exceeds 64 KiB line limit", reason="invalid-command")
         self._serve._write_line(line_bytes)
 
-    def stop(self, force: Optional[bool] = None) -> None:
-        """Stop this run (`force=False` graceful, `force=True` immediate, `None` escalate)."""
+    def stop(self, force: Optional[bool] = None, *, id: Optional[int] = None) -> None:
+        """Stop this run (`force=False` graceful, `force=True` immediate, `None` default graceful)."""
         if force is not None and not isinstance(force, bool):
             raise TypeError("force must be True, False, or None")
         with self._serve._changed:
@@ -156,6 +156,8 @@ class RunHandle:
         payload: Dict[str, Any] = {"command": "stop", "run": self._id}
         if force is not None:
             payload["force"] = force
+        if id is not None:
+            payload["id"] = id
         line_bytes = _encode_ndjson(payload)
         try:
             self._serve._write_line(line_bytes)
@@ -163,7 +165,7 @@ class RunHandle:
             pass
 
     def wait(self, timeout: float = 120.0) -> dict:
-        """Wait for this run's result and (when `not launcher_ends`) for the launcher to return to idle."""
+        """Wait for this run's Events v4 `result` event (which embeds settled `ExecutionStatus`)."""
         deadline = time.monotonic() + timeout
         with self._serve._changed:
             while self._result_event is None and not self._serve._ended:
@@ -173,14 +175,6 @@ class RunHandle:
                 self._serve._changed.wait(left)
             if self._result_event is None:
                 raise ServeError(f"run {self._id} ended without writing a result")
-            if not self._result_event.get("launcher_ends"):
-                while not self._idle_after_result and not self._serve._ended:
-                    left = deadline - time.monotonic()
-                    if left <= 0:
-                        raise ServeError(
-                            f"launcher did not return to idle after run {self._id} within {timeout} s"
-                        )
-                    self._serve._changed.wait(left)
             return self._result_event["result"]
 
     def __enter__(self) -> "RunHandle":
@@ -189,12 +183,6 @@ class RunHandle:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         with self._serve._changed:
             need_stop = self._result_event is None and not self._serve._ended
-            need_idle_sync = (
-                self._result_event is not None
-                and not self._result_event.get("launcher_ends")
-                and not self._idle_after_result
-                and not self._serve._ended
-            )
         if need_stop:
             self.stop(force=False)
             if exc_type is not None:
@@ -204,24 +192,17 @@ class RunHandle:
                     pass
             else:
                 self.wait()
-        elif need_idle_sync:
-            if exc_type is not None:
-                try:
-                    self.wait(timeout=10.0)
-                except ServeError:
-                    pass
-            else:
-                self.wait()
 
 
 class Serve:
-    """`vehicle_sil_launch serve <config>` as a resident child process (standard library only)."""
+    """`vehicle_sil_launch serve [--once] <config>` as a resident child process (standard library only)."""
 
     def __init__(
         self,
         launcher: Union[str, os.PathLike],
         config: Union[str, os.PathLike],
         *,
+        once: bool = False,
         control: bool = False,
         address: str = "0",
         credentials: Optional[Union[str, os.PathLike]] = None,
@@ -236,8 +217,13 @@ class Serve:
         events_stall_ms: Optional[int] = None,
         arguments: Sequence[str] = (),
         cwd: Optional[Union[str, os.PathLike]] = None,
+        env: Optional[Mapping[str, str]] = None,
+        stdout: Optional[Any] = subprocess.PIPE,
         stderr: Optional[Any] = None,
         keep_logs: bool = True,
+        keep_log_skeleton: bool = False,
+        start_new_session: bool = False,
+        wait_ready: bool = True,
         startup_timeout: float = 30.0,
     ) -> None:
         if not control:
@@ -258,6 +244,8 @@ class Serve:
                 raise TypeError(f"{opt_name} must be an int")
 
         command: List[str] = [os.fspath(launcher), "serve"]
+        if once:
+            command.append("--once")
         if control:
             command += ["--control", address]
             if credentials is not None:
@@ -282,15 +270,18 @@ class Serve:
             command += ["--events-stall-ms", str(events_stall_ms)]
         command += list(arguments) + ["--", os.fspath(config)]
 
+        self.command: List[str] = command
         self.events: List[dict] = []
         self.bad_lines: List[bytes] = []
         self._keep_logs = keep_logs
+        self._keep_log_skeleton = keep_log_skeleton
         self._changed = threading.Condition()
         self._write_lock = threading.Lock()
         self._next_id = 1
         self._hello: Optional[dict] = None
         self._ready = False
-        self._idle = False
+        self._latest_status: Optional[dict] = None
+        self._active_run_id: Optional[str] = None
         self._ended = False
         self._closed = False
         self._startup_result: Optional[dict] = None
@@ -299,29 +290,44 @@ class Serve:
         self._run_starts: Dict[int, dict] = {}
         self._command_refusals: Dict[int, dict] = {}
         self._runs: Dict[str, RunHandle] = {}
-        self._awaiting_idle: Optional[RunHandle] = None
         self._temp_files: set[str] = set()
         self._stderr_chunks: List[str] = []
+
+        popen_kwargs: Dict[str, Any] = {}
+        if start_new_session:
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            else:
+                popen_kwargs["start_new_session"] = True
 
         try:
             self._process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=stdout,
                 stderr=stderr,
                 cwd=os.fspath(cwd) if cwd is not None else None,
+                env=None if env is None else dict(env),
+                **popen_kwargs,
             )
         except OSError as exc:
             raise ServeError(f"cannot start {os.fspath(launcher)}: {exc}") from exc
 
-        self._reader = threading.Thread(target=self._read, name="vehicle_sil_launch serve events", daemon=True)
-        self._reader.start()
+        self._reader: Optional[threading.Thread] = None
+        if stdout == subprocess.PIPE:
+            self._reader = threading.Thread(target=self._read, name="vehicle_sil_launch serve events", daemon=True)
+            self._reader.start()
+        else:
+            self._ended = True
         self._stderr_reader: Optional[threading.Thread] = None
         if stderr == subprocess.PIPE:
             self._stderr_reader = threading.Thread(
                 target=self._read_stderr, name="vehicle_sil_launch serve stderr", daemon=True
             )
             self._stderr_reader.start()
+
+        if not wait_ready:
+            return
 
         deadline = time.monotonic() + startup_timeout
         timed_out = False
@@ -355,6 +361,7 @@ class Serve:
 
     def _read(self) -> None:
         try:
+            assert self._process.stdout is not None
             for line in self._process.stdout:
                 if not line.endswith(b"\n"):
                     break
@@ -368,25 +375,26 @@ class Serve:
                     etype = event.get("event")
                     if self._keep_logs or etype != "log":
                         self.events.append(event)
+                    elif self._keep_log_skeleton:
+                        self.events.append({k: event.get(k) for k in ("event", "seq", "t_ms", "run") if k in event})
                     run_id = event.get("run")
                     if etype == "hello":
                         self._hello = event
-                    elif etype == "idle":
-                        self._ready = True
-                        self._idle = True
-                        if self._awaiting_idle is not None:
-                            self._awaiting_idle._idle_after_result = True
-                            self._awaiting_idle = None
-                    elif etype == "prepare":
-                        cmd_id = event.get("id")
-                        if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
-                            self._prepare_replies[cmd_id] = event
                     elif etype == "status":
+                        self._ready = True
+                        self._latest_status = event
                         cmd_id = event.get("id")
                         if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
                             self._status_replies[cmd_id] = event
+                    elif etype == "prepare":
+                        self._ready = True
+                        if isinstance(event.get("status"), dict):
+                            self._latest_status = event["status"]
+                        cmd_id = event.get("id")
+                        if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
+                            self._prepare_replies[cmd_id] = event
                     elif etype == "run_start" and run_id:
-                        self._idle = False
+                        self._active_run_id = run_id
                         handle = RunHandle(self, run_id, event)
                         self._runs[run_id] = handle
                         cmd_id = event.get("id")
@@ -394,7 +402,11 @@ class Serve:
                             self._run_starts[cmd_id] = event
                     elif etype == "command" and run_id is None and event.get("accepted") is False:
                         cmd_id = event.get("id")
-                        if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
+                        if (
+                            isinstance(cmd_id, int)
+                            and not isinstance(cmd_id, bool)
+                            and event.get("command") in ("run", "prepare", "status", None)
+                        ):
                             self._command_refusals[cmd_id] = event
                     elif etype == "result" and run_id is None:
                         self._startup_result = event
@@ -405,9 +417,12 @@ class Serve:
                         if etype == "result":
                             handle._result_event = event
                             handle.result = event.get("result")
+                            handle.status = event.get("status")
                             handle.launcher_ends = event.get("launcher_ends")
-                            if not handle.launcher_ends:
-                                self._awaiting_idle = handle
+                            if isinstance(handle.status, dict):
+                                self._latest_status = handle.status
+                            if self._active_run_id == run_id:
+                                self._active_run_id = None
                     self._changed.notify_all()
         except (OSError, ValueError):
             pass
@@ -418,6 +433,7 @@ class Serve:
 
     def _read_stderr(self) -> None:
         try:
+            assert self._process.stderr is not None
             for line in self._process.stderr:
                 text = line.decode("utf-8", "replace")
                 with self._changed:
@@ -426,16 +442,30 @@ class Serve:
             pass
 
     @property
+    def process(self) -> subprocess.Popen:
+        return self._process
+
+    @property
     def hello(self) -> dict:
         with self._changed:
-            return dict(self._hello or {})
+            if self._hello is not None:
+                return dict(self._hello)
+        return dict(self.wait_event("hello", timeout=30.0))
 
     @property
     def instance(self) -> str:
         with self._changed:
-            if not self._hello or "launcher" not in self._hello:
-                raise ServeError("hello event has no launcher instance ID")
-            return self._hello["launcher"]
+            hello = self._hello
+        if hello is None:
+            hello = self.wait_event("hello", timeout=30.0)
+        if not hello or "launcher" not in hello:
+            raise ServeError("hello event has no launcher instance ID")
+        return hello["launcher"]
+
+    @property
+    def latest_status(self) -> Optional[dict]:
+        with self._changed:
+            return dict(self._latest_status) if self._latest_status is not None else None
 
     @property
     def pid(self) -> int:
@@ -449,6 +479,67 @@ class Serve:
     def stderr_text(self) -> str:
         with self._changed:
             return "".join(self._stderr_chunks)
+
+    def snapshot(self) -> List[dict]:
+        with self._changed:
+            return list(self.events)
+
+    def window(self, run_id: str) -> List[dict]:
+        with self._changed:
+            return [e for e in self.events if e.get("run") == run_id]
+
+    def wait_for(
+        self,
+        condition: Callable[[dict], bool],
+        what: str = "event",
+        timeout: float = 60.0,
+        after: Optional[Mapping[str, Any]] = None,
+    ) -> dict:
+        """Wait for the first event after `after` (by `seq`) satisfying `condition`."""
+        deadline = time.monotonic() + timeout
+        after_seq = -1 if after is None else after["seq"]
+        with self._changed:
+            start = 0
+            while True:
+                for index in range(start, len(self.events)):
+                    e = self.events[index]
+                    if e.get("seq", -1) > after_seq and condition(e):
+                        return e
+                start = len(self.events)
+                if self._ended:
+                    raise ServeError(f"vehicle_sil_launch serve events ended without {what}")
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise ServeError(f"no {what} within {timeout} s")
+                self._changed.wait(min(left, 1.0))
+
+    def wait_event(
+        self,
+        event: str,
+        timeout: float = 60.0,
+        after: Optional[Mapping[str, Any]] = None,
+        **keys: Any,
+    ) -> dict:
+        return self.wait_for(
+            lambda e: e.get("event") == event and all(e.get(k) == v for k, v in keys.items()),
+            f"{event} {keys or ''}",
+            timeout,
+            after,
+        )
+
+    def ready(self, timeout: float = 60.0) -> dict:
+        """Wait until the launcher has emitted its initial status and has no active run in flight."""
+        deadline = time.monotonic() + timeout
+        with self._changed:
+            while True:
+                if self._hello is not None and self._ready and self._active_run_id is None and self.events:
+                    return self.events[-1]
+                if self._startup_result is not None or self._ended:
+                    raise ServeError("vehicle_sil_launch serve ended before becoming ready")
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise ServeError(f"vehicle_sil_launch serve did not become ready within {timeout} s")
+                self._changed.wait(min(left, 1.0))
 
     def _next_command_id(self) -> int:
         if self._closed or self._ended:
@@ -485,17 +576,18 @@ class Serve:
         disable: Sequence[str] = (),
         enable: Sequence[str] = (),
         manual: Sequence[str] = (),
+        id: Optional[int] = None,
         timeout: float = 30.0,
     ) -> dict:
         """Prepare the configuration (`prepare` command) and return the `prepare` reply event."""
         if variant is not None and (not isinstance(variant, str) or not variant):
             raise ValueError("variant must be a non-empty string")
-        disable_list = _validate_name_sequence(disable, "disable")
-        enable_list = _validate_name_sequence(enable, "enable")
-        manual_list = _validate_name_sequence(manual, "manual")
+        disable_list = validate_name_sequence(disable, "disable")
+        enable_list = validate_name_sequence(enable, "enable")
+        manual_list = validate_name_sequence(manual, "manual")
 
         with self._changed:
-            cmd_id = self._next_command_id()
+            cmd_id = self._next_command_id() if id is None else id
 
         payload: Dict[str, Any] = {"command": "prepare", "id": cmd_id}
         if variant is not None:
@@ -531,10 +623,10 @@ class Serve:
                 self._prepare_replies.pop(cmd_id, None)
                 self._command_refusals.pop(cmd_id, None)
 
-    def status(self, timeout: float = 30.0) -> dict:
+    def status(self, timeout: float = 30.0, *, id: Optional[int] = None) -> dict:
         """Query the current `ExecutionStatus` (`status` command) and return the `status` event."""
         with self._changed:
-            cmd_id = self._next_command_id()
+            cmd_id = self._next_command_id() if id is None else id
 
         line_bytes = _encode_ndjson({"command": "status", "id": cmd_id})
         self._write_line(line_bytes)
@@ -577,12 +669,13 @@ class Serve:
         stop_at_ms: Optional[int] = None,
         late_tolerance_ms: Optional[int] = None,
         timeline: Optional[Union[str, os.PathLike]] = None,
+        id: Optional[int] = None,
         timeout: float = 60.0,
     ) -> RunHandle:
         """Start one simulation run (`run` command) and return its `RunHandle`."""
-        disable_list = _validate_name_sequence(disable, "disable")
-        enable_list = _validate_name_sequence(enable, "enable")
-        manual_list = _validate_name_sequence(manual, "manual")
+        disable_list = validate_name_sequence(disable, "disable")
+        enable_list = validate_name_sequence(enable, "enable")
+        manual_list = validate_name_sequence(manual, "manual")
 
         has_request = request is not None
         has_intent = intent is not None
@@ -656,7 +749,7 @@ class Serve:
                 intent_dict["late_tolerance_ms"] = late_tolerance_ms
 
         with self._changed:
-            cmd_id = self._next_command_id()
+            cmd_id = self._next_command_id() if id is None else id
 
         base_payload: Dict[str, Any] = {"command": "run", "id": cmd_id}
         if timeline is not None:
@@ -735,6 +828,30 @@ class Serve:
 
         return run_handle
 
+    def close_input(self) -> None:
+        """Close stdin (EOF shutdown) without waiting for the child process."""
+        with self._write_lock:
+            if self._process.stdin is not None and not self._process.stdin.closed:
+                try:
+                    self._process.stdin.close()
+                except OSError:
+                    pass
+
+    def wait(self, timeout: float = 60.0) -> int:
+        """Wait for the launcher child process to exit and return its exit code."""
+        try:
+            self._process.wait(timeout)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait()
+            raise ServeError(f"vehicle_sil_launch serve did not end within {timeout} s: it was killed") from None
+        if self._reader is not None:
+            self._reader.join(10.0)
+        if self._stderr_reader is not None:
+            self._stderr_reader.join(10.0)
+        assert self._process.returncode is not None
+        return self._process.returncode
+
     def __enter__(self) -> "Serve":
         return self
 
@@ -748,12 +865,7 @@ class Serve:
                 return self._process.poll()
             self._closed = True
 
-        with self._write_lock:
-            if self._process.stdin is not None and not self._process.stdin.closed:
-                try:
-                    self._process.stdin.close()
-                except OSError:
-                    pass
+        self.close_input()
 
         try:
             self._process.wait(timeout)
@@ -761,12 +873,13 @@ class Serve:
             self._process.kill()
             self._process.wait()
 
-        self._reader.join(10.0)
-        if not self._reader.is_alive() and self._process.stdout is not None:
-            try:
-                self._process.stdout.close()
-            except OSError:
-                pass
+        if self._reader is not None:
+            self._reader.join(10.0)
+            if not self._reader.is_alive() and self._process.stdout is not None:
+                try:
+                    self._process.stdout.close()
+                except OSError:
+                    pass
         if self._stderr_reader is not None:
             self._stderr_reader.join(10.0)
             if not self._stderr_reader.is_alive() and self._process.stderr is not None:

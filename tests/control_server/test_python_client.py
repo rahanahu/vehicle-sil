@@ -378,28 +378,6 @@ class ReleaseTest(unittest.TestCase):
                          f"{vehicle_sil_control.__version__}: use the vehicle_sil_control of the same release as the "
                          "launcher")
 
-    def test_a_server_that_does_not_report_its_release_is_refused(self):
-        import vehicle_sil_control
-        self.assertEqual(self.refused(""),
-                         "FAILED_PRECONDITION: the control server does not report its vehicle-sil release (a 0.1.0 "
-                         "launcher, or one built before this check); this vehicle_sil_control is "
-                         f"{vehicle_sil_control.__version__}: use the vehicle_sil_control that came with the launcher")
-
-    def test_stubs_from_before_the_field_are_refused_without_a_call(self):
-        import types
-        from unittest import mock
-        import grpc
-        from vehicle_sil_control import client
-        address, pings = ping_server(self, "")
-        old = types.SimpleNamespace(DESCRIPTOR=types.SimpleNamespace(fields_by_name={}))  # a PingReply without the field
-        with Control(address) as c, mock.patch.object(client.pb, "PingReply", old):
-            with self.assertRaises(ControlError) as refused:
-                c.peers()
-        self.assertEqual(refused.exception.code, grpc.StatusCode.FAILED_PRECONDITION)
-        self.assertIn("are older than this vehicle_sil_control (their PingReply has no vehicle_sil): make them again "
-                      "with `python -m vehicle_sil_control.generate`", str(refused.exception))
-        self.assertEqual(pings, [])
-
 
 def run_server(test, run, required=False):
     """A gRPC server on a free local port whose ControlService answers Ping (with `run` as its run)

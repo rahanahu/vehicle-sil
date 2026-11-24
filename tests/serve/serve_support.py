@@ -1,21 +1,7 @@
 # SPDX-License-Identifier: MIT
-"""vehicle_sil_launch serve as a child process, for the tests of tests/serve (standard library only).
-
-- Serve: starts `vehicle_sil_launch serve <file>`, writes commands to its standard input, reads its events on a
-  thread of its own, waits for idle, run_start and result, sends signals, and collects the exit code.
-- cold(): the same request as one `vehicle_sil_launch run --json` of its own (a new process), for the comparison.
-- Scratch: a directory of the test's own with request files, configuration files and behaviour files.
-- resources(): what a launcher holds on Linux (descriptors, threads, child processes, listening sockets, RSS).
-
-The names that the launcher's documentation settles (the verb, the hello's format, the exit codes, the reasons of a
-refusal, the variable of the delay of the fault injection) are the constants below, one place each.
-
-Environment (CMake sets it, tests/serve/CMakeLists.txt): VEHICLE_SIL_LAUNCH_EXE, VEHICLE_SIL_TEST_ECU,
-VEHICLE_SIL_EXAMPLE_DIR (the build's examples/), VEHICLE_SIL_SERVE_SCRATCH, VEHICLE_SIL_SERVE_LIN_MASTER and
-VEHICLE_SIL_SERVE_LIN_SLAVE, VEHICLE_SIL_SERVE_RUNS_1 and VEHICLE_SIL_SERVE_RUNS_10 (how many Runs the repetitions
-make), VEHICLE_SIL_SERVE_FAULT_DELAY (ON when the launcher was built with the delay of its close),
-VEHICLE_SIL_SERVE_ASAN (ON when built with AddressSanitizer), and the factor
-of the waits (VEHICLE_SIL_TEST_TIMEOUT_SCALE, else VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT).
+"""Test support for `tests/serve`: thin wrapper around `vehicle_sil_control.Serve` adding only
+fault-injection helpers (`send_raw`, `signal`, `kill`), `Cold` baseline runner, and Linux `/proc`
+resource inspection (standard library only).
 """
 from __future__ import annotations
 
@@ -28,42 +14,46 @@ import signal
 import socket
 import subprocess
 import sys
-import threading
 import time
 import unittest
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Dict, List, Optional
 
-# --- The names of the contract -------------------------------------------------------------------------------
-SERVE_VERB = "serve"
-# hello: the key of the format and its value for serve (None: any number; run --events writes 2).
-HELLO_FORMAT_KEY = "vehicle_sil_events"
-SERVE_EVENTS_FORMAT: Optional[int] = None
-HELLO_LAUNCHER_KEY = "launcher"  # the launcher's instance (16 hexadecimal digits)
-RUN_KEY = "run"  # the key that names the Run on a line and in a command
-EXIT_IDLE_EOF = 0  # the end of standard input while idle
-EXIT_INTERRUPTED = 130  # a signal, the end of input during a Run, a closed output
-EXIT_USAGE = 4  # a usage error at the start (trace included)
-EXIT_CONTAMINATED = 6  # the launcher ended after a Run it could not close (launcher_ends)
-REASON_RUN_REQUIRED = "run-required"
-REASON_RUN_CHANGED = "run-changed"
-REASON_BUSY = "busy"
-REASON_NOT_PREPARED = "not-prepared"
-REASON_CONTAMINATED = "contaminated"
-# The fault injection of a test build: how long the launcher sleeps before it closes its own SIL Kit connections.
-FAULT_DELAY_ENV = "VEHICLE_SIL_FAULT_CLOSE_DELAY_MS"
-FAULT_CLOSE_TIMEOUT_ENV = "VEHICLE_SIL_FAULT_CLOSE_TIMEOUT_MS"
-TRACE_ENV = "VEHICLE_SIL_TRACE"
-# The gRPC metadata of the Run (also in vehicle_sil_control).
-RUN_METADATA = "vehicle-sil-run"
-# ---------------------------------------------------------------------------------------------------------------
-
-EXE = ".exe" if os.name == "nt" else ""
-WINDOWS = os.name == "nt"
-
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_PYTHON_DIR = str(_REPO_ROOT / "python")
+if _PYTHON_DIR not in sys.path:
+    sys.path.insert(0, _PYTHON_DIR)
 _COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
 if _COMMON_DIR not in sys.path:
     sys.path.insert(0, _COMMON_DIR)
+
 from timeout_scale import timeout_scale as _timeout_scale  # noqa: E402
+from vehicle_sil_control.protocol import (  # noqa: E402
+    EVENTS_FORMAT as SERVE_EVENTS_FORMAT,
+    EXIT_CONTAMINATED,
+    EXIT_IDLE_EOF,
+    EXIT_INTERRUPTED,
+    EXIT_USAGE,
+    HELLO_FORMAT_KEY,
+    HELLO_LAUNCHER_KEY,
+    REASON_BUSY,
+    REASON_CONTAMINATED,
+    REASON_NOT_PREPARED,
+    REASON_RUN_CHANGED,
+    REASON_RUN_REQUIRED,
+    RUN_KEY,
+    serve_run_payload as run_command,
+)
+from vehicle_sil_control.serve import Serve as _SdkServe, ServeError  # noqa: E402
+
+SERVE_VERB = "serve"
+FAULT_DELAY_ENV = "VEHICLE_SIL_FAULT_CLOSE_DELAY_MS"
+FAULT_CLOSE_TIMEOUT_ENV = "VEHICLE_SIL_FAULT_CLOSE_TIMEOUT_MS"
+TRACE_ENV = "VEHICLE_SIL_TRACE"
+RUN_METADATA = "vehicle-sil-run"
+
+EXE = ".exe" if os.name == "nt" else ""
+WINDOWS = os.name == "nt"
 
 try:
     SCALE = _timeout_scale()
@@ -103,10 +93,6 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-class ServeError(AssertionError):
-    """The launcher did not do what the test waited for (the message says what it wrote)."""
-
-
 class Scratch:
     """A directory of the test's own (emptied when it is made)."""
 
@@ -143,6 +129,7 @@ def read_json(path: os.PathLike) -> dict:
 
 # --- Cold: one run --json ---------------------------------------------------------------------------------------
 
+
 class Cold:
     """One `vehicle_sil_launch run --json` with the same configuration, request and timeline as a serve Run."""
 
@@ -153,17 +140,28 @@ class Cold:
         self.stderr = stderr
 
 
-def cold(launch: os.PathLike, config: os.PathLike, request: Optional[os.PathLike] = None,
-         timeline: Optional[os.PathLike] = None, arguments: Sequence[str] = (), env: Optional[Mapping] = None,
-         timeout: float = 120.0) -> Cold:
+def cold(
+    launch: os.PathLike,
+    config: os.PathLike,
+    request: Optional[os.PathLike] = None,
+    timeline: Optional[os.PathLike] = None,
+    arguments: Sequence[str] = (),
+    env: Optional[Mapping] = None,
+    timeout: float = 120.0,
+) -> Cold:
     command = [os.fspath(launch), "run", "--json", *arguments]
     if request is not None:
         command += ["--request", os.fspath(request)]
     if timeline is not None:
         command += ["--timeline", os.fspath(timeline)]
     command += ["--", os.fspath(config)]
-    done = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=scaled(timeout),
-                          env=None if env is None else dict(env))
+    done = subprocess.run(
+        command,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=scaled(timeout),
+        env=None if env is None else dict(env),
+    )
     try:
         result = json.loads(done.stdout)
     except ValueError:
@@ -172,245 +170,129 @@ def cold(launch: os.PathLike, config: os.PathLike, request: Optional[os.PathLike
     return Cold(done.returncode, result, tl, done.stderr.decode("utf-8", "replace"))
 
 
-# --- serve ------------------------------------------------------------------------------------------------------
+# --- Serve test wrapper over vehicle_sil_control.Serve ----------------------------------------------------------
 
-class Serve:
-    """`vehicle_sil_launch serve [arguments] <config>` as a child process (in a process group of its own, so that a
-    signal the test sends reaches the launcher only, as Ctrl+C in its terminal would).
 
-    `events` keeps every line of its standard output (log lines too, unless keep_logs=False); `bad_lines` the lines
-    that are no JSON. `stderr_text` its standard error. A last line without a line end is left out (the launcher
-    was killed)."""
+class RunRecord:
+    """One serve Run: its ID, its run_start and result lines, the lines of its window and its timeline file."""
 
-    _ids = itertools.count(1000)
+    def __init__(self, run: str, start: dict, result_event: dict, window: List[dict], timeline: Optional[dict]):
+        self.run = run
+        self.start = start
+        self.result_event = result_event
+        self.result = result_event.get("result") or {}
+        self.status = result_event.get("status")
+        self.window = window
+        self.timeline = timeline
 
-    def __init__(self, launch: os.PathLike, config: os.PathLike, arguments: Sequence[str] = (), *,
-                 env: Optional[Mapping] = None, cwd: Optional[os.PathLike] = None, keep_logs: bool = True,
-                 stdout=subprocess.PIPE):
-        self.command = [os.fspath(launch), SERVE_VERB, *arguments, "--", os.fspath(config)]
-        self.events: List[dict] = []
-        self.bad_lines: List[bytes] = []
-        self.stderr_text = ""
-        self._keep_logs = keep_logs
-        self._changed = threading.Condition()
-        self._ended = False
-        options: Dict = {}
-        if WINDOWS:
-            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            options["start_new_session"] = True
-        self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=stdout, stderr=subprocess.PIPE,
-                                        cwd=None if cwd is None else os.fspath(cwd),
-                                        env=None if env is None else dict(env), **options)
-        self._reader = None
-        if stdout == subprocess.PIPE:
-            self._reader = threading.Thread(target=self._read, name="serve events", daemon=True)
-            self._reader.start()
-        else:
-            self._ended = True
-        self._stderr_reader = threading.Thread(target=self._read_stderr, name="serve stderr", daemon=True)
-        self._stderr_reader.start()
+    @property
+    def launcher_ends(self) -> bool:
+        return bool(self.result_event.get("launcher_ends"))
 
-    # The reading threads.
-    def _read(self) -> None:
-        try:
-            for line in self.process.stdout:
-                if not line.endswith(b"\n"):
-                    break
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    with self._changed:
-                        self.bad_lines.append(line)
-                    continue
-                with self._changed:
-                    if self._keep_logs or event.get("event") != "log":
-                        self.events.append(event)
-                    else:
-                        # The stream checks need every seq: keep a log line's skeleton.
-                        self.events.append({k: event.get(k) for k in ("event", "seq", "t_ms", RUN_KEY) if k in event})
-                    self._changed.notify_all()
-        except (OSError, ValueError):
-            pass
-        finally:
-            with self._changed:
-                self._ended = True
-                self._changed.notify_all()
 
-    def _read_stderr(self) -> None:
-        try:
-            for line in self.process.stderr:
-                with self._changed:
-                    self.stderr_text += line.decode("utf-8", "replace")
-        except (OSError, ValueError):
-            pass
+class Serve(_SdkServe):
+    """Thin test wrapper around `vehicle_sil_control.Serve` adding fault-injection (`send_raw`, `signal`)
+    and `scaled()` timeouts."""
 
-    # Waiting for lines.
-    def wait_for(self, condition: Callable[[dict], bool], what: str, timeout: float = 60.0,
-                 after: Optional[Mapping] = None) -> dict:
-        """The first line after `after` (by seq) for which condition() holds. ServeError if the stream ends or the
-        (scaled) time is over first."""
-        deadline = time.monotonic() + scaled(timeout)
-        after_seq = -1 if after is None else after["seq"]
-        with self._changed:
-            start = 0
-            while True:
-                for index in range(start, len(self.events)):
-                    e = self.events[index]
-                    if e.get("seq", -1) > after_seq and condition(e):
-                        return e
-                start = len(self.events)
-                if self._ended:
-                    raise ServeError(f"the launcher's events ended without {what}{self._tail()}")
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise ServeError(f"no {what} within {scaled(timeout):.0f} s{self._tail()}")
-                self._changed.wait(min(left, 1.0))
-
-    def wait_event(self, event: str, timeout: float = 60.0, after: Optional[Mapping] = None, **keys) -> dict:
-        return self.wait_for(lambda e: e.get("event") == event and all(e.get(k) == v for k, v in keys.items()),
-                             f"{event} {keys or ''}", timeout, after)
+    def __init__(
+        self,
+        launch: os.PathLike,
+        config: os.PathLike,
+        arguments: Sequence[str] = (),
+        *,
+        once: bool = False,
+        env: Optional[Mapping] = None,
+        cwd: Optional[os.PathLike] = None,
+        keep_logs: bool = True,
+        stdout=subprocess.PIPE,
+    ):
+        if not WINDOWS:
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                if signal.getsignal(sig) == signal.SIG_IGN:
+                    signal.signal(sig, signal.SIG_DFL)
+        super().__init__(
+            launch,
+            config,
+            once=once,
+            arguments=arguments,
+            env=env,
+            cwd=cwd,
+            stdout=stdout,
+            stderr=subprocess.PIPE,
+            keep_logs=keep_logs,
+            keep_log_skeleton=not keep_logs,
+            start_new_session=True,
+            wait_ready=False,
+        )
+        self._next_id = 1000
 
     def _tail(self, count: int = 8) -> str:
         lines = [json.dumps(e)[:300] for e in self.events[-count:]]
         err = self.stderr_text.strip()[-1500:]
-        return ("\n--- last events ---\n" + "\n".join(lines) + ("\n--- stderr ---\n" + err if err else "")
-                + f"\n--- exit code: {self.process.poll()}")
+        return (
+            "\n--- last events ---\n"
+            + "\n".join(lines)
+            + ("\n--- stderr ---\n" + err if err else "")
+            + f"\n--- exit code: {self.process.poll()}"
+        )
 
-    @property
-    def hello(self) -> dict:
-        return self.wait_event("hello", timeout=30)
+    def wait_for(
+        self,
+        condition: Callable[[dict], bool],
+        what: str = "event",
+        timeout: float = 60.0,
+        after: Optional[Mapping] = None,
+    ) -> dict:
+        try:
+            return super().wait_for(condition, what, timeout=scaled(timeout), after=after)
+        except ServeError as exc:
+            raise ServeError(f"{exc}{self._tail()}") from None
 
-    @property
-    def instance(self) -> str:
-        return self.hello[HELLO_LAUNCHER_KEY]
+    def ready(self, timeout: float = 60.0) -> dict:
+        try:
+            return super().ready(timeout=scaled(timeout))
+        except ServeError as exc:
+            raise ServeError(f"{exc}{self._tail()}") from None
 
-    def wait_idle(self, after: Optional[Mapping] = None, timeout: float = 60.0) -> dict:
-        return self.wait_event("idle", timeout, after)
-
-    def snapshot(self) -> List[dict]:
-        with self._changed:
-            return list(self.events)
-
-    def last(self) -> Optional[dict]:
-        with self._changed:
-            return self.events[-1] if self.events else None
-
-    # Writing commands.
     def send(self, command: Mapping) -> None:
+        """Fault-injection raw JSON line write to stdin."""
         self.send_raw((json.dumps(command) + "\n").encode())
 
     def send_raw(self, data: bytes) -> None:
-        """Bytes on the launcher's standard input in one write (several commands in one write, a part of one)."""
-        try:
-            self.process.stdin.write(data)
-            self.process.stdin.flush()
-        except (BrokenPipeError, ValueError, OSError):
-            pass
+        """Fault-injection raw bytes write to stdin (e.g. batched or malformed commands)."""
+        with self._write_lock:
+            if self.process.stdin is None or self.process.stdin.closed:
+                return
+            try:
+                self.process.stdin.write(data)
+                self.process.stdin.flush()
+            except (BrokenPipeError, ValueError, OSError):
+                pass
 
-    def run(self, request: Optional[os.PathLike] = None, timeline: Optional[os.PathLike] = None,
-            id: Optional[int] = None, intent: Optional[Mapping] = None) -> int:
-        """Sends a run command; returns its id (the run_start carries it)."""
-        id = next(self._ids) if id is None else id
-        self.send(run_command(request, timeline, id, intent=intent))
-        return id
-
-    def prepare(self, variant: Optional[str] = None, disable: Sequence[str] = (), enable: Sequence[str] = (),
-                manual: Sequence[str] = (), id: Optional[int] = None, timeout: float = 60.0) -> dict:
-        """Sends a prepare command and waits for its prepare reply."""
-        id = next(self._ids) if id is None else id
-        cmd: dict = {"command": "prepare", "id": id}
-        if variant is not None:
-            cmd["variant"] = variant
-        if disable:
-            cmd["disable"] = list(disable)
-        if enable:
-            cmd["enable"] = list(enable)
-        if manual:
-            cmd["manual"] = list(manual)
-        self.send(cmd)
-        return self.wait_event("prepare", timeout=timeout, id=id)
-
-    def status(self, id: Optional[int] = None, timeout: float = 60.0) -> dict:
-        """Sends a status command and waits for its status reply."""
-        id = next(self._ids) if id is None else id
-        self.send({"command": "status", "id": id})
-        return self.wait_event("status", timeout=timeout, id=id)
-
-    def stop(self, run: str, force: Optional[bool] = None, id: Optional[int] = None) -> int:
-        """Sends a stop command; returns its id."""
-        id = next(self._ids) if id is None else id
-        cmd: dict = {"command": "stop", "run": run, "id": id}
-        if force is not None:
-            cmd["force"] = force
-        self.send(cmd)
-        return id
-
-    def run_started(self, id: int, after: Optional[Mapping] = None, timeout: float = 60.0) -> dict:
-        """The run_start of the run command `id`; ServeError if the launcher refused it."""
-        e = self.wait_for(lambda e: e.get("id") == id and (e.get("event") == "run_start" or
-                                                           (e.get("event") == "command" and e.get("accepted") is False)),
-                          f"run_start of the run command {id}", timeout, after)
-        if e["event"] != "run_start":
-            raise ServeError(f"the run command {id} was refused: {json.dumps(e)}")
-        return e
-
-    def result_of(self, run: str, timeout: float = 120.0) -> dict:
-        return self.wait_for(lambda e: e.get("event") == "result" and e.get(RUN_KEY) == run,
-                             f"the result of Run {run}", timeout)
-
-    def run_once(self, request: Optional[os.PathLike] = None, timeline: Optional[os.PathLike] = None,
-                 timeout: float = 120.0, idle: bool = True, intent: Optional[Mapping] = None) -> "RunRecord":
-        """One Run from idle to its result, and to the next idle unless the launcher ends (idle=False: does not wait
-        for that idle)."""
-        before = self.ready(timeout)
-        id = self.run(request, timeline, intent=intent)
-        start = self.run_started(id, after=before, timeout=timeout)
-        run = start[RUN_KEY]
-        result = self.result_of(run, timeout)
-        if idle and not result.get("launcher_ends"):
-            self.wait_idle(after=result, timeout=timeout)
+    def run_once(
+        self,
+        request: Optional[os.PathLike] = None,
+        timeline: Optional[os.PathLike] = None,
+        timeout: float = 120.0,
+        intent: Optional[Mapping] = None,
+    ) -> RunRecord:
+        """Execute one Run via `vehicle_sil_control.Serve.start()` and `RunHandle.wait()`."""
+        self.ready(timeout)
+        handle = self.start(
+            request=request,
+            timeline=timeline,
+            intent=intent,
+            timeout=scaled(timeout),
+        )
+        handle.wait(timeout=scaled(timeout))
+        res_ev = handle.result_event
+        assert res_ev is not None
         tl = read_json(timeline) if timeline is not None and os.path.exists(timeline) else None
-        return RunRecord(run, id, start, result, self.window(run), tl)
-
-    def ready(self, timeout: float = 60.0) -> dict:
-        """The idle that follows the last Run (waits for it): the launcher takes a run command now."""
-        with self._changed:
-            boundary = None
-            for e in reversed(self.events):
-                if e.get("event") == "idle" and boundary is None:
-                    return e
-                if e.get("event") in ("run_start", "result"):
-                    boundary = e
-                    break
-        return self.wait_idle(after=boundary, timeout=timeout)
-
-    def window(self, run: str) -> List[dict]:
-        with self._changed:
-            return [e for e in self.events if e.get(RUN_KEY) == run]
-
-    # Ending.
-    def close_input(self) -> None:
-        try:
-            self.process.stdin.close()
-        except OSError:
-            pass
+        return RunRecord(handle.id, handle.start_event, res_ev, self.window(handle.id), tl)
 
     def signal(self, number: int) -> None:
-        """Sends a signal to the launcher alone (POSIX)."""
+        """Send a POSIX signal to the launcher process."""
         os.kill(self.process.pid, number)
-
-    def wait(self, timeout: float = 60.0) -> int:
-        """Waits for the launcher to end; its exit code. ServeError (after killing it) if it does not end in time."""
-        try:
-            self.process.wait(scaled(timeout))
-        except subprocess.TimeoutExpired:
-            self.kill()
-            raise ServeError(f"the launcher did not end within {scaled(timeout):.0f} s: it was killed{self._tail()}") from None
-        if self._reader is not None:
-            self._reader.join(scaled(10))
-        self._stderr_reader.join(scaled(10))
-        return self.process.returncode
 
     def kill(self) -> None:
         if self.process.poll() is None:
@@ -426,68 +308,18 @@ class Serve:
         except subprocess.TimeoutExpired:
             pass
 
-    def close(self) -> Optional[int]:
-        """Ends the launcher if it still runs (the end of its input, then a kill) and closes the pipes."""
-        if self.process.poll() is None:
-            self.close_input()
-            try:
-                self.process.wait(scaled(60))
-            except subprocess.TimeoutExpired:
-                self.kill()
-        if self._reader is not None:
-            self._reader.join(10)
-            if not self._reader.is_alive() and self.process.stdout:
-                self.process.stdout.close()
-        self._stderr_reader.join(10)
-        if not self._stderr_reader.is_alive() and self.process.stderr:
-            self.process.stderr.close()
-        if self.process.stdin:
-            try:
-                self.process.stdin.close()
-            except OSError:
-                pass
-        return self.process.returncode
-
-    def __enter__(self) -> "Serve":
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.close()
-
-
-def run_command(request: Optional[os.PathLike] = None, timeline: Optional[os.PathLike] = None,
-                id: Optional[int] = None, intent: Optional[Mapping] = None) -> dict:
-    command: dict = {"command": "run"}
-    if id is not None:
-        command["id"] = id
-    if request is not None:
-        command["request"] = pathlib.Path(request).as_posix()
-    if intent is not None:
-        command["intent"] = dict(intent)
-    if timeline is not None:
-        command["timeline"] = pathlib.Path(timeline).as_posix()
-    return command
-
-
-class RunRecord:
-    """One serve Run: its ID, the id of its run command, its run_start and result lines, the lines of its window and
-    its timeline file (None if it has none)."""
-
-    def __init__(self, run: str, id: int, start: dict, result_event: dict, window: List[dict], timeline: Optional[dict]):
-        self.run = run
-        self.id = id
-        self.start = start
-        self.result_event = result_event
-        self.result = result_event.get("result") or {}
-        self.window = window
-        self.timeline = timeline
-
-    @property
-    def launcher_ends(self) -> bool:
-        return bool(self.result_event.get("launcher_ends"))
+    def wait(self, timeout: float = 60.0) -> int:
+        try:
+            return super().wait(timeout=scaled(timeout))
+        except ServeError:
+            self.kill()
+            raise ServeError(
+                f"the launcher did not end within {scaled(timeout):.0f} s: it was killed{self._tail()}"
+            ) from None
 
 
 # --- Linux: what a process holds --------------------------------------------------------------------------------
+
 
 def descendants(pid: int) -> List[int]:
     """The processes below `pid` (Linux; [] elsewhere)."""
@@ -521,8 +353,7 @@ def descendants(pid: int) -> List[int]:
             stat = (entry / "stat").read_text()
         except OSError:
             continue
-        # pid (comm) state ppid ...: comm can hold spaces and parentheses.
-        fields = stat[stat.rfind(")") + 2:].split()
+        fields = stat[stat.rfind(")") + 2 :].split()
         parent[int(entry.name)] = int(fields[1])
     out: List[int] = []
     wanted = {pid}
@@ -552,8 +383,8 @@ def _listening_inodes() -> set:
 
 
 def resources(pid: int, *, check_listen: bool = True) -> Optional[dict]:
-    """What the process `pid` holds now (Linux): descriptors, threads, RSS and anonymous memory (KiB), the processes
-    below it, the TCP sockets it listens on. None elsewhere, or if the process has gone."""
+    """What the process `pid` holds now (Linux): descriptors, threads, RSS and anonymous memory (KiB),
+    child processes, listening TCP sockets."""
     base = pathlib.Path(f"/proc/{pid}")
     if not base.is_dir():
         return None
@@ -579,15 +410,26 @@ def resources(pid: int, *, check_listen: bool = True) -> Optional[dict]:
     if check_listen and socket_inodes:
         listening = _listening_inodes()
         listen = sum(1 for inode in socket_inodes if inode in listening)
-    return {"fds": len(fds), "threads": values.get("Threads"), "rss_kb": values.get("VmRSS"),
-            "anon_kb": values.get("RssAnon"), "vm_kb": values.get("VmSize"), "descendants": len(descendants(pid)),
-            "listen": listen}
+    return {
+        "fds": len(fds),
+        "threads": values.get("Threads"),
+        "rss_kb": values.get("VmRSS"),
+        "anon_kb": values.get("RssAnon"),
+        "vm_kb": values.get("VmSize"),
+        "descendants": len(descendants(pid)),
+        "listen": listen,
+    }
 
 
-def settled_resources(pid: int, baseline: Mapping, keys: Iterable[str] = ("fds", "threads", "descendants", "listen"),
-                      timeout: float = 5.0, *, check_listen: bool = True) -> dict:
-    """resources(pid), taken again for a short while until `keys` are back at `baseline` (a thread or a descriptor of
-    the last Run may still be on its way out right after idle). The last one taken."""
+def settled_resources(
+    pid: int,
+    baseline: Mapping,
+    keys: Iterable[str] = ("fds", "threads", "descendants", "listen"),
+    timeout: float = 5.0,
+    *,
+    check_listen: bool = True,
+) -> dict:
+    """resources(pid), polled briefly until `keys` settle back to `baseline`."""
     active_keys = tuple(k for k in keys if check_listen or k != "listen")
     deadline = time.monotonic() + scaled(timeout)
     while True:
