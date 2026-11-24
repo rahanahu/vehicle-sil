@@ -54,7 +54,8 @@ def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool)
                 found = children(gui.proc.pid)
                 status, body = await c.get("api/session")
                 session = body.get("session") or {}
-                return (len(found) == 1 and session.get("id") == 1
+                sid = session.get("id")
+                return (len(found) == 1 and isinstance(sid, str) and sid.endswith("-1")
                         and (session.get("launcher") or {}).get("pid") == found[0])
             assert await until_async(the_run_alone), children(gui.proc.pid)
             launchers = children(gui.proc.pid)
@@ -74,28 +75,29 @@ def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool)
 def test_stop_is_idempotent_and_answers_with_the_summary(tmp_path: Path) -> None:
     with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         async def main(c: Client) -> None:
-            status, body = await c.post("api/stop")  # nothing runs: not an error
-            assert status == 200 and body == {"session": None}
+            _, app = await c.get("api/app")
+            inst = app["instance"]
+            status, body = await c.post("api/stop-session", {"run_id": f"{inst}-1", "instance": inst, "force": False})
+            assert status == 409 and body["error"]["code"] == "session-changed"
             sock = await c.ws()
             await sock.until(is_synced)
-            status, body = await c.post("api/run", {"file": "forever.yaml"})
-            assert status == 200 and body["session"]["stop"] == "none" and body["session"]["launcher"]["running"]
+            status, r1 = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 200 and r1["run_id"]
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-            replies = await asyncio.gather(*(c.post("api/stop", {"force": False}) for _ in range(3)))
-            assert all(s == 200 and b["session"]["stop"] == "requested" for s, b in replies), replies
-            # A stop without a body and without Content-Type (what a plain fetch sends) is a stop too.
-            async with c.http.post(f"{gui.base}/api/stop", headers=gui.headers()) as r:
-                assert r.status == 200 and (await r.json())["session"]["stop"] == "requested"
+            target = {"run_id": r1["run_id"], "instance": r1["instance"]}
+            replies = await asyncio.gather(*(c.post("api/stop-session", {**target, "force": False}) for _ in range(3)))
+            assert all(s == 200 and b == target for s, b in replies), replies
             got = await sock.until(is_ended)
             assert len(event_messages(sock.received, "command")) == 1  # one stop reached the launcher
             end = got[-1]["session"]
-            assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "mode": "cold",
-                                       "process_alive": False, "exit_code": 0, "signal": None, "silent_s": None}
-            status, body = await c.post("api/stop", {"force": True})  # ended: the summary, nothing sent
-            assert status == 200 and body["session"]["snapshot_rev"] > end["snapshot_rev"]
-            assert {**without_variables(body["session"]), "snapshot_rev": end["snapshot_rev"]} == end
-            for bad in ({"force": "yes"}, {"force": 1}):
-                status, body = await c.post("api/stop", bad)
+            assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "mode": "hot",
+                                       "process_alive": True, "exit_code": None, "signal": None, "silent_s": None}
+            status, body = await c.post("api/stop-session", {**target, "force": True})  # ended: ack, nothing sent
+            assert status == 200 and body == target
+            _, s_body = await c.get("api/session")
+            assert without_variables(s_body["session"]) == end
+            for bad in ({**target, "force": "yes"}, {**target, "force": 1}):
+                status, body = await c.post("api/stop-session", bad)
                 assert status == 400 and body["error"]["code"] == "invalid-field"
         run_async(main, gui)
 
@@ -105,18 +107,19 @@ def test_force_stops_a_launcher_that_waits(tmp_path: Path) -> None:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "ignore-stop.yaml"})
+            _, r1 = await c.post("api/run", {"file": "ignore-stop.yaml"})
+            target = {"run_id": r1["run_id"], "instance": r1["instance"]}
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-            status, body = await c.post("api/stop", {})
-            assert body["session"]["stop"] == "requested"
+            status, body = await c.post("api/stop-session", {**target, "force": False})
+            assert status == 200 and body == target
             await sock.until(lambda m: m.get("event", {}).get("command") == "stop")
             await sock.until(lambda m: m.get("event", {}).get("event") == "participant"
                              and m["event"].get("name") == "Logger"
                              and m["event"].get("state") == "stop_requested")
             status, body = await c.get("api/session")
             assert body["session"]["state"] == "running"  # this launcher waits after the first stop
-            replies = await asyncio.gather(*(c.post("api/stop", {"force": True}) for _ in range(3)))
-            assert all(b["session"]["stop"] == "forced" for _, b in replies)
+            replies = await asyncio.gather(*(c.post("api/stop-session", {**target, "force": True}) for _ in range(3)))
+            assert all(s == 200 and b == target for s, b in replies)
             got = await sock.until(is_ended)
             # Engine and Dashboard end when asked; Logger (it ignores SIGTERM) is killed by the second stop
             assert [p["state"] for p in got[-1]["session"]["participants"]] == ["ended", "ended", "killed"]
@@ -129,39 +132,42 @@ def test_force_without_a_stop_first_sends_two(tmp_path: Path) -> None:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "ignore-stop.yaml"})
+            _, r1 = await c.post("api/run", {"file": "ignore-stop.yaml"})
+            target = {"run_id": r1["run_id"], "instance": r1["instance"]}
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-            status, body = await c.post("api/stop", {"force": True})
-            assert body["session"]["stop"] == "forced"
+            status, body = await c.post("api/stop-session", {**target, "force": True})
+            assert status == 200 and body == target
             got = await sock.until(is_ended)
             assert got[-1]["session"]["result"]["result"] == "stopped"
-            assert len(event_messages(sock.received, "command")) == 2
+            assert len(event_messages(sock.received, "command")) == 1
         run_async(main, gui)
 
 
 def test_a_stop_while_the_run_starts_stops_it_once_started(tmp_path: Path) -> None:
-    # The stop has to come while the names are checked: that window is scaled.
     check_ms = str(round(scaled(1.5) * 1000))
     with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50", "REPLAY_CHECK_DELAY_MS": check_ms}) as gui:
         async def main(c: Client) -> None:
+            _, app = await c.get("api/app")
+            inst = app["instance"]
             sock = await c.ws()
             await sock.until(is_synced)
-            run = asyncio.create_task(c.post("api/run", {"file": "forever.yaml"}))  # checks the names first
+            run = asyncio.create_task(c.post("api/run", {"file": "forever.yaml"}))
 
-            async def checking() -> bool:  # the launcher that checks the names has started
+            async def checking() -> bool:
                 return bool(children(gui.proc.pid))
             assert await until_async(checking)
-            status, body = await c.post("api/stop", {"force": False})
-            assert status == 200 and body == {"session": None}  # no run yet: the one starting gets the stop
-            status, body = await run
-            assert status == 200 and body["session"]["stop"] == "requested", body
+            status, body = await c.post("api/stop-session", {"run_id": f"{inst}-1", "instance": inst, "force": False})
+            assert status == 409 and body["error"]["code"] == "session-changed"
+            status, r1 = await run
+            assert status == 200 and r1["run_id"] == f"{inst}-1", r1
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": inst, "force": False})
             got = await sock.until(is_ended, timeout=15)
             assert got[-1]["session"]["result"]["result"] == "stopped"
             assert len(event_messages(sock.received, "command")) == 1
             # The next run does not inherit the stop.
-            status, body = await c.post("api/run", {"file": "forever.yaml"})
-            assert status == 200 and body["session"]["stop"] == "none"
-            await c.post("api/stop", {"force": True})
+            status, r2 = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 200 and r2["run_id"] == f"{inst}-2"
+            await c.post("api/stop-session", {"run_id": r2["run_id"], "instance": inst, "force": True})
             await sock.until(is_ended, timeout=15)
         run_async(main, gui)
 

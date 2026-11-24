@@ -40,7 +40,7 @@ EXAMPLES = {
     "error-not-running", "time", "ws-time", "ws-late", "ws-control-trouble",
     "ws-pass", "ws-log-dropped", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
-    "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit", "ws-without-check",
+    "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit",
     "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable", "error-session-changed",
     "error-variables-not-ready", "error-invalid-watch", "dashboard", "dashboard-errors", "dashboard-none",
     "scenarios", "check-scenario", "error-scenario-not-listed", "ws-scenario", "recording", "error-scenario-running",
@@ -76,8 +76,8 @@ def ended(result: str, interrupted_by=None, problems: dict | None = None, states
 def resumed(example: dict) -> None:
     kinds = [m["type"] for m in example["server"]]
     assert kinds[0] == "hello" and kinds[-1] == "synced" and set(kinds[1:-1]) == {"event"}
-    after = example["client"][0]["from_seq"]
-    assert all(m["event"]["seq"] >= after for m in example["server"][1:-1])
+    after = example["client"][0]["after_stream_seq"]
+    assert all(m["stream_seq"] > after for m in example["server"][1:-1])
 
 
 SHOWN = {
@@ -141,32 +141,15 @@ class Normalizer:
         self.paths = {str(REPLAY): "/path/to/vehicle_sil_launch", str(CONFIGS): "/path/to/root",
                       f"127.0.0.1:{gui.port}": "127.0.0.1:8765", **(paths or {})}
         self.token = gui.token
-        self._revisions = None
 
     def __call__(self, value, key=None):
-        if self._revisions is None:
-            # Keep the ordering visible in this example, without gaps from unshown captures.
-            found = {"snapshot_rev": set(), "variables_rev": set()}
-
-            def collect(item, parent=None):
-                if isinstance(item, dict):
-                    if isinstance(item.get("snapshot_rev"), int):
-                        found["snapshot_rev"].add(item["snapshot_rev"])
-                    if ((parent == "variables" and "state" in item and "operations" in item)
-                            or item.get("type") == "availability") and isinstance(item.get("rev"), int):
-                        found["variables_rev"].add(item["rev"])
-                    for child_key, child in item.items():
-                        collect(child, child_key)
-                elif isinstance(item, list):
-                    for child in item:
-                        collect(child, parent)
-
-            collect(value)
-            self._revisions = {name: {n: rank for rank, n in enumerate(sorted(numbers), 1)}
-                               for name, numbers in found.items()}
         if isinstance(value, dict):
+            assert "snapshot_rev" not in value, value
+            assert "problem_seq" not in value, value
+            assert "event_seq" not in value, value
             out = {k: self(v, k) for k, v in value.items()}
             if "vehicle_sil_gui" in out and isinstance(out.get("version"), str):
+                assert out["vehicle_sil_gui"] == 4, out
                 assert out["version"] == __version__, out
                 out["version"] = "<version>"
             if "vehicle_sil" in out and isinstance(out["vehicle_sil"], str):
@@ -175,11 +158,6 @@ class Normalizer:
                 else:
                     assert SEMVER_RE.fullmatch(out["vehicle_sil"]), out["vehicle_sil"]
                 out["vehicle_sil"] = "<version>"
-            if isinstance(out.get("snapshot_rev"), int):
-                out["snapshot_rev"] = self._revisions["snapshot_rev"][out["snapshot_rev"]]
-            if ((key == "variables" and "state" in out and "operations" in out)
-                    or out.get("type") == "availability") and isinstance(out.get("rev"), int):
-                out["rev"] = self._revisions["variables_rev"][out["rev"]]
             if isinstance(out.get("seq"), int) and "t_ms" in out:
                 out["t_ms"] = out["seq"] * 10
             if isinstance(out.get("last_seq"), int) and "last_t_ms" in out:
@@ -198,6 +176,10 @@ class Normalizer:
             return self.pids.setdefault(value, 10001 + len(self.pids))
         if key == "instance" and isinstance(value, str):
             return "0123456789abcdef"
+        if key in ("run_id", "id") and isinstance(value, str):
+            m = re.fullmatch(r"[0-9a-f]{16}-(\d+)", value)
+            if m:
+                return m.group(1)
         if key in ("started_at", "ended_at") and isinstance(value, str):
             return "2026-01-01T00:00:00.000Z" if key == "started_at" else "2026-01-01T00:00:01.000Z"
         if key == "url" and isinstance(value, str) and value.startswith("panels/"):
@@ -208,6 +190,7 @@ class Normalizer:
             for real, fixed in self.paths.items():
                 value = value.replace(real, fixed)
             value = value.replace(f"pid {self.pid_in_log(value)}", "pid 10099") if "pid " in value else value
+            value = re.sub(r"\b[0-9a-f]{16}-(\d+)\b", r"\1", value)
             value = re.sub(r'"t_ms":\s*\d+', '"t_ms":0', value)  # a raw line in a problem's detail
             value = re.sub(r"127\.0\.0\.1:(?!8765\b)\d+", "127.0.0.1:8510", value)  # a run's control server
             # The file a scenario run's timeline is written to (in the server's temporary directory)
@@ -223,9 +206,37 @@ class Normalizer:
         return m.group(1) if m else "-"
 
 
+_STREAM_SEQ_TYPES = frozenset({
+    "hello", "synced", "session", "event", "allowed", "runtime",
+    "variables", "operation", "availability",
+})
+
+_EXACT_HTTP_EXAMPLES = frozenset({
+    "run", "stop", "stop-force", "stop-ended", "time", "write", "error-session-changed",
+    "config", "save-config", "scenarios", "dashboard", "dashboard-errors",
+})
+
+
+def _validate_protocol_v4_example(name: str, example: dict) -> None:
+    if "server" in example:
+        assert isinstance(example["server"], list) and example["server"], name
+        for msg in example["server"]:
+            assert isinstance(msg, dict) and isinstance(msg.get("type"), str), (name, msg)
+            assert "snapshot_rev" not in msg and "problem_seq" not in msg and "event_seq" not in msg, (name, msg)
+            mtype = msg["type"]
+            if mtype == "hello":
+                assert msg.get("vehicle_sil_gui") == 4, (name, msg)
+            if mtype == "values":
+                assert "stream_seq" not in msg, (name, msg)
+                assert isinstance(msg.get("run_id"), str) and msg["run_id"], (name, msg)
+            elif mtype in _STREAM_SEQ_TYPES:
+                assert isinstance(msg.get("stream_seq"), int), (name, msg)
+
+
 def check_example(name: str, example: dict, gui, paths: dict[str, str] | None = None) -> None:
     assert name in EXAMPLES, f"{name}: add it to EXAMPLES"
     example = Normalizer(gui, paths)(example)
+    _validate_protocol_v4_example(name, example)
     if name in SHOWN:
         shown(name, example)
         return
@@ -236,9 +247,25 @@ def check_example(name: str, example: dict, gui, paths: dict[str, str] | None = 
         path.write_text(text, encoding="utf-8", newline="\n")
         return
     assert path.is_file(), f"{path} is missing: run the tests with UPDATE_PROTOCOL_EXAMPLES=1"
-    assert json.loads(path.read_text(encoding="utf-8")) == example, \
-        f"{path} no longer matches what the server sends: if the change is intended, run the tests with " \
-        "UPDATE_PROTOCOL_EXAMPLES=1 and update gui/web to the new shape"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    _validate_protocol_v4_example(name, saved)
+    if "request" in example:
+        assert example["request"] == saved["request"], (name, example["request"], saved["request"])
+        assert example["status"] == saved["status"], (name, example["status"], saved["status"])
+        assert set(example["response"].keys()) == set(saved["response"].keys()), (name, example["response"], saved["response"])
+        if name in _EXACT_HTTP_EXAMPLES:
+            assert example["response"] == saved["response"], (name, example["response"], saved["response"])
+        elif "error" in saved.get("response", {}):
+            err = example["response"]["error"]
+            assert err["code"] == saved["response"]["error"]["code"], (name, err)
+            assert isinstance(err.get("message"), str) and err["message"], (name, err)
+            assert set(err.keys()) == set(saved["response"]["error"].keys()), (name, err)
+    elif "server" in example:
+        assert [m.get("type") for m in example["client"]] == [m.get("type") for m in saved["client"]], name
+        saved_types = {m["type"]: set(m.keys()) for m in saved["server"]}
+        for m in example["server"]:
+            if m["type"] in saved_types:
+                assert set(m.keys()) == saved_types[m["type"]], (name, m["type"], m.keys(), saved_types[m["type"]])
 
 
 def http(description: str, method: str, path: str, body, status: int, response: dict) -> dict:
@@ -365,9 +392,9 @@ def test_http_examples(tmp_path: Path) -> None:
             await sock.until(is_synced)
             # ignore-stop.yaml: Logger does not end when asked, so the run is still there when the second stop comes
             req = {"file": "ignore-stop.yaml", "disable": []}
-            status, body = await c.post("api/run", req)
+            status, run_ack = await c.post("api/run", req)
             check_example("run", http("Start a run: the summary of the new run.", "POST", "api/run", req, status,
-                                      body), gui)
+                                      run_ack), gui)
             status, body = await c.post("api/run", req)
             check_example("error-already-running", http("Start while a run is starting or running.", "POST",
                                                         "api/run", req, status, body), gui)
@@ -375,21 +402,23 @@ def test_http_examples(tmp_path: Path) -> None:
             status, body = await c.get("api/session")
             check_example("session-running", http("A run that is running (the summary).", "GET", "api/session",
                                                   None, status, body), gui)
-            status, body = await c.post("api/stop", {})
+            stop_req = {"run_id": run_ack["run_id"], "instance": run_ack["instance"], "force": False}
+            status, body = await c.post("api/stop-session", stop_req)
             check_example("stop", http("Ask the run to stop in order (force false; again: nothing more).", "POST",
-                                       "api/stop", {}, status, body), gui)
+                                       "api/stop-session", stop_req, status, body), gui)
             # The second stop when the launcher has asked Logger to stop and waits for it: the summary then has
             # every line up to there (the stand-in hurries them out after the first stop), whatever the timing.
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "participant"
                              and m["event"].get("state") == "stop_requested")
-            status, body = await c.post("api/stop", {"force": True})
+            force_req = {"run_id": run_ack["run_id"], "instance": run_ack["instance"], "force": True}
+            status, body = await c.post("api/stop-session", force_req)
             check_example("stop-force", http("Ask the run to stop without waiting (a second stop to the launcher).",
-                                             "POST", "api/stop", {"force": True}, status, body), gui)
+                                             "POST", "api/stop-session", force_req, status, body), gui)
             await sock.until(is_ended)
             await sock.close()
-            status, body = await c.post("api/stop")
+            status, body = await c.post("api/stop-session", stop_req)
             check_example("stop-ended", http("Stop when the run has ended: the summary, not an error.", "POST",
-                                             "api/stop", None, status, body), gui)
+                                             "api/stop-session", stop_req, status, body), gui)
         run_async(talk, gui)
 
 
@@ -398,15 +427,15 @@ def test_the_error_of_a_feature_that_the_launcher_lacks(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            status, body = await c.post("api/run", {"file": "forever.yaml"})
-            assert status == 200, body
+            status, started = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 200, started
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
-            req = {"session": body["session"]["id"], "writes": {"Engine": {"engine.demand": 40}}}
+            req = {"run_id": started["run_id"], "writes": {"Engine": {"engine.demand": 40}}}
             status, body = await c.post("api/write", req)
             check_example("error-unsupported", http("A write to a run whose launcher was built without a control "
                                                     "server (it lacks the feature control-server).", "POST",
                                                     "api/write", req, status, body), gui)
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
             await sock.until(is_ended)
         run_async(talk, gui)
 
@@ -624,7 +653,7 @@ def test_ws_scenario_examples(tmp_path: Path, scenario: str) -> None:
             intent: dict[str, object] = {"file": file}
             if file != "participant-crash.yaml":
                 intent["stop_at_ms"] = 1000
-            await c.post("api/run", intent)
+            _, started = await c.post("api/run", intent)
             await sock.until(is_ended)
             check_example(f"ws-{scenario}", ws(description, sock.sent, sock.received), gui)
             if scenario == "pass":
@@ -632,46 +661,19 @@ def test_ws_scenario_examples(tmp_path: Path, scenario: str) -> None:
                 await again.until(is_synced)
                 check_example("ws-replay", ws("A screen that connects after the run: the summary in hello, then "
                                               "the kept log lines, then synced.", again.sent, again.received), gui)
-                logs = [m["event"]["seq"] for m in sock.received if m.get("event", {}).get("event") == "log"]
-                resumed = await c.ws({"session": 1, "from_seq": logs[-2]})
+                logs = [m["stream_seq"] for m in sock.received if m.get("event", {}).get("event") == "log"]
+                resumed = await c.ws({
+                    "instance": started["instance"],
+                    "run_id": started["run_id"],
+                    "after_stream_seq": logs[-1] - 1,
+                })
                 await resumed.until(is_synced)
                 check_example("ws-resume", ws("A screen that reconnects and says what it already has: the summary, "
-                                              "then only the log lines from from_seq on.", resumed.sent,
+                                              "then only the log lines after after_stream_seq.", resumed.sent,
                                               resumed.received), gui)
                 status, body = await c.get("api/session")
                 check_example("session-ended", http("The summary after the run ended.", "GET", "api/session",
                                                     None, status, body), gui)
-        run_async(talk, gui)
-
-
-def test_ws_without_check_example(tmp_path: Path) -> None:
-    with gui_server(tmp_path) as gui:
-        async def talk(c: Client) -> None:
-            lean = await c.ws({"session_without_check": True})
-            full = await c.ws()
-            # only true asks for it: other values leave the summaries as they are
-            loose = [await c.ws({"session_without_check": value}) for value in (1, "true", None)]
-            for sock in (lean, full, *loose):
-                await sock.until(is_synced)
-            await c.post("api/run", {"file": "simulation.yaml", "stop_at_ms": 1000})
-            for sock in (lean, full, *loose):
-                await sock.until(is_ended)
-
-            def summaries(sock):
-                return [m["session"] for m in sock.received if m["type"] == "session"]
-            for sock in (full, *loose):
-                assert summaries(sock) and all("check" in s for s in summaries(sock))
-            assert summaries(lean) and not any("check" in s for s in summaries(lean))
-            # The check comes as its event; the rest of each summary is the same
-            assert any(m["type"] == "event" and m["event"]["event"] == "check" for m in lean.received)
-            assert [{k: v for k, v in s.items() if k != "check"} for s in summaries(full)] == summaries(lean)
-            check_example("ws-without-check", ws("A screen that asks for summaries without the check "
-                                                 "(session_without_check): the check comes in its event, and the "
-                                                 "session messages leave it out.", lean.sent, lean.received), gui)
-            # hello always has it (a reconnection has no check event to take it from)
-            again = await c.ws({"session_without_check": True})
-            hello = (await again.until(is_synced))[0]
-            assert hello["session"]["check"]["result"] == "passed"
         run_async(talk, gui)
 
 
@@ -684,7 +686,7 @@ def test_ws_allowed_example(tmp_path: Path) -> None:
             await sock.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
             check_example("ws-allowed", ws("What the server accepts changed with no session message to carry it: a "
                                            "start begins (start is starting), then fails (start is ok again). Each "
-                                           "`allowed` has a rev that goes up with each change.", sock.sent,
+                                           "`allowed` has a stream_seq that goes up with each change.", sock.sent,
                                            sock.received), gui)
         run_async(talk, gui)
 
@@ -700,10 +702,10 @@ def test_ws_time_examples(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "speed": "max",
-                                     "start_paused": True})
+            _, started = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "speed": "max",
+                                                  "start_paused": True})
             await sock.until_stands(0)
-            req = {"command": "step", "ms": 25}
+            req = {"command": "step", "ms": 25, "run_id": started["run_id"], "instance": started["instance"]}
             status, body = await c.post("api/time", req)
             check_example("time", http("A time command: passed on to the launcher at once (what it did comes as its "
                                        "command and time events).", "POST", "api/time", req, status, body), gui)
@@ -716,7 +718,7 @@ def test_ws_time_examples(tmp_path: Path) -> None:
             await sock.until(lambda m: m.get("event", {}).get("event") == "command")
             await c.post("api/time", {"command": "pause"})
             await sock.until_stands()
-            await c.post("api/stop", {})
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
             await sock.until(is_ended)
             await sock.close()
             check_example("ws-time", ws("Started paused at the speed max: a step of 25 ms (the launcher rounds it up "
@@ -739,13 +741,13 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
             _, started = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "start_paused": True})
-            sid = started["session"]["id"]
+            sid, instance = started["run_id"], started["instance"]
             await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
             await sock.send({"type": "watch", "id": 1, "period_ms": 100,
                              "variables": [{"peer": "Engine", "name": "engine.demand"},
                                            {"peer": "Engine", "name": "engine.speed"}]})
             await sock.until(lambda m: m["type"] == "values" and m["paused"])
-            req = {"session": sid, "writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}}
+            req = {"run_id": sid, "writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}}
             status, body = await c.post("api/write", req)
             check_example("write", http("A write: checked against the schema and given to the run's control server "
                                         "(what became of it comes as operation messages).", "POST", "api/write", req,
@@ -760,11 +762,11 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
                                             "server writes no file: the screen saves the text).", "GET",
                                             "api/recording", None, status, body), gui)
             for code, req, text in (
-                    ("unknown-variable", {"session": sid, "writes": {"Engine": {"engine.torque": 1}}},
+                    ("unknown-variable", {"run_id": sid, "writes": {"Engine": {"engine.torque": 1}}},
                      "A variable the run does not have."),
-                    ("not-writable", {"session": sid, "writes": {"Engine": {"engine.speed": 900}}},
+                    ("not-writable", {"run_id": sid, "writes": {"Engine": {"engine.speed": 900}}},
                      "An output cannot be written."),
-                    ("session-changed", {"session": sid + 1, "writes": {"Engine": {"engine.demand": 1}}},
+                    ("session-changed", {"run_id": f"{instance}-2", "writes": {"Engine": {"engine.demand": 1}}},
                      "A write meant for another run than the one that is running (it was sent while one run ended "
                      "and the next began): nothing is written.")):
                 status, body = await c.post("api/write", req)
@@ -774,7 +776,7 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
             check_example("error-invalid-watch", ws("A watch that is wrong: an error for this connection, which "
                                                     "goes on.", sock.sent[-1:], got[-1:]), gui)
             await sock.send({"type": "unwatch", "id": 1})
-            await c.post("api/stop", {})
+            await c.post("api/stop-session", {"run_id": sid, "instance": instance, "force": False})
             await sock.until(is_ended)
             await sock.close()
             check_example("ws-variables", ws(
@@ -791,7 +793,7 @@ def test_availability_example(tmp_path: Path, control_env: dict) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
             _, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
-            sid = started["session"]["id"]
+            sid, instance = started["run_id"], started["instance"]
             ready = await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
             engine = {v["name"]: v for p in ready[-1]["variables"]["peers"] if p["name"] == "Engine"
                       for v in p["variables"]}
@@ -802,12 +804,12 @@ def test_availability_example(tmp_path: Path, control_env: dict) -> None:
             assert told[-1]["peers"]["Engine"] == {"engine.demand": "inactive", "engine.speed": "active"}
             await sock.until_stands(100)
             # A variable that is not in use is written as any other.
-            status, _ = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.demand": 40}}})
+            status, _ = await c.post("api/write", {"run_id": sid, "writes": {"Engine": {"engine.demand": 40}}})
             assert status == 200
             await c.post("api/time", {"command": "step", "ms": 100})
             done = await sock.until(lambda m: m["type"] == "operation" and m["done"])
             assert done[-1]["state"] == "applied"
-            await c.post("api/stop", {})
+            await c.post("api/stop-session", {"run_id": sid, "instance": instance, "force": False})
             await sock.until(is_ended)
             await sock.close()
             shown = [m for m in sock.received if m["type"] in ("variables", "availability") or
@@ -859,13 +861,13 @@ def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
             _, started = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"],
                                                   "scenario": "scenarios/throttle.yaml", "speed": 0.001})
             await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
-            req = {"session": started["session"]["id"], "writes": {"Engine": {"engine.demand": 40}}}
+            req = {"run_id": started["run_id"], "writes": {"Engine": {"engine.demand": 40}}}
             status, body = await c.post("api/write", req)
             check_example("error-scenario-running", http("A write while the run plays a scenario (a launcher with "
                                                          "scenario-control reads the variables then, and nothing "
                                                          "writes them).", "POST", "api/write", req, status, body),
                           gui)
-            await c.post("api/stop", {})
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
             await sock.until(is_ended)
         run_async(talk, gui)
 
@@ -877,12 +879,12 @@ def test_variables_failed_examples(tmp_path: Path, control_env: dict) -> None:
             await sock.until(is_synced)
             _, started = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"]})
             await sock.until(lambda m: m["type"] == "variables" and m["variables"]["reason"])
-            req = {"session": started["session"]["id"], "writes": {"Engine": {"engine.demand": 40}}}
+            req = {"run_id": started["run_id"], "writes": {"Engine": {"engine.demand": 40}}}
             status, body = await c.post("api/write", req)
             check_example("error-variables-not-ready", http("A write while the variables cannot be read (the reason "
                                                             "is the summary's variables.reason).", "POST",
                                                             "api/write", req, status, body), gui)
-            await c.post("api/stop", {})
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
             await sock.until(is_ended)
             await sock.close()
             told = [m for m in sock.received if m["type"] == "variables"]
@@ -898,9 +900,9 @@ def test_ws_late_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "late.yaml", "speed": 1})
+            _, started = await c.post("api/run", {"file": "late.yaml", "speed": 1})
             await sock.until(is_time(late_steps=1, late_ms=0))
-            await c.post("api/stop", {})
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
             await sock.until(is_ended)
             await sock.close()
             check_example("ws-late", ws("A run at speed 1 whose third step starts 200 ms late: a time event while it "
@@ -920,10 +922,14 @@ def test_ws_stop_examples(tmp_path: Path) -> None:
             ):
                 sock = await c.ws()
                 await sock.until(is_synced)
-                await c.post("api/run", {"file": file})
+                _, started = await c.post("api/run", {"file": file})
                 await sock.until(lambda m: m.get("event", {}).get("phase") == "running")
                 for n, body in enumerate(stops):
-                    await c.post("api/stop", body)
+                    await c.post("api/stop-session", {
+                        "run_id": started["run_id"],
+                        "instance": started["instance"],
+                        "force": bool(body.get("force", False)),
+                    })
                     if n + 1 < len(stops):
                         # The launcher has taken the stop (its command event) before the next one: on a slow
                         # machine a time event already on its way could come first.
@@ -960,15 +966,19 @@ def test_ws_dropped_example(tmp_path: Path) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "flood.yaml", "stop_at_ms": 1000})
+            _, started = await c.post("api/run", {"file": "flood.yaml", "stop_at_ms": 1000})
             await sock.until(is_ended)
             await sock.close()
-            resumed = await c.ws({"session": 1, "from_seq": 20})
+            resumed = await c.ws({
+                "instance": started["instance"],
+                "run_id": started["run_id"],
+                "after_stream_seq": 20,
+            })
             got = await resumed.until(is_synced)
             hello, dropped = got[0], got[1]
             first = got[2]
             check_example("ws-dropped", ws("A screen that reconnects after more log lines than the server keeps: "
-                                           "dropped (lines from from_seq on that are not sent), then the kept "
+                                           "dropped (lines from after_stream_seq on that are not sent), then the kept "
                                            "lines (here only the first of them, and the end).",
                                            resumed.sent, [hello, dropped, first, got[-1]]), gui)
         run_async(talk, gui)

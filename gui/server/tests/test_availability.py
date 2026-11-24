@@ -102,9 +102,9 @@ def test_the_summary_has_each_variables_state_and_a_change_is_told_once() -> Non
         assert told(sent) == []  # not at once: the changes of a short time go together
         await tick(loop, TOLD_TOGETHER_S)
         # Of the peer, every variable that reports, by name.
-        assert len(told(sent)) == 1 and told(sent)[0]["rev"] > 0
-        assert {k: v for k, v in told(sent)[0].items() if k != "rev"} == {
-            "type": "availability", "session": 7,
+        assert len(told(sent)) == 1
+        assert told(sent)[0] == {
+            "type": "availability", "run_id": "7",
             "peers": {"Engine": {"io.lamp": "active", "io.fog": "inactive", "io.out": "inactive"}}}
         # The control server sends it again now and then: nothing changed, nothing is told.
         v.on_availability("Engine", "a", DECIDED)
@@ -285,7 +285,7 @@ def test_a_variable_not_in_use_is_written_and_watched_as_any_other() -> None:
         v, source, _ = make()
         v.on_availability("Engine", "a", DECIDED)
         await tick(loop, 1)
-        writes, at_ns, late = v.check_write({"session": 7, "writes": {"Engine": {"io.fog": 3}}})
+        writes, at_ns, late = v.check_write({"run_id": 7, "writes": {"Engine": {"io.fog": 3}}})
         await v.write(writes, at_ns, late)
         assert source.written == [[("Engine", "io.fog", 3)]]
         source.values["Engine"] = ListSample("a", 30 * MS, 3, [1, 1, 3, 6, 900])

@@ -14,8 +14,8 @@ from vehicle_sil_gui.allowed import Facts
 from vehicle_sil_gui.hub import Client, Hub, encode
 from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, check_disable, check_enable,
                                      check_fields, check_manual, check_params, check_speed, check_strict,
-                                     check_time_command, check_variant, command_line, request_text, run_command,
-                                     speed_argument, write_request_file, hide_request, hide_request_in_line,
+                                     check_time_command, check_variant, command_line, request_text, serve_command,
+                                     serve_run_command, speed_argument, write_request_file, hide_request,
                                      REQUEST_FIELDS)
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
@@ -26,8 +26,29 @@ def line(event: str, seq: int, **fields) -> str:
     return json.dumps({"event": event, "seq": seq, "t_ms": seq, **fields})
 
 
+def _feed_line(self: Session, text: str) -> list[dict]:
+    size = len(text.encode("utf-8", "surrogatepass"))
+    try:
+        ev = json.loads(
+            text,
+            parse_constant=lambda c: (_ for _ in ()).throw(ValueError(c)),
+            parse_float=lambda s: float(s) if math.isfinite(float(s)) else (_ for _ in ()).throw(ValueError(s)),
+        )
+    except (ValueError, RecursionError):
+        return self.bad_line(text)
+    if not isinstance(ev, dict) or not isinstance(ev.get("event"), str):
+        return self.bad_line(text)
+    return self.feed_event(ev, size)
+
+
+import math  # noqa: E402
+Session.feed_line = _feed_line  # type: ignore[attr-defined]
+
+
 def new_session(**limits) -> Session:
-    return Session(1, "simulation.yaml", [], None, False, limits=Limits(**limits))
+    s = Session("1", "simulation.yaml", [], None, False, limits=Limits(**limits))
+    s.next_stream_seq = lambda: (s.last_seq if s.last_seq is not None else 0)
+    return s
 
 
 def kinds(messages: list[dict]) -> list[str]:
@@ -39,7 +60,7 @@ def kinds(messages: list[dict]) -> list[str]:
 
 def test_session_follows_the_events() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2, pid=42))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4, pid=42))
     check = {"participants": [{"name": "A", "required": True, "enabled": True, "variables": []},
                               {"name": "B", "required": False, "enabled": False, "variables": None}]}
     s.feed_line(line("check", 1, check=check))
@@ -69,7 +90,7 @@ def test_session_follows_the_events() -> None:
     assert summary["participants"] == [{"name": "B", "state": "disabled"},
                                        {"name": "A", "state": "ended", "pid": 7, "command": ["a"], "log": None,
                                         "exit_code": 3, "signal": None}]
-    assert summary["findings"] == [{"severity": "error", "code": "participant-failed", "message": "m", "event_seq": 6}]
+    assert summary["findings"] == [{"severity": "error", "code": "participant-failed", "message": "m"}]
     assert summary["registry"] == {"uri": "silkit://x"}
     assert summary["last_command"] == {"seq": 9, "command": "stop", "accepted": True}
     assert summary["result"] == {"result": "failed"} and summary["problems"] == []
@@ -78,7 +99,7 @@ def test_session_follows_the_events() -> None:
 
 def test_only_the_last_state_of_the_launcher_is_kept() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     assert s.summary()["launcher_state"] is None
     first = {"rev": 1, "phase": "starting", "allowed": {"pause": {"ok": True, "reason": None}}}
     out = s.feed_line(line("state", 1, **first))
@@ -93,7 +114,7 @@ def test_only_the_last_state_of_the_launcher_is_kept() -> None:
     # too large to keep: it is shown now, the one kept stays, and the server says so once
     big = {"rev": 4, "allowed": {}, "outside": ["x" * 5000]}
     small = new_session(state_bytes=1000)
-    small.feed_line(line("hello", 0, vehicle_sil_events=2))
+    small.feed_line(line("hello", 0, vehicle_sil_events=4))
     small.feed_line(line("state", 1, rev=1, allowed={}))
     out = small.feed_line(line("state", 2, **big))
     assert kinds(out) == ["error:kept-limit", "event"] and small.summary()["launcher_state"]["rev"] == 1
@@ -101,7 +122,7 @@ def test_only_the_last_state_of_the_launcher_is_kept() -> None:
 
 def test_the_command_event_returns_the_id_and_the_reason() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     s.feed_line(line("command", 1, command="step", accepted=False, message="m", reason="not-paused", id=7))
     assert s.summary()["last_command"] == {"seq": 1, "command": "step", "accepted": False, "message": "m",
                                            "reason": "not-paused", "id": 7}
@@ -148,17 +169,18 @@ def test_allowed_says_what_this_server_takes() -> None:
     assert s.summary()["allowed"]["start"]["message"] == "no launcher"
 
 
-def test_allowed_has_a_number_that_goes_up_with_each_change_only() -> None:
+def test_allowed_reflects_stop_and_facts_changes() -> None:
     s = new_session()
     first = s.summary()["allowed"]
-    assert s.summary()["allowed"]["rev"] == first["rev"] and s.allowed()["rev"] == first["rev"]  # unchanged
+    assert "rev" not in first
+    assert s.summary()["allowed"] == first and s.allowed() == first  # unchanged
     s.request_stop(False)
     second = s.summary()["allowed"]
-    assert second["rev"] == first["rev"] + 1 and s.allowed()["rev"] == second["rev"]
+    assert second["stop"]["reason"] == "already-stopping" and s.allowed() == second
     s.facts = lambda: Facts(closing=True)
-    assert s.allowed()["rev"] == second["rev"] + 1
-    s.facts = Facts  # back: it is a change again, so a new number (a reader keeps the larger)
-    assert s.allowed()["rev"] == second["rev"] + 2
+    assert s.allowed()["start"]["reason"] == "shutting-down"
+    s.facts = Facts
+    assert s.allowed() == second
 
 
 def test_a_signal_is_not_an_exit_code() -> None:
@@ -206,7 +228,7 @@ NOT_FINITE = {"<1e999>": "1e999", "<-1e999>": "-1e999", "<1E400>": "1E400"}
 WRONG_VALUES = [None, True, 0, -1, 2.5, "x", "", [], [1], {}, {"a": 1}, [{"name": 1}], "\ud800", 2 ** 64, -(2 ** 64),
                 *NOT_FINITE]
 KNOWN = {
-    "hello": {"vehicle_sil_events": 2, "pid": 1},
+    "hello": {"vehicle_sil_events": 4, "pid": 1},
     "phase": {"phase": "running"},
     "check": {"check": {"participants": [{"name": "A", "required": True}]}},
     "registry": {"uri": "u"},
@@ -255,7 +277,7 @@ def test_no_field_of_the_wrong_type_stops_the_reading() -> None:
 
 def test_numbers_that_are_not_finite_are_not_events() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     for n, number in enumerate(("1e999", "-1e999", "1E400", "-0.5e+999")):
         out = s.feed_line(f'{{"event":"time","seq":{n + 1},"t_ms":0,"sim_ms":5,"actual_speed":{number}}}')
         assert kinds(out) == ["error:launcher-output"], number
@@ -266,7 +288,7 @@ def test_numbers_that_are_not_finite_are_not_events() -> None:
 
 def test_seq_and_t_ms_are_integers_javascript_reads_exactly() -> None:
     s = new_session(dropped_seqs=4, log_line_bytes=10)
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     for seq in (2 ** 63, 2 ** 64, 2 ** 53 + 1, -1):
         assert kinds(s.feed_line(line("log", seq, source="A", line="x"))) == ["error:launcher-output"], seq
     out = s.feed_line(json.dumps({"event": "log", "seq": 1, "t_ms": 2 ** 64, "source": "A", "line": "x"}))
@@ -278,7 +300,7 @@ def test_seq_and_t_ms_are_integers_javascript_reads_exactly() -> None:
 
 def test_a_known_event_of_the_wrong_shape_is_not_passed_on() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     out = s.feed_line(line("check", 1, check={"participants": 5}))
     assert kinds(out) == ["error:bad-event"] and s.summary()["check"] is None and s.last_seq == 1
     assert kinds(s.feed_line(line("log", 2, source=None, line="x"))) == ["error:bad-event"]
@@ -293,13 +315,13 @@ def test_a_different_events_format_is_reported_but_passed_on() -> None:
 
 def test_ending_without_a_result_is_reported() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     s.launcher_exited(70)
     out = s.ended()
     assert kinds(out) == ["error:no-result", "session"]
     assert s.summary()["launcher"]["exit_code"] == 70 and s.summary()["problems"][0]["detail"] == {"exit_code": 70}
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     s.feed_line(line("result", 1, result={"result": "passed"}))
     s.launcher_exited(0)
     assert kinds(s.ended(output_cut=True)) == ["error:output-left-open", "session"]
@@ -334,7 +356,7 @@ def test_junk_does_not_hide_the_servers_notices_or_the_last_stderr_lines() -> No
 
 def test_the_log_is_kept_per_source_and_bounded() -> None:
     s = new_session(log_lines_per_source=3, log_sources=2)
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     seq = 1
     for n in range(5):
         for source in ("A", "B", "C"):  # C is the third source: it shares the log of the later sources
@@ -345,21 +367,21 @@ def test_the_log_is_kept_per_source_and_bounded() -> None:
     dropped, events = s.replay(None)
     lines = [m["event"]["line"] for m in events]
     assert lines == ["A2", "B2", "C2", "A3", "B3", "C3", "A4", "B4", "C4"]  # log only, in seq order
-    assert dropped == {"type": "dropped", "session": 1, "reason": "not-kept", "log": {"A": 2, "B": 2, "*": 2},
-                       "at_least": [], "events": 0}
+    assert dropped == {"type": "dropped", "run_id": "1", "reason": "not-kept",
+                       "log": {"A": 2, "B": 2, "*": 2}, "at_least": [], "events": 0}
     assert s.summary()["log"] == {"A": {"kept": 3, "dropped": 2}, "B": {"kept": 3, "dropped": 2},
                                   "*": {"kept": 3, "dropped": 2}}
     assert s.summary()["time"]["sim_ms"] == 4
-    a3 = next(m["event"]["seq"] for m in events if m["event"]["line"] == "A3")
-    dropped, events = s.replay(a3)
+    a3 = next(m["stream_seq"] for m in events if m["event"]["line"] == "A3")
+    dropped, events = s.replay(a3 - 1)
     assert dropped is None and [m["event"]["line"] for m in events] == ["A3", "B3", "C3", "A4", "B4", "C4"]
-    dropped, events = s.replay(2)  # A0 (seq 1) is before: it was dropped, but the screen has it
+    dropped, events = s.replay(1)  # A0 (seq 1) is already received: it was dropped, but the screen has it
     assert dropped["log"] == {"A": 1, "B": 2, "*": 2}
 
 
 def test_memory_is_bounded_in_bytes() -> None:
     s = new_session(dropped_seqs=100)
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     seq = 1
     for n in range(3000):  # 3000 lines of 2 KiB from 20 sources: 6 MiB in all, 1 MiB per source at most
         s.feed_line(line("log", seq, source=f"S{n % 20}", line="x" * 2048))
@@ -403,24 +425,24 @@ def test_memory_is_bounded_in_bytes() -> None:
 
 def test_dropped_counts_are_exact_with_a_line_too_long_to_keep() -> None:
     s = new_session(log_lines_per_source=5)
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     for seq in range(1, 12):  # seq 6 is too long to keep: dropped when it comes, before 1..5
         s.feed_line(line("log", seq, source="A", line="x" * (70_000 if seq == 6 else 1)))
-    for from_seq, want in ((None, 6), (1, 6), (4, 3), (6, 1)):
-        dropped = s.replay(from_seq)[0]
-        assert dropped["log"] == {"A": want} and dropped["at_least"] == [], from_seq
-    assert s.replay(7)[0] is None
+    for after_seq, want in ((None, 6), (0, 6), (3, 3), (5, 1)):
+        dropped = s.replay(after_seq)[0]
+        assert dropped["log"] == {"A": want} and dropped["at_least"] == [], after_seq
+    assert s.replay(6)[0] is None
     small = new_session(log_lines_per_source=2, dropped_seqs=3)  # fewer recorded than dropped
-    small.feed_line(line("hello", 0, vehicle_sil_events=2))
+    small.feed_line(line("hello", 0, vehicle_sil_events=4))
     for seq in range(1, 9):  # 4 too long: dropped first; kept 7, 8; dropped 1..6
         small.feed_line(line("log", seq, source="A", line="x" * (70_000 if seq == 4 else 1)))
-    assert small.replay(4)[0]["log"] == {"A": 3} and small.replay(4)[0]["at_least"] == []  # 4, 5, 6
-    assert small.replay(3)[0]["log"] == {"A": 3} and small.replay(3)[0]["at_least"] == ["A"]
+    assert small.replay(3)[0]["log"] == {"A": 3} and small.replay(3)[0]["at_least"] == []  # 4, 5, 6
+    assert small.replay(2)[0]["log"] == {"A": 3} and small.replay(2)[0]["at_least"] == ["A"]
 
 
 def test_log_dropped_is_counted_and_kept_where_it_came() -> None:
     s = new_session(log_lines_per_source=3)
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     s.feed_line(line("log", 1, source="A", line="a1"))
     out = s.feed_line(line("log_dropped", 2, count=125, sources={"A": 120, "vehicle_sil_launch": 5}))
     assert kinds(out) == ["event"]
@@ -428,7 +450,7 @@ def test_log_dropped_is_counted_and_kept_where_it_came() -> None:
     assert s.summary()["log"] == {"A": {"kept": 2, "dropped": 120}, "vehicle_sil_launch": {"kept": 0, "dropped": 5}}
     _, events = s.replay(None)
     assert [e["event"]["seq"] for e in events] == [1, 2, 3], "the marker once, in its place"
-    _, events = s.replay(3)
+    _, events = s.replay(2)
     assert [e["event"]["seq"] for e in events] == [3]
     for n in range(4, 8):  # the marker leaves with the old lines; the counts stay
         s.feed_line(line("log", n, source="A", line=f"a{n}"))
@@ -439,7 +461,7 @@ def test_log_dropped_is_counted_and_kept_where_it_came() -> None:
 
 def test_a_launcher_that_writes_nothing_is_reported_as_silent() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     start = s.last_line_at
     assert s.check_silence(start + 4.9, 5) == []
     out = s.check_silence(start + 5.2, 5)
@@ -458,7 +480,7 @@ def test_a_launcher_that_writes_nothing_is_reported_as_silent() -> None:
 
 def test_a_participant_state_this_server_does_not_know_passes_through() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     s.feed_line(line("participant", 1, name="A", state="started", pid=7, command=["a"], log=None))
     out = s.feed_line(line("participant", 2, name="A", state="failed", reason="process_ended", message="m"))
     assert kinds(out) == ["event"]
@@ -474,7 +496,7 @@ def test_the_control_link_of_a_participant_is_kept_in_its_entry() -> None:
     """The control event (a state of the participant's link to its variables) is laid over the participant's entry
     as one field, so that a screen opened later sees it; a state this server does not know passes through."""
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     s.feed_line(line("participant", 1, name="A", state="started", pid=7))
     s.feed_line(line("participant", 2, name="A", state="joined"))
     out = s.feed_line(line("control_link", 3, name="A", state="connected", variables=17))
@@ -494,7 +516,7 @@ def test_an_event_this_server_does_not_know_is_passed_on_and_the_reading_goes_on
     """A launcher newer than this server may write events it does not know: they reach the screens as they are
     (the screen skips what it does not know), nothing is reported, and the events after them are read as usual."""
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     out = s.feed_line(line("future_thing", 1, payload={"a": [1, 2]}, note="n"))
     assert kinds(out) == ["event"] and out[0]["event"]["payload"] == {"a": [1, 2]}
     out = s.feed_line(line("phase", 2, phase="running"))
@@ -504,7 +526,7 @@ def test_an_event_this_server_does_not_know_is_passed_on_and_the_reading_goes_on
 
 def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
     s = new_session()
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     long_command = [f"--argument-{n}-" + "x" * 100 for n in range(45)]  # about 5 KiB
     out = s.feed_line(line("participant", 1, name="Engine", state="started", pid=7, command=long_command,
                            log="engine.log"))
@@ -544,13 +566,13 @@ def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
 
 def test_dropped_counts_are_exact_while_recorded() -> None:
     s = new_session(log_lines_per_source=10, dropped_seqs=20)
-    s.feed_line(line("hello", 0, vehicle_sil_events=2))
+    s.feed_line(line("hello", 0, vehicle_sil_events=4))
     for seq in range(1, 101):
         s.feed_line(line("log", seq, source="A", line=str(seq)))
     # kept: seq 91..100; dropped: 1..90, of which 71..90 recorded
-    assert s.replay(80)[0]["log"] == {"A": 11} and s.replay(80)[0]["at_least"] == []
-    assert s.replay(91)[0] is None
-    assert s.replay(50)[0]["log"] == {"A": 20} and s.replay(50)[0]["at_least"] == ["A"]
+    assert s.replay(79)[0]["log"] == {"A": 11} and s.replay(79)[0]["at_least"] == []
+    assert s.replay(90)[0] is None
+    assert s.replay(49)[0]["log"] == {"A": 20} and s.replay(49)[0]["at_least"] == ["A"]
     assert s.replay(None)[0]["log"] == {"A": 90} and s.replay(None)[0]["at_least"] == []
 
 
@@ -602,14 +624,14 @@ def run_hub(messages: list[dict], limit: int = 10, max_bytes: int = 1 << 30,
 
 
 def log_event(seq: int, source: str = "A") -> dict:
-    return {"type": "event", "session": 1, "event": {"event": "log", "seq": seq, "source": source, "line": "x"}}
+    return {"type": "event", "run_id": "1", "event": {"event": "log", "seq": seq, "source": source, "line": "x"}}
 
 
 def test_a_slow_screen_loses_log_lines_not_the_state() -> None:
     messages = [log_event(n, "A" if n % 2 else "B") for n in range(200)]
-    messages[50] = {"type": "event", "session": 1, "event": {"event": "phase", "seq": 50, "phase": "running"}}
-    messages[60] = {"type": "error", "session": 1, "code": "seq-gap", "message": "m", "detail": None}
-    messages += [{"type": "event", "session": 1, "event": {"event": "time", "seq": 200 + n, "sim_ms": n}}
+    messages[50] = {"type": "event", "run_id": "1", "event": {"event": "phase", "seq": 50, "phase": "running"}}
+    messages[60] = {"type": "error", "run_id": "1", "code": "seq-gap", "message": "m", "detail": None}
+    messages += [{"type": "event", "run_id": "1", "event": {"event": "time", "seq": 200 + n, "sim_ms": n}}
                  for n in range(30)]
     sent, client = run_hub(messages, limit=10)
     types = [m["type"] for m in sent]
@@ -619,14 +641,14 @@ def test_a_slow_screen_loses_log_lines_not_the_state() -> None:
     dropped = [m for m in sent if m["type"] == "dropped"]
     log_sent = [m for m in sent if m["type"] == "event" and m["event"]["event"] == "log"]
     assert sum(sum(d["log"].values()) for d in dropped) + len(log_sent) == 198
-    assert all(d["reason"] == "slow-client" and d["session"] == 1 for d in dropped)
+    assert all(d["reason"] == "slow-client" and d["run_id"] == "1" for d in dropped)
     times = [m["event"]["sim_ms"] for m in sent if m["type"] == "event" and m["event"]["event"] == "time"]
     assert times[-1] == 29 and times == sorted(times)
 
 
 def test_a_slow_screen_keeps_the_last_state_of_the_launcher() -> None:
     messages = [log_event(n, "A") for n in range(200)]
-    messages += [{"type": "event", "session": 1, "event": {"event": "state", "seq": 200 + n, "rev": n, "allowed": {}}}
+    messages += [{"type": "event", "run_id": "1", "event": {"event": "state", "seq": 200 + n, "rev": n, "allowed": {}}}
                  for n in range(30)]
     sent, client = run_hub(messages, limit=10)
     assert client.resyncs == 0
@@ -638,9 +660,9 @@ def test_a_slow_screen_keeps_the_last_state_of_the_launcher() -> None:
 
 def test_a_slow_screen_counts_what_the_launcher_dropped_and_loses_no_heartbeat_count() -> None:
     messages = [log_event(n, "A") for n in range(100)]
-    messages[40] = {"type": "event", "session": 1, "event": {"event": "log_dropped", "seq": 40, "count": 1005,
+    messages[40] = {"type": "event", "run_id": "1", "event": {"event": "log_dropped", "seq": 40, "count": 1005,
                                                              "sources": {"A": 1000, "B": 5}}}
-    messages[41] = {"type": "event", "session": 1, "event": {"event": "heartbeat", "seq": 41}}
+    messages[41] = {"type": "event", "run_id": "1", "event": {"event": "heartbeat", "seq": 41}}
     sent, _ = run_hub(messages, limit=10)
     dropped = [m for m in sent if m["type"] == "dropped"]
     markers = [m for m in sent if m["type"] == "event" and m["event"]["event"] == "log_dropped"]
@@ -652,9 +674,9 @@ def test_a_slow_screen_counts_what_the_launcher_dropped_and_loses_no_heartbeat_c
 
 
 def test_a_slow_screen_gets_resync_when_dropping_is_not_enough() -> None:
-    messages = [{"type": "event", "session": 1, "event": {"event": "finding", "seq": n, "severity": "note",
+    messages = [{"type": "event", "run_id": "1", "event": {"event": "finding", "seq": n, "severity": "note",
                                                            "message": "m"}} for n in range(100)]
-    messages.append({"type": "event", "session": 1, "event": {"event": "phase", "seq": 100, "phase": "after"}})
+    messages.append({"type": "event", "run_id": "1", "event": {"event": "phase", "seq": 100, "phase": "after"}})
     sent, client = run_hub(messages, limit=10)
     types = [m["type"] for m in sent]
     assert "resync" in types and client.resyncs >= 1
@@ -678,28 +700,6 @@ def test_a_message_that_cannot_be_sent_does_not_stop_the_others() -> None:
     assert [m["event"]["seq"] for m in sent if m["type"] == "event"] == [0, 2]
 
 
-def test_one_line_that_cannot_be_passed_on_does_not_stop_the_reading() -> None:
-    from conftest import CONFIGS, REPLAY
-    from vehicle_sil_gui.launcher import Launcher
-    from vehicle_sil_gui.server import GuiServer, Options
-    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="t"))
-    session = new_session()
-    sent: list[dict] = []
-    server.hub.broadcast = lambda messages, log_key=None, real=server.hub.broadcast: (
-        sent.extend(messages), real(messages, log_key))[1]
-    feed = session.feed_line
-    calls = iter([
-        lambda text: [{"type": "event", "session": 1, "event": {"event": "time", "seq": 1, "x": float("inf")}}],
-        lambda text: 1 / 0,
-    ])
-    session.feed_line = lambda text: next(calls, feed)(text)
-    server.relay(session, line("time", 1, sim_ms=1))  # a message that cannot be turned into JSON
-    server.relay(session, line("time", 2, sim_ms=2))  # an exception while reading it
-    server.relay(session, line("hello", 0, vehicle_sil_events=2))
-    assert kinds(sent[1:]) == ["error:bad-event", "error:bad-event", "event"]
-    assert "ZeroDivisionError" in sent[2]["message"]
-
-
 def test_relay_event_handles_non_finite_dict_and_feed_exceptions() -> None:
     from conftest import CONFIGS, REPLAY
     from vehicle_sil_gui.launcher import Launcher
@@ -712,13 +712,13 @@ def test_relay_event_handles_non_finite_dict_and_feed_exceptions() -> None:
         sent.extend(messages), real(messages, log_key))[1]
     feed = session.feed_event
     calls = iter([
-        lambda ev, sz: [{"type": "event", "session": 1, "event": {"event": "time", "seq": 1, "x": float("inf")}}],
+        lambda ev, sz: [{"type": "event", "run_id": "1", "event": {"event": "time", "seq": 1, "x": float("inf")}}],
         lambda ev, sz: 1 / 0,
     ])
     session.feed_event = lambda ev, sz: next(calls, feed)(ev, sz)
     server.relay_event(session, {"event": "time", "seq": 1, "t_ms": 1, "sim_ms": 1}, 40)
     server.relay_event(session, {"event": "time", "seq": 2, "t_ms": 2, "sim_ms": 2}, 40)
-    server.relay_event(session, {"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 2}, 50)
+    server.relay_event(session, {"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4}, 50)
     assert kinds(sent[1:]) == ["error:bad-event", "error:bad-event", "event"]
     assert "ZeroDivisionError" in sent[2]["message"]
 
@@ -729,7 +729,7 @@ def test_session_feed_event_parity_limits_and_zero_json_loads(monkeypatch) -> No
     s_line = new_session(log_line_bytes=20, object_bytes=80, state_bytes=60, findings_bytes=70)
     s_ev = new_session(log_line_bytes=20, object_bytes=80, state_bytes=60, findings_bytes=70)
     events = [
-        {"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 2, "pid": 12},
+        {"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4, "pid": 12},
         {"event": "log", "seq": 1, "t_ms": 1, "source": "A", "line": "ok"},
         {"event": "log", "seq": 2, "t_ms": 2, "source": "A", "line": "too long for log_line_bytes"},
         {"event": "log_dropped", "seq": 3, "t_ms": 3, "count": 2, "sources": {"A": 2}},
@@ -765,7 +765,7 @@ def test_session_feed_event_parity_limits_and_zero_json_loads(monkeypatch) -> No
 
 
 def test_messages_are_valid_utf_8() -> None:
-    sent, _ = run_hub([{"type": "event", "session": 1, "event": {"event": "log", "seq": 0, "source": "A",
+    sent, _ = run_hub([{"type": "event", "run_id": "1", "event": {"event": "log", "seq": 0, "source": "A",
                                                                  "line": "a\ud800b 日"}}])
     assert sent[2]["event"]["line"] == "a\ud800b 日"
 
@@ -1242,12 +1242,15 @@ def test_the_intent_becomes_a_request_file_and_the_launchers_arguments(tmp_path:
     # The arguments are the launcher's side only: the intent is not among them
     assert check_command(launcher, "f.yaml", request)[1:] == ["check", "--json", "--request", str(request), "--",
                                                               "f.yaml"]
-    assert run_command(launcher, "f.yaml", request)[1:] == ["run", "--events", "--stdin-commands", "--request",
-                                                           str(request), "--", "f.yaml"]
+    assert serve_command(launcher, "f.yaml")[1:] == ["serve", "--", "f.yaml"]
+    assert serve_command(launcher, "f.yaml", once=True)[1:] == ["serve", "--once", "--", "f.yaml"]
     credentials = tmp_path / "c.txt"
-    assert run_command(launcher, "f.yaml", request, credentials)[1:] == [
-        "run", "--events", "--stdin-commands", "--control", "0", "--control-credentials", str(credentials),
-        "--request", str(request), "--", "f.yaml"]
+    assert serve_command(launcher, "f.yaml", credentials, once=True)[1:] == [
+        "serve", "--once", "--control", "0", "--control-credentials", str(credentials),
+        "--", "f.yaml"]
+    assert json.loads(serve_run_command(request, command_id=1)) == {
+        "command": "run", "request": str(request), "id": 1
+    }
 
 
 def test_a_request_field_is_checked_before_anything_is_made_of_it() -> None:
@@ -1276,10 +1279,6 @@ def test_the_name_of_the_request_file_is_hidden_from_what_the_launcher_says(tmp_
                                      "message": "the request: params has a name that is not a name; variant in "
                                                 "the request"}
     assert hidden["findings"][1] == other
-    line = json.dumps({"event": "finding", **finding})
-    assert str(path) not in hide_request_in_line(line, path) and json.loads(hide_request_in_line(line, path))["line"] is None
-    assert hide_request_in_line("not JSON " + str(path) + ", line 2", path) == "not JSON the request"
-    assert hide_request_in_line('{"event":"time"}', path) == '{"event":"time"}'
 
     from vehicle_sil_gui.launcher import hide_request_in_event
     unrelated = {"event": "time", "seq": 1, "sim_ms": 10}
@@ -1471,7 +1470,7 @@ def test_allowed_run_facts_and_stop_requests_projection() -> None:
 
 
 def test_session_allowed_uses_hot_execution_status_projection() -> None:
-    s = Session(1, "simulation.yaml", [], None, False, launcher_mode="hot")
+    s = Session("1", "simulation.yaml", [], None, False, launcher_mode="hot")
     cur_status: dict | None = {"launcher_state": "running", "run_state": {"stop": {"requests": 0}}}
     s.execution_status = lambda: cur_status
 
@@ -1483,140 +1482,53 @@ def test_session_allowed_uses_hot_execution_status_projection() -> None:
     # C++ reports 2 stop requests via ExecutionStatus -> force becomes already-forced without local request_stop().
     cur_status = {"launcher_state": "running", "run_state": {"stop": {"requests": 2}}}
     a2 = s.allowed()
-    assert a2["rev"] == a1["rev"] + 1
     assert a2["stop"]["reason"] == "already-stopping"
     assert a2["force"]["reason"] == "already-forced"
 
     # C++ result arrived before session.ended(): stoppable drops to False while start stays already-running.
     cur_status = {"launcher_state": "ready", "run_state": None}
     a3 = s.allowed()
-    assert a3["rev"] == a2["rev"] + 1
     assert a3["start"]["reason"] == "already-running"
     assert a3["stop"]["reason"] == "not-running"
     assert a3["force"]["reason"] == "not-running"
-
-    # Calling allowed() again with unchanged state keeps rev stable.
-    assert s.allowed()["rev"] == a3["rev"]
+    assert s.allowed() == a3
 
 
-def test_project_runtime_status_covers_all_cpp_launcher_states() -> None:
-    from vehicle_sil_gui.runtime import project_runtime_status
+def test_serve_runtime_projected_status_covers_all_cpp_launcher_states(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from vehicle_sil_gui.runtime import ServeRuntime, _Resident
 
-    # Without serve feature -> Cold unsupported.
-    assert project_runtime_status(has_serve=False) == {
-        "mode": "cold",
-        "state": "cold",
-        "config": None,
-        "reason": "launcher-unsupported",
-        "message": "this launcher was built without serve mode: running each simulation in its own launcher",
-    }
+    rt = ServeRuntime(Launcher(Path("vehicle_sil_launch")), cwd=tmp_path)
+    assert rt.status() == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
 
-    # Transition states override live resident status.
-    assert project_runtime_status(
-        has_serve=True, resetting=True, resetting_config="a.yaml", resident_alive=True,
-    )["state"] == "resetting"
-    assert project_runtime_status(
-        has_serve=True, spawning_config="a.yaml", resident_alive=False,
-    ) == {"mode": "hot", "state": "preparing", "config": "a.yaml", "reason": None, "message": None}
-    assert project_runtime_status(
-        has_serve=True, preparing_config="a.yaml", resident_alive=True,
-    ) == {"mode": "hot", "state": "preparing", "config": "a.yaml", "reason": None, "message": None}
+    fake_proc = SimpleNamespace(returncode=None, pid=1234, stdin=None, stdout=None, stderr=None)
+    res = _Resident(config="a.yaml", want_control=False, proc=fake_proc, credentials=None, token=None)  # type: ignore[arg-type]
+    rt._resident = res
 
-    # All 6 C++ LauncherState values.
     for cpp_state, expected_state, expected_cfg in (
+        ("unprepared", "ready", "a.yaml"),
         ("preparing", "preparing", "a.yaml"),
         ("ready", "ready", "a.yaml"),
         ("running", "running", "a.yaml"),
         ("ending", "idle", None),
         ("contaminated", "idle", None),
     ):
-        st = project_runtime_status(
-            has_serve=True,
-            resident_config="a.yaml",
-            resident_alive=True,
-            execution_status={
-                "launcher_state": cpp_state,
-                "config": "a.yaml",
-                "eligibility": {"eligible": True, "reason": None, "message": None},
-                "launcher_allowed": {"prepare": {"ok": True}, "run": {"ok": True}},
-            },
-        )
-        assert st == {"mode": "hot", "state": expected_state, "config": expected_cfg, "reason": None, "message": None}
-
-    # Real C++ Idle pre-prepare or after run without prepare():
-    # eligibility.eligible is False (reason=None) while launcher_allowed.run.ok is True -> ready.
-    assert project_runtime_status(
-        has_serve=True,
-        resident_config="a.yaml",
-        resident_alive=True,
-        execution_status={
-            "launcher_state": "idle",
-            "config": "a.yaml",
-            "eligibility": {"eligible": False, "reason": None, "message": None},
-            "launcher_allowed": {"prepare": {"ok": True, "reason": None}, "run": {"ok": True, "reason": None}},
-        },
-    ) == {"mode": "hot", "state": "ready", "config": "a.yaml", "reason": None, "message": None}
-
-    # Idle with ineligible config -> cold with eligibility reason.
-    assert project_runtime_status(
-        has_serve=True,
-        resident_config="fixed.yaml",
-        resident_alive=True,
-        execution_status={
-            "launcher_state": "idle",
-            "config": "fixed.yaml",
-            "eligibility": {"eligible": False, "reason": "fixed-registry", "message": "fixed registry"},
-            "launcher_allowed": {"run": {"ok": False, "reason": "fixed-registry"}},
-        },
-    ) == {"mode": "cold", "state": "cold", "config": "fixed.yaml", "reason": "fixed-registry", "message": "fixed registry"}
-
-    # Idle with no config / run blocked -> idle (including explicit config: None with empty launcher_allowed).
-    assert project_runtime_status(
-        has_serve=True,
-        resident_alive=True,
-        execution_status={
-            "launcher_state": "idle",
-            "config": "",
-            "eligibility": {"eligible": False, "reason": None, "message": None},
-            "launcher_allowed": {"run": {"ok": False, "reason": "not-prepared"}},
-        },
-    ) == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
-    assert project_runtime_status(
-        has_serve=True,
-        resident_config="a.yaml",
-        resident_alive=True,
-        execution_status={
-            "launcher_state": "idle",
-            "config": None,
-            "launcher_allowed": {},
-        },
-    ) == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
-
-    # release_config() mid-run marks resident ending while current_run is active -> stays running until run ends.
-    assert project_runtime_status(
-        has_serve=True,
-        resident_config="a.yaml",
-        resident_alive=True,
-        resident_ending=True,
-        current_run_active=True,
-        execution_status={
-            "launcher_state": "running",
+        res.execution_status = {
+            "launcher_state": cpp_state,
             "config": "a.yaml",
             "eligibility": {"eligible": True, "reason": None, "message": None},
-            "launcher_allowed": {"prepare": {"ok": False, "reason": "busy"}, "run": {"ok": False, "reason": "busy"}},
-        },
-    ) == {"mode": "hot", "state": "running", "config": "a.yaml", "reason": None, "message": None}
-    assert project_runtime_status(
-        has_serve=True,
-        resident_config="a.yaml",
-        resident_alive=True,
-        resident_ending=True,
-        current_run_active=False,
-        execution_status={"launcher_state": "ready", "config": "a.yaml"},
-    ) == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+            "launcher_allowed": {"prepare": {"ok": True}, "run": {"ok": True}},
+        }
+        assert rt.status() == {"mode": "hot", "state": expected_state, "config": expected_cfg, "reason": None, "message": None}
 
-    # Cold fallback when no resident alive.
-    assert project_runtime_status(
-        has_serve=True,
-        cold_fallback=("a.yaml", "resident-failed", "boom"),
-    ) == {"mode": "cold", "state": "cold", "config": "a.yaml", "reason": "resident-failed", "message": "boom"}
+    res.execution_status = {
+        "launcher_state": "cold_only",
+        "config": "fixed.yaml",
+        "eligibility": {"eligible": False, "reason": "fixed-registry", "message": "fixed registry"},
+        "launcher_allowed": {"run": {"ok": False, "reason": "fixed-registry"}},
+    }
+    assert rt.status() == {"mode": "cold", "state": "cold", "config": "fixed.yaml", "reason": "fixed-registry", "message": "fixed registry"}
+
+    rt._resident = None
+    rt._once_status = ("a.yaml", "resident-failed", "boom")
+    assert rt.status() == {"mode": "cold", "state": "cold", "config": "a.yaml", "reason": "resident-failed", "message": "boom"}

@@ -11,7 +11,6 @@
   "server": [
     {
       "type": "error",
-      "stream_seq": 1,
       "run_id": null,
       "code": "invalid-watch",
       "message": "period_ms must be a whole number of milliseconds from 20 to 60000: send {\"type\":\"watch\",\"id\":1,\"variables\":\"all\",\"period_ms\":100}",

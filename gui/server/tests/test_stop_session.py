@@ -1,4 +1,4 @@
-"""A delayed stop must not affect a newer run."""
+"""A delayed stop must not affect a newer run (Protocol v4 targeted POST api/stop-session)."""
 
 import asyncio
 from pathlib import Path
@@ -13,39 +13,41 @@ def test_targeted_stop_does_not_stop_a_later_run(tmp_path: Path) -> None:
             await sock.until(is_synced)
             status, first = await c.post("api/run", {"file": "forever.yaml"})
             assert status == 200, first
-            first_id = first["session"]["id"]
+            first_id = first["run_id"]
             instance = first["instance"]
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-            status, _ = await c.post("api/stop-session", {"session": first_id, "instance": instance})
-            assert status == 200
+            status, ack = await c.post("api/stop-session", {"run_id": first_id, "instance": instance})
+            assert status == 200 and ack == {"instance": instance, "run_id": first_id}
             await sock.until(is_ended)
             status, second = await c.post("api/run", {"file": "forever.yaml"})
             assert status == 200, second
-            second_id = second["session"]["id"]
+            second_id = second["run_id"]
             assert second_id != first_id
-            status, stale = await c.post("api/stop-session", {"session": first_id, "instance": instance})
+            status, stale = await c.post("api/stop-session", {"run_id": first_id, "instance": instance})
             assert status == 409 and stale["error"]["code"] == "session-changed"
             status, current = await c.get("api/session")
             assert status == 200 and current["session"]["id"] == second_id
             assert current["session"]["stop"] == "none"
-            status, stale = await c.post("api/stop-session", {"session": second_id, "instance": "old-server"})
+            status, stale = await c.post("api/stop-session", {"run_id": second_id, "instance": "old-server"})
             assert status == 409 and stale["error"]["code"] == "session-changed"
-            status, stopped = await c.post("api/stop-session", {"session": second_id, "instance": instance})
-            assert status == 200 and stopped["session"]["stop"] == "requested"
+            status, stopped = await c.post("api/stop-session", {"run_id": second_id, "instance": instance})
+            assert status == 200 and stopped == {"instance": instance, "run_id": second_id}
             await sock.until(is_ended)
             await sock.close()
         run_async(main, gui)
 
 
-def test_targeted_stop_rejects_invalid_session_ids(tmp_path: Path) -> None:
+def test_targeted_stop_rejects_invalid_run_ids(tmp_path: Path) -> None:
     with gui_server(tmp_path) as gui:
         async def main(c: Client) -> None:
-            for value in (None, 0, -1, True, "1", 1.5):
-                status, reply = await c.post("api/stop-session", {"session": value, "instance": "x"})
+            for value in (None, 0, -1, True, "", 1.5):
+                status, reply = await c.post("api/stop-session", {"run_id": value, "instance": "x"})
                 assert status == 400 and reply["error"]["code"] == "invalid-field"
-            status, reply = await c.post("api/stop-session", {"session": 1})
+            status, reply = await c.post("api/stop-session", {"run_id": "inst-1"})
             assert status == 400 and reply["error"]["code"] == "invalid-field"
-            status, reply = await c.post("api/stop-session", {"session": 1, "instance": "x", "forse": True})
+            status, reply = await c.post("api/stop-session", {"run_id": "inst-1", "instance": "x", "forse": True})
+            assert status == 400 and reply["error"]["code"] == "invalid-field"
+            status, reply = await c.post("api/stop-session", {"session": 1, "instance": "x"})
             assert status == 400 and reply["error"]["code"] == "invalid-field"
         run_async(main, gui)
 
@@ -60,52 +62,23 @@ def test_targeted_stop_cannot_queue_a_stop_for_another_start(tmp_path: Path) -> 
             start = asyncio.create_task(c.post("api/run", {"file": "forever.yaml"}))
             await sock.until(lambda m: m.get("type") == "allowed" and
                              m.get("allowed", {}).get("start", {}).get("reason") == "starting")
-            status, stale = await c.post("api/stop-session", {"session": 999, "instance": app["instance"]})
+            status, stale = await c.post("api/stop-session", {"run_id": f"{app['instance']}-999", "instance": app["instance"]})
             assert status == 409 and stale["error"]["code"] == "session-changed"
             status, answer = await start
-            assert status == 200 and answer["session"]["stop"] == "none"
+            assert status == 200
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-            status, stopped = await c.post("api/stop-session", {"session": answer["session"]["id"], "instance": app["instance"]})
-            assert status == 200 and stopped["session"]["stop"] == "requested"
+            status, sess = await c.get("api/session")
+            assert status == 200 and sess["session"]["stop"] == "none"
+            status, stopped = await c.post("api/stop-session", {"run_id": answer["run_id"], "instance": app["instance"]})
+            assert status == 200 and stopped == {"instance": app["instance"], "run_id": answer["run_id"]}
             await sock.until(is_ended)
             await sock.close()
         run_async(main, gui)
 
 
-def test_unscoped_stop_rejects_unknown_fields_and_stops_nothing(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
+def test_removed_unscoped_stop_returns_not_found(tmp_path: Path) -> None:
+    with gui_server(tmp_path) as gui:
         async def main(c: Client) -> None:
-            sock = await c.ws()
-            await sock.until(is_synced)
-            status, run = await c.post("api/run", {"file": "forever.yaml"})
-            assert status == 200, run
-            await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-            for body in ({"session": 42, "instance": "not-this-server"}, {"forse": True}, {"force": True, "x": 1},
-                         {"force": None}):
-                status, reply = await c.post("api/stop", body)
-                assert status == 400 and reply["error"]["code"] == "invalid-field", (body, reply)
-            status, current = await c.get("api/session")
-            assert status == 200 and current["session"]["id"] == run["session"]["id"]
-            assert current["session"]["stop"] == "none"
-            status, stopped = await c.post("api/stop", {"force": False})
-            assert status == 200 and stopped["session"]["stop"] == "requested"
-            await sock.until(is_ended)
-            await sock.close()
-        run_async(main, gui)
-
-
-def test_unscoped_stop_accepts_an_empty_body_and_an_empty_object(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
-        async def main(c: Client) -> None:
-            sock = await c.ws()
-            await sock.until(is_synced)
             status, reply = await c.post("api/stop", {})
-            assert status == 200 and reply["session"] is None
-            status, run = await c.post("api/run", {"file": "forever.yaml"})
-            assert status == 200, run
-            await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-            status, stopped = await c.post("api/stop")
-            assert status == 200 and stopped["session"]["stop"] == "requested"
-            await sock.until(is_ended)
-            await sock.close()
+            assert status == 404 and reply["error"]["code"] == "not-found"
         run_async(main, gui)

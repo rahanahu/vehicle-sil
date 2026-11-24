@@ -336,11 +336,11 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
         tsan_step = next(s for s in JOBS["linux-tsan"]["steps"] if s.get("name") == "Configure, build and test")
         self.assertNotIn("VEHICLE_SIL_BATCH_UNIT_TESTS=ON", tsan_step["run"])
 
-        recordings_step = next(
-            s for s in JOBS["linux"]["steps"] if s.get("name") == "The GUI's recordings against this launcher"
+        contract_step = next(
+            s for s in JOBS["linux"]["steps"] if s.get("name") == "The GUI's Events v4 contract against this launcher"
         )
-        self.assertIn("needs.changes.outputs.ctest_filter == ''", recordings_step["if"])
-        self.assertIn("--compare version check-simulation run-simulation control-scenario-passes", recordings_step["run"])
+        self.assertIn("needs.changes.outputs.ctest_filter == ''", contract_step["if"])
+        self.assertIn("test_real_launcher_events_v4_contract_and_stub_parity", contract_step["run"])
 
     def test_ccache_maxsize_and_age_eviction_policy(self):
         self.assertIn("matrix.preset == 'linux-clang-asan' && '700M'", JOBS["linux"]["env"]["CCACHE_MAXSIZE"])

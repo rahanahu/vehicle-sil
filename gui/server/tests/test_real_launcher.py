@@ -1,12 +1,8 @@
-"""The recordings that replay_launcher.py plays, against the real launcher: record_launcher.py --compare records
-every case again with the real vehicle_sil_launch and the ecu_main example ECUs and compares them with recordings/
-(the events in order without time, log and heartbeat, their keys and JSON types, the commands, the exit code, what
-check --json and version --json print). When it differs, record again and read the diff (record_launcher.py says
-how). Also the YAML of a saved scenario, read by the real launcher's check.
+"""Real vehicle_sil_launch integration tests against the GUI server and Events v4 contract.
 
 Runs only when VEHICLE_SIL_GUI_LAUNCHER names a real vehicle_sil_launch (scripts/verify-gui.py --launcher
 <path>) and the ecu_main example ECUs are built next to it (or VEHICLE_SIL_GUI_EXAMPLES names their
-directory); otherwise every test here is skipped, with the reason. Linux only (record_launcher.py is).
+directory); otherwise every test here is skipped, with the reason. Linux only.
 """
 
 from __future__ import annotations
@@ -21,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from conftest import Client, alive, gui_server, is_ended, is_synced, run_async, scaled, wait_until
+from fake_runtime import validate_events_v4_event
 from real_configs import NETWORKS, examples_dir, executables, usable, write
 from vehicle_sil_gui import __version__
 from vehicle_sil_gui.recording import scenario_yaml
@@ -50,25 +47,25 @@ def test_real_targeted_stop_does_not_stop_the_next_run(tmp_path: Path) -> None:
         await sock.until(is_synced)
         status, first = await c.post("api/run", {"file": "forever.yaml"})
         assert status == 200, first
-        first_id, instance = first["session"]["id"], first["instance"]
+        first_id, instance = first["run_id"], first["instance"]
         await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-        status, _ = await c.post("api/stop-session", {"session": first_id, "instance": instance})
+        status, _ = await c.post("api/stop-session", {"run_id": first_id, "instance": instance})
         assert status == 200
         await sock.until(is_ended, timeout=60)
 
         status, second = await c.post("api/run", {"file": "forever.yaml"})
         assert status == 200, second
-        second_id = second["session"]["id"]
+        second_id = second["run_id"]
         assert second_id != first_id
         await sock.until(lambda m: m.get("event", {}).get("event") == "time")
-        status, stale = await c.post("api/stop-session", {"session": first_id, "instance": instance})
+        status, stale = await c.post("api/stop-session", {"run_id": first_id, "instance": instance})
         assert status == 409 and stale["error"]["code"] == "session-changed", stale
         status, current = await c.get("api/session")
         assert status == 200 and current["session"]["id"] == second_id
         assert current["session"]["stop"] == "none"
         assert alive(current["session"]["launcher"]["pid"])
-        status, stopped = await c.post("api/stop-session", {"session": second_id, "instance": instance})
-        assert status == 200 and stopped["session"]["stop"] == "requested", stopped
+        status, stopped = await c.post("api/stop-session", {"run_id": second_id, "instance": instance})
+        assert status == 200 and stopped["run_id"] == second_id, stopped
         await sock.until(is_ended, timeout=60)
         await sock.close()
 
@@ -76,10 +73,61 @@ def test_real_targeted_stop_does_not_stop_the_next_run(tmp_path: Path) -> None:
         run_async(talk, gui)
 
 
-def test_the_recordings_are_what_the_real_launcher_writes() -> None:
-    p = subprocess.run([sys.executable, str(TESTS / "record_launcher.py"), "--launcher", LAUNCHER, "--examples",
-                        str(EXAMPLES), "--compare"], capture_output=True, text=True, timeout=900)
-    assert p.returncode == 0, f"{p.stdout}{p.stderr[-6000:]}"
+def test_real_launcher_events_v4_contract_and_stub_parity(tmp_path: Path) -> None:
+    """Real vehicle_sil_launch serve emits valid Events v4 lines across hello, status, prepare, run, and result."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    proc = subprocess.Popen(
+        [str(LAUNCHER), "serve", "--", str(configs / "simulation.yaml")],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    events: list[dict] = []
+    try:
+        assert proc.stdout is not None and proc.stdin is not None
+        for _ in range(2):
+            line = proc.stdout.readline()
+            assert line, proc.stderr.read() if proc.stderr else ""
+            ev = json.loads(line)
+            validate_events_v4_event(ev)
+            events.append(ev)
+        assert [e["event"] for e in events] == ["hello", "status"]
+        proc.stdin.write(json.dumps({"command": "prepare", "id": 1}) + "\n")
+        proc.stdin.flush()
+        while True:
+            line = proc.stdout.readline()
+            assert line
+            ev = json.loads(line)
+            validate_events_v4_event(ev)
+            events.append(ev)
+            if ev["event"] == "prepare":
+                assert ev["accepted"] is True
+                break
+        req_path = tmp_path / "req.json"
+        req_path.write_text(
+            json.dumps({"vehicle_sil_run_request": 1, "speed": "max", "stop_at_ms": 100}),
+            encoding="utf-8",
+        )
+        proc.stdin.write(json.dumps({"command": "run", "request": str(req_path), "id": 2}) + "\n")
+        proc.stdin.flush()
+        while True:
+            line = proc.stdout.readline()
+            assert line
+            ev = json.loads(line)
+            validate_events_v4_event(ev)
+            events.append(ev)
+            if ev["event"] == "result":
+                assert ev["result"]["result"] == "passed"
+                assert ev["status"]["launcher_state"] == "ready"
+                break
+        proc.stdin.close()
+        assert proc.wait(timeout=RUN_TIMEOUT_S) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
 
 def test_a_saved_scenario_with_names_beyond_ascii_passes_the_real_check(tmp_path: Path) -> None:
@@ -252,7 +300,7 @@ def test_real_single_check_describes_once_per_start_and_recovers_after_failed_ch
         before = count_calls()
         st, body = await c.post("api/run", {"file": "b.yaml", "stop_at_ms": 100})
         assert st == 200, body
-        prev_id = body["session"]["id"]
+        prev_id = body["run_id"]
         await sock.until(is_ended, timeout=30)
         assert count_calls() - before == 2
 
@@ -263,7 +311,7 @@ def test_real_single_check_describes_once_per_start_and_recovers_after_failed_ch
         assert st_sess == 200 and cur["session"]["id"] == prev_id
         before = count_calls()
         st, body = await c.post("api/run", {"file": "a.yaml", "stop_at_ms": 100})
-        assert st == 200 and body["session"]["id"] == prev_id + 1, body
+        assert st == 200 and body["run_id"] != prev_id, body
         await sock.until(is_ended, timeout=30)
         assert count_calls() - before == 2
         await sock.close()

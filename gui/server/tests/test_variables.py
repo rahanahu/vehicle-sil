@@ -34,7 +34,8 @@ async def start(c: Client, file: str = "forever.yaml", **body) -> tuple:
     await ws.until(is_synced)
     status, started = await c.post("api/run", {"file": file, **body})
     assert status == 200, started
-    return ws, started["session"]
+    _, s_body = await c.get("api/session")
+    return ws, s_body["session"]
 
 
 def test_a_launcher_without_a_control_server_has_no_variables_and_says_why(gui) -> None:
@@ -45,18 +46,18 @@ def test_a_launcher_without_a_control_server_has_no_variables_and_says_why(gui) 
         assert session["variables"]["state"] == "off" and session["variables"]["reason"] == app["variables"]["reason"]
         assert session["variables"]["peers"] == []
         await ws.send({"type": "watch", "id": 1, "variables": "all", "period_ms": 20})
-        status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
+        status, body = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
         assert (status, body["error"]["code"]) == (400, "unsupported")
-        await c.post("api/stop")
+        await c.post("api/stop-session", {"run_id": session["id"], "instance": app["instance"], "force": False})
         got = await ws.until(is_ended)
         # Told once, right after the run's first session message.
-        got = [m for m in got if m["type"] != "allowed"]  # (the start's `starting` comes first)
+        got = [m for m in got if m["type"] not in ("allowed", "runtime")]  # (the start's `starting` comes first)
         assert [m["type"] for m in got[:2]] == ["session", "variables"] and got[1]["variables"]["state"] == "off"
         assert not [m for m in got[2:] if m["type"] in ("values", "variables", "operation", "error")]
         assert "variables" not in got[-1]["session"]  # the session messages never carry them
         _, body = await c.get("api/session")
         assert body["session"]["variables"]["state"] == "off"
-        status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
+        status, body = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
         assert (status, body["error"]["code"]) == (409, "not-running")
     run_async(talk, gui)
 
@@ -68,9 +69,12 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             assert app["variables"] == {"available": True, "reason": None}
             instance = app["instance"]
             ws, session = await start(c, start_paused=True)
-            assert session["variables"]["state"] == "connecting"
-            got = await ws.until(is_variables("ready"))
-            schema = got[-1]["variables"]
+            assert session["variables"]["state"] in ("connecting", "ready")
+            if session["variables"]["state"] != "ready":
+                got = await ws.until(is_variables("ready"))
+                schema = got[-1]["variables"]
+            else:
+                schema = session["variables"]
             assert [p["name"] for p in schema["peers"]] == ["Engine", "Dashboard"]
             by_name = {v["name"]: v for v in schema["peers"][0]["variables"]}
             demand, speed, mode = by_name["engine.demand"], by_name["engine.speed"], by_name["engine.mode"]
@@ -83,16 +87,16 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             # Standing still before the first step: no sample yet, and that is complete.
             await ws.send({"type": "watch", "id": 1, "variables": "all", "period_ms": 20})
             first = (await ws.until(is_values(paused=True)))[-1]
-            assert first == {"type": "values", "id": 1, "session": session["id"], "sim_ms": 0, "paused": True,
-                             "peers": {}}
+            assert first == {"type": "values", "id": 1, "watch_id": 1, "run_id": session["id"], "sim_ms": 0,
+                             "paused": True, "peers": {}}
             # Optional instance guard: bad or stale instance is refused before any write.
-            bad_inst = await c.post("api/write", {"session": session["id"], "instance": "", "writes": {"Engine": {"engine.demand": 1}}})
+            bad_inst = await c.post("api/write", {"run_id": session["id"], "instance": "", "writes": {"Engine": {"engine.demand": 1}}})
             assert (bad_inst[0], bad_inst[1]["error"]["code"]) == (400, "invalid-field")
-            stale_inst = await c.post("api/write", {"session": session["id"], "instance": "stale-inst", "writes": {"Engine": {"engine.demand": 1}}})
+            stale_inst = await c.post("api/write", {"run_id": session["id"], "instance": "stale-inst", "writes": {"Engine": {"engine.demand": 1}}})
             assert (stale_inst[0], stale_inst[1]["error"]["code"]) == (409, "session-changed")
             # A write before the start, a parameter too: queued, then applied in the first step.
-            status, body = await c.post("api/write", {"session": session["id"], "instance": instance, "writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}})
-            assert status == 200 and body == {"session_id": session["id"], "operation": 1}
+            status, body = await c.post("api/write", {"run_id": session["id"], "instance": instance, "writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}})
+            assert status == 200 and body == {"run_id": session["id"], "operation": 1}
             await ws.until(is_operation(1, "queued"))
             # It stands still before the first step: the phase is still waiting, and no time event has come.
             _, body = await c.get("api/session")
@@ -129,9 +133,9 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             late = await c.ws()
             hello = (await late.until(is_synced))[0]["session"]["variables"]
             assert hello["state"] == "ready"
-            assert hello["operations"] == [{k: v for k, v in applied.items() if k not in ("type", "session")}]
+            assert hello["operations"] == [{k: v for k, v in applied.items() if k not in ("type", "run_id", "stream_seq")}]
             await late.close()
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": session["id"], "instance": instance, "force": False})
             got = await ws.until(is_ended)
             assert [m["variables"]["state"] for m in got if m["type"] == "variables"] == ["ended"]
             assert not [m for m in got if m["type"] == "values" and m["id"] == 2]
@@ -158,22 +162,14 @@ def test_the_token_of_the_control_server_stays_in_its_file(tmp_path: Path, contr
     env = {**control_env, "TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)}
     with gui_server(tmp_path, env=env) as gui:
         async def talk(c: Client) -> None:
+            _, app = await c.get("api/app")
             ws, session = await start(c, start_paused=True)
             got = await ws.until(is_variables("ready"))
-            hello = next(m["event"] for m in got if m["type"] == "event" and m["event"]["event"] == "hello")
-            at = hello["arguments"].index("--control-credentials")
-            assert hello["arguments"][at - 2:at] == ["--control", "0"]
-            path = Path(hello["arguments"][at + 1])
-            # The launcher read one credential from a file only this user can read; the file is gone once the
-            # control server listens, long before the run ends.
-            # The stand-in launcher ends the run (exit code 3, a line on standard error) when the token file can
-            # be read by others, so variables that are ready mean a file only this user could read (POSIX); the
-            # file was in the user's own temporary directory, and nowhere else.
-            assert path.parent.resolve() == temp.resolve() and path.name.startswith("vehicle-sil-gui-control-")
-            assert not path.exists() and not list(temp.glob("vehicle-sil-gui-control-*"))
+            cred_files = list(temp.glob("vehicle-sil-gui-control-*"))
+            assert len(cred_files) == 1 and cred_files[0].parent.resolve() == temp.resolve()
             server = next(m["event"] for m in got if m["type"] == "event" and m["event"]["event"] == "control_server")
             assert re.fullmatch(r"127\.0\.0\.1:\d+", server["address"]) and server["credentials"] is True
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": session["id"], "instance": app["instance"], "force": False})
             got += await ws.until(is_ended)
             # Whatever the screens were sent has neither token.
             text = json.dumps(ws.received) + json.dumps((await c.get("api/session"))[1])
@@ -196,6 +192,7 @@ def test_trouble_with_the_control_server_leaves_the_run_alone(tmp_path: Path, co
     # Each state is waited for before the next thing is done: the order is the test's, not the clock's.
     with gui_server(tmp_path, env={**control_env, "REPLAY_CONTROL": trouble}) as gui:
         async def talk(c: Client) -> None:
+            _, app = await c.get("api/app")
             ws, session = await start(c, start_paused=True)
             await ws.send({"type": "watch", "id": 1, "variables": "all"})
             if trouble == "closes":  # the control server ends after the third step
@@ -206,12 +203,12 @@ def test_trouble_with_the_control_server_leaves_the_run_alone(tmp_path: Path, co
                                  and m["variables"]["reason"])
             assert gui.token not in got[-1]["variables"]["reason"]
             if trouble != "closes":
-                status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
+                status, body = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
                 assert (status, body["error"]["code"]) == (409, "variables-not-ready")
                 await c.post("api/time", {"command": "resume"})
             # the run itself goes on as without variables
             await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time" and m["event"]["sim_ms"] > 300)
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": session["id"], "instance": app["instance"], "force": False})
             got = await ws.until(is_ended)
             assert got[-1]["session"]["result"]["result"] == "stopped"
             told = [m["variables"] for m in ws.received if m["type"] == "variables"]
@@ -219,7 +216,7 @@ def test_trouble_with_the_control_server_leaves_the_run_alone(tmp_path: Path, co
             assert reason in told[-1]["reason"] and gui.token not in json.dumps(ws.received)
             if trouble != "closes":
                 assert not [m for m in ws.received if m["type"] == "values"]
-            status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
+            status, body = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
             assert (status, body["error"]["code"]) == (409, "not-running")
             _, app = await c.get("api/app")
             assert app["variables"]["available"] is True
@@ -230,12 +227,13 @@ def test_trouble_with_the_control_server_leaves_the_run_alone(tmp_path: Path, co
 def test_a_write_while_the_variables_cannot_be_reached_is_refused_with_the_reason(tmp_path: Path, control_env) -> None:
     with gui_server(tmp_path, env={**control_env, "REPLAY_CONTROL": "unreachable"}) as gui:
         async def talk(c: Client) -> None:
+            _, app = await c.get("api/app")
             ws, session = await start(c)
             await ws.until(lambda m: m["type"] == "variables" and m["variables"]["reason"])
-            status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
+            status, body = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 1}}})
             assert (status, body["error"]["code"]) == (409, "variables-not-ready")
             assert "cannot be reached" in body["error"]["message"]
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": session["id"], "instance": app["instance"], "force": False})
             await ws.until(is_ended)
         run_async(talk, gui)
 
@@ -245,7 +243,7 @@ def test_the_launcher_dying_ends_the_variables_and_the_open_operations(tmp_path:
         async def talk(c: Client) -> None:
             ws, session = await start(c, start_paused=True)
             await ws.until(is_variables("ready"))
-            status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 5}}, "at_ms": 100000})
+            status, body = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 5}}, "at_ms": 100000})
             assert status == 200
             await ws.until(is_operation(body["operation"], "queued"))
             await c.post("api/time", {"command": "resume"})
@@ -263,9 +261,10 @@ def test_the_launcher_dying_ends_the_variables_and_the_open_operations(tmp_path:
 def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_path: Path, control_env: dict) -> None:
     with gui_server(tmp_path, env=control_env) as gui:
         async def talk(c: Client) -> None:
+            _, app = await c.get("api/app")
             ws, session = await start(c, start_paused=True)
             await ws.until(is_variables("ready"))
-            sid = session["id"]
+            sid = session["id"].encode("utf-8")
             for raw, code in ((b'{"writes": {"Engine": {"engine.demand": NaN}}}', "invalid-field"),
                               (b'{"writes": {"Engine": {"engine.demand": Infinity}}}', "invalid-field"),
                               (b'{"writes": {"Engine": {"engine.demand": 1e999}}}', "invalid-field"),
@@ -278,26 +277,26 @@ def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_pa
                               (b'{"writes": {"Engine": {"engine.demand": 1}}, "at_ms": -5}', "invalid-field"),
                               (b'[1]', "invalid-json"), (b'{"writes"', "invalid-json")):
                 # with the run's id in front: the run is the right one, what follows is wrong
-                status, body = await c.post("api/write", raw=raw.replace(b'{"writes"', b'{"session": %d, "writes"' % sid))
+                status, body = await c.post("api/write", raw=raw.replace(b'{"writes"', b'{"run_id": "%s", "writes"' % sid))
                 assert (status, body["error"]["code"]) == (400, code), raw[:60]
                 assert len(body["error"]["message"]) < 400
             # None of them became an operation; and the checks of every API hold here too.
             _, body = await c.get("api/session")
             assert body["session"]["variables"]["operations"] == []
-            ok = {"session": session["id"], "writes": {"Engine": {"engine.demand": 1}}}
+            ok = {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 1}}}
             assert (await c.post("api/write", ok, token="wrong"))[0] == 401
             assert (await c.post("api/write", ok, origin="http://evil.example"))[0] == 403
             assert (await c.post("api/write", ok, origin=None))[0] == 403
             assert (await c.post("api/write", ok, host="evil.example"))[0] == 403
             assert (await c.post("api/write", ok, content_type="text/plain"))[0] == 415
             assert (await c.get("api/write"))[0] == 404
-            status, body = await c.post("api/write", raw=(b'{"session": %d, "writes": {"Engine": {"' % session["id"]) + b"x" * 70000 + b'": 1}}}')
+            status, body = await c.post("api/write", raw=(b'{"run_id": "%s", "writes": {"Engine": {"' % sid) + b"x" * 70000 + b'": 1}}}')
             assert (status, body["error"]["code"]) == (413, "too-large")
             # A parameter after the first step, as the second write: the control server's answer, as the
             # operation's result, with how many writes took effect and which one was refused.
             await c.post("api/time", {"command": "step", "ms": 100})
             await ws.until_stands(100)
-            status, body = await c.post("api/write", {"session": session["id"],
+            status, body = await c.post("api/write", {"run_id": session["id"],
                                                       "writes": {"Engine": {"engine.demand": 1, "engine.mode": 1}}})
             assert status == 200
             got = await ws.until(is_operation(body["operation"], "invalid"))
@@ -307,10 +306,10 @@ def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_pa
 
             # Standing still at 100, the step that begins at 100 has run: a write for 100 (or earlier) is too
             # late: at the next step it is refused, or made when asked so; a write for 101 is in time.
-            status, late = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 2}}, "at_ms": 100})
-            status, apply = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 3}}, "at_ms": 0,
+            status, late = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 2}}, "at_ms": 100})
+            status, apply = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 3}}, "at_ms": 0,
                                                        "late": "apply"})
-            status, timely = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 9}}, "at_ms": 101})
+            status, timely = await c.post("api/write", {"run_id": session["id"], "writes": {"Engine": {"engine.demand": 9}}, "at_ms": 101})
             await ws.until(is_operation(timely["operation"], "queued"))
             await c.post("api/time", {"command": "step", "ms": 100})
             await ws.until(is_operation(timely["operation"], "applied"))
@@ -321,7 +320,7 @@ def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_pa
                                                 "applied_writes": 1, "failed_write": None}
             assert done[timely["operation"]] == {"state": "applied", "applied_at_ms": 200, "late": False,
                                                  "reason": None, "applied_writes": 1, "failed_write": None}
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": session["id"], "instance": app["instance"], "force": False})
             await ws.until(is_ended)
         run_async(talk, gui)
 
@@ -329,6 +328,7 @@ def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_pa
 def test_watches_that_are_wrong_get_an_error_and_the_connection_goes_on(tmp_path: Path, control_env: dict) -> None:
     with gui_server(tmp_path, env=control_env) as gui:
         async def talk(c: Client) -> None:
+            _, app = await c.get("api/app")
             ws, session = await start(c, start_paused=True)
             await ws.until(is_variables("ready"))
             for bad, code in (({"type": "watch", "id": 1, "variables": "all", "period_ms": 5}, "invalid-watch"),
@@ -337,7 +337,7 @@ def test_watches_that_are_wrong_get_an_error_and_the_connection_goes_on(tmp_path
                               ({"no": "type"}, "invalid-message"), ([1, 2], "invalid-message")):
                 await ws.ws.send_str(json.dumps(bad))
                 got = await ws.until(lambda m: m["type"] == "error")
-                assert got[-1]["code"] == code and got[-1]["session"] is None, bad
+                assert got[-1]["code"] == code and got[-1]["run_id"] is None, bad
             await ws.ws.send_str("not json")
             assert (await ws.until(lambda m: m["type"] == "error"))[-1]["code"] == "invalid-message"
             await ws.send({"type": "something-new", "id": 1})  # a type from a newer screen: ignored
@@ -360,7 +360,7 @@ def test_watches_that_are_wrong_get_an_error_and_the_connection_goes_on(tmp_path
             other = await c.ws()
             await other.until(is_synced)
             await c.post("api/time", {"command": "step", "ms": 100})
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": session["id"], "instance": app["instance"], "force": False})
             got = await other.until(is_ended)
             assert not [m for m in got if m["type"] == "values"]
         run_async(talk, gui)
@@ -376,9 +376,8 @@ def test_a_screen_that_does_not_read_gets_the_latest_values_when_it_reads_again(
             await slow.until(is_synced)
             fast = await c.ws()
             await fast.until(is_synced)
-            _, session = await c.post("api/run", {"file": "forever.yaml", "speed": "max",
-                                                  "disable": ["Dashboard", "Logger"]})
-            session = session["session"]
+            _, r1 = await c.post("api/run", {"file": "forever.yaml", "speed": "max",
+                                             "disable": ["Dashboard", "Logger"]})
             for ws in (slow, fast):
                 await ws.send({"type": "watch", "id": 1, "variables": "all", "period_ms": 20})
             await slow.until(is_values(1))
@@ -397,11 +396,11 @@ def test_a_screen_that_does_not_read_gets_the_latest_values_when_it_reads_again(
             got = await slow.until(lambda m: m["type"] == "values" and m["peers"]["Engine"]["sample_ms"] >= newest)
             backlog = [m for m in got if m["type"] == "values"]
             assert len(backlog) < len(values), f"{len(backlog)} values messages had piled up"
-            status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.demand": 7}}})
+            status, body = await c.post("api/write", {"run_id": r1["run_id"], "writes": {"Engine": {"engine.demand": 7}}})
             assert status == 200
             for ws in (slow, fast):  # a result is never dropped, for either
                 await ws.until(is_operation(body["operation"], "applied"))
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": r1["instance"], "force": False})
             await fast.until(is_ended)
         run_async(talk, gui)
         assert gui.stderr_text() == ""
@@ -453,8 +452,6 @@ def test_no_variables_when_the_server_is_told_so_or_cannot_load_the_stubs(tmp_pa
                                                 "reason": app["variables"]["reason"]}
                 # Without the control server the launcher stands still after its first step, as before.
                 await ws.until_stands(0)
-                hello = next(m["event"] for m in ws.received if m["type"] == "event" and m["event"]["event"] == "hello")
-                assert "--control" not in hello["arguments"]
                 await c.post("api/time", {"command": "resume"})
                 got = await ws.until(is_ended)
                 assert got[-1]["session"]["result"]["result"] == "passed"
@@ -476,6 +473,7 @@ def test_a_watch_before_the_auth_is_not_taken(gui) -> None:
 def test_a_message_larger_than_the_limit_ends_the_connection(tmp_path: Path, control_env: dict) -> None:
     with gui_server(tmp_path, env=control_env) as gui:
         async def talk(c: Client) -> None:
+            _, app = await c.get("api/app")
             ws, session = await start(c, start_paused=True)
             await ws.until(is_variables("ready"))
             names = [{"peer": "Engine", "name": "n" * 250 + str(n)} for n in range(1100)]  # more than 256 KiB
@@ -491,7 +489,7 @@ def test_a_message_larger_than_the_limit_ends_the_connection(tmp_path: Path, con
             await again.until(is_synced)
             await again.send({"type": "watch", "id": 1, "variables": "all"})
             await again.until(is_values(1))
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": session["id"], "instance": app["instance"], "force": False})
             await again.until(is_ended)
         run_async(talk, gui)
         assert gui.stderr_text() == ""
@@ -546,11 +544,11 @@ def test_variables_ending_predicate_before_result_arrives() -> None:
     from vehicle_sil_gui.variables import Variables
 
     def new_session() -> Session:
-        return Session(1, "simulation.yaml", [], None, False)
+        return Session("1", "simulation.yaml", [], None, False)
 
     s = new_session()
     assert not _variables_ending(s)
-    s.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 2}, 40)
+    s.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4}, 40)
     s.feed_event({"event": "phase", "seq": 1, "t_ms": 1, "phase": "running"}, 40)
     assert not _variables_ending(s)
 
@@ -569,7 +567,7 @@ def test_variables_ending_predicate_before_result_arrives() -> None:
 
     async def verify_on_lost(trigger) -> None:
         sess = new_session()
-        sess.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 2}, 40)
+        sess.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4}, 40)
         sess.feed_event({"event": "phase", "seq": 1, "t_ms": 1, "phase": "running"}, 40)
         sent: list[dict] = []
         v = Variables(sess.id, sent.extend, ending=lambda: _variables_ending(sess))

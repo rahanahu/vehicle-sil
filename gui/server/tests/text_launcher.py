@@ -47,7 +47,7 @@ import tempfile
 import time
 from pathlib import Path
 
-REPLAY = Path(__file__).resolve().parent / "replay_launcher.py"
+REPLAY = Path(__file__).resolve().parent / "stub_launcher.py"
 OPTIONS = ("--descriptions", "--write-descriptions", "--compare-commands")
 COMMANDS = {"# stand-in: commands changed": "changed", "# stand-in: commands not compared": "not_compared",
             "# stand-in: commands null": None}
@@ -65,8 +65,15 @@ def fabricated(result: str, participants: list | None = None) -> str:
     errors = 0 if result == "passed" else 1
     findings = [] if not errors else [{"severity": "error", "code": result, "message": f"stand-in: {result}",
                                        "file": None, "line": None, "participant": None, "key": None}]
+    elig = (
+        {"eligible": True, "reason": None, "message": None}
+        if result == "passed"
+        else {"eligible": False, "reason": "usage" if result == "usage" else "config-unreadable", "message": f"stand-in: {result}"}
+    )
     return json.dumps({"vehicle_sil_check": 1, "result": result, "errors": errors, "warnings": 0, "notes": 0,
-                       "participants": participants or [], "findings": findings}, indent=2)
+                       "participants": participants or [], "networks": [], "findings": findings,
+                       "file_sha256": "0" * 64 if result != "unreadable" else None,
+                       "hot_eligibility": elig}, indent=2)
 
 
 def command_lines(text: str) -> dict[str, str]:

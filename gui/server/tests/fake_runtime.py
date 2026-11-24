@@ -37,7 +37,7 @@ class FakeLauncher(Launcher):
         self.version = {
             "vehicle_sil_launch": 1,
             "vehicle_sil": __version__,
-            "formats": {"check": 1, "run": 2, "events": 2, "describe": 1, "test": 1,
+            "formats": {"check": 1, "run": 2, "events": 4, "describe": 1, "test": 1,
                         "timeline": 1, "connections": 1},
             "features": list(features),
         }
@@ -70,7 +70,32 @@ def default_check_result(config: str = "simple.yaml",
         ],
         "networks": [],
         "findings": [],
+        "file_sha256": "0" * 64,
+        "hot_eligibility": {"eligible": True, "reason": None, "message": None},
     }
+
+
+def validate_events_v4_event(ev: dict) -> None:
+    """Validates that a launcher event dictionary conforms to the Events v4 wire contract."""
+    assert isinstance(ev, dict) and isinstance(ev.get("event"), str), ev
+    assert type(ev.get("seq")) is int and ev["seq"] >= 0, ev
+    if "t_ms" in ev:
+        assert type(ev["t_ms"]) is int and ev["t_ms"] >= 0, ev
+    kind = ev["event"]
+    if kind == "hello":
+        assert ev.get("vehicle_sil_events") == 4, ev
+    elif kind == "status":
+        assert isinstance(ev.get("instance"), str) and ev["instance"], ev
+        assert type(ev.get("status_rev")) is int, ev
+        assert ev.get("launcher_state") in (
+            "unprepared", "cold_only", "preparing", "ready", "running", "ending", "contaminated"
+        ), ev
+    elif kind == "prepare":
+        assert isinstance(ev.get("accepted"), bool), ev
+        assert isinstance(ev.get("status"), dict), ev
+    elif kind == "result":
+        assert isinstance(ev.get("result"), dict), ev
+        assert isinstance(ev.get("launcher_ends"), bool), ev
 
 
 class FakeRun:
@@ -144,13 +169,8 @@ class FakeRun:
         return self.drain_ok
 
     def emit(self, event: str, **fields) -> dict:
-        """Emits one launcher event JSON line to the server sink."""
-        assert self.sink is not None
-        payload = {"event": event, "seq": self._seq, "t_ms": self._t_ms, **fields}
-        self._seq += 1
-        self._t_ms += 10
-        self.sink.on_stdout_line(json.dumps(payload))
-        return payload
+        """Emits one launcher event to the server sink."""
+        return self.emit_event(event, **fields)
 
     def emit_event(self, event: str, **fields) -> dict:
         """Emits one already-parsed launcher event dict to the server sink."""

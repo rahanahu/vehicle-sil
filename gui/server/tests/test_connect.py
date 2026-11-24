@@ -386,7 +386,7 @@ def test_file_only_metadata_fail_closed_and_sha256_toctou(tmp_path: Path) -> Non
         "a = sys.argv[1:]\n"
         "if a == ['version', '--json']:\n"
         "    print(json.dumps({'vehicle_sil_launch': 1, 'vehicle_sil': " + json.dumps(__version__) + ", "
-        "'features': " + json.dumps([*REQUIRED_FEATURES, 'timeline', 'run-stop-at', 'check-file-only']) + "}))\n"
+        "'events': 4, 'features': " + json.dumps([*REQUIRED_FEATURES, 'timeline', 'run-stop-at', 'check-file-only']) + "}))\n"
         "    sys.exit(0)\n"
         "if a[:3] == ['check', '--file-only', '--json']:\n"
         "    path = a[-1]\n"

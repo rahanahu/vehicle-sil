@@ -122,9 +122,10 @@ def test_a_run_with_a_scenario_keeps_its_steps_in_the_summary(gui, scenario: str
         ws = await c.ws()
         await ws.until(is_synced)
         status, body = await c.post("api/run", {"file": "simulation.yaml", "scenario": scenario})
-        assert status == 200, body
-        assert body["session"]["scenario"]["file"] == scenario and body["session"]["scenario"]["steps"] == []
+        assert status == 200 and body["run_id"], body
         got = await ws.until(is_ended)
+        first_sess = next(m["session"] for m in got if m["type"] == "session")
+        assert first_sess["scenario"]["file"] == scenario
         assert any(is_step("running", 1)(m) for m in got)
         _, body = await c.get("api/session")
         s = body["session"]["scenario"]
@@ -154,17 +155,17 @@ def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: P
         async def talk(c: Client) -> None:
             ws = await c.ws()
             await ws.until(is_synced)
-            status, body = await c.post("api/run", {"file": "forever.yaml", "scenario": PASS, "speed": 0.001})
-            assert status == 200, body
-            session = body["session"]["id"]
+            status, started = await c.post("api/run", {"file": "forever.yaml", "scenario": PASS, "speed": 0.001})
+            assert status == 200, started
+            run_id = started["run_id"]
             await ws.until(is_variables("ready"))
             await ws.send({"type": "watch", "id": 1, "variables": "all", "period_ms": 20})
             await ws.until(lambda m: m["type"] == "values" and m["peers"])
-            status, body = await c.post("api/write", {"session": session,
+            status, body = await c.post("api/write", {"run_id": run_id,
                                                       "writes": {"Engine": {"engine.demand": 1}}})
             assert (status, body["error"]["code"]) == (409, "scenario-running")
             assert "scenario" in body["error"]["message"]  # the launcher's own sentence (its allowed.write)
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": run_id, "instance": started["instance"], "force": False})
             await ws.until(is_ended)
         run_async(talk, gui)
 
@@ -177,8 +178,8 @@ def test_the_time_commands_go_to_the_launcher_while_a_scenario_runs(tmp_path: Pa
         async def talk(c: Client) -> None:
             ws = await c.ws()
             await ws.until(is_synced)
-            status, body = await c.post("api/run", {"file": "forever.yaml", "scenario": PASS, "speed": 0.001})
-            assert status == 200, body
+            status, started = await c.post("api/run", {"file": "forever.yaml", "scenario": PASS, "speed": 0.001})
+            assert status == 200, started
             await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "scenario_step"
                            and m["event"]["index"] == 2)
             for command in ({"command": "pause"}, {"command": "step", "ms": 10}, {"command": "speed", "value": 0.002},
@@ -188,7 +189,7 @@ def test_the_time_commands_go_to_the_launcher_while_a_scenario_runs(tmp_path: Pa
                 got = await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "command"
                                      and m["event"]["command"] == command["command"])
                 assert got[-1]["event"]["accepted"] is True, got[-1]
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
             got = await ws.until(is_ended)
             assert got[-1]["session"]["scenario"]["status"] == "incomplete"
         run_async(talk, gui)
@@ -204,26 +205,26 @@ def test_the_applied_writes_come_back_as_a_scenario(tmp_path: Path, control_env:
             assert body == {"recording": None}
             ws = await c.ws()
             await ws.until(is_synced)
-            status, body = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
-            session = body["session"]["id"]
+            status, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
+            run_id = started["run_id"]
             await ws.until(is_variables("ready"))
             _, body = await c.get("api/recording")
             r = body["recording"]
             assert (r["available"], r["writes"], r["yaml"]) == (True, 0, None) and "no write" in r["reason"]
             # Before the first step: a parameter (an enum by its name) and an input, applied at 0
-            status, body = await c.post("api/write", {"session": session, "writes": {
+            status, body = await c.post("api/write", {"run_id": run_id, "writes": {
                 "Engine": {"engine.mode": "on", "engine.demand": 30}, "Dashboard": {"ecu.connected": False}}})
             assert status == 200, body
             first = body["operation"]
             await c.post("api/time", {"command": "resume"})
             await ws.until(lambda m: m["type"] == "operation" and m["seq"] == first and m["done"])
-            status, body = await c.post("api/write", {"session": session,
+            status, body = await c.post("api/write", {"run_id": run_id,
                                                       "writes": {"Engine": {"engine.demand": 62.5}}})
             second = body["operation"]
             got = await ws.until(lambda m: m["type"] == "operation" and m["seq"] == second and m["done"])
             applied = got[-1]["peers"]["Engine"]["applied_at_ms"]
             # A write that is refused is not recorded
-            status, body = await c.post("api/write", {"session": session, "writes": {"Engine": {"engine.mode": "off"}}})
+            status, body = await c.post("api/write", {"run_id": run_id, "writes": {"Engine": {"engine.mode": "off"}}})
             assert status == 200, body
             refused = body["operation"]
             await ws.until(lambda m: m["type"] == "operation" and m["seq"] == refused and m["done"])
@@ -231,12 +232,12 @@ def test_the_applied_writes_come_back_as_a_scenario(tmp_path: Path, control_env:
             r = body["recording"]
             assert (r["available"], r["writes"], r["omitted"], r["steps"]) == (True, 4, 0, 2), r
             scenario = yaml.safe_load(r["yaml"])
-            assert scenario == {"vehicle_sil_scenario": 1, "name": f"recorded from forever.yaml (run {session})",
+            assert scenario == {"vehicle_sil_scenario": 1, "name": f"recorded from forever.yaml (run {run_id})",
                                 "steps": [{"at_ms": 0, "set": {"Engine.engine.mode": "on", "Engine.engine.demand": 30.0,
                                                                 "Dashboard.ecu.connected": False}},
                                           {"at_ms": applied, "set": {"Engine.engine.demand": 62.5}}]}
             assert '"on"' in r["yaml"]  # an enum's name is quoted: `on` alone would be a bool in YAML 1.1
-            await c.post("api/stop")
+            await c.post("api/stop-session", {"run_id": run_id, "instance": started["instance"], "force": False})
             await ws.until(is_ended)
             _, body = await c.get("api/recording")  # the run that ended last
             # The same steps; only the comment of how far the run went has moved on (to where it stopped)

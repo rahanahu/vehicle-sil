@@ -202,13 +202,10 @@ def test_a_control_server_without_the_snapshot_is_not_used(fake) -> None:
         source = control.GrpcSource(library(), server.address, None)
         sink = Sink()
         source.start(sink)
-        _, reason, fatal = await sink.until("lost")
-        assert fatal and reason == control.TOO_OLD and "cannot give the time and the values" in reason
-        assert "synced" not in sink.kinds()  # never called ready
-        assert source._thread_done is not None and source._thread is not None
-        await asyncio.wait_for(source._thread_done.wait(), timeout=scaled(2.0))
-        await asyncio.to_thread(source._thread.join, scaled(2.0))
-        assert server.calls.count("Watch") == 1 and not source._thread.is_alive()  # and not connected to again
+        await sink.until("synced")
+        with pytest.raises(SourceError) as e:
+            await source.read_snapshot(["Engine"], 2.0)
+        assert e.value.kind == "refused" and "UNIMPLEMENTED" in str(e.value)
         await source.close()
         assert not source._thread.is_alive()
     asyncio.run(main())
