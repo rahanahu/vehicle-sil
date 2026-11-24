@@ -70,7 +70,7 @@ void howto_copies_agree(const fs::path& docs, const std::string& command)
 
 void docs(const Options& o)
 {
-    const fs::path dir = o.example_dir;
+    const fs::path dir = example_copy(o);
     const Captured text = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000"}, dir);
     expect_code(text, 0, "run simulation.yaml");
     expect_text(text.standard_output, block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml -->"),
@@ -902,7 +902,7 @@ void control(const Options& o)
                                           "    command: [" + ecu(o) + ", --no-control]\n",
                                           {{"Engine", "variables"}, {"Brake", "variables"}, {"Quiet", "variables"}});
         const auto begin = std::chrono::steady_clock::now();
-        const Captured run = launch(o, {"run", "sim.yaml", "--events"}, dir);
+        const Captured run = launch(o, {"serve", "--once", "sim.yaml"}, dir);
         expect_code(run, 0, "run with control agents");
         // Nobody is waited for in vain: the hellos are there when the start looks for them.
         require(std::chrono::steady_clock::now() - begin < 60s, "the run with control agents took too long");

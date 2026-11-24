@@ -436,10 +436,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         finalize(report);
         return report;
     }
-    if (!host.config_from_stdin)
-    {
-        report.file_sha256 = detail::sha256_hex(text);
-    }
+    report.file_sha256 = detail::sha256_hex(text);
     config::ConfigRead read = config::read_config(text, overrides);
     if (read.config)
     {

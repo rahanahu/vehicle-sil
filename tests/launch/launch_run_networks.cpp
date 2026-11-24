@@ -4,7 +4,7 @@
 // the configuration file.
 #include "launch_run_support.hpp"
 
-/// The event "participant" of `name` in `state` among the lines of run --events, or "".
+/// The event "participant" of `name` in `state` among the lines of serve --once, or "".
 std::string participant_event(const std::string& events, const std::string& name, const std::string& state)
 {
     const std::string key = "\"event\":\"participant\"";
@@ -362,7 +362,7 @@ void network_names(const Options& o)
     {
         // Each executable gets its lines after everything else, in the file's order and direction;
         // a line whose two names are the same is not given. What is started is one bus each.
-        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "together", "--events"}, dir);
+        const Captured run = launch(o, {"serve", "--once", "sim.yaml", "--variant", "together"}, dir);
         expect_code(run, 0, "run with network_names");
         const std::string events = lf(run.standard_output);
         const std::string engine = participant_event(events, "Engine", "started");
@@ -390,7 +390,7 @@ void network_names(const Options& o)
     forget();
     {
         // The variant without the first line: Engine's J1939_CAN is not Dashboard's VehicleCAN.
-        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "apart", "--events"}, dir);
+        const Captured run = launch(o, {"serve", "--once", "sim.yaml", "--variant", "apart"}, dir);
         expect_code(run, 0, "run with the variant that takes a line away");
         const std::string engine = participant_event(lf(run.standard_output), "Engine", "started");
         require(contains(engine, "\"--start-timeout-ms\",") && contains(engine, "\",\"--map-network\",\"Body CAN=CAN_B\"],\"log\"") &&
@@ -403,7 +403,7 @@ void network_names(const Options& o)
     {
         // The variant that moves a network to another bus: CAN_B is on VehicleCAN, where Dashboard
         // hears it, and no longer on "Body CAN", where Door is.
-        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "moved", "--events"}, dir);
+        const Captured run = launch(o, {"serve", "--once", "sim.yaml", "--variant", "moved"}, dir);
         expect_code(run, 0, "run with the variant that moves a network");
         const std::string engine = participant_event(lf(run.standard_output), "Engine", "started");
         require(contains(engine, "\"--start-timeout-ms\",") && contains(engine, "\",\"--map-network\",\"VehicleCAN=CAN_B\"],\"log\"") &&
@@ -453,7 +453,7 @@ void network_names(const Options& o)
     {
         // The event of a participant started by hand has the same arguments, and the same line
         // (the registry is where the file says, so the command of the run before starts Door here).
-        Live live(o, dir, {"run", "sim.yaml", "--variant", "together", "--manual", "Door", "--events"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml", "--variant", "together", "--manual", "Door"});
         const std::string manual = live.wait_for({"\"event\":\"participant\"", "\"name\":\"Door\",\"state\":\"manual\""});
 #ifdef _WIN32
         const std::string quoted = " --name Door --map-network \\\"Body CAN=DoorCAN\\\"\"";
@@ -464,7 +464,7 @@ void network_names(const Options& o)
                 "the event of the participant started by hand has the arguments and the line:\n" + manual);
         ByHand byHand(hand.line, hand.directory);
         const auto [status, out] = live.finish_unchecked();
-        require(status && status->code == 0, "the run with --events and Door started by hand ends with 0:\n" + out_of(out));
+        require(status && status->code == 0, "the run with events and Door started by hand ends with 0:\n" + out_of(out));
         const auto ended = byHand.wait(30s);
         require(ended && ended->code == 0, "Door ends by itself with 0");
     }
@@ -557,7 +557,7 @@ void j1939_nodes(const Options& o)
         hand_dir(o, "nodes", config_with("    j1939_nodes: [{ network: BUS, address: 0x01, identity_number: 2 }]\n"), behaviours);
     {
         // Each executable gets its entries last; the one without entries gets none.
-        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "together", "--events"}, dir);
+        const Captured run = launch(o, {"serve", "--once", "sim.yaml", "--variant", "together"}, dir);
         expect_code(run, 0, "run with j1939_nodes");
         const std::string events = lf(run.standard_output);
         const std::string engine2 = participant_event(events, "Engine2", "started");
@@ -606,7 +606,7 @@ void j1939_nodes(const Options& o)
     }
     {
         // The variant's entry takes the common one's place.
-        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "moved", "--events"}, dir);
+        const Captured run = launch(o, {"serve", "--once", "sim.yaml", "--variant", "moved"}, dir);
         expect_code(run, 0, "run with the variant that moves Engine2");
         const std::string engine2 = participant_event(lf(run.standard_output), "Engine2", "started");
         require(contains(engine2, "\",\"--j1939-node\",\"BUS=address:0x05,identity_number:5\"],\"log\"") &&
@@ -637,7 +637,7 @@ void j1939_nodes(const Options& o)
     }
     {
         // The event of a participant started by hand has the same arguments.
-        Live live(o, dir, {"run", "sim.yaml", "--variant", "together", "--manual", "Engine2", "--events"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml", "--variant", "together", "--manual", "Engine2"});
         const std::string manual = live.wait_for({"\"event\":\"participant\"", "\"name\":\"Engine2\",\"state\":\"manual\""});
 #ifdef _WIN32
         const std::string quoted = " --j1939-node \\\"BUS=address:0x01,identity_number:2\\\"\"";
@@ -648,7 +648,7 @@ void j1939_nodes(const Options& o)
                 "the event of the participant started by hand has the arguments and the line:\n" + manual);
         ByHand byHand(hand.line, hand.directory);
         const auto [status, out] = live.finish_unchecked();
-        require(status && status->code == 0, "the run with --events and Engine2 started by hand ends with 0:\n" + out_of(out));
+        require(status && status->code == 0, "the run with events and Engine2 started by hand ends with 0:\n" + out_of(out));
         const auto ended = byHand.wait(30s);
         require(ended && ended->code == 0, "Engine2 ends by itself with 0");
     }

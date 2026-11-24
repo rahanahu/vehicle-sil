@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
-// The launch_run scenarios about run --events and --stdin-commands: the event lines, a reader
+// The launch_run scenarios about serve --once and --stdin-commands: the event lines, a reader
 // that is slow, stalls or goes away, and the stop command:
 //
-//   events       run --events: the example of the docs byte for byte (after its placeholders), the
+//   events       serve --once: the example of the docs byte for byte (after its placeholders), the
 //                whole example's events (seq, order, the result as --json writes it), nothing on stderr
-//   events_usage run --events with a wrong command line (also one the check finds) or a file that
+//   events_usage serve --once with a wrong command line (also one the check finds) or a file that
 //                cannot be read: which events come
 //   events_findings a participant leaves the simulation and its process ends later: every finding
 //                event is in the result, and none comes twice; the state "failed" comes at once; a
@@ -52,7 +52,8 @@ std::vector<std::string> history_of(const std::vector<std::string>& lines)
     std::vector<std::string> out;
     for (const std::string& line : lines)
     {
-        if (value_of(line, "event") != "state")
+        const std::string ev = value_of(line, "event");
+        if (ev != "state" && ev != "status" && ev != "run_start")
         {
             out.push_back(line);
         }
@@ -159,26 +160,37 @@ std::string with_placeholders(std::string text, const fs::path& dir)
         const auto from = at + version.size();
         text.replace(from, text.find('"', from) - from, "<version>");
     }
+    const std::string launcher_key = "\"launcher\":\"";
+    if (const auto at = text.find(launcher_key); at != std::string::npos)
+    {
+        const auto from = at + launcher_key.size();
+        const auto to = text.find('"', from);
+        if (to != std::string::npos && to > from)
+        {
+            const std::string instance = text.substr(from, to - from);
+            replace_all(instance, "<launcher>");
+        }
+    }
     return text;
 }
 
 void events(const Options& o)
 {
-    const fs::path dir = o.example_dir;
-    const Captured alone = launch(o, {"run", "simulation.yaml", "--stop-at-ms", "1000", "--events", "--disable", "Dashboard"}, dir);
-    expect_code(alone, 0, "run simulation.yaml --events --disable Dashboard");
+    const fs::path dir = example_copy(o);
+    const Captured alone = launch(o, {"serve", "--once", "simulation.yaml", "--stop-at-ms", "1000", "--disable", "Dashboard"}, dir);
+    expect_code(alone, 0, "serve --once simulation.yaml --disable Dashboard");
     static_cast<void>(check_events(alone.standard_output));
     // Without the heartbeats: how many there are depends on how long the run takes.
     expect_text(without_timing(with_placeholders(without_heartbeats(alone.standard_output), dir)),
-                block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --events --disable Dashboard -->"),
-                "run simulation.yaml --events --disable Dashboard");
-    expect_text(alone.standard_error, "", "run --events: stderr");
+                block_after(o.docs, "<!-- vehicle_sil_launch serve --once simulation.yaml -->"),
+                "serve --once simulation.yaml --disable Dashboard");
+    expect_text(alone.standard_error, "", "serve --once: stderr");
 
     // Both ECUs: their lines come as events of their own, in no fixed order with the rest.
-    const Captured both = launch(o, {"run", "--events", "simulation.yaml", "--stop-at-ms", "1000"}, dir);
-    expect_code(both, 0, "run --events simulation.yaml");
+    const Captured both = launch(o, {"serve", "--once", "simulation.yaml", "--stop-at-ms", "1000"}, dir);
+    expect_code(both, 0, "serve --once simulation.yaml");
     const std::vector<std::string> lines = check_events(both.standard_output);
-    expect_text(both.standard_error, "", "run --events: stderr");
+    expect_text(both.standard_error, "", "serve --once: stderr");
     require(!events_with(lines, {"\"event\":\"log\"", "\"source\":\"Dashboard\"",
                                  "\"line\":\"t=0 ms engine speed 0 rpm (0 messages)\""})
                  .empty(),
@@ -228,11 +240,11 @@ void events_usage(const Options& o)
     // hello comes first whatever is wrong with the command line, the result last.
     for (const auto& [args, message] :
          std::vector<std::pair<std::vector<std::string>, std::string>>{
-             {{"run", "--events", "--bad", "x.yaml"}, "unknown option --bad"},
-             {{"run", "--events", "--json", "x.yaml"}, "--json and --events cannot be used together"},
-             {{"run", "--events", "--events-stall-ms", "999", "x.yaml"}, "--events-stall-ms must be from 1000 to 86400000"},
-             {{"run", "--events", "--events-stall-ms", "soon", "x.yaml"}, "invalid value for --events-stall-ms: soon"},
-             {{"run", "--events"}, "run needs the configuration file"}})
+             {{"serve", "--once", "--bad", "x.yaml"}, "unknown option --bad"},
+             {{"serve", "--once", "--json", "x.yaml"}, "--json is not for serve"},
+             {{"serve", "--once", "--events-stall-ms", "999", "x.yaml"}, "--events-stall-ms must be from 1000 to 86400000"},
+             {{"serve", "--once", "--events-stall-ms", "soon", "x.yaml"}, "invalid value for --events-stall-ms: soon"},
+             {{"serve", "--once"}, "serve needs the configuration file"}})
     {
         const Captured run = launch(o, args, dir);
         expect_code(run, 4, args.back());
@@ -241,24 +253,24 @@ void events_usage(const Options& o)
                 "hello and the result of a usage error:\n" + run.standard_output);
         require(contains(lf(run.standard_error), "error: " + message), "the error on stderr:\n" + run.standard_error);
     }
-    // The limit is for the events: without them it is a mistake (and no event is written).
+    // The limit is for serve: with run it is a mistake (and no event is written).
     const Captured alone = launch(o, {"run", "--events-stall-ms", "5000", "x.yaml"}, dir);
-    expect_code(alone, 4, "run --events-stall-ms without --events");
-    require(alone.standard_output.empty() && contains(lf(alone.standard_error), "error: --events-stall-ms is for --events"),
+    expect_code(alone, 4, "run --events-stall-ms");
+    require(alone.standard_output.empty() && contains(lf(alone.standard_error), "error: --events-stall-ms is for serve, not for run"),
             "the error on stderr:\n" + alone.standard_error);
-    const Captured missing = launch(o, {"run", "--events", "missing.yaml"}, dir);
-    expect_code(missing, 3, "run --events missing.yaml");
+    const Captured missing = launch(o, {"serve", "--once", "missing.yaml"}, dir);
+    expect_code(missing, 3, "serve --once missing.yaml");
     const std::vector<std::string> lines = history_of(check_events(missing.standard_output));
     require(lines.size() == 5 && value_of(lines[0], "file") == "missing.yaml" && contains(lines[2], "\"event\":\"check\"") &&
                 contains(lines[4], "\"result\":\"unreadable\""),
             "hello, checking, check, ended and the result of a file that cannot be read:\n" + missing.standard_output);
-    expect_text(missing.standard_error, "", "run --events missing.yaml: stderr");
+    expect_text(missing.standard_error, "", "serve --once missing.yaml: stderr");
 
     // A wrong command line that only the check finds (a name the file does not have): the check
     // is an event, then the result "usage".
     const fs::path sim = two_ecus(o);
-    const Captured name = launch(o, {"run", "--events", "--disable", "Nobody", "sim.yaml"}, sim);
-    expect_code(name, 4, "run --events --disable Nobody");
+    const Captured name = launch(o, {"serve", "--once", "--disable", "Nobody", "sim.yaml"}, sim);
+    expect_code(name, 4, "serve --once --disable Nobody");
     const std::vector<std::string> states = events_with(check_events(name.standard_output), {"\"event\":\"state\""});
     // The states at the check, when the time commands end and at the end (one is not written if
     // the next came before the writer got to it): nothing was set up, nothing was asked to stop.
@@ -281,8 +293,8 @@ void events_usage(const Options& o)
     fs::create_directories(failing);
     write_file(failing / "sim.yaml", "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
                                      "  - name: Engine\n    command: [no-such-ecu]\n");
-    const Captured checkFailed = launch(o, {"run", "--events", "sim.yaml"}, failing);
-    expect_code(checkFailed, 1, "run --events with a missing participant executable");
+    const Captured checkFailed = launch(o, {"serve", "--once", "sim.yaml"}, failing);
+    expect_code(checkFailed, 1, "serve --once with a missing participant executable");
     for (const auto& [run, what] : std::vector<std::pair<Captured, std::string>>{
              {missing, "a file that cannot be read"},
              {name, "a usage error the check finds"},
@@ -368,7 +380,7 @@ void expect_stopped_in_order(const std::optional<vehicle_sil::process::ExitStatu
 void stdin_stop(const Options& o)
 {
     const fs::path dir = two_ecus(o);
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "sim.yaml"});
     live.wait_for({"\"phase\":\"running\""});
     // Nothing happens (it stands still at 0): a heartbeat every second.
     live.wait_for_count({"{\"event\":\"heartbeat\",\"seq\":"}, 2);
@@ -386,7 +398,7 @@ void stdin_stop(const Options& o)
     require(contains(commands[0], "\"command\":null,\"source\":\"stdin\",\"accepted\":false,\"message\":\"the line is "
                                   "not a JSON object: "),
             "a line that is no JSON object:\n" + commands[0]);
-    require(contains(commands[1], "\"message\":\"unknown command 'jump': the commands are stop, pause, resume, step, "
+    require(contains(commands[1], "\"message\":\"unknown command 'jump': the commands are run, prepare, status, stop, pause, resume, step, "
                                   "run_until and speed\""),
             "an unknown command:\n" + commands[1]);
     require(contains(commands[2], "\"command\":\"stop\",\"source\":\"stdin\",\"accepted\":true,\"message\":null,\"reason\":null,\"id\":null}"),
@@ -422,17 +434,17 @@ void stdin_eof(const Options& o)
                                       "participants:\n"
                                       "  - name: Engine\n"
                                       "    command: [" + ecu(o) + "]\n");
-    // Without --stdin-commands, the input is not read: closed at once, it changes nothing.
+    // Without --stdin-commands, run does not read the input: closed at once, it changes nothing.
     {
-        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        Live live(o, dir, {"run", "--json", "sim.yaml"});
         live.process().close_input();
-        const auto [status, lines] = live.finish();
+        const auto [status, lines] = live.finish_unchecked();
         require(status.has_value() && status->code == 0, "the run without --stdin-commands passes");
-        require(contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && events_with(lines, {"\"event\":\"command\""}).empty(),
-                "it ran to stop_at_ms:\n" + lines.back());
+        require(contains(out_of(lines), "\"simulation\": \"reached_stop_at\""),
+                "it ran to stop_at_ms:\n" + out_of(lines));
     }
     const fs::path forever = two_ecus(o);
-    Live live(o, forever, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    Live live(o, forever, {"serve", "--once", "--stdin-commands", "sim.yaml"});
     live.wait_for({"\"phase\":\"running\""});
     live.process().close_input();
     const auto [status, lines] = live.finish();
@@ -455,7 +467,7 @@ void stdin_twice(const Options& o)
                                       "  - name: Deaf\n"
                                       "    command: [" + ecu(o) + "]\n",
                                       {{"Deaf", "pid hang-after-end ignore-stop"}});
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
     live.wait_for({"\"phase\":\"running\""});
     live.write("{\"command\":\"stop\"}\n");
     live.wait_for({"\"phase\":\"stopping\""});
@@ -489,7 +501,7 @@ void stdin_ending(const Options& o)
                                       "  - name: Stuck\n"
                                       "    command: [" + ecu(o) + "]\n",
                                       {{"Stuck", "pid hang-after-end stop-exit 9"}});
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
     live.wait_for({"\"phase\":\"stopping\""});
     wait_hanging(dir, "Stuck");
     live.write("{\"command\":\"stop\"}\n");
@@ -535,7 +547,7 @@ void stdin_ending_optional(const Options& o)
                                       "    describe: false\n"
                                       "    required: false\n",
                                       {{"Engine", ""}});
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
     live.wait_for({"\"name\":\"Deaf\"", "\"state\":\"stop_requested\""});
     live.write("{\"command\":\"stop\"}\n");
     live.write("{\"command\":\"stop\"}\n");
@@ -553,7 +565,7 @@ void output_closed(const Options& o)
 {
     {
         const fs::path dir = two_ecus(o);
-        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
         live.wait_for({"\"phase\":\"running\""});
         // The reader goes away: the launcher's events have nowhere to go (its stderr closes too).
         live.process().finish_output(0ms);
@@ -575,7 +587,7 @@ void output_closed(const Options& o)
                                              "    command: [" + helper(o) + ", --on-stop, \"9\", --pid-file, ghost.pid, --sleep-ms, \"600000\", --uri, \"{registry_uri}\"]\n"
                                              "    describe: false\n");
         fs::remove(dir / "ghost.pid");
-        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
         live.wait_for({"\"phase\":\"waiting\""});
         const long ghost = read_pid((dir / "ghost.pid").string(), 60s);
         const auto closed = std::chrono::steady_clock::now();
@@ -599,7 +611,7 @@ void output_closed(const Options& o)
                                           "    command: [" + ecu(o) + "]\n",
                                           {{"Stuck", "pid hang-after-end stop-exit 9"}});
         fs::remove(dir / "Stuck.pid");
-        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
         live.wait_for({"\"phase\":\"stopping\""});
         wait_hanging(dir, "Stuck");
         live.process().finish_output(0ms);
@@ -623,7 +635,7 @@ void stop_once(const Options& o)
                                       "  - name: Deaf\n"
                                       "    command: [" + ecu(o) + "]\n",
                                       {{"Deaf", "pid hang-after-end ignore-stop"}});
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
     live.wait_for({"\"phase\":\"running\""});
     const long deaf = read_pid((dir / "Deaf.pid").string(), 60s);
     live.write("{\"command\":\"stop\"}\n");
@@ -773,7 +785,7 @@ void events_stalled(const Options& o)
     Checks checks;
     // The limit (--events-stall-ms) is far away: a stop command works while the reader does not
     // read, and a second one ends the launcher's wait for the reader (it cannot write its result).
-    const std::vector<std::string> kRun{"run", "--events", "--events-stall-ms", "600000", "--stdin-commands", "--log-dir", "logs", "sim.yaml"};
+    const std::vector<std::string> kRun{"serve", "--once", "--events-stall-ms", "600000", "--stdin-commands", "--log-dir", "logs", "sim.yaml"};
     {
         Stalled run(o, kRun, checks);
         const auto asked = std::chrono::steady_clock::now();
@@ -825,7 +837,7 @@ void events_stalled(const Options& o)
     // A signal (Windows: Ctrl+Break, if there is a console to send it through).
     if (can_request_stop())
     {
-        Stalled run(o, {"run", "--events", "--events-stall-ms", "600000", "--log-dir", "logs", "sim.yaml"}, checks);
+        Stalled run(o, {"serve", "--once", "--events-stall-ms", "600000", "--log-dir", "logs", "sim.yaml"}, checks);
         const auto interrupt = [&run] {
 #ifdef _WIN32
             static_cast<void>(run.live->process().request_stop());
@@ -841,7 +853,7 @@ void events_stalled(const Options& o)
     }
     // The limit itself: the launcher gives the reader up, stops the run and says why.
     {
-        Stalled run(o, {"run", "--events", "--events-stall-ms", "1000", "--log-dir", "logs", "sim.yaml"}, checks, false);
+        Stalled run(o, {"serve", "--once", "--events-stall-ms", "1000", "--log-dir", "logs", "sim.yaml"}, checks, false);
         const auto held = std::chrono::steady_clock::now();
         const bool ended = run.live->process().wait_for(scaled_timeout(30s)).has_value();
         const long long after = ms_since(held);
@@ -853,7 +865,7 @@ void events_stalled(const Options& o)
         checks.expect(gone, "it has ended the participants");
         const std::string err = run.live->err();
         checks.expect(contains(err, "vehicle_sil_launch: cannot write the events (their reader has not read for 1000 ms") &&
-                          contains(err, "stopping the run"),
+                          contains(err, "the launcher ends"),
                       "it says why on stderr:\n" + err);
         check_cut_events(lines);
     }
@@ -865,7 +877,7 @@ void events_slow(const Options& o)
     // The reader stops for a while and reads again: the participants' lines that did not fit are
     // dropped and counted; everything else is written, and the stream ends with the result.
     Checks checks;
-    Stalled run(o, {"run", "--events", "--events-stall-ms", "600000", "--stdin-commands", "--log-dir", "logs", "sim.yaml"}, checks);
+    Stalled run(o, {"serve", "--once", "--events-stall-ms", "600000", "--stdin-commands", "--log-dir", "logs", "sim.yaml"}, checks);
     run.live->release();
     run.live->wait_for({"\"event\":\"log_dropped\""});
     run.live->write("{\"command\":\"stop\"}\n");
@@ -919,8 +931,8 @@ void events_findings(const Options& o)
                                       "  - name: Brake\n"
                                       "    command: [" + ecu(o) + "]\n",
                                       {{"Engine", "throw-at-ms 200 linger-ms 1500"}});
-    const Captured run = launch(o, {"run", "--events", "sim.yaml"}, dir);
-    expect_code(run, 1, "run --events with an ECU whose step fails");
+    const Captured run = launch(o, {"serve", "--once", "sim.yaml"}, dir);
+    expect_code(run, 1, "serve --once with an ECU whose step fails");
     std::string findings;
     for (const auto& line : lines_of(run.standard_output))
     {
@@ -984,8 +996,8 @@ void events_findings(const Options& o)
     // ("left_simulation": "failed" comes before "ended", without a message). Either way: one
     // "failed", one "ended", one finding, which says how the process ended.
     write_file(dir / "Engine.behaviour", "exit-at-ms 200 7\n");
-    const Captured crash = launch(o, {"run", "--events", "sim.yaml"}, dir);
-    expect_code(crash, 1, "run --events with an ECU whose process ends");
+    const Captured crash = launch(o, {"serve", "--once", "sim.yaml"}, dir);
+    expect_code(crash, 1, "serve --once with an ECU whose process ends");
     const std::vector<std::string> crashed = check_events(crash.standard_output);
     const auto state = events_with(crashed, {"\"event\":\"participant\"", "\"name\":\"Engine\"", "\"state\":\"failed\""});
     const auto ended = events_with(crashed, {"\"event\":\"participant\"", "\"name\":\"Engine\"", "\"state\":\"ended\""});
@@ -1021,11 +1033,12 @@ void events_stderr(const Options& o)
     bool held = true;
     vehicle_sil::process::ProcessOptions options;
     options.working_directory = dir;
+    options.input = true;
     options.on_line = [&](vehicle_sil::process::Stream, std::string_view) {
         std::unique_lock lock(mutex);
         changed.wait(lock, [&held] { return !held; });
     };
-    const std::vector<std::string> run{"run", "--events", "--events-stall-ms", "1500", "sim.yaml"};
+    const std::vector<std::string> run{"serve", "--once", "--events-stall-ms", "1500", "sim.yaml"};
 #ifdef _WIN32
     const char* shell = std::getenv("ComSpec");
     require(shell != nullptr, "ComSpec is not set");
@@ -1039,6 +1052,7 @@ void events_stderr(const Options& o)
 #endif
     const auto from = std::chrono::steady_clock::now();
     vehicle_sil::process::Process wrapper(shell, args, std::move(options));
+    static_cast<void>(wrapper.write_input("{\"command\":\"run\"}\n"));
     const long engine = read_pid((dir / "Engine.pid").string(), 60s);
     const long brake = read_pid((dir / "Brake.pid").string(), 60s);
     const auto status = wrapper.wait_for(scaled_timeout(60s));
@@ -1078,24 +1092,32 @@ void events_nonblocking(const Options& o)
     // O_NONBLOCK on it), and its reader reads late: a full pipe is no closed pipe.
     const fs::path dir = chatty(o, 20, "# run-option --stop-at-ms 3000\n");
     int fds[2];
-    require(::pipe(fds) == 0 && ::fcntl(fds[1], F_SETFL, ::fcntl(fds[1], F_GETFL) | O_NONBLOCK) == 0, "a pipe");
+    int in_fds[2];
+    require(::pipe(fds) == 0 && ::pipe(in_fds) == 0 &&
+                ::fcntl(fds[1], F_SETFL, ::fcntl(fds[1], F_GETFL) | O_NONBLOCK) == 0,
+            "a pipe");
     const std::string program = o.launch.string();
     const std::string in = dir.string();
     const pid_t pid = ::fork();
     if (pid == 0)
     {
-        if (::chdir(in.c_str()) != 0 || ::dup2(fds[1], STDOUT_FILENO) < 0)
+        if (::chdir(in.c_str()) != 0 || ::dup2(in_fds[0], STDIN_FILENO) < 0 || ::dup2(fds[1], STDOUT_FILENO) < 0)
         {
             ::_exit(126);
         }
+        ::close(in_fds[0]);
+        ::close(in_fds[1]);
         ::close(fds[0]);
         ::close(fds[1]);
-        ::execl(program.c_str(), program.c_str(), "run", "--events", "--log-dir", "logs", "--stop-at-ms", "3000",
+        ::execl(program.c_str(), program.c_str(), "serve", "--once", "--log-dir", "logs",
                 "sim.yaml", static_cast<char*>(nullptr));
         ::_exit(127);
     }
     require(pid > 0, "fork");
+    ::close(in_fds[0]);
     ::close(fds[1]);
+    constexpr std::string_view kRunCmd = "{\"command\":\"run\",\"intent\":{\"stop_at_ms\":3000}}\n";
+    require(::write(in_fds[1], kRunCmd.data(), kRunCmd.size()) == static_cast<ssize_t>(kRunCmd.size()), "write run command");
     // The whole run writes about 6 MiB; the pipe holds 64 KiB.
     const auto grown = growth(dir / "logs" / "Engine.log", 512 * 1024, 60s);
     std::string out;
@@ -1106,6 +1128,7 @@ void events_nonblocking(const Options& o)
         out.append(buffer, got > 0 ? static_cast<std::size_t>(got) : 0);
     }
     ::close(fds[0]);
+    ::close(in_fds[1]);
     int status = 0;
     require(::waitpid(pid, &status, 0) == pid, "waitpid");
     require(grown >= 512 * 1024, "Engine wrote before the events were read");
@@ -1135,16 +1158,23 @@ void events_output(const Options& o)
     options.timeout = scaled_timeout(120s);
     options.working_directory = dir;
     // A file: every event is in it.
-    const Captured file = vehicle_sil::process::run_captured(
-        "/bin/sh", {"-c", "exec \"$0\" run --events --stop-at-ms 300 sim.yaml > events.ndjson", o.launch.string()}, options);
-    expect_code(file, 0, "run --events > file");
+    vehicle_sil::process::ProcessOptions file_opts;
+    file_opts.working_directory = dir;
+    file_opts.input = true;
+    vehicle_sil::process::Process file_proc(
+        "/bin/sh", {"-c", "exec \"$0\" serve --once sim.yaml > events.ndjson", o.launch.string()},
+        std::move(file_opts));
+    static_cast<void>(file_proc.write_input("{\"command\":\"run\",\"intent\":{\"stop_at_ms\":300}}\n"));
+    const auto file_status = file_proc.wait_for(options.timeout);
+    file_proc.finish_output(10s);
+    require(file_status.has_value() && file_status->code == 0, "serve --once > file");
     const std::vector<std::string> lines = check_events(read_text(dir / "events.ndjson"));
     require(contains(lines.back(), "\"result\":\"passed\""), "the result is in the file");
     // No standard output at all: a mistake of whoever started it, said at once; nothing starts.
     const Captured none = vehicle_sil::process::run_captured(
-        "/bin/sh", {"-c", "exec \"$0\" run --events sim.yaml >&-", o.launch.string()}, options);
-    expect_code(none, 4, "run --events without a standard output");
-    require(contains(none.standard_error, "error: --events needs a standard output to write the events to"),
+        "/bin/sh", {"-c", "exec \"$0\" serve --once sim.yaml >&-", o.launch.string()}, options);
+    expect_code(none, 4, "serve --once without a standard output");
+    require(contains(none.standard_error, "error: serve needs a standard output to write the events to"),
             "the error on stderr:\n" + none.standard_error);
 #endif
 }
@@ -1154,7 +1184,7 @@ void stdin_killed(const Options& o)
     // The last resort of a program that runs the launcher: its input closes, and at once it is
     // killed (not its process group or job). Its participants end all the same.
     const fs::path dir = two_ecus(o);
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
     live.wait_for({"\"phase\":\"running\""});
     const std::vector<long> pids{read_pid((dir / "Engine.pid").string(), 60s), read_pid((dir / "Brake.pid").string(), 60s)};
     live.process().close_input();
@@ -1177,7 +1207,7 @@ void no_console_stdin(const Options& o)
     // No console: neither Ctrl+C nor Ctrl+Break reaches the launcher. A stop command does, and
     // the ECUs end by themselves when the simulation stops.
     const fs::path dir = two_ecus(o);
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"}, true);
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"}, true);
     live.wait_for({"\"phase\":\"running\""});
     live.write("{\"command\":\"stop\"}\n");
     const auto [status, lines] = live.finish();

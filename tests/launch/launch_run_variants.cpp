@@ -252,8 +252,8 @@ void variants(const Options& o)
                                               "(Body.body.heater is absent: participant 'Body' does not have it in the variant "
                                               "small (absent: true in its variables))\n"),
             "the run's line about the skipped step:\n" + lf(text.standard_error));
-    const Captured events = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "s.yaml", "--events"}, dir);
-    expect_code(events, 0, "run --variant small --events");
+    const Captured events = launch(o, {"serve", "--once", "sim.yaml", "--variant", "small", "--scenario", "s.yaml"}, dir);
+    expect_code(events, 0, "serve --once --variant small");
     require(contains(lf(events.standard_output), "\"index\":3,\"line\":8,\"kind\":\"expect\",\"text\":\"expect Body.body.heater (within 100 ms)\","
                                                  "\"status\":\"skipped\",\"start_ms\":30,\"at_ms\":null,\"end_ms\":30,"
                                                  "\"code\":\"scenario-skipped\","),

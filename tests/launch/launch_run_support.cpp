@@ -139,7 +139,8 @@ void expect_text(const std::string& actual, const std::string& expected, const s
 
 std::vector<std::string> fixture_run_arguments(const fs::path& dir, const std::vector<std::string>& args)
 {
-    if (args.empty() || (args.front() != "check" && args.front() != "run" && args.front() != "test"))
+    if (args.empty() ||
+        (args.front() != "check" && args.front() != "run" && args.front() != "serve" && args.front() != "test"))
     {
         return args;
     }
@@ -179,10 +180,399 @@ std::vector<std::string> fixture_run_arguments(const fs::path& dir, const std::v
             }
         }
         std::vector<std::string> all = args;
-        all.insert(all.begin() + 1, options.begin(), options.end());
+        const std::size_t insert_at =
+            (all.size() >= 2 && all[0] == "serve" && all[1] == "--once") ? 2 : 1;
+        all.insert(all.begin() + static_cast<std::ptrdiff_t>(insert_at), options.begin(), options.end());
         return all;
     }
     return args;
+}
+
+namespace {
+
+std::string json_quote(std::string_view text)
+{
+    std::string out = "\"";
+    for (const char c : text)
+    {
+        if (c == '\\' || c == '"')
+        {
+            out += '\\';
+        }
+        out += c;
+    }
+    out += '"';
+    return out;
+}
+
+std::string json_string_array(const std::vector<std::string>& items)
+{
+    std::string out = "[";
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        if (i > 0)
+        {
+            out += ',';
+        }
+        out += json_quote(items[i]);
+    }
+    out += ']';
+    return out;
+}
+
+} // namespace
+
+ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::vector<std::string>& raw_args)
+{
+    const std::vector<std::string> all = fixture_run_arguments(dir, raw_args);
+    ServeOnceInvocation out;
+    out.cli_args = {"serve", "--once"};
+
+    std::optional<std::string> request_file;
+    std::optional<std::string> timeline;
+    std::optional<std::string> variant;
+    std::optional<std::string> scenario;
+    std::optional<std::string> speed;
+    std::optional<std::string> stop_at_ms;
+    std::optional<std::string> late_tolerance_ms;
+    std::optional<std::string> time_policy;
+    bool strict = false;
+    bool start_paused = false;
+    std::vector<std::string> disable;
+    std::vector<std::string> enable;
+    std::vector<std::string> manual;
+    std::vector<std::pair<std::string, std::string>> params;
+    std::vector<std::pair<std::string, std::string>> connect;
+    std::vector<std::string> positionals;
+
+    bool after_dashdash = false;
+    for (std::size_t i = 1; i < all.size(); ++i)
+    {
+        const std::string& a = all[i];
+        if (after_dashdash)
+        {
+            positionals.push_back(a);
+            continue;
+        }
+        if (a == "--")
+        {
+            after_dashdash = true;
+            continue;
+        }
+        if (a == "--once" || a == "--stdin-commands")
+        {
+            continue;
+        }
+        if (a == "--strict")
+        {
+            strict = true;
+            continue;
+        }
+        if (a == "--start-paused")
+        {
+            start_paused = true;
+            continue;
+        }
+        const auto take_val = [&](std::string& dst) -> bool {
+            if (i + 1 >= all.size())
+            {
+                out.passthrough = true;
+                return false;
+            }
+            dst = all[++i];
+            return true;
+        };
+        if (a == "--log-dir" || a == "--timeout-ms" || a == "--describe-timeout-ms" ||
+            a == "--participant-start-timeout-ms" || a == "--participant-stop-timeout-ms" ||
+            a == "--events-stall-ms" || a == "--control" || a == "--control-credentials" ||
+            a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            if (a == "--events-stall-ms")
+            {
+                char* end = nullptr;
+                errno = 0;
+                const long long ms = std::strtoll(val.c_str(), &end, 10);
+                if (val.empty() || *end != '\0' || errno != 0 || ms < 1000 || ms > 86'400'000)
+                {
+                    out.passthrough = true;
+                    break;
+                }
+            }
+            out.cli_args.push_back(a);
+            out.cli_args.push_back(val);
+            continue;
+        }
+        if (a == "--request")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            request_file = std::move(val);
+            continue;
+        }
+        if (a == "--timeline")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            timeline = std::move(val);
+            continue;
+        }
+        if (a == "--variant")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            variant = std::move(val);
+            continue;
+        }
+        if (a == "--scenario")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            scenario = std::move(val);
+            continue;
+        }
+        if (a == "--speed")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            speed = std::move(val);
+            continue;
+        }
+        if (a == "--stop-at-ms")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            stop_at_ms = std::move(val);
+            continue;
+        }
+        if (a == "--late-tolerance-ms")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            late_tolerance_ms = std::move(val);
+            continue;
+        }
+        if (a == "--time-policy")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            time_policy = std::move(val);
+            continue;
+        }
+        if (a == "--disable")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            disable.push_back(std::move(val));
+            continue;
+        }
+        if (a == "--enable")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            enable.push_back(std::move(val));
+            continue;
+        }
+        if (a == "--manual")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            manual.push_back(std::move(val));
+            continue;
+        }
+        if (a == "--param")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            const auto eq = val.find('=');
+            if (eq == std::string::npos)
+            {
+                out.passthrough = true;
+                break;
+            }
+            params.emplace_back(val.substr(0, eq), val.substr(eq + 1));
+            continue;
+        }
+        if (a == "--connect")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            const auto eq = val.find('=');
+            if (eq == std::string::npos)
+            {
+                out.passthrough = true;
+                break;
+            }
+            connect.emplace_back(val.substr(0, eq), val.substr(eq + 1));
+            continue;
+        }
+        if (!a.empty() && a.front() == '-')
+        {
+            out.passthrough = true;
+            break;
+        }
+        positionals.push_back(a);
+    }
+
+    if (out.passthrough || positionals.size() != 1)
+    {
+        out.passthrough = true;
+        out.cli_args = all;
+        out.run_command_line.clear();
+        return out;
+    }
+
+    out.cli_args.push_back(positionals.front());
+
+    std::vector<std::string> intent_fields;
+    if (variant)
+    {
+        intent_fields.push_back("\"variant\":" + json_quote(*variant));
+    }
+    if (scenario)
+    {
+        intent_fields.push_back("\"scenario\":" + json_quote(*scenario));
+    }
+    if (!params.empty())
+    {
+        std::string obj = "{";
+        for (std::size_t i = 0; i < params.size(); ++i)
+        {
+            if (i > 0)
+            {
+                obj += ',';
+            }
+            obj += json_quote(params[i].first) + ':' + json_quote(params[i].second);
+        }
+        obj += '}';
+        intent_fields.push_back("\"params\":" + obj);
+    }
+    if (!disable.empty())
+    {
+        intent_fields.push_back("\"disable\":" + json_string_array(disable));
+    }
+    if (!enable.empty())
+    {
+        intent_fields.push_back("\"enable\":" + json_string_array(enable));
+    }
+    if (!manual.empty())
+    {
+        intent_fields.push_back("\"manual\":" + json_string_array(manual));
+    }
+    if (!connect.empty())
+    {
+        std::string obj = "{";
+        for (std::size_t i = 0; i < connect.size(); ++i)
+        {
+            if (i > 0)
+            {
+                obj += ',';
+            }
+            obj += json_quote(connect[i].first) + ':' + json_quote(connect[i].second);
+        }
+        obj += '}';
+        intent_fields.push_back("\"connect\":" + obj);
+    }
+    if (time_policy)
+    {
+        intent_fields.push_back("\"time_policy\":" + json_quote(*time_policy));
+    }
+    if (speed)
+    {
+        if (*speed == "max")
+        {
+            intent_fields.push_back("\"speed\":\"max\"");
+        }
+        else
+        {
+            intent_fields.push_back("\"speed\":" + *speed);
+        }
+    }
+    if (start_paused)
+    {
+        intent_fields.push_back("\"start_paused\":true");
+    }
+    if (strict)
+    {
+        intent_fields.push_back("\"strict\":true");
+    }
+    if (stop_at_ms)
+    {
+        intent_fields.push_back("\"stop_at_ms\":" + *stop_at_ms);
+    }
+    if (late_tolerance_ms)
+    {
+        intent_fields.push_back("\"late_tolerance_ms\":" + *late_tolerance_ms);
+    }
+
+    std::string cmd = "{\"command\":\"run\"";
+    if (request_file)
+    {
+        cmd += ",\"request\":" + json_quote(*request_file);
+    }
+    else if (!intent_fields.empty())
+    {
+        cmd += ",\"intent\":{";
+        for (std::size_t i = 0; i < intent_fields.size(); ++i)
+        {
+            if (i > 0)
+            {
+                cmd += ',';
+            }
+            cmd += intent_fields[i];
+        }
+        cmd += '}';
+    }
+    if (timeline)
+    {
+        cmd += ",\"timeline\":" + json_quote(*timeline);
+    }
+    cmd += "}\n";
+    out.run_command_line = std::move(cmd);
+    return out;
 }
 
 Captured launch(const Options& o, const std::vector<std::string>& args, const fs::path& dir)
@@ -190,6 +580,43 @@ Captured launch(const Options& o, const std::vector<std::string>& args, const fs
     vehicle_sil::process::CaptureOptions options;
     options.timeout = scaled_timeout(240s);
     options.working_directory = dir;
+    if (!args.empty() && args.front() == "serve")
+    {
+        const ServeOnceInvocation inv = split_serve_once_arguments(dir, args);
+        if (inv.passthrough)
+        {
+            return vehicle_sil::process::run_captured(o.launch, inv.cli_args, options);
+        }
+        std::mutex mu;
+        std::string out_bytes;
+        std::string err_bytes;
+        vehicle_sil::process::ProcessOptions proc_opts;
+        proc_opts.working_directory = dir;
+        proc_opts.input = true;
+        proc_opts.max_line = std::size_t{1} << 20;
+        proc_opts.on_line = [&](vehicle_sil::process::Stream stream, std::string_view line) {
+            const std::lock_guard lock(mu);
+            (stream == vehicle_sil::process::Stream::Output ? out_bytes : err_bytes) += std::string(line) + "\n";
+        };
+        vehicle_sil::process::Process proc(o.launch, inv.cli_args, std::move(proc_opts));
+        static_cast<void>(proc.write_input(inv.run_command_line));
+        const auto status = proc.wait_for(options.timeout);
+        if (!status)
+        {
+            proc.kill_tree();
+        }
+        proc.finish_output(10s);
+        Captured cap;
+        if (status)
+        {
+            cap.exit_code = status->code;
+            cap.signal = status->signal;
+        }
+        const std::lock_guard lock(mu);
+        cap.standard_output = std::move(out_bytes);
+        cap.standard_error = std::move(err_bytes);
+        return cap;
+    }
     return vehicle_sil::process::run_captured(o.launch, fixture_run_arguments(dir, args), options);
 }
 
@@ -239,7 +666,7 @@ fs::path example_copy(const Options& o)
             }
         }
     }
-    fs::copy_file(o.example_dir / "simulation.yaml", dir / "simulation.yaml", fs::copy_options::overwrite_existing);
+    write_file(dir / "simulation.yaml", lf(read_text(o.example_dir / "simulation.yaml")));
     return dir;
 }
 
@@ -316,7 +743,27 @@ std::string members_of(const std::string& line)
 {
     const auto at = line.find(",\"t_ms\":");
     const auto from = at == std::string::npos ? at : line.find_first_of(",}", at + 8);
-    return from == std::string::npos || line[from] == '}' ? std::string{} : line.substr(from + 1, line.size() - from - 2);
+    if (from == std::string::npos || line[from] == '}')
+    {
+        return {};
+    }
+    std::string out = line.substr(from + 1, line.size() - from - 2);
+    if (out.rfind("\"run\":\"", 0) == 0)
+    {
+        const auto end_quote = out.find('"', 7);
+        if (end_quote != std::string::npos)
+        {
+            if (end_quote + 1 == out.size())
+            {
+                return {};
+            }
+            if (out[end_quote + 1] == ',')
+            {
+                out.erase(0, end_quote + 2);
+            }
+        }
+    }
+    return out;
 }
 
 void check_frame(const std::string& line, std::size_t i)

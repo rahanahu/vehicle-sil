@@ -439,8 +439,8 @@ Top-level keys:
 | `participants[]` | Array of participants (in the order of the configuration file) |
 | `networks[]` | Array of networks (in the order of the configuration file) |
 | `findings[]` | Array of findings (in the same order as the human-readable output) |
-| `file_sha256` | Present only with `--file-only`: lowercase hex SHA-256 of the raw configuration file bytes (`null` if unreadable or not read) |
-| `hot_eligibility` | Present only with `--file-only`: object `{ "eligible": bool, "reason": string\|null, "message": string\|null }` for `vehicle_sil_launch serve` (`reason` is `"usage"`, `"config-unreadable"`, `"fixed-registry"`, `"manual-participants"`, `"trace-enabled"`, or `null` when eligible) |
+| `file_sha256` | Lowercase hex SHA-256 of the raw configuration file bytes (`null` if unreadable or not read) |
+| `hot_eligibility` | Object `{ "eligible": bool, "reason": string\|null, "message": string\|null }` for `vehicle_sil_launch serve` (`reason` is `"usage"`, `"config-unreadable"`, `"fixed-registry"`, `"manual-participants"`, `"trace-enabled"`, or `null` when eligible) |
 
 - If `--variant` is missing or names no variant (`result` is `"usage"`), `variant` is `null` and `variants` gives the names you can choose from.
 - Each element of `params` has `name`, `value` (`true`/`false`, a number or a string) and `from` (`configuration` or `variant`).
@@ -683,7 +683,13 @@ participants:
       "message": "network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)",
       "detail": null
     }
-  ]
+  ],
+  "file_sha256": "c34efb597077f856df9a19f08690c2fdc28c9e482d85f7a4c550f925393c5e27",
+  "hot_eligibility": {
+    "eligible": true,
+    "reason": null,
+    "message": null
+  }
 }
 ```
 

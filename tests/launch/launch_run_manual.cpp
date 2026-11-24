@@ -109,8 +109,8 @@ void network(const Options& o)
                 contains(run.standard_output, "; start it with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment, so that the "
                                               "other computers reach it (registry_uri is not a loopback address)"),
             "the manual note tells the variable:\n" + run.standard_output);
-    const Captured events = launch(o, {"run", file, "--events"}, dir);
-    expect_code(events, 0, "run --events with a registry on 0.0.0.0");
+    const Captured events = launch(o, {"serve", "--once", file}, dir);
+    expect_code(events, 0, "serve --once with a registry on 0.0.0.0");
     require(contains(events.standard_output, "\"environment\":{\"VEHICLE_SIL_LISTEN_ON_NETWORK\":\"1\"}"),
             "the manual event has the variable:\n" + events.standard_output);
     const Captured checked = launch(o, {"check", file}, dir);
@@ -246,7 +246,7 @@ void manual_fails(const Options& o)
     {
         // It fails while the simulation runs: the launcher sees it leave the simulation.
         const fs::path dir = hand_dir(o, "fails", hand_config(o, "# run-option --stop-at-ms 1000\n", ""), {{"Auto", ""}, {"Hand", "exit-at-ms 100 3"}});
-        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
         const std::string event = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         require(contains(event, "\"command\":[\"") && contains(event, "\"--name\",\"Hand\",\"--registry-uri\","),
                 "the event manual has the command:\n" + event);
@@ -277,7 +277,7 @@ void manual_stop(const Options& o)
     {
         // A stop before the start (Late never comes): Hand, which has joined, is told to end.
         const fs::path dir = hand_dir(o, "stop", hand_config(o, "", late_participant(o)), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
         const std::string event = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         ByHand byHand(json_text(event, "command_line"), json_text(event, "working_directory"));
         live.wait_for({"\"name\":\"Hand\"", "\"state\":\"joined\""});
@@ -293,7 +293,7 @@ void manual_stop(const Options& o)
     {
         // A signal must also wake a run that can wait indefinitely for a manual participant.
         const fs::path dir = hand_dir(o, "signal", hand_config(o, "", ""), {{"Auto", ""}, {"Hand", ""}});
-        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
         live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         live.wait_for({"\"name\":\"Auto\"", "\"state\":\"joined\""});
 #ifdef _WIN32
@@ -318,7 +318,7 @@ void manual_frozen(const Options& o)
         // end before the stop command.
         const fs::path dir = hand_dir(o, "frozen", hand_config(o, "# run-option --participant-stop-timeout-ms 1000\n", late_participant(o)),
                                       {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         const std::string lateEvent = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
         ByHand byHand(json_text(hand, "command_line"), json_text(hand, "working_directory"));
@@ -365,7 +365,7 @@ void manual_frozen(const Options& o)
         // still may never return there, docs/dependencies.md).
         const fs::path dir = hand_dir(o, "frozen_running", hand_config(o, "# run-option --participant-stop-timeout-ms 1000\n", late_participant(o)),
                                       {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         const std::string lateEvent = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
         ByHand byHand(json_text(hand, "command_line"), json_text(hand, "working_directory"));
@@ -397,7 +397,7 @@ void manual_thawed(const Options& o)
         // going on: the run passes. Whether its variables can be used is logged (its control link
         // at the start).
         const fs::path dir = hand_dir(o, "thawed", hand_config(o, "# run-option --stop-at-ms 200\n", late_participant(o)), {{"Auto", ""}, {"Hand", "variables"}, {"Late", ""}});
-        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         const std::string lateEvent = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
         ByHand byHand(json_text(hand, "command_line"), json_text(hand, "working_directory"));
@@ -422,7 +422,7 @@ void manual_again(const Options& o)
         // Ended after it joined, before the start (to start it again): the start fails, and the
         // finding says to start the launcher again as well.
         const fs::path dir = hand_dir(o, "again", hand_config(o, "", late_participant(o)), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
-        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
         const auto hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         const auto late = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
         auto byHand = std::make_unique<ByHand>(json_text(hand, "command_line"), json_text(hand, "working_directory"));

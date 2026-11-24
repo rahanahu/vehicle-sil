@@ -254,7 +254,7 @@ fs::path example_copy(const Options& o)
             }
         }
     }
-    fs::copy_file(o.example_dir / "simulation.yaml", dir / "simulation.yaml", fs::copy_options::overwrite_existing);
+    write_file(dir / "simulation.yaml", lf(read_file(o.example_dir / "simulation.yaml")));
     return dir;
 }
 
@@ -305,15 +305,15 @@ void docs(const Options& o)
     expect_text(lf(read_file(o.example_config)), block_after(o.docs, "<!-- examples/ecu_main/simulation.yaml -->"),
                 "examples/ecu_main/simulation.yaml in the docs");
 
-    const fs::path example = o.example_dir / "simulation.yaml";
+    // The files with mistakes go to a copy of the example, not next to the example that works.
+    const fs::path mistakes = example_copy(o);
+    const fs::path example = mistakes / "simulation.yaml";
     const Captured passed = launch(o, {"check", shown_path(example)});
     expect_code(passed, 0, "check simulation.yaml");
     expect_text(shown_as(passed.standard_output, example, "simulation.yaml"),
                 block_after(o.docs, "<!-- vehicle_sil_launch check simulation.yaml -->"), "check simulation.yaml");
     expect_text(passed.standard_error, "", "check simulation.yaml: stderr");
 
-    // The files with mistakes go to a copy of the example, not next to the example that works.
-    const fs::path mistakes = example_copy(o);
     const fs::path twoEngines = mistakes / "two-engines.yaml";
     write_file(twoEngines, block_after(o.docs, "<!-- two-engines.yaml -->"));
     const Captured failed = launch(o, {"check", shown_path(twoEngines)});
@@ -630,7 +630,8 @@ void usage(const Options& o)
                  "runs by itself; pause and step it with --stdin-commands or from a Control Server client (--control) if needed");
     expect_usage({"run", "a.yaml", "--start-paused", "--control-audit-log", "a.log"},
                  "--control-audit-log is for --control: without it there is no control server");
-    expect_usage({"check", "a.yaml", "--events"}, "--events is for run: check starts no participant");
+    expect_usage({"check", "a.yaml", "--events"}, "--events is not for check: check starts no participant");
+    expect_usage({"check", "a.yaml", "--events-stall-ms", "1000"}, "--events-stall-ms is for serve, not for check");
     expect_usage({"check", "a.yaml", "--stdin-commands"}, "--stdin-commands is for run: check starts no participant");
     for (const std::vector<std::string>& args : {std::vector<std::string>{"--help"}, {"check", "x.yaml", "-h"}})
     {
@@ -762,16 +763,15 @@ void request(const Options& o)
                     contains(run.standard_output, "\"strict\": true") && contains(run.standard_output, "\"speed\": \"max\""),
                 "run " + args[2] + " wrote:\n" + run.standard_output);
     }
-    // A request file that cannot be read, or is no request file: a usage error, also as JSON and as the result event.
+    // A request file that cannot be read, or is no request file: a usage error, also as JSON.
     const auto expect_usage = [&](const std::vector<std::string>& args, const std::string& error) {
         const Captured run = launch(o, args);
         expect_code(run, 4, "vehicle_sil_launch " + error);
         const bool json = std::find(args.begin(), args.end(), "--json") != args.end();
-        const bool events = std::find(args.begin(), args.end(), "--events") != args.end();
         require(json ? contains(run.standard_output, "\"result\": \"usage\"") && contains(run.standard_output, json_string(error))
-                     : events ? contains(run.standard_output, "\"result\":\"usage\"") : run.standard_output.empty(),
+                     : run.standard_output.empty(),
                 "usage error, stdout: " + run.standard_output);
-        require(events || lf(run.standard_error).rfind("error: " + error + "\nusage: vehicle_sil_launch check [--json]", 0) == 0,
+        require(lf(run.standard_error).rfind("error: " + error + "\nusage: vehicle_sil_launch check [--json]", 0) == 0,
                 "for the error '" + error + "' vehicle_sil_launch wrote:\n" + run.standard_error);
     };
     const std::string absent = shown_path(o.work_dir / "bench" / "absent.json");
@@ -783,7 +783,6 @@ void request(const Options& o)
         expect_usage({command, "--request", shown_path(o.work_dir / "bench"), config},
                      "--request " + shown_path(o.work_dir / "bench") + ": this is not a regular file: name the request file");
     }
-    expect_usage({"run", "--events", "--request", absent, config}, "--request " + absent + ": the file does not exist: check the path");
     const std::string wrong = shown_path(o.work_dir / "bench" / "wrong.json");
     write_file(o.work_dir / "bench" / "wrong.json", "{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}\n");
     const std::string unknown = wrong + ", line 3: unknown key 'conect': did you mean 'connect'? (the keys here: "
@@ -2035,11 +2034,11 @@ void file_only(const Options& o)
     expect_code(crlf_res, 0, "check --file-only --json crlf.yaml");
     require(lf_res.standard_output != crlf_res.standard_output, "LF and CRLF file_sha256 must differ");
 
-    // 2. check --json without --file-only omits file_sha256 and hot_eligibility.
+    // 2. check --json without --file-only also includes file_sha256 and hot_eligibility.
     const Captured plain = launch(o, {"check", "--json", "--variant", "fast", shown_path(lf)});
     expect_code(plain, 1, "check --json without --file-only");
-    require(!contains(plain.standard_output, "\"file_sha256\""), plain.standard_output);
-    require(!contains(plain.standard_output, "\"hot_eligibility\""), plain.standard_output);
+    require(contains(plain.standard_output, "\"file_sha256\": \""), plain.standard_output);
+    require(contains(plain.standard_output, "\"hot_eligibility\": {\n    \"eligible\": true"), plain.standard_output);
 
     // 3. check --file-only --json with fixed registry_uri and manual participant reports ineligible.
     const fs::path fixed = dir / "fixed.yaml";

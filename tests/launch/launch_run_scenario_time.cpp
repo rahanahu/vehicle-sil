@@ -46,7 +46,7 @@ class Run
 public:
     Run(const Options& o, const fs::path& dir, const std::string& speed) :
       dir_(dir),
-      live_(o, dir, {"run", "--events", "--stdin-commands", "--scenario", "s.yaml", "--timeline", "timeline.json", "--speed", speed,
+      live_(o, dir, {"serve", "--once", "--stdin-commands", "--scenario", "s.yaml", "--timeline", "timeline.json", "--speed", speed,
                      "sim.yaml"})
     {
     }
@@ -295,7 +295,7 @@ void scenario_paused_timeout(const Options& o)
                              "    expect: { Body.level: 5 }\n";
     const fs::path dir = scenario_ecus(o, "", file);
     const std::string timeout = std::to_string(scaled_timeout(1200ms).count());
-    const std::vector<std::string> args{"run", "--events", "--stdin-commands", "--scenario", "s.yaml", "--timeout-ms", timeout, "sim.yaml"};
+    const std::vector<std::string> args{"serve", "--once", "--stdin-commands", "--scenario", "s.yaml", "--timeout-ms", timeout, "sim.yaml"};
     // Without a pause it is over long before the timeout (as fast as possible).
     {
         Live live(o, dir, args);

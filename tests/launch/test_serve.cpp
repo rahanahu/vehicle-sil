@@ -245,24 +245,37 @@ public:
         stream_ = std::make_unique<EventStream>(
           [s = state_](std::string_view bytes) {
               EventWrite out;
-              const std::lock_guard lock(s->mutex);
-              s->buffer.append(bytes);
-              std::size_t pos = 0;
-              while (true)
+              std::function<void()> result_hook;
               {
-                  const std::size_t nl = s->buffer.find('\n', pos);
-                  if (nl == std::string::npos)
+                  const std::lock_guard lock(s->mutex);
+                  s->buffer.append(bytes);
+                  std::size_t pos = 0;
+                  while (true)
                   {
-                      break;
+                      const std::size_t nl = s->buffer.find('\n', pos);
+                      if (nl == std::string::npos)
+                      {
+                          break;
+                      }
+                      JsonLine parsed = parse_line(s->buffer.substr(pos, nl - pos));
+                      if (parsed.event == "result" && s->on_write_result)
+                      {
+                          result_hook = std::move(s->on_write_result);
+                          s->on_write_result = {};
+                      }
+                      s->lines.push_back(std::move(parsed));
+                      pos = nl + 1;
                   }
-                  s->lines.push_back(parse_line(s->buffer.substr(pos, nl - pos)));
-                  pos = nl + 1;
+                  if (pos > 0)
+                  {
+                      s->buffer.erase(0, pos);
+                  }
+                  s->changed.notify_all();
               }
-              if (pos > 0)
+              if (result_hook)
               {
-                  s->buffer.erase(0, pos);
+                  result_hook();
               }
-              s->changed.notify_all();
               out.bytes = bytes.size();
               return out;
           },
@@ -320,6 +333,12 @@ public:
         state_->on_next_emit = std::move(fn);
     }
 
+    void set_on_write_result(std::function<void()> fn)
+    {
+        const std::lock_guard lock(state_->mutex);
+        state_->on_write_result = std::move(fn);
+    }
+
 private:
     struct State
     {
@@ -329,6 +348,7 @@ private:
         std::vector<JsonLine> lines;
         std::string closed_reason;
         std::function<void()> on_next_emit;
+        std::function<void()> on_write_result;
     };
     std::shared_ptr<State> state_;
     std::unique_ptr<EventStream> stream_;
@@ -1273,4 +1293,61 @@ TEST_CASE(serve_single_run_exits_zero_after_one_run_with_launcher_ends_true)
     CHECK(lines.back().event == "result");
     CHECK(lines.back().launcher_ends == true);
     CHECK(lines.back().status_launcher_state == "ending");
+}
+
+TEST_CASE(serve_concurrent_next_run_and_eof_during_result_flush_preserve_strict_order)
+{
+    CaptureStream cap;
+    LauncherEnd end;
+    ServeOptions options;
+    options.instance = "ccddeeff00112233";
+    options.base.host.config = "sim.yaml";
+    std::atomic<int> runs{0};
+    options.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+        ++runs;
+        lent.controls->set_phase(Phase::Running);
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
+
+    // When Run 1's result is written to the output callback (while run_loop() is still blocked in
+    // finish_run()'s wait_result()), immediately submit Run 2; when Run 2's result is written,
+    // immediately signal end_of_input().
+    cap.set_on_write_result([&] {
+        cap.set_on_write_result([&] { serve.end_of_input(); });
+        serve.command(cmd(R"({"command":"run","id":2})"));
+    });
+    serve.command(cmd(R"({"command":"run","id":1})"));
+
+    const ServeEnd ended = done.get();
+    CHECK_EQ(ended.code, 0);
+    CHECK_EQ(runs.load(), 2);
+
+    const auto lines = cap.lines();
+    std::size_t r1_result = lines.size();
+    std::size_t r2_start = lines.size();
+    std::size_t r2_result = lines.size();
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        if (lines[i].event == "result" && lines[i].run == "ccddeeff00112233-1")
+        {
+            r1_result = i;
+        }
+        if (lines[i].event == "run_start" && lines[i].run == "ccddeeff00112233-2")
+        {
+            r2_start = i;
+        }
+        if (lines[i].event == "result" && lines[i].run == "ccddeeff00112233-2")
+        {
+            r2_result = i;
+        }
+    }
+    CHECK(r1_result < r2_start);
+    CHECK(r2_start < r2_result);
+    CHECK(lines.back().event == "status");
+    CHECK(lines.back().launcher_state == "ending");
 }

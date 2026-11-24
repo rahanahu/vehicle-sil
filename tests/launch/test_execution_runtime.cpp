@@ -2,8 +2,8 @@
 //
 // Deterministic unit tests for ExecutionRuntime (execution_runtime.hpp): 2-axis state machine,
 // Prepare/Eligibility/Metadata, Prepare+Shutdown barrier, RunSubmission, StopMode
-// (Graceful/Force/Escalate) + close_cut, send_time_command via Entry::Api, bounded result()
-// retention, and contamination handling. Uses injectable RunFunction + mutex/CV barriers
+// (Graceful/Force) + close_cut, send_time_command via Entry::Api, synchronous on_status
+// emission, and contamination handling. Uses injectable RunFunction + mutex/CV barriers
 // (no SIL Kit, no subprocesses, no fixed sleeps).
 #include "test_harness.hpp"
 

@@ -33,17 +33,19 @@ public:
     std::unique_ptr<RunEventSink> open_run(const std::string& run_id,
                                            std::optional<std::int64_t> command_id) override
     {
-        std::unique_ptr<EventStream> window = events_.open_run(run_id, command_id);
-        active_window_ = window.get();
-        return window;
+        return events_.open_run(run_id, command_id);
     }
 
-    bool finish_run(RunEventSink& /*window*/, const RunReport& report, bool launcher_ends,
-                    const ExecutionStatus& status, const std::function<bool()>& give_up) override
+    void on_run_result(RunEventSink& window, const RunReport& report, bool launcher_ends,
+                       const ExecutionStatus& status) noexcept override
     {
-        EventStream* const w = std::exchange(active_window_, nullptr);
-        return w != nullptr &&
-               w->result(format_result_event(report, launcher_ends, &status), give_up, launcher_ends);
+        window.enqueue_result(format_result_event(report, launcher_ends, &status), launcher_ends);
+    }
+
+    bool finish_run(RunEventSink& window, const RunReport& /*report*/, bool launcher_ends,
+                    const ExecutionStatus& /*status*/, const std::function<bool()>& give_up) override
+    {
+        return window.wait_result(give_up, launcher_ends);
     }
 
     [[nodiscard]] bool closed() const override { return events_.closed(); }
@@ -52,7 +54,6 @@ public:
 
 private:
     EventStream& events_;
-    EventStream* active_window_ = nullptr;
 };
 
 Serve::Serve(EventStream& events, LauncherEnd& end, ServeOptions options) :

@@ -10,6 +10,8 @@
 #include "vehicle_sil/runner/run_controls.hpp"
 #include "vehicle_sil/runner/run_events.hpp"
 
+#include <functional>
+#include <string>
 #include <string_view>
 
 namespace vehicle_sil::launch {
@@ -30,6 +32,8 @@ public:
     virtual void check(const Checked& report) = 0;
     virtual void command(const runner::Command& command, std::string_view source) = 0;
     virtual void state(const runner::RunState& state) = 0;
+    virtual void enqueue_result(std::string /*members*/, bool /*seal*/) {}
+    virtual bool wait_result(const std::function<bool()>& /*give_up*/, bool /*seal*/) { return true; }
 };
 
 } // namespace vehicle_sil::launch

@@ -162,7 +162,7 @@ long long stat_of(const fs::path& log, const std::string& key)
 std::string run_counts(const std::string& result)
 {
     std::smatch match;
-    const std::regex head("^\\{\"event\":\"result\",\"seq\":[0-9]+,\"t_ms\":[0-9]+,\"result\":\\{\"vehicle_sil_run\":2,\"vehicle_sil\":\"[^\"]*\","
+    const std::regex head("\"result\":\\{\"vehicle_sil_run\":2,\"vehicle_sil\":\"[^\"]*\","
                           "\"file\":\"[^\"]*\",(\"result\":\"[a-z_]+\"),\"end\":[a-z_\"]+,\"ok\":(?:true|false),\"message\":\"[^\"]*\","
                           "(\"strict\":(?:true|false),\"errors\":[0-9]+,\"warnings\":[0-9]+,\"notes\":[0-9]+)");
     return std::regex_search(result, match, head) ? match[1].str() + "," + match[2].str() : std::string{};
@@ -213,7 +213,7 @@ void expect_counts(const std::vector<std::string>& lines, const fs::path& logs, 
                 contains(lines.back(), "\"" + from_key + "\":" + std::to_string(from)),
             network + ": the result's counts are those of the bridge's last statistics line:\n" + lines.back());
     const std::vector<std::string> events = events_with(lines, {"\"event\":\"outside\"", "\"network\":\"" + network + "\""});
-    require(!events.empty(), network + ": run --events wrote the event outside:\n" + out_of(lines));
+    require(!events.empty(), network + ": serve --once wrote the event outside:\n" + out_of(lines));
     require(index_of(lines, {"\"name\":\"" + bridge + "\"", "\"state\":\"started\""}) <
                 index_of(lines, {"\"event\":\"outside\"", "\"network\":\"" + network + "\""}),
             network + ": the event outside after the bridge started:\n" + out_of(lines));
@@ -269,7 +269,7 @@ void connect_lost(const Options& base, bool hard)
     const Options o = connect_options(base);
     const fs::path dir = connect_dir(o, hard ? "lost_kill" : "lost_exit0", "", "");
     const std::string timeout = std::to_string(scaled_timeout(60s).count());
-    Live live(o, dir, {"run", "--events", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0", "sim.yaml"});
     const long pid = started_pid(live.wait_for({"\"name\":\"bridge.ETH_EXT\"", "\"state\":\"started\""}));
     live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
     end_process(pid, hard);
@@ -306,7 +306,7 @@ void connect_roundtrip(const Options& base)
     // Long enough for a statistics line of the bridges while the frames go (once a second): on Windows
     // the launcher may have to end them, and then their last one is what run has.
     const fs::path dir = connect_dir(o, "roundtrip", "# run-option --stop-at-ms 2500\n", talker(o), {{"Talker", "talk CAN"}});
-    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--strict", "--log-dir", "logs", "--connect", "ETH_EXT=fake0",
+    const Captured run = launch(o, {"serve", "--once", "--speed", "1", "--strict", "--log-dir", "logs", "--connect", "ETH_EXT=fake0",
                                     "--connect", "CAN=virtual:1", "sim.yaml"},
                                 dir);
     const std::vector<std::string> lines = check_events(run.standard_output);
@@ -372,7 +372,7 @@ void connect_no_adapter(const Options& base)
     // gives the finding in time.
     const fs::path dir = connect_dir(o, "no_adapter", "# run-option --participant-start-timeout-ms 120000\n", talker(o), {{"Talker", "talk CAN"}});
     const Captured run =
-        launch(o, {"run", "--events", "--connect", "ETH_EXT=eth9", "--connect", "CAN=physical:9", "sim.yaml"}, dir);
+        launch(o, {"serve", "--once", "--connect", "ETH_EXT=eth9", "--connect", "CAN=physical:9", "sim.yaml"}, dir);
     const std::vector<std::string> lines = check_events(run.standard_output);
     expect_code(run, 1, "run --connect to an adapter that is not there");
     const std::string failed = finding_in(lines, "connect-failed");
@@ -403,7 +403,7 @@ void connect_bus_off(const Options& base)
     set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "0");
     set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "1000");
     const fs::path dir = connect_dir(o, "bus_off", "# run-option --stop-at-ms 4500\n", talker(o), {{"Talker", "talk CAN"}});
-    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--log-dir", "logs", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
+    const Captured run = launch(o, {"serve", "--once", "--speed", "1", "--log-dir", "logs", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
     set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "");
     const std::vector<std::string> lines = check_events(run.standard_output);
     expect_code(run, 0, "run --connect with a bus that is off");
@@ -438,7 +438,7 @@ void connect_bus_off_lost(const Options& base)
     const fs::path dir = connect_dir(o, "bus_off_lost", "# run-option --stop-at-ms 300000\n", talker(o), {{"Talker", "talk CAN"}});
     const std::string timeout = std::to_string(scaled_timeout(120s).count());
     const auto began = std::chrono::steady_clock::now();
-    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
+    const Captured run = launch(o, {"serve", "--once", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
                           "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
     const auto took = std::chrono::steady_clock::now() - began;
     set_environment("VEHICLE_SIL_FAKE_XL_BUS_OFF_AFTER_MS", "");
@@ -472,7 +472,7 @@ void connect_nothing_received(const Options& base)
     const fs::path dir = connect_dir(o, "nothing_received", "# run-option --stop-at-ms 2500\n", talker(o), {{"Talker", "talk CAN"}});
     const std::vector<std::string> args{"--speed", "1", "--strict", "--log-dir", "logs", "--connect", "ETH_EXT=fake1",
                                         "--connect", "CAN=virtual:1", "sim.yaml"};
-    std::vector<std::string> withEvents{"run", "--events"};
+    std::vector<std::string> withEvents{"serve", "--once"};
     withEvents.insert(withEvents.end(), args.begin(), args.end());
     const Captured run = launch(o, withEvents, dir);
     const std::vector<std::string> lines = check_events(run.standard_output);
@@ -523,7 +523,7 @@ void connect_dies_while_waiting(const Options& base)
 {
     const Options o = connect_options(base);
     const fs::path dir = connect_dir(o, "dies_while_waiting", "", "  - name: Late\n    command: [" + ecu(o) + "]\n");
-    Live live(o, dir, {"run", "--events", "--manual", "Late", "--connect", "ETH_EXT=fake0", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--manual", "Late", "--connect", "ETH_EXT=fake0", "sim.yaml"});
     const long pid = started_pid(live.wait_for({"\"name\":\"bridge.ETH_EXT\"", "\"state\":\"started\""}));
     live.wait_for({"\"name\":\"bridge.ETH_EXT\"", "\"state\":\"joined\""});
     live.wait_for({"\"event\":\"log\"", "waiting for Late to join"});
@@ -551,7 +551,7 @@ void connect_dies_while_held(const Options& base)
     // Long enough not to end the hold before the bridge does; a run that missed the bridge would
     // end with the finding timeout after it, not wait for ever.
     const std::string timeout = std::to_string(scaled_timeout(60s).count());
-    Live live(o, dir, {"run", "--events", "--control", "0", "--start-paused", "--time-policy", "free", "--timeout-ms", timeout,
+    Live live(o, dir, {"serve", "--once", "--control", "0", "--start-paused", "--time-policy", "free", "--timeout-ms", timeout,
                        "--connect", "ETH_EXT=fake0", "sim.yaml"});
     const long pid = started_pid(live.wait_for({"\"name\":\"bridge.ETH_EXT\"", "\"state\":\"started\""}));
     live.wait_for({"\"event\":\"log\"", "standing still before the first step"});
@@ -576,7 +576,7 @@ void connect_speed(const Options& base)
         return connect_dir(o, name, "# run-option --stop-at-ms 300\n", talker(o), {{"Talker", "talk CAN"}});
     };
     const auto run_with = [](std::vector<std::string> args) {
-        args.insert(args.begin(), {"run", "--events"});
+        args.insert(args.begin(), {"serve", "--once"});
         args.insert(args.end(), {"--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"});
         return args;
     };
@@ -592,13 +592,13 @@ void connect_speed(const Options& base)
                 "the error outside-real-time is about " + what + ", and nothing was started:\n" + out_of(lines));
     };
     // --speed 2 over the file's speed 1: the run keeps real time, so it is an error.
-    refused(launch(o, run_with({"--speed", "2"}), dir), "--speed 2");
-    refused(launch(o, run_with({"--time-policy", "realtime", "--speed", "max"}), dir), "--speed max");
+    refused(launch(o, run_with({"--speed", "2"}), dir), "speed 2 in intent");
+    refused(launch(o, run_with({"--time-policy", "realtime", "--speed", "max"}), dir), "speed max in intent");
     // --time-policy free: a note, so it runs with --strict too.
     const Captured free = launch(o, run_with({"--strict", "--time-policy", "free", "--speed", "2"}), dir);
     const std::vector<std::string> freeLines = check_events(free.standard_output);
     expect_code(free, 0, "run --strict --time-policy free --connect --speed 2 (a note)");
-    require(contains(finding_in(freeLines, "outside-not-real-time"), "--speed 2 runs the simulation at that speed") &&
+    require(contains(finding_in(freeLines, "outside-not-real-time"), "speed 2 in intent runs the simulation at that speed") &&
                 contains(freeLines.back(), "\"severity\":\"note\",\"code\":\"outside-not-real-time\"") &&
                 contains(finding_in(freeLines, "outside-not-real-time"), "the bridge still carries frames both ways") &&
                 !events_with(freeLines, {"\"event\":\"state\"", "\"speed\":2,"}).empty() &&
@@ -624,12 +624,12 @@ void connect_speed(const Options& base)
         const Captured kept = launch(o, run_with({"--strict", "--time-policy", "free", "--speed", "8"}), other);
         const std::vector<std::string> keptLines = check_events(kept.standard_output);
         expect_code(kept, 0, "run --strict --time-policy free --connect of a file with speed: 8");
-        require(contains(finding_in(keptLines, "outside-not-real-time"), "--speed 8 runs the simulation at that speed") &&
+        require(contains(finding_in(keptLines, "outside-not-real-time"), "speed 8 in intent runs the simulation at that speed") &&
                     contains(keptLines.back(), "\"timing\":{\"speed\":8,"),
                 "the run went at the file's speed:\n" + out_of(keptLines));
         // Nothing connected (none): nothing is locked: the file's speed, and no finding about it.
         const Captured alone =
-            launch(o, {"run", "--events", "--speed", "8", "--connect", "ETH_EXT=none", "--connect", "CAN=none", "sim.yaml"}, other);
+            launch(o, {"serve", "--once", "--speed", "8", "--connect", "ETH_EXT=none", "--connect", "CAN=none", "sim.yaml"}, other);
         const std::vector<std::string> aloneLines = check_events(alone.standard_output);
         expect_code(alone, 0, "run --connect <network>=none of a file with speed: 8");
         require(finding_in(aloneLines, "outside-speed-set").empty() && finding_in(aloneLines, "outside-not-real-time").empty() &&
@@ -672,14 +672,14 @@ void connect_speed(const Options& base)
                 "the run went at speed 1 with the file's step, and coarse-time-step is the check's:\n" + out);
     }
     // --start-paused: an error too.
-    refused(launch(o, run_with({"--stdin-commands", "--start-paused"}), dir), "--start-paused");
+    refused(launch(o, run_with({"--stdin-commands", "--start-paused"}), dir), "start_paused in intent");
     // With --time-policy free it is a note, and it runs after a resume.
     Live live(o, dir, run_with({"--strict", "--stdin-commands", "--time-policy", "free", "--start-paused"}));
     live.wait_standing(0);
     live.write("{\"command\":\"resume\"}\n");
     const auto [status, lines] = live.finish();
     require(status && status->code == 0, "exit code " + code_text(status) + "\n" + out_of(lines));
-    require(contains(finding_in(lines, "outside-not-real-time"), "--start-paused makes the simulation wait before its first step"),
+    require(contains(finding_in(lines, "outside-not-real-time"), "start_paused in intent makes the simulation wait before its first step"),
             "the note outside-not-real-time:\n" + out_of(lines));
     require(contains(lines.back(), "\"simulation\":\"reached_stop_at\""), "it ran to its end:\n" + lines.back());
     // Starting paused and the resume do not change the time of a run that goes on in real time.
@@ -700,37 +700,36 @@ void connect_request(const Options& base)
     // which --strict lets pass.
     bench("");
     {
-        const Captured run = launch(o, {"run", "--events", "--strict", "--request", "bench.json", "sim.yaml"}, dir);
-        const std::vector<std::string> lines = check_events(run.standard_output);
+        const Captured run = launch(o, {"run", "--json", "--strict", "--request", "bench.json", "sim.yaml"}, dir);
+        const std::string out = lf(run.standard_output);
         expect_code(run, 0, "run --request with connect");
-        require(run_counts(lines.back()) == "\"result\":\"passed\",\"strict\":true,\"errors\":0,\"warnings\":0,\"notes\":1",
-                "one note:\n" + lines.back());
-        require(contains(lines.back(), "\"severity\":\"note\",\"code\":\"connect-network-unused\"") && contains(lines.back(), unused),
-                "the note about the network of the file:\n" + lines.back());
+        require(contains(out, "\"result\": \"passed\",\n  \"end\": \"completed\",\n  \"ok\": true,") &&
+                    contains(out, "\"strict\": true,\n  \"errors\": 0,\n  \"warnings\": 0,\n  \"notes\": 1,"),
+                "one note:\n" + out);
+        require(contains(out, "\"severity\": \"note\",\n        \"code\": \"connect-network-unused\"") && contains(out, unused),
+                "the note about the network of the file:\n" + out);
         for (const char* bridge : {"bridge.ETH_EXT", "bridge.CAN"})
         {
-            require(index_of(lines, {"\"name\":\"" + std::string(bridge) + "\"", "\"state\":\"joined\""}) < lines.size(),
-                    std::string(bridge) + " joined:\n" + out_of(lines));
+            require(contains(out, "\"name\": \"" + std::string(bridge) + "\""),
+                    std::string(bridge) + " joined:\n" + out);
         }
-        require(contains(lines.back(), "\"outside\":[{\"network\":\"ETH_EXT\",\"target\":\"fake0\",") &&
-                    contains(lines.back(), "{\"network\":\"CAN\",\"target\":\"virtual:1\",") &&
-                    !contains(lines.back(), "bridge.LIN_BODY"),
-                "the result has the two networks outside:\n" + lines.back());
+        require(contains(out, "\"network\": \"ETH_EXT\",\n      \"target\": \"fake0\",") &&
+                    contains(out, "\"network\": \"CAN\",\n      \"target\": \"virtual:1\",") &&
+                    !contains(out, "bridge.LIN_BODY"),
+                "the result has the two networks outside:\n" + out);
     }
     // --connect <network>=none takes the file's target away: one bridge, and none.
     {
-        const Captured run = launch(o, {"run", "--events", "--request", "bench.json", "--connect", "ETH_EXT=none", "sim.yaml"}, dir);
-        const std::vector<std::string> lines = check_events(run.standard_output);
+        const Captured run = launch(o, {"run", "--json", "--request", "bench.json", "--connect", "ETH_EXT=none", "sim.yaml"}, dir);
         expect_code(run, 0, "run --request --connect ETH_EXT=none");
-        require(index_of(lines, {"\"name\":\"bridge.CAN\"", "\"state\":\"joined\""}) < lines.size() &&
-                    events_with(lines, {"\"name\":\"bridge.ETH_EXT\""}).empty(),
-                "only the CAN bridge ran:\n" + out_of(lines));
+        require(contains(run.standard_output, "\"name\": \"bridge.CAN\"") &&
+                    !contains(run.standard_output, "\"name\": \"bridge.ETH_EXT\""),
+                "only the CAN bridge ran:\n" + run.standard_output);
         const Captured alone = launch(
-            o, {"run", "--events", "--request", "bench.json", "--connect", "ETH_EXT=none", "--connect", "CAN=none", "sim.yaml"}, dir);
-        const std::vector<std::string> aloneLines = check_events(alone.standard_output);
+            o, {"run", "--json", "--request", "bench.json", "--connect", "ETH_EXT=none", "--connect", "CAN=none", "sim.yaml"}, dir);
         expect_code(alone, 0, "run --request --connect <network>=none for both");
-        require(events_with(aloneLines, {"\"name\":\"bridge."}).empty() && contains(aloneLines.back(), unused),
-                "no bridge ran:\n" + out_of(aloneLines));
+        require(!contains(alone.standard_output, "\"name\": \"bridge.") && contains(alone.standard_output, unused),
+                "no bridge ran:\n" + alone.standard_output);
     }
     // The file's speed is refused as --speed is, and named with the file; --speed 1 wins over it.
     {
@@ -741,41 +740,38 @@ void connect_request(const Options& base)
     }
     bench(", \"speed\": 2");
     {
-        const Captured run = launch(o, {"run", "--events", "--request", "bench.json", "sim.yaml"}, dir);
-        const std::vector<std::string> lines = check_events(run.standard_output);
+        const Captured run = launch(o, {"run", "--json", "--request", "bench.json", "sim.yaml"}, dir);
+        const std::string out = lf(run.standard_output);
         expect_code(run, 1, "run --request with speed 2 and connect");
-        require(contains(lines.back(), "\"severity\":\"error\",\"code\":\"outside-real-time\"") &&
-                    contains(lines.back(), "speed 2 in bench.json is refused. Take speed out of bench.json, or pass --speed 1") &&
-                    contains(lines.back(), "\"result\":\"check_failed\"") &&
-                    events_with(lines, {"\"event\":\"participant\"", "\"state\":\"started\""}).empty(),
-                "the file's speed is refused, and nothing was started:\n" + out_of(lines));
-        const Captured one = launch(o, {"run", "--events", "--request", "bench.json", "--speed", "1", "sim.yaml"}, dir);
+        require(contains(out, "\"code\": \"outside-real-time\"") &&
+                    contains(out, "speed 2 in bench.json is refused. Take speed out of bench.json, or pass --speed 1") &&
+                    contains(out, "\"result\": \"check_failed\"") &&
+                    contains(out, "\"participants\": []"),
+                "the file's speed is refused, and nothing was started:\n" + out);
+        const Captured one = launch(o, {"run", "--json", "--request", "bench.json", "--speed", "1", "sim.yaml"}, dir);
         expect_code(one, 0, "run --request with speed 2, --speed 1");
     }
     // The file's time_policy free: the note names the file; --time-policy realtime wins over it.
     bench(", \"speed\": 2, \"time_policy\": \"free\"");
     {
-        const Captured run = launch(o, {"run", "--events", "--strict", "--request", "bench.json", "sim.yaml"}, dir);
-        const std::vector<std::string> lines = check_events(run.standard_output);
+        const Captured run = launch(o, {"run", "--json", "--strict", "--request", "bench.json", "sim.yaml"}, dir);
+        const std::string out = lf(run.standard_output);
         expect_code(run, 0, "run --request with time_policy free");
-        require(contains(finding_in(lines, "outside-not-real-time"),
-                         "with time_policy free in bench.json speed 2 in bench.json runs the simulation at that speed") &&
-                    contains(finding_in(lines, "outside-not-real-time"),
-                             "leave time_policy free in bench.json and speed in bench.json out") &&
-                    contains(lines.back(), "\"timing\":{\"speed\":2,"),
-                "the note names the file:\n" + out_of(lines));
-        const Captured locked = launch(o, {"run", "--events", "--time-policy", "realtime", "--request", "bench.json", "sim.yaml"}, dir);
-        const std::vector<std::string> lockedLines = check_events(locked.standard_output);
+        require(contains(out, "with time_policy free in bench.json speed 2 in bench.json runs the simulation at that speed") &&
+                    contains(out, "leave time_policy free in bench.json and speed in bench.json out") &&
+                    contains(out, "\"speed\": 2,"),
+                "the note names the file:\n" + out);
+        const Captured locked = launch(o, {"run", "--json", "--time-policy", "realtime", "--request", "bench.json", "sim.yaml"}, dir);
         expect_code(locked, 1, "run --request with time_policy free, --time-policy realtime");
-        require(contains(lockedLines.back(), "speed 2 in bench.json is refused"),
-                "--time-policy realtime wins over the file:\n" + out_of(lockedLines));
+        require(contains(locked.standard_output, "speed 2 in bench.json is refused"),
+                "--time-policy realtime wins over the file:\n" + locked.standard_output);
     }
 }
 
 void connect_time_locked(const Options& base)
 {
     const Options o = connect_options(base);
-    const std::vector<std::string> run{"run", "--events", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect",
+    const std::vector<std::string> run{"serve", "--once", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect",
                                        "CAN=virtual:1", "sim.yaml"};
     /// The command events of standard input, in their order, each as "<command> <id> <accepted or the reason>".
     const auto answers = [](const std::vector<std::string>& lines) {
@@ -880,7 +876,7 @@ void connect_time_changed(const Options& base)
     // No stop_at_ms: the commands do not have to come within a time of the run; a stop ends it.
     {
         const fs::path dir = connect_dir(o, "time_changed", "", talker(o), {{"Talker", "talk CAN"}});
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "--time-policy", "free", "--connect", "ETH_EXT=fake0",
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "--time-policy", "free", "--connect", "ETH_EXT=fake0",
                            "--connect", "CAN=virtual:1", "sim.yaml"});
         live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
         live.write("{\"command\":\"pause\"}\n");
@@ -917,7 +913,7 @@ void connect_time_changed(const Options& base)
     // With --strict the note does not fail the run. The speed is written at once: a command before
     // the simulation starts waits for the configuration, is taken and kept, and counts as well.
     const fs::path dir = connect_dir(o, "time_changed_strict", "# run-option --stop-at-ms 300\n", talker(o), {{"Talker", "talk CAN"}});
-    Live live(o, dir, {"run", "--events", "--strict", "--stdin-commands", "--time-policy", "free", "--connect", "ETH_EXT=fake0",
+    Live live(o, dir, {"serve", "--once", "--strict", "--stdin-commands", "--time-policy", "free", "--connect", "ETH_EXT=fake0",
                        "--connect", "CAN=virtual:1", "sim.yaml"});
     live.write("{\"command\":\"speed\",\"value\":\"max\"}\n");
     const auto [status, lines] = live.finish();
@@ -1052,7 +1048,7 @@ void connect_device_shared(const Options& base)
     outside.wait_ready();
     {
         const fs::path dir = connect_dir(o, "device_shared", "# run-option --stop-at-ms 2500\n", talker(o), {{"Talker", "talk CAN"}});
-        const Captured run = launch(o, {"run", "--events", "--speed", "1", "--log-dir", "logs", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
+        const Captured run = launch(o, {"serve", "--once", "--speed", "1", "--log-dir", "logs", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
         const std::vector<std::string> lines = check_events(run.standard_output);
         expect_code(run, 0, "run --connect on a device that a bridge outside the run uses (a warning)");
         const std::string found = finding_in(lines, "outside-device-shared");
@@ -1085,7 +1081,7 @@ void connect_device_shared(const Options& base)
     {
         const fs::path dir = connect_dir(o, "device_shared_manual", "# run-option --stop-at-ms 2500\n", talker(o) + "  - name: Late\n    command: [" + ecu(o) + "]\n",
                                          {{"Talker", "talk CAN"}});
-        Live live(o, dir, {"run", "--events", "--manual", "Late", "--speed", "1", "--connect", "CAN=virtual:1", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--manual", "Late", "--speed", "1", "--connect", "CAN=virtual:1", "sim.yaml"});
         live.wait_for({"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge" + who_text(outside.id())});
         const long pid = started_pid(live.wait_for({"\"name\":\"bridge.CAN\"", "\"state\":\"started\""}));
         end_process(pid, true);
@@ -1097,7 +1093,7 @@ void connect_device_shared(const Options& base)
     // --strict: an error, and the ECUs are not started.
     const fs::path dir = connect_dir(o, "device_shared_strict", "# run-option --stop-at-ms 2500\n", talker(o), {{"Talker", "talk CAN"}});
     const Captured run =
-        launch(o, {"run", "--events", "--strict", "--speed", "1", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
+        launch(o, {"serve", "--once", "--strict", "--speed", "1", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"}, dir);
     const std::vector<std::string> lines = check_events(run.standard_output);
     expect_code(run, 1, "run --strict --connect on a device that a bridge outside the run uses");
     const std::string found = finding_in(lines, "outside-device-shared");
@@ -1136,7 +1132,7 @@ void connect_device_shared_later(const Options& base)
     const std::string timeout = std::to_string(scaled_timeout(120s).count());
     {
         const fs::path dir = connect_dir(o, "device_shared_later", "# run-option --stop-at-ms 300000\n", talker(o), {{"Talker", "talk CAN"}});
-        Live live(o, dir, {"run", "--events", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
+        Live live(o, dir, {"serve", "--once", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
                           "--connect", "CAN=virtual:1", "sim.yaml"});
         live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
         OutsideBridge outside(o, registry.uri());
@@ -1170,7 +1166,7 @@ void connect_device_shared_later(const Options& base)
     }
     // Gone again within 3 s: the run is not stopped.
     const fs::path dir = connect_dir(o, "device_shared_gone", "# run-option --stop-at-ms 4000\n", talker(o), {{"Talker", "talk CAN"}});
-    Live live(o, dir, {"run", "--events", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
+    Live live(o, dir, {"serve", "--once", "--strict", "--speed", "1", "--timeout-ms", timeout, "--connect", "ETH_EXT=fake0",
                           "--connect", "CAN=virtual:1", "sim.yaml"});
     live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
     {
@@ -1214,7 +1210,7 @@ void connect_device_shared_own(const Options& base)
                                  "    command: [" + ecu(o) + "]\n");
     write_file(dir / "Talker.behaviour", "talk CAN\n");
     const Captured run =
-        launch(o, {"run", "--events", "--speed", "1", "--connect", "CAN=virtual:1", "--connect", "CAN2=virtual:2", "sim.yaml"}, dir);
+        launch(o, {"serve", "--once", "--speed", "1", "--connect", "CAN=virtual:1", "--connect", "CAN2=virtual:2", "sim.yaml"}, dir);
     const std::vector<std::string> lines = check_events(run.standard_output);
     expect_code(run, 0, "run --connect with two networks on one device (a warning)");
     require(finding_in(lines, "outside-device-shared").empty(), "no outside-device-shared:\n" + out_of(lines));

@@ -32,7 +32,7 @@ format_usage_json(CommandKind command, const std::string &file,
                   const std::vector<config::Finding> &errors,
                   const std::vector<std::string> &variants = {});
 
-/// The same as the report of `run --events`, whose result event says "usage".
+/// The same as the report of `serve`, whose result event says "usage".
 [[nodiscard]] RunReport
 usage_run_report(const std::string &file, const std::vector<config::Finding> &errors,
                  const std::vector<std::string> &variants = {});
@@ -43,7 +43,7 @@ usage_run_report(const std::string &file, const std::vector<config::Finding> &er
 format_internal_error_json(CommandKind command, const std::string &file,
                            const std::string &message);
 
-/// The same as the report of `run --events`.
+/// The same as the report of `serve`.
 [[nodiscard]] RunReport internal_error_run_report(const std::string &message);
 
 } // namespace vehicle_sil::launch

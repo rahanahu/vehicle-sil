@@ -588,7 +588,7 @@ void ignore_broken_pipes()
 
 std::string interrupt_name() { return source_name(g_stops.first()); }
 
-// --- the events (run --events, serve) ---
+// --- the events (serve) ---
 
 #ifdef _WIN32
 HANDLE g_events_handle = INVALID_HANDLE_VALUE;
@@ -1262,7 +1262,15 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
 
 int check(const cli::Args& args)
 {
-    for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands", "start-paused",
+    if (args.flag("events"))
+    {
+        throw cli::UsageError("--events is not for check: check starts no participant");
+    }
+    if (args.has("events-stall-ms"))
+    {
+        throw cli::UsageError("--events-stall-ms is for serve, not for check");
+    }
+    for (const char* runOnly : {"log-dir", "timeout-ms", "stdin-commands", "start-paused",
                                 "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log",
                                 "timeline"})
     {
