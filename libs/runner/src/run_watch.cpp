@@ -106,7 +106,7 @@ void RunWatch::note_timing(SimulationController& controller)
     t.late_ms = ceil_ms(s.current_lateness);
 }
 
-RunWatch::Watched RunWatch::watch(SimulationController& controller)
+RunWatch::Watched RunWatch::watch(SimulationController& controller, const std::function<void()>& before_wait)
 {
     WatchOptions watch;
     watch.poll = ctx_.plan.poll;
@@ -258,20 +258,30 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
     });
     const ScenarioWatchWait wait{
         [&controller](std::chrono::milliseconds duration) { return controller.wait_until_finished(duration); },
-        [this, &completionGeneration](std::chrono::milliseconds duration) {
-            return scenario_.wait_for_completion(completionGeneration, duration);
+        [this, &completionGeneration, &before_wait](std::chrono::milliseconds duration) {
+            return scenario_.wait_for_completion(completionGeneration, duration, before_wait);
         },
         [&controller] { return has_finished(PeerStatus{controller.runtime().state()}); },
         [] { return std::chrono::steady_clock::now(); },
     };
-    target.wait_until_finished = [this, &controller, &wait, &stopping](std::chrono::milliseconds timeout) {
+    target.wait_until_finished = [this, &controller, &wait, &stopping, &before_wait](std::chrono::milliseconds timeout) {
         if (stopping)
         {
             return controller.wait_until_finished(timeout);
         }
         if (ctx_.scenario == nullptr)
         {
-            return controller.wait_until_finished(timeout, [this] { return ctx_.interrupts() > 0; });
+            return controller.wait_until_finished(timeout, [this, &before_wait] {
+                if (ctx_.interrupts() > 0)
+                {
+                    return true;
+                }
+                if (before_wait)
+                {
+                    before_wait();
+                }
+                return false;
+            });
         }
         if (ctx_.interrupts() > 0)
         {

@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -865,16 +866,18 @@ TEST_CASE(virtual_time_gate_end_gate_wakes_wait_until_paused_and_wait_guarded)
         GateSim sim(TimeControlOptions{.step = 10ms, .speed = 1.0});
         sim.start();
         std::optional<SimTime> pausedAt = at(1ms);
-        std::atomic<bool> started{false};
+        std::promise<void> waiting;
+        auto waitingFuture = waiting.get_future();
+        std::atomic<bool> signaled{false};
         std::thread waiter([&] {
-            started.store(true, std::memory_order_release);
-            pausedAt = sim.controller->wait_until_paused(scaled_timeout(10s));
+            pausedAt = sim.controller->wait_until_paused(scaled_timeout(10s), [&] {
+                if (!signaled.exchange(true, std::memory_order_acq_rel))
+                {
+                    waiting.set_value();
+                }
+            });
         });
-        while (!started.load(std::memory_order_acquire))
-        {
-            std::this_thread::sleep_for(1ms);
-        }
-        std::this_thread::sleep_for(20ms);
+        CHECK(waitingFuture.wait_for(scaled_timeout(5s)) == std::future_status::ready);
         const auto t0 = Wall::now();
         sim.controller->abort();
         waiter.join();
@@ -887,16 +890,18 @@ TEST_CASE(virtual_time_gate_end_gate_wakes_wait_until_paused_and_wait_guarded)
         sim.controller->guard_from(at(60s));
         sim.start();
         std::optional<SimTime> guardedAt = at(1ms);
-        std::atomic<bool> started{false};
+        std::promise<void> waiting;
+        auto waitingFuture = waiting.get_future();
+        std::atomic<bool> signaled{false};
         std::thread waiter([&] {
-            started.store(true, std::memory_order_release);
-            guardedAt = sim.controller->wait_guarded(scaled_timeout(10s));
+            guardedAt = sim.controller->wait_guarded(scaled_timeout(10s), [&] {
+                if (!signaled.exchange(true, std::memory_order_acq_rel))
+                {
+                    waiting.set_value();
+                }
+            });
         });
-        while (!started.load(std::memory_order_acquire))
-        {
-            std::this_thread::sleep_for(1ms);
-        }
-        std::this_thread::sleep_for(20ms);
+        CHECK(waitingFuture.wait_for(scaled_timeout(5s)) == std::future_status::ready);
         const auto t0 = Wall::now();
         sim.controller->abort();
         waiter.join();
@@ -913,12 +918,25 @@ TEST_CASE(virtual_time_watch_wakes_promptly_on_wake_waiters)
     CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
 
     std::atomic<bool> stop{false};
+    std::promise<void> waiting;
+    auto waitingFuture = waiting.get_future();
+    std::atomic<bool> signaled{false};
     WatchOptions opts;
     opts.poll = scaled_timeout(10s);
-    opts.interrupted = [&] { return stop.load(std::memory_order_acquire); };
+    opts.interrupted = [&] {
+        if (stop.load(std::memory_order_acquire))
+        {
+            return true;
+        }
+        if (!signaled.exchange(true, std::memory_order_acq_rel))
+        {
+            waiting.set_value();
+        }
+        return false;
+    };
     WatchResult result;
     std::thread watcher([&] { result = watch_simulation(*sim.controller, opts); });
-    std::this_thread::sleep_for(30ms);
+    CHECK(waitingFuture.wait_for(scaled_timeout(5s)) == std::future_status::ready);
     const auto t0 = Wall::now();
     stop.store(true, std::memory_order_release);
     sim.controller->runtime().wake_waiters();

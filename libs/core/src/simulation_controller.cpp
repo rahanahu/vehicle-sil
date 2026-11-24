@@ -351,7 +351,8 @@ TimeState SimulationController::time_state() const
     return state;
 }
 
-std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::milliseconds timeout)
+std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::milliseconds timeout,
+                                                               const std::function<void()>& before_wait)
 {
     auto& g = gate();
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -377,6 +378,10 @@ std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::mill
             {
                 return std::nullopt;
             }
+            if (before_wait)
+            {
+                before_wait();
+            }
             // Short slices: the end of the lifecycle may also be seen before end_gate() runs.
             g.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)),
                             [&] { return g.model.paused() || g.model.ended(); }); // checked again at the top
@@ -394,13 +399,15 @@ void SimulationController::guard_from(std::optional<SimTime> t)
     g.wake();
 }
 
-std::optional<SimTime> SimulationController::wait_guarded(std::chrono::milliseconds timeout)
+std::optional<SimTime> SimulationController::wait_guarded(std::chrono::milliseconds timeout,
+                                                          const std::function<void()>& before_wait)
 {
-    const GuardWaitResult result = wait_guarded_result(timeout);
+    const GuardWaitResult result = wait_guarded_result(timeout, before_wait);
     return result.status == GuardWaitResult::Status::Guarded ? result.time : std::nullopt;
 }
 
-SimulationController::GuardWaitResult SimulationController::wait_guarded_result(std::chrono::milliseconds timeout)
+SimulationController::GuardWaitResult SimulationController::wait_guarded_result(
+    std::chrono::milliseconds timeout, const std::function<void()>& before_wait)
 {
     auto& g = gate();
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -424,6 +431,10 @@ SimulationController::GuardWaitResult SimulationController::wait_guarded_result(
         if (now >= deadline)
         {
             return {GuardWaitResult::Status::TimedOut, std::nullopt};
+        }
+        if (before_wait)
+        {
+            before_wait();
         }
         // Short slices: the end of the lifecycle may also be seen before end_gate() runs.
         g.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)),

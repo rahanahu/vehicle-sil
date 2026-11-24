@@ -135,9 +135,14 @@ void Subscription::put_availability(const std::string& peer, std::optional<Avail
     cv_.notify_all();
 }
 
-std::vector<Update> Subscription::poll(std::size_t max, std::chrono::milliseconds timeout)
+std::vector<Update> Subscription::poll(std::size_t max, std::chrono::milliseconds timeout,
+                                       const std::function<void()>& before_wait)
 {
     std::unique_lock lock(mutex_);
+    if (before_wait)
+    {
+        before_wait();
+    }
     cv_.wait_for(lock, timeout, [&] {
         return closed_ || !peers_.empty() || !availability_.empty() || !operations_.empty() || !events_.empty() || !values_.empty();
     });
@@ -1119,9 +1124,14 @@ std::optional<OperationResult> Hub::operation(std::uint64_t seq) const
     return view(it->second);
 }
 
-std::optional<OperationResult> Hub::wait_queued(std::uint64_t seq, std::chrono::milliseconds timeout)
+std::optional<OperationResult> Hub::wait_queued(std::uint64_t seq, std::chrono::milliseconds timeout,
+                                                const std::function<void()>& before_wait)
 {
     std::unique_lock lock(mutex_);
+    if (before_wait)
+    {
+        before_wait();
+    }
     std::optional<OperationResult> result;
     changed_.wait_for(lock, timeout, [&] {
         const auto it = operations_.find(seq);

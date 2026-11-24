@@ -191,7 +191,7 @@ struct ControlServer::Impl
 
     explicit Impl(ServerOptions o) :
       options(check(std::move(o))),
-      audit(options.audit, options.run.empty() ? std::string() : "[run " + options.run + "] "),
+      audit(options.audit, options.run.empty() ? std::string() : "[run " + options.run + "] ", options.audit_clock),
       own_hub(options.external_hub == nullptr ? std::make_unique<control::Hub>(options.hub) : nullptr),
       hub(options.external_hub != nullptr ? *options.external_hub : *own_hub),
       auth(options.security),
@@ -264,6 +264,13 @@ control::Hub& ControlServer::hub() noexcept
 SimulationMonitor* ControlServer::simulation() noexcept
 {
     return impl_->monitor.get();
+}
+
+std::size_t ControlServer::waiting_calls() const noexcept
+{
+    return impl_->clients.waiting_calls != nullptr
+               ? impl_->clients.waiting_calls->load(std::memory_order_acquire)
+               : 0;
 }
 
 void ControlServer::shutdown()

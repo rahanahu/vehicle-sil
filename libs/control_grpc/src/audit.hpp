@@ -30,8 +30,9 @@ public:
     static constexpr std::size_t kMaxLine = 1000;
     static constexpr int kRefusedPerSecond = 20;
 
-    explicit AuditLog(std::function<void(const std::string&)> sink, std::string prefix = {}) :
-      sink_(std::move(sink)), prefix_(std::move(prefix))
+    explicit AuditLog(std::function<void(const std::string&)> sink, std::string prefix = {},
+                      std::function<std::chrono::steady_clock::time_point()> clock = {}) :
+      sink_(std::move(sink)), prefix_(std::move(prefix)), clock_(std::move(clock))
     {
     }
     AuditLog(const AuditLog&) = delete;
@@ -54,7 +55,7 @@ public:
         std::uint64_t left_out = 0;
         {
             const std::lock_guard lock(mutex_);
-            const auto now = std::chrono::steady_clock::now();
+            const auto now = clock_ ? clock_() : std::chrono::steady_clock::now();
             if (now - window_ >= std::chrono::seconds(1))
             {
                 window_ = now;
@@ -95,6 +96,7 @@ private:
 
     std::function<void(const std::string&)> sink_;
     std::string prefix_;
+    std::function<std::chrono::steady_clock::time_point()> clock_;
     mutable std::mutex mutex_;
     mutable std::chrono::steady_clock::time_point window_{};
     mutable int in_window_ = 0;

@@ -337,14 +337,17 @@ void run_until_stdin(const Options& o)
         const std::vector<std::string> standing{"\"event\":\"state\"", "\"paused\":true,\"paused_at_ms\":"};
         // (the first state after the command may be the one that does not say where yet)
         std::string stands;
-        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(120s);
-        while (stands.empty() || value_of(stands, "paused_at_ms") == "null")
-        {
-            require(std::chrono::steady_clock::now() < deadline, "no state says where it stands still:\n" + stands);
-            std::this_thread::sleep_for(5ms);
-            const std::vector<std::string> states = events_with(run.lines(), standing);
-            stands = states.empty() ? std::string{} : states.back();
-        }
+        run.wait_until(
+            [&](const std::vector<std::string>& current) {
+                const std::vector<std::string> states = events_with(current, standing);
+                if (!states.empty() && value_of(states.back(), "paused_at_ms") != "null")
+                {
+                    stands = states.back();
+                    return true;
+                }
+                return false;
+            },
+            "no state says where it stands still");
         std::this_thread::sleep_for(300ms);
         run.write("{\"command\":\"stop\"}\n");
         const auto [ended, out] = run.finish();
@@ -380,18 +383,12 @@ void state_on_arrival(const Options& o)
     // Waits for the time event that stands still at `ms`, then until the latest state says paused.
     const auto stands_at = [&](std::int64_t ms) {
         live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","});
-        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(120s);
-        while (true)
-        {
-            const std::vector<std::string> states = events_with(live.lines(), {stateEvent});
-            if (!states.empty() && says_paused(states.back()))
-            {
-                return;
-            }
-            require(std::chrono::steady_clock::now() < deadline,
-                    "the state does not say paused although the time event at " + std::to_string(ms) + " ms does");
-            std::this_thread::sleep_for(2ms);
-        }
+        live.wait_until(
+            [&](const std::vector<std::string>& current) {
+                const std::vector<std::string> states = events_with(current, {stateEvent});
+                return !states.empty() && says_paused(states.back());
+            },
+            "the state does not say paused although the time event at " + std::to_string(ms) + " ms does");
     };
     stands_at(0);
     live.write("{\"command\":\"step\",\"ms\":30,\"id\":1}\n");
@@ -856,18 +853,21 @@ void paused_failures(const Options& o)
     }
     // start_timeout_ms is for the start: standing still at 0 longer than it is fine.
     {
-        const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 100\n# run-option --participant-start-timeout-ms 1000\n");
+        const auto start_timeout = std::max(600ms, scaled_timeout(300ms));
+        const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 100\n# run-option --participant-start-timeout-ms " +
+                                            std::to_string(start_timeout.count()) + "\n");
         Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
         // The event comes once the simulation stands still: the launcher's count of that time has begun.
-        // A little longer than the 2000 ms asked for below all the same (a sleep that returns a moment
-        // early, a launcher that gave up waiting for the standstill before it wrote the event).
+        // Sleep slightly longer than start_timeout so paused_ms is strictly >= start_timeout even if the
+        // sleep wakes a moment early or the launcher started counting right after emitting the event.
         live.wait_standing(0);
-        std::this_thread::sleep_for(2200ms);
+        std::this_thread::sleep_for(start_timeout + 200ms);
         live.write("{\"command\":\"resume\"}\n");
         const auto [status, lines] = live.finish();
         require(status && status->code == 0 && contains(lines.back(), "\"simulation\":\"reached_stop_at\""),
                 "a start paused for longer than start_timeout_ms runs to its end:\n" + lines.back());
-        require(std::stoll(value_of(lines.back(), "paused_ms")) >= 2000, "the time it stood still:\n" + lines.back());
+        require(std::stoll(value_of(lines.back(), "paused_ms")) >= start_timeout.count(),
+                "the time it stood still:\n" + lines.back());
     }
 }
 

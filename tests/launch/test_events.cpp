@@ -20,6 +20,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -114,6 +115,8 @@ public:
         return state_->changed.wait_for(lock, 10s, [&] { return state_->writes == target && state_->inside; });
     }
     void unblock() { set(&State::blocked, false); }
+    /// Destroys the stream and waits for its writer and watch threads to exit.
+    void stop() { stream_.reset(); }
     void set_busy(bool busy) { set(&State::busy, busy); }
     void break_it() { set(&State::broken, true); }
     /// Every write takes 50 ms.
@@ -331,7 +334,7 @@ TEST_CASE(the_check_and_the_result_are_their_json_on_one_line_and_nothing_follow
     e.log("late", "after the result");
     e.phase(Phase::Ended);
     CHECK(!e.result(format_result_event(report))); // only one result
-    std::this_thread::sleep_for(100ms);
+    sink.stop();
     CHECK(sink.lines().size() == count);
     CHECK(sink.closed().empty());
     // The same JSON as check --json and run --json, without its line ends and spaces.
@@ -422,7 +425,7 @@ TEST_CASE(a_reader_that_went_away_closes_the_stream_and_the_caller_is_told_once_
     e.phase(Phase::Stopping);
     CHECK(!e.wait_written(0ms));
     CHECK(!e.result(format_result_event(RunReport{})));
-    std::this_thread::sleep_for(50ms);
+    sink.stop();
     CHECK(sink.closed().size() == 1);
     check_text(shape(sink.lines()), "phase \"phase\":\"running\"}\n");
 }
@@ -555,7 +558,7 @@ TEST_CASE(the_stream_closes_when_too_many_events_that_cannot_be_dropped_wait)
     CHECK(closed.size() == 1);
     check_text(closed.at(0), "more than 5 events wait to be written");
     sink.unblock();
-    std::this_thread::sleep_for(50ms);
+    sink.stop();
     // The write that was waiting may end; nothing follows it.
     CHECK(sink.text().empty() || sink.text() == "{\"event\":\"phase\",\"seq\":0,\"t_ms\":7,\"phase\":\"running\"}\n");
 }
@@ -884,12 +887,13 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
         EventStream& e = sink.start(options);
         sink.block();
         e.phase(Phase::Ended);
-        std::thread reader([&sink] {
-            std::this_thread::sleep_for(200ms);
-            sink.unblock();
-        });
-        const bool written = e.result(format_result_event(RunReport{}));
-        reader.join();
+        CHECK(sink.wait_inside());
+        bool written = false;
+        std::thread caller([&] { written = e.result(format_result_event(RunReport{})); });
+        // Let "phase" finish and wait until the writer blocks inside writing "result" itself.
+        CHECK(sink.allow(1));
+        sink.unblock();
+        caller.join();
         CHECK(written && !e.closed());
         CHECK(sink.lines().size() == 2);
     }
@@ -1251,12 +1255,31 @@ TEST_CASE(time_commands_from_another_thread_never_reach_a_controller_that_is_gon
         std::atomic<bool> done{false};
         std::atomic<int> refused_after_detach{0};
         std::atomic<bool> detached{false};
+        std::mutex sync_mutex;
+        std::condition_variable sync_cv;
+        std::atomic<int> calls{0};
+        std::atomic<int> notify_at{0};
+        const auto wait_calls = [&](int n) {
+            const int target = calls.load(std::memory_order_acquire) + n;
+            std::unique_lock lock(sync_mutex);
+            notify_at.store(target, std::memory_order_release);
+            CHECK(sync_cv.wait_for(lock, vehicle_sil::test::scaled_timeout(10s), [&] {
+                return calls.load(std::memory_order_acquire) >= target;
+            }));
+        };
         std::thread reader([&] {
             std::size_t i = 0;
             while (!done.load())
             {
                 const bool after = detached.load();
                 const Command out = commands.apply(lines[i++ % lines.size()], "stdin");
+                const int c = calls.fetch_add(1, std::memory_order_acq_rel) + 1;
+                if (const int target = notify_at.load(std::memory_order_acquire); target > 0 && c >= target)
+                {
+                    const std::lock_guard lock(sync_mutex);
+                    notify_at.store(0, std::memory_order_relaxed);
+                    sync_cv.notify_all();
+                }
                 if (after && !out.accepted)
                 {
                     ++refused_after_detach;
@@ -1273,13 +1296,13 @@ TEST_CASE(time_commands_from_another_thread_never_reach_a_controller_that_is_gon
             options.required_participants = {"NeverJoins"};
             options.time_control = TimeControlOptions{.step = std::chrono::milliseconds(10)};
             SimulationController controller(options);
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            wait_calls(20);
             commands.attach(controller, 10, std::nullopt);
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            wait_calls(20);
             commands.detach();
             detached = true;
         } // the controller goes while the reader still applies commands
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        wait_calls(20);
         done = true;
         reader.join();
         CHECK(refused_after_detach.load() > 0);
@@ -1411,17 +1434,37 @@ TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up
         commands.attach(controller, 10, std::nullopt);
         std::atomic<int> result{-1};
         std::atomic<int> began{0};
+        std::mutex wait_mutex;
+        std::condition_variable wait_cv;
+        int wait_entries = 0;
         std::thread window([&] {
-            result = static_cast<int>(commands.hold_before_start([] { return false; }, std::chrono::milliseconds(5), [&] { ++began; }));
+            result = static_cast<int>(commands.hold_before_start(
+                [] { return false; }, std::chrono::milliseconds(5), [&] { ++began; }, [&] {
+                    {
+                        const std::lock_guard lock(wait_mutex);
+                        ++wait_entries;
+                    }
+                    wait_cv.notify_all();
+                }));
         });
         // In the hold: it stands still at 0, and neither a pause nor a speed lets it go.
         CHECK(commands.wait_paused(std::chrono::seconds(10)) == std::optional<SimTime>(SimTime{}));
         bool held = false;
         CHECK(commands.inspect([&held](SimulationController&, bool holding) { held = holding; }) == TimeCommands::Stage::Attached);
         CHECK(held);
+        int entries_before = 0;
+        {
+            std::unique_lock lock(wait_mutex);
+            CHECK(wait_cv.wait_for(lock, vehicle_sil::test::scaled_timeout(5s), [&] { return wait_entries >= 1; }));
+            entries_before = wait_entries;
+        }
         CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
         CHECK(commands.apply(command(R"({"command":"speed","value":2})"), "stdin").accepted);
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        commands.wake_hold();
+        {
+            std::unique_lock lock(wait_mutex);
+            CHECK(wait_cv.wait_for(lock, vehicle_sil::test::scaled_timeout(5s), [&] { return wait_entries > entries_before; }));
+        }
         CHECK(result.load() == -1);
         Command go;
         if (std::string(release) == "run_until" || std::string(release) == "pause_at")
@@ -1453,8 +1496,19 @@ TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up
     bool held = true;
     static_cast<void>(commands.inspect([&held](SimulationController&, bool holding) { held = holding; }));
     CHECK(!held); // not left holding
-    std::thread again([&] { result = static_cast<int>(commands.hold_before_start([] { return false; }, std::chrono::milliseconds(5))); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::promise<void> waiting;
+    auto waitingFuture = waiting.get_future();
+    std::atomic<bool> signaled{false};
+    std::thread again([&] {
+        result = static_cast<int>(commands.hold_before_start(
+            [] { return false; }, std::chrono::milliseconds(5), {}, [&] {
+                if (!signaled.exchange(true, std::memory_order_acq_rel))
+                {
+                    waiting.set_value();
+                }
+            }));
+    });
+    CHECK(waitingFuture.wait_for(vehicle_sil::test::scaled_timeout(5s)) == std::future_status::ready);
     int detached = 0;
     commands.set_on_detach([&detached](SimulationController&) { ++detached; });
     commands.detach();
@@ -1724,11 +1778,15 @@ TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_
     // The run detaches the commands while the stop is being asked for: it waits until it is.
     const Command done = commands.apply(stop, "control_server", [&] {
         ++asked;
+        std::promise<void> started;
+        auto startedFuture = started.get_future();
         detacher = std::thread([&] {
+            started.set_value();
             commands.detach();
             detached = true;
         });
-        std::this_thread::sleep_for(50ms);
+        CHECK(startedFuture.wait_for(vehicle_sil::test::scaled_timeout(5s)) == std::future_status::ready);
+        std::this_thread::sleep_for(10ms);
         CHECK(!detached.load());
     });
     detacher.join();

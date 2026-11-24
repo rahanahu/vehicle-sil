@@ -15,11 +15,12 @@
 namespace vehicle_sil::runner {
 
 std::int64_t detail::ecu_start_timeout_ms(const config::SimulationConfig& config, bool stands_still_before_start,
-                                              std::int64_t start_timeout_ms, std::int64_t stop_timeout_ms)
+                                              std::int64_t start_timeout_ms, std::int64_t stop_timeout_ms,
+                                              std::int64_t margin_ms)
 {
     // The launcher waits start_timeout_ms for the start and then stops the participants within
     // stop_timeout_ms; the ECU must not give up first (it would end, and the launcher would name it
-    // instead of who did not join). 10 s more for a slow machine; never more than ecu_main accepts.
+    // instead of who did not join). 10 s more (default margin_ms) for a slow machine; never more than ecu_main accepts.
     // A start that waits for someone to start a participant by hand may take any time, and so may
     // one that stands still before the first step until a control client's command: the ECUs are
     // not Running before it, and a limit of theirs would end the run while it stands still.
@@ -27,7 +28,7 @@ std::int64_t detail::ecu_start_timeout_ms(const config::SimulationConfig& config
     {
         return config::kMaxMillis;
     }
-    return std::min(start_timeout_ms + stop_timeout_ms + 10000, config::kMaxMillis);
+    return std::min(start_timeout_ms + stop_timeout_ms + margin_ms, config::kMaxMillis);
 }
 
 detail::StopRequest detail::record_stop_request(ParticipantRun& run, bool sent, const std::optional<process::ExitStatus>& status)
@@ -137,7 +138,7 @@ std::string command_text(const std::filesystem::path& executable, const std::vec
 std::vector<std::string> participant_arguments(const config::SimulationConfig& config, const config::ParticipantConfig& participant,
                                                const std::string& registry_uri, bool stands_still_before_start,
                                                bool sample_every_step, std::int64_t start_timeout_ms,
-                                               std::int64_t stop_timeout_ms)
+                                               std::int64_t stop_timeout_ms, std::int64_t ecu_start_margin_ms)
 {
     const std::vector<std::string> rest(participant.command.begin() + (participant.command.empty() ? 0 : 1),
                                         participant.command.end());
@@ -146,7 +147,8 @@ std::vector<std::string> participant_arguments(const config::SimulationConfig& c
     {
         arguments = config::expand_placeholders(rest, "", "");
         arguments.insert(arguments.end(), {"--name", participant.name, "--registry-uri", registry_uri, "--start-timeout-ms",
-                                           std::to_string(ecu_start_timeout_ms(config, stands_still_before_start, start_timeout_ms, stop_timeout_ms))});
+                                           std::to_string(ecu_start_timeout_ms(config, stands_still_before_start, start_timeout_ms,
+                                                                               stop_timeout_ms, ecu_start_margin_ms))});
     }
     else
     {
@@ -222,7 +224,8 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         else
         {
             arguments = participant_arguments(ctx_.config, p, uri, ctx_.holds(), ctx_.plan.members[i].sample_every_step,
-                                              ctx_.plan.start_timeout_ms, ctx_.plan.stop_timeout_ms);
+                                              ctx_.plan.start_timeout_ms, ctx_.plan.stop_timeout_ms,
+                                              ctx_.plan.ecu_start_margin.count());
         }
         const std::filesystem::path executable = without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
         if (p.manual)

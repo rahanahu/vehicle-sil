@@ -314,6 +314,17 @@ public:
         return found;
     }
 
+    /// Waits until `match(out_)` returns true (up to 120 s, scaled), woken on every output line.
+    template <class Match>
+    void wait_until(Match&& match, const std::string& what)
+    {
+        std::unique_lock lock(mutex_);
+        const bool seen = changed_.wait_for(lock, scaled_timeout(120s), [&] {
+            return match(out_) || process_->poll().has_value();
+        });
+        require(seen && match(out_), what + ":\n" + text_locked() + "--- stderr ---\n" + err_);
+    }
+
     /// Waits until the latest "state" says paused (up to 120 s, scaled). For a pause of a simulation
     /// that goes. After a step or a run_until use wait_standing(): the state before the command's
     /// says paused too.

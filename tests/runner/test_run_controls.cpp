@@ -371,15 +371,20 @@ TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
         std::atomic<int> wakes{0};
         controls.set_stop_wake([&wakes] { wakes.fetch_add(1, std::memory_order_relaxed); });
 
-        std::promise<void> entered;
-        auto enteredFuture = entered.get_future();
+        std::promise<void> waiting;
+        auto waitingFuture = waiting.get_future();
+        std::atomic<bool> signaled{false};
         TimeCommands::Hold result = TimeCommands::Hold::None;
         std::thread holder([&] {
-            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, scaled_timeout(5s),
-                                                       [&] { entered.set_value(); });
+            result = controls.time().hold_before_start(
+                [&] { return stops.count() > 0; }, scaled_timeout(5s), {}, [&] {
+                    if (!signaled.exchange(true, std::memory_order_acq_rel))
+                    {
+                        waiting.set_value();
+                    }
+                });
         });
-        CHECK(enteredFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
-        std::this_thread::sleep_for(10ms);
+        CHECK(waitingFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
 
         const auto t0 = Clock::now();
         const Command applied = controls.time().apply(
@@ -407,15 +412,20 @@ TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
         std::atomic<int> wakes{0};
         controls.set_stop_wake([&wakes] { wakes.fetch_add(1, std::memory_order_relaxed); });
 
-        std::promise<void> entered;
-        auto enteredFuture = entered.get_future();
+        std::promise<void> waiting;
+        auto waitingFuture = waiting.get_future();
+        std::atomic<bool> signaled{false};
         TimeCommands::Hold result = TimeCommands::Hold::None;
         std::thread holder([&] {
-            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, scaled_timeout(5s),
-                                                       [&] { entered.set_value(); });
+            result = controls.time().hold_before_start(
+                [&] { return stops.count() > 0; }, scaled_timeout(5s), {}, [&] {
+                    if (!signaled.exchange(true, std::memory_order_acq_rel))
+                    {
+                        waiting.set_value();
+                    }
+                });
         });
-        CHECK(enteredFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
-        std::this_thread::sleep_for(10ms);
+        CHECK(waitingFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
 
         const auto t0 = Clock::now();
         stops.request(vehicle_sil::runner::stop_source::kEndOfInput);
@@ -436,15 +446,20 @@ TEST_CASE(hold_before_start_and_stop_wake_react_immediately_to_non_signal_stops)
         std::atomic<int> wakes{0};
         controls.set_stop_wake([&wakes] { wakes.fetch_add(1, std::memory_order_relaxed); });
 
-        std::promise<void> entered;
-        auto enteredFuture = entered.get_future();
+        std::promise<void> waiting;
+        auto waitingFuture = waiting.get_future();
+        std::atomic<bool> signaled{false};
         TimeCommands::Hold result = TimeCommands::Hold::None;
         std::thread holder([&] {
-            result = controls.time().hold_before_start([&] { return stops.count() > 0; }, scaled_timeout(5s),
-                                                       [&] { entered.set_value(); });
+            result = controls.time().hold_before_start(
+                [&] { return stops.count() > 0; }, scaled_timeout(5s), {}, [&] {
+                    if (!signaled.exchange(true, std::memory_order_acq_rel))
+                    {
+                        waiting.set_value();
+                    }
+                });
         });
-        CHECK(enteredFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
-        std::this_thread::sleep_for(10ms);
+        CHECK(waitingFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
 
         const auto t0 = Clock::now();
         stops.request(vehicle_sil::runner::stop_source::kEndOfInput);
@@ -473,15 +488,20 @@ TEST_CASE(run_controls_raise_to_and_stop_wake_ignore_duplicate_levels)
     std::atomic<int> wakes{0};
     controls.set_stop_wake([&wakes] { wakes.fetch_add(1, std::memory_order_relaxed); });
 
-    std::promise<void> entered;
-    auto enteredFuture = entered.get_future();
+    std::promise<void> waiting;
+    auto waitingFuture = waiting.get_future();
+    std::atomic<bool> signaled{false};
     TimeCommands::Hold result = TimeCommands::Hold::None;
     std::thread holder([&] {
-        result = controls.time().hold_before_start([&] { return stops.count() > 0; }, scaled_timeout(5s),
-                                                   [&] { entered.set_value(); });
+        result = controls.time().hold_before_start(
+            [&] { return stops.count() > 0; }, scaled_timeout(5s), {}, [&] {
+                if (!signaled.exchange(true, std::memory_order_acq_rel))
+                {
+                    waiting.set_value();
+                }
+            });
     });
-    CHECK(enteredFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
-    std::this_thread::sleep_for(10ms);
+    CHECK(waitingFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
 
     const auto t0 = Clock::now();
     const Command first = controls.time().apply(named("stop"), "api", [&stops] {

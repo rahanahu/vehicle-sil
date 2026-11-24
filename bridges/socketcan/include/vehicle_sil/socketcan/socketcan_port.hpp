@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -28,6 +29,8 @@ struct SocketCanPortOptions
     std::optional<std::chrono::milliseconds> transmit_timeout;
     /// How often the thread looks at the interface (up or down, still there, the controller's state).
     std::chrono::milliseconds watch_interval{250};
+    /// Clock used for transmit_timeout tracking (empty: std::chrono::steady_clock::now).
+    std::function<std::chrono::steady_clock::time_point()> clock{};
 };
 
 /// Whether the interface is up (IFF_UP): what a program can send to. A vcan interface is up as

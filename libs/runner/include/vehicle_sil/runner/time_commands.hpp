@@ -208,8 +208,11 @@ public:
     /// command has been accepted, `give_up()` is true or detach() is called. `on_hold` is called
     /// once when the hold begins (not for Hold::None), `give_up` every `poll` and whenever an
     /// accepted stop command or wake_hold() wakes the wait; both without this object's mutex.
+    /// `before_wait` (for tests), if set, runs under this object's mutex right before each wait on
+    /// the hold's condition variable (must be short, must not wait, and must not call this object).
     Hold hold_before_start(const std::function<bool()>& give_up, std::chrono::milliseconds poll,
-                           const std::function<void()>& on_hold = {});
+                           const std::function<void()>& on_hold = {},
+                           const std::function<void()>& before_wait = {});
 
     /// Wakes hold_before_start() to recheck `give_up()` immediately (for non-signal stop paths
     /// that did not go through apply("stop")). Thread safe; must NOT be called from a signal

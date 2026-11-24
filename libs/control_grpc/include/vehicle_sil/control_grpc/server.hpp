@@ -220,6 +220,8 @@ struct ServerOptions
     /// simulation()->poll() is called), and the grace of its failure check (SimulationMonitor).
     std::chrono::milliseconds monitor_period{50};
     std::chrono::steady_clock::duration leave_grace = FailureCheck::kDefaultGrace;
+    /// Clock used to rate-limit refused audit lines (empty: std::chrono::steady_clock::now).
+    std::function<std::chrono::steady_clock::time_point()> audit_clock{};
 };
 
 class SimulationMonitor;
@@ -240,6 +242,8 @@ public:
     [[nodiscard]] control::Hub& hub() noexcept;
     /// The monitor of `time` (its snapshot and its changes); nullptr without ServerOptions::time.
     [[nodiscard]] SimulationMonitor* simulation() noexcept;
+    /// Number of waiting calls (Watch, WaitOperation, WaitPaused) currently active on the server.
+    [[nodiscard]] std::size_t waiting_calls() const noexcept;
     /// Stops serving and stops the simulation monitor: open watches and waits end, and the server
     /// no longer reads `time`. Idempotent.
     void shutdown();

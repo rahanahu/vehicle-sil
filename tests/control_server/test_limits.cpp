@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -110,10 +111,14 @@ TEST_CASE(control_server_thins_out_refused_calls_in_the_audit)
 {
     // Anyone who reaches the port can make refused calls: they cannot flood the audit log.
     AuditLines audit;
+    std::atomic<std::int64_t> now_ms{10000};
     control_grpc::ServerOptions o;
     o.security.credentials = {Credential{"alice", "viewer-token-0123456789", Role::Viewer},
                               Credential{"bob", "operator-token-0123456789", Role::Operator}};
     o.audit = audit.sink();
+    o.audit_clock = [&] {
+        return std::chrono::steady_clock::time_point(std::chrono::milliseconds(now_ms.load(std::memory_order_acquire)));
+    };
     control_grpc::ControlServer server(std::move(o));
     auto stub = v1::ControlService::NewStub(channel(server));
     const auto list = [&] {
@@ -129,7 +134,7 @@ TEST_CASE(control_server_thins_out_refused_calls_in_the_audit)
     CHECK(logged >= 1);
     CHECK(logged < 100); // 20 per second
     // A refusal after the second is over reports how many were left out.
-    std::this_thread::sleep_for(1100ms);
+    now_ms.fetch_add(1100, std::memory_order_acq_rel);
     CHECK(list() == grpc::StatusCode::UNAUTHENTICATED);
     CHECK(audit.count("more refused calls not logged") >= 1);
 

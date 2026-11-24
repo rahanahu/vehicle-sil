@@ -109,7 +109,7 @@ TransmitResult SocketCanPort::transmit(const can::CanFrame& frame)
     {
         return TransmitResult::Failed; // last_error() tells the fault
     }
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = options_.clock ? options_.clock() : std::chrono::steady_clock::now();
     // The time of the oldest frame no receipt has answered, as it was before this frame (to put back if the write fails).
     std::optional<std::chrono::steady_clock::time_point> unconfirmed_before;
     if (options_.transmit_timeout)

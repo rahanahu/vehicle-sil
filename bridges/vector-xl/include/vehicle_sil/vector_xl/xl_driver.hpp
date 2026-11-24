@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -106,6 +107,9 @@ struct XlCanPortOptions
     ///  - Relies on the controller's state: bus_state_interval, or what the driver reports by
     ///    itself. 0 disables the restarts.
     std::chrono::milliseconds bus_off_restart{1000};
+    /// Clock used for transmit_timeout, probe backoff and bus_off_restart (empty:
+    /// std::chrono::steady_clock::now). Must return a non-zero time_point when set.
+    std::function<std::chrono::steady_clock::time_point()> clock{};
 };
 
 /// One Vector XL CAN channel opened as an ExternalCanPort.

@@ -315,8 +315,10 @@ public:
     /// or the lifecycle left Running.
     [[nodiscard]] TimeState time_state() const;
     /// Waits until the simulation stands still, or the lifecycle ended, or the timeout expires.
+    /// `before_wait` (for tests), if set, runs under the gate's mutex right before waiting.
     /// @returns the time at which it stands still, or nullopt (also once the lifecycle ended).
-    std::optional<SimTime> wait_until_paused(std::chrono::milliseconds timeout);
+    std::optional<SimTime> wait_until_paused(std::chrono::milliseconds timeout,
+                                             const std::function<void()>& before_wait = {});
 
     /// The guard: a second hold beside pause and pacing, for one owner that must do something
     /// between two steps of the controller at exact virtual times (vehicle_sil_launch's scenario).
@@ -347,11 +349,14 @@ public:
     };
 
     /// Waits until a step is held for the guard, or the lifecycle ended, or the timeout expires.
+    /// `before_wait` (for tests), if set, runs under the gate's mutex right before waiting.
     /// @returns the start time of the held step, or nullopt (also once the lifecycle ended). Not
     /// from a step (see wait_until_paused()).
-    std::optional<SimTime> wait_guarded(std::chrono::milliseconds timeout);
+    std::optional<SimTime> wait_guarded(std::chrono::milliseconds timeout,
+                                        const std::function<void()>& before_wait = {});
     /// Like wait_guarded(), distinguishing a timeout from the end of the simulation.
-    GuardWaitResult wait_guarded_result(std::chrono::milliseconds timeout);
+    GuardWaitResult wait_guarded_result(std::chrono::milliseconds timeout,
+                                        const std::function<void()>& before_wait = {});
 
     /// Sets an observer called (without holding the gate's lock) whenever the time gate's state
     /// changes or ends. Must be short, must not call back into this controller, and must not throw.

@@ -1753,9 +1753,19 @@ TEST_CASE(run_watch_wakes_immediately_on_non_signal_stop_for_plain_and_scenario_
             vehicle_sil::unit::start_together(controller, {peer.get()}, 30s);
             CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)).has_value());
 
+            std::promise<void> waiting;
+            auto waitingFuture = waiting.get_future();
+            std::atomic<bool> signaled{false};
             RunWatch::Watched watched;
-            std::thread watcher([&] { watched = watch.watch(controller); });
-            std::this_thread::sleep_for(30ms);
+            std::thread watcher([&] {
+                watched = watch.watch(controller, [&] {
+                    if (!signaled.exchange(true, std::memory_order_acq_rel))
+                    {
+                        waiting.set_value();
+                    }
+                });
+            });
+            CHECK(waitingFuture.wait_for(vehicle_sil::test::scaled_timeout(5s)) == std::future_status::ready);
 
             const auto t0 = Clock::now();
             if (via_publish)

@@ -489,7 +489,7 @@ TEST_CASE(control_server_shutdown_ends_waiting_calls)
         static_cast<void>(stub->WaitOperation(&context, request, &op));
         returned = true;
     });
-    std::this_thread::sleep_for(300ms);
+    CHECK(eventually([&] { return server->waiting_calls() == 1; }));
     CHECK(!returned.load());
     const auto begin = std::chrono::steady_clock::now();
     server->shutdown();

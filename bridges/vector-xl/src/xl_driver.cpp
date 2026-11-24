@@ -174,10 +174,10 @@ struct XlCanPort::Impl
     /// bus off). False while unknown (no answer yet, monitoring off).
     std::atomic<bool> bus_troubled{false};
 
-    static std::int64_t now_ns() noexcept
+    std::int64_t now_ns() const noexcept
     {
-        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
-            .count();
+        const auto tp = options.clock ? options.clock() : std::chrono::steady_clock::now();
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(tp.time_since_epoch()).count();
     }
     void on_receipt() noexcept
     {
@@ -412,7 +412,7 @@ TransmitResult XlCanPort::transmit(const SilKit::Services::Can::CanFrame& frame)
             impl.set_last_error("XL channel is not active");
             return TransmitResult::Failed;
         }
-        const auto now = Impl::now_ns();
+        const auto now = impl.now_ns();
         if (impl.stuck(now) && !impl.probe_due(now))
         {
             return TransmitResult::Dropped;

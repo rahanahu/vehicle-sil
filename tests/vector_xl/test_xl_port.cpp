@@ -9,8 +9,11 @@
 #include "xl_events.hpp" // internal: classify_xl_event, to_transmit_message
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -98,10 +101,30 @@ public:
     /// Waits until a bus state of `level` arrived.
     bool wait_for_bus_level(ExternalBusState::Level level, std::chrono::milliseconds timeout = 2000ms)
     {
+        return wait_for_bus_level_after(0, level, timeout);
+    }
+
+    /// Waits until a bus state of `level` arrives at index >= `from`.
+    bool wait_for_bus_level_after(std::size_t from, ExternalBusState::Level level,
+                                  std::chrono::milliseconds timeout = 2000ms)
+    {
         std::unique_lock lock(mutex_);
         return cv_.wait_for(lock, scaled_timeout(timeout), [&] {
-            return std::any_of(bus_states_.begin(), bus_states_.end(), [&](const ExternalBusState& s) { return s.level == level; });
+            for (std::size_t i = from; i < bus_states_.size(); ++i)
+            {
+                if (bus_states_[i].level == level)
+                {
+                    return true;
+                }
+            }
+            return false;
         });
+    }
+
+    std::size_t bus_state_count()
+    {
+        const std::lock_guard lock(mutex_);
+        return bus_states_.size();
     }
 
 private:
@@ -624,11 +647,30 @@ TEST_CASE(xl_port_stop_reports_what_it_could_not_send)
     CHECK_EQ(fake_xl::queued_transmissions(kHardware1), 0u); // gone with the channel
 }
 
+struct FakeClock
+{
+    std::atomic<std::int64_t> now_ms{10000}; // non-zero: XlCanPort uses 0 for "unset"
+
+    std::function<std::chrono::steady_clock::time_point()> fn()
+    {
+        return [this] {
+            return std::chrono::steady_clock::time_point(std::chrono::milliseconds(now_ms.load(std::memory_order_acquire)));
+        };
+    }
+
+    void advance(std::chrono::milliseconds d)
+    {
+        now_ms.fetch_add(d.count(), std::memory_order_acq_rel);
+    }
+};
+
 TEST_CASE(xl_port_refuses_frames_while_the_bus_is_stuck_longer_than_the_transmit_timeout)
 {
+    FakeClock clock;
     XlCanPortOptions options;
     options.transmit_timeout = 100ms;
     options.drain_timeout = 0ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_bus_blocked(kHardware1, true);
     // Within the timeout frames are accepted and wait.
@@ -636,7 +678,7 @@ TEST_CASE(xl_port_refuses_frames_while_the_bus_is_stuck_longer_than_the_transmit
     {
         CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
     }
-    std::this_thread::sleep_for(150ms);
+    clock.advance(150ms);
     // After it nothing new is accepted, so nothing more piles up.
     for (int i = 0; i < 5; ++i)
     {
@@ -661,47 +703,50 @@ TEST_CASE(xl_port_refuses_frames_while_the_bus_is_stuck_longer_than_the_transmit
 
 TEST_CASE(xl_port_a_lost_receipt_does_not_make_a_working_bus_look_stuck)
 {
-    // The receipts come, but the port's thread may lag behind them on a slow machine: the time
-    // that would make the bus look stuck is scaled, and the gaps with it.
-    const auto timeout = scaled_timeout(50ms);
+    FakeClock clock;
+    constexpr auto timeout = 50ms;
     XlCanPortOptions options;
     options.transmit_timeout = timeout;
+    options.drain_timeout = 0ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::lose_next_receipt(kHardware1);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
     CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
-    std::this_thread::sleep_for(3 * timeout); // a gap longer than the timeout, with one receipt missing
+    clock.advance(3 * timeout); // a gap longer than the timeout, with one receipt missing
     for (int i = 0; i < 5; ++i)
     {
         CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
         CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
-        std::this_thread::sleep_for(timeout + 30ms);
+        // Wait for the port's receive thread to process the receipt before advancing past timeout.
+        CHECK_EQ(of_kind(f.sink.wait_for(static_cast<std::size_t>(i + 1), 1000ms),
+                         ExternalEventKind::OwnTransmission)
+                     .size(),
+                 static_cast<std::size_t>(i + 1));
+        clock.advance(timeout + 30ms);
     }
+    f.port->stop();
 }
 
 TEST_CASE(xl_port_lets_a_probe_through_while_stuck)
 {
+    FakeClock clock;
     XlCanPortOptions options;
     options.transmit_timeout = 50ms;
     options.drain_timeout = 0ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_bus_blocked(kHardware1, true);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
-    std::this_thread::sleep_for(60ms);
+    clock.advance(60ms);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Dropped);
 
     // The driver loses the waiting frame (bus off), then the bus works: no receipt would ever
     // come for it. A probe one timeout later goes out and its receipt ends the stuck state.
     fake_xl::discard_queued_transmissions(kHardware1);
     fake_xl::set_bus_blocked(kHardware1, false);
-    bool probed = false;
-    const auto until = std::chrono::steady_clock::now() + 2500ms;
-    while (!probed && std::chrono::steady_clock::now() < until)
-    {
-        probed = f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok;
-        std::this_thread::sleep_for(5ms);
-    }
-    CHECK(probed);
+    clock.advance(40ms); // 100 ms after the first frame (one timeout after stuckFrom = 50 ms)
+    CHECK(f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok);
     CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     // The port counts the receipt before it reports the frame as its own transmission.
     CHECK(!of_kind(f.sink.wait_for_kind(ExternalEventKind::OwnTransmission), ExternalEventKind::OwnTransmission).empty());
@@ -712,30 +757,31 @@ TEST_CASE(xl_port_lets_a_probe_through_while_stuck)
     f.port->stop();
 }
 
-// Offers a frame every 5 ms for `duration` and counts the ones the port let through.
-int count_accepted(XlCanPort& port, std::chrono::milliseconds duration)
+// Offers a frame every 5 ms of simulated time for `duration` and counts the ones the port let through.
+int count_accepted(XlCanPort& port, FakeClock& clock, std::chrono::milliseconds duration)
 {
     int accepted = 0;
-    const auto until = std::chrono::steady_clock::now() + duration;
-    while (std::chrono::steady_clock::now() < until)
+    for (std::chrono::milliseconds elapsed{0}; elapsed < duration; elapsed += 5ms)
     {
         accepted += port.transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok ? 1 : 0;
-        std::this_thread::sleep_for(5ms);
+        clock.advance(5ms);
     }
     return accepted;
 }
 
 TEST_CASE(xl_port_probes_less_often_the_longer_the_bus_is_stuck)
 {
+    FakeClock clock;
     XlCanPortOptions options;
     options.transmit_timeout = 50ms;
     options.drain_timeout = 0ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_bus_blocked(kHardware1, true);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
-    std::this_thread::sleep_for(60ms); // stuck from here
-    // Probes about 100, 200, 400 and 800 ms after the first frame; one per timeout would be 22.
-    const auto probes = count_accepted(*f.port, 1200ms);
+    clock.advance(60ms); // stuck from here
+    // Probes at 100, 200, 400 and 800 ms after the first frame; one per timeout would be 22.
+    const auto probes = count_accepted(*f.port, clock, 1200ms);
     CHECK(probes >= 2);
     CHECK(probes <= 6);
     f.port->stop();
@@ -743,19 +789,21 @@ TEST_CASE(xl_port_probes_less_often_the_longer_the_bus_is_stuck)
 
 TEST_CASE(xl_port_probes_at_most_once_a_second_while_the_controller_reports_trouble)
 {
+    FakeClock clock;
     XlCanPortOptions options;
     options.transmit_timeout = 50ms;
     options.drain_timeout = 0ms;
-    options.bus_state_interval = 20ms;
+    options.bus_state_interval = 5ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_chip_state(kHardware1, {detail::backend::ChipLevel::ErrorPassive, 128, 0});
     // The port notes the trouble before it reports the state.
     CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::ErrorPassive));
     fake_xl::set_bus_blocked(kHardware1, true);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
-    std::this_thread::sleep_for(60ms); // stuck from here
-    // The first probe about 1050 ms after the first frame, the next 2 s later.
-    const auto probes = count_accepted(*f.port, 1500ms);
+    clock.advance(60ms); // stuck from here
+    // The first probe at 1050 ms after the first frame, the next 2 s later.
+    const auto probes = count_accepted(*f.port, clock, 1500ms);
     CHECK(probes >= 1);
     CHECK(probes <= 2);
     f.port->stop();
@@ -765,16 +813,18 @@ TEST_CASE(xl_port_does_not_use_the_transmit_timeout_without_init_access)
 {
     // Another application could switch the receipts off: the port would never see the bus
     // working again, so it does not drop frames at all.
+    FakeClock clock;
     XlCanPortOptions options;
     options.transmit_timeout = 50ms;
     options.drain_timeout = 0ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options, false);
     CHECK(!f.port->has_init_access());
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
     CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     fake_xl::set_bus_blocked(kHardware1, true);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
-    std::this_thread::sleep_for(150ms);
+    clock.advance(150ms);
     for (int i = 0; i < 5; ++i)
     {
         CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
@@ -785,10 +835,12 @@ TEST_CASE(xl_port_does_not_use_the_transmit_timeout_without_init_access)
 TEST_CASE(xl_port_restarts_the_channel_after_a_lasting_bus_off)
 {
     using detail::backend::ChipLevel;
+    FakeClock clock;
     XlCanPortOptions options;
-    options.bus_state_interval = 20ms;
+    options.bus_state_interval = 5ms;
     options.bus_off_restart = 100ms;
     options.drain_timeout = 0ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_bus_blocked(kHardware1, true);
     for (int i = 0; i < 2; ++i)
@@ -796,6 +848,8 @@ TEST_CASE(xl_port_restarts_the_channel_after_a_lasting_bus_off)
         CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
     }
     fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
+    CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::BusOff));
+    clock.advance(100ms);
 
     const auto events = f.sink.wait_for_kind(ExternalEventKind::Warning, 1000ms);
     const auto warnings = of_kind(events, ExternalEventKind::Warning);
@@ -818,12 +872,17 @@ TEST_CASE(xl_port_restarts_the_channel_after_a_lasting_bus_off)
 TEST_CASE(xl_port_does_not_restart_the_channel_when_disabled)
 {
     using detail::backend::ChipLevel;
+    FakeClock clock;
     XlCanPortOptions options;
-    options.bus_state_interval = 20ms;
+    options.bus_state_interval = 5ms;
     options.bus_off_restart = 0ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
-    std::this_thread::sleep_for(300ms);
+    CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::BusOff));
+    const std::size_t before = f.sink.bus_state_count();
+    clock.advance(300ms);
+    CHECK(f.sink.wait_for_bus_states(before + 3).size() >= before + 3);
     CHECK(of_kind(f.sink.wait_for(1000, 0ms), ExternalEventKind::Warning).empty());
     CHECK_EQ(fake_xl::activations(kHardware1), 1u);
     f.port->stop();
@@ -832,12 +891,17 @@ TEST_CASE(xl_port_does_not_restart_the_channel_when_disabled)
 TEST_CASE(xl_port_does_not_restart_the_channel_without_init_access)
 {
     using detail::backend::ChipLevel;
+    FakeClock clock;
     XlCanPortOptions options;
-    options.bus_state_interval = 20ms;
+    options.bus_state_interval = 5ms;
     options.bus_off_restart = 50ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options, false);
     fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
-    std::this_thread::sleep_for(300ms);
+    CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::BusOff));
+    const std::size_t before = f.sink.bus_state_count();
+    clock.advance(300ms);
+    CHECK(f.sink.wait_for_bus_states(before + 3).size() >= before + 3);
     CHECK(of_kind(f.sink.wait_for(1000, 0ms), ExternalEventKind::Warning).empty());
     CHECK_EQ(fake_xl::activations(kHardware1), 1u);
     f.port->stop();
@@ -846,16 +910,29 @@ TEST_CASE(xl_port_does_not_restart_the_channel_without_init_access)
 TEST_CASE(xl_port_does_not_restart_the_channel_after_a_short_bus_off)
 {
     using detail::backend::ChipLevel;
+    FakeClock clock;
     XlCanPortOptions options;
-    options.bus_state_interval = 20ms;
+    options.bus_state_interval = 5ms;
     options.bus_off_restart = 300ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
-    std::this_thread::sleep_for(100ms);
+    CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::BusOff));
+    std::size_t count = f.sink.bus_state_count();
+    clock.advance(100ms);
+    CHECK(f.sink.wait_for_bus_states(count + 2).size() >= count + 2);
+    count = f.sink.bus_state_count();
     fake_xl::set_chip_state(kHardware1, {ChipLevel::ErrorActive, 0, 0}); // left bus off by itself
-    std::this_thread::sleep_for(100ms);
+    CHECK(f.sink.wait_for_bus_level_after(count, ExternalBusState::Level::ErrorActive));
+    count = f.sink.bus_state_count();
+    clock.advance(100ms);
+    CHECK(f.sink.wait_for_bus_states(count + 2).size() >= count + 2);
+    count = f.sink.bus_state_count();
     fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0}); // a new bus off: counts anew
-    std::this_thread::sleep_for(200ms);
+    CHECK(f.sink.wait_for_bus_level_after(count, ExternalBusState::Level::BusOff));
+    count = f.sink.bus_state_count();
+    clock.advance(200ms);
+    CHECK(f.sink.wait_for_bus_states(count + 2).size() >= count + 2);
     CHECK_EQ(fake_xl::activations(kHardware1), 1u);
     f.port->stop();
 }
@@ -863,14 +940,24 @@ TEST_CASE(xl_port_does_not_restart_the_channel_after_a_short_bus_off)
 TEST_CASE(xl_port_restarts_less_often_while_the_bus_stays_broken)
 {
     using detail::backend::ChipLevel;
+    FakeClock clock;
     XlCanPortOptions options;
-    options.bus_state_interval = 10ms;
+    options.bus_state_interval = 2ms;
     options.bus_off_restart = 50ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_bus_off_persists(kHardware1, true);
     fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
-    // Restarts after about 50, 150, 350 and 750 ms of bus off; one every 50 ms would be 15.
-    std::this_thread::sleep_for(800ms);
+    CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::BusOff));
+    // Restarts at 50, 150, 350 and 750 ms of bus off; one every 50 ms would be 15.
+    // Waiting 2 bus-state events per step guarantees any restart triggered on the first event completes
+    // and the subsequent bus-off timestamp is recorded before advancing further.
+    for (int step = 0; step < 16; ++step)
+    {
+        const std::size_t before = f.sink.bus_state_count();
+        clock.advance(50ms);
+        CHECK(f.sink.wait_for_bus_states(before + 2).size() >= before + 2);
+    }
     const auto restarts = fake_xl::activations(kHardware1) - 1;
     CHECK(restarts >= 2);
     CHECK(restarts <= 5);
@@ -884,9 +971,11 @@ TEST_CASE(xl_port_restarts_less_often_while_the_bus_stays_broken)
 TEST_CASE(xl_port_reports_the_lost_frames_before_the_fault_when_a_restart_fails)
 {
     using detail::backend::ChipLevel;
+    FakeClock clock;
     XlCanPortOptions options;
-    options.bus_state_interval = 20ms;
+    options.bus_state_interval = 5ms;
     options.bus_off_restart = 50ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_bus_blocked(kHardware1, true);
     for (int i = 0; i < 3; ++i)
@@ -895,6 +984,8 @@ TEST_CASE(xl_port_reports_the_lost_frames_before_the_fault_when_a_restart_fails)
     }
     fake_xl::set_activate_fails(true);
     fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
+    CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::BusOff));
+    clock.advance(50ms);
     const auto events = f.sink.wait_for_kind(ExternalEventKind::Fault, 1000ms);
     std::vector<ExternalEventKind> kinds;
     for (const auto& e : events)
@@ -936,17 +1027,21 @@ TEST_CASE(xl_port_stops_cleanly_while_it_restarts_the_channel)
 TEST_CASE(xl_port_restart_ends_a_stuck_state)
 {
     using detail::backend::ChipLevel;
+    FakeClock clock;
     XlCanPortOptions options;
-    options.bus_state_interval = 20ms;
+    options.bus_state_interval = 5ms;
     options.bus_off_restart = 100ms;
     options.transmit_timeout = 50ms;
     options.drain_timeout = 0ms;
+    options.clock = clock.fn();
     BlockedBusFixture f(options);
     fake_xl::set_bus_blocked(kHardware1, true);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
-    std::this_thread::sleep_for(60ms);
+    clock.advance(60ms);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Dropped);
     fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
+    CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::BusOff));
+    clock.advance(100ms);
     CHECK(!of_kind(f.sink.wait_for_kind(ExternalEventKind::Warning, 1000ms), ExternalEventKind::Warning).empty());
     // The waiting frames went with the deactivation: the next frame goes to the driver at once.
     fake_xl::set_bus_blocked(kHardware1, false);

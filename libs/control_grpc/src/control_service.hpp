@@ -71,6 +71,9 @@ struct ControlServiceHandle
     /// Closes every active Watch subscription so its poll() wakes immediately on shutdown.
     /// Must only be called while `service` is alive.
     std::function<void()> close_watches;
+    /// Number of waiting calls (Watch, WaitOperation, WaitPaused) currently active.
+    /// Points into `service`; must only be read while `service` is alive.
+    const std::atomic<std::size_t>* waiting_calls = nullptr;
 };
 
 /// ControlService. `monitor` is nullptr without ServerOptions::time.

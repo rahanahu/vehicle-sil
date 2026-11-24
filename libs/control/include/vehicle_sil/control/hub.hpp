@@ -241,8 +241,10 @@ class Subscription
 public:
     /// Takes up to `max` updates (0: all), in this order: peers, the availability, operations (by
     /// seq), events (in order), values. Waits up to `timeout` if there is none and the
-    /// subscription is open.
-    std::vector<Update> poll(std::size_t max, std::chrono::milliseconds timeout);
+    /// subscription is open. `before_wait` (for tests), if set, runs under the subscription's
+    /// mutex right before waiting.
+    std::vector<Update> poll(std::size_t max, std::chrono::milliseconds timeout,
+                             const std::function<void()>& before_wait = {});
     /// Updates dropped because a queue was full, since the subscription began.
     [[nodiscard]] std::uint64_t dropped() const;
     /// Ends the subscription: a waiting poll() returns, no more updates arrive.
@@ -387,9 +389,11 @@ public:
     std::uint64_t write(OperationRequest request);
     [[nodiscard]] std::optional<OperationResult> operation(std::uint64_t seq) const;
     /// Waits until no target of `seq` is Sent any more, e.g. before resuming a paused simulation.
+    /// `before_wait` (for tests), if set, runs under the hub's mutex right before waiting.
     /// @returns the operation then (check that every target is Queued or final as wanted), or
     /// nullopt on timeout or for an unknown seq.
-    std::optional<OperationResult> wait_queued(std::uint64_t seq, std::chrono::milliseconds timeout);
+    std::optional<OperationResult> wait_queued(std::uint64_t seq, std::chrono::milliseconds timeout,
+                                               const std::function<void()>& before_wait = {});
     /// Waits until every target is final. @returns the operation, or nullopt on timeout or for an
     /// unknown seq.
     std::optional<OperationResult> wait_done(std::uint64_t seq, std::chrono::milliseconds timeout);

@@ -435,7 +435,8 @@ void TimeCommands::detach()
 }
 
 TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& give_up, std::chrono::milliseconds poll,
-                                                   const std::function<void()>& on_hold)
+                                                   const std::function<void()>& on_hold,
+                                                   const std::function<void()>& before_wait)
 {
     State& s = *state_;
     std::uint64_t seen_wake = 0;
@@ -482,6 +483,10 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
             return Hold::GaveUp;
         }
         std::unique_lock lock(s.mutex);
+        if (before_wait)
+        {
+            before_wait();
+        }
         if (s.cv.wait_for(lock, poll, [&s, seen_wake] { return !s.holding || s.hold_wake_generation != seen_wake; }))
         {
             if (!s.holding)

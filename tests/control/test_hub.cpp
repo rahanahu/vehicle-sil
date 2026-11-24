@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -402,14 +403,18 @@ TEST_CASE(control_hub_subscriptions_keep_the_latest_and_bound_the_rest)
     CHECK_EQ(seen->seq, seq);
     CHECK(seen->targets.at(0).status == TargetStatus::Applied);
     // close() wakes a waiting poll.
+    std::promise<void> polling;
+    auto pollingFuture = polling.get_future();
+    bool sawPollEntry = false;
     std::thread closer([&] {
-        std::this_thread::sleep_for(20ms);
+        sawPollEntry = pollingFuture.wait_for(scaled_timeout(5s)) == std::future_status::ready;
         only_body->close();
     });
     const auto begin = std::chrono::steady_clock::now();
-    CHECK(only_body->poll(0, 5s).empty());
+    CHECK(only_body->poll(0, 5s, [&] { polling.set_value(); }).empty());
     CHECK(std::chrono::steady_clock::now() - begin < 3s);
     closer.join();
+    CHECK(sawPollEntry);
 }
 
 TEST_CASE(control_hub_wait_returns_the_operation)
@@ -420,12 +425,16 @@ TEST_CASE(control_hub_wait_returns_the_operation)
     busy.connect();
     const auto seq = hub.write(req({{"Engine", "level", 10.0}}, at(30ms)));
     CHECK(!hub.wait_queued(seq, 10ms).has_value());
+    std::promise<void> waiting;
+    auto waitingFuture = waiting.get_future();
+    bool sawWaitEntry = false;
     std::thread transport([&] {
-        std::this_thread::sleep_for(20ms);
+        sawWaitEntry = waitingFuture.wait_for(scaled_timeout(5s)) == std::future_status::ready;
         engine.pump();
     });
-    const auto queued = hub.wait_queued(seq, scaled_timeout(5s));
+    const auto queued = hub.wait_queued(seq, scaled_timeout(5s), [&] { waiting.set_value(); });
     transport.join();
+    CHECK(sawWaitEntry);
     CHECK(queued.has_value());
     CHECK(queued->targets.at(0).status == TargetStatus::Queued);
     engine.step(at(30ms));

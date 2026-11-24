@@ -46,6 +46,8 @@ public:
     {
     }
 
+    [[nodiscard]] const std::atomic<std::size_t>* waiting_counter() const noexcept { return &waiting_; }
+
     /// Counts a call that waits (holds a server thread); empty if too many wait already.
     class WaitingCall
     {
@@ -850,6 +852,7 @@ ControlServiceHandle make_control_service(Hub& hub, const ServerOptions& options
     return ControlServiceHandle{
         .service = std::move(impl),
         .close_watches = [raw] { raw->close_watches(); },
+        .waiting_calls = raw->waiting_counter(),
     };
 }
 

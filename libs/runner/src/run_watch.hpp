@@ -58,7 +58,9 @@ public:
     };
 
     /// Watches until the simulation is over (stopping or aborting it if it has to).
-    [[nodiscard]] Watched watch(SimulationController& controller);
+    /// `before_wait` (for tests), if set, runs right before each watch wait so callers can
+    /// synchronize deterministically without sleeping.
+    [[nodiscard]] Watched watch(SimulationController& controller, const std::function<void()>& before_wait = {});
 
     /// The simulation that `over` watched is over: ends the scenario, notes its timing and
     /// traffic, ends the time commands, and notes in the outcome how it ended. Returns the stop

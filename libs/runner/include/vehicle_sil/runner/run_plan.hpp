@@ -45,6 +45,9 @@ struct RunLimits
     /// offers them in the launcher's version of the messages (it is there before the wait begins,
     /// by the order in which SIL Kit sets the participants up: the limit is a last line).
     std::chrono::milliseconds control_hello_timeout{5000};
+    /// Extra margin above start_timeout_ms + stop_timeout_ms given to ecu_main's --start-timeout-ms
+    /// when the run does not hold before the first step.
+    std::chrono::milliseconds ecu_start_margin{10000};
 };
 
 /// What the caller chose for one run, as plan_run() takes it: the request's fields that the plan
@@ -117,11 +120,12 @@ struct RunPlan
     std::filesystem::path log_dir;
     std::filesystem::path timeline;
     std::string timeline_shown;
-    /// RunLimits::poll, outside_lost_after and control_hello_timeout and RunChoices::timeout, as given.
+    /// RunLimits::poll, outside_lost_after, control_hello_timeout and ecu_start_margin, and RunChoices::timeout, as given.
     std::chrono::milliseconds poll{};
     std::chrono::milliseconds outside_lost_after{};
     std::optional<std::chrono::milliseconds> timeout;
     std::chrono::milliseconds control_hello_timeout{};
+    std::chrono::milliseconds ecu_start_margin{10000};
     std::optional<std::int64_t> stop_at_ms{};
     std::int64_t start_timeout_ms = 30000;
     std::int64_t stop_timeout_ms = 10000;
