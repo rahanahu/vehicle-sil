@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
+import importlib.util
 import logging
 import math
 import os
@@ -130,6 +130,16 @@ def _load() -> Library:
     return Library(grpc, pb, rpc)
 
 
+def _generate_stubs(root: Path, out: Path) -> None:
+    path = root / "python" / "vehicle_sil_control" / "generate.py"
+    spec = importlib.util.spec_from_file_location("_vehicle_sil_control_generate", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.generate(root / "proto", out)
+
+
 def _stubs_directory() -> tuple[Path, bool]:
     """Where the stubs are, and whether this call made the directory (a temporary one, which the caller removes
     once the stubs are imported)."""
@@ -142,18 +152,15 @@ def _stubs_directory() -> tuple[Path, bool]:
     root = repository()
     generated = root / "python" / "vehicle_sil_control" / "_generated" if root is not None else None
     if root is not None:
+        out = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-stubs-"))
         try:
-            from grpc_tools import protoc
-        except Exception:
-            protoc = None
-        if protoc is not None:
-            out = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-stubs-"))
-            code = protoc.main(["protoc", f"-I{root / 'proto'}", f"--python_out={out}", f"--grpc_python_out={out}",
-                                str(root / "proto" / PROTO)])
-            if code == 0:
-                return out, True
+            _generate_stubs(root, out)
+            return out, True
+        except ImportError:
             shutil.rmtree(out, ignore_errors=True)
-            log.warning("making the Control API stubs failed (protoc exit code %s)", code)
+        except Exception as e:
+            shutil.rmtree(out, ignore_errors=True)
+            log.warning("making the Control API stubs failed (%s)", e)
     if generated is not None and (generated / PROTO.with_name("control_pb2.py")).is_file():
         return generated, False
     where = "this GUI server does not run from the vehicle-sil repository, which has the proto file they are " \

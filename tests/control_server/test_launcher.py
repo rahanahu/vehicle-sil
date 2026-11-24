@@ -38,6 +38,11 @@ import grpc
 from vehicle_sil_control import Control, ControlError, Launch, LaunchError, TimeState, control_address, ms
 from vehicle_sil_control._stubs import pb, rpc
 
+_COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
+if _COMMON_DIR not in sys.path:
+    sys.path.insert(0, _COMMON_DIR)
+from timeout_scale import scaled, timeout_scale  # noqa: E402
+
 EXE = ".exe" if os.name == "nt" else ""
 TOKEN = "0123456789abcdef-test-token"
 LAUNCH = EXAMPLE = TESTDATA = SCRATCH = None
@@ -46,6 +51,10 @@ LAUNCH = EXAMPLE = TESTDATA = SCRATCH = None
 def setUpModule():
     # Read here, not on import (scripts/verify-python.py imports the module without them).
     global LAUNCH, EXAMPLE, TESTDATA, SCRATCH
+    try:
+        timeout_scale()
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
     LAUNCH = os.environ["VEHICLE_SIL_LAUNCH_EXE"]
     EXAMPLE = pathlib.Path(os.environ["VEHICLE_SIL_EXAMPLE_DIR"])
     TESTDATA = pathlib.Path(os.environ["VEHICLE_SIL_TEST_DATA_DIR"])
@@ -126,9 +135,10 @@ def findings_of(result):
 
 
 def wait_until(test, what, condition, timeout=60.0):
-    deadline = time.monotonic() + timeout
+    limit = scaled(timeout)
+    deadline = time.monotonic() + limit
     while not condition():
-        test.assertLess(time.monotonic(), deadline, f"not within {timeout} s: {what}")
+        test.assertLess(time.monotonic(), deadline, f"not within {limit} s: {what}")
         time.sleep(0.02)
 
 
@@ -155,7 +165,7 @@ class Calls:
         return {name for name, thread in self._threads.items() if thread.is_alive()}
 
     def join(self, timeout):
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + scaled(timeout)
         for thread in self._threads.values():
             thread.join(max(0.0, deadline - time.monotonic()))
         return not self.waiting()
@@ -995,7 +1005,7 @@ class LauncherTest(unittest.TestCase):
             self.assertEqual(first.wait()["interrupted_by"], "control server stop")
         with self.launch("fixed_second", stop_at_ms=600_000, start_paused=True, address=str(port)) as second:
             self.assertEqual(second.address, address)
-            deadline = time.monotonic() + 30 * float(os.environ.get("VEHICLE_SIL_TEST_TIMEOUT_SCALE") or 1)
+            deadline = time.monotonic() + scaled(30)
             while True:  # gRPC's backoff: UNAVAILABLE until the channel has connected again
                 with self.assertRaises(ControlError) as refused:
                     bound.sim.stop("an earlier run's client")

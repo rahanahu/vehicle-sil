@@ -105,20 +105,24 @@ def _make_stubs() -> str:
     """The stubs, made now from the repository's proto file (needs grpcio-tools) into a temporary directory that
     load() removes after the import: for a stand-in launcher that is started without VEHICLE_SIL_CONTROL_STUBS
     (the e2e of gui/web)."""
+    import importlib.util
     import shutil
     import tempfile
     from pathlib import Path
 
-    from grpc_tools import protoc
-
-    proto = Path(__file__).resolve().parents[3] / "proto"
-    out = tempfile.mkdtemp(prefix="fake-control-stubs-")
-    code = protoc.main(["protoc", f"-I{proto}", f"--python_out={out}", f"--grpc_python_out={out}",
-                        str(proto / "vehicle_sil" / "control" / "v1" / "control.proto")])
-    if code != 0:
+    root = Path(__file__).resolve().parents[3]
+    path = root / "python" / "vehicle_sil_control" / "generate.py"
+    spec = importlib.util.spec_from_file_location("_vehicle_sil_control_generate", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    out = Path(tempfile.mkdtemp(prefix="fake-control-stubs-"))
+    try:
+        module.generate(root / "proto", out)
+    except Exception:
         shutil.rmtree(out, ignore_errors=True)
-        raise RuntimeError(f"protoc failed ({code})")
-    return out
+        raise
+    return str(out)
 
 
 class FakeControl:

@@ -55,13 +55,15 @@ add_test(NAME serve.tools
 set_tests_properties(serve.tools PROPERTIES
   LABELS "unit;serve;python" TIMEOUT 60)
 
+_vehicle_sil_scaled_ctest_timeout(_serve_long_timeout 600)
+
 # #1 (50 Run 1-ECU + 20 Run 10-ECU vt=0), #2 (Cold equivalence, protocols, faults, binary swap),
 # #10 (fixed registry refusal, manual refusal, LIN repetitions).
 add_test(NAME serve.basic
          COMMAND "${_serve_python}" -m unittest -v test_serve_basic
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.basic PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT 600 ${_vehicle_sil_tsan_processors} COST 25
+  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} ${_vehicle_sil_tsan_processors} COST 25
   ENVIRONMENT "${_serve_common_env}")
 
 # #3 (stale stdin), #4 (event window isolation & log-dir), #6 (idle signals & run/SIGINT race),
@@ -70,7 +72,7 @@ add_test(NAME serve.isolation
          COMMAND "${_serve_python}" -m unittest -v test_serve_isolation
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.isolation PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT 600 RUN_SERIAL TRUE COST 30
+  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} RUN_SERIAL TRUE COST 30
   ENVIRONMENT "${_serve_common_env}")
 
 # #11: Windows-specific handle/thread/Job Object/CTRL_BREAK/fixed-port gRPC acceptance test.
@@ -83,7 +85,7 @@ if(WIN32)
            COMMAND "${_serve_python}" -m unittest -v test_serve_windows
            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   set_tests_properties(serve.windows PROPERTIES
-    LABELS "${_serve_win_labels}" TIMEOUT 600 RUN_SERIAL TRUE COST 15
+    LABELS "${_serve_win_labels}" TIMEOUT ${_serve_long_timeout} RUN_SERIAL TRUE COST 15
     ENVIRONMENT "${_serve_common_env}")
 endif()
 
@@ -97,11 +99,12 @@ if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
     PYTHONPATH "${PROJECT_SOURCE_DIR}/python"
     DEPENDS vehicle_sil_launch vehicle_sil_launch_test_ecu)
   if(_serve_grpc_python)
+    _vehicle_sil_scaled_ctest_timeout(_serve_grpc_timeout 300)
     add_test(NAME serve.grpc
              COMMAND "${_serve_grpc_python}" -m unittest -v test_serve_grpc
              WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(serve.grpc PROPERTIES
-      LABELS "serve;control;control_server;launch;integration;python" TIMEOUT 300
+      LABELS "serve;control;control_server;launch;integration;python" TIMEOUT ${_serve_grpc_timeout}
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_serve_stubs};${_serve_common_env}")
   endif()
 endif()

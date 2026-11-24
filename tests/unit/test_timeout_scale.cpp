@@ -30,12 +30,16 @@ TEST_CASE(timeout_scale_reads_a_number_greater_than_zero)
 
 TEST_CASE(timeout_scale_refuses_what_is_not_a_number_greater_than_zero)
 {
-    // Digits and one point only, as the readers in CMake, the GUI server's tests and the e2e.
-    for (const char* text : {"", "0", "0.0", ".", "-1", "+3", "abc", "3x", " ", " 3", "3 ", "1e3", "1e-3", "0x10", "1_000",
-                             "1.2.3", "inf", "nan"})
+    // Digits and one point only, as the readers in CMake, Python, the GUI server's tests and the e2e.
+    for (const char* text : {"", "0", "0.0", "000", "000.0", ".", "-1", "+3", "abc", "3x", " ", " 3", "3 ", "1e3", "1e-3",
+                             "0x10", "1_000", "1.2.3", "inf", "nan", "Infinity", "NaN", "3\n"})
     {
         CHECK(!parse_timeout_scale(text).has_value());
     }
+    const std::string overflow(400, '9');
+    const std::string underflow = "0." + std::string(400, '0') + "1";
+    CHECK(!parse_timeout_scale(overflow).has_value());
+    CHECK(!parse_timeout_scale(underflow).has_value());
 }
 
 TEST_CASE(timeout_scale_comes_from_the_variable_or_else_the_build_default)

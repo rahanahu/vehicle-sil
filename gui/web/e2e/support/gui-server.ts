@@ -133,12 +133,11 @@ function makeControlStubs(): string | undefined {
         '--project',
         REPOSITORY,
         'python',
-        '-c',
-        'import sys; from grpc_tools import protoc; out, proto = sys.argv[1], sys.argv[2]; ' +
-          'sys.exit(protoc.main(["protoc", f"-I{proto}", f"--python_out={out}", f"--grpc_python_out={out}", ' +
-          'f"{proto}/vehicle_sil/control/v1/control.proto"]))',
-        out,
+        resolve(REPOSITORY, 'python/vehicle_sil_control/generate.py'),
+        '--proto-root',
         resolve(REPOSITORY, 'proto'),
+        '--out',
+        out,
       ],
       { stdio: 'ignore' },
     );

@@ -73,7 +73,8 @@ def stop_group(process: subprocess.Popen) -> None:
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True)
         return
     # SIGINT first: Playwright then stops the web servers it started (they run in their own process groups).
-    for sig, seconds in ((signal.SIGINT, 20), (signal.SIGTERM, 5), (signal.SIGKILL, 0)):
+    for sig, seconds in ((signal.SIGINT, 20), (signal.SIGTERM, 5), (signal.SIGKILL, 1)):
+        process.poll()
         if not _group_alive(process.pid):
             return
         try:
@@ -81,7 +82,10 @@ def stop_group(process: subprocess.Popen) -> None:
         except ProcessLookupError:
             return
         deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline and _group_alive(process.pid):
+        while time.monotonic() < deadline:
+            process.poll()
+            if not _group_alive(process.pid):
+                return
             time.sleep(0.2)
 
 

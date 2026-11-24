@@ -21,9 +21,11 @@ if(NOT _multi_host_python)
   message(STATUS "vehicle-sil: no Python 3.11+ for multi_host.two_hosts (tried: ${_multi_host_python_TRIED})")
   return()
 endif()
+_vehicle_sil_scaled_ctest_timeout(_multi_host_timeout 300)
 add_test(NAME multi_host.two_hosts
   COMMAND "${_multi_host_python}" ${CMAKE_CURRENT_SOURCE_DIR}/two_hosts.py
           --launch $<TARGET_FILE:vehicle_sil_launch>
           --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..)
-set_tests_properties(multi_host.two_hosts PROPERTIES LABELS "integration;launch" TIMEOUT 300 SKIP_RETURN_CODE 77
-                                                     ${_vehicle_sil_tsan_processors} COST 15)
+set_tests_properties(multi_host.two_hosts PROPERTIES LABELS "integration;launch" TIMEOUT ${_multi_host_timeout} SKIP_RETURN_CODE 77
+                                                     ${_vehicle_sil_tsan_processors} COST 15
+                                                     ENVIRONMENT "VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT=${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")

@@ -9,7 +9,7 @@
     "build": "ng build",
     "build:workbench": "npm --prefix workbench run build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test --watch=false",
+    "test": "ng test --watch=false && node --test e2e/support/timeouts.unit.mjs",
     "test:client": "tsc -p ../client && vitest run --config ../client/vitest.config.mjs",
     "test:timeline": "node ../timeline/bundle.js --check && node --test ../timeline/tests/viewer.test.js",
     "bundle:timeline": "node ../timeline/bundle.js",

@@ -118,7 +118,7 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 | 倍率の決まり方 | テストを動かすときの環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`、なければビルドの既定です。 |
 | ビルドの既定 | CMake のキャッシュ変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT` で、既定は 1、TSan のプリセットは 4 です。 |
 | 値の書き方 | 数字と小数点 1 つだけで書き、0 より大きくします（`3`、`2.5`）。 |
-| ほかの書き方（空白、指数、16 進） | C++ のテスト、GUI サーバーのテスト、e2e が、変数の名前と直し方を表示して止まります。 |
+| ほかの書き方（空白、指数、16 進） | C++ のテスト、`tests/` 配下の Python テスト（`tests/common/timeout_scale.py`。`VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT` も参照）、GUI サーバーのテスト、e2e が、変数の名前と直し方を表示して止まります。 |
 | CI | 3 を与えます。TSan のジョブは与えずに、プリセットの既定を使います（`.github/workflows/ci.yml`）。 |
 
 倍率を掛けるかどうかは、値の種類で決まります。
@@ -131,7 +131,7 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 
 上限を書くときのルール:
 
-- 関数に上限を渡すときは `scaled_timeout(20s)`（`tests/unit/test_timeout_scale.hpp`）を通します。GUI サーバーのテストは `conftest.py` の `scaled()`、e2e は `scaled()` です。
+- 関数に上限を渡すときは `scaled_timeout(20s)`（`tests/unit/test_timeout_scale.hpp`）を通します。`tests/` 配下の Python テストは `tests/common/timeout_scale.py` の `scaled()`、GUI サーバーのテストは `conftest.py` の `scaled()`、e2e は `scaled()` です。
 - 上限を受け取って中で倍率を掛ける関数（`eventually`、`tests/process/spawn_sleeper.hpp` の待ち、シナリオのランチャーの `--timeout-ms` など）は、そのドキュメントコメントに「scaled」と書きます。
 - そうした関数に渡す値には、呼ぶ側で倍率を掛けません。
 

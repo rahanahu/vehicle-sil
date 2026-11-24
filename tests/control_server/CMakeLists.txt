@@ -37,22 +37,24 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicl
     DEPENDS vehicle_sil_launch vehicle_sil_engine_ecu vehicle_sil_dashboard_ecu)
   if(_control_python)
     set(_example_dir "$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..")
+    _vehicle_sil_scaled_ctest_timeout(_control_python_client_timeout 180)
+    _vehicle_sil_scaled_ctest_timeout(_control_launcher_timeout 300)
     # The client and the CLI under the launcher with the ECUs of examples/ecu_main; what the client
     # makes of the server's messages.
     add_test(NAME control_server.python_client
              COMMAND "${_control_python}" -m unittest -v test_python_client
              WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(control_server.python_client PROPERTIES
-      LABELS "control;control_server;python" TIMEOUT 180 ${_vehicle_sil_tsan_processors} COST 11
-      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=${_example_dir};VEHICLE_SIL_LAUNCH_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/python_client_scratch")
+      LABELS "control;control_server;python" TIMEOUT ${_control_python_client_timeout} ${_vehicle_sil_tsan_processors} COST 11
+      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=${_example_dir};VEHICLE_SIL_LAUNCH_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/python_client_scratch;VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT=${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
     # vehicle_sil_launch run --control with the ECUs of examples/ecu_main, driven from Python; and
     # the example of examples/launch_control (it checks itself).
     add_test(NAME control_server.launcher
              COMMAND "${_control_python}" -m unittest -v test_launcher
              WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(control_server.launcher PROPERTIES
-      LABELS "control;control_server;python;launch;integration" TIMEOUT 300 ${_vehicle_sil_tsan_processors} COST 12
-      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=${_example_dir};VEHICLE_SIL_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata;VEHICLE_SIL_LAUNCH_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/launcher_scratch")
+      LABELS "control;control_server;python;launch;integration" TIMEOUT ${_control_launcher_timeout} ${_vehicle_sil_tsan_processors} COST 12
+      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=${_example_dir};VEHICLE_SIL_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata;VEHICLE_SIL_LAUNCH_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/launcher_scratch;VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT=${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
     add_test(NAME control_server.example_write_before_start
              COMMAND "${_control_python}" "${PROJECT_SOURCE_DIR}/examples/launch_control/write_before_start.py"
                      --launch $<TARGET_FILE:vehicle_sil_launch> $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/../simulation.yaml)
@@ -88,7 +90,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicl
     vehicle_sil_python_install_hint(_hint "grpcio grpcio-tools protobuf" "the OS packages"
                                     "mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools"
                                     -DVEHICLE_SIL_CONTROL_PYTHON)
-    if(VEHICLE_SIL_CONTROL_PYTHON)
+    if(NOT "${VEHICLE_SIL_CONTROL_PYTHON}" STREQUAL "")
       string(CONCAT _what "${VEHICLE_SIL_CONTROL_PYTHON} (VEHICLE_SIL_CONTROL_PYTHON) is not Python 3.11+ with grpcio "
                           "and grpcio-tools: ${_control_python_REASON}")
     else()

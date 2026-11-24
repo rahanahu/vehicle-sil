@@ -118,7 +118,7 @@ Wait limits are multiplied by a scale factor.
 | How the factor is chosen | The environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` when the tests run; without it, the build's default. |
 | Build default | The CMake cache variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT`. The default is 1, and 4 for the TSan presets. |
 | How to write the value | Digits and at most one decimal point, greater than 0 (`3`, `2.5`). |
-| Other forms (spaces, exponents, hexadecimal) | The C++ tests, the GUI server tests and the e2e tests stop and print the variable's name and how to fix it. |
+| Other forms (spaces, exponents, hexadecimal) | The C++ tests, the Python tests under `tests/` (`tests/common/timeout_scale.py`, which also honors `VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT`), the GUI server tests and the e2e tests stop and print the variable's name and how to fix it. |
 | CI | Sets 3. The TSan jobs do not set it and use the preset's default (`.github/workflows/ci.yml`). |
 
 Whether a value is scaled depends on its kind.
@@ -131,7 +131,7 @@ Whether a value is scaled depends on its kind.
 
 Rules for writing limits:
 
-- When you pass a limit to a function, pass it through `scaled_timeout(20s)` (`tests/unit/test_timeout_scale.hpp`). The GUI server tests use `scaled()` in `conftest.py`, and the e2e tests use `scaled()`.
+- When you pass a limit to a function, pass it through `scaled_timeout(20s)` (`tests/unit/test_timeout_scale.hpp`). The Python tests under `tests/` use `scaled()` from `tests/common/timeout_scale.py`, the GUI server tests use `scaled()` in `conftest.py`, and the e2e tests use `scaled()`.
 - A function that takes a limit and scales it internally (`eventually`, the waits in `tests/process/spawn_sleeper.hpp`, `--timeout-ms` of a scenario launcher and others) says "scaled" in its documentation comment.
 - Do not scale a value on the caller's side when you pass it to such a function.
 

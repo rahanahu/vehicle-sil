@@ -207,7 +207,7 @@ void failing_start(const fs::path& ecu, const fs::path& dir)
     const launch::RunReport report = launch::run_file(asked, watching, lent, limits);
     const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
     // Without stop_at_ms the simulation would run for ever: it was ended for the failure.
-    require(std::chrono::steady_clock::now() - begin < 60s, "the run took too long" + shown);
+    require(std::chrono::steady_clock::now() - begin < vehicle_sil::test::scaled_timeout(60s), "the run took too long" + shown);
     require(report.result() == launch::RunResult::Failed, "the run did not fail" + shown);
     require(report.run.has_value() && report.run->end.simulation == vehicle_sil::runner::SimulationEnd::Aborted, "the simulation was not aborted" + shown);
     require(report.findings.size() == 1 && report.findings[0].code == "before-start" &&
@@ -986,6 +986,20 @@ void a_request_for_a_control_server_is_read_before_any_check(const fs::path& dir
 
 int main(int argc, char** argv)
 {
+    try
+    {
+        (void)vehicle_sil::test::timeout_scale_of_process();
+        if (const auto warning = vehicle_sil::test::timeout_scale_warning())
+        {
+            std::printf("%s\n", warning->c_str());
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::fprintf(stderr, "%s\n", e.what());
+        return 1;
+    }
+
     // Each part is a test of its own (they run side by side), in a directory of its own.
     using Part = std::function<void(const fs::path& ecu, const fs::path& helper, const fs::path& dir)>;
     const std::vector<std::pair<std::string, Part>> parts = {

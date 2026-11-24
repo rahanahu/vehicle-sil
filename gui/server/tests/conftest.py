@@ -168,17 +168,29 @@ def _default_control_stubs() -> Path | None:
         return _SESSION_STUBS
     try:
         import grpc  # noqa: F401
-        from grpc_tools import protoc
     except ImportError as e:
         _SESSION_STUBS_ERROR = e
         _SESSION_STUBS_READY = True
         return None
+    import importlib.util
+
+    path = REPOSITORY / "python" / "vehicle_sil_control" / "generate.py"
+    spec = importlib.util.spec_from_file_location("_vehicle_sil_control_generate", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     out = Path(tempfile.mkdtemp(prefix="vehicle-sil-pytest-stubs-"))
+    try:
+        module.generate(REPOSITORY / "proto", out)
+    except ImportError as e:
+        shutil.rmtree(out, ignore_errors=True)
+        _SESSION_STUBS_ERROR = e
+        _SESSION_STUBS_READY = True
+        return None
+    except Exception:
+        shutil.rmtree(out, ignore_errors=True)
+        raise
     atexit.register(shutil.rmtree, out, True)
-    proto = REPOSITORY / "proto"
-    code = protoc.main(["protoc", f"-I{proto}", f"--python_out={out}", f"--grpc_python_out={out}",
-                        str(proto / "vehicle_sil" / "control" / "v1" / "control.proto")])
-    assert code == 0, "protoc failed"
     _SESSION_STUBS = out
     _SESSION_STUBS_READY = True
     return out

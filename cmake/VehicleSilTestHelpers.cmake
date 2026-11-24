@@ -11,10 +11,12 @@ include_guard(GLOBAL)
 set(VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT "1" CACHE STRING
     "The factor on the tests' upper bounds of waiting when VEHICLE_SIL_TEST_TIMEOUT_SCALE is not set (digits, such as 4 or 2.5)")
 
-# <out_factor> = <text> rounded up to a whole factor, at least 1, and <out_ok> = TRUE when <text>
-# is digits with at most one point and greater than 0 (such as 3, 2.5 or .5): the rule of the
-# other readers (tests/unit/test_timeout_scale.hpp, gui/server/tests/conftest.py,
-# gui/web/e2e/support/timeouts.ts). Otherwise <out_ok> = FALSE and <out_factor> = 1.
+# <out_factor> = <text> rounded up to a whole factor, at least 1 and at most 1000000000 (1e9, matching
+# whole_timeout_factor in tests/unit/test_timeout_scale.hpp), and <out_ok> = TRUE when <text>
+# is digits with at most one point, finite in IEEE-754 double, and greater than 0 (such as 3, 2.5
+# or .5): the rule of the other readers (tests/unit/test_timeout_scale.hpp,
+# tests/common/timeout_scale.py, gui/server/tests/conftest.py, gui/web/e2e/support/timeouts.ts).
+# Otherwise <out_ok> = FALSE and <out_factor> = 1.
 function(_vehicle_sil_whole_timeout_factor text out_factor out_ok)
   set(${out_factor} 1 PARENT_SCOPE)
   set(${out_ok} FALSE PARENT_SCOPE)
@@ -24,7 +26,37 @@ function(_vehicle_sil_whole_timeout_factor text out_factor out_ok)
   set(whole "${CMAKE_MATCH_1}")
   set(fraction "${CMAKE_MATCH_3}")
   if(whole STREQUAL "")
-    set(whole 0)
+    # Reject IEEE-754 double underflow to 0.0: values <= 2^-1075 (half DBL_TRUE_MIN, round-to-even).
+    if(NOT fraction MATCHES "^(0*)([1-9][0-9]*)$")
+      return()
+    endif()
+    string(LENGTH "${CMAKE_MATCH_1}" _lz)
+    string(REGEX REPLACE "0+$" "" _sig "${CMAKE_MATCH_2}")
+    set(_dbl_true_min_half_sig "24703282292062327208828439643411068618252990130716238221279284125033775363510437593264991818081799618989828234772285886546332835517796989819938739800539093906315035659515570226392290858392449105184435931802849936536152500319370457678249219365623669863658480757001585769269903706311928279558551332927834338409351978015531246597263579574622766465272827220056374006485499977096599470454020828166226237857393450736339007967761930577506740176324673600968951340535537458516661134223766678604162159680461914467291840300530057530849048765391711386591646239524912623653881879636239373280423891018672348497668235089863388587925628302755995657524455507255189313690836254779186948667994968324049705821028513185451396213837722826145437693412532098591327667236328125")
+    if(_lz GREATER 323)
+      return()
+    endif()
+    if(_lz EQUAL 323 AND NOT _sig STRGREATER "${_dbl_true_min_half_sig}")
+      return()
+    endif()
+    set(${out_factor} 1 PARENT_SCOPE)
+    set(${out_ok} TRUE PARENT_SCOPE)
+    return()
+  endif()
+  # Reject IEEE-754 double overflow to +inf: values >= (2^54 - 1) * 2^970 (DBL_MAX + 0.5 ulp, round-to-even).
+  string(LENGTH "${whole}" _whole_len)
+  set(_dbl_max_cutoff "179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792")
+  if(_whole_len GREATER 309)
+    return()
+  endif()
+  if(_whole_len EQUAL 309 AND NOT whole STRLESS "${_dbl_max_cutoff}")
+    return()
+  endif()
+  # Clamp to 1000000000 (1e9) before math(EXPR) to avoid 64-bit overflow or wraparound.
+  if(_whole_len GREATER 10 OR (_whole_len EQUAL 10 AND NOT whole STRLESS "1000000000"))
+    set(${out_factor} 1000000000 PARENT_SCOPE)
+    set(${out_ok} TRUE PARENT_SCOPE)
+    return()
   endif()
   if(fraction MATCHES "[1-9]")
     math(EXPR whole "${whole} + 1")
