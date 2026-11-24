@@ -119,6 +119,83 @@ def test_cmake_arg_is_forwarded_to_configure() -> None:
               f"configure received --cmake-arg values: {calls}")
 
 
+def _make_fake_cmake_ctest(bin_dir: Path, cmake_calls: Path, ctest_calls: Path) -> None:
+    bin_dir.mkdir(exist_ok=True)
+    if os.name == "nt":
+        (bin_dir / "cmake.bat").write_text(
+            f'@echo off\r\necho %* >> "{cmake_calls}"\r\nexit /b 0\r\n', encoding="utf-8")
+        (bin_dir / "ctest.bat").write_text(
+            f'@echo off\r\necho %* >> "{ctest_calls}"\r\necho 100%% tests passed out of 1\r\nexit /b 0\r\n',
+            encoding="utf-8")
+    else:
+        cmake_sh = bin_dir / "cmake"
+        cmake_sh.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {cmake_calls!s}\nexit 0\n", encoding="utf-8")
+        cmake_sh.chmod(0o755)
+        ctest_sh = bin_dir / "ctest"
+        ctest_sh.write_text(
+            f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {ctest_calls!s}\necho '100% tests passed out of 1'\nexit 0\n",
+            encoding="utf-8")
+        ctest_sh.chmod(0o755)
+
+
+def test_ctest_filters_and_no_build() -> None:
+    preset = "windows-mingw-debug" if os.name == "nt" else "linux-gcc-debug"
+    base_env = {k: v for k, v in os.environ.items()
+                if k not in (job_summary.SUMMARY_ENV, job_summary.NESTED_ENV, job_summary.ARTIFACT_ENV)}
+
+    # 1. -L, -LE, -E forwarded to ctest alongside --tests
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        bin_dir = tmp / "bin"
+        cmake_calls = tmp / "cmake.txt"
+        ctest_calls = tmp / "ctest.txt"
+        _make_fake_cmake_ctest(bin_dir, cmake_calls, ctest_calls)
+        env = {**base_env, "PATH": str(bin_dir) + os.pathsep + base_env.get("PATH", "")}
+        run = subprocess.run(
+            [sys.executable, str(VERIFY), preset, "--tag", "test-filters", "--no-configure",
+             "--tests", "^launch", "-E", "slow", "-L", "config", "-LE", "integration"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=env,
+        )
+        check(run.returncode == 0, f"verify.py filters exited {run.returncode}: {run.stdout}\n{run.stderr}")
+        ctest_lines = ctest_calls.read_text(encoding="utf-8").splitlines() if ctest_calls.exists() else []
+        check(len(ctest_lines) == 1, f"expected 1 ctest call, got {ctest_lines}")
+        if ctest_lines:
+            line = ctest_lines[0]
+            for token in ("-R ^launch", "-E slow", "-L config", "-LE integration"):
+                check(token in line, f"ctest call missing {token!r}: {line}")
+
+    # 2. --no-build skips both configure and build (cmake is never invoked)
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        bin_dir = tmp / "bin"
+        cmake_calls = tmp / "cmake.txt"
+        ctest_calls = tmp / "ctest.txt"
+        _make_fake_cmake_ctest(bin_dir, cmake_calls, ctest_calls)
+        env = {**base_env, "PATH": str(bin_dir) + os.pathsep + base_env.get("PATH", "")}
+        run = subprocess.run(
+            [sys.executable, str(VERIFY), preset, "--tag", "test-nobuild", "--no-build",
+             "--labels", "unit", "--exclude-labels", "integration", "--exclude", "flaky"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=env,
+        )
+        check(run.returncode == 0, f"verify.py --no-build exited {run.returncode}: {run.stdout}\n{run.stderr}")
+        check(not cmake_calls.exists(), f"--no-build should not invoke cmake, got: {cmake_calls}")
+        ctest_lines = ctest_calls.read_text(encoding="utf-8").splitlines() if ctest_calls.exists() else []
+        check(len(ctest_lines) == 1, f"--no-build expected 1 ctest call, got {ctest_lines}")
+        if ctest_lines:
+            line = ctest_lines[0]
+            for token in ("-E flaky", "-L unit", "-LE integration"):
+                check(token in line, f"--no-build ctest call missing {token!r}: {line}")
+
+    # 3. --no-build conflicts with --targets and --cmake-arg (exit 2)
+    for extra in (["--targets", "foo"], ["--cmake-arg=-DFOO=ON"]):
+        bad = subprocess.run(
+            [sys.executable, str(VERIFY), preset, "--no-build", *extra],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=base_env,
+        )
+        check(bad.returncode == 2, f"--no-build {extra} exited {bad.returncode}, expected 2: {bad.stderr}")
+        check("--no-build" in bad.stderr, f"--no-build {extra} stderr missing hint: {bad.stderr}")
+
+
 def test_linux_presets_derived_from_cmake_presets() -> None:
     known = verify.load_presets()
     check("windows-mingw-control" in known and known["windows-mingw-control"]["host"] == "Windows",

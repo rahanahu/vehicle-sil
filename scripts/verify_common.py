@@ -49,6 +49,20 @@ def validate_tag(prog: str, tag: str) -> str:
     return tag
 
 
+def parse_steps(prog: str, raw: list[str], valid: tuple[str, ...], flag: str = "--only") -> list[str]:
+    """Parse comma-separated/repeatable step names and return them in `valid`'s canonical order."""
+    chosen: set[str] = set()
+    for item in raw:
+        parts = [p.strip() for p in item.split(",")]
+        if not parts or any(not p for p in parts):
+            die_usage(prog, f"{flag} {item!r}: empty step name; valid steps: {', '.join(valid)}")
+        for p in parts:
+            if p not in valid:
+                die_usage(prog, f"unknown step {p!r} in {flag}; valid steps: {', '.join(valid)}")
+            chosen.add(p)
+    return [step for step in valid if step in chosen]
+
+
 def clean_lines(text: str, limit: int = LINE_CHARS) -> list[str]:
     return [ANSI.sub("", ln).rstrip()[:limit] for ln in text.splitlines()]
 
@@ -82,11 +96,19 @@ def stop_group(process: subprocess.Popen) -> None:
         except ProcessLookupError:
             return
         deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
+        if process.poll() is None:
+            try:
+                process.wait(timeout=seconds)
+            except subprocess.TimeoutExpired:
+                pass
+        while True:
             process.poll()
             if not _group_alive(process.pid):
                 return
-            time.sleep(0.2)
+            now = time.monotonic()
+            if now >= deadline:
+                break
+            time.sleep(min(0.2, deadline - now))
 
 
 def _on_sigterm(_signum: int, _frame: object) -> None:

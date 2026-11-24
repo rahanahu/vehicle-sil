@@ -18,21 +18,48 @@ import time
 from pathlib import Path
 
 # Exact process names, and name prefixes (qemu-system-x86_64; /proc/<pid>/comm keeps 15 characters).
-EXACT = ("ctest", "ninja")
+EXACT = ("ctest", "ninja", "ninja-build")
 PREFIXES = ("qemu-system-x86",)
 DEFAULT_LIMIT_S = 20 * 60
 POLL_S = 5.0
+MAX_SHOWN = 4
 
 
-def _names_linux() -> list[str]:
+def _matches(name: str) -> bool:
+    return name in EXACT or name.startswith(PREFIXES)
+
+
+def _names_linux(proc_root: Path = Path("/proc")) -> list[str]:
     names = []
-    for entry in Path("/proc").iterdir():
+    for entry in proc_root.iterdir():
         if entry.name.isdigit():
             try:
                 names.append((entry / "comm").read_text(encoding="utf-8", errors="replace").strip())
             except OSError:  # the process ended meanwhile
                 pass
     return names
+
+
+def _details_linux(proc_root: Path = Path("/proc")) -> list[str]:
+    entries: list[tuple[str, int, str]] = []
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            comm = (entry / "comm").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:  # the process ended meanwhile
+            continue
+        if not _matches(comm):
+            continue
+        try:
+            cwd = os.readlink(entry / "cwd")
+            cwd_name = os.path.basename(cwd.rstrip("/\\")) or cwd
+            detail = f"{comm} (pid {entry.name}, {cwd_name})"
+        except OSError:
+            detail = f"{comm} (pid {entry.name})"
+        entries.append((comm, int(entry.name), detail))
+    entries.sort(key=lambda item: (item[0], item[1]))
+    return [item[2] for item in entries]
 
 
 def _names_windows() -> list[str]:
@@ -52,16 +79,36 @@ def _names_ps() -> list[str]:
 def busy_processes() -> list[str]:
     """The names of the running processes that make the GUI tests unreliable, sorted, each once."""
     try:
-        if Path("/proc/self/comm").exists():
-            names = _names_linux()
-        elif os.name == "nt":
+        if os.name == "nt":
             names = _names_windows()
+        elif Path("/proc/self/comm").exists():
+            names = _names_linux()
         else:
             names = _names_ps()
     except OSError:
         return []
-    found = {n for n in names if n in EXACT or n.startswith(PREFIXES)}
+    found = {n for n in names if _matches(n)}
     return sorted(found)
+
+
+def busy_details() -> list[str]:
+    """Busy processes with PID and working-directory basename on Linux; process names elsewhere."""
+    if os.name == "nt":
+        return busy_processes()
+    try:
+        if Path("/proc/self/comm").exists():
+            return _details_linux()
+    except OSError:
+        return []
+    return busy_processes()
+
+
+def _format_busy(items: list[str], limit: int = MAX_SHOWN) -> str:
+    shown = items[:limit]
+    extra = len(items) - len(shown)
+    if extra > 0:
+        return ", ".join(shown) + f", and {extra} more"
+    return ", ".join(shown)
 
 
 def wait_until_quiet(prog: str, limit_s: float = DEFAULT_LIMIT_S, poll_s: float = POLL_S) -> None:
@@ -69,19 +116,19 @@ def wait_until_quiet(prog: str, limit_s: float = DEFAULT_LIMIT_S, poll_s: float 
 
     One line when the wait starts (what it waits for), and a warning if it gives up.
     """
-    busy = busy_processes()
+    busy = busy_details()
     if not busy:
         return
     start = time.monotonic()
-    print(f"{prog}: waiting for {', '.join(busy)} to end (timing-sensitive; up to {limit_s / 60:g} min, "
+    print(f"{prog}: waiting for {_format_busy(busy)} to end (timing-sensitive; up to {limit_s / 60:g} min, "
           "--no-wait to skip)", file=sys.stderr, flush=True)
     while busy:
         if time.monotonic() - start >= limit_s:
-            print(f"{prog}: warning: {', '.join(busy)} still running after {limit_s / 60:g} min; continuing, "
+            print(f"{prog}: warning: {_format_busy(busy)} still running after {limit_s / 60:g} min; continuing, "
                   "so timing-sensitive tests may fail", file=sys.stderr, flush=True)
             return
         time.sleep(poll_s)
-        busy = busy_processes()
+        busy = busy_details()
 
 
 if __name__ == "__main__":

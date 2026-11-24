@@ -58,6 +58,8 @@ ROOT = verify_common.ROOT
 LOG_DIR = verify_common.LOG_DIR
 ENV_DIR = ROOT / "build" / "python-envs"
 LOWEST = "3.11"
+ALL_STEPS = ("syntax", "codegen", "knowledge", "template", "schema", "scripts", "control")
+LOWEST_STEPS = ("codegen", "schema", "control")
 OUTPUT_LINES = 15
 LINE_CHARS = 400
 
@@ -155,8 +157,9 @@ def installed_versions(python: str, env: dict[str, str]) -> dict[str, str]:
 
 
 def check_version(uv: str, version: str, tag: str, files: list[str],
-                  lowest: bool = False) -> tuple[bool, str, list[str], Path | None]:
-    """Runs every step for one Python version. Returns (ok, description, failure lines, failed log).
+                  lowest: bool = False,
+                  selected: list[str] | None = None) -> tuple[bool, str, list[str], Path | None]:
+    """Runs selected steps (or every step) for one Python version. Returns (ok, description, failure lines, failed log).
 
     With lowest, the environment gets the lower bounds of pyproject.toml (uv's lowest-direct resolution,
     not uv.lock), and the sync step fails unless each declared lower bound is what was installed.
@@ -251,10 +254,19 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             s.run([python, "examples/launch_control/pause_and_step.py", "--help"]),
         ])
 
-    steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("knowledge", knowledge), ("template", template), ("schema", schema),
-             ("scripts", scripts), ("control", control)]
+    step_map = {
+        "syntax": syntax,
+        "codegen": codegen,
+        "knowledge": knowledge,
+        "template": template,
+        "schema": schema,
+        "scripts": scripts,
+        "control": control,
+    }
+    wanted = list(ALL_STEPS) if selected is None else selected
     if lowest:  # the syntax, the template's script and the scripts do not depend on the packages
-        steps = [s for s in steps if s[0] not in ("syntax", "template", "scripts", "knowledge")]
+        wanted = [s for s in wanted if s in LOWEST_STEPS]
+    steps = [("sync", sync)] + [(s, step_map[s]) for s in wanted]
     times = []
     for step_name, body in steps:
         log = LOG_DIR / f"{tag}-py{name}-{step_name}.log"
@@ -284,6 +296,8 @@ def main() -> int:
         epilog="examples:\n"
         "  scripts/verify-python.py                  # 3.11, .python-version, and 3.11 with the lower bounds\n"
         "  scripts/verify-python.py --skip-lowest    # only the versions of uv.lock\n"
+        "  scripts/verify-python.py --only control   # only sync + control (across 3.11, pinned, 3.11 lowest)\n"
+        "  scripts/verify-python.py --only scripts   # only sync + scripts (skips 3.11 lowest automatically)\n"
         "  scripts/verify-python.py --python 3.13\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -293,10 +307,14 @@ def main() -> int:
     parser.add_argument("--skip-lowest", action="store_true",
                         help=f"leave out the run on Python {LOWEST} with the lower bounds of pyproject.toml "
                         "(uv's lowest-direct resolution; it needs the package index or uv's cache)")
+    parser.add_argument("--only", action="append", metavar="STEPS",
+                        help="run only these comma-separated steps after sync (repeatable; valid: "
+                        + ", ".join(ALL_STEPS) + ")")
     parser.add_argument("--tag", default="verify", help="prefix of the log names (default: verify)")
     args = parser.parse_args()
 
     verify_common.validate_tag("verify-python", args.tag)
+    selected = verify_common.parse_steps("verify-python", args.only, ALL_STEPS) if args.only else None
     versions = list(dict.fromkeys(args.python or [LOWEST] + ([pinned] if pinned else [])))
     for v in versions:
         if not re.fullmatch(r"3\.\d+(\.\d+)?", v):
@@ -309,12 +327,19 @@ def main() -> int:
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     files = tracked_python_files()
-    runs = [(v, False) for v in versions] + ([] if args.skip_lowest else [(LOWEST, True)])
+    runs = [(v, False) for v in versions]
+    skipped_lowest: str | None = None
+    if not args.skip_lowest:
+        lowest_wanted = [s for s in (selected or ALL_STEPS) if s in LOWEST_STEPS]
+        if lowest_wanted:
+            runs.append((LOWEST, True))
+        else:
+            skipped_lowest = f"none of {', '.join(selected or [])} use lower-bound packages"
     failed = []
     try:
         for v, lowest in runs:
             label = f"{v} lowest" if lowest else v
-            ok, text, lines, log = check_version(uv, v, args.tag, files, lowest)
+            ok, text, lines, log = check_version(uv, v, args.tag, files, lowest, selected)
             print(f"python {label}: {text}")
             if not ok:
                 failed.append(label)
@@ -326,6 +351,8 @@ def main() -> int:
     except KeyboardInterrupt:
         print("verify-python: interrupted", file=sys.stderr)
         return 130
+    if not failed and skipped_lowest is not None:
+        print(f"python {LOWEST} lowest: skipped ({skipped_lowest})")
     if failed:
         print("verify-python: FAILED " + ", ".join(failed))
         return 1
