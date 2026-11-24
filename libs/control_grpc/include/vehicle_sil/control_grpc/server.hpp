@@ -249,4 +249,12 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+namespace detail {
+
+[[nodiscard]] TimeView time_view_of(SimulationController& controller, bool holding = false);
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> simulation_participants_of(
+    SimulationController& controller);
+
+} // namespace detail
+
 } // namespace vehicle_sil::control_grpc

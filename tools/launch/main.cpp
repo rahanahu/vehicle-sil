@@ -103,6 +103,7 @@ constexpr const char* kUsage =
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                                [--time-policy realtime|free] [--request <file>] [--speed <speed>]\n"
     "                                [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
+    "                                [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
     "                                [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]\n"
     "                                [--compare-commands <file>]\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"

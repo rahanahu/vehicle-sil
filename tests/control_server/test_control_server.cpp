@@ -15,6 +15,7 @@
 
 #include <grpcpp/grpcpp.h>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <chrono>
@@ -526,4 +527,148 @@ TEST_CASE(control_server_lists_simulation_participants_without_an_agent)
     CHECK(eventually([&] { return listed("Running"); }));
     controller.stop("done");
     plain.stop("done");
+}
+
+TEST_CASE(control_server_time_control_of_matches_simulation_lifecycle)
+{
+    InProcessRegistry registry;
+    SimulationControllerOptions controlOptions;
+    controlOptions.registry_uri = registry.uri;
+    controlOptions.required_participants = {"Plain"};
+    controlOptions.time_control = TimeControlOptions{.step = 10ms, .start_paused = true};
+    SimulationController controller(controlOptions);
+    const auto time = control_grpc::time_control_of(controller);
+
+    // Before start(): started() is false and state is not Running.
+    const auto before = time->state();
+    CHECK(before.available);
+    CHECK(!before.running);
+    CHECK(!before.ended);
+    const auto holding_before = control_grpc::detail::time_view_of(controller, /*holding=*/true);
+    CHECK(holding_before.available);
+    CHECK(holding_before.paused);
+    CHECK(!holding_before.running);
+    CHECK(!holding_before.ended);
+    CHECK(!holding_before.pause_target.has_value());
+
+    // Inside the start window: runtime().started() is already true, before ParticipantState::Running.
+    bool saw_start_window = false;
+    bool started_in_window = false;
+    control_grpc::TimeView in_window;
+    controller.set_start_window([&](const StartWindow&) {
+        started_in_window = controller.runtime().started();
+        in_window = time->state();
+        saw_start_window = true;
+    });
+
+    ParticipantRuntime plain(vehicle_sil::unit::coordinated_options("Plain", registry.uri, VirtualTimeOptions{10ms}));
+    plain.set_step_handler([](SimTime, SimDuration) {});
+    vehicle_sil::unit::start_together(controller, {&plain}, 30s);
+    CHECK(saw_start_window);
+    CHECK(started_in_window);
+    CHECK(in_window.available);
+    CHECK(!in_window.running);
+    CHECK(!in_window.ended);
+
+    // Once Running and paused at 0 ms: running is true, paused is true, ended is false.
+    CHECK(time->wait_paused(10s).has_value());
+    CHECK(eventually([&] {
+        const auto s = time->state();
+        return s.available && s.running && s.paused && !s.ended && s.now == SimTime{};
+    }));
+
+    // Advance while paused, then stop while a run_until() pause_target is active: ended clears
+    // pause_target, excludes paused, clamps now >= runtime().now(), and overrides holding=true.
+    time->run_until(SimTime{} + 30ms);
+    const auto reached = time->wait_paused(10s);
+    CHECK(reached.has_value() && *reached == SimTime{} + 30ms);
+    time->set_speed(0.001);
+    time->run_until(SimTime{} + 200ms);
+    CHECK(time->state().pause_target == SimTime{} + 200ms);
+    time->stop("done");
+    const auto finished = plain.wait_until_finished(30s);
+    CHECK(finished.has_value() && *finished == orch::ParticipantState::Shutdown);
+    CHECK(eventually([&] { return time->state().ended; }));
+    const auto after = time->state();
+    CHECK(after.available);
+    CHECK(after.ended);
+    CHECK(!after.running);
+    CHECK(!(after.paused && after.ended));
+    CHECK(!after.pause_target.has_value());
+    CHECK(after.now >= controller.runtime().now());
+    const auto holding_after = control_grpc::detail::time_view_of(controller, /*holding=*/true);
+    CHECK(holding_after.available);
+    CHECK(holding_after.ended);
+    CHECK(!holding_after.paused);
+    CHECK(!holding_after.running);
+    CHECK(!holding_after.pause_target.has_value());
+    CHECK(holding_after.now == std::max(SimTime{}, controller.runtime().now()));
+    controller.stop("done");
+    plain.stop("done");
+}
+
+TEST_CASE(control_server_time_view_of_holding_after_abort_reports_ended)
+{
+    InProcessRegistry registry;
+    SimulationControllerOptions controlOptions;
+    controlOptions.registry_uri = registry.uri;
+    controlOptions.required_participants = {"Plain"};
+    controlOptions.time_control = TimeControlOptions{.step = 10ms, .start_paused = true};
+    SimulationController controller(controlOptions);
+
+    std::atomic<bool> in_window{false};
+    controller.set_start_window([&](const StartWindow& window) {
+        in_window = true;
+        while (!window.cancelled())
+        {
+            std::this_thread::sleep_for(5ms);
+        }
+    });
+
+    ParticipantRuntime plain(vehicle_sil::unit::coordinated_options("Plain", registry.uri, VirtualTimeOptions{10ms}));
+    plain.set_step_handler([](SimTime, SimDuration) {});
+    std::thread starter([&] {
+        try
+        {
+            plain.start(30s);
+        }
+        catch (const std::exception&)
+        {
+        }
+    });
+    bool saw_window = false;
+    std::thread aborter([&] {
+        saw_window = eventually([&] { return in_window.load(); });
+        if (saw_window)
+        {
+            controller.abort();
+        }
+    });
+
+    bool start_threw = false;
+    try
+    {
+        controller.start(30s);
+    }
+    catch (const std::exception&)
+    {
+        start_threw = true;
+    }
+    aborter.join();
+    starter.join();
+
+    CHECK(saw_window);
+    CHECK(start_threw);
+    const auto ctrl_finished = controller.wait_until_finished(30s);
+    CHECK(ctrl_finished.has_value() && *ctrl_finished == orch::ParticipantState::Shutdown);
+    const auto plain_finished = plain.wait_until_finished(30s);
+    CHECK(plain_finished.has_value() && *plain_finished == orch::ParticipantState::Shutdown);
+
+    const auto holding_after = control_grpc::detail::time_view_of(controller, /*holding=*/true);
+    CHECK(holding_after.available);
+    CHECK(holding_after.ended);
+    CHECK(!holding_after.paused);
+    CHECK(!holding_after.running);
+    CHECK(!holding_after.pause_target.has_value());
+    CHECK(holding_after.now == std::max(SimTime{}, controller.runtime().now()));
 }
