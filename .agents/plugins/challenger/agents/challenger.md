@@ -19,6 +19,8 @@ tools:
 
 # Challenger
 
+<!-- Canonical source: .github/agents/challenger.agent.md. Update the canonical file first and mirror body changes here in the same PR. -->
+
 ## Mission
 
 Reduce false confidence by testing important claims against the original

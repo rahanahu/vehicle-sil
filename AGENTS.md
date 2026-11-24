@@ -94,6 +94,7 @@ Skills for AI agents live in `.agents/skills/<name>/SKILL.md`, a layout that sev
 
 - `agent-prompt-design`: a checklist for writing instructions, briefs and handoffs that another agent will act on.
 - `run-challenge`: Coordinator workflow for screening changes, delegating a bounded task to the independent `challenger` agent (`.github/agents/challenger.agent.md`; Antigravity plugin: `.agents/plugins/challenger/agents/challenger.md`), assessing its report, and closing the loop.
+  - **Canonical Challenger definition & sync policy:** `.github/agents/challenger.agent.md` is the canonical source. `.agents/plugins/challenger/agents/challenger.md` mirrors its body with Antigravity-specific frontmatter (`subagent`, `mainAgent`, `tools`). Update `.github/agents/challenger.agent.md` first and mirror body changes to `.agents/plugins/challenger/agents/challenger.md` in the same pull request.
 
 ### Independent challenge
 
