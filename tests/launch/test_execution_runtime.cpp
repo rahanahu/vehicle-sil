@@ -101,13 +101,21 @@ private:
     std::vector<RecordedCommandEvent>& commands_;
 };
 
+struct FinishedRun
+{
+    std::string run_id;
+    bool launcher_ends = false;
+    RunReport report{};
+    ExecutionStatus status{};
+};
+
 class MockExecutionSink final : public ExecutionSink
 {
 public:
     std::function<void(const ExecutionStatus&)> status_hook{};
     std::function<void()> finish_hook{};
 
-    void on_status(const ExecutionStatus& status) override
+    void on_status(const ExecutionStatus& status, std::optional<std::int64_t>) noexcept override
     {
         if (status_hook)
         {
@@ -118,10 +126,17 @@ public:
         cv_.notify_all();
     }
 
-    void on_idle() override
+    void on_prepare(const PrepareResult& result, std::optional<std::int64_t>) noexcept override
     {
+        if (status_hook)
+        {
+            status_hook(result.status);
+        }
         const std::lock_guard lock(mu_);
-        ++idle_count_;
+        if (statuses_.empty() || statuses_.back().status_rev != result.status.status_rev)
+        {
+            statuses_.push_back(result.status);
+        }
         cv_.notify_all();
     }
 
@@ -141,12 +156,21 @@ public:
         return std::make_unique<MockRunWindow>(run_id, mu_, command_events_);
     }
 
-    bool finish_run(RunEventSink& window, const RunReport&, bool launcher_ends, const std::function<bool()>&) override
+    bool finish_run(RunEventSink& window, const RunReport& report, bool launcher_ends,
+                    const ExecutionStatus& status, const std::function<bool()>&) override
     {
         const auto& w = static_cast<const MockRunWindow&>(window);
+        if (status_hook)
+        {
+            status_hook(status);
+        }
         {
             const std::lock_guard lock(mu_);
-            finished_runs_.push_back({w.run_id(), launcher_ends});
+            if (statuses_.empty() || statuses_.back().status_rev != status.status_rev)
+            {
+                statuses_.push_back(status);
+            }
+            finished_runs_.push_back(FinishedRun{w.run_id(), launcher_ends, report, status});
         }
         cv_.notify_all();
         if (finish_hook)
@@ -179,9 +203,8 @@ public:
     }
 
     /// Waits until the status after the end of `run_id` has been delivered: the runtime takes that
-    /// snapshot under its lock after it stored the result and left Running (busy cleared), so
-    /// result(run_id), start_run() and prepare() see the run as over once this returns true. Only
-    /// the sink's own state is read under its lock (the runtime calls the sink under its lock).
+    /// snapshot under its lock after it left Running (busy cleared), so start_run() and prepare()
+    /// see the run as over once this returns true.
     [[nodiscard]] bool wait_last_run(const std::string& run_id) const
     {
         std::unique_lock lock(mu_);
@@ -191,10 +214,17 @@ public:
         });
     }
 
-    int idle_count() const
+    std::optional<FinishedRun> finished_run(const std::string& run_id) const
     {
         const std::lock_guard lock(mu_);
-        return idle_count_;
+        for (const FinishedRun& f : finished_runs_)
+        {
+            if (f.run_id == run_id)
+            {
+                return f;
+            }
+        }
+        return std::nullopt;
     }
 
     std::vector<RecordedRefusal> refusals() const
@@ -209,7 +239,7 @@ public:
         return command_events_;
     }
 
-    std::vector<std::pair<std::string, bool>> finished_runs() const
+    std::vector<FinishedRun> finished_runs() const
     {
         const std::lock_guard lock(mu_);
         return finished_runs_;
@@ -219,10 +249,9 @@ private:
     mutable std::mutex mu_;
     mutable std::condition_variable cv_;
     std::vector<ExecutionStatus> statuses_;
-    int idle_count_ = 0;
     std::vector<RecordedRefusal> refusals_;
     std::vector<std::string> opened_runs_;
-    std::vector<std::pair<std::string, bool>> finished_runs_;
+    std::vector<FinishedRun> finished_runs_;
     std::vector<RecordedCommandEvent> command_events_;
     std::atomic<bool> closed_{false};
     bool fail_finish_ = false;
@@ -306,10 +335,10 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     };
 
     ExecutionRuntime rt(sink, end, std::move(opts));
-    CHECK_EQ(sink.idle_count(), 1);
+    CHECK_EQ(sink.statuses().size(), std::size_t{1});
     const ExecutionStatus init = rt.status();
-    CHECK(init.launcher_state == LauncherState::Idle);
-    CHECK(std::string(launcher_state_name(init.launcher_state)) == "idle");
+    CHECK(init.launcher_state == LauncherState::Unprepared);
+    CHECK(std::string(launcher_state_name(init.launcher_state)) == "unprepared");
     CHECK_EQ(init.status_rev, std::uint64_t{0});
     CHECK(init.instance == "0011223344556677");
     CHECK(!init.active_run_id.has_value());
@@ -319,7 +348,7 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     CHECK(!init.launcher_allowed.run.ok);
     CHECK(init.launcher_allowed.run.reason == serve_reason::kNotPrepared);
 
-    // 1. Valid config -> Idle -> Preparing -> Ready with ConfigMetadata.
+    // 1. Valid config -> Unprepared -> Preparing -> Ready with ConfigMetadata.
     const PrepareResult p_valid = rt.prepare(PrepareSpec{valid_cfg.string(), std::string("fast")});
     CHECK(p_valid.accepted);
     CHECK(p_valid.reason.empty());
@@ -335,35 +364,36 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     CHECK(p_valid.metadata.file_sha256 == vehicle_sil::launch::detail::sha256_hex(valid_text));
     CHECK_EQ(p_valid.metadata.file_sha256.size(), std::size_t{64});
 
-    // 2. Fixed registry -> resets Ready back to Idle with fixed-registry reason.
+    // 2. Fixed registry -> resets Ready to ColdOnly with fixed-registry reason.
     const PrepareResult p_fixed = rt.prepare(PrepareSpec{fixed_cfg.string()});
     CHECK(p_fixed.accepted);
     CHECK(!p_fixed.status.eligibility.eligible);
     CHECK(p_fixed.status.eligibility.reason == "fixed-registry");
-    CHECK(p_fixed.status.launcher_state == LauncherState::Idle);
+    CHECK(p_fixed.status.launcher_state == LauncherState::ColdOnly);
+    CHECK(std::string(launcher_state_name(p_fixed.status.launcher_state)) == "cold_only");
     CHECK(!p_fixed.status.launcher_allowed.run.ok);
     CHECK(p_fixed.status.launcher_allowed.run.reason == "fixed-registry");
 
-    // 3. Manual participants -> manual-participants, Idle.
+    // 3. Manual participants -> manual-participants, ColdOnly.
     const PrepareResult p_manual = rt.prepare(PrepareSpec{manual_cfg.string()});
     CHECK(p_manual.accepted);
     CHECK(!p_manual.status.eligibility.eligible);
     CHECK(p_manual.status.eligibility.reason == "manual-participants");
-    CHECK(p_manual.status.launcher_state == LauncherState::Idle);
+    CHECK(p_manual.status.launcher_state == LauncherState::ColdOnly);
 
-    // 4. Unreadable config -> config-unreadable, Idle.
+    // 4. Unreadable config -> config-unreadable, ColdOnly.
     const PrepareResult p_missing = rt.prepare(PrepareSpec{(dir / "does_not_exist.yaml").string()});
     CHECK(p_missing.accepted);
     CHECK(!p_missing.status.eligibility.eligible);
     CHECK(p_missing.status.eligibility.reason == "config-unreadable");
-    CHECK(p_missing.status.launcher_state == LauncherState::Idle);
+    CHECK(p_missing.status.launcher_state == LauncherState::ColdOnly);
 
-    // 5. Usage error (nonexistent variant) -> usage, Idle, file_sha256 still computed from readable file.
+    // 5. Usage error (nonexistent variant) -> usage, ColdOnly, file_sha256 still computed from readable file.
     const PrepareResult p_usage = rt.prepare(PrepareSpec{valid_cfg.string(), std::string("missing_variant")});
     CHECK(p_usage.accepted);
     CHECK(!p_usage.status.eligibility.eligible);
     CHECK(p_usage.status.eligibility.reason == "usage");
-    CHECK(p_usage.status.launcher_state == LauncherState::Idle);
+    CHECK(p_usage.status.launcher_state == LauncherState::ColdOnly);
     CHECK(p_usage.metadata.file_sha256 == vehicle_sil::launch::detail::sha256_hex(valid_text));
 
     // 6. Re-prepare valid config -> Ready, then refuse prepare with busy during Running.
@@ -400,7 +430,7 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     CHECK(!p_ending.accepted);
     CHECK(p_ending.reason == serve_reason::kLauncherEnding);
 
-    // 8. trace_enabled = true -> trace-enabled, Idle.
+    // 8. trace_enabled = true -> trace-enabled, ColdOnly.
     MockExecutionSink trace_sink;
     LauncherEnd trace_end;
     ExecutionRuntimeOptions trace_opts;
@@ -411,7 +441,7 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     CHECK(p_trace.accepted);
     CHECK(!p_trace.status.eligibility.eligible);
     CHECK(p_trace.status.eligibility.reason == "trace-enabled");
-    CHECK(p_trace.status.launcher_state == LauncherState::Idle);
+    CHECK(p_trace.status.launcher_state == LauncherState::ColdOnly);
     CHECK(trace_rt.status().launcher_allowed.run.reason == "trace-enabled");
 }
 
@@ -424,46 +454,24 @@ TEST_CASE(execution_runtime_prepare_shutdown_race_stays_ending)
                "networks:\n  - name: CAN1\n    kind: can\n"
                "participants:\n  - name: Engine\n    command: [\"./engine\"]\n");
 
-    std::mutex mu;
-    std::condition_variable cv;
-    bool entered_preparing = false;
-    bool release_prepare = false;
-
+    LauncherEnd end;
     MockExecutionSink sink;
+    // Mark LauncherEnd during the Preparing status callback (under mutex_, lock-free atomic):
+    // once prepare() finishes check_file() and re-acquires mutex_, it must see end.requested()
+    // and transition directly to Ending.
     sink.status_hook = [&](const ExecutionStatus& s) {
         if (s.launcher_state == LauncherState::Preparing)
         {
-            {
-                const std::lock_guard lock(mu);
-                entered_preparing = true;
-            }
-            cv.notify_all();
-            std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return release_prepare; });
+            end.mark(stop_source::kEndOfInput);
         }
     };
 
-    LauncherEnd end;
     ExecutionRuntimeOptions opts;
     opts.instance = "1122334455667788";
     ExecutionRuntime rt(sink, end, std::move(opts));
 
-    auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
-    auto prep_future = std::async(std::launch::async, [&] { return rt.prepare(PrepareSpec{valid_cfg.string()}); });
-
-    {
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return entered_preparing; });
-    }
-    rt.request_shutdown(stop_source::kEndOfInput);
-    {
-        const std::lock_guard lock(mu);
-        release_prepare = true;
-    }
-    cv.notify_all();
-
-    const PrepareResult prep = prep_future.get();
-    const ExecutionEnd ended = loop_future.get();
+    const PrepareResult prep = rt.prepare(PrepareSpec{valid_cfg.string()});
+    const ExecutionEnd ended = rt.run_loop();
     CHECK(!prep.accepted);
     CHECK(prep.reason == serve_reason::kLauncherEnding);
     CHECK(prep.status.launcher_state == LauncherState::Ending);
@@ -545,25 +553,25 @@ TEST_CASE(execution_runtime_start_run_contracts_and_in_memory_submission)
     ExecutionRuntime rt(sink, end, std::move(opts));
     auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
 
-    // 1. Compatible Idle start_run (without prepare()) and pre_usage finding -> Usage report, seq 1.
+    // 1. Compatible Unprepared start_run (without prepare()) and pre_usage finding -> Usage report, seq 1.
     RunSubmission bad_sub;
     bad_sub.pre_usage.push_back(Finding{Severity::Error, "usage", "bad inline intent", 0, "", ""});
     const CommandReply r1 = rt.start_run(std::move(bad_sub));
     CHECK(r1.accepted);
     CHECK(r1.run_id == "abcdef0123456789-1");
 
-    // Wait for Run 1's post-run Idle status delivery (happens after busy_ clears) so it cannot
+    // Wait for Run 1's post-run status delivery (happens after busy_ clears) so it cannot
     // arrive after status_before_run2 below.
-    sink.wait_status_count(2);
     CHECK(sink.wait_last_run(*r1.run_id));
+    const auto f1 = sink.finished_run(*r1.run_id);
+    CHECK(f1.has_value());
+    CHECK(f1->report.result() == RunResult::Usage);
+    CHECK(f1->status.launcher_state == LauncherState::Unprepared);
+
     const PrepareResult prep = rt.prepare(PrepareSpec{});
     CHECK(prep.accepted);
     CHECK(prep.status.launcher_state == LauncherState::Ready);
-    const ResultQuery q1 = rt.result(*r1.run_id);
-    CHECK(q1.ok);
-    CHECK(q1.report && q1.report->result() == RunResult::Usage);
 
-    sink.wait_status_count(4);
     const std::size_t status_before_run2 = sink.statuses().size();
 
     // 2. Ready start_run with in-memory RunSubmission (RunIntent start_paused).
@@ -613,7 +621,7 @@ TEST_CASE(execution_runtime_start_run_contracts_and_in_memory_submission)
 
     // Wait for Run 3 to complete before reading seen_req3 and shutting down.
     CHECK(sink.wait_last_run(*r3.run_id));
-    CHECK(rt.result(*r3.run_id).ok);
+    CHECK(sink.finished_run(*r3.run_id).has_value());
     CHECK(seen_req3.intent.scenario == std::optional<std::string>("drive.scenario.yaml"));
     CHECK(seen_req3.host.timeline == "out/timeline.json");
 
@@ -623,7 +631,7 @@ TEST_CASE(execution_runtime_start_run_contracts_and_in_memory_submission)
     CHECK(!rt.start_run(RunSubmission{}).accepted);
 }
 
-TEST_CASE(execution_runtime_stop_modes_graceful_force_escalate_and_close_cut)
+TEST_CASE(execution_runtime_stop_modes_graceful_force_and_close_cut)
 {
     MockExecutionSink sink;
     LauncherEnd end;
@@ -666,11 +674,6 @@ TEST_CASE(execution_runtime_stop_modes_graceful_force_escalate_and_close_cut)
         {
             std::unique_lock lock(mu);
             cv.wait(lock, [&] { return phase_step >= 3; });
-        }
-        else if (num == 3)
-        {
-            std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return phase_step >= 4; });
             cut_graceful_then_force = obs.close_cut(1);
         }
         lent.controls->set_phase(Phase::Ended);
@@ -715,7 +718,7 @@ TEST_CASE(execution_runtime_stop_modes_graceful_force_escalate_and_close_cut)
     }
     cv.notify_all();
 
-    // Run 2: Escalate (0->1->2->2).
+    // Run 2: Graceful (1) before close, then Force (2) during close -> close_cut(1) == true.
     CHECK(sink.wait_last_run(*s1.run_id));
     const CommandReply s2 = rt.start_run(RunSubmission{});
     CHECK(s2.accepted);
@@ -723,34 +726,17 @@ TEST_CASE(execution_runtime_stop_modes_graceful_force_escalate_and_close_cut)
         std::unique_lock lock(mu);
         cv.wait(lock, [&] { return active_num == 2; });
     }
-    CHECK_EQ(rt.stop_run(*s2.run_id, StopMode::Escalate).stop_requests, 1);
-    CHECK_EQ(rt.stop_run(*s2.run_id, StopMode::Escalate).stop_requests, 2);
-    CHECK_EQ(rt.stop_run(*s2.run_id, StopMode::Escalate).stop_requests, 2);
+    CHECK_EQ(rt.stop_run(*s2.run_id, StopMode::Graceful).stop_requests, 1);
+    CHECK_EQ(rt.stop_run(*s2.run_id, StopMode::Force).stop_requests, 2);
     {
         const std::lock_guard lock(mu);
         phase_step = 3;
     }
     cv.notify_all();
 
-    // Run 3: Graceful (1) before close, then Force (2) during close -> close_cut(1) == true.
+    // Wait for Run 2 to finish before shutting down cleanly.
     CHECK(sink.wait_last_run(*s2.run_id));
-    const CommandReply s3 = rt.start_run(RunSubmission{});
-    CHECK(s3.accepted);
-    {
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return active_num == 3; });
-    }
-    CHECK_EQ(rt.stop_run(*s3.run_id, StopMode::Graceful).stop_requests, 1);
-    CHECK_EQ(rt.stop_run(*s3.run_id, StopMode::Force).stop_requests, 2);
-    {
-        const std::lock_guard lock(mu);
-        phase_step = 4;
-    }
-    cv.notify_all();
-
-    // Wait for Run 3 to finish before shutting down cleanly.
-    CHECK(sink.wait_last_run(*s3.run_id));
-    CHECK(rt.result(*s3.run_id).ok);
+    CHECK(sink.finished_run(*s2.run_id).has_value());
     rt.request_shutdown(stop_source::kEndOfInput);
     const ExecutionEnd ended = loop_future.get();
     CHECK_EQ(ended.code, 0);
@@ -870,7 +856,7 @@ TEST_CASE(execution_runtime_send_time_command_via_entry_api)
     cv.notify_all();
 
     CHECK(sink.wait_last_run(run_id));
-    CHECK(rt.result(run_id).ok);
+    CHECK(sink.finished_run(run_id).has_value());
     rt.request_shutdown(stop_source::kEndOfInput);
     CHECK_EQ(loop_future.get().code, 0);
 
@@ -891,7 +877,7 @@ TEST_CASE(execution_runtime_send_time_command_via_entry_api)
     CHECK(saw_api_stop);
 }
 
-TEST_CASE(execution_runtime_results_bounded_memory_and_contamination)
+TEST_CASE(execution_runtime_handle_release_and_contamination)
 {
     MockExecutionSink sink;
     LauncherEnd end;
@@ -932,11 +918,6 @@ TEST_CASE(execution_runtime_results_bounded_memory_and_contamination)
         }
         if (n == 2)
         {
-            lent.controls->set_phase(Phase::Ended);
-            return passed_report();
-        }
-        if (n == 3)
-        {
             RunReport r = passed_report();
             r.run->close.not_closed_ms = 5000;
             lent.controls->set_phase(Phase::Ended);
@@ -946,7 +927,6 @@ TEST_CASE(execution_runtime_results_bounded_memory_and_contamination)
     };
 
     ExecutionRuntime rt(sink, end, std::move(opts));
-    CHECK(rt.result().reason == serve_reason::kRunNotFound);
 
     auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
     const CommandReply s1 = rt.start_run(RunSubmission{});
@@ -955,48 +935,34 @@ TEST_CASE(execution_runtime_results_bounded_memory_and_contamination)
         std::unique_lock lock(mu);
         cv.wait(lock, [&] { return in_run1; });
     }
-    CHECK(!rt.result().ok);
-    CHECK(rt.result().reason == serve_reason::kRunInProgress);
-    CHECK(rt.result(*s1.run_id).reason == serve_reason::kRunInProgress);
-
     {
         const std::lock_guard lock(mu);
         release_run1 = true;
     }
     cv.notify_all();
 
-    // Wait for Run 1 result.
+    // Wait for Run 1 result: ended_control_server and timeline_record are released before finish_run.
     CHECK(sink.wait_last_run(*s1.run_id));
-    const ResultQuery q1 = rt.result(*s1.run_id);
-    CHECK(q1.ok);
-    CHECK(!q1.launcher_ends);
-    CHECK(q1.report != nullptr);
-    CHECK(q1.report->ended_control_server == nullptr);
-    CHECK(q1.report->run->scenario.timeline_record == nullptr);
+    const auto f1 = sink.finished_run(*s1.run_id);
+    CHECK(f1.has_value());
+    CHECK(!f1->launcher_ends);
+    CHECK(f1->report.ended_control_server == nullptr);
+    CHECK(f1->report.run->scenario.timeline_record == nullptr);
     CHECK(weak_srv.expired());
     CHECK(weak_tl.expired());
 
-    // Run 2 replaces Run 1 in bounded last_result_.
+    // Run 2 contaminates (not_closed_ms).
     const CommandReply s2 = rt.start_run(RunSubmission{});
     CHECK(s2.accepted);
-    CHECK(sink.wait_last_run(*s2.run_id));
-    CHECK(rt.result(*s2.run_id).ok);
-    CHECK(rt.result(*s1.run_id).reason == serve_reason::kRunNotFound);
-    CHECK(rt.result().run_id == *s2.run_id);
-
-    // Run 3 contaminates (not_closed_ms).
-    const int idles_before_r3 = sink.idle_count();
-    const CommandReply s3 = rt.start_run(RunSubmission{});
-    CHECK(s3.accepted);
     const ExecutionEnd ended = loop_future.get();
     CHECK_EQ(ended.code, kExitContaminated);
     CHECK(ended.at_once);
     CHECK(rt.status().launcher_state == LauncherState::Contaminated);
-    CHECK_EQ(sink.idle_count(), idles_before_r3); // on_idle NOT called after contamination
 
-    const ResultQuery q3 = rt.result(*s3.run_id);
-    CHECK(q3.ok);
-    CHECK(q3.launcher_ends);
+    const auto f2 = sink.finished_run(*s2.run_id);
+    CHECK(f2.has_value());
+    CHECK(f2->launcher_ends);
+    CHECK(f2->status.launcher_state == LauncherState::Contaminated);
     CHECK(rt.prepare(PrepareSpec{}).reason == serve_reason::kContaminated);
     CHECK(rt.start_run(RunSubmission{}).reason == serve_reason::kContaminated);
 
@@ -1020,467 +986,177 @@ TEST_CASE(execution_runtime_results_bounded_memory_and_contamination)
     CHECK(ex_rt.start_run(RunSubmission{}).reason == serve_reason::kContaminated);
 }
 
-TEST_CASE(execution_runtime_prepare_done_status_and_shutdown_stay_monotonic)
+TEST_CASE(execution_runtime_pipe_wakeup_order_allows_immediate_next_run_inside_finish_run)
 {
-    const std::filesystem::path dir = scratch_dir("prepare_done_shutdown_monotonic");
+    const std::filesystem::path dir = scratch_dir("pipe_wakeup_order");
     const std::filesystem::path valid_cfg = dir / "valid.yaml";
     write_text(valid_cfg,
                "vehicle_sil_simulation: 2\n"
                "networks:\n  - name: CAN1\n    kind: can\n"
                "participants:\n  - name: Engine\n    command: [\"./engine\"]\n");
 
-    std::mutex mu;
-    std::condition_variable cv;
-    bool entered_ready = false;
-    bool release_ready = false;
-
     MockExecutionSink sink;
-    sink.status_hook = [&](const ExecutionStatus& s) {
-        if (s.launcher_state == LauncherState::Ready)
-        {
-            {
-                const std::lock_guard lock(mu);
-                entered_ready = true;
-            }
-            cv.notify_all();
-            std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return release_ready; });
-        }
-    };
-
     LauncherEnd end;
     ExecutionRuntimeOptions opts;
     opts.instance = "66778899aabbccdd";
-    ExecutionRuntime rt(sink, end, std::move(opts));
-
-    auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
-    auto prep_future = std::async(std::launch::async, [&] { return rt.prepare(PrepareSpec{valid_cfg.string()}); });
-
-    {
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return entered_ready; });
-    }
-    rt.request_shutdown(stop_source::kEndOfInput);
-    {
-        const std::lock_guard lock(mu);
-        release_ready = true;
-    }
-    cv.notify_all();
-
-    const PrepareResult prep = prep_future.get();
-    const ExecutionEnd ended = loop_future.get();
-    CHECK(prep.accepted);
-    CHECK(prep.status.launcher_state == LauncherState::Ending);
-    CHECK_EQ(prep.status.status_rev, std::uint64_t{3});
-    CHECK_EQ(ended.code, 0);
-    CHECK(!ended.at_once);
-
-    const auto statuses = sink.statuses();
-    CHECK_EQ(statuses.size(), std::size_t{3});
-    CHECK(statuses[0].launcher_state == LauncherState::Preparing);
-    CHECK_EQ(statuses[0].status_rev, std::uint64_t{1});
-    CHECK(statuses[1].launcher_state == LauncherState::Ready);
-    CHECK_EQ(statuses[1].status_rev, std::uint64_t{2});
-    CHECK(statuses[2].launcher_state == LauncherState::Ending);
-    CHECK_EQ(statuses[2].status_rev, std::uint64_t{3});
-}
-
-TEST_CASE(execution_runtime_run_loop_drains_in_flight_status_before_exit_and_destruction)
-{
-    const std::filesystem::path dir = scratch_dir("run_loop_drains_destruction");
-    const std::filesystem::path valid_cfg = dir / "valid.yaml";
-    write_text(valid_cfg,
-               "vehicle_sil_simulation: 2\n"
-               "networks:\n  - name: CAN1\n    kind: can\n"
-               "participants:\n  - name: Engine\n    command: [\"./engine\"]\n");
-
-    std::mutex mu;
-    std::condition_variable cv;
-    bool entered_ready = false;
-    bool entered_finish = false;
-    bool release_ready = false;
-    std::atomic<bool> loop_exited{false};
-
-    MockExecutionSink sink;
-    sink.status_hook = [&](const ExecutionStatus& s) {
-        if (s.launcher_state == LauncherState::Ready)
-        {
-            {
-                const std::lock_guard lock(mu);
-                entered_ready = true;
-            }
-            cv.notify_all();
-            std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return release_ready; });
-        }
-    };
-    sink.finish_hook = [&] {
-        {
-            const std::lock_guard lock(mu);
-            entered_finish = true;
-        }
-        cv.notify_all();
-    };
-
-    LauncherEnd end;
-    ExecutionRuntimeOptions opts;
-    opts.instance = "778899aabbccdde0";
-    opts.run = [](const RunRequest&, const RunObservers&, const RunLent&) -> RunReport {
-        throw std::runtime_error("contaminate");
-    };
-    auto rt = std::make_unique<ExecutionRuntime>(sink, end, std::move(opts));
-
-    auto loop_future = std::async(std::launch::async, [&] {
-        const ExecutionEnd ended = rt->run_loop();
-        loop_exited.store(true);
-        return ended;
-    });
-    auto prep_future = std::async(std::launch::async, [&] { return rt->prepare(PrepareSpec{valid_cfg.string()}); });
-
-    {
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return entered_ready; });
-    }
-    const CommandReply started = rt->start_run(RunSubmission{});
-    CHECK(started.accepted);
-
-    {
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return entered_finish; });
-    }
-    // The status that says Contaminated cannot reach the sink here (its delivery is held in the
-    // Ready hook above), so nothing signals the change: look, with a deadline.
-    CHECK(vehicle_sil::unit::eventually([&] { return rt->status().launcher_state == LauncherState::Contaminated; },
-                                        std::chrono::seconds(10)));
-    CHECK(!loop_exited.load());
-    {
-        const std::lock_guard lock(mu);
-        release_ready = true;
-    }
-    cv.notify_all();
-
-    const ExecutionEnd ended = loop_future.get();
-    CHECK(loop_exited.load());
-    CHECK_EQ(ended.code, kExitContaminated);
-    CHECK(ended.at_once);
-
-    rt.reset();
-    const PrepareResult prep = prep_future.get();
-    CHECK(prep.accepted);
-    CHECK(prep.status.launcher_state == LauncherState::Contaminated);
-
-    const auto statuses = sink.statuses();
-    CHECK_EQ(statuses.size(), std::size_t{4});
-    CHECK(statuses[0].launcher_state == LauncherState::Preparing);
-    CHECK_EQ(statuses[0].status_rev, std::uint64_t{1});
-    CHECK(statuses[1].launcher_state == LauncherState::Ready);
-    CHECK_EQ(statuses[1].status_rev, std::uint64_t{2});
-    CHECK(statuses[2].launcher_state == LauncherState::Running);
-    CHECK_EQ(statuses[2].status_rev, std::uint64_t{3});
-    CHECK(statuses[3].launcher_state == LauncherState::Contaminated);
-    CHECK_EQ(statuses[3].status_rev, std::uint64_t{4});
-}
-
-TEST_CASE(execution_runtime_start_run_and_run_loop_serialize_on_status)
-{
-    std::mutex mu;
-    std::condition_variable cv;
-    bool entered_running = false;
-    bool entered_finish = false;
-    bool release_running = false;
-
-    MockExecutionSink sink;
-    sink.status_hook = [&](const ExecutionStatus& s) {
-        if (s.launcher_state == LauncherState::Running)
-        {
-            {
-                const std::lock_guard lock(mu);
-                entered_running = true;
-            }
-            cv.notify_all();
-            std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return release_running; });
-        }
-    };
-    sink.finish_hook = [&] {
-        {
-            const std::lock_guard lock(mu);
-            entered_finish = true;
-        }
-        cv.notify_all();
-    };
-
-    LauncherEnd end;
-    ExecutionRuntimeOptions opts;
-    opts.instance = "8899aabbccddeeff";
-    opts.base.host.config = "sim.yaml";
-    opts.run = [](const RunRequest&, const RunObservers&, const RunLent& lent) {
+    std::atomic<int> runs{0};
+    opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+        ++runs;
         lent.controls->set_phase(Phase::Ended);
         return passed_report();
     };
     ExecutionRuntime rt(sink, end, std::move(opts));
+    const PrepareResult prep = rt.prepare(PrepareSpec{valid_cfg.string()});
+    CHECK(prep.accepted);
+    CHECK(prep.status.launcher_state == LauncherState::Ready);
+
+    CommandReply wake_reply;
+    // Simulate a reader waking up the instant finish_run writes the result to the OS pipe,
+    // before finish_run returns to run_loop(): busy_ must already be false and state_ Ready.
+    sink.finish_hook = [&] {
+        if (runs.load() == 1)
+        {
+            wake_reply = rt.start_run(RunSubmission{});
+        }
+    };
 
     auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
-    auto start_future = std::async(std::launch::async, [&] { return rt.start_run(RunSubmission{}); });
+    const CommandReply s1 = rt.start_run(RunSubmission{});
+    CHECK(s1.accepted);
+    CHECK(s1.run_id == "66778899aabbccdd-1");
 
-    {
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return entered_running; });
-    }
-    {
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return entered_finish; });
-    }
-    {
-        const std::lock_guard lock(mu);
-        release_running = true;
-    }
-    cv.notify_all();
-
-    const CommandReply started = start_future.get();
-    CHECK(started.accepted);
-    sink.wait_status_count(2);
-    CHECK(rt.result(*started.run_id).ok);
+    CHECK(sink.wait_last_run("66778899aabbccdd-2"));
+    CHECK(wake_reply.accepted);
+    CHECK(wake_reply.run_id == "66778899aabbccdd-2");
 
     rt.request_shutdown(stop_source::kEndOfInput);
     const ExecutionEnd ended = loop_future.get();
     CHECK_EQ(ended.code, 0);
 
     const auto statuses = sink.statuses();
-    CHECK_EQ(statuses.size(), std::size_t{3});
-    CHECK(statuses[0].launcher_state == LauncherState::Running);
-    CHECK_EQ(statuses[0].status_rev, std::uint64_t{1});
-    CHECK(statuses[1].launcher_state == LauncherState::Idle);
-    CHECK_EQ(statuses[1].status_rev, std::uint64_t{2});
-    CHECK(statuses[2].launcher_state == LauncherState::Ending);
-    CHECK_EQ(statuses[2].status_rev, std::uint64_t{3});
+    for (std::size_t i = 0; i < statuses.size(); ++i)
+    {
+        CHECK_EQ(statuses[i].status_rev, i);
+    }
 }
 
-TEST_CASE(execution_runtime_prepare_exception_after_ready_clears_eligibility)
+TEST_CASE(execution_runtime_shutdown_during_run_transitions_directly_to_ending_in_result)
 {
-    const std::filesystem::path dir = scratch_dir("prepare_guard_exception");
+    const std::filesystem::path dir = scratch_dir("shutdown_during_run_no_transient_ready");
     const std::filesystem::path valid_cfg = dir / "valid.yaml";
     write_text(valid_cfg,
                "vehicle_sil_simulation: 2\n"
                "networks:\n  - name: CAN1\n    kind: can\n"
                "participants:\n  - name: Engine\n    command: [\"./engine\"]\n");
+
+    std::mutex mu;
+    std::condition_variable cv;
+    bool in_run = false;
+    bool release_run = false;
+
+    MockExecutionSink sink;
+    LauncherEnd end;
+    ExecutionRuntimeOptions opts;
+    opts.instance = "778899aabbccdde0";
+    opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+        {
+            const std::lock_guard lock(mu);
+            in_run = true;
+        }
+        cv.notify_all();
+        {
+            std::unique_lock lock(mu);
+            cv.wait(lock, [&] { return release_run; });
+        }
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+    ExecutionRuntime rt(sink, end, std::move(opts));
+    const PrepareResult prep = rt.prepare(PrepareSpec{valid_cfg.string()});
+    CHECK(prep.accepted);
+    CHECK(prep.status.launcher_state == LauncherState::Ready);
+
+    auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+    const CommandReply started = rt.start_run(RunSubmission{});
+    CHECK(started.accepted);
+    {
+        std::unique_lock lock(mu);
+        cv.wait(lock, [&] { return in_run; });
+    }
+    rt.request_shutdown(stop_source::kEndOfInput);
+    {
+        const std::lock_guard lock(mu);
+        release_run = true;
+    }
+    cv.notify_all();
+
+    const ExecutionEnd ended = loop_future.get();
+    CHECK_EQ(ended.code, kExitInterrupted);
+    CHECK(!ended.at_once);
+
+    const auto f1 = sink.finished_run(*started.run_id);
+    CHECK(f1.has_value());
+    CHECK(f1->launcher_ends);
+    CHECK(f1->status.launcher_state == LauncherState::Ending);
+
+    // Status sequence: 0 Unprepared -> 1 Preparing -> 2 Ready -> 3 Running -> 4 Ending (no transient Ready after Running).
+    const auto statuses = sink.statuses();
+    CHECK_EQ(statuses.size(), std::size_t{5});
+    CHECK(statuses[0].launcher_state == LauncherState::Unprepared);
+    CHECK(statuses[1].launcher_state == LauncherState::Preparing);
+    CHECK(statuses[2].launcher_state == LauncherState::Ready);
+    CHECK(statuses[3].launcher_state == LauncherState::Running);
+    CHECK(statuses[4].launcher_state == LauncherState::Ending);
+    for (std::size_t i = 0; i < statuses.size(); ++i)
+    {
+        CHECK_EQ(statuses[i].status_rev, i);
+    }
+}
+
+TEST_CASE(execution_runtime_single_run_allows_trace_and_fixed_registry_and_exits_after_one_run)
+{
+    const std::filesystem::path dir = scratch_dir("single_run_mode");
+    const std::filesystem::path fixed_manual_cfg = dir / "fixed_manual.yaml";
+    write_text(fixed_manual_cfg,
+               "vehicle_sil_simulation: 2\n"
+               "registry_uri: silkit://127.0.0.1:8500\n"
+               "networks:\n  - name: CAN1\n    kind: can\n"
+               "participants:\n  - name: Engine\n    command: [\"./engine\"]\n    manual: true\n");
 
     MockExecutionSink sink;
     LauncherEnd end;
     ExecutionRuntimeOptions opts;
     opts.instance = "99aabbccddeeff00";
-    ExecutionRuntime rt(sink, end, std::move(opts));
-
-    const PrepareResult ready = rt.prepare(PrepareSpec{valid_cfg.string()});
-    CHECK(ready.accepted);
-    CHECK(ready.status.launcher_state == LauncherState::Ready);
-    CHECK(ready.status.launcher_allowed.run.ok);
-
-    sink.status_hook = [](const ExecutionStatus& s) {
-        if (s.launcher_state == LauncherState::Preparing)
-        {
-            throw std::runtime_error("sink failure");
-        }
+    opts.base.host.config = fixed_manual_cfg.string();
+    opts.single_run = true;
+    opts.trace_enabled = true;
+    opts.refuse_fixed_registry = false;
+    bool seen_refuse_fixed = true;
+    opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+        seen_refuse_fixed = lent.refuse_fixed_registry;
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
     };
 
-    bool threw = false;
-    try
-    {
-        static_cast<void>(rt.prepare(PrepareSpec{valid_cfg.string()}));
-    }
-    catch (const std::runtime_error&)
-    {
-        threw = true;
-    }
-    CHECK(threw);
-    sink.status_hook = nullptr;
+    ExecutionRuntime rt(sink, end, std::move(opts));
+    const PrepareResult prep = rt.prepare(PrepareSpec{});
+    CHECK(prep.accepted);
+    CHECK(prep.status.eligibility.eligible);
+    CHECK(prep.status.launcher_state == LauncherState::Ready);
+    CHECK(prep.status.launcher_allowed.run.ok);
 
-    const ExecutionStatus after = rt.status();
-    CHECK(after.launcher_state == LauncherState::Idle);
-    CHECK(!after.eligibility.eligible);
-    CHECK(after.eligibility.reason == "config-unreadable");
-    CHECK(!after.launcher_allowed.run.ok);
-    CHECK(after.launcher_allowed.prepare.ok);
+    auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+    const CommandReply started = rt.start_run(RunSubmission{});
+    CHECK(started.accepted);
+
+    const ExecutionEnd ended = loop_future.get();
+    CHECK_EQ(ended.code, 0);
+    CHECK(!ended.at_once);
+    CHECK(!seen_refuse_fixed);
+
+    const auto f1 = sink.finished_run(*started.run_id);
+    CHECK(f1.has_value());
+    CHECK(f1->launcher_ends);
+    CHECK(f1->status.launcher_state == LauncherState::Ending);
     CHECK(!rt.start_run(RunSubmission{}).accepted);
-
-    const PrepareResult recovered = rt.prepare(PrepareSpec{});
-    CHECK(recovered.accepted);
-    CHECK(recovered.status.launcher_state == LauncherState::Ready);
-    CHECK(recovered.status.launcher_allowed.run.ok);
-}
-
-TEST_CASE(execution_runtime_throwing_on_status_drains_exit_barriers_without_hanging)
-{
-    {
-        std::mutex mu;
-        std::condition_variable cv;
-        bool in_on_status = false;
-        bool in_run = false;
-        bool release_run = false;
-        bool entered_finish = false;
-        bool release_throw = false;
-        std::atomic<bool> loop_exited{false};
-
-        MockExecutionSink sink;
-        sink.status_hook = [&](const ExecutionStatus& s) {
-            if (s.launcher_state == LauncherState::Running)
-            {
-                {
-                    const std::lock_guard lock(mu);
-                    in_on_status = true;
-                }
-                cv.notify_all();
-                std::unique_lock lock(mu);
-                cv.wait(lock, [&] { return release_throw; });
-                throw std::runtime_error("on_status boom");
-            }
-        };
-        sink.finish_hook = [&] {
-            {
-                const std::lock_guard lock(mu);
-                entered_finish = true;
-            }
-            cv.notify_all();
-        };
-
-        LauncherEnd end;
-        ExecutionRuntimeOptions opts;
-        opts.instance = "aabbccddeeff0011";
-        opts.base.host.config = "sim.yaml";
-        opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
-            {
-                const std::lock_guard lock(mu);
-                in_run = true;
-            }
-            cv.notify_all();
-            {
-                std::unique_lock lock(mu);
-                cv.wait(lock, [&] { return release_run; });
-            }
-            lent.controls->set_phase(Phase::Ended);
-            return passed_report();
-        };
-
-        ExecutionRuntime rt(sink, end, std::move(opts));
-        auto loop_future = std::async(std::launch::async, [&] {
-            const ExecutionEnd ended = rt.run_loop();
-            loop_exited.store(true);
-            return ended;
-        });
-        auto start_future = std::async(std::launch::async, [&] { return rt.start_run(RunSubmission{}); });
-
-        {
-            std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return in_on_status && in_run; });
-        }
-        // Hold the active run open across request_shutdown() so input_ended_in_run_ is guaranteed,
-        // then release the run to finish_run() so run_loop() parks at its post-run exit barrier
-        // while status_emitting_ == true. Releasing on_status to throw must wake run_loop() and
-        // drain pending_statuses_ cleanly without hanging.
-        rt.request_shutdown(stop_source::kEndOfInput);
-        {
-            const std::lock_guard lock(mu);
-            release_run = true;
-        }
-        cv.notify_all();
-        {
-            std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return entered_finish; });
-        }
-        // The status that says Ending cannot reach the sink here (its delivery is held in the
-        // Running hook above), so nothing signals the change: look, with a deadline.
-        CHECK(vehicle_sil::unit::eventually([&] { return rt.status().launcher_state == LauncherState::Ending; },
-                                            std::chrono::seconds(10)));
-        CHECK(!loop_exited.load());
-        {
-            const std::lock_guard lock(mu);
-            release_throw = true;
-        }
-        cv.notify_all();
-
-        bool start_threw = false;
-        try
-        {
-            static_cast<void>(start_future.get());
-        }
-        catch (const std::runtime_error&)
-        {
-            start_threw = true;
-        }
-        CHECK(start_threw);
-        const ExecutionEnd ended = loop_future.get();
-        CHECK(loop_exited.load());
-        CHECK_EQ(ended.code, kExitInterrupted);
-    }
-
-    // Throwing directly inside run_loop()'s idle exit barrier (Ending) must be caught cleanly.
-    {
-        MockExecutionSink sink;
-        sink.status_hook = [](const ExecutionStatus& s) {
-            if (s.launcher_state == LauncherState::Ending)
-            {
-                throw std::runtime_error("ending status boom");
-            }
-        };
-        LauncherEnd end;
-        ExecutionRuntimeOptions opts;
-        opts.instance = "bbccddeeff001122";
-        ExecutionRuntime rt(sink, end, std::move(opts));
-        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
-        sink.set_closed(true);
-        const ExecutionEnd ended = loop_future.get();
-        CHECK_EQ(ended.code, kExitInterrupted);
-        CHECK(rt.status().launcher_state == LauncherState::Ending);
-    }
-
-    // Throwing directly inside run_loop()'s post-run exit barrier (Ending) must also be caught cleanly.
-    {
-        std::mutex mu;
-        std::condition_variable cv;
-        bool in_run = false;
-        bool release_run = false;
-
-        MockExecutionSink sink;
-        sink.status_hook = [](const ExecutionStatus& s) {
-            if (s.launcher_state == LauncherState::Ending)
-            {
-                throw std::runtime_error("post-run ending status boom");
-            }
-        };
-        LauncherEnd end;
-        ExecutionRuntimeOptions opts;
-        opts.instance = "ccddeeff00112233";
-        opts.base.host.config = "sim.yaml";
-        opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
-            {
-                const std::lock_guard lock(mu);
-                in_run = true;
-            }
-            cv.notify_all();
-            {
-                std::unique_lock lock(mu);
-                cv.wait(lock, [&] { return release_run; });
-            }
-            lent.controls->set_phase(Phase::Ended);
-            return passed_report();
-        };
-
-        ExecutionRuntime rt(sink, end, std::move(opts));
-        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
-        const CommandReply started = rt.start_run(RunSubmission{});
-        CHECK(started.accepted);
-        {
-            std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return in_run; });
-        }
-        rt.request_shutdown(stop_source::kEndOfInput);
-        {
-            const std::lock_guard lock(mu);
-            release_run = true;
-        }
-        cv.notify_all();
-        const ExecutionEnd ended = loop_future.get();
-        CHECK_EQ(ended.code, kExitInterrupted);
-        CHECK(rt.status().launcher_state == LauncherState::Ending);
-    }
 }

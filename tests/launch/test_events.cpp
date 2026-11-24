@@ -250,7 +250,7 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
 {
     Sink sink;
     EventStream& e = sink.start();
-    e.hello(42, "dir/sim.yaml", {"run", "--events", "dir/sim.yaml"});
+    e.hello(42, "dir/sim.yaml", {"serve", "dir/sim.yaml"}, "0123456789abcdef");
     e.phase(Phase::Checking);
     e.registry("silkit://127.0.0.1:8500");
     e.participant("Logger", ParticipantState::Disabled);
@@ -280,8 +280,8 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
     CHECK(e.wait_written(10s));
     const std::string v = version();
     check_text(sink.text(),
-               R"({"event":"hello","seq":0,"t_ms":7,"vehicle_sil_events":2,"vehicle_sil":")" + v +
-                   R"(","pid":42,"file":"dir/sim.yaml","arguments":["run","--events","dir/sim.yaml"]}
+               R"({"event":"hello","seq":0,"t_ms":7,"vehicle_sil_events":4,"vehicle_sil":")" + v +
+                   R"(","pid":42,"file":"dir/sim.yaml","arguments":["serve","dir/sim.yaml"],"launcher":"0123456789abcdef"}
 {"event":"phase","seq":1,"t_ms":7,"phase":"checking"}
 {"event":"registry","seq":2,"t_ms":7,"uri":"silkit://127.0.0.1:8500"}
 {"event":"participant","seq":3,"t_ms":7,"name":"Logger","state":"disabled"}
@@ -324,7 +324,7 @@ TEST_CASE(the_check_and_the_result_are_their_json_on_one_line_and_nothing_follow
     RunReport report;
     report.check = check;
     // The result is written when result() returns.
-    CHECK(e.result(format_result_event(report)));
+    CHECK(e.result(format_result_event(report, true)));
     CHECK(sink.lines().size() >= 2 && sink.lines().back().find("\"event\":\"result\"") != std::string::npos);
     // The scenario of the check is in the event "check".
     const std::vector<std::string> written = sink.lines(); // a copy: begin() and end() of one vector
@@ -334,7 +334,7 @@ TEST_CASE(the_check_and_the_result_are_their_json_on_one_line_and_nothing_follow
     const std::size_t count = sink.lines().size();
     e.log("late", "after the result");
     e.phase(Phase::Ended);
-    CHECK(!e.result(format_result_event(report))); // only one result
+    CHECK(!e.result(format_result_event(report, true))); // only one result
     sink.stop();
     CHECK(sink.lines().size() == count);
     CHECK(sink.closed().empty());
@@ -371,8 +371,8 @@ TEST_CASE(the_check_and_the_result_are_their_json_on_one_line_and_nothing_follow
     };
     const auto lines = sink.lines();
     check_text(lines.front(), R"({"event":"check","seq":0,"t_ms":7,"check":)" + compact(format_json(check)) + "}");
-    check_text(lines.back(), R"({"event":"result","seq":)" + std::to_string(count - 1) + R"(,"t_ms":7,"result":)" +
-                                 compact(format_run_json(report)) + "}");
+    check_text(lines.back(), R"({"event":"result","seq":)" + std::to_string(count - 1) +
+                                 R"(,"t_ms":7,"launcher_ends":true,"result":)" + compact(format_run_json(report)) + "}");
 }
 
 TEST_CASE(seq_follows_the_order_of_the_lines_whatever_thread_writes)
@@ -425,7 +425,7 @@ TEST_CASE(a_reader_that_went_away_closes_the_stream_and_the_caller_is_told_once_
     e.log("Engine", "not written");
     e.phase(Phase::Stopping);
     CHECK(!e.wait_written(0ms));
-    CHECK(!e.result(format_result_event(RunReport{})));
+    CHECK(!e.result(format_result_event(RunReport{}, true)));
     sink.stop();
     CHECK(sink.closed().size() == 1);
     check_text(shape(sink.lines()), "phase \"phase\":\"running\"}\n");
@@ -511,7 +511,7 @@ TEST_CASE(wait_on_closed_waits_for_on_closed_callback_with_a_timeout)
         options.stall_timeout = 100ms;
         EventStream& e = sink.start(options);
         sink.block();
-        CHECK(!e.result(format_result_event(RunReport{})));
+        CHECK(!e.result(format_result_event(RunReport{}, true)));
         CHECK(e.closed());
         CHECK(e.wait_on_closed(0ms));
         CHECK(sink.closed().empty());
@@ -554,7 +554,7 @@ TEST_CASE(no_maker_of_events_waits_for_a_reader_that_does_not_read_and_only_log_
         e.log("C", std::to_string(i));
     }
     sink.unblock();
-    CHECK(e.result(format_result_event(RunReport{})));
+    CHECK(e.result(format_result_event(RunReport{}, true)));
     std::string all = shape(sink.lines());
     all.erase(all.rfind("result ")); // the result's JSON: another test
     check_text(all, R"(phase "phase":"running"}
@@ -792,7 +792,7 @@ TEST_CASE(only_the_latest_state_waits_and_states_never_close_the_stream)
     CHECK(sink.lines().at(5).find("\"rev\":10002,") != std::string::npos);
     CHECK(sink.lines().at(6).find("\"rev\":10004,") != std::string::npos);
     // Nothing follows the result, a state neither.
-    CHECK(e.result(format_result_event(RunReport{})));
+    CHECK(e.result(format_result_event(RunReport{}, true)));
     e.state(state_of(10005));
     CHECK(e.wait_written(10s));
     CHECK_EQ(sink.lines().size(), std::size_t{8});
@@ -847,7 +847,7 @@ TEST_CASE(a_reader_that_does_not_read_is_given_up_after_the_limit)
         check_text(closed.at(0), "their reader has not read for 150 ms");
         CHECK(after >= 150ms && after < 5s);
         CHECK(time_of([&e] { e.log("A", "x"); }) < 1000ms);
-        CHECK(!e.result(format_result_event(RunReport{})));
+        CHECK(!e.result(format_result_event(RunReport{}, true)));
     }
     // A reader that reads slowly is not given up: every write that is taken starts the limit anew.
     Sink sink;
@@ -874,10 +874,10 @@ TEST_CASE(a_heartbeat_is_written_when_nothing_else_is_from_the_first_line_to_the
     EventStream& e = sink.start(options);
     std::this_thread::sleep_for(150ms);
     check_text(sink.text(), ""); // hello is the first line
-    e.hello(1, "", {});
+    e.hello(1, "", {}, "0123456789abcdef");
     std::this_thread::sleep_for(250ms);
     e.phase(Phase::Checking);
-    CHECK(e.result(format_result_event(RunReport{})));
+    CHECK(e.result(format_result_event(RunReport{}, true)));
     const auto lines = sink.lines();
     std::this_thread::sleep_for(150ms);
     CHECK(sink.lines().size() == lines.size()); // nothing after the result
@@ -913,7 +913,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
         EventStream& e = sink.start(options);
         sink.block();
         bool written = true;
-        const auto took = time_of([&] { written = e.result(format_result_event(RunReport{})); });
+        const auto took = time_of([&] { written = e.result(format_result_event(RunReport{}, true)); });
         CHECK(!written && took >= 200ms && took < 5s);
         CHECK(e.closed());
         CHECK(e.close_reason() == "the result could not be written within 200 ms" ||
@@ -934,7 +934,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
             e.registry("silkit://" + std::to_string(i));
         }
         bool written = true;
-        const auto took = time_of([&] { written = e.result(format_result_event(RunReport{})); });
+        const auto took = time_of([&] { written = e.result(format_result_event(RunReport{}, true)); });
         CHECK(!written && took >= 300ms && took < 1500ms);
         check_text(e.close_reason(), "the result could not be written within 300 ms");
         const auto count = sink.lines().size();
@@ -950,7 +950,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
         std::atomic<int> asked{0};
         bool written = true;
         const auto took = time_of(
-            [&] { written = e.result(format_result_event(RunReport{}), [&asked] { return ++asked >= 3; }); });
+            [&] { written = e.result(format_result_event(RunReport{}, true), [&asked] { return ++asked >= 3; }); });
         // Asked only once the reader has not read for a moment: a reader that reads gets the result.
         CHECK(!written && took >= 500ms && took < 5s && asked.load() == 3);
         check_text(e.close_reason(), "the result was not read, and the wait for its reader was stopped");
@@ -964,7 +964,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
         {
             e.registry("silkit://" + std::to_string(i));
         }
-        CHECK(e.result(format_result_event(RunReport{}), [] { return true; }));
+        CHECK(e.result(format_result_event(RunReport{}, true), [] { return true; }));
         CHECK(sink.lines().size() == 1001 && !e.closed());
     }
     // A reader that reads in time gets it, however late it started.
@@ -977,7 +977,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
         e.phase(Phase::Ended);
         CHECK(sink.wait_inside());
         bool written = false;
-        std::thread caller([&] { written = e.result(format_result_event(RunReport{})); });
+        std::thread caller([&] { written = e.result(format_result_event(RunReport{}, true)); });
         // Let "phase" finish and wait until the writer blocks inside writing "result" itself.
         CHECK(sink.allow(1));
         sink.unblock();
@@ -1723,7 +1723,7 @@ TEST_CASE(version_names_the_formats_and_the_features)
   "formats": {
     "check": 1,
     "run": 2,
-    "events": 2,
+    "events": 4,
     "describe": 1,
     "test": 1,
     "timeline": 1,

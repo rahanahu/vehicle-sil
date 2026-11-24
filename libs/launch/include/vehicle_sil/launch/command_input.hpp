@@ -42,7 +42,7 @@ struct ServeCommand
     std::optional<std::string> intent_json{};
     /// run: "timeline", the file the run writes its timeline to (as run --timeline); "" for none.
     std::string timeline{};
-    /// stop: explicit force flag (true -> Force, false -> Graceful, nullopt -> Escalate).
+    /// stop: explicit force flag (true -> Force, false or nullopt -> Graceful).
     std::optional<bool> force{};
     /// prepare: optional preview overrides against the launcher's bound configuration.
     std::optional<std::string> variant{};
@@ -69,9 +69,15 @@ public:
     {
     };
 
-    explicit CommandInput(std::function<void(const runner::Command&)> on_command) : on_command_(std::move(on_command)) {}
+    explicit CommandInput(std::function<void(const runner::Command&)> on_command) :
+      on_command_([cb = std::move(on_command)](const ServeCommand& s) { cb(s.command); }), single_run_(true)
+    {
+    }
     /// serve: each line as parse_serve_command() reads it (a line that is too long has no "run").
-    CommandInput(Serve, std::function<void(const ServeCommand&)> on_command) : on_serve_(std::move(on_command)) {}
+    CommandInput(Serve, std::function<void(const ServeCommand&)> on_command) :
+      on_command_(std::move(on_command)), single_run_(false)
+    {
+    }
     /// What was read.
     void append(std::string_view bytes);
     /// The end of input: a last line without a line end is read too.
@@ -83,8 +89,8 @@ private:
     /// A line that is not accepted for its length (without "run" in serve).
     void too_long(const runner::Command& command);
 
-    std::function<void(const runner::Command&)> on_command_;
-    std::function<void(const ServeCommand&)> on_serve_;
+    std::function<void(const ServeCommand&)> on_command_;
+    bool single_run_ = false;
     std::string pending_;
     bool skipping_ = false; ///< in a line that was too long, until its end
 };

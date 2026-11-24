@@ -2,6 +2,7 @@
 #include "vehicle_sil/launch/events.hpp"
 
 #include "check_format.hpp"
+#include "run_format.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
@@ -615,12 +616,12 @@ std::string EventStream::close_reason() const
 
 namespace {
 
-/// The members of "hello": `launcher` only for serve.
-std::string hello_members(int format, long pid, const std::string& file, const std::vector<std::string>& arguments,
-                          const std::string* launcher)
+/// The members of "hello".
+std::string hello_members(long pid, const std::string& file, const std::vector<std::string>& arguments,
+                          const std::string& launcher)
 {
     return object([&](Writer& w) {
-        w.integer("vehicle_sil_events", format);
+        w.integer("vehicle_sil_events", kEventsFormat);
         w.string("vehicle_sil", version());
         w.integer("pid", pid);
         optional_text(w, "file", file);
@@ -630,10 +631,7 @@ std::string hello_members(int format, long pid, const std::string& file, const s
             w.string({}, argument);
         }
         w.end_array();
-        if (launcher != nullptr)
-        {
-            w.string("launcher", *launcher);
-        }
+        w.string("launcher", launcher);
     });
 }
 
@@ -676,18 +674,11 @@ void write_command_members(Writer& w, const runner::Command& command, std::strin
 
 } // namespace
 
-void EventStream::hello(long pid, const std::string& file, const std::vector<std::string>& arguments)
-{
-    emit("hello", hello_members(kEventsFormat, pid, file, arguments, nullptr));
-}
-
 void EventStream::hello(long pid, const std::string& file, const std::vector<std::string>& arguments,
                         const std::string& launcher)
 {
-    emit("hello", hello_members(kServeEventsFormat, pid, file, arguments, &launcher));
+    emit("hello", hello_members(pid, file, arguments, launcher));
 }
-
-void EventStream::idle() { emit("idle", "{}"); }
 
 void EventStream::refused(const runner::Command& command, std::string_view source, const std::optional<std::string>& asked_run)
 {
@@ -1006,7 +997,9 @@ void write_run_state_members(Writer& w, const runner::RunState& state)
     w.end_array();
 }
 
-void write_status_members(Writer& w, const ExecutionStatus& status)
+} // namespace
+
+void detail::write_status_members(Writer& w, const ExecutionStatus& status)
 {
     w.string("instance", status.instance);
     w.integer("status_rev", static_cast<std::int64_t>(status.status_rev));
@@ -1049,8 +1042,6 @@ void write_status_members(Writer& w, const ExecutionStatus& status)
     }
 }
 
-} // namespace
-
 void EventStream::prepare(const PrepareResult& result, std::optional<std::int64_t> id)
 {
     emit("prepare", object([&](Writer& w) {
@@ -1066,7 +1057,7 @@ void EventStream::prepare(const PrepareResult& result, std::optional<std::int64_
              optional_text(w, "reason", result.accepted ? std::string{} : result.reason);
              optional_text(w, "message", result.accepted ? std::string{} : result.message);
              w.begin_object("status");
-             write_status_members(w, result.status);
+             detail::write_status_members(w, result.status);
              w.end_object();
              if (result.accepted)
              {
@@ -1111,7 +1102,7 @@ void EventStream::status(const ExecutionStatus& status, std::optional<std::int64
              {
                  w.null("id");
              }
-             write_status_members(w, status);
+             detail::write_status_members(w, status);
          }));
 }
 
