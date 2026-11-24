@@ -33,9 +33,9 @@ MAX_PAGE_FILE_BYTES = 4 * 1024 * 1024
 log = logging.getLogger("vehicle_sil_gui")
 
 
-def api_path(session_id: int) -> str:
+def api_path(run_id: str) -> str:
     """Where the file of a run is served (relative to the server's URL; needs the token)."""
-    return f"api/timeline/{session_id}"
+    return f"api/timeline/{run_id}"
 
 
 def written_whole(result: object) -> bool:
@@ -73,7 +73,7 @@ class Timelines:
 
     def __init__(self) -> None:
         self.directory: Path | None = None
-        self.ready: OrderedDict[int, tuple[Path, str]] = OrderedDict()  # session id -> (file, name), oldest first
+        self.ready: OrderedDict[str, tuple[Path, str]] = OrderedDict()  # run_id -> (file, name), oldest first
 
     def new_file(self) -> Path:
         """A name for the next run's file (the launcher creates the file). Makes the directory on first use."""
@@ -81,7 +81,7 @@ class Timelines:
             self.directory = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-timelines-"))
         return self.directory / f"{secrets.token_hex(8)}.timeline.json"
 
-    def finish(self, session_id: int, path: Path, usable: bool, scenario: str) -> bool:
+    def finish(self, run_id: str, path: Path, usable: bool, scenario: str) -> bool:
         """The run has ended: keeps its file when the launcher wrote a whole one (usable, and the file is not
         empty), and removes the oldest beyond KEPT; otherwise removes it. Whether it is kept. scenario: the
         scenario file, whose name the file is given when it is served (<name>.timeline.json)."""
@@ -93,15 +93,15 @@ class Timelines:
             _remove(path)
             return False
         stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(scenario.replace("\\", "/")).stem) or "scenario"
-        self.ready[session_id] = (path, f"{stem}.timeline.json")
+        self.ready[str(run_id)] = (path, f"{stem}.timeline.json")
         while len(self.ready) > KEPT:
             _, (old, _) = self.ready.popitem(last=False)
             _remove(old)
         return True
 
-    def file_of(self, session_id: int) -> tuple[Path, str] | None:
+    def file_of(self, run_id: str) -> tuple[Path, str] | None:
         """(the file, the name it is served under) of a run whose file is kept."""
-        found = self.ready.get(session_id)
+        found = self.ready.get(str(run_id))
         return found if found is not None and found[0].is_file() else None
 
     def remove_all(self) -> None:

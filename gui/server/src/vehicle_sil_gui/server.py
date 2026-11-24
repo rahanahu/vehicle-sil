@@ -26,7 +26,7 @@ from pathlib import Path
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
-from .allowed import Facts, Numbered, RunFacts, allowed as allowed_of, allowed_save, allowed_start, project_run_facts
+from .allowed import Facts, RunFacts, allowed as allowed_of, allowed_save, allowed_start, project_run_facts
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME,
                        NO_CONNECTION, REQUEST_FIELDS,
@@ -53,7 +53,7 @@ from .timelines import (KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path,
                         written_whole)
 from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables, Watch, check_watch
 
-PROTOCOL = 3  # vehicle_sil_gui: the version of the shapes in gui/protocol
+PROTOCOL = 4  # vehicle_sil_gui: the version of the shapes in gui/protocol
 MAX_BODY = 64 * 1024
 # The text of a configuration file: `text` of api/check and of POST api/config (as UTF-8), the file of GET api/config
 MAX_TEXT = 1024 * 1024
@@ -389,7 +389,7 @@ class _RunSink:
             run.silence_task.cancel()
         # Recorded now (api/session and a stop see it), sent with the end: a summary sent before the
         # launcher's last lines are read would be older than the events that follow it.
-        run.session.launcher_exited(returncode)
+        run.session.launcher_exited(returncode, tell=False)
         run.request_gone = control.remove(run.request)  # the launcher has ended: it needs the file no more
 
     async def on_run_finished(self, *, output_cut: bool = False, launcher_alive: bool = False) -> None:
@@ -480,7 +480,7 @@ class GuiServer:
         self._prepared = asyncio.Event()  # set when no post_prepare() is in flight
         self._prepared.set()
         self._next_session_id = 1
-        self.numbered = Numbered()  # the numbering of `allowed` that every place that carries it shares
+        self._stream_seq = 0
         self._check_lock = asyncio.Lock()
         self._check_waiting = 0
         self.launcher.track = self._checks
@@ -493,7 +493,6 @@ class GuiServer:
         self._unauthenticated: dict[web.WebSocketResponse, None] = {}  # oldest first
         self._authenticated: set[web.WebSocketResponse] = set()
         self._evicting: set[asyncio.Task] = set()
-        self._stop_on_start: bool | None = None  # api/stop while a run starts: its force, applied once started
         self._hurry = asyncio.Event()
         self._closing = False
         self._watching: dict[Watch, Client] = {}  # every watch of every connection, with its connection's queue
@@ -502,13 +501,17 @@ class GuiServer:
         self._library: control.Library | None = None
         self._no_library: str | None = None  # why the gRPC library cannot be used, once known
         self._library_lock = asyncio.Lock()
-        self.hub = Hub(self.snapshot)
+        self.hub = Hub(self.snapshot, next_stream_seq=self.next_stream_seq)
         port = options.port
         self.hosts = {f"127.0.0.1:{port}"}
         self.origins = {f"http://127.0.0.1:{port}"}
         if options.dev_origin:
             self.origins.add(options.dev_origin)
             self.hosts.add(options.dev_origin.split("://", 1)[1])
+
+    def next_stream_seq(self) -> int:
+        self._stream_seq += 1
+        return self._stream_seq
 
     @property
     def session(self) -> Session | None:
@@ -531,12 +534,12 @@ class GuiServer:
             s.stop,
             launcher_mode=s.launcher_mode,
             execution_status=self.runtime.execution_status(),
+            run_state=s.launcher_state,
         )
 
     def allowed(self) -> dict:
         """The `allowed` of the run the screens see; with no run, what the server accepts (start)."""
-        return self.session.allowed() if self.session else self.numbered.stamp(
-            allowed_of(self.facts(), self._run_facts()))
+        return self.session.allowed() if self.session else allowed_of(self.facts(), self._run_facts())
 
     def _on_runtime_status(self, status: dict) -> None:
         self.hub.broadcast([{"type": "runtime", "runtime": status}])
@@ -547,8 +550,8 @@ class GuiServer:
         """Tells the screens an `allowed` that changed with no `session` message to carry it (a start begins or
         fails, the server's end begins): a small message of its own. Nothing when it has not changed."""
         answer = self.allowed()
-        if answer["rev"] > self.hub.told_allowed_rev:  # not yet sent to every screen, whoever made the number
-            self.hub.broadcast([{"type": "allowed", "session": self.session.id if self.session else None,
+        if answer != self.hub.last_allowed:
+            self.hub.broadcast([{"type": "allowed", "run_id": self.session.id if self.session else None,
                                  "allowed": answer}])
 
     # ------------------------------------------------------------ the application
@@ -565,7 +568,6 @@ class GuiServer:
         app.router.add_post("/api/connections", self.post_connections)
         app.router.add_post("/api/prepare", self.post_prepare)
         app.router.add_post("/api/run", self.post_run)
-        app.router.add_post("/api/stop", self.post_stop)
         app.router.add_post("/api/stop-session", self.post_stop_session)
         app.router.add_post("/api/time", self.post_time)
         app.router.add_post("/api/write", self.post_write)
@@ -573,7 +575,7 @@ class GuiServer:
         app.router.add_get("/api/dashboard", self.get_dashboard)
         app.router.add_get("/api/scenarios", self.get_scenarios)
         app.router.add_get("/api/recording", self.get_recording)
-        app.router.add_get("/api/timeline/{session}", self.get_timeline)
+        app.router.add_get("/api/timeline/{run_id}", self.get_timeline)
         app.router.add_get("/ws", self.websocket)
         app.router.add_route("*", "/api/{rest:.*}", self.api_not_found)
         app.router.add_get("/panels/{key}/{path:.*}", self.get_panel)
@@ -629,7 +631,7 @@ class GuiServer:
                 response.headers["WWW-Authenticate"] = "Bearer"
                 return response
             # A body must be JSON (a form or text/plain post is what another page could send without asking);
-            # no body at all (a bare POST api/stop) needs no Content-Type.
+            # no body at all needs no Content-Type.
             if request.method == "POST" and request.body_exists and request.content_type != "application/json":
                 return error(415, "unsupported-media-type", "send the body as JSON (Content-Type: application/json)")
         return await handler(request)
@@ -854,15 +856,14 @@ class GuiServer:
 
     async def get_timeline(self, request: web.Request) -> web.StreamResponse:
         """The timeline file of a scenario run (one of the last runs that wrote one), as the launcher wrote it."""
-        text = request.match_info["session"]
-        session_id = int(text) if text.isascii() and text.isdigit() and len(text) <= 18 else None
-        path = await asyncio.to_thread(self.timelines.file_of, session_id) if session_id is not None else None
+        run_id = request.match_info["run_id"]
+        path = await asyncio.to_thread(self.timelines.file_of, run_id) if run_id else None
         if path is None:
             return error(404, "no-timeline",
-                         f"run {text} has no timeline file on this server: a scenario run started from this GUI "
+                         f"run {run_id} has no timeline file on this server: a scenario run started from this GUI "
                          "server records one when the launcher has the feature 'timeline', and it can be read once "
                          f"the run has ended; the server keeps the files of the last {TIMELINES_KEPT} such runs "
-                         "until it stops", {"session_id": session_id})
+                         "until it stops", {"run_id": run_id})
         path, name = path
         return web.FileResponse(path, headers={"Content-Type": "application/json",
                                                "Content-Disposition": f'inline; filename="{name}"'})
@@ -1124,7 +1125,7 @@ class GuiServer:
             manual = tuple(check_name_list("manual", body.get("manual")))
             await self._usable()
             why_not = await self._no_variables()
-            status = await self.runtime.prepare(
+            await self.runtime.prepare(
                 config.relative,
                 variant=variant,
                 disable=disable,
@@ -1138,7 +1139,7 @@ class GuiServer:
             self._prepares_in_flight -= 1
             if self._prepares_in_flight == 0:
                 self._prepared.set()
-        return web.json_response({"instance": self.instance, "runtime": status})
+        return web.json_response({"instance": self.instance})
 
     async def post_run(self, request: web.Request) -> web.Response:
         try:
@@ -1156,7 +1157,6 @@ class GuiServer:
         self._starting = True
         self._starts_in_flight += 1
         self._started.clear()
-        self._stop_on_start = None
         self._push_allowed()
         registered = False
 
@@ -1164,7 +1164,6 @@ class GuiServer:
             nonlocal registered
             registered = True
             self._starting = False
-            self._stop_on_start = None
 
         try:
             return await self._start(body, finish_starting)
@@ -1173,7 +1172,6 @@ class GuiServer:
         finally:
             if not registered:
                 self._starting = False
-                self._stop_on_start = None
                 self._push_allowed()
             self._starts_in_flight -= 1
             if self._starts_in_flight == 0:
@@ -1286,12 +1284,13 @@ class GuiServer:
             control.remove(run_credentials)
             run_credentials = None
             run_token = handle.control_token
-        session = Session(self._next_session_id, config.relative, disable, speed, start_paused,
+        run_id = f"{self.instance}-{self._next_session_id}"
+        session = Session(run_id, config.relative, disable, speed, start_paused,
                           limits=self.o.limits, launcher_pid=handle.pid, launcher_mode=handle.mode,
                           scenario=scenario, manual=manual)
         session.facts = self.facts
         session.execution_status = self.runtime.execution_status
-        session.numbered = self.numbered
+        session.next_stream_seq = self.next_stream_seq
         preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
         gate = _PreStartGate(config.relative, request) if getattr(handle, "waits_for_check", True) else None
 
@@ -1376,17 +1375,13 @@ class GuiServer:
         self._next_session_id += 1
         self.current = run
         run.silence_task = asyncio.create_task(self._watch_silence(session))
-        stop_on_start = self._stop_on_start
         # Registration is complete: clear starting state before broadcasting the session and draining
         # buffered pre-start callbacks so an already-exited launcher neither corrupts `allowed` while
         # draining nor triggers a spurious `allowed` push when post_run() exits.
         finish_starting()
-        if stop_on_start is not None:  # api/stop came while it was starting: it applies now
-            self._write_stop(run, stop_on_start)
         # The session messages do not carry the variables: a new run's are told right after it.
         self.hub.broadcast([session.message()])
         self._tell_variables([variables.message()])
-        initial_summary = session.summary()
         if gate is not None:
             gate.live = True
             while gate.buffer:
@@ -1408,7 +1403,7 @@ class GuiServer:
                 await sink.on_run_cleanup()
         if self._closing:  # the end began while the launcher was starting: it is stopped with the others
             raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
-        return web.json_response({"instance": self.instance, "session": initial_summary})
+        return web.json_response({"instance": self.instance, "run_id": session.id})
 
     async def _discard_failed_start(self, run: Run) -> None:
         self._remove_credentials(run)
@@ -1422,41 +1417,32 @@ class GuiServer:
 
     async def post_stop_session(self, request: web.Request) -> web.Response:
         """Stop one identified run, never a run that replaced it."""
-        return await self.post_stop(request, targeted=True)
-
-    async def post_stop(self, request: web.Request, *, targeted: bool = False) -> web.Response:
         try:
             body = await self._body(request, empty_ok=True)
-            if targeted:
-                check_fields("api/stop-session", body, ("force", "session", "instance"))
-            else:  # a field this endpoint does not take must not be ignored while the run is stopped
-                check_fields("api/stop", body, ("force",))
+            check_fields("api/stop-session", body, ("force", "run_id", "instance"))
         except InvalidRequest as e:
             return self._refusal(e)
         force = body.get("force", False)
         if not isinstance(force, bool):
             return error(400, "invalid-field", "force must be true or false")
-        target = body.get("session") if targeted else None
-        if targeted and (isinstance(target, bool) or not isinstance(target, int) or target < 1):
-            return error(400, "invalid-field", "session must be a positive integer")
-        if targeted and (not isinstance(body.get("instance"), str) or not body["instance"]):
+        target = body.get("run_id")
+        if not isinstance(target, str) or not target:
+            return error(400, "invalid-field", "run_id must be a non-empty string")
+        if not isinstance(body.get("instance"), str) or not body["instance"]:
             return error(400, "invalid-field", "instance must be the server instance from the run or session answer")
-        # Check before setting _stop_on_start or writing to a launcher: a delayed request must
+        # Check before writing to a launcher: a delayed request must
         # never stop a different run, including one which is still starting.
-        if target is not None and (body["instance"] != self.instance or self._starting or self.current is None
-                                   or self.current.session.id != target):
+        if (
+            body["instance"] != self.instance
+            or self._starting
+            or self.current is None
+            or self.current.session.id != target
+        ):
             return error(409, "session-changed", "the run has changed: no stop was sent")
-        if self._starting and not self._closing:  # applied as soon as the launcher has started (in _start)
-            self._stop_on_start = force or bool(self._stop_on_start)
         run = self.current
-        if run is None:
-            return web.json_response({"session": None})
-        session = run.session
-        if self._closing or self._starting:  # the server's end is stopping it, or it is the run before
-            return web.json_response({"session": session.summary()})
-        if self._write_stop(run, force):  # decided, recorded and written before any await
+        if not self._closing and self._write_stop(run, force):  # decided, recorded and written before any await
             await run.handle.drain(STDIN_DRAIN_S)
-        return web.json_response({"session": session.summary()})
+        return web.json_response({"instance": self.instance, "run_id": run.session.id})
 
     async def post_time(self, request: web.Request) -> web.Response:
         """A time command (pause, resume, step, run_until, speed) to the launcher of the run that is running. Written
@@ -1465,12 +1451,12 @@ class GuiServer:
         try:
             self._not_closing()
             body = await self._body(request)
-            targeted = "session" in body or "instance" in body
-            session = body.pop("session", None)
+            targeted = "run_id" in body or "instance" in body
+            run_id = body.pop("run_id", None)
             instance = body.pop("instance", None)
             if targeted:
-                if type(session) is not int or session < 1:
-                    raise InvalidRequest("invalid-field", "session must be a positive integer")
+                if not isinstance(run_id, str) or not run_id:
+                    raise InvalidRequest("invalid-field", "run_id must be a non-empty string")
                 if not isinstance(instance, str) or not instance:
                     raise InvalidRequest("invalid-field", "instance must be the server instance from the run or session answer")
             command = check_time_command(body)
@@ -1478,7 +1464,7 @@ class GuiServer:
             return self._refusal(e)
         run = self.current
         # Compare the target after reading the request and before writing anything to the launcher.
-        if targeted and (instance != self.instance or self._starting or run is None or session != run.session.id):
+        if targeted and (instance != self.instance or self._starting or run is None or run_id != run.session.id):
             return error(409, "session-changed", "the run has changed: no time command was sent")
         if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running \
                 or not run.handle.can_send():
@@ -1495,7 +1481,7 @@ class GuiServer:
         if not await run.handle.drain(STDIN_DRAIN_S):
             return gone
         # Not the summary: what the command does comes later, as the launcher's command and time events.
-        return web.json_response({"session_id": run.session.id, "command": command})
+        return web.json_response({"run_id": run.session.id, "command": command})
 
     @staticmethod
     def _launcher_refuses(run: Run, name: str) -> tuple[str, str] | None:
@@ -1515,7 +1501,7 @@ class GuiServer:
         for m in messages:  # the record of the applied writes looks at the operations as the screens do
             if m.get("type") == "operation":
                 for run in self._runs:
-                    if run.session.id == m.get("session"):
+                    if run.session.id == m.get("run_id"):
                         run.recording.on_operation(m)
         if any(m.get("type") == "variables" for m in messages) and self._watching:
             now = time.monotonic()
@@ -1524,17 +1510,17 @@ class GuiServer:
             self._tick_now.set()
 
     async def post_write(self, request: web.Request) -> web.Response:
-        """Writes variables of the run that is running: {"session": <the run's id>, "writes": {"<peer>":
-        {"<variable>": <value>}}, "at_ms", "late"}. The session names the run the write is meant for: a write for
+        """Writes variables of the run that is running: {"run_id": <the run's id>, "writes": {"<peer>":
+        {"<variable>": <value>}}, "at_ms", "late"}. The run_id names the run the write is meant for: a write for
         another run is refused (session-changed), so that a write sent while one run ends and the next begins is
         not made in the next. Checked against the schema here, then given to the launcher's control server; the
         answer is the operation's number, and what became of it comes to every screen as `operation` messages."""
         try:
             self._not_closing()
             body = await self._body(request)
-            meant = body.get("session") if isinstance(body, dict) else None
-            if isinstance(meant, bool) or not isinstance(meant, int):
-                raise Refused(400, "invalid-field", "a write needs session: the id of the run it is meant for (the "
+            meant = body.get("run_id") if isinstance(body, dict) else None
+            if not isinstance(meant, str) or not meant:
+                raise Refused(400, "invalid-field", "a write needs run_id: the id of the run it is meant for (the "
                                                     "id of the summary of GET api/session, or of hello)")
             if "instance" in body:
                 inst = body.get("instance")
@@ -1572,7 +1558,7 @@ class GuiServer:
             run.recording.wrote(seq, writes, run.variables.operations.get(seq))
         except (InvalidRequest, Refused, Rejected) as e:
             return self._refusal(e)
-        return web.json_response({"session_id": run.session.id, "operation": seq})
+        return web.json_response({"run_id": run.session.id, "operation": seq})
 
     def _write_stop(self, run: Run, force: bool) -> bool:
         """Records a stop request and writes its commands to the launcher's input (no await); whether something
@@ -1941,18 +1927,19 @@ class GuiServer:
 
     # ------------------------------------------------------------ WebSocket
 
-    def snapshot(self, session_id: int | None, from_seq: int | None) -> list[dict]:
+    def snapshot(self, run_id: str | None, after_stream_seq: int | None) -> list[dict]:
         s = self.session
+        sseq = self._stream_seq
         hello = {"type": "hello", "vehicle_sil_gui": PROTOCOL, "version": __version__, "instance": self.instance,
-                 "session": s.summary() if s else None, "allowed": self.allowed(), "replay": None,
+                 "stream_seq": sseq, "session": s.summary() if s else None, "allowed": self.allowed(), "replay": None,
                  "runtime": self.runtime.status()}
         if s is None:
-            return [hello, {"type": "synced", "session": None, "last_seq": None}]
-        start = from_seq if session_id == s.id else None
-        hello["replay"] = {"from_seq": start}
+            return [hello, {"type": "synced", "stream_seq": sseq, "run_id": None, "last_seq": None}]
+        start = after_stream_seq if (run_id == s.id and after_stream_seq is not None) else None
+        hello["replay"] = {"after_stream_seq": start}
         dropped, events = s.replay(start)
         return [hello, *([dropped] if dropped else []), *events,
-                {"type": "synced", "session": s.id, "last_seq": s.last_seq}]
+                {"type": "synced", "stream_seq": sseq, "run_id": s.id, "last_seq": s.last_seq}]
 
     async def websocket(self, request: web.Request) -> web.StreamResponse:
         if self._closing:
@@ -2007,7 +1994,7 @@ class GuiServer:
                 pass
         if not (isinstance(auth, dict) and auth.get("type") == "auth" and isinstance(auth.get("token"), str)
                 and same_secret(auth["token"], self.o.token)):
-            await ws.send_json({"type": "error", "session": None, "code": "unauthorized",
+            await ws.send_json({"type": "error", "run_id": None, "code": "unauthorized",
                                 "message": "the first message must be {\"type\":\"auth\",\"token\":...} with the "
                                            "token of the URL the server printed", "detail": None})
             await ws.close(code=4401, message=b"unauthorized")
@@ -2018,11 +2005,13 @@ class GuiServer:
             return
         self._authenticated.add(ws)
         client = self.hub.client(ws.send_str)
-        # A screen that keeps the check from hello and the check event can ask for summaries without it.
-        client.without_check = auth.get("session_without_check") is True
         connection = Connection(client)
-        sender = asyncio.create_task(self.hub.serve(client, count_or_none(auth.get("session")),
-                                                    count_or_none(auth.get("from_seq"))))
+        req_run_id = auth.get("run_id") if isinstance(auth.get("run_id"), str) and auth.get("run_id") else None
+        req_after_seq = count_or_none(auth.get("after_stream_seq"))
+        if "instance" in auth and auth.get("instance") is not None and auth.get("instance") != self.instance:
+            req_run_id = None
+            req_after_seq = None
+        sender = asyncio.create_task(self.hub.serve(client, req_run_id, req_after_seq))
         reader = asyncio.create_task(self._listen(ws, connection))
         try:
             await asyncio.wait({sender, reader}, return_when=asyncio.FIRST_COMPLETED)
@@ -2046,7 +2035,7 @@ class GuiServer:
             try:
                 self._from_screen(connection, msg.data)
             except Rejected as e:
-                connection.client.put(Outgoing({"type": "error", "session": None, "code": e.code,
+                connection.client.put(Outgoing({"type": "error", "run_id": None, "code": e.code,
                                                 "message": str(e), "detail": e.detail}))
 
     def _from_screen(self, connection: Connection, text: str) -> None:

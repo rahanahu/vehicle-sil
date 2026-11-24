@@ -11,6 +11,7 @@ lines and gets back the messages to send to the screens.
 from __future__ import annotations
 
 import heapq
+import itertools
 import json
 import math
 import time
@@ -23,7 +24,7 @@ from datetime import UTC, datetime
 from itertools import islice
 from typing import Any
 
-from .allowed import Facts, Numbered, allowed as allowed_of, project_run_facts
+from .allowed import Facts, allowed as allowed_of, project_run_facts
 from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT, STEP_MS_MAX
 
 EVENTS_FORMAT = 4  # the `vehicle_sil_events` of hello that this server reads
@@ -50,8 +51,8 @@ STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
 # The summary's `variables` of a run without any (variables.Variables.summary makes the others).
 # The fields of a scenario step that the summary keeps (the launcher's scenario_step event and result.scenario.steps[])
 SCENARIO_STEP_FIELDS = ("index", "line", "kind", "text", "status", "start_ms", "at_ms", "end_ms", "code", "message")
-NO_VARIABLES = {"rev": 0, "state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
-                "operations": []}
+NO_VARIABLES = {"state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
+                "operations": [], "operations_from_seq": 0, "operations_open_omitted": 0}
 
 
 def check_timing(check: dict) -> dict:
@@ -259,7 +260,7 @@ class _Log:
 
 @dataclass
 class Session:
-    id: int
+    id: str
     file: str
     disable: list[str]
     speed: float | str | None
@@ -272,6 +273,7 @@ class Session:
     manual: list[str] = field(default_factory=list)  # the names given to --manual (the user starts them)
 
     def __post_init__(self) -> None:
+        self.id = str(self.id)
         self.ended_at: str | None = None
         self.state = "running"  # until the run ends and its output is read
         self.launcher_running = True
@@ -295,17 +297,16 @@ class Session:
         self.launcher_state: dict | None = None  # the last `state` event of the launcher (what it accepts now)
         self.facts: Callable[[], Facts] = Facts  # what the server knows apart from the run (the server sets it)
         self.execution_status: Callable[[], dict | None] = lambda: None
-        self.numbered = Numbered()  # numbers `allowed` (the server's, so that all runs share one numbering)
+        self.next_stream_seq: Callable[[], int] = itertools.count(1).__next__
         self.result: dict | None = None
         self.problems: list[dict] = []
         self.problems_omitted = 0
-        self._problem_seq = 0
         self._problem_counts = {"launcher": 0, "server": 0}
         self._stderr_lines = 0
         self._stderr_last: deque[str] = deque(maxlen=self.limits.stderr_last)
         self.hello_seen = False
         self.run_id: str | None = None
-        self.run_t0_ms: int | None = None
+        self.run_t0_ms: int = 0
         self._stream_run = False
         self._logs: dict[str, _Log] = {}
         self._log_bytes = 0
@@ -316,7 +317,6 @@ class Session:
         # The ECUs' variables of the run (the schema, the state, the last operations), made by the server's
         # variables.Variables when a summary is asked for. Not in the `session` messages (see message).
         self.variables: Callable[[], dict] | None = None
-        self._snapshot_rev = 0  # order of complete server snapshots within this run
         # The scenario's progress (a run with --scenario): from the check, the scenario_step events, the result.
         self.scenario_name: str | None = None
         self.scenario_step_count: int | None = None
@@ -391,7 +391,12 @@ class Session:
                                                    "ignored (not shown); the launcher and this GUI may not match",
                                       problem_detail())
         out += self._apply(event, size)
-        out.append({"type": "event", "session": self.id, "event": event})
+        sseq = self.next_stream_seq()
+        if kind == "log":
+            self._keep_log(event, size, sseq)
+        elif kind == "log_dropped":
+            self._keep_marker(event, size, sseq)
+        out.append({"type": "event", "stream_seq": sseq, "run_id": self.id, "event": event})
         return out
 
     def _apply(self, event: dict, size: int) -> list[dict]:
@@ -410,10 +415,6 @@ class Session:
                 self.run_id = event["run"]
             if _is_count(event.get("t_ms")):
                 self.run_t0_ms = event["t_ms"]
-        elif kind == "log":
-            self._keep_log(event, size)
-        elif kind == "log_dropped":
-            self._keep_marker(event, size)
         elif kind == SCENARIO_STEP_EVENT:
             self._keep_step(event)
         elif kind == "check":
@@ -438,7 +439,6 @@ class Session:
                                              "bytes: only its short plain fields are kept for a screen opened later")
         elif kind == "finding":
             entry = {k: v for k, v in event.items() if k not in ENVELOPE}
-            entry["event_seq"] = event["seq"]
             if len(self.findings) < self.limits.findings and self.findings_bytes + size <= self.limits.findings_bytes:
                 self.findings.append(entry)
                 self.findings_bytes += size
@@ -578,12 +578,12 @@ class Session:
                 "steps_omitted": self.scenario_steps_omitted, "status": self.scenario_status,
                 "over_at_ms": self.scenario_over_at_ms, "timeline_url": self.timeline_url}
 
-    def _keep_log(self, event: dict, size: int) -> None:
+    def _keep_log(self, event: dict, size: int, stream_seq: int) -> None:
         log = self._log_of(event["source"])
         if size > self.limits.log_line_bytes:
-            log.drop(event["seq"])
+            log.drop(stream_seq)
             return
-        log.lines.append((event["seq"], size, event))
+        log.lines.append((stream_seq, size, event))
         log.bytes += size
         self._log_bytes += size
         self._trim(log)
@@ -596,7 +596,7 @@ class Session:
             log = self._logs[source] = _Log(self.limits.dropped_seqs)
         return log
 
-    def _keep_marker(self, event: dict, size: int) -> None:
+    def _keep_marker(self, event: dict, size: int, stream_seq: int) -> None:
         """A log_dropped event: counted in the dropped lines of each source it names, and kept in their logs
         where it came (once per log), so that a screen that connects later shows the gap in the same place."""
         counts: dict[int, list] = {}
@@ -607,7 +607,7 @@ class Session:
             log.launcher_dropped += count
             if size > self.limits.log_line_bytes:
                 continue
-            log.lines.append((event["seq"], size, event))
+            log.lines.append((stream_seq, size, event))
             log.markers += 1
             log.bytes += size
             self._log_bytes += size
@@ -635,8 +635,7 @@ class Session:
         """A problem for the screens, kept in the summary while its room has space: the server's own problems,
         the launcher's standard error (bounded by stderr_line) and the rest of what the launcher wrote each have
         their own room."""
-        self._problem_seq += 1
-        entry = {"code": code, "message": message, "detail": detail, "problem_seq": self._problem_seq}
+        entry = {"code": code, "message": message, "detail": detail}
         room = "server" if code in SERVER_PROBLEMS else None if code == STDERR else "launcher"
         if room is None or self._problem_counts[room] < (self.limits.server_problems if room == "server"
                                                          else self.limits.problems):
@@ -645,7 +644,7 @@ class Session:
                 self._problem_counts[room] += 1
         else:
             self.problems_omitted += 1
-        return [{"type": "error", "session": self.id, **entry}]
+        return [{"type": "error", "stream_seq": self.next_stream_seq(), "run_id": self.id, **entry}]
 
     def stderr_line(self, line: str) -> list[dict]:
         """A line of the launcher's standard error. The first stderr_first lines are problems at once; of the
@@ -712,7 +711,7 @@ class Session:
         self.silent_s = shown
         return out + [self.message()]
 
-    def launcher_exited(self, returncode: int | None) -> list[dict]:
+    def launcher_exited(self, returncode: int | None, *, tell: bool = True) -> list[dict]:
         """The launcher process has exited (its output may still be being read). A negative returncode is the
         POSIX signal that ended it. The message is for a caller that sends it at once."""
         self.launcher_running = False
@@ -722,7 +721,7 @@ class Session:
             self.exit_code, self.signal = None, -returncode
         else:
             self.exit_code, self.signal = returncode, None
-        return [self.message()]
+        return [self.message()] if tell else []
 
     def ended(self, output_cut: bool = False, *, launcher_alive: bool = False) -> list[dict]:
         """The run has ended and its output is read (or, output_cut, given up on)."""
@@ -750,10 +749,9 @@ class Session:
     # ------------------------------------------------------------ output
 
     def summary(self, variables: bool = True) -> dict:
-        self._snapshot_rev += 1
         out = {
-            "snapshot_rev": self._snapshot_rev,
-            "id": self.id, "file": self.file, "disable": self.disable, "manual": self.manual, "speed": self.speed,
+            "id": self.id, "run_t0_ms": self.run_t0_ms, "file": self.file, "disable": self.disable,
+            "manual": self.manual, "speed": self.speed,
             "start_paused": self.start_paused, "started_at": self.started_at, "ended_at": self.ended_at,
             "state": self.state,
             "launcher": {"pid": self.launcher_pid, "running": self.launcher_running, "exit_code": self.exit_code,
@@ -768,7 +766,6 @@ class Session:
             "log": {source: {"kept": log.kept, "dropped": log.dropped + log.launcher_dropped}
                     for source, log in self._logs.items()},
             "problems": list(self.problems), "problems_omitted": self.problems_omitted,
-            "problem_seq": self._problem_seq,
             "scenario": self.scenario_summary(),
             **self.check_timing,
         }
@@ -784,17 +781,19 @@ class Session:
             self.stop,
             launcher_mode=self.launcher_mode,
             execution_status=self.execution_status(),
+            run_state=self.launcher_state,
         )
-        return self.numbered.stamp(allowed_of(self.facts(), run))
+        return allowed_of(self.facts(), run)
 
     def message(self) -> dict:
         """The summary for the screens that are connected. Without `variables`: they are large, change seldom,
         and have a message of their own when they do (`variables`); hello and the HTTP answers have them."""
-        return {"type": "session", "session": self.summary(variables=False)}
+        return {"type": "session", "stream_seq": self.next_stream_seq(), "session": self.summary(variables=False)}
 
-    def replay(self, from_seq: int | None) -> tuple[dict | None, list[dict]]:
+    def replay(self, after_stream_seq: int | None) -> tuple[dict | None, list[dict]]:
         """(the dropped message, or None when nothing is missing; the log events to send), for a screen that
-        has everything before from_seq (None: nothing)."""
+        has everything up to after_stream_seq (None: nothing)."""
+        from_seq = None if after_stream_seq is None else after_stream_seq + 1
         counts, at_least = {}, []
         for source, log in self._logs.items():
             n, exact = log.dropped_from(from_seq)
@@ -806,14 +805,14 @@ class Session:
         streams = []
         for log in self._logs.values():
             first = bisect_left(log.lines, start, key=lambda line: line[0]) if start else 0
-            streams.append([e for _, _, e in islice(log.lines, first, None)])
-        events, last = [], None
-        for e in heapq.merge(*streams, key=lambda e: e["seq"]):
-            if e["seq"] != last:  # a log_dropped kept in the logs of several sources is sent once
-                events.append({"type": "event", "session": self.id, "event": e})
-            last = e["seq"]
+            streams.append(islice(log.lines, first, None))
+        events, last = [], -1
+        for sseq, _, e in heapq.merge(*streams, key=lambda item: item[0]):
+            if sseq != last:  # a log_dropped kept in the logs of several sources is sent once
+                events.append({"type": "event", "stream_seq": sseq, "run_id": self.id, "event": e})
+                last = sseq
         dropped = None
         if counts or at_least:
-            dropped = {"type": "dropped", "session": self.id, "reason": "not-kept", "log": counts,
+            dropped = {"type": "dropped", "run_id": self.id, "reason": "not-kept", "log": counts,
                        "at_least": at_least, "events": 0}
         return dropped, events

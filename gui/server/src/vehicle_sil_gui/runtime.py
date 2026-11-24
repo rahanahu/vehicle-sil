@@ -1224,11 +1224,6 @@ class ServeRuntime:
         kind = ev["event"]
         if kind == "hello" and resident.hello is None:
             resident.hello = ev
-            version = ev.get("vehicle_sil_events")
-            if version != EVENTS_FORMAT:
-                resident.startup_error = f"serve wrote events format {version!r}, expected {EVENTS_FORMAT}"
-                resident.ending = True
-                resident.ready_or_ended.set()
             return
 
         if kind == "run_start":
@@ -1243,6 +1238,17 @@ class ServeRuntime:
                 resident.pending_run = None
                 resident.current_run = pending
                 pending._run_id = run_id
+                if resident.hello is not None:
+                    version = resident.hello.get("vehicle_sil_events")
+                    if version != EVENTS_FORMAT:
+                        pending.enqueue((
+                            "problem",
+                            "events-format",
+                            f"the launcher writes events in format {version!r}, and this GUI reads format "
+                            f"{EVENTS_FORMAT}: what it shows may be wrong; use a GUI of the same vehicle-sil "
+                            "version as the launcher",
+                            {"vehicle_sil_events": version if type(version) is int else None},
+                        ))
                 pending.enqueue(("event", ev, size))
                 pending._started_event.set()
                 if self._resident is resident:
@@ -1274,6 +1280,15 @@ class ServeRuntime:
             return
 
         if current is not None and ev_run == current.run_id:
+            if kind == "state" and isinstance(resident.execution_status, dict):
+                ev_rev = ev.get("rev")
+                if isinstance(ev_rev, int) and not isinstance(ev_rev, bool):
+                    cur_rs = resident.execution_status.get("run_state")
+                    cur_rev = cur_rs.get("rev") if isinstance(cur_rs, dict) else None
+                    if not (isinstance(cur_rev, int) and not isinstance(cur_rev, bool)) or ev_rev >= cur_rev:
+                        resident.execution_status["run_state"] = {
+                            k: v for k, v in ev.items() if k not in ("event", "seq", "t_ms", "run")
+                        }
             current.enqueue(("event", ev, size))
             if kind == "result":
                 launcher_ends = ev.get("launcher_ends") is True

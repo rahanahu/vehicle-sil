@@ -7,11 +7,6 @@ launcher's `log_dropped` adds its counts to the log lines of its sources), `time
 one of each, and heartbeats are dropped without a count (the server watches them; a screen does not need them). Only when that is not enough is the queue emptied, and the screen gets
 `resync` followed by a fresh hello (what a reconnection gets).
 
-A screen that asked for it in its auth (`session_without_check`) gets the `session` messages without the summary's
-`check` (it has the check from hello and the `check` event; it does not change during a run and can be large).
-That text is made once per message, when the message is queued (the summary shares lists with the session, which
-change later), without encoding the check a second time.
-
 The values of a watch are not queued as text: the watch itself waits in the queue, at most once (put_deferred),
 and its message is made when the queue comes to it, from the values at that time. A slow screen so gets the
 latest values each time it reads, costs nothing in between, and its queue does not grow with the values.
@@ -30,7 +25,7 @@ QUEUE_BYTES = 24 * 1024 * 1024  # and their size (more than the largest summary,
 SEND_TIMEOUT_S = 30  # one message that cannot be sent in this time closes the connection
 
 # Events that the summary is made of: never dropped for a slow screen (the others can be, and are counted).
-SUMMARY_EVENTS = frozenset({"hello", "phase", "check", "registry", "participant", "finding", "command", "result"})
+SUMMARY_EVENTS = frozenset({"hello", "run_start", "phase", "check", "registry", "participant", "finding", "command", "result"})
 DROPPED_SOURCES = 64  # sources named in one slow-client `dropped`; the others are counted under "*"
 
 log = logging.getLogger("vehicle_sil_gui")
@@ -48,22 +43,27 @@ def encode(message: dict) -> str:
 class Outgoing:
     """One message for the screens, as text, with what a slow screen's queue needs to know about it."""
 
-    __slots__ = ("text", "text_without_check", "size", "kind", "session", "source", "counts", "variables_of")
+    __slots__ = ("text", "size", "kind", "run_id", "source", "counts", "variables_of")
 
     def __init__(self, message: dict, log_key: Callable[[str], str] | None = None):
         """log_key: the name a log line's source has in the session's summary (where the `dropped` counts of
         a slow screen are put)."""
         self.text = encode(message)
         self.size = len(self.text)
-        self.text_without_check = self.text  # for screens that asked for summaries without the check
-        summary = message.get("session")
-        if message.get("type") == "session" and isinstance(summary, dict) and "check" in summary:
-            self.text_without_check = encode({**message, "session": {k: v for k, v in summary.items()
-                                                                      if k != "check"}})
-        self.session = message.get("session") if isinstance(message.get("session"), int) else None
+        raw_run = message.get("run_id")
+        if isinstance(raw_run, str) and raw_run:
+            self.run_id: str | None = raw_run
+        elif (
+            message.get("type") == "session"
+            and isinstance(message.get("session"), dict)
+            and isinstance(message["session"].get("id"), str)
+        ):
+            self.run_id = message["session"]["id"]
+        else:
+            self.run_id = None
         # The run whose variables this message tells (a `variables` message): after it, the values of that run
         # may be sent to the screen (Client.variables_of).
-        self.variables_of = self.session if message.get("type") == "variables" else None
+        self.variables_of = self.run_id if message.get("type") == "variables" else None
         self.source = None
         self.counts: dict[str, int] | None = None
         self.kind = "keep"
@@ -90,17 +90,17 @@ class Outgoing:
 class _Dropped:
     """A `dropped` message waiting in a queue; more drops are added to it until it is sent."""
 
-    __slots__ = ("session", "log", "events", "size")
+    __slots__ = ("run_id", "log", "events", "size")
 
-    def __init__(self, session: int | None):
-        self.session = session
+    def __init__(self, run_id: str | None):
+        self.run_id = run_id
         self.log: dict[str, int] = {}
         self.events = 0
         self.size = 200
 
     @property
     def text(self) -> str:
-        return encode({"type": "dropped", "session": self.session, "reason": "slow-client", "log": self.log,
+        return encode({"type": "dropped", "run_id": self.run_id, "reason": "slow-client", "log": self.log,
                        "at_least": [], "events": self.events})
 
 
@@ -122,11 +122,10 @@ class Client:
         self.ready = asyncio.Event()
         self.resyncs = 0
         self.sheds = 0
-        self.without_check = False  # session messages without the summary's check (session_without_check)
         self.deferred: set = set()  # the items of put_deferred that wait in the queue
         # The run whose variables this screen was last sent (hello's summary, or a `variables` message): a `values`
         # message of another run would come before the screen knows the run it belongs to.
-        self.variables_of: int | None = None
+        self.variables_of: str | None = None
 
     def put(self, item: Outgoing) -> None:
         if self.items and (self.items[0] is RESYNC or self.items[-1] is CLOSE):
@@ -160,25 +159,25 @@ class Client:
         """Drops what can be dropped; when that is not enough, everything (resync)."""
         self.sheds += 1
         kept: deque = deque()
-        notices: dict[int | None, _Dropped] = {}
-        last_of: dict[tuple[str, int | None], Outgoing] = {}
+        notices: dict[str | None, _Dropped] = {}
+        last_of: dict[tuple[str, str | None], Outgoing] = {}
         for item in self.items:
             if isinstance(item, Outgoing) and item.kind in ("time", "state"):
-                last_of[item.kind, item.session] = item
+                last_of[item.kind, item.run_id] = item
         for item in self.items:
-            if isinstance(item, _Dropped) and item.session not in notices:
-                notices[item.session] = item
+            if isinstance(item, _Dropped) and item.run_id not in notices:
+                notices[item.run_id] = item
                 kept.append(item)
                 continue
             if not isinstance(item, Outgoing) or item.kind == "keep" or \
-                    (item.kind in ("time", "state") and last_of.get((item.kind, item.session)) is item):
+                    (item.kind in ("time", "state") and last_of.get((item.kind, item.run_id)) is item):
                 kept.append(item)
                 continue
             if item.kind in ("time", "state", "beat"):
                 continue
-            notice = notices.get(item.session)
+            notice = notices.get(item.run_id)
             if notice is None:
-                notice = notices[item.session] = _Dropped(item.session)
+                notice = notices[item.run_id] = _Dropped(item.run_id)
                 kept.append(notice)  # where the first dropped message was
             if item.kind == "log":
                 for source, count in (item.counts if item.counts is not None else {item.source: 1}).items():
@@ -219,15 +218,16 @@ class Client:
 
 
 class Hub:
-    def __init__(self, snapshot: Callable[[int | None, int | None], list[dict]], limit: int = QUEUE_LIMIT,
-                 max_bytes: int = QUEUE_BYTES):
-        """snapshot(session, from_seq) gives hello, what is replayed and synced, in order."""
+    def __init__(self, snapshot: Callable[[str | None, int | None], list[dict]], limit: int = QUEUE_LIMIT,
+                 max_bytes: int = QUEUE_BYTES, *, next_stream_seq: Callable[[], int] | None = None):
+        """snapshot(run_id, after_stream_seq) gives hello, what is replayed and synced, in order."""
         self.snapshot = snapshot
         self.limit = limit
         self.max_bytes = max_bytes
+        self.next_stream_seq = next_stream_seq
         self.clients: set[Client] = set()
         self.closed = False
-        self.told_allowed_rev = 0  # the largest `allowed.rev` sent to every screen (in a `session` or `allowed`)
+        self.last_allowed: dict | None = None
 
     def client(self, send: Callable[[str], Awaitable[None]]) -> Client:
         return Client(send, self.limit, self.max_bytes)
@@ -237,11 +237,17 @@ class Hub:
         bug) is left out and logged, and the others are sent. Whether every message could be."""
         items, ok = [], True
         for m in messages:
+            if (
+                self.next_stream_seq is not None
+                and "stream_seq" not in m
+                and m.get("type") not in ("resync", "values")
+            ):
+                m["stream_seq"] = self.next_stream_seq()
             told = m.get("allowed") if m.get("type") == "allowed" else \
                 m["session"].get("allowed") if m.get("type") == "session" and isinstance(m.get("session"), dict) \
                 else None
-            if isinstance(told, dict) and isinstance(told.get("rev"), int):
-                self.told_allowed_rev = max(self.told_allowed_rev, told["rev"])
+            if isinstance(told, dict):
+                self.last_allowed = dict(told)
             try:
                 items.append(Outgoing(m, log_key))
             except (ValueError, TypeError, RecursionError, KeyError):
@@ -257,12 +263,13 @@ class Hub:
         for client in self.clients:
             client.close()
 
-    async def serve(self, client: Client, session: int | None, from_seq: int | None) -> None:
+    async def serve(self, client: Client, run_id: str | None, after_stream_seq: int | None) -> None:
         """Sends hello, the replay and then every broadcast message until the connection fails or close_all.
         The snapshot is taken in the same step as joining, so nothing is lost or sent twice between them."""
         if self.closed:
             return
         self.clients.add(client)
+
         def told(messages: list[dict]) -> list[str]:
             for m in messages:
                 if m.get("type") == "hello":
@@ -270,7 +277,7 @@ class Hub:
             return [encode(m) for m in messages]
 
         try:
-            pending = told(self.snapshot(session, from_seq))
+            pending = told(self.snapshot(run_id, after_stream_seq))
             while True:
                 for text in pending:
                     async with asyncio.timeout(SEND_TIMEOUT_S):
@@ -286,7 +293,7 @@ class Hub:
                 elif isinstance(item, Outgoing):
                     if item.variables_of is not None:
                         client.variables_of = item.variables_of
-                    pending = [item.text_without_check if client.without_check else item.text]
+                    pending = [item.text]
                 elif isinstance(item, _Dropped):
                     pending = [item.text]
                 else:  # deferred: made now

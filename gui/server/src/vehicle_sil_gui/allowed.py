@@ -1,11 +1,12 @@
 """What this server accepts of a screen now: `allowed.start`, `allowed.stop`, `allowed.force` and `allowed.save` of the
 summary.
 
-`rev` goes up with each change. Each is {"ok", "reason", "message"}: ok says whether the server would take the request (POST api/run, POST api/stop
-and POST api/stop with force), reason is a code that stays the same (null when ok) and message is one English
-sentence for a person (null when ok). The codes of start are those POST api/run answers with (409 or 503); POST api/stop always answers 200, so the
-reasons of stop and force are only here. save (POST api/config) also has caution: null, or {"code", "message"} when
-the server takes the request but there is something to know first (the same shape as the launcher's `caution`).
+Each is {"ok", "reason", "message"}: ok says whether the server would take the request (POST api/run, POST api/stop-session
+and POST api/stop-session with force), reason is a code that stays the same (null when ok) and message is one English
+sentence for a person (null when ok). The codes of start are those POST api/run answers with (409 or 503); POST api/stop-session
+answers 200 for the current run, so the reasons of stop and force are only here. save (POST api/config) also has caution: null,
+or {"code", "message"} when the server takes the request but there is something to know first (the same shape as the
+launcher's `caution`).
 
 Only what the server knows is decided here: whether the launcher can be used, whether a run is starting, running
 or ending, and how many stop requests it has taken. What the launcher accepts (pause, step, speed, writes) comes
@@ -57,6 +58,7 @@ def project_run_facts(
     *,
     launcher_mode: str = "cold",
     execution_status: dict | None = None,
+    run_state: dict | None = None,
 ) -> RunFacts:
     """Projects RunFacts from C++ ExecutionStatus in Hot mode or Session state in Cold mode."""
     running = bool(session_running)
@@ -68,8 +70,8 @@ def project_run_facts(
                 stop=local_stop,
             )
         stoppable = running and execution_status.get("launcher_state") == "running"
-        run_state = execution_status.get("run_state")
-        stop_info = run_state.get("stop") if isinstance(run_state, dict) else None
+        rs = run_state if isinstance(run_state, dict) else execution_status.get("run_state")
+        stop_info = rs.get("stop") if isinstance(rs, dict) else None
         requests = stop_info.get("requests") if isinstance(stop_info, dict) else None
         return RunFacts(
             running=running,
@@ -104,8 +106,7 @@ def allowed_start(facts: Facts, running: bool) -> dict:
 
 def allowed_stop(facts: Facts, stoppable: bool, stop: str) -> dict:
     """stoppable: its launcher runs (Session.request_stop writes a stop only then). stop: the session's stop
-    state ("none", "requested", "forced"). A stop asked for while a run starts is taken and applies once the
-    launcher has started."""
+    state ("none", "requested", "forced")."""
     if facts.closing:
         return _answer("shutting-down", "the GUI server is stopping: it stops the run itself")
     if facts.starting:
@@ -147,22 +148,6 @@ def allowed_save(facts: Facts) -> dict:
                               "the commands that run, and new files, so whoever has its token can run any command as "
                               "this user"}
     return {**answer, "caution": caution}
-
-
-class Numbered:
-    """Gives `allowed` a number (`rev`) that goes up whenever what it says changes, so that a reader who gets it from
-    several places (hello, api/session, the summary, the `allowed` message) keeps the one with the larger number.
-    One per server."""
-
-    def __init__(self) -> None:
-        self.rev = 0
-        self._last: dict | None = None
-
-    def stamp(self, answer: dict) -> dict:
-        if answer != self._last:
-            self._last = answer
-            self.rev += 1
-        return {"rev": self.rev, **answer}
 
 
 def allowed(

@@ -49,7 +49,7 @@ AT_MS_MAX = 10 ** 12  # the latest time a write may name (as a step command's mi
 TYPES = ("bool", "integer", "real", "enum")
 ROLES = ("input", "output", "parameter")
 FINAL = frozenset({"applied", "late", "rejected", "cancelled", "invalid", "busy", "unknown"})
-WRITE_KEYS = ("session", "instance", "writes", "at_ms", "late")
+WRITE_KEYS = ("run_id", "instance", "writes", "at_ms", "late")
 FORGOTTEN_OPEN = 100_000  # numbers kept of open operations that were forgotten (they get their end with the run)
 STANDING_READ_S = 0.25  # while it stands still with every value read, the watched peers are read this often
 READ_FAILURES = 3  # reads in a row that gave nothing, before the summary says so (state ready, with a reason)
@@ -187,11 +187,11 @@ def _is_count(value: object) -> bool:
 
 
 class Variables:
-    def __init__(self, session_id: int, emit: Callable[[list[dict]], object], *, limits: Limits | None = None,
+    def __init__(self, run_id: str, emit: Callable[[list[dict]], object], *, limits: Limits | None = None,
                  ending: Callable[[], bool] = lambda: False, secret: str | None = None):
         """emit(messages) sends messages to every screen. ending() says whether the run is ending (then a lost
         connection is the end, not a failure). secret: never shown in a reason (the source's token)."""
-        self.session_id = session_id
+        self.run_id = str(run_id)
         self.limits = limits or Limits()
         self._emit = emit
         self._ending = ending
@@ -205,7 +205,6 @@ class Variables:
         self._seen: dict[str, int] = {}  # how many variables the source has for each peer it named
         self.operations: dict[int, dict] = {}  # by seq, in the order they were first seen
         self.time: TimeInfo | None = None  # as the source last told by itself (the values' time comes with a read)
-        self._snapshot_rev = 0  # orders full variable snapshots and availability deltas within this run
         self.schema_version = 0
         self.state_version = 0  # counts the changes of the state
         self._epoch = 0  # grows when a standstill that was read may be over (see _Read.epoch)
@@ -275,7 +274,6 @@ class Variables:
         return self.state in (READY, ENDED)
 
     def summary(self) -> dict:
-        self._snapshot_rev += 1
         # the operations: every open one that is kept, and the last ones. Every operation from `from_seq` on is
         # in the list; one that is not in it and has a lower number is done, unless open ones had to be forgotten
         first_recent = len(self.operations) - self.limits.operations_in_summary
@@ -285,7 +283,7 @@ class Variables:
                 listed.append(entry)
             else:
                 left_out = max(left_out, entry["seq"])
-        return {"rev": self._snapshot_rev, "state": self.state, "reason": self.reason,
+        return {"state": self.state, "reason": self.reason,
                 "peers": [{"name": p.name, "connected": p.connected, "variables": p.variables}
                           for p in self.peers.values()],
                 "peers_omitted": self.peers_omitted, "variables_omitted": self.variables_omitted,
@@ -293,7 +291,7 @@ class Variables:
                 "operations_open_omitted": len(self._forgotten_open)}
 
     def message(self) -> dict:
-        return {"type": "variables", "session": self.session_id, "variables": self.summary()}
+        return {"type": "variables", "run_id": self.run_id, "variables": self.summary()}
 
     def _tell_schema(self, soon: bool = False) -> None:
         """Sends the summary to the screens: now, or (soon) once for the changes of a short time (peers come one
@@ -333,9 +331,7 @@ class Variables:
                 if states:
                     peers[peer.name] = states
         if peers:
-            self._snapshot_rev += 1
-            self._emit([{"type": "availability", "session": self.session_id, "rev": self._snapshot_rev,
-                         "peers": peers}])
+            self._emit([{"type": "availability", "run_id": self.run_id, "peers": peers}])
 
     # ------------------------------------------------------------ from the source (on the event loop)
 
@@ -612,7 +608,7 @@ class Variables:
             if self.operations.get(op.seq) == entry:
                 continue
             self._keep_operation(entry)
-            messages.append({"type": "operation", "session": self.session_id, **entry})
+            messages.append({"type": "operation", "run_id": self.run_id, **entry})
         if messages:
             self._emit(messages)
 
@@ -733,9 +729,9 @@ class Variables:
             closed = {**entry, "done": True, "peers": peers,
                       "state": states.pop() if len(states) == 1 else "mixed" if states else "unknown"}
             self.operations[entry["seq"]] = closed
-            self._emit([{"type": "operation", "session": self.session_id, **closed}])
+            self._emit([{"type": "operation", "run_id": self.run_id, **closed}])
         for seq in sorted(self._forgotten_open):  # open ones that were forgotten: their end, without the peers
-            self._emit([{"type": "operation", "session": self.session_id, "seq": seq, "state": "unknown",
+            self._emit([{"type": "operation", "run_id": self.run_id, "seq": seq, "state": "unknown",
                          "done": True, "peers": {}}])
         self._forgotten_open.clear()
         self._epoch += 1
@@ -743,7 +739,6 @@ class Variables:
         if self.state == OFF:
             return
         before = self.summary()
-        before.pop("rev")
         for peer in self.peers.values():
             peer.connected = False
         if self.was_ready:
@@ -758,7 +753,6 @@ class Variables:
             self._set_state(FAILED, (self._lost + " until the run ended") if self._lost else
                             "the run ended before the variables were read", tell=False)
         after = self.summary()
-        after.pop("rev")
         if open_ones or self._availability_changed or after != before:
             self._tell_schema()  # with the availability not told yet
 
@@ -767,7 +761,7 @@ class Variables:
     def stamp(self, watch: Watch) -> object:
         """Changes when a `values` message for the watch would differ from the last one."""
         plan = self._plan(watch)
-        return (self.session_id, self.state_version, self._moment(plan), sum(peer.version for peer, _ in plan))
+        return (self.run_id, self.state_version, self._moment(plan), sum(peer.version for peer, _ in plan))
 
     def _moment(self, plan: list[tuple[_Peer, list[str] | None]]) -> tuple[bool, int | None]:
         """(`paused`, `sim_ms`) of a message with these peers: see the top of this file."""
@@ -780,7 +774,7 @@ class Variables:
         return paused, None if now_ns is None else now_ns // NS_PER_MS
 
     def _plan(self, watch: Watch) -> list[tuple[_Peer, list[str] | None]]:
-        key = (self.session_id, self.schema_version)
+        key = (self.run_id, self.schema_version)
         if watch.plan is None or watch.plan[0] != key:
             if watch.wanted is None:
                 plan = [(p, None) for p in self.peers.values()]
@@ -804,8 +798,8 @@ class Variables:
                                 "values": values if names is None else {n: values[n] for n in names if n in values}}
         paused, sim_ms = self._moment(self._plan(watch))
         watch.sent = self.stamp(watch)
-        return {"type": "values", "id": watch.id, "session": self.session_id, "sim_ms": sim_ms, "paused": paused,
-                "peers": peers}
+        return {"type": "values", "id": watch.id, "watch_id": watch.id, "run_id": self.run_id, "sim_ms": sim_ms,
+                "paused": paused, "peers": peers}
 
     # ------------------------------------------------------------ writes
 
@@ -900,7 +894,7 @@ class Variables:
                                       "applied_writes": None, "failed_write": None}
                                for peer in dict.fromkeys(w[0] for w in writes)}}
             self._keep_operation(entry)
-            self._emit([{"type": "operation", "session": self.session_id, **entry}])
+            self._emit([{"type": "operation", "run_id": self.run_id, **entry}])
         return seq
 
 
