@@ -92,7 +92,7 @@ class Recording:
         self._order += 1
         self.entries.append((at_ms, self._order, peer, name, value))
 
-    def to_json(self, session_id: int, file: str, state: str, enums: dict[tuple[str, str], list[dict]],
+    def to_json(self, run_id: str, file: str, state: str, enums: dict[tuple[str, str], list[dict]],
                 run_ms: int | None = None) -> dict:
         """What GET api/recording answers for this run. enums: the items of each enum variable, by (peer, name);
         run_ms: the virtual time the run has reached (or ended at), when known."""
@@ -100,12 +100,12 @@ class Recording:
         reason = self.reason
         if self.available:
             if self.entries:
-                text, steps, skipped = scenario_yaml(self.entries, f"recorded from {file} (run {session_id})",
+                text, steps, skipped = scenario_yaml(self.entries, f"recorded from {file} (run {run_id})",
                                                      enums, self.omitted, run_ms)
             if steps == 0:
                 reason = ("no write made through this GUI server has been applied in this run yet: write variables "
                           "(the variables screen, or POST api/write), then save again")
-        return {"session_id": session_id, "file": file, "state": state, "available": self.available,
+        return {"run_id": str(run_id), "file": file, "state": state, "available": self.available,
                 "reason": reason if text is None else None, "writes": len(self.entries) - skipped,
                 "omitted": self.omitted + skipped, "steps": steps, "yaml": text}
 
