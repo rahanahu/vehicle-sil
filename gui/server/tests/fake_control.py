@@ -452,22 +452,25 @@ class FakeControl:
         yield from first
         while context.is_active():
             with self.changed:
-                if self.stopped:
-                    return
-                if self.version == seen:
+                if not self.stopped and self.version == seen:
                     self.changed.wait(0.1)
+                stopping = self.stopped
                 updates = []
-                for op in self.operations.values():
-                    if request.operations and op["version"] > seen:
-                        updates.append(pb.Update(operation=self._operation(op)))
-                for name, s in self.samples.items():
-                    if request.values and s[3] > seen:
-                        updates.append(pb.Update(values=pb.PeerValues(peer=name, incarnation="1",
-                                                                      snapshot=self._snapshot(name, s))))
-                for name, (_, version) in self.states.items():
-                    if request.availability and version > seen:
-                        updates.append(pb.Update(availability=self._states(name)))
-                if request.time and self.time["version"] > seen:
-                    updates.append(pb.Update(time=self._time()))
-                seen = self.version
-            yield from updates
+                if not stopping or self.time["ended"]:
+                    for op in self.operations.values():
+                        if request.operations and op["version"] > seen:
+                            updates.append(pb.Update(operation=self._operation(op)))
+                    for name, s in self.samples.items():
+                        if request.values and s[3] > seen:
+                            updates.append(pb.Update(values=pb.PeerValues(peer=name, incarnation="1",
+                                                                          snapshot=self._snapshot(name, s))))
+                    for name, (_, version) in self.states.items():
+                        if request.availability and version > seen:
+                            updates.append(pb.Update(availability=self._states(name)))
+                    if request.time and self.time["version"] > seen:
+                        updates.append(pb.Update(time=self._time()))
+                    seen = self.version
+            if updates:
+                yield from updates
+            if stopping:
+                return

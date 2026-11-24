@@ -157,6 +157,15 @@ def count_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def _variables_ending(session: Session) -> bool:
+    return (
+        session.phase in ("stopping", "ended")
+        or session.stop != "none"
+        or session.result is not None
+        or not session.launcher_running
+    )
+
+
 _MAX_CONFIG_HASH_BYTES = 16 * 1024 * 1024
 
 
@@ -1303,8 +1312,7 @@ class GuiServer:
             self._tell_variables(messages)
 
         variables = Variables(session.id, emit_variables, limits=self.o.variable_limits, secret=run_token,
-                              ending=lambda: session.phase == "stopping" or session.result is not None
-                              or not session.launcher_running)
+                              ending=lambda: _variables_ending(session))
         if why_not is None:
             variables.expect()
         else:

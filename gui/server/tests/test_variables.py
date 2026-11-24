@@ -537,3 +537,121 @@ def test_stubs_directory_outside_repository_without_env_is_unavailable(monkeypat
     with pytest.raises(control.Unavailable) as exc:
         control._stubs_directory()
     assert "does not run from the vehicle-sil repository" in str(exc.value)
+
+
+def test_variables_ending_predicate_before_result_arrives() -> None:
+    from vehicle_sil_gui.server import _variables_ending
+    from vehicle_sil_gui.session import Session
+    from vehicle_sil_gui.source import PeerInfo, TimeInfo
+    from vehicle_sil_gui.variables import Variables
+
+    def new_session() -> Session:
+        return Session(1, "simulation.yaml", [], None, False)
+
+    s = new_session()
+    assert not _variables_ending(s)
+    s.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 2}, 40)
+    s.feed_event({"event": "phase", "seq": 1, "t_ms": 1, "phase": "running"}, 40)
+    assert not _variables_ending(s)
+
+    for setup in (
+        lambda sess: setattr(sess, "phase", "stopping"),
+        lambda sess: setattr(sess, "phase", "ended"),
+        lambda sess: setattr(sess, "stop", "requested"),
+        lambda sess: setattr(sess, "stop", "forced"),
+        lambda sess: setattr(sess, "result", {"result": "passed"}),
+        lambda sess: setattr(sess, "launcher_running", False),
+    ):
+        cand = new_session()
+        cand.phase = "running"
+        setup(cand)
+        assert _variables_ending(cand)
+
+    async def verify_on_lost(trigger) -> None:
+        sess = new_session()
+        sess.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 2}, 40)
+        sess.feed_event({"event": "phase", "seq": 1, "t_ms": 1, "phase": "running"}, 40)
+        sent: list[dict] = []
+        v = Variables(sess.id, sent.extend, ending=lambda: _variables_ending(sess))
+        v.expect()
+        v.on_peers([PeerInfo("Engine", "1", True, [])], [])
+        v.on_time(TimeInfo(10_000_000, False, True, False))
+        v.on_synced()
+        assert v.state == "ready"
+        sent.clear()
+        trigger(sess)
+        assert sess.result is None and sess.launcher_running is True
+        v.on_lost("control server closed", False)
+        assert v.state == "ended"
+        states = [m["variables"]["state"] for m in sent if m["type"] == "variables"]
+        assert states == ["ended"]
+        await v.close()
+
+    asyncio.run(verify_on_lost(lambda sess: sess.feed_event({"event": "phase", "seq": 2, "t_ms": 2, "phase": "ended"}, 40)))
+    asyncio.run(verify_on_lost(lambda sess: sess.request_stop(False)))
+
+
+def test_fake_control_flushes_ended_time_when_stopped(control_env: dict) -> None:
+    import fake_control
+    from vehicle_sil_gui import control
+    from vehicle_sil_gui.variables import Variables
+
+    # Deterministic _watch() generator test: set_time(ended=True) and stopped=True before the post-initial loop.
+    server = fake_control.FakeControl({"Engine": fake_control.variables("Engine")})
+
+    class FakeContext:
+        def is_active(self) -> bool:
+            return True
+
+    req = server.pb.WatchRequest(values=False, events=False, operations=True, time=True, availability=True)
+    gen = server._watch(req, FakeContext())
+    while True:
+        update = next(gen)
+        if update.initial_done:
+            break
+    server.set_time(100, False, running=False, ended=True)
+    with server.changed:
+        server.stopped = True
+    remaining = list(gen)
+    assert any(u.WhichOneof("kind") == "time" and u.time.ended for u in remaining)
+
+    # End-to-end GrpcSource + Variables test: even with ending=lambda: False, flushed TimeState(ended=True)
+    # prevents emitting 'connecting' when FakeControl stops right after set_time(..., ended=True).
+    grpc_server = fake_control.FakeControl({"Engine": fake_control.variables("Engine")})
+    addr = grpc_server.start()
+
+    async def main() -> None:
+        sent: list[dict] = []
+        ended_event = asyncio.Event()
+
+        def emit(messages: list[dict]) -> None:
+            sent.extend(messages)
+            for msg in messages:
+                if msg["type"] == "variables" and msg["variables"]["state"] in ("ended", "failed"):
+                    ended_event.set()
+
+        v = Variables(1, emit, ending=lambda: False)
+        v.expect()
+        assert v.state == "connecting"
+        src = control.GrpcSource(control.load(), addr, None)
+        v.connect(src)
+        while v.state != "ready":
+            await asyncio.sleep(0.01)
+
+        with grpc_server.changed:
+            grpc_server.set_time(100, False, running=False, ended=True)
+            grpc_server.stopped = True
+            grpc_server.changed.notify_all()
+        grpc_server.stop()
+
+        async with asyncio.timeout(5.0):
+            await ended_event.wait()
+        states = [m["variables"]["state"] for m in sent if m["type"] == "variables"]
+        assert states == ["ready", "ended"]
+        assert v.time is not None and v.time.ended is True
+        await v.close()
+
+    try:
+        asyncio.run(main())
+    finally:
+        grpc_server.stop()

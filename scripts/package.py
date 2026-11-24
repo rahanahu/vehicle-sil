@@ -392,7 +392,10 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
 
         def rollback() -> None:
             for path, raw in snapshots:
-                path.write_bytes(raw)
+                try:
+                    path.write_bytes(raw)
+                except OSError as exc:
+                    print(f"warning: failed to restore {path}: {exc}", file=sys.stderr)
 
         try:
             for rel, new_text in updates:

@@ -447,6 +447,44 @@ class PackageVersionSyncTest(unittest.TestCase):
         for rel, content in before.items():
             self.assertEqual((tree / rel).read_bytes(), content, f"{rel} was not rolled back on post-sync error")
 
+    def test_sync_rollback_continues_when_one_restore_raises_oserror(self) -> None:
+        tree = self._copy_version_tree(with_uv_lock=True)
+        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        tracked = (*self.VERSION_FILES, "uv.lock")
+        before = {rel: (tree / rel).read_bytes() for rel in tracked}
+        fail_rel = "pyproject.toml"
+        fail_path = tree / fail_rel
+        orig_write_bytes = Path.write_bytes
+
+        def failing_uv(cmd, cwd=None, capture_output=False, text=False):
+            (Path(cwd) / "uv.lock").write_bytes(b"corrupted-partial-lock\n")
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="simulated offline failure")
+
+        def guarded_write_bytes(self_path: Path, data: bytes) -> int:
+            if self_path == fail_path:
+                raise OSError("simulated restore permission error")
+            return orig_write_bytes(self_path, data)
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(package_mod, "ROOT", tree),
+            mock.patch.object(package_mod.shutil, "which", return_value="/usr/bin/uv"),
+            mock.patch.object(package_mod.subprocess, "run", side_effect=failing_uv),
+            mock.patch.object(Path, "write_bytes", guarded_write_bytes),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+
+        self.assertEqual(rc, 1)
+        stderr_text = err.getvalue()
+        self.assertIn(f"warning: failed to restore {fail_path}: simulated restore permission error", stderr_text)
+        self.assertIn("error: uv lock --offline failed: simulated offline failure", stderr_text)
+        for rel, content in before.items():
+            if rel == fail_rel:
+                continue
+            self.assertEqual((tree / rel).read_bytes(), content, f"{rel} was not restored after {fail_rel} failed")
+
     def test_version_flag_validation_and_cli_exit_code_2(self) -> None:
         with self.assertRaises(package_mod.Usage):
             package_mod.version_command(argparse.Namespace(dry_run=True))
