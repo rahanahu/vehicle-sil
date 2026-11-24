@@ -7,6 +7,7 @@ import {
   Target,
   numberOf,
   openVariables,
+  scrollWidgetIntoView,
   startRun,
   stopRun,
   widget,
@@ -33,6 +34,7 @@ test('the example ECUs: writing the throttle changes the engine speed', async ({
       ['Engine', 'engine.speed'],
       ['Dashboard', 'dashboard.engine_speed'],
     ]) {
+      await scrollWidgetIntoView(page, peer, name);
       await expect(widget(page, peer, name)).toBeAttached();
     }
     await expect(

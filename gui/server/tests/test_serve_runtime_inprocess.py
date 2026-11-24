@@ -343,6 +343,11 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 current_run = None
                 status_rev += 1
                 launcher_state = "ready" if elig_state["eligible"] else "idle"
+                if mode == "delayed-idle":
+                    import time as _time
+                    _time.sleep(0.2)
+                elif mode == "crash-before-idle":
+                    os._exit(9)
                 emit({"event": "idle", "seq": seq, "t_ms": t_ms + 35})
                 seq += 1
         elif name in ("stop", "pause", "resume", "step", "run_until", "speed"):
@@ -1190,6 +1195,95 @@ def test_hot_file_only_single_call_serve_prepare_reuse_and_unknown_participant(t
             st3, err = await c.post("api/run", {"file": "a.yaml", "disable": ["Nobody"]})
             assert st3 == 400 and err["error"]["code"] == "unknown-participant"
             assert "Engine" in err["error"]["message"]
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_inspect_waits_for_delayed_idle_after_result_and_reuses_prepare(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(
+            tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "delayed-idle"},
+        ) as (server, c, log_path):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st1, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st1 == 200
+            await sock.until(is_ended)
+
+            # result arrives and broadcasts session:ended ~0.2s before idle;
+            # POST api/run must wait for resident.idle and reuse serve prepare.
+            st2, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st2 == 200
+            await sock.until(is_ended)
+
+            entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+            assert sum(1 for e in entries if e.get("cmd") == "check-file-only") == 1
+            assert sum(1 for e in entries if isinstance(e.get("cmd"), dict) and e["cmd"].get("command") == "prepare") == 1
+            assert rt.resident_starts == 1
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_inspect_wakes_immediately_if_resident_crashes_before_idle(tmp_path: Path) -> None:
+    import time
+
+    async def run() -> None:
+        async with _serve_gui(
+            tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "crash-before-idle"},
+        ) as (server, c, log_path):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st1, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st1 == 200
+            await sock.until(is_ended)
+
+            t0 = time.monotonic()
+            inspection = await rt.inspect_config("a.yaml")
+            elapsed = time.monotonic() - t0
+            assert elapsed < 2.0
+            assert inspection.hot.hot is True
+            assert rt._resident is None
+            entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+            assert sum(1 for e in entries if e.get("cmd") == "check-file-only") == 2
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_inspect_does_not_wait_for_idle_while_run_is_active(tmp_path: Path) -> None:
+    import time
+
+    async def run() -> None:
+        async with _serve_gui(
+            tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"},
+        ) as (server, c, log_path):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st1, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st1 == 200
+            await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+
+            t0 = time.monotonic()
+            inspection = await rt.inspect_config("a.yaml")
+            elapsed = time.monotonic() - t0
+            assert elapsed < 2.0
+            assert inspection.hot.hot is True
+            entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+            assert sum(1 for e in entries if e.get("cmd") == "check-file-only") == 2
+
+            await c.post("api/stop", {"force": False})
+            await sock.until(is_ended)
             await sock.close()
 
     asyncio.run(run())
