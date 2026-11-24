@@ -10,7 +10,7 @@
 
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 #include "vehicle_sil/runner/detail/runner.hpp"
-#include "vehicle_sil/launch/events.hpp"
+#include "vehicle_sil/launch/run_sink.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
 
 #include "vehicle_sil/process/paths.hpp"
@@ -33,7 +33,7 @@ using runner::detail::Runner;
 /// run, on the caller's stop requests if there are any. Its phases go to RunLent::events.
 struct OwnControls
 {
-    static runner::RunControls::Observers observers(EventStream* events)
+    static runner::RunControls::Observers observers(RunEventSink* events)
     {
         runner::RunControls::Observers out;
         if (events != nullptr)
@@ -44,7 +44,7 @@ struct OwnControls
         return out;
     }
 
-    OwnControls(runner::StopRequests* stops, const RunIntent& intent, const runner::RunObservers& given, EventStream* events,
+    OwnControls(runner::StopRequests* stops, const RunIntent& intent, const runner::RunObservers& given, RunEventSink* events,
                 bool control_server) :
       controls(stops != nullptr ? *stops : none, intent.start_paused, observers(events), intent.scenario.has_value())
     {
@@ -102,9 +102,9 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
         {
             throw std::invalid_argument(
               "RunLent::controls and RunLent::events are both set, but the controls have no observer for the "
-              "events the run leaves to them; set RunControls::Observers::on_phase to call EventStream::phase(), "
-              "Observers::on_command to call EventStream::command() and Observers::on_state to call "
-              "EventStream::state(), or leave `events` null.");
+              "events the run leaves to them; set RunControls::Observers::on_phase to call RunEventSink::phase(), "
+              "Observers::on_command to call RunEventSink::command() and Observers::on_state to call "
+              "RunEventSink::state(), or leave `events` null.");
         }
         const bool scenario = request.intent.scenario.has_value();
         if (lent.controls->start_paused() != request.intent.start_paused || lent.controls->scenario() != scenario)
@@ -223,7 +223,7 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // The controls get the time lock as soon as the configuration has been read, before any
     // --describe: the time commands that came until then wait for it, and are decided there.
     report.check = check_file(request, check, [&controls](const config::TimeLock& lock) { controls.set_time_lock(lock); });
-    event([&report](EventStream& e) { e.check(report.check); });
+    event([&report](RunEventSink& e) { e.check(report.check); });
     if (!report.check.passed())
     {
         // Nothing starts: the run ends as every run does. The phase `ended` refuses the time
@@ -233,7 +233,7 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
         return report;
     }
     // The participants that will not start, before anything starts, in the file's order.
-    event([&report](EventStream& e) {
+    event([&report](RunEventSink& e) {
         for (const auto& p : report.check.config->participants)
         {
             if (!p.enabled)
@@ -247,10 +247,10 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // Destroyed when run_file() returns, also if the run's closing thread was left at its limit
     // (OutcomeClose::not_closed_ms): that thread uses nothing of the Runner.
     // What the run is given, in three kinds: the plan (a value, settled here), the observers (the
-    // caller's functions) and what it borrows (the controls; the stream of the events and the
+    // caller's functions) and what it borrows (the controls; the event sink and the
     // control server stay here).
-    // The run tells through the interface it knows (RunEvents), which the stream of the events
-    // implements; the stream's own members (check(), phase(), state()) are called here only.
+    // The run tells through the interface it knows (RunEvents), which RunEventSink extends; the
+    // sink's own members (check(), phase(), state()) are called here only.
     runner::detail::Runner runner(runner::plan_run(report.check, detail::scenario_of(report.check), base, run_choices(request), limits,
                            server_of_run != nullptr),
                   observers, lent.events, controls);

@@ -7,6 +7,7 @@
 
 #include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
+#include "vehicle_sil/launch/run_sink.hpp"
 #include "vehicle_sil/runner/command.hpp"
 #include "vehicle_sil/runner/run_controls.hpp"
 #include "vehicle_sil/runner/run_events.hpp"
@@ -176,9 +177,10 @@ struct EventStreamOptions
 /// a console blocks while the console holds its output; a closed pipe fails the write on both
 /// (SIGPIPE is ignored).
 ///
-/// What the run itself tells is RunEvents (run_events.hpp), which this implements: the parts of a
-/// run call those members and do not know this class. The other members are for whoever runs the
-/// launcher's commands (hello, check, phase, command, state, result).
+/// What a run itself tells is RunEventSink (run_sink.hpp), which extends RunEvents (run_events.hpp)
+/// and which this implements: run_file() and the parts of a run call those members and do not
+/// know this class. The other members are for whoever runs the launcher's commands (hello, idle,
+/// refused, open_run, result).
 ///
 /// serve: one stream for the life of the launcher, which runs one run after the other. Each run
 /// has a window (open_run()): a stream object that shares this stream's queue, writer, watch,
@@ -191,7 +193,7 @@ struct EventStreamOptions
 /// the windows the stream writes the launcher's own lines (idle(), refused(), heartbeats) without
 /// "run", and is never sealed: only a result() of the stream itself (the launcher ends at its
 /// start) is the last line. One window is open at a time (the caller's rule).
-class EventStream : public runner::RunEvents
+class EventStream : public RunEventSink
 {
 public:
     /// Writes the beginning of `bytes` to the output (as much as it takes); may block while the
@@ -221,9 +223,9 @@ public:
     /// the run command's number (null without one). The window is open until its result() or
     /// until it is destroyed; it may outlive this object (it shares the stream's state).
     [[nodiscard]] std::unique_ptr<EventStream> open_run(const std::string& run, std::optional<std::int64_t> id);
-    void phase(runner::Phase phase);
+    void phase(runner::Phase phase) override;
     /// The check's result, as `check --json` writes it.
-    void check(const Checked& report);
+    void check(const Checked& report) override;
     void registry(const std::string& uri) override;
     /// "control_server": the run's control server listens at `address` (gRPC, the actual port),
     /// with TLS or not, with credentials (every call needs a token) or not.
@@ -267,13 +269,13 @@ public:
     void time(const runner::TimeEvent& time) override;
     /// A command from standard input (`source` "stdin"), its end ("eof"), or a call of a control
     /// client ("control_server").
-    void command(const runner::Command& command, std::string_view source);
+    void command(const runner::Command& command, std::string_view source) override;
     /// "state": where the run stands and what it takes now (RunControls::publish() calls this
     /// when that has changed). Unlike every other event it is no history: only the latest means
     /// anything, so a "state" that still waits to be written is replaced by this one, which goes
     /// to the end of the queue (its "seq" is higher than that of every event made before the
     /// call). It is never counted for max_other_events, and at most one waits.
-    void state(const runner::RunState& state);
+    void state(const runner::RunState& state) override;
     /// The last event: the run's result as `run --json` writes it. `members`: the event's members
     /// as a compact JSON object, {"result":{...}} (format_result_event() of run.hpp writes it from
     /// the run's report). On a run's window (open_run()): the window's last line, which closes the

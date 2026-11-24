@@ -9,6 +9,7 @@
 
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/request.hpp"
+#include "vehicle_sil/launch/run_sink.hpp"
 #include "vehicle_sil/runner/run_controls.hpp"
 #include "vehicle_sil/runner/run_events.hpp"
 #include "vehicle_sil/runner/run_outcome.hpp"
@@ -26,8 +27,6 @@ class Hub;
 } // namespace vehicle_sil::control
 
 namespace vehicle_sil::launch {
-
-class EventStream;
 
 /// The version of the JSON that format_run_json() writes (its "vehicle_sil_run" key).
 inline constexpr int kRunFormat = 2;
@@ -167,14 +166,15 @@ struct RunLent
     /// server with it. run_file() starts it as it starts its own; it must stay usable while
     /// run_file() runs, and the caller ends it after run_file().
     ControlEndpoint* control_endpoint = nullptr;
-    /// run --events: what happens, as events (events.hpp) instead of RunObservers::write_line():
+    /// run --events: what happens, as events (run_sink.hpp; EventStream of events.hpp is one
+    /// implementation) instead of RunObservers::write_line():
     /// the phases, the check, the participants, the lines, the run's findings, the virtual time.
     /// run_file() writes every event but hello and the result (the caller writes them). No call
     /// waits for the reader of the events. May be null. run_file() writes the check and the
     /// disabled participants itself, and the phases and the state when it makes its own controls
     /// (with lent controls, the caller's observers write them); the parts of the run are given the
-    /// stream as the interface they know (RunEvents, run_events.hpp).
-    EventStream* events = nullptr;
+    /// sink as the interface they know (RunEvents, run_events.hpp).
+    RunEventSink* events = nullptr;
     /// serve: a run whose registry would listen at a fixed address (the file's registry_uri, or a
     /// participant that is started by hand, which waits at the fixed address of manual runs) is
     /// refused after its check, before anything starts: CheckReport::usage with one finding that
