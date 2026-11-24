@@ -81,9 +81,10 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 
 | 変更 | 実行するもの |
 |---|---|
-| 文書だけ | リンクとスキーマ・テンプレートの検査（`python`）。変更したページが、文書を比べる `linux-gcc-debug` のテストが読むもの（`docs/simulation-*.md`、`docs/scenario.md`、`docs/ecu-executable.md`、`docs/j1939-guide.md`、`docs/howto/*.md`）であるときは `linux-gcc-debug` も、`docs/howto/first-ecu.md` か `docs/howto/operate-signals.md` であるときは `linux-gcc-control` も。変更したファイルが `gui/` 以下にあるときは GUI の README の書式も、`docs/gui.md` か `gui/protocol/README.md`（またはその日本語のページ）であるときは GUI サーバーのテストとタイムライン要素のテストも、`gui/client/README.md` か `examples/gui_starter/README.md`（またはその日本語のページ）であるときはクライアントライブラリのパッケージの検査（`npm run pack:client`）も |
+| 文書だけ（`tools/knowledge/` を除く） | リンクとスキーマ・テンプレートの検査（`python` は `.python-version` のみ）。変更したページが、文書を比べる `linux-gcc-debug` のテストが読むもの（`docs/simulation-*.md`、`docs/scenario.md`、`docs/ecu-executable.md`、`docs/j1939-guide.md`、`docs/howto/*.md`）であるときは `linux-gcc-debug` も、`docs/howto/first-ecu.md` か `docs/howto/operate-signals.md` であるときは `linux-gcc-control` も。変更したファイルが `gui/` 以下にあるときは GUI の README の書式も、`docs/gui.md` か `gui/protocol/README.md`（またはその日本語のページ）であるときは GUI サーバーのテストとタイムライン要素のテストも、`gui/client/README.md` か `examples/gui_starter/README.md`（またはその日本語のページ）であるときはクライアントライブラリのパッケージの検査（`npm run pack:client`）も |
 | ブラウザ GUI だけ（`gui/web`、`gui/client`、`gui/timeline`、`gui/protocol/examples`、`examples/gui_client`、`examples/gui_starter`） | GUI のジョブ（`gui` と `gui-server`）と `python`。変更したファイルが、`tests/launch/test_shared_values.cpp` が上限や定数を読むファイルであるときは `linux-gcc-debug` も |
-| GUI サーバー（`gui/server`、`gui/protocol/dashboard.schema.json`） | `gui`、`gui-server`、`linux-gcc-debug`、`linux-gcc-control`、`python` |
+| GUI サーバー（`gui/server`、`gui/protocol/dashboard.schema.json`） | `gui`、`gui-server`、`python`、`linux-gcc-control`（`launch.shared_values` と `schema.*`、および記録の照合も含む実ランチャーの GUI テストに絞って実行。C++ が検証する文書も変えたときは `linux-gcc-debug` と全 CTest も実行） |
+| 非 GUI スクリプト（GUI・共通スクリプト以外の `scripts/`、`tests/scripts/test_*.py`） | `python`、および `scripts.*` と `template.*` に絞った `linux-gcc-debug` と Windows（`scripts/trace-report.py` を変えたときは `launch_run.trace_files` も追加） |
 | `tools/knowledge` だけ | `python` |
 | コード | `linux-gcc-debug`、`linux-clang-tsan`、`linux-gcc-control`、Windows、GUI のジョブ（変更したファイルがすべて GUI とそのテストが読むものの外なら除く）、`python` |
 | ビルドのファイル（CMake、プリセット、パッチ、`external/`、`.gitmodules`、`.github/`） | さらに `linux-gcc-release`、`linux-gcc-static`、最も古い CMake、ECU プロジェクトのテンプレートを FetchContent でビルドするテスト |
