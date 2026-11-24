@@ -158,12 +158,10 @@ class LaunchedTest(unittest.TestCase):
         self.assertIn("engine.speed", target.reason)
 
         # The engine sped up (towards 2400 rpm) and the dashboard received it over J1939.
-        deadline = time.time() + scaled(10)
-        while time.time() < deadline:
-            v = c.values("Dashboard")
-            if v and v.time >= ms(590):
-                break
-            time.sleep(0.05)
+        with Control(self.address) as w:
+            first(self, w.watch(peers=["Dashboard"], values=True, events=False, operations=False),
+                  lambda u: isinstance(u, Values) and u.peer == "Dashboard" and u.time >= ms(590),
+                  timeout=10.0)
         engine = c.values("Engine").values
         dashboard = c.values("Dashboard").values
         self.assertEqual(engine["engine.throttle"], 80.0)

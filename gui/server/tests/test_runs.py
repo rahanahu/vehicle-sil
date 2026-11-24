@@ -14,8 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import (CONFIGS, REPLAY, Client, Gui, alive, gui_server, is_ended, is_state, is_synced, run_async, scaled, wait_until,
-                      without_variables)
+from conftest import (CONFIGS, REPLAY, Client, Gui, alive, gui_server, is_ended, is_state, is_synced, run_async, scaled,
+                      until_async, wait_until, without_variables)
 from vehicle_sil_gui import __version__
 
 POSIX = sys.platform != "win32"
@@ -388,7 +388,9 @@ def test_a_second_stop_does_not_wait(tmp_path: Path) -> None:
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
             await c.post("api/stop")
             await sock.until(lambda m: m.get("event", {}).get("command") == "stop")
-            await asyncio.sleep(0.3)
+            await sock.until(lambda m: m.get("event", {}).get("event") == "participant"
+                             and m["event"].get("name") == "Logger"
+                             and m["event"].get("state") == "stop_requested")
             status, body = await c.get("api/session")
             assert body["session"]["state"] == "running"  # this launcher waits after the first stop
             status, body = await c.post("api/stop", {"force": True})
@@ -558,7 +560,13 @@ def test_a_second_signal_skips_the_waiting(tmp_path: Path) -> None:
     with gui_server(tmp_path, env={"REPLAY_NO_SLEEPERS": "0"}) as gui:
         pids = start_run(gui, "ignore-stop.yaml")
         gui.proc.send_signal(signal.SIGINT)
-        time.sleep(0.5)
+
+        async def wait_shutting_down(c: Client) -> None:
+            async def ending() -> bool:
+                return (await c.post("api/check", {"file": "../outside.yaml"}))[0] == 503
+            assert await until_async(ending)
+
+        run_async(wait_shutting_down, gui)
         assert gui.proc.poll() is None  # waiting for the launcher, which ignores the first stop
         start = time.monotonic()
         gui.proc.send_signal(signal.SIGINT)
@@ -857,7 +865,7 @@ def test_a_start_that_is_starting_says_so_to_the_second_request(tmp_path: Path) 
             sock = await c.ws()
             await sock.until(is_synced)
             first = asyncio.ensure_future(c.post("api/run", {"file": "forever.yaml"}))
-            await asyncio.sleep(0.1)
+            await sock.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"].get("reason") == "starting")
             status, body = await c.post("api/run", {"file": "forever.yaml"})
             assert status == 409 and body["error"]["code"] == "starting", body
             assert (await first)[0] == 200

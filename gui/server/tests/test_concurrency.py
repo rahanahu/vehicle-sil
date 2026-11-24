@@ -42,6 +42,8 @@ def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool)
         async def main(c: Client) -> list[int]:
             if checked_first:
                 assert (await c.post("api/check", {"file": "forever.yaml"}))[0] == 200
+            sock = await c.ws()
+            await sock.until(is_synced)
             replies = await asyncio.gather(*(c.post("api/run", {"file": "forever.yaml"}) for _ in range(4)))
             assert sorted(s for s, _ in replies) == [200, 409, 409, 409], replies
             # a start in progress is `starting`; once its run is registered, `already-running`
@@ -56,9 +58,9 @@ def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool)
                         and (session.get("launcher") or {}).get("pid") == found[0])
             assert await until_async(the_run_alone), children(gui.proc.pid)
             launchers = children(gui.proc.pid)
-            # ... and stays the only one: no refused request starts another a moment later (a check that
-            # something does not happen, so the time is not scaled).
-            await asyncio.sleep(1.0)
+            # ... and stays the only one once the simulation is ticking: no refused request started another.
+            await sock.until(lambda m: m.get("event", {}).get("event") == "time")
+            await sock.close()
             assert children(gui.proc.pid) == launchers, (launchers, children(gui.proc.pid))
             return launchers
         launchers = run_async(main, gui)
@@ -108,7 +110,9 @@ def test_force_stops_a_launcher_that_waits(tmp_path: Path) -> None:
             status, body = await c.post("api/stop", {})
             assert body["session"]["stop"] == "requested"
             await sock.until(lambda m: m.get("event", {}).get("command") == "stop")
-            await asyncio.sleep(0.3)
+            await sock.until(lambda m: m.get("event", {}).get("event") == "participant"
+                             and m["event"].get("name") == "Logger"
+                             and m["event"].get("state") == "stop_requested")
             status, body = await c.get("api/session")
             assert body["session"]["state"] == "running"  # this launcher waits after the first stop
             replies = await asyncio.gather(*(c.post("api/stop", {"force": True}) for _ in range(3)))
@@ -268,6 +272,10 @@ def unauthenticated_websocket(port: int) -> socket.socket:
 def half_sent_request(port: int) -> socket.socket:
     s = socket.create_connection(("127.0.0.1", port))
     s.sendall(b"GET /api/app HTTP/1.1\r\nHost: 127.0.0.1")
+    # Round-trip a second connection so aiohttp's accept loop has processed `s` before SIGTERM.
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as probe:
+        probe.sendall(f"GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n".encode())
+        assert probe.recv(100).startswith(b"HTTP/1.1 ")
     return s
 
 
@@ -283,7 +291,6 @@ def test_open_connections_do_not_delay_the_end(tmp_path: Path, connect) -> None:
     with gui_server(tmp_path) as gui:
         s = connect(gui.port)
         try:
-            time.sleep(0.3)
             assert stop_and_time(gui.proc) < 4
             if connect is unauthenticated_websocket:  # told why: going away (1001), not just cut
                 s.settimeout(2)

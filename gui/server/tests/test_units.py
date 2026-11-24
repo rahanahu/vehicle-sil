@@ -577,13 +577,22 @@ def run_hub(messages: list[dict], limit: int = 10, max_bytes: int = 1 << 30,
             sent.append(json.loads(text))
 
         client = hub.client(send)
+        drained = asyncio.Event()
+        orig_next = client.next
+
+        async def next_item() -> object:
+            if gate.is_set() and not client.items:
+                drained.set()
+            return await orig_next()
+
+        client.next = next_item  # type: ignore[method-assign]
         task = asyncio.create_task(hub.serve(client, None, None))
         await asyncio.sleep(0)
         for m in messages:
             hub.broadcast([m], log_key)
             assert len(client.items) <= limit + 1
         gate.set()
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(drained.wait(), timeout=2.0)
         hub.close_all()
         await task
         assert client not in hub.clients
@@ -1026,23 +1035,45 @@ def test_a_command_that_does_not_end_is_killed_with_its_children(tmp_path: Path)
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 def test_a_cancelled_command_is_killed_with_its_children(tmp_path: Path) -> None:
-    pids = tmp_path / "pids"
-    code = ("import os, subprocess, sys, time\n"
-            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
-            f"open({str(pids)!r}, 'w').write(f'{{os.getpid()}} {{child.pid}}')\n"
-            "time.sleep(60)\n")
+    from conftest import alive, scaled, wait_until
 
-    async def main() -> None:
-        task = asyncio.create_task(process.run_to_end([sys.executable, "-c", code], cwd=None, timeout_s=60))
-        while not pids.exists() or not pids.read_text():
-            await asyncio.sleep(0.05)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+    async def main() -> tuple[int, int]:
+        ready: asyncio.Future[tuple[int, int]] = asyncio.get_running_loop().create_future()
 
-    asyncio.run(main())
-    from conftest import alive, wait_until
-    parent, child = map(int, pids.read_text().split())
+        async def on_ready(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                line = (await reader.readline()).decode("utf-8").strip()
+                if line and not ready.done():
+                    p, c = map(int, line.split())
+                    ready.set_result((p, c))
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        srv = await asyncio.start_server(on_ready, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        code = ("import os, socket, subprocess, sys, time\n"
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+                f"with socket.create_connection(('127.0.0.1', {port})) as s:\n"
+                "    s.sendall(f'{os.getpid()} {child.pid}\\n'.encode())\n"
+                "time.sleep(60)\n")
+        try:
+            task = asyncio.create_task(process.run_to_end([sys.executable, "-c", code], cwd=None, timeout_s=60))
+            try:
+                parent, child = await asyncio.wait_for(ready, timeout=scaled(10.0))
+            except BaseException:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                raise
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            return parent, child
+        finally:
+            srv.close()
+            await srv.wait_closed()
+
+    parent, child = asyncio.run(main())
     assert wait_until(lambda: not alive(parent) and not alive(child), 5)
 
 
@@ -1051,33 +1082,50 @@ def test_a_cancelled_command_is_killed_with_its_children(tmp_path: Path) -> None
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 def test_the_last_resort_kills_a_version_probe_that_hangs(tmp_path: Path) -> None:
-    from conftest import CONFIGS, alive
+    from conftest import CONFIGS, alive, scaled, wait_until
     from vehicle_sil_gui.launcher import Launcher
     from vehicle_sil_gui.server import GuiServer, Options
-    pid_file = tmp_path / "pid"
     path = tmp_path / "launcher.py"
-    path.write_text(f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
-    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(path), port=1, token="t"))
 
     async def main() -> bool:
-        probe = asyncio.create_task(server.launcher.probe())
-        while not pid_file.exists() or not pid_file.read_text():
-            await asyncio.sleep(0.05)
-        server.kill_all()  # what the server's end does when it takes too long: the probe is not left
-        pid = int(pid_file.read_text())
-        for _ in range(60):
-            if not alive(pid):
-                break
-            await asyncio.sleep(0.05)
-        gone = not alive(pid)
-        probe.cancel()
-        await asyncio.gather(probe, return_exceptions=True)
-        return gone
+        ready: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+        async def on_ready(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                line = (await reader.readline()).decode("utf-8").strip()
+                if line and not ready.done():
+                    ready.set_result(int(line))
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        srv = await asyncio.start_server(on_ready, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        path.write_text(
+            "import os, socket, time\n"
+            f"with socket.create_connection(('127.0.0.1', {port})) as s:\n"
+            "    s.sendall(f'{os.getpid()}\\n'.encode())\n"
+            "time.sleep(60)\n",
+        )
+        server = GuiServer(Options(root=CONFIGS, launcher=Launcher(path), port=1, token="t"))
+        try:
+            probe = asyncio.create_task(server.launcher.probe())
+            try:
+                pid = await asyncio.wait_for(ready, timeout=scaled(10.0))
+                server.kill_all()  # what the server's end does when it takes too long: the probe is not left
+                gone = await asyncio.to_thread(wait_until, lambda: not alive(pid), 5)
+            finally:
+                probe.cancel()
+                await asyncio.gather(probe, return_exceptions=True)
+            return gone
+        finally:
+            srv.close()
+            await srv.wait_closed()
 
     assert asyncio.run(main())
 
 
-def test_concurrent_probes_wait_for_the_answer(tmp_path: Path) -> None:
+def test_concurrent_probes_wait_for_the_answer(tmp_path: Path, monkeypatch) -> None:
     from conftest import REPLAY
     from vehicle_sil_gui.launcher import Launcher
     path = tmp_path / "launcher.py"
@@ -1087,12 +1135,36 @@ def test_concurrent_probes_wait_for_the_answer(tmp_path: Path) -> None:
     async def main() -> list[bool]:
         await launcher.probe()
         assert launcher.usable
-        path.write_text("import time\ntime.sleep(0.5)\nprint('not the version object')\n")  # replaced
+        path.write_text("print('not the version object')\n")  # replaced (new size invalidates cached stamp)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def gated_run_to_end(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            entered.set()
+            await release.wait()
+            return 0, b"not the version object\n", b""
+
+        monkeypatch.setattr(process, "run_to_end", gated_run_to_end)
 
         async def probe() -> bool:
             await launcher.probe()
             return launcher.usable
-        return await asyncio.gather(probe(), probe())
+
+        first = asyncio.create_task(probe())
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5.0)
+            second = asyncio.create_task(probe())
+            while not launcher._lock.locked():
+                await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        finally:
+            release.set()
+        results = await asyncio.gather(first, second)
+        assert calls == 1
+        return results
 
     assert asyncio.run(main()) == [False, False]
 

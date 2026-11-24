@@ -134,14 +134,30 @@ class Proc:
         self.reader.start()
 
     def _read(self) -> None:
-        for line in self.p.stdout:
+        try:
+            for line in self.p.stdout:
+                with self.lock:
+                    self.lines.append(line.rstrip("\n"))
+                    self.lock.notify_all()
+        finally:
             with self.lock:
-                self.lines.append(line.rstrip("\n"))
                 self.lock.notify_all()
 
     def text(self) -> str:
         with self.lock:
             return "\n".join(self.lines)
+
+    def wait_until(self, predicate, describe, timeout: float = WAIT) -> None:
+        """Waits until `predicate(lines)` holds, woken on every output line; fails after `timeout` s or on EOF."""
+        end = time.monotonic() + timeout
+        with self.lock:
+            while True:
+                if predicate(self.lines):
+                    return
+                remaining = end - time.monotonic()
+                if remaining <= 0 or (self.p.poll() is not None and not self.reader.is_alive()):
+                    fail(f"{describe(self.lines)}; the output:\n{chr(10).join(self.lines)}")
+                self.lock.wait(min(0.2, remaining))
 
     def wait_for(self, part: str, timeout: float = WAIT, after: int = 0) -> str:
         """The first line with `part` (from line number `after` on); fails after `timeout` s or when the program has
@@ -152,9 +168,10 @@ class Proc:
                 for line in self.lines[after:]:
                     if part in line:
                         return line
-                if time.monotonic() > end or (self.p.poll() is not None and not self.reader.is_alive()):
+                remaining = end - time.monotonic()
+                if remaining <= 0 or (self.p.poll() is not None and not self.reader.is_alive()):
                     fail(f"no line with {part!r} within {timeout} s; the output:\n{chr(10).join(self.lines)}")
-                self.lock.wait(0.2)
+                self.lock.wait(min(0.2, remaining))
 
     def count(self) -> int:
         with self.lock:
@@ -310,16 +327,14 @@ def final_statistics(bridge: Proc) -> dict[str, int]:
 
 def wait_for_statistics(bridge: Proc, **expected: int) -> None:
     """Waits until the latest statistics line has at least the counts in `expected`."""
-    end = time.monotonic() + WAIT
-    while True:
-        lines = [line for line in bridge.text().splitlines() if "] stats " in line]
-        if lines:
-            found = dict((k, int(v)) for k, v in re.findall(r"\b([a-z_]+)=([0-9]+)", lines[-1]))
-            if all(found.get(k, 0) >= v for k, v in expected.items()):
-                return
-        if time.monotonic() > end:
-            fail(f"the statistics never reached {expected}; the output:\n{bridge.text()}")
-        time.sleep(0.1)
+    def enough(lines: list[str]) -> bool:
+        stats = [line for line in lines if "] stats " in line]
+        if not stats:
+            return False
+        found = dict((k, int(v)) for k, v in re.findall(r"\b([a-z_]+)=([0-9]+)", stats[-1]))
+        return all(found.get(k, 0) >= v for k, v in expected.items())
+
+    bridge.wait_until(enough, lambda _lines: f"the statistics never reached {expected}")
 
 
 def link_lines(bridge: Proc) -> list[str]:
@@ -327,11 +342,11 @@ def link_lines(bridge: Proc) -> list[str]:
 
 
 def wait_for_link(bridge: Proc, value: str) -> None:
-    end = time.monotonic() + WAIT
-    while not link_lines(bridge) or f"link={value}" not in link_lines(bridge)[-1]:
-        if time.monotonic() > end:
-            fail(f"the last link line does not say link={value}:\n{bridge.text()}")
-        time.sleep(0.1)
+    def reached(lines: list[str]) -> bool:
+        links = [line.split("] link ", 1)[1] for line in lines if line.startswith("[bridge] link ")]
+        return bool(links) and f"link={value}" in links[-1]
+
+    bridge.wait_until(reached, lambda _lines: f"the last link line does not say link={value}")
 
 
 def start_peer(world: World, *more: str) -> Proc:

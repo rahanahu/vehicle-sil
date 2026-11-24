@@ -180,9 +180,12 @@ def test_a_run_compares_its_targets_right_before_the_launcher_starts(tmp_path: P
         gui = Gui(proc=None, port=test_server.port, token="test-token",
                   url=f"http://127.0.0.1:{test_server.port}/#token=test-token", stderr=tmp_path / ".err")
         orig_no_vars = server._no_variables
+        entered = asyncio.Event()
+        release = asyncio.Event()
 
         async def slow_no_vars():
-            await asyncio.sleep(0.35)
+            entered.set()
+            await release.wait()
             return await orig_no_vars()
 
         server._no_variables = slow_no_vars  # type: ignore[method-assign]
@@ -191,21 +194,30 @@ def test_a_run_compares_its_targets_right_before_the_launcher_starts(tmp_path: P
                 c = Client(gui, http)
                 await listed(c)
                 starting = asyncio.ensure_future(c.post("api/run", run))
-                await asyncio.sleep(0.1)
-                touch(root / FILE)
-                refused(*await starting, "target-not-listed")
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=5.0)
+                    touch(root / FILE)
+                finally:
+                    release.set()
+                refused(*await asyncio.wait_for(starting, timeout=5.0), "target-not-listed")
 
                 await listed(c)
                 broken.touch()
+                entered.clear()
+                release.clear()
                 starting = asyncio.ensure_future(c.post("api/run", run))
-                await asyncio.sleep(0.1)
-                status, reply = await c.post("api/connections", LIST)
-                assert (status, reply["error"]["code"]) == (502, "launcher-output"), reply
-                error = refused(*await starting, "target-not-listed")
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=5.0)
+                    status, reply = await c.post("api/connections", LIST)
+                    assert (status, reply["error"]["code"]) == (502, "launcher-output"), reply
+                finally:
+                    release.set()
+                error = refused(*await asyncio.wait_for(starting, timeout=5.0), "target-not-listed")
                 assert "there is no list of where 'ETH_EXT'" in error["message"]
                 status, body = await c.get("api/session")
                 assert body["session"] is None
         finally:
+            release.set()
             await server.shutdown()
             await test_server.close()
 
@@ -254,9 +266,12 @@ def test_a_run_whose_file_changes_during_its_check_connects_nothing(tmp_path: Pa
         gui = Gui(proc=None, port=test_server.port, token="test-token",
                   url=f"http://127.0.0.1:{test_server.port}/#token=test-token", stderr=tmp_path / ".err")
         orig_no_vars = server._no_variables
+        entered = asyncio.Event()
+        release = asyncio.Event()
 
         async def slow_no_vars():
-            await asyncio.sleep(0.35)
+            entered.set()
+            await release.wait()
             return await orig_no_vars()
 
         server._no_variables = slow_no_vars  # type: ignore[method-assign]
@@ -264,14 +279,18 @@ def test_a_run_whose_file_changes_during_its_check_connects_nothing(tmp_path: Pa
             async with aiohttp.ClientSession() as http:
                 c = Client(gui, http)
                 starting = asyncio.ensure_future(c.post("api/run", {"file": FILE, "connect": {"CAN1": "physical:1"}}))
-                await asyncio.sleep(0.1)
-                touch(root / FILE)
-                error = refused(*await starting, "target-not-listed")
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=5.0)
+                    touch(root / FILE)
+                finally:
+                    release.set()
+                error = refused(*await asyncio.wait_for(starting, timeout=5.0), "target-not-listed")
                 assert "connect.yaml has changed since this run was checked" in error["message"]
                 assert error["detail"] == {"network": "CAN1", "target": "physical:1"}
                 status, body = await c.get("api/session")
                 assert body["session"] is None
         finally:
+            release.set()
             await server.shutdown()
             await test_server.close()
 

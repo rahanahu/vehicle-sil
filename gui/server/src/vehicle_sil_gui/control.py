@@ -30,6 +30,7 @@ event or a message: every text that comes from the control server is cleaned of 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import importlib.util
 import logging
@@ -270,10 +271,12 @@ class GrpcSource:
         self._sink: Sink | None = None
         self._thread: threading.Thread | None = None
         self._thread_done: asyncio.Event | None = None
+        self._done_future: concurrent.futures.Future[None] | None = None
         self._reader_exited = threading.Event()
-        self._stop = threading.Event()
-        self._taken = threading.Event()  # the loop has taken a lost connection: the reader may connect again
         self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+        self._stop_flag = False
+        self._taken_flag = False  # the loop has taken a lost connection: the reader may connect again
         self._call = None
         self._scheduled = False
         self._closed = False
@@ -295,7 +298,11 @@ class GrpcSource:
         self._loop = asyncio.get_running_loop()
         self._sink = sink
         self._thread_done = asyncio.Event()
+        self._done_future = concurrent.futures.Future()
         self._reader_exited.clear()
+        with self._cond:
+            self._stop_flag = False
+            self._taken_flag = False
         self._thread = threading.Thread(target=self._read, name="vehicle_sil_gui control", daemon=True)
         self._thread.start()
 
@@ -303,9 +310,10 @@ class GrpcSource:
         if self._closed:
             return
         self._closed = True
-        self._stop.set()
-        self._taken.set()
-        with self._lock:
+        with self._cond:
+            self._stop_flag = True
+            self._taken_flag = True
+            self._cond.notify_all()
             call = self._call
         if call is not None:
             call.cancel()
@@ -315,20 +323,24 @@ class GrpcSource:
             return
         deadline = time.monotonic() + CLOSE_WAIT_S
         done = self._thread_done
+        done_future = self._done_future
         same_loop = self._loop is asyncio.get_running_loop()
         if done is not None and same_loop and not self._reader_exited.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(done.wait(), timeout=CLOSE_WAIT_S)
+        elif done_future is not None and not self._reader_exited.is_set():
+            # Cross-loop close(): wrap the thread-safe Future on the caller's loop (no sleep polling).
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.wrap_future(done_future), timeout=CLOSE_WAIT_S)
         elif not self._reader_exited.is_set():
-            # Fallback only when close() runs on a different loop than start().
-            while thread.is_alive() and time.monotonic() < deadline:
-                await asyncio.sleep(0.01)
+            await asyncio.to_thread(thread.join, CLOSE_WAIT_S)
+            return
         if self._reader_exited.is_set() and thread.is_alive():
-            # _read() has already reached its finally block; join the exiting OS thread briefly
-            # so thread.is_alive() is reliably False when close() returns.
+            # _read() has already reached its finally block; join the exiting OS thread off the event loop
+            # so thread.is_alive() is reliably False when close() returns without blocking the loop.
             remaining = max(0.0, deadline - time.monotonic())
             if remaining > 0.0:
-                thread.join(timeout=min(0.05, remaining))
+                await asyncio.to_thread(thread.join, remaining)
 
     async def read_peers(self, timeout_s: float) -> list[PeerInfo]:
         reply = await self._unary(self._stub.ListPeers, self._pb.ListPeersRequest(), timeout_s)
@@ -448,7 +460,9 @@ class GrpcSource:
             lost, self._lost = self._lost, None
         sink = self._sink
         if self._closed or sink is None:
-            self._taken.set()
+            with self._cond:
+                self._taken_flag = True
+                self._cond.notify_all()
             return
         try:
             if peers or removed:
@@ -471,7 +485,9 @@ class GrpcSource:
             log.exception("taking what the control server sent")
         finally:
             if lost is not None:
-                self._taken.set()
+                with self._cond:
+                    self._taken_flag = True
+                    self._cond.notify_all()
 
     def _peer(self, p) -> PeerInfo:
         pb = self._pb
@@ -518,17 +534,29 @@ class GrpcSource:
     # ------------------------------------------------------------ the reader thread
 
     def _wake(self) -> None:
-        """Under _lock: asks the loop to take what was read, once however much is read before it does."""
+        """Under _cond: asks the loop to take what was read, once however much is read before it does."""
+        is_closed = getattr(self._loop, "is_closed", None)
+        if callable(is_closed) and is_closed():
+            self._stop_flag = True
+            self._taken_flag = True
+            self._cond.notify_all()
+            return
         if self._scheduled:
             return
         self._scheduled = True
         try:
             self._loop.call_soon_threadsafe(self._take)
         except RuntimeError:  # the loop is closed
-            self._stop.set()
+            self._stop_flag = True
+            self._taken_flag = True
+            self._cond.notify_all()
 
     def _notify_thread_done(self) -> None:
         self._reader_exited.set()
+        done_future = self._done_future
+        if done_future is not None:
+            with contextlib.suppress(concurrent.futures.InvalidStateError):
+                done_future.set_result(None)
         loop, done = self._loop, self._thread_done
         if loop is not None and done is not None and not loop.is_closed():
             try:
@@ -547,7 +575,10 @@ class GrpcSource:
         delay = RECONNECT_MIN_S
         fatal_codes = (grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED,
                        grpc.StatusCode.UNIMPLEMENTED, grpc.StatusCode.INVALID_ARGUMENT)
-        while not self._stop.is_set():
+        while True:
+            with self._cond:
+                if self._stop_flag:
+                    return
             reason, fatal, synced = "the control server ended the connection", False, False
             silent = threading.Event()
             try:
@@ -559,9 +590,10 @@ class GrpcSource:
                 if "operation_clients_excluded" in request.DESCRIPTOR.fields_by_name:  # not in stubs older than it
                     request.operation_clients_excluded.append(SCENARIO_CLIENT)
                 call = self._stub.Watch(request, metadata=self._metadata)
-                with self._lock:
+                with self._cond:
                     self._call = call
-                if self._stop.is_set():
+                    stopped = self._stop_flag
+                if stopped:
                     call.cancel()
                 # A server that takes the call and then says nothing (it hangs) is not waited for for ever.
                 watchdog = threading.Timer(SYNC_TIMEOUT_S, lambda: (silent.set(), call.cancel()))
@@ -593,23 +625,23 @@ class GrpcSource:
                 call.cancel()
             except Exception as e:  # the channel was closed under the call, or a message this side cannot read
                 reason = f"reading from the control server failed ({type(e).__name__}: {e})"
-            if self._stop.is_set():
-                return
             if synced:
                 delay = RECONNECT_MIN_S
-            self._taken.clear()
-            with self._lock:
+            with self._cond:
                 self._call = None
+                if self._stop_flag:
+                    return
+                self._taken_flag = False
                 self._lost = (reason, fatal)
                 self._wake()
-            if fatal:
-                return
-            # Not before the loop has taken the end of this connection: what the next one sends comes after it.
-            while not self._taken.wait(0.1):
-                if self._stop.is_set():
+                if fatal:
                     return
-            if self._stop.wait(delay):
-                return
+                # Not before the loop has taken the end of this connection: what the next one sends comes after it.
+                self._cond.wait_for(lambda: self._taken_flag or self._stop_flag)
+                if self._stop_flag:
+                    return
+                if self._cond.wait_for(lambda: self._stop_flag, timeout=delay):
+                    return
             delay = min(delay * 2, RECONNECT_MAX_S)
 
     def _probe(self) -> None:
@@ -633,7 +665,7 @@ class GrpcSource:
             kind = update.WhichOneof("kind")
             if kind == "initial_done" and not self._probed:
                 self._probe()  # before the variables are called ready: they cannot be read without GetSnapshot
-            with self._lock:
+            with self._cond:
                 if update.dropped > dropped_seen:
                     dropped_seen = update.dropped
                     self._dropped = True

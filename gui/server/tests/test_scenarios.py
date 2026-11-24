@@ -223,8 +223,10 @@ def test_the_applied_writes_come_back_as_a_scenario(tmp_path: Path, control_env:
             got = await ws.until(lambda m: m["type"] == "operation" and m["seq"] == second and m["done"])
             applied = got[-1]["peers"]["Engine"]["applied_at_ms"]
             # A write that is refused is not recorded
-            status, _ = await c.post("api/write", {"session": session, "writes": {"Engine": {"engine.mode": "off"}}})
-            await asyncio.sleep(0.3)
+            status, body = await c.post("api/write", {"session": session, "writes": {"Engine": {"engine.mode": "off"}}})
+            assert status == 200, body
+            refused = body["operation"]
+            await ws.until(lambda m: m["type"] == "operation" and m["seq"] == refused and m["done"])
             _, body = await c.get("api/recording")
             r = body["recording"]
             assert (r["available"], r["writes"], r["omitted"], r["steps"]) == (True, 4, 0, 2), r

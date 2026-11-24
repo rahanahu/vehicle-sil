@@ -79,9 +79,13 @@ class Proc:
         self.reader.start()
 
     def _read(self) -> None:
-        for line in self.p.stdout:
+        try:
+            for line in self.p.stdout:
+                with self.lock:
+                    self.lines.append(line.rstrip("\n"))
+                    self.lock.notify_all()
+        finally:
             with self.lock:
-                self.lines.append(line.rstrip("\n"))
                 self.lock.notify_all()
 
     def text(self) -> str:
@@ -198,7 +202,7 @@ def inner(args: argparse.Namespace) -> None:
         b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", str(int(scaled(60000)))], work)
         procs.append(b)
         a.wait_for("simulation running", scaled(30))
-        time.sleep(1)
+        b.wait_for("t=0 ms engine speed", scaled(30))
         sh("ip", "-n", "b", "link", "set", "vb", "down")
         cut = time.monotonic()
         said = a.wait_for("virtual time has not advanced for 10 s", scaled(40))
@@ -221,7 +225,7 @@ def inner(args: argparse.Namespace) -> None:
         b = Proc("b", [dashboard, "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", str(int(scaled(60000)))], work)
         procs.append(b)
         a.wait_for("simulation running", scaled(30))
-        time.sleep(1)
+        b.wait_for("t=0 ms engine speed", scaled(30))
         b.end()
         killed = time.monotonic()
         if a.wait(scaled(30)) != 1 or "participant 'Dashboard' failed" not in a.text():

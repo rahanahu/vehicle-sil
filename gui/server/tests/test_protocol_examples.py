@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from conftest import (CONFIGS, CONTROL_FEATURES, REPLAY, REPOSITORY, Client, gui_server, is_ended, is_state, is_synced, manual_pages,
-                      run_async)
+                      run_async, until_async)
 from vehicle_sil_gui import __version__
 
 DIRECTORY = Path(__file__).resolve().parents[2] / "protocol" / "examples"
@@ -570,7 +570,10 @@ def test_errors_of_a_launcher_that_changed(tmp_path: Path) -> None:
             await c.post("api/run", {"file": "ignore-stop.yaml"})
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
             gui.proc.send_signal(signal.SIGTERM)
-            await asyncio.sleep(0.3)
+
+            async def ending() -> bool:
+                return (await c.post("api/check", {"file": "../outside.yaml"}))[0] == 503
+            assert await until_async(ending)
             req = {"file": "simulation.yaml"}
             status, body = await c.post("api/run", req)
             check_example("error-shutting-down", http("A run asked for while the server is ending.", "POST",
