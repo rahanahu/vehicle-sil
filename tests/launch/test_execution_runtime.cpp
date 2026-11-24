@@ -372,12 +372,12 @@ TEST_CASE(execution_runtime_prepare_eligibility_metadata_and_status_transitions)
     CHECK(p_busy.status.launcher_allowed.prepare.reason == serve_reason::kBusy);
     CHECK(p_busy.status.launcher_allowed.run.reason == serve_reason::kBusy);
 
+    rt.request_shutdown(stop_source::kEndOfInput);
     {
         const std::lock_guard lock(run_mu);
         allow_finish = true;
     }
     run_cv.notify_all();
-    rt.request_shutdown(stop_source::kEndOfInput);
     const ExecutionEnd ended = loop_future.get();
     CHECK(ended.code == kExitInterrupted);
 
@@ -1357,63 +1357,172 @@ TEST_CASE(execution_runtime_prepare_exception_after_ready_clears_eligibility)
 
 TEST_CASE(execution_runtime_throwing_on_status_drains_exit_barriers_without_hanging)
 {
-    std::mutex mu;
-    std::condition_variable cv;
-    bool in_on_status = false;
-    bool release_throw = false;
+    {
+        std::mutex mu;
+        std::condition_variable cv;
+        bool in_on_status = false;
+        bool in_run = false;
+        bool release_run = false;
+        bool entered_finish = false;
+        bool release_throw = false;
+        std::atomic<bool> loop_exited{false};
 
-    MockExecutionSink sink;
-    sink.status_hook = [&](const ExecutionStatus& s) {
-        if (s.launcher_state == LauncherState::Running)
-        {
+        MockExecutionSink sink;
+        sink.status_hook = [&](const ExecutionStatus& s) {
+            if (s.launcher_state == LauncherState::Running)
+            {
+                {
+                    const std::lock_guard lock(mu);
+                    in_on_status = true;
+                }
+                cv.notify_all();
+                std::unique_lock lock(mu);
+                cv.wait(lock, [&] { return release_throw; });
+                throw std::runtime_error("on_status boom");
+            }
+        };
+        sink.finish_hook = [&] {
             {
                 const std::lock_guard lock(mu);
-                in_on_status = true;
+                entered_finish = true;
             }
             cv.notify_all();
+        };
+
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = "aabbccddeeff0011";
+        opts.base.host.config = "sim.yaml";
+        opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            {
+                const std::lock_guard lock(mu);
+                in_run = true;
+            }
+            cv.notify_all();
+            {
+                std::unique_lock lock(mu);
+                cv.wait(lock, [&] { return release_run; });
+            }
+            lent.controls->set_phase(Phase::Ended);
+            return passed_report();
+        };
+
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] {
+            const ExecutionEnd ended = rt.run_loop();
+            loop_exited.store(true);
+            return ended;
+        });
+        auto start_future = std::async(std::launch::async, [&] { return rt.start_run(RunSubmission{}); });
+
+        {
             std::unique_lock lock(mu);
-            cv.wait(lock, [&] { return release_throw; });
-            throw std::runtime_error("on_status boom");
+            cv.wait(lock, [&] { return in_on_status && in_run; });
         }
-    };
+        // Hold the active run open across request_shutdown() so input_ended_in_run_ is guaranteed,
+        // then release the run to finish_run() so run_loop() parks at its post-run exit barrier
+        // while status_emitting_ == true. Releasing on_status to throw must wake run_loop() and
+        // drain pending_statuses_ cleanly without hanging.
+        rt.request_shutdown(stop_source::kEndOfInput);
+        {
+            const std::lock_guard lock(mu);
+            release_run = true;
+        }
+        cv.notify_all();
+        {
+            std::unique_lock lock(mu);
+            cv.wait(lock, [&] { return entered_finish; });
+        }
+        CHECK(!loop_exited.load());
+        {
+            const std::lock_guard lock(mu);
+            release_throw = true;
+        }
+        cv.notify_all();
 
-    LauncherEnd end;
-    ExecutionRuntimeOptions opts;
-    opts.instance = "aabbccddeeff0011";
-    opts.base.host.config = "sim.yaml";
-    opts.run = [](const RunRequest&, const RunObservers&, const RunLent& lent) {
-        lent.controls->set_phase(Phase::Ended);
-        return passed_report();
-    };
+        bool start_threw = false;
+        try
+        {
+            static_cast<void>(start_future.get());
+        }
+        catch (const std::runtime_error&)
+        {
+            start_threw = true;
+        }
+        CHECK(start_threw);
+        const ExecutionEnd ended = loop_future.get();
+        CHECK(loop_exited.load());
+        CHECK_EQ(ended.code, kExitInterrupted);
+    }
 
-    ExecutionRuntime rt(sink, end, std::move(opts));
-    auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
-    auto start_future = std::async(std::launch::async, [&] { return rt.start_run(RunSubmission{}); });
+    // Throwing directly inside run_loop()'s idle exit barrier (Ending) must be caught cleanly.
+    {
+        MockExecutionSink sink;
+        sink.status_hook = [](const ExecutionStatus& s) {
+            if (s.launcher_state == LauncherState::Ending)
+            {
+                throw std::runtime_error("ending status boom");
+            }
+        };
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = "bbccddeeff001122";
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+        sink.set_closed(true);
+        const ExecutionEnd ended = loop_future.get();
+        CHECK_EQ(ended.code, kExitInterrupted);
+        CHECK(rt.status().launcher_state == LauncherState::Ending);
+    }
 
+    // Throwing directly inside run_loop()'s post-run exit barrier (Ending) must also be caught cleanly.
     {
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return in_on_status; });
-    }
-    // While status_emitting_ == true, request_shutdown queues Ending into pending_statuses_
-    // (or returns immediately after enqueuing); then releasing on_status throws and run_loop()
-    // must still drain pending_statuses_ and exit cleanly instead of hanging at the exit barrier.
-    rt.request_shutdown(stop_source::kEndOfInput);
-    {
-        const std::lock_guard lock(mu);
-        release_throw = true;
-    }
-    cv.notify_all();
+        std::mutex mu;
+        std::condition_variable cv;
+        bool in_run = false;
+        bool release_run = false;
 
-    bool start_threw = false;
-    try
-    {
-        static_cast<void>(start_future.get());
+        MockExecutionSink sink;
+        sink.status_hook = [](const ExecutionStatus& s) {
+            if (s.launcher_state == LauncherState::Ending)
+            {
+                throw std::runtime_error("post-run ending status boom");
+            }
+        };
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = "ccddeeff00112233";
+        opts.base.host.config = "sim.yaml";
+        opts.run = [&](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            {
+                const std::lock_guard lock(mu);
+                in_run = true;
+            }
+            cv.notify_all();
+            {
+                std::unique_lock lock(mu);
+                cv.wait(lock, [&] { return release_run; });
+            }
+            lent.controls->set_phase(Phase::Ended);
+            return passed_report();
+        };
+
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+        const CommandReply started = rt.start_run(RunSubmission{});
+        CHECK(started.accepted);
+        {
+            std::unique_lock lock(mu);
+            cv.wait(lock, [&] { return in_run; });
+        }
+        rt.request_shutdown(stop_source::kEndOfInput);
+        {
+            const std::lock_guard lock(mu);
+            release_run = true;
+        }
+        cv.notify_all();
+        const ExecutionEnd ended = loop_future.get();
+        CHECK_EQ(ended.code, kExitInterrupted);
+        CHECK(rt.status().launcher_state == LauncherState::Ending);
     }
-    catch (const std::runtime_error&)
-    {
-        start_threw = true;
-    }
-    CHECK(start_threw);
-    const ExecutionEnd ended = loop_future.get();
-    CHECK_EQ(ended.code, kExitInterrupted);
 }

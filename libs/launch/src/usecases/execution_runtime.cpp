@@ -725,7 +725,6 @@ ExecutionEnd ExecutionRuntime::run_loop()
                     pending_statuses_.push_back(snapshot_locked(nullptr));
                 }
                 changed_.notify_all();
-                drain_statuses_locked(lock);
                 while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0 || status_emitting_ ||
                        !pending_statuses_.empty())
                 {
@@ -854,7 +853,6 @@ ExecutionEnd ExecutionRuntime::run_loop()
             }
             pending_statuses_.push_back(snapshot_locked(nullptr));
             changed_.notify_all();
-            drain_statuses_locked(lock);
             while (state_ == LauncherState::Preparing || in_flight_prepare_ > 0 || status_emitting_ ||
                    !pending_statuses_.empty())
             {
