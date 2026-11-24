@@ -1198,6 +1198,10 @@ TEST_CASE(execution_runtime_run_loop_drains_in_flight_status_before_exit_and_des
         std::unique_lock lock(mu);
         cv.wait(lock, [&] { return entered_finish; });
     }
+    while (rt->status().launcher_state != LauncherState::Contaminated)
+    {
+        std::this_thread::yield();
+    }
     CHECK(!loop_exited.load());
     {
         const std::lock_guard lock(mu);
@@ -1432,6 +1436,10 @@ TEST_CASE(execution_runtime_throwing_on_status_drains_exit_barriers_without_hang
         {
             std::unique_lock lock(mu);
             cv.wait(lock, [&] { return entered_finish; });
+        }
+        while (rt.status().launcher_state != LauncherState::Ending)
+        {
+            std::this_thread::yield();
         }
         CHECK(!loop_exited.load());
         {
