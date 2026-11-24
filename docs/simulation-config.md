@@ -881,7 +881,7 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 ## Arguments and exit codes
 
 ```text
-vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -947,6 +947,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--request <file>` | `check`, `run` and `connections` | Reads what to run from a request file (JSON); an argument wins over the file, field by field. `connections` reads only its `connect` and says whether each target can be used on this computer (see "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request)). |
 | `--network <name>` | `connections` only | Lists the network `<name>` only. |
 | `--text-from-stdin` | `check` only | Reads the text of the configuration from stdin instead of from `<file>`. `<file>` still names it: its relative paths and the `scenario` of a request file are from its directory, and the findings and the JSON name it. The file need not exist. |
+| `--file-only` | `check` only | Checks only the configuration text without looking up or running executables (see "Checking the file only (`--file-only`)" in [simulation-check.md](simulation-check.md#checking-the-file-only---file-only)). Cannot be combined with `--text-from-stdin`. |
 | `--write-descriptions <file>` | `check` only | Writes the `--describe` output of each participant whose output was read to `<file>`, for `--descriptions` (see "Saved descriptions (`--write-descriptions`, `--descriptions`)" in [simulation-check.md](simulation-check.md#saved-descriptions---write-descriptions---descriptions)). |
 | `--descriptions <file>` | `check` only | Starts no process: takes each participant's `--describe` output from `<file>`, if its command and its executable are as they were when the output was saved; any other participant is not described (see the same section of [simulation-check.md](simulation-check.md#saved-descriptions---write-descriptions---descriptions)). |
 | `--compare-commands <file>` | `check` only | Compares the commands that run (each participant's `command`, `describe`, `manual` and `enabled` in every variant, with what `run` adds for `network_names` and `j1939_nodes` of a `describe: false` participant; the participants, the variants, `registry_uri`) with those of the configuration file `<file>`, and writes `"same"`, `"changed"` or `"not_compared"` in `commands` of `--json` (see "Comparing the commands that run (`--compare-commands`)" in [simulation-check.md](simulation-check.md#comparing-the-commands-that-run---compare-commands)). |
@@ -1040,7 +1041,7 @@ The following give exit code 4:
 | `check` | `--events`, `--stdin-commands` |
 | `check` | `--log-dir`, `--timeout-ms`, `--start-paused`, `--control` and `--control-*` |
 | `run` | `--json` and `--events` together |
-| `run` | `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
+| `run` | `--file-only`, `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
 | `run` | `--events-stall-ms` without `--events`, or with a value out of range |
 | `run` | `--start-paused` with neither `--stdin-commands` nor `--control` |
 | `check` or `run` | `--speed` that is neither a number nor `max` |
@@ -1059,7 +1060,7 @@ The following give exit code 4:
 | Variants and parameters | A malformed `--param`, `--param` without `--scenario`, or `--param` with a name that is not in the scenario |
 | `test` | No `--scenarios`, a `--scenarios` path that does not exist, or a directory with no scenario files |
 | `test` | Options for `run` only, and `--scenario`, given to `test` |
-| `test` | `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
+| `test` | `--file-only`, `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
 | `test` | An enabled participant with `manual: true` in the configuration file given to `test` |
 
 ## See also

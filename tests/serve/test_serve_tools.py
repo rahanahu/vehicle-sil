@@ -194,6 +194,22 @@ class StreamTest(unittest.TestCase):
         e[7]["accepted"] = True
         self.assertProblem(e, "without the Run inside the window")
 
+    def test_allow_replies_permits_prepare_and_status_only_when_opted_in(self):
+        r1 = f"{L}-1"
+        e = stream(
+            {"event": "hello", "launcher": L, "vehicle_sil_events": 3},
+            {"event": "idle"},
+            {"event": "prepare", "id": 1, "accepted": True},
+            {"event": "status", "id": 2, "launcher_state": "ready"},
+            {"event": "run_start", "run": r1, "id": 3},
+            {"event": "status", "id": 4, "launcher_state": "running"},
+            {"event": "prepare", "id": 5, "accepted": False, "reason": "busy"},
+            {"event": "result", "run": r1, "launcher_ends": False, "result": {"result": "passed"}},
+            {"event": "idle"},
+        )
+        self.assertNotEqual(stream_problems(e), [])
+        self.assertEqual(stream_problems(e, allow_replies=True), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -989,7 +989,8 @@ class Player:
                     self._line("this is not the check object")
                 elif isinstance(printed, dict) and printed.get("vehicle_sil_launch") is not None:
                     wanted = os.environ.get("REPLAY_FEATURES")
-                    printed["features"] = [f for f in printed["features"] if f not in ("control-server", "serve")] \
+                    printed["features"] = [f for f in printed["features"]
+                                           if f not in ("control-server", "serve", "check-file-only", "serve-prepare")] \
                         if wanted is None else [f for f in wanted.split(",") if f]
                     printed["vehicle_sil"] = os.environ.get("REPLAY_VERSION") or gui_version() or printed["vehicle_sil"]
                     self._line(json.dumps(printed, indent=2, ensure_ascii=False))

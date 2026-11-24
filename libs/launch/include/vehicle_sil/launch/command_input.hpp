@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace vehicle_sil::launch {
 
@@ -30,19 +31,30 @@ inline constexpr std::size_t kMaxCommandLine = 64 * 1024;
 /// A line of standard input as serve reads it: the command, and what serve adds to it.
 struct ServeCommand
 {
-    /// As parse_command() reads it, but "run" is a command too.
+    /// As parse_command() reads it, but "run", "prepare" and "status" are commands too.
     runner::Command command{};
     /// "run": the ID of the run the command is for (as its "run_start" said it); empty if the
-    /// line has none. Every command but run needs it (the launcher compares it).
+    /// line has none. Every run-targeted command needs it (the launcher compares it).
     std::optional<std::string> run{};
     /// run: "request", the request file of the run (as run --request reads it); "" for none.
     std::string request{};
+    /// run: inline run-request JSON object (mutually exclusive with `request`).
+    std::optional<std::string> intent_json{};
     /// run: "timeline", the file the run writes its timeline to (as run --timeline); "" for none.
     std::string timeline{};
+    /// stop: explicit force flag (true -> Force, false -> Graceful, nullopt -> Escalate).
+    std::optional<bool> force{};
+    /// prepare: optional preview overrides against the launcher's bound configuration.
+    std::optional<std::string> variant{};
+    std::vector<std::string> disable{};
+    std::vector<std::string> enable{};
+    std::vector<std::string> manual{};
 };
 
-/// Reads `line` as serve does: as parse_command(), and {"command":"run"} with "request" and
-/// "timeline" (non-empty strings, each optional), and "run" (a non-empty string) on any command.
+/// Reads `line` as serve does: as parse_command(), plus {"command":"run"} (with optional
+/// "request"/"intent" and "timeline"), {"command":"prepare"} (with optional "variant",
+/// "disable", "enable", "manual"; rejects "config"), {"command":"status"}, {"command":"stop"}
+/// with optional boolean "force", and "run" (a non-empty string) on any command.
 /// A line that is not accepted has its `reason` (its "run" too, if it could be read).
 [[nodiscard]] std::optional<ServeCommand> parse_serve_command(std::string_view line);
 

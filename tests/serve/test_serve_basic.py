@@ -3,6 +3,7 @@
 scenarios/protocols/faults/binary swap, fixed-registry refusal, and LIN repetitions."""
 from __future__ import annotations
 
+import hashlib
 import os
 import pathlib
 import statistics
@@ -301,6 +302,75 @@ class ServeBasicAcceptanceTest(unittest.TestCase):
                 srv.close_input()
                 self.assertEqual(srv.wait(), EXIT_IDLE_EOF)
                 self.assertEqual(stream_problems(srv.snapshot()), [])
+
+
+    def test_11_prepare_status_stop_force_and_inline_intent_equivalence(self) -> None:
+        scratch = Scratch("basic_serve_extensions")
+        cfg = fx.bench(scratch, ["T1"])
+        scen = fx.vt0_scenario(scratch)
+        req = scratch.request("vt0", scenario=scen.name)
+        expected_sha = hashlib.sha256(cfg.read_bytes()).hexdigest()
+
+        # Cold baseline for comparison against serve inline intent.
+        c_ref = cold(self.launch, cfg, req, scratch.timeline("cold_intent"))
+        self.assertEqual(c_ref.returncode, 0, c_ref.stderr)
+        self.assertEqual(c_ref.result["result"], "passed")
+
+        with Serve(self.launch, cfg) as srv:
+            srv.ready()
+            st0 = srv.status(id=1)
+            self.assertEqual(st0["launcher_state"], "idle")
+            self.assertIsNone(st0["active_run_id"])
+
+            prep = srv.prepare(id=2)
+            self.assertTrue(prep["accepted"])
+            self.assertEqual(prep["status"]["launcher_state"], "ready")
+            self.assertTrue(prep["status"]["eligibility"]["eligible"])
+            self.assertEqual(prep["metadata"]["file_sha256"], expected_sha)
+            self.assertEqual(prep["metadata"]["participants"], ["T1"])
+
+            # Inline intent run matches Cold equivalence.
+            tl_hot = scratch.timeline("hot_intent")
+            rec_intent = srv.run_once(
+                timeline=tl_hot,
+                intent={"vehicle_sil_run_request": 1, "scenario": scen.name},
+            )
+            self.assertEqual(rec_intent.result["result"], "passed")
+            self.assert_same_as_cold("inline intent", c_ref, rec_intent)
+
+            # Invalid request + intent together is refused without advancing run sequence.
+            bad_id = 50
+            srv.send({"command": "run", "id": bad_id, "request": req.as_posix(), "intent": {"speed": 2}})
+            refused = srv.wait_event("command", id=bad_id)
+            self.assertFalse(refused["accepted"])
+            self.assertEqual(refused["reason"], "invalid-argument")
+
+            # Next accepted run gets -2 (sequence not advanced by refusal) and stops cleanly with force=false.
+            paused_before = srv.ready()
+            r2_id = srv.run(intent={"start_paused": True})
+            r2_start = srv.run_started(r2_id, after=paused_before)
+            r2 = r2_start["run"]
+            self.assertTrue(r2.endswith("-2"), r2)
+            srv.wait_for(lambda e: e.get("event") == "state" and e.get("run") == r2 and e.get("paused") is True,
+                         "paused state")
+            st_running = srv.status(id=60)
+            self.assertEqual(st_running["launcher_state"], "running")
+            self.assertEqual(st_running["active_run_id"], r2)
+            self.assertIsNotNone(st_running["run_state"])
+            prep_busy = srv.prepare(id=61)
+            self.assertFalse(prep_busy["accepted"])
+            self.assertEqual(prep_busy["reason"], "busy")
+
+            srv.stop(r2, force=False, id=62)
+            srv.stop(r2, force=False, id=63)
+            res2 = srv.result_of(r2)
+            self.assertEqual(res2["result"]["result"], "stopped")
+            srv.ready()
+
+            srv.close_input()
+            self.assertEqual(srv.wait(), EXIT_IDLE_EOF)
+            self.assertEqual(srv.bad_lines, [])
+            self.assertEqual(stream_problems(srv.snapshot(), allow_replies=True), [])
 
 
 if __name__ == "__main__":

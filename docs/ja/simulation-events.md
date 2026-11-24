@@ -689,7 +689,9 @@ participant の `log` の終わりの側には、保証がありません。part
     "request",
     "scenario-samples",
     "run-stop-at",
-    "serve"
+    "serve",
+    "check-file-only",
+    "serve-prepare"
   ]
 }
 ```
@@ -754,6 +756,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-samples` | シナリオの最上位のキー `samples` と、シナリオが値を読む ECU のステップごとのサンプル（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」） |
 | `run-stop-at` | Run 単位の `stop_at_ms` と `late_tolerance_ms` に対応。 |
 | `serve` | `vehicle_sil_launch serve`: 1 つのランチャープロセスで Run ID とイベント窓を分離して順次実行する（[常駐ランチャー](#常駐ランチャーserve)） |
+| `check-file-only` | `check --file-only --json`: 実行ファイルを起動せず設定テキストのみ検証し、`file_sha256` と `hot_eligibility` を出力する（[JSON（`--json`）](simulation-check.md#json--json)） |
+| `serve-prepare` | `serve` の `prepare`、`status`、`stop.force`、インライン `run.intent` コマンド（[常駐ランチャー](#常駐ランチャーserve)） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |
@@ -805,6 +809,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | 実行イベント | 実行（`"run": "<ID>"`） | `run_start` と `result` の間のすべてのイベント（`phase`、`check`、`control_server`、`registry`、`participant`、`control_link`、`log`、`log_dropped`、`outside`、`finding`、`scenario_step`、`time`、`state`、`command`、`heartbeat`）に `"run": "<ID>"` が付く。`state.rev` は実行ごとにリセットされる |
 | `result` | 実行（`"run": "<ID>"`） | 実行のイベント窓を閉じる。`"launcher_ends": <bool>` と `"result": {...}` を持つ。この後に同じ `"run"` のイベントは出ない |
 | `command` | ランチャー（`run` なし） | ランチャー直下の拒否（`accepted: false`）。`"asked_run"`（指定がなければ `null`）を追加 |
+| `prepare` | ランチャー（`run` なし） | `{"command":"prepare"}` への応答: `"id"`、`"accepted"`、`"reason"`、`"message"`、`"status"`（`ExecutionStatus`）、`"metadata"`（`participants`、`networks`、`variants`、`file_sha256`。`!accepted` 時は `null`）、`"findings"` |
+| `status` | ランチャー（`run` なし） | `{"command":"status"}` への応答: `"id"`、`"instance"`、`"status_rev"`、`"launcher_state"`、`"config"`、`"eligibility"`、`"launcher_allowed"`、`"active_run_id"`、`"last_run_id"`、`"run_state"` |
 | `heartbeat` | ランチャーまたは実行 | 待機中（`run` なし）も実行中（`"run"` 付き）も出力 |
 
 起動時の使い方の誤り（`VEHICLE_SIL_TRACE` 設定時を含む）では、`hello` の後にランチャー直下の `result`（`run` なし、`"launcher_ends": true`）を最終行として終了します。
@@ -812,12 +818,17 @@ participant の `log` の終わりの側には、保証がありません。part
 ### `serve` の標準入力コマンド
 
 ```json
-{"command":"run","id":1,"request":"bench.json","timeline":"timeline.json"}
-{"command":"stop","run":"0123456789abcdef-1","id":2}
+{"command":"prepare","id":1,"variant":"fast","disable":["Logger"]}
+{"command":"status","id":2}
+{"command":"run","id":3,"request":"bench.json","timeline":"timeline.json"}
+{"command":"run","id":4,"intent":{"speed":2,"start_paused":true}}
+{"command":"stop","run":"0123456789abcdef-1","force":false,"id":5}
 ```
 
-- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）、`"timeline"`（タイムライン JSON の出力先パス）、`"id"` はいずれも任意です。実行中（`idle` より前）は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
-- `stop`、`pause`、`resume`、`step`、`run_until`、`speed`: `"run": "<Run ID>"` が必須です。欄がなければ `"run-required"`、現在の実行と異なれば（終了済みや待機中を含む）`"run-changed"` と `"asked_run"` で拒否します。
+- `prepare`: 束縛中の `<file>` を `--file-only` 相当で検証し（任意の `"variant"`、`"disable"`、`"enable"`、`"manual"` 配列を指定可能。`"config"` は拒否）、`status`、`metadata`、`file_sha256`、`findings` を含む `prepare` イベントを返します。実行中や終了処理中は `"busy"`、`"launcher-ending"`、`"contaminated"` で拒否（`accepted: false`）します。
+- `status`: 現在のランチャーおよび実行中 Run の状態（待機中の `run_state` は `null`）を `status` イベントで返します。
+- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）と `"intent"`（64 KiB の行上限以内のインライン実行要求 JSON オブジェクト。`"vehicle_sil_run_request"` は任意）は排他です。`"timeline"`（タイムライン JSON の出力先パス）と `"id"` は任意です。実行中（`idle` より前）は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
+- `stop`、`pause`、`resume`、`step`、`run_until`、`speed`: `"run": "<Run ID>"` が必須です。欄がなければ `"run-required"`、現在の実行と異なれば（終了済みや待機中を含む）`"run-changed"` と `"asked_run"` で拒否します。`stop` では任意の真偽値 `"force"` で冪等な通常停止（`false`、停止要求 1 回）か即時強制停止（`true`、2 回へ引き上げ）を指定でき、省略時は従来の段階的エスカレーション（`1 -> 2`）となります。ランチャー直下のコマンド（`run`、`prepare`、`status`）は `"run"` を省略するか妥当な文字列であれば無視します。
 - 標準入力の閉鎖（EOF）はランチャー終了を意味します（待機中なら終了コード 0、実行中ならその実行を止めて終了コード 130）。
 
 ## 関連するドキュメント

@@ -973,3 +973,234 @@ TEST_CASE(serve_refuses_fixed_registry_uri_and_manual_before_describe)
     CHECK(c2.findings.front().code == "usage");
     CHECK(c2.findings.front().message.find("manual") != std::string::npos);
 }
+
+TEST_CASE(serve_parse_command_reads_prepare_status_force_and_inline_intent)
+{
+    // prepare: valid with variant and disable/enable/manual (including empty arrays).
+    const auto prep = parse_serve_command(
+        R"({"command":"prepare","id":11,"variant":"fast","disable":["Logger"],"enable":[],"manual":["Dash"]})");
+    CHECK(prep.has_value());
+    CHECK(prep->command.accepted);
+    CHECK(prep->command.name == "prepare");
+    CHECK(prep->command.id == 11);
+    CHECK(prep->variant == "fast");
+    CHECK((prep->disable == std::vector<std::string>{"Logger"}));
+    CHECK(prep->enable.empty());
+    CHECK((prep->manual == std::vector<std::string>{"Dash"}));
+
+    // prepare rejects explicit "config" key and invalid types.
+    const auto prep_cfg = parse_serve_command(R"({"command":"prepare","config":"other.yaml"})");
+    CHECK(prep_cfg.has_value());
+    CHECK(!prep_cfg->command.accepted);
+    CHECK(prep_cfg->command.reason == runner::reason::kInvalidArgument);
+
+    const auto prep_bad_var = parse_serve_command(R"({"command":"prepare","variant":123})");
+    CHECK(prep_bad_var.has_value());
+    CHECK(!prep_bad_var->command.accepted);
+    CHECK(prep_bad_var->command.reason == runner::reason::kInvalidArgument);
+
+    const auto prep_bad_dis = parse_serve_command(R"({"command":"prepare","disable":["", "A"]})");
+    CHECK(prep_bad_dis.has_value());
+    CHECK(!prep_bad_dis->command.accepted);
+    CHECK(prep_bad_dis->command.reason == runner::reason::kInvalidArgument);
+
+    // status: valid and invalid id.
+    const auto st = parse_serve_command(R"({"command":"status","id":12})");
+    CHECK(st.has_value());
+    CHECK(st->command.accepted);
+    CHECK(st->command.name == "status");
+    CHECK(st->command.id == 12);
+
+    const auto st_bad = parse_serve_command(R"({"command":"status","id":"abc"})");
+    CHECK(st_bad.has_value());
+    CHECK(!st_bad->command.accepted);
+    CHECK(st_bad->command.reason == runner::reason::kInvalidArgument);
+
+    // stop: force true, false, omitted, invalid.
+    const auto stop_force = parse_serve_command(R"({"command":"stop","run":"r-1","force":true,"id":3})");
+    CHECK(stop_force.has_value() && stop_force->command.accepted && stop_force->force == std::optional<bool>(true));
+    const auto stop_grace = parse_serve_command(R"({"command":"stop","run":"r-1","force":false})");
+    CHECK(stop_grace.has_value() && stop_grace->command.accepted && stop_grace->force == std::optional<bool>(false));
+    const auto stop_esc = parse_serve_command(R"({"command":"stop","run":"r-1"})");
+    CHECK(stop_esc.has_value() && stop_esc->command.accepted && !stop_esc->force.has_value());
+    const auto stop_bad = parse_serve_command(R"({"command":"stop","run":"r-1","force":"yes"})");
+    CHECK(stop_bad.has_value() && !stop_bad->command.accepted &&
+          stop_bad->command.reason == runner::reason::kInvalidArgument);
+
+    // run: inline intent object, mutual exclusion with request, type rejection.
+    const auto run_intent = parse_serve_command(
+        R"({"command":"run","id":4,"timeline":"tl.json","intent":{"speed":2,"start_paused":true}})");
+    CHECK(run_intent.has_value() && run_intent->command.accepted);
+    CHECK(run_intent->timeline == "tl.json");
+    CHECK(run_intent->intent_json.has_value());
+
+    const auto run_both =
+        parse_serve_command(R"({"command":"run","request":"a.json","intent":{"speed":2}})");
+    CHECK(run_both.has_value() && !run_both->command.accepted &&
+          run_both->command.reason == runner::reason::kInvalidArgument);
+
+    const auto run_bad_intent = parse_serve_command(R"({"command":"run","intent":["bad"]})");
+    CHECK(run_bad_intent.has_value() && !run_bad_intent->command.accepted &&
+          run_bad_intent->command.reason == runner::reason::kInvalidArgument);
+
+    // parse_command (non-serve) continues rejecting prepare and status.
+    CHECK(!parse_command(R"({"command":"prepare"})")->accepted);
+    CHECK(parse_command(R"({"command":"prepare"})")->reason == runner::reason::kUnknownCommand);
+    CHECK(!parse_command(R"({"command":"status"})")->accepted);
+    CHECK(parse_command(R"({"command":"status"})")->reason == runner::reason::kUnknownCommand);
+
+    // 64 KiB boundary in CommandInput(Serve{}, ...).
+    std::vector<ServeCommand> got;
+    CommandInput input(CommandInput::Serve{}, [&](const ServeCommand& c) { got.push_back(c); });
+    const std::string prefix = R"({"command":"run","intent":{"scenario":")";
+    const std::string suffix = R"("}})";
+    const std::string exact_ok = prefix + std::string(kMaxCommandLine - prefix.size() - suffix.size(), 'x') + suffix;
+    CHECK_EQ(exact_ok.size(), kMaxCommandLine);
+    const std::string too_long = exact_ok + "x";
+    input.append(exact_ok + "\n" + too_long + "\n" + R"({"command":"status","id":99})" + "\n");
+    input.finish();
+    CHECK_EQ(got.size(), std::size_t{3});
+    CHECK(got[0].command.accepted && got[0].intent_json.has_value());
+    CHECK(!got[1].command.accepted && got[1].command.reason == runner::reason::kInvalidCommand);
+    CHECK(got[2].command.accepted && got[2].command.name == "status" && got[2].command.id == 99);
+}
+
+TEST_CASE(serve_prepare_run_handles_inline_intent_with_and_without_format_version)
+{
+    const std::filesystem::path dir = scratch_dir("prepare_intent");
+    RunRequest base;
+    base.host.config = (dir / "sim.yaml").string();
+    base.host.log_dir = dir / "logs";
+    base.host.stdin_commands = true;
+
+    // Without vehicle_sil_run_request (optional for inline intent).
+    ServeCommand c1 = cmd(R"({"command":"run","intent":{"speed":2,"scenario":"drive.yaml"}})");
+    const PreparedRun p1 = prepare_serve_run(base, c1, "0011223344556677-1");
+    CHECK(p1.usage.empty());
+    CHECK(!p1.request.intent.start_paused);
+    CHECK(p1.request.intent.speed == std::optional<std::optional<double>>(std::optional<double>(2.0)));
+    CHECK(p1.request.intent.scenario == std::optional<std::string>("drive.yaml"));
+    CHECK(p1.request.origin.has("scenario"));
+    CHECK(p1.request.origin.file == "intent");
+
+    // With explicit vehicle_sil_run_request: 1.
+    ServeCommand c2 = cmd(R"({"command":"run","intent":{"vehicle_sil_run_request":1,"start_paused":true,"strict":true}})");
+    const PreparedRun p2 = prepare_serve_run(base, c2, "0011223344556677-2");
+    CHECK(p2.usage.empty());
+    CHECK(p2.request.intent.start_paused);
+    CHECK(p2.request.intent.strict);
+
+    // Wrong vehicle_sil_run_request version or unknown key yields usage finding.
+    ServeCommand c_bad_ver = cmd(R"({"command":"run","intent":{"vehicle_sil_run_request":2}})");
+    const PreparedRun p_bad_ver = prepare_serve_run(base, c_bad_ver, "0011223344556677-3");
+    CHECK(!p_bad_ver.usage.empty());
+    CHECK(p_bad_ver.usage.front().code == "usage");
+
+    ServeCommand c_bad_key = cmd(R"({"command":"run","intent":{"bogus":1}})");
+    const PreparedRun p_bad_key = prepare_serve_run(base, c_bad_key, "0011223344556677-4");
+    CHECK(!p_bad_key.usage.empty());
+    CHECK(p_bad_key.usage.front().code == "usage");
+}
+
+TEST_CASE(serve_executes_prepare_status_stop_force_and_inline_intent)
+{
+    const std::filesystem::path dir = scratch_dir("serve_ext");
+    const std::filesystem::path cfg = dir / "sim.yaml";
+    write_text(cfg,
+               "vehicle_sil_simulation: 2\n"
+               "networks:\n  - name: CAN1\n    kind: can\n"
+               "participants:\n  - name: Engine\n    command: [\"./engine\"]\n");
+
+    CaptureStream cap;
+    LauncherEnd end;
+    const std::string instance = "fedcba9876543210";
+    cap.stream().hello(100, cfg.string(), {"serve", cfg.string()}, instance);
+
+    std::mutex mu;
+    std::condition_variable cv;
+    bool in_run = false;
+    bool release_run = false;
+    int seen_stop_count = 0;
+    bool seen_start_paused = false;
+
+    ServeOptions options;
+    options.instance = instance;
+    options.base.host.config = cfg.string();
+    options.base.host.stdin_commands = true;
+    options.run = [&](const RunRequest& req, const RunObservers&, const RunLent& lent) {
+        {
+            const std::lock_guard lock(mu);
+            seen_start_paused = req.intent.start_paused;
+            in_run = true;
+        }
+        cv.notify_all();
+        std::unique_lock lock(mu);
+        cv.wait(lock, [&] { return release_run; });
+        seen_stop_count = lent.controls->stops().count();
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+    cap.wait_for([](const JsonLine& l) { return l.event == "idle"; });
+
+    // 1. status while idle (no unsolicited status events emitted prior to this).
+    serve.command(cmd(R"({"command":"status","id":1})"));
+    const JsonLine st1 = cap.wait_for([](const JsonLine& l) { return l.event == "status"; });
+    CHECK(st1.id == 1);
+    CHECK(!st1.run.has_value());
+    CHECK(json_string(top_field(st1.raw, "launcher_state")) == "idle");
+
+    // 2. prepare while idle -> ready, eligible: true, file_sha256 populated.
+    serve.command(cmd(R"({"command":"prepare","id":2})"));
+    const JsonLine prep1 = cap.wait_for([](const JsonLine& l) { return l.event == "prepare"; });
+    CHECK(prep1.id == 2);
+    CHECK(prep1.accepted == true);
+    CHECK(!prep1.run.has_value());
+
+    // 3. run with inline intent; verify status during run and stop with force=false twice (stays 1).
+    serve.command(cmd(R"({"command":"run","id":3,"intent":{"start_paused":true}})"));
+    {
+        std::unique_lock lock(mu);
+        cv.wait(lock, [&] { return in_run; });
+    }
+    serve.command(cmd(R"({"command":"status","id":4})"));
+    const JsonLine st2 = cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.id == 4; });
+    CHECK(json_string(top_field(st2.raw, "launcher_state")) == "running");
+    CHECK(json_string(top_field(st2.raw, "active_run_id")) == instance + "-1");
+
+    // prepare while running is refused with busy.
+    serve.command(cmd(R"({"command":"prepare","id":5})"));
+    const JsonLine prep_busy = cap.wait_for([](const JsonLine& l) { return l.event == "prepare" && l.id == 5; });
+    CHECK(prep_busy.accepted == false);
+    CHECK(prep_busy.reason == serve_reason::kBusy);
+
+    // Two stop commands with force: false MUST stay at count == 1 (idempotent Graceful).
+    const std::string run_id = instance + "-1";
+    serve.command(cmd(std::string(R"({"command":"stop","run":")") + run_id + R"(","force":false,"id":6})"));
+    cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 6; });
+    serve.command(cmd(std::string(R"({"command":"stop","run":")") + run_id + R"(","force":false,"id":7})"));
+    cap.wait_for([](const JsonLine& l) { return l.event == "command" && l.id == 7; });
+    {
+        const std::lock_guard lock(mu);
+        release_run = true;
+    }
+    cv.notify_all();
+
+    const JsonLine run1_res = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == run_id; });
+    cap.wait_for([&](const JsonLine& l) { return l.event == "idle" && l.seq > run1_res.seq; });
+    CHECK(seen_start_paused);
+    CHECK_EQ(seen_stop_count, 1);
+
+    // Invalid inline intent emits usage result and returns to idle.
+    serve.command(cmd(R"({"command":"run","id":8,"intent":{"unknown_key":1}})"));
+    const JsonLine bad_res = cap.wait_for([&](const JsonLine& l) { return l.event == "result" && l.run == instance + "-2"; });
+    CHECK(bad_res.result_status == "usage");
+    CHECK(bad_res.launcher_ends == false);
+    cap.wait_for([&](const JsonLine& l) { return l.event == "idle" && l.seq > bad_res.seq; });
+
+    serve.end_of_input();
+    const ServeEnd ended = done.get();
+    CHECK_EQ(ended.code, 0);
+}

@@ -2065,11 +2065,12 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
   [--] <file>
 ```
 
-- `serve` は常に標準出力に NDJSON イベントを書き、標準入力からコマンドを読みます（[simulation-events.md](simulation-events.md#常駐ランチャーserve) の「常駐ランチャー（`serve`）」）。`--events` や `--stdin-commands` の指定は使い方の誤りです。
-- 実行ごとのオプション（`--scenario`、`--variant`、`--param`、`--speed`、`--strict`、`--start-paused`、`--stop-at-ms`、`--late-tolerance-ms`、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、`--request`、`--timeline`）はコマンドラインで受け付けません。各 `{"command":"run"}` コマンドの `"request"` ファイル（および `"timeline"` パス）で指定します。
+- `serve` は常に標準出力に NDJSON イベントを書き、標準入力からコマンドを読みます（[simulation-events.md](simulation-events.md#常駐ランチャーserve) の「常駐ランチャー（`serve`）」）。`--events`、`--stdin-commands`、`--file-only` の指定は使い方の誤りです。
+- 実行ごとのオプション（`--scenario`、`--variant`、`--param`、`--speed`、`--strict`、`--start-paused`、`--stop-at-ms`、`--late-tolerance-ms`、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、`--request`、`--timeline`）はコマンドラインで受け付けません。各 `{"command":"run"}` コマンドの `"request"` ファイルまたはインライン `"intent"` オブジェクト（および `"timeline"` パス）で指定します。
+- `{"command":"prepare"}` は束縛中の `<file>` を `--file-only` 相当で検証し（任意の `"variant"`、`"disable"`、`"enable"`、`"manual"` 配列を指定可能）`prepare` を返し、`{"command":"status"}` は `status` を返します。
 - `--log-dir <dir>` を指定すると、実行ごとの participant ログを `<dir>/<Run ID>/` に書きます。
 - `--control-credentials <file>` は実行ごとに読み直すため、呼び出し側は実行ごとにトークンを差し替えられます。
-- 同時に実行できるのは 1 つだけです。`idle` の前に届いた `run` コマンドは `busy` で拒否され、待ち行列には積みません。
+- 同時に実行できるのは 1 つだけです。`idle` の前に届いた `run` または `prepare` コマンドは `busy` で拒否され、待ち行列には積みません。
 - 失敗・タイムアウト・停止で終わった実行を自動で再実行することはありません。
 
 ### `serve` の制限
@@ -2080,7 +2081,8 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
 ### `serve` の停止と終了コード
 
 - Run ID を指定した標準入力の `stop`（`{"command":"stop","run":"<Run ID>"}`）や、一致する Run ID の Control API `Stop` は、現在の実行だけを止めます。終了処理が正常に終わればランチャーは `idle` を出し、次の `run` を受け付けます。
-- 実行が自身の SIL Kit 接続を閉じている途中に届いた 1 回目の `stop` は、閉じる待ちを打ち切りません。打ち切るのは 2 回目の `stop`（強制）かランチャー終了の要求だけです。
+- 標準入力の `stop` に任意の真偽値 `"force"` を指定すると、冪等な通常停止（`false`、再送しても強制に昇格しない）または即時強制停止（`true`、閉じる待ちを打ち切る）を選べます。省略時は従来の `1 -> 2` 昇格動作を保ちます。
+- 実行が自身の SIL Kit 接続を閉じている途中に届いた 1 回目の `stop` は、閉じる待ちを打ち切りません。打ち切るのは 2 回目の `stop`（`force: true` または `force` 省略時の昇格）かランチャー終了の要求だけです。
 - `SIGINT`、`SIGTERM`、`SIGHUP`（Windows では `CTRL_C_EVENT`、`CTRL_BREAK_EVENT`、`CTRL_CLOSE_EVENT`）、標準入力の EOF、または標準出力の閉鎖はランチャーの終了を意味します。実行中であればその実行を止め、`result` に `"launcher_ends": true` を付けて（`idle` は出さずに）終了します。
 - 自身の SIL Kit 接続を期限内に閉じられなかった場合（`connection-not-closed`）や内部例外が発生した場合、その実行の `result` に `"launcher_ends": true` を出して終了コード 6 で即座に終了します。呼び出し側は次の実行のために新しいランチャーを起動します。
 

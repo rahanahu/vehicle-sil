@@ -120,17 +120,110 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
         }
         if (serve != nullptr && *out.name == "run")
         {
-            bool given = false;
-            for (const auto& [key, value] : {std::pair{"request", &serve->request}, std::pair{"timeline", &serve->timeline}})
+            bool request_given = false;
+            bool timeline_given = false;
+            if (!text("request", serve->request, request_given))
             {
-                if (!text(key, *value, given))
+                out.message = "run: \"request\" must be the path of a file as a string, such as "
+                              "{\"command\":\"run\",\"request\":\"bench.json\",\"timeline\":\"timeline.json\"}; leave it out "
+                              "for none";
+                out.reason = runner::reason::kInvalidArgument;
+                return out;
+            }
+            if (!text("timeline", serve->timeline, timeline_given))
+            {
+                out.message = "run: \"timeline\" must be the path of a file as a string, such as "
+                              "{\"command\":\"run\",\"request\":\"bench.json\",\"timeline\":\"timeline.json\"}; leave it out "
+                              "for none";
+                out.reason = runner::reason::kInvalidArgument;
+                return out;
+            }
+            const auto intent_node = tree.find_child(root, ryml::csubstr("intent", 6));
+            if (intent_node != ryml::NONE)
+            {
+                if (request_given)
                 {
-                    out.message = std::string("run: \"") + key + "\" must be the path of a file as a string, such as " +
-                                  "{\"command\":\"run\",\"request\":\"bench.json\",\"timeline\":\"timeline.json\"}; leave it out " +
-                                  "for none";
+                    out.message = "run: cannot give both \"request\" and \"intent\"; choose one";
                     out.reason = runner::reason::kInvalidArgument;
                     return out;
                 }
+                if (!tree.is_map(intent_node))
+                {
+                    out.message = "run: \"intent\" must be a JSON object with run request fields; leave it out for none";
+                    out.reason = runner::reason::kInvalidArgument;
+                    return out;
+                }
+                std::string emitted = ryml::emitrs_json<std::string>(tree, intent_node);
+                if (const auto brace = emitted.find('{'); brace != std::string::npos)
+                {
+                    emitted.erase(0, brace);
+                }
+                serve->intent_json = std::move(emitted);
+            }
+        }
+        else if (serve != nullptr && *out.name == "prepare")
+        {
+            if (tree.find_child(root, ryml::csubstr("config", 6)) != ryml::NONE)
+            {
+                out.message =
+                    "prepare: \"config\" cannot be changed in serve; start a new serve process for another configuration file";
+                out.reason = runner::reason::kInvalidArgument;
+                return out;
+            }
+            std::string variant;
+            bool variant_given = false;
+            if (!text("variant", variant, variant_given))
+            {
+                out.message =
+                    "prepare: \"variant\" must be the name of a variant as a non-empty string; leave it out for none";
+                out.reason = runner::reason::kInvalidArgument;
+                return out;
+            }
+            if (variant_given)
+            {
+                serve->variant = std::move(variant);
+            }
+            for (const auto& [key, target] :
+                 {std::pair{"disable", &serve->disable}, std::pair{"enable", &serve->enable},
+                  std::pair{"manual", &serve->manual}})
+            {
+                const auto arr = tree.find_child(root, ryml::to_csubstr(key));
+                if (arr == ryml::NONE)
+                {
+                    continue;
+                }
+                if (!tree.is_seq(arr))
+                {
+                    out.message = std::string("prepare: \"") + key + "\" must be a JSON array of non-empty participant names";
+                    out.reason = runner::reason::kInvalidArgument;
+                    return out;
+                }
+                for (auto child = tree.first_child(arr); child != ryml::NONE; child = tree.next_sibling(child))
+                {
+                    if (!tree.has_val(child) || tree.is_container(child) || !tree.is_val_quoted(child) ||
+                        tree.val(child).empty())
+                    {
+                        out.message =
+                            std::string("prepare: \"") + key + "\" must be a JSON array of non-empty participant names";
+                        out.reason = runner::reason::kInvalidArgument;
+                        return out;
+                    }
+                    target->push_back(config::detail::to_string(tree.val(child)));
+                }
+            }
+        }
+        else if (serve != nullptr && *out.name == "stop")
+        {
+            if (tree.find_child(root, ryml::csubstr("force", 5)) != ryml::NONE)
+            {
+                const auto force = scalar("force");
+                if (!force || force->second || (force->first != "true" && force->first != "false"))
+                {
+                    out.message = "stop: \"force\" must be true or false; leave it out to escalate";
+                    out.reason = runner::reason::kInvalidArgument;
+                    return out;
+                }
+                serve->force = (force->first == "true");
             }
         }
         else if (*out.name == "step")
@@ -181,13 +274,14 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
         return out;
     }
     static constexpr std::string_view kNames[] = {"stop", "pause", "resume", "step", "run_until", "speed"};
+    static constexpr std::string_view kServeNames[] = {"run", "prepare", "status"};
     if (std::find(std::begin(kNames), std::end(kNames), *out.name) == std::end(kNames) &&
-        (serve == nullptr || *out.name != "run"))
+        (serve == nullptr || std::find(std::begin(kServeNames), std::end(kServeNames), *out.name) == std::end(kServeNames)))
     {
         // The name as far as it is worth showing.
         const std::string shown = out.name->size() > 64 ? out.name->substr(0, 64) + "..." : *out.name;
         out.message = "unknown command '" + shown + "': the commands are " +
-                      (serve != nullptr ? "run, " : "") + "stop, pause, resume, step, run_until and speed";
+                      (serve != nullptr ? "run, prepare, status, " : "") + "stop, pause, resume, step, run_until and speed";
         out.reason = runner::reason::kUnknownCommand;
         return out;
     }

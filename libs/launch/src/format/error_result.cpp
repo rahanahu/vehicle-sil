@@ -33,7 +33,8 @@ RunReport usage_run_report(const std::string &file,
 
 std::string format_usage_json(CommandKind command, const std::string &file,
                               const std::vector<config::Finding> &errors,
-                              const std::vector<std::string> &variants) {
+                              const std::vector<std::string> &variants,
+                              bool file_only) {
   switch (command) {
   case CommandKind::Connections: {
     ConnectionsReport report;
@@ -59,6 +60,10 @@ std::string format_usage_json(CommandKind command, const std::string &file,
   check.usage = true;
   check.variants = variants;
   check.findings = errors;
+  if (file_only) {
+    check.file_sha256 = std::string{};
+    check.hot_eligibility = evaluate_hot_eligibility(check);
+  }
   return format_json(check);
 }
 

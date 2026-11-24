@@ -25,7 +25,7 @@ class Reader : private config::detail::YamlReader
 public:
     Reader(const config::detail::YamlDocument& doc, std::vector<config::Finding>& findings) : config::detail::YamlReader(doc, findings) {}
 
-    RequestFile read()
+    RequestFile read(bool require_version = true)
     {
         RequestFile out;
         RunIntent& intent = out.intent;
@@ -163,7 +163,7 @@ public:
                 out.fields.push_back(key);
             }
         }
-        if (!version)
+        if (!version && require_version)
         {
             error("value", root == ryml::NONE ? 0 : doc_.line(root),
                   "vehicle_sil_run_request is missing: write \"vehicle_sil_run_request\": " +
@@ -270,9 +270,7 @@ private:
     }
 };
 
-} // namespace
-
-RequestFileRead read_request_file(std::string_view text, std::string_view shown)
+RequestFileRead read_request_impl(std::string_view text, std::string_view shown, bool require_version)
 {
     RequestFileRead out;
     std::vector<config::Finding> found;
@@ -295,7 +293,7 @@ RequestFileRead read_request_file(std::string_view text, std::string_view shown)
         try
         {
             const config::detail::YamlDocument doc(text);
-            RequestFile file = Reader(doc, found).read();
+            RequestFile file = Reader(doc, found).read(require_version);
             if (found.empty())
             {
                 file.shown = std::string(shown);
@@ -317,6 +315,18 @@ RequestFileRead read_request_file(std::string_view text, std::string_view shown)
         out.findings.push_back(std::move(finding));
     }
     return out;
+}
+
+} // namespace
+
+RequestFileRead read_request_file(std::string_view text, std::string_view shown)
+{
+    return read_request_impl(text, shown, true);
+}
+
+RequestFileRead read_request_intent(std::string_view text, std::string_view shown)
+{
+    return read_request_impl(text, shown, false);
 }
 
 } // namespace vehicle_sil::launch

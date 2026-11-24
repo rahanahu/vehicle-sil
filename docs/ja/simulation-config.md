@@ -879,7 +879,7 @@ variants:
 ## 引数と終了コード
 
 ```text
-vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -945,6 +945,7 @@ vehicle_sil_launch version [--json]
 | `--request <file>` | `check`、`run`、`connections` | 何を走らせるかを要求ファイル（JSON）から読みます。欄ごとに、引数がファイルに勝ちます。`connections` が読むのは `connect` だけで、その先がこの PC で使えるかを答えます（[simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）。 |
 | `--network <name>` | `connections` だけ | ネットワーク `<name>` だけを出します。 |
 | `--text-from-stdin` | `check` だけ | 構成の文を `<file>` からでなく標準入力から読みます。`<file>` は名前として使います。相対パスと要求ファイルの `scenario` はそのディレクトリから読み、指摘と JSON はその名前を書きます。ファイルはなくてもかまいません。 |
+| `--file-only` | `check` だけ | 実行ファイルを探したり起動したりせず、設定テキストだけを照合します（[simulation-check.md](simulation-check.md#ファイルだけを照合する--file-only) の「ファイルだけを照合する（`--file-only`）」）。`--text-from-stdin` とは併用できません。 |
 | `--write-descriptions <file>` | `check` だけ | 読めた participant の `--describe` の出力を、`--descriptions` のために `<file>` に書きます（[simulation-check.md](simulation-check.md#保存した説明--write-descriptions--descriptions) の「保存した説明（`--write-descriptions`、`--descriptions`）」）。 |
 | `--descriptions <file>` | `check` だけ | プロセスを起動しません。各 participant の `--describe` の出力を、コマンドと実行ファイルが保存したときのままなら `<file>` から取ります。それ以外の participant は照合しません（[simulation-check.md](simulation-check.md#保存した説明--write-descriptions--descriptions) の同じ節）。 |
 | `--compare-commands <file>` | `check` だけ | 実行されるコマンド（すべての機種での各 participant の `command`、`describe`、`manual`、`enabled` と、`describe: false` の participant の `network_names`・`j1939_nodes` のために `run` が足すもの。participant、機種、`registry_uri`）を、設定ファイル `<file>` のものと比べ、`--json` の `commands` に `"same"`、`"changed"`、`"not_compared"` を書きます（[simulation-check.md](simulation-check.md#実行されるコマンドを比べる--compare-commands) の「実行されるコマンドを比べる（`--compare-commands`）」）。 |
@@ -1038,7 +1039,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | `check` | `--events`、`--stdin-commands` |
 | `check` | `--log-dir`、`--timeout-ms`、`--start-paused`、`--control` と `--control-*` |
 | `run` | `--json` と `--events` を一緒に付ける |
-| `run` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
+| `run` | `--file-only`、`--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
 | `run` | `--events` なしの `--events-stall-ms` と、範囲の外の値 |
 | `run` | `--stdin-commands` も `--control` もない `--start-paused` |
 | `run` | 数でも `max` でもない `--speed` |
@@ -1057,7 +1058,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 機種とパラメーター | 形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param` |
 | `test` | `--scenarios` がない、`--scenarios` のパスがない、シナリオのファイルがないディレクトリ |
 | `test` | `test` に付けた `run` だけの引数と `--scenario` |
-| `test` | `--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
+| `test` | `--file-only`、`--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
 | `test` | `test` に渡した設定ファイルの、有効で `manual: true` の participant |
 
 ## 関連するドキュメント

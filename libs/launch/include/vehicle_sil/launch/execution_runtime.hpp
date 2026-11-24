@@ -127,17 +127,6 @@ enum class LauncherState
 
 [[nodiscard]] const char* launcher_state_name(LauncherState state) noexcept;
 
-/// Whether a checked configuration can run inside the resident launcher.
-struct HotEligibility
-{
-    bool eligible = false;
-    /// "", "fixed-registry", "manual-participants", "trace-enabled", "config-unreadable", "usage"
-    std::string reason{};
-    std::string message{};
-
-    [[nodiscard]] bool operator==(const HotEligibility&) const = default;
-};
-
 /// File-only metadata extracted during prepare().
 struct ConfigMetadata
 {

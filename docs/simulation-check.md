@@ -7,6 +7,7 @@ This is the reference for `vehicle_sil_launch check <file>`: the order in which 
 | To find | See |
 |---|---|
 | What is checked, and in which order | [Check order](#check-order) |
+| Checking only the configuration file without running executables | [Checking the file only (`--file-only`)](#checking-the-file-only---file-only) |
 | Checking without starting the executables | [Saved descriptions](#saved-descriptions---write-descriptions---descriptions) |
 | Whether an edit changes the commands that run | [Comparing the commands that run](#comparing-the-commands-that-run---compare-commands) |
 | What each finding code means and how to fix it | [Finding codes](#finding-codes) |
@@ -35,6 +36,10 @@ This is the reference for `vehicle_sil_launch check <file>`: the order in which 
 | 4 | The configuration file against the `--describe` output | Checks the two against each other. |
 
 With `--connect`, after stage 3 the check also looks for the bridge of each connected network and runs its `--describe` with the arguments that the launcher gives it (see "Connecting a network outside (`external`, `--connect`)" in [simulation-config.md](simulation-config.md#connecting-a-network-outside-external---connect)).
+
+### Checking the file only (`--file-only`)
+
+`check --file-only` runs only stage 1 (reading and validating the configuration text, variant overrides, time lock, and `--connect` syntax/network names), skipping stages 2–4 and scenario reading, and starting no ECU or bridge executable. Findings are sorted before returning. With `--json`, it adds `file_sha256` (lowercase hexadecimal FIPS 180-4 SHA-256 of the raw configuration file bytes, or `null` when unreadable/not read) and `hot_eligibility` (whether the configuration can run in `vehicle_sil_launch serve`). `--file-only` cannot be combined with `--text-from-stdin`, and is refused by `run`, `test`, and `serve` (exit code 4).
 
 **Notes on stage 1**
 
@@ -434,6 +439,8 @@ Top-level keys:
 | `participants[]` | Array of participants (in the order of the configuration file) |
 | `networks[]` | Array of networks (in the order of the configuration file) |
 | `findings[]` | Array of findings (in the same order as the human-readable output) |
+| `file_sha256` | Present only with `--file-only`: lowercase hex SHA-256 of the raw configuration file bytes (`null` if unreadable or not read) |
+| `hot_eligibility` | Present only with `--file-only`: object `{ "eligible": bool, "reason": string\|null, "message": string\|null }` for `vehicle_sil_launch serve` (`reason` is `"usage"`, `"config-unreadable"`, `"fixed-registry"`, `"manual-participants"`, `"trace-enabled"`, or `null` when eligible) |
 
 - If `--variant` is missing or names no variant (`result` is `"usage"`), `variant` is `null` and `variants` gives the names you can choose from.
 - Each element of `params` has `name`, `value` (`true`/`false`, a number or a string) and `from` (`configuration` or `variant`).

@@ -160,14 +160,14 @@
 
 | 名前 | 場所 |
 |---|---|
-| `check_file()`、`Checked`（ファイルの照合と、`--scenario` のシナリオ。その `format_text()` と `format_json()`） | `launch/checked.hpp` |
+| `check_file()`、`Checked`（`--file-only` 時の `file_sha256` と `hot_eligibility` を含む）、`HotEligibility`、`evaluate_hot_eligibility()`、`--scenario`（`format_text()` と `format_json()`） | `launch/checked.hpp` |
 | ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `executable_status()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_config_stdin()`（`check --text-from-stdin`）、`read_scenario_file()`、`files_beside()`、`environment_value()`。`check_file()` が participant の `--describe` の出力を取るところ（`DescribeSource`: `describe_by_running()`、またはプロセスを起動しない `describe_from_saved()`）と、保存した説明のファイル（`read_saved_descriptions()`、`write_saved_descriptions()`、`executable_stamp()`） | `launch/probe.hpp` |
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（backend ごとに各ブリッジに 1 回だけ聞く。`prefix_targets()` が `--connect` の受ける値にする）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`check_requested()`（`--request`: 要求ファイルの先が一覧にあるか。backend と名前で比べる。ファイルを読み構成に合わせて切るのは、要求ファイルの行の関数）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()`、その結果（`RunReport`。書くのは `format_run_text()` と `format_run_json()`）、実行が借りるもの（`RunLent`）、実行から見た Control Server（`ControlEndpoint`） | `launch/run.hpp` |
-| `ExecutionRuntime`、`ExecutionSink`、`ExecutionStatus`、`LauncherState`、`HotEligibility`、`ConfigMetadata`、`LauncherEnd`、`ExecutionEnd`: Prepare、Run、Stop、時刻命令、Status、Results、Shutdown を管理するトランスポート非依存の常駐実行ランタイム | `launch/execution_runtime.hpp` |
+| `ExecutionRuntime`、`ExecutionSink`、`ExecutionStatus`、`LauncherState`、`ConfigMetadata`、`LauncherEnd`、`ExecutionEnd`: Prepare、Run、Stop、時刻命令、Status、Results、Shutdown を管理するトランスポート非依存の常駐実行ランタイム | `launch/execution_runtime.hpp` |
 | `Serve`（`ExecutionRuntime` 上で `vehicle_sil_launch serve` を実装する薄い NDJSON アダプター）と `prepare_serve_run()` | `launch/serve.hpp` |
 | check、run、test が何を頼まれたかを、値にしたもの: `RunRequest`。2 つの部分に分かれる。`RunIntent`（利用者のもの: variant、パラメーター、利用者が書いたとおりのシナリオ、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、速さ、`--start-paused`、`--strict`）と `RunHost`（呼ぶ側のもの: 利用者が書いたとおりのファイル、道具とログの場所、`--describe` と実行の期限、利用者が書いたとおりのタイムラインのファイル、求められた Control Server（アドレスとファイルの名前）、標準入力の命令を求めているか）。`validate_request()`（純粋）が、一緒には使えない欄の規則（`--param` と `--timeline` にはシナリオが要る、`--start-paused` をシナリオと使う、続ける手段なしに使う）を、code が `usage` の指摘として持つ。`check_file()`、`run_file()`、`test_file()`（`TestOptions::request`）がこれを受け、名前からパスを作る。`CheckOptions` に残るのは、頼まれたことではないものだけ（`file_only`、`params_for_many`、`fastest_by_default`）。`tools/launch/main.cpp` の `read_request()` と `run()` が、誤りを報告する順に引数を読み、3 か所で `validate_request()` を呼んで最初の指摘を断る（`--request` があるときは、全部の引数を読んだ後に 1 度）。プロセスなしの試験は `tests/launch/test_request.cpp`（規則と、check と計画が欄ごとに読むもの） | `launch/request.hpp`、`src/request/request.cpp` |
-| `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`config/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`config/check.hpp`。実体は `check_report.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request/request_read.cpp`、`src/request/request.cpp` |
+| `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` と `read_request_intent()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`config/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`config/check.hpp`。実体は `check_report.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request/request_read.cpp`、`src/request/request.cpp` |
 | `RunEventSink`（`RunEvents` を `phase()`、`check()`、`command()`、`state()` で広げた実行ごとのイベントのインターフェース。`run_file()` と `RunLent::events` がこれを使います） | `launch/run_sink.hpp` |
 | `EventStream`（`run --events` のイベントを書き、`RunEventSink` を実装します） | `launch/events.hpp` |
 | `parse_command()` と `CommandInput`（`--stdin-commands` のコマンドを読む） | `launch/command_input.hpp` |
@@ -177,7 +177,7 @@
 
 | 内容 | 場所 |
 |---|---|
-| 照合の全体の流れ（`check_file()`） | `src/usecases/check.cpp` |
+| 照合の全体の流れ（`check_file()`）、`evaluate_hot_eligibility()`、純粋 C++20 FIPS 180-4 SHA-256（`detail::sha256_hex()`） | `src/usecases/check.cpp`、`src/usecases/sha256.{hpp,cpp}` |
 | コンピューターを調べる: ファイルシステム（実行ファイルやブリッジの場所、設定ファイル、シナリオ、点のファイル）、環境変数（`PATH`、`VEHICLE_SIL_LISTEN_ON_NETWORK`）、出力を読むために動かすプロセス。ルールは調べた結果を値（`config.cpp` の `executable_finding()` はファイルの状態を受け取る）か関数（`ConnectTools`、`ScenarioContext::read_file`）で受け取る。例外が 1 つ残る: `connect.cpp` の `bridge_working_directory()` は相対のディレクトリを絶対にする | `src/probe/probe.cpp` |
 | 保存した説明のファイル（`check --write-descriptions`、`--descriptions`。ランチャー独自の JSON で、同じ版だけが読む）と、それから取る `DescribeSource` | `src/probe/saved_descriptions.cpp` |
 | check の JSON に、実行ファイルが申告したとおりのネットワークを書く（`write_reported_networks()`） | `src/format/reported_networks.cpp` |
@@ -187,7 +187,7 @@
 | `run_file()`: 照合、実行が自分で作る操作盤と Control Server、`Runner` の 2 つの段、タイムラインのファイル | `src/usecases/run_file.cpp` |
 | `ExecutionRuntime`: 2 軸のランチャー・実行状態機械、`prepare()`、`start_run()`、`stop_run()`、`send_time_command()`、`status()`、`result()`、`request_shutdown()`、`run_loop()` | `src/usecases/execution_runtime.cpp` |
 | `Serve`: `ServeCommand` と `EventStream` を `ExecutionRuntime` に接続する NDJSON アダプター | `src/usecases/serve.cpp` |
-| `--stdin-commands` のコマンドを読む | `src/endpoints/command_input.cpp` |
+| `--stdin-commands` と `serve` のコマンドを読む（`parse_command()`、`parse_serve_command()`、`prepare`、`status`、`stop.force`、インライン `intent`） | `src/endpoints/command_input.cpp` |
 | コマンドラインと、標準入力・標準出力のスレッド | `tools/launch/main.cpp` |
 | `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）。実行からは `ControlEndpoint` として見える（`launch/run.hpp`）。`run_file()` が、照合の前に要求（`RunHost::control`）から作り、実行の 2 つの段（`src/run.cpp` の `Runner::prepare()` と `Runner::run()`）の間で起動し、戻るときに終える。破棄は、呼ぶ側が結果の後に行う（`RunReport::ended_control_server`） | `libs/launch/src/endpoints/control_server.cpp`（サーバーと、要求がそのために指すものの読み取りと検査）、`libs/launch/src/endpoints/run_control_server.hpp`（`run_file()` が呼ぶもの） |
 

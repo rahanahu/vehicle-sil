@@ -48,6 +48,8 @@ struct ServeOptions
     std::function<std::string(int source)> source_name{};
     /// How long run() waits for the events to be written when the launcher ends while idle.
     std::chrono::milliseconds flush_limit{5000};
+    /// Injected by caller (e.g. tools/launch/main.cpp) so libs/launch never links vehicle_sil::trace.
+    bool trace_enabled = false;
 };
 
 /// How the launcher ends (Serve::run()).

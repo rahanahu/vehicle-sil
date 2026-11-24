@@ -28,6 +28,9 @@
 
 namespace vehicle_sil::launch {
 
+struct ExecutionStatus;
+struct PrepareResult;
+
 /// The version of the events (hello's "vehicle_sil_events").
 inline constexpr int kEventsFormat = 2;
 /// The version of the events of `serve` (its hello's "vehicle_sil_events"): the lines of
@@ -38,7 +41,7 @@ inline constexpr int kServeEventsFormat = 3;
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 28> kFeatures{"events",
+inline constexpr std::array<std::string_view, 30> kFeatures{"events",
                                                             "stdin-commands",
                                                             "check-variables",
                                                             "speed",
@@ -65,7 +68,9 @@ inline constexpr std::array<std::string_view, 28> kFeatures{"events",
                                                             "request",
                                                             "scenario-samples",
                                                             "run-stop-at",
-                                                            "serve"};
+                                                            "serve",
+                                                            "check-file-only",
+                                                            "serve-prepare"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
@@ -219,6 +224,10 @@ public:
     /// "run"): the members of command() and "asked_run", the run the command named (null if it
     /// named none).
     void refused(const runner::Command& command, std::string_view source, const std::optional<std::string>& asked_run);
+    /// serve: reply to {"command":"prepare"} (no "run").
+    void prepare(const PrepareResult& result, std::optional<std::int64_t> id);
+    /// serve: reply to {"command":"status"} (no "run").
+    void status(const ExecutionStatus& status, std::optional<std::int64_t> id);
     /// serve: opens the window of the run `run` (see above) and writes its "run_start" with "id",
     /// the run command's number (null without one). The window is open until its result() or
     /// until it is destroyed; it may outlive this object (it shares the stream's state).
