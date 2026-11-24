@@ -10,8 +10,10 @@
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -113,6 +115,10 @@ public:
 
     /// Every bridge of `bridges` has written a link line (it says whether the device is shared).
     [[nodiscard]] bool link_lines_read(const std::vector<std::size_t>& bridges);
+    /// Waits up to `timeout` until every bridge of `bridges` has written a link line, or until
+    /// `interrupted()` becomes true (lock-free atomic check).
+    [[nodiscard]] Waited wait_for_link_lines(const std::vector<std::size_t>& bridges, std::chrono::milliseconds timeout,
+                                             const std::function<bool()>& interrupted);
 
     /// What was read of the bridge `index`'s link line and counts, added up at `now` (OutsideState::summary()).
     /// After its output has been read to the end.
@@ -150,6 +156,7 @@ private:
 
     const RunContext& ctx_;
     std::mutex mutex_;
+    std::condition_variable link_lines_cv_; ///< notified when a bridge's link line is recorded under mutex_
     std::vector<std::unique_ptr<std::ofstream>> logs_; ///< per participant; guarded by mutex_ once the participants run
     std::vector<config::detail::LastLine> last_lines_;                 ///< per participant (only a bridge's is used); guarded by mutex_
     std::vector<OutsideNote> outside_; ///< per participant (only a bridge's is used); guarded by mutex_

@@ -58,12 +58,26 @@ struct SimulationController::Gate
     detail::TimeGate model;
     bool quit = false;
     std::thread thread; ///< completes held steps (run_gate())
+    std::mutex observer_mutex;
+    std::function<void()> observer;
 
     /// After a change of `model` (made under `mutex`, called without it).
     void wake() noexcept
     {
         cv.notify_all();
         waiter.notify();
+        const std::lock_guard lock(observer_mutex);
+        if (observer)
+        {
+            try
+            {
+                observer();
+            }
+            catch (...)
+            {
+                // An observer must not disturb gate state transitions.
+            }
+        }
     }
 };
 
@@ -382,6 +396,12 @@ void SimulationController::guard_from(std::optional<SimTime> t)
 
 std::optional<SimTime> SimulationController::wait_guarded(std::chrono::milliseconds timeout)
 {
+    const GuardWaitResult result = wait_guarded_result(timeout);
+    return result.status == GuardWaitResult::Status::Guarded ? result.time : std::nullopt;
+}
+
+SimulationController::GuardWaitResult SimulationController::wait_guarded_result(std::chrono::milliseconds timeout)
+{
     auto& g = gate();
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (true)
@@ -389,26 +409,33 @@ std::optional<SimTime> SimulationController::wait_guarded(std::chrono::milliseco
         // Once the lifecycle has ended (or is being stopped), no step is held any more.
         if (runtime_->stop_requested() || (runtime_->started() && has_finished(PeerStatus{runtime_->state()})))
         {
-            return std::nullopt;
+            return {GuardWaitResult::Status::Ended, std::nullopt};
         }
         std::unique_lock lock(g.mutex);
         if (g.model.ended())
         {
-            return std::nullopt;
+            return {GuardWaitResult::Status::Ended, std::nullopt};
         }
         if (g.model.guarded())
         {
-            return g.model.now();
+            return {GuardWaitResult::Status::Guarded, g.model.now()};
         }
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline)
         {
-            return std::nullopt;
+            return {GuardWaitResult::Status::TimedOut, std::nullopt};
         }
         // Short slices: the end of the lifecycle may also be seen before end_gate() runs.
         g.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)),
                         [&] { return g.model.guarded() || g.model.ended(); });
     }
+}
+
+void SimulationController::set_gate_observer(std::function<void()> observer)
+{
+    auto& g = gate();
+    const std::lock_guard lock(g.observer_mutex);
+    g.observer = std::move(observer);
 }
 
 void SimulationController::set_start_window(std::function<void(const StartWindow& window)> window)

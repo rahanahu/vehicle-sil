@@ -3,7 +3,9 @@
 
 #include "spawn.hpp"
 
+#include <algorithm>
 #include <cstring>
+#include <limits>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -350,7 +352,7 @@ Process::Process(const std::filesystem::path& executable, const std::vector<std:
     int outWrite = -1;
     int errWrite = -1;
     const auto close_all = [&] {
-        for (int* fd : {&out_, &err_, &outWrite, &errWrite, &wake_read_, &wake_write_, &in_})
+        for (int* fd : {&out_, &err_, &outWrite, &errWrite, &wake_read_, &wake_write_, &in_, &pidfd_})
         {
             if (*fd >= 0)
             {
@@ -388,6 +390,7 @@ Process::Process(const std::filesystem::path& executable, const std::vector<std:
         try
         {
             pid_ = detail::spawn(executable, arguments, request);
+            pidfd_ = detail::open_pidfd(pid_);
         }
         catch (...)
         {
@@ -425,12 +428,22 @@ Process::~Process()
     kill_tree();
     finish_output(std::chrono::milliseconds(0));
     close_input();
+    close_pidfd();
     for (int fd : {wake_read_, wake_write_})
     {
         if (fd >= 0)
         {
             ::close(fd);
         }
+    }
+}
+
+void Process::close_pidfd() noexcept
+{
+    if (pidfd_ >= 0)
+    {
+        ::close(pidfd_);
+        pidfd_ = -1;
     }
 }
 
@@ -551,10 +564,15 @@ std::optional<ExitStatus> Process::poll()
     if (waited == pid_)
     {
         status_ = detail::exit_status_of(status);
+        if (status_)
+        {
+            close_pidfd();
+        }
     }
     else if (waited < 0)
     {
         status_ = ExitStatus{-1, std::nullopt}; // not our child any more (cannot happen here)
+        close_pidfd();
     }
     return status_;
 }
@@ -568,11 +586,26 @@ std::optional<ExitStatus> Process::wait_for(std::chrono::milliseconds timeout)
         {
             return status;
         }
-        if (std::chrono::steady_clock::now() >= deadline)
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
         {
             return std::nullopt;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (pidfd_ >= 0)
+        {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+            const int waitMs = static_cast<int>(
+                std::clamp<std::chrono::milliseconds::rep>(left.count(), 1, std::numeric_limits<int>::max()));
+            pollfd pfd{pidfd_, POLLIN, 0};
+            const int rc = ::poll(&pfd, 1, waitMs);
+            if (rc < 0 && errno != EINTR)
+            {
+                close_pidfd();
+            }
+            continue;
+        }
+        std::this_thread::sleep_for(
+            std::min<std::chrono::steady_clock::duration>(std::chrono::milliseconds(5), deadline - now));
     }
 }
 
@@ -609,6 +642,7 @@ void Process::kill_tree() noexcept
         {
         }
         status_ = waited == pid_ ? detail::exit_status_of(status) : std::optional<ExitStatus>(ExitStatus{-1, std::nullopt});
+        close_pidfd();
     }
 }
 

@@ -37,8 +37,6 @@ constexpr std::chrono::seconds kEndWait{10};
 /// Simulation::SilKitRun::wait_for_the_abort()). The tools of this project look every 50 ms and
 /// abort when a participant is in Error. Tests shorten it (detail::set_abort_wait()).
 std::atomic<std::chrono::milliseconds::rep> abort_wait_ms{5000};
-/// How often wait_for_the_abort() looks at the states.
-constexpr std::chrono::milliseconds kAbortPoll{10};
 
 std::string join(const std::vector<std::string>& parts)
 {
@@ -380,9 +378,21 @@ void Simulation::SilKitRun::wait_for_the_abort()
     };
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(abort_wait_ms.load(std::memory_order_relaxed));
-    while (std::any_of(peers.begin(), peers.end(), in_the_simulation) && std::chrono::steady_clock::now() < deadline)
+    for (const auto& p : peers)
     {
-        std::this_thread::sleep_for(kAbortPoll);
+        while (true)
+        {
+            const std::uint64_t generation = p->runtime().peer_generation();
+            if (!in_the_simulation(p) || std::chrono::steady_clock::now() >= deadline)
+            {
+                break;
+            }
+            p->runtime().wait_for_peer_change(generation, deadline);
+        }
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            break;
+        }
     }
 }
 

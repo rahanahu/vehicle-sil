@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -131,11 +132,21 @@ struct XlCanPort::Impl
 
     std::mutex xl_mutex; // serialises every driver call on `port`
     std::mutex lifecycle_mutex;
+    std::mutex drain_mutex; // leaf lock for stop()'s drain wait
+    std::condition_variable drain_cv;
     std::thread receive_thread;
     std::atomic<bool> running{false};
     std::atomic<bool> receiving{false}; // the receive loop runs (false after a Fault)
     bool active = false;
     EventHandler handler;
+
+    void notify_drain() noexcept
+    {
+        {
+            const std::lock_guard lock(drain_mutex);
+        }
+        drain_cv.notify_all();
+    }
 
     // Frames the driver accepted (transmit() Ok) and has not confirmed with a receipt yet, for
     // the wait at stop and ext_tx_unsent. Changed under xl_mutex together with the driver call
@@ -176,6 +187,10 @@ struct XlCanPort::Impl
         }
         unconfirmed_since.store(0);
         receipts_known.store(true);
+        if (value <= 1)
+        {
+            notify_drain();
+        }
     }
     [[nodiscard]] std::int64_t timeout_ns() const noexcept
     {
@@ -350,10 +365,12 @@ void XlCanPort::stop() noexcept
     const std::lock_guard lifecycle(impl.lifecycle_mutex);
     // Let the frames the driver accepted reach the bus first; the receive loop counts the receipts.
     const auto drainUntil = std::chrono::steady_clock::now() + impl.options.drain_timeout;
-    while (impl.running.load() && impl.receiving.load() && impl.receipts_known.load() && impl.pending.load() > 0 &&
-           std::chrono::steady_clock::now() < drainUntil)
+    if (impl.running.load() && impl.receipts_known.load())
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::unique_lock lock(impl.drain_mutex);
+        impl.drain_cv.wait_until(lock, drainUntil, [&impl] {
+            return !impl.running.load() || !impl.receiving.load() || !impl.receipts_known.load() || impl.pending.load() <= 0;
+        });
     }
     impl.running.store(false);
     if (impl.receive_thread.joinable())
@@ -482,6 +499,7 @@ void XlCanPort::Impl::receive_loop()
                     ExternalCanEvent fault{ExternalEventKind::Fault, {}, {}};
                     fault.detail = text;
                     receiving.store(false);
+                    notify_drain();
                     handler(fault);
                     return; // no events after Fault; stop() still joins this thread
                 }
@@ -515,6 +533,8 @@ void XlCanPort::Impl::receive_loop()
         }
         (void)backend::wait_for_notification(notification, wait);
     }
+    receiving.store(false);
+    notify_drain();
 }
 
 namespace {
@@ -565,6 +585,7 @@ void XlCanPort::Impl::dispatch(const backend::ReceivedEvent& event)
         // call the bus stuck because of a receipt that was lost here.
         pending.store(0);
         unconfirmed_since.store(0);
+        notify_drain();
         handler(ExternalCanEvent{ExternalEventKind::Overrun, {}});
     }
     switch (classified.event_class)
@@ -615,6 +636,7 @@ bool XlCanPort::Impl::restart_channel()
             active = status.ok();
         }
     }
+    notify_drain();
     if (!receipts_known.load())
     {
         lost = 0; // unknown, not "all of them"
@@ -637,6 +659,7 @@ bool XlCanPort::Impl::restart_channel()
         ExternalCanEvent fault{ExternalEventKind::Fault, {}, {}};
         fault.detail = text;
         receiving.store(false);
+        notify_drain();
         handler(fault);
         return false;
     }

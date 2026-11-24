@@ -294,9 +294,7 @@ bool RunStart::stopped_for_shared_device(const std::vector<std::size_t>& bridges
 {
     // The first link line comes before the bridge's lifecycle starts, so it is read by now, but the
     // thread that reads the bridge's output may be a moment behind.
-    const Waited waited = detail::wait_for(
-        kOutsideFirstLineWait, std::chrono::milliseconds(5), [&] { return out_.link_lines_read(bridges); },
-        [this] { return ctx_.interrupts() > 0; });
+    const Waited waited = out_.wait_for_link_lines(bridges, kOutsideFirstLineWait, [this] { return ctx_.interrupts() > 0; });
     if (waited == Waited::Interrupted)
     {
         interrupted_before_start();
@@ -338,34 +336,55 @@ bool RunStart::wait_for_bridges(SimulationController& controller)
     const auto state_of = [&controller](const ParticipantRun& run) {
         return controller.runtime().peer_status(run.name).state;
     };
-    const Waited waited = detail::wait_for(
-        limit, std::chrono::milliseconds(5),
-        [&] {
-            // "joined" as each comes, so that a bridge's comes before any ECU's "started".
-            notes_.note_joined(controller, outcome_);
-            // A bridge that ended before it connected to SIL Kit has no state: its process says so.
-            if (const int ended = participants_.look_at_children(true); ended >= 0)
+    const auto check_done = [&] {
+        // "joined" as each comes, so that a bridge's comes before any ECU's "started".
+        notes_.note_joined(controller, outcome_);
+        // A bridge that ended before it connected to SIL Kit has no state: its process says so.
+        if (const int ended = participants_.look_at_children(true); ended >= 0)
+        {
+            failed = static_cast<std::size_t>(ended);
+            const ParticipantRun& run = outcome_.participants[failed];
+            why = run.exit ? exit_text(*run.exit) : std::string("ended");
+            return true;
+        }
+        for (const std::size_t i : bridges)
+        {
+            const auto state = state_of(outcome_.participants[i]);
+            if (state && (*state == orch::ParticipantState::Error || *state == orch::ParticipantState::Shutdown))
             {
-                failed = static_cast<std::size_t>(ended);
-                const ParticipantRun& run = outcome_.participants[failed];
-                why = run.exit ? exit_text(*run.exit) : std::string("ended");
+                failed = i;
+                why = "left the simulation (state " + std::string(orch::to_string(*state)) + ")";
                 return true;
             }
-            for (const std::size_t i : bridges)
-            {
-                const auto state = state_of(outcome_.participants[i]);
-                if (state && (*state == orch::ParticipantState::Error || *state == orch::ParticipantState::Shutdown))
-                {
-                    failed = i;
-                    why = "left the simulation (state " + std::string(orch::to_string(*state)) + ")";
-                    return true;
-                }
-            }
-            return std::all_of(bridges.begin(), bridges.end(), [&](std::size_t i) {
-                return state_of(outcome_.participants[i]) == orch::ParticipantState::Running;
-            });
-        },
-        [this] { return ctx_.interrupts() > 0; });
+        }
+        return std::all_of(bridges.begin(), bridges.end(), [&](std::size_t i) {
+            return state_of(outcome_.participants[i]) == orch::ParticipantState::Running;
+        });
+    };
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    Waited waited = Waited::Done;
+    while (true)
+    {
+        const std::uint64_t peerGen = controller.runtime().peer_generation();
+        if (check_done())
+        {
+            waited = Waited::Done;
+            break;
+        }
+        if (ctx_.interrupts() > 0)
+        {
+            waited = check_done() ? Waited::Done : Waited::Interrupted;
+            break;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            waited = Waited::TimedOut;
+            break;
+        }
+        // Wakes immediately on any peer status transition; short slice checks child exit / interrupts.
+        controller.runtime().wait_for_peer_change(peerGen, std::min(deadline, now + std::chrono::milliseconds(20)));
+    }
     if (waited == Waited::Interrupted)
     {
         interrupted_before_start();

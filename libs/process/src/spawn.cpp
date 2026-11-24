@@ -588,6 +588,20 @@ pid_t spawn(const std::filesystem::path& executable, const std::vector<std::stri
                      report.stage == 3 ? StartError::Cause::System : StartError::Cause::Executable);
 }
 
+int open_pidfd(pid_t pid) noexcept
+{
+#if defined(__linux__) && defined(SYS_pidfd_open)
+    if (pid <= 0)
+    {
+        return -1;
+    }
+    return static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+#else
+    static_cast<void>(pid);
+    return -1;
+#endif
+}
+
 #endif
 
 } // namespace vehicle_sil::process::detail
