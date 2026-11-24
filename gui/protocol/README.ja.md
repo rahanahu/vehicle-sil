@@ -176,7 +176,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 
 GUI Client は `api/session` と `api/run` の成功応答に `instance` を必要とします。応答にない場合は操作を中断し、同じリリースの GUI サーバーを使うよう案内します。開始要求はサーバーに届いている場合があるため、再試行の前に現在の実行を確認してください。
 
-実行を止めるには、`POST api/stop-session` に `{"run_id": <文字列>, "instance": <サーバーの識別子>, "force": <真偽>}` を送ります（`force` は任意で、省略は `false`。現在の実行を直接止める場合 `instance` も任意）。`instance` は `api/run`、`api/session` の応答か WebSocket の `hello` にある識別子です。`instance` と `run_id` を原子的に照合し、一致しないか別の実行が動いている・始まりかけているときは 409 `session-changed` を返して何もしません。`run_id`、`instance`、`force` 以外の欄（または null）は、ほかの口と同じく 400 `invalid-field` で断り、何も止めません。
+実行を止めるには、`POST api/stop-session` に `{"run_id": <文字列>, "instance": <サーバーの識別子>, "force": <真偽>}` を送ります（`force` は任意で、省略は `false`）。`instance` は `api/run`、`api/session` の応答か WebSocket の `hello` にある識別子です。`instance` と `run_id` を原子的に照合し、一致しないか別の実行が動いている・始まりかけているときは 409 `session-changed` を返して何もしません。`run_id`、`instance`、`force` 以外の欄（または null）は、ほかの口と同じく 400 `invalid-field` で断り、何も止めません。
 
 | `force` | すること | すでに頼んであるとき |
 |---|---|---|

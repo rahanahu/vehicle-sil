@@ -34,7 +34,7 @@ test.afterAll(async () => {
  * when it is in sync, so the choices wait for that (an open list moves away with the card), and the wait is for the
  * check shown on the page, which the page may have sent itself.
  */
-async function runFailingScenario(page: Page): Promise<number> {
+async function runFailingScenario(page: Page): Promise<string> {
   await page.goto(`${base}#token=${server.token}`);
   await inSync(page);
   await page.getByRole('combobox', { name: '構成ファイル' }).click();
@@ -48,7 +48,7 @@ async function runFailingScenario(page: Page): Promise<number> {
   await start.click();
   const answer = await response;
   expect(answer.status()).toBe(200);
-  return ((await answer.json()) as { session: { id: number } }).session.id;
+  return ((await answer.json()) as { run_id: string }).run_id;
 }
 
 test('timeline: a failed scenario run links its timeline, which opens in the GUI language', async ({
@@ -63,7 +63,7 @@ test('timeline: a failed scenario run links its timeline, which opens in the GUI
   const link = card.getByTestId('scenario-timeline');
   await expect(link).toHaveText('時間の軸');
   const href = (await link.getAttribute('href')) ?? '';
-  expect(href).toMatch(/^timeline\/\?src=%2Fapi%2Ftimeline%2F\d+&lang=ja$/);
+  expect(href).toMatch(/^timeline\/\?src=%2Fapi%2Ftimeline%2F[^&]+&lang=ja$/);
   expect(href).not.toContain(server.token);
   if (shots) {
     await page.setViewportSize({ width: 1280, height: 900 });
