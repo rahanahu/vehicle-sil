@@ -17,6 +17,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_request_file.cpp
     test_run.cpp
     test_run_controls.cpp
+    test_run_sink.cpp
     test_scenario_samples.cpp
     test_scenario_timeline.cpp
     test_serve.cpp
@@ -82,7 +83,8 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
 set(_launch_silkit_prefixes silkit/ vehicle_sil/control_silkit/ vehicle_sil/can_silkit/ vehicle_sil/eth_silkit/
                             vehicle_sil/lin_silkit/ vehicle_sil/core/participant_)
 set(_launch_probe_headers vehicle_sil/launch/probe)
-set(_launch_output_headers vehicle_sil/launch/events vehicle_sil/launch/timeline_format vehicle_sil/launch/error_result)
+set(_launch_output_headers vehicle_sil/launch/events vehicle_sil/launch/run_sink vehicle_sil/launch/timeline_format
+                           vehicle_sil/launch/error_result)
 set(_launch_endpoint_headers vehicle_sil/launch/command_input)
 set(_launch_usecase_headers vehicle_sil/launch/run. vehicle_sil/launch/serve. vehicle_sil/launch/connections vehicle_sil/launch/test
                             vehicle_sil/launch/checked)
@@ -109,7 +111,7 @@ _launch_part_test(probe_boundary probe "probe.hpp"
     vehicle_sil/runner/ ${_launch_silkit_prefixes}
     ${_launch_output_headers} ${_launch_endpoint_headers} ${_launch_usecase_headers}
     usecases/ format/ endpoints/)
-_launch_part_test(format_boundary format "timeline_format.hpp;error_result.hpp"
+_launch_part_test(format_boundary format "run_sink.hpp;timeline_format.hpp;error_result.hpp"
     ${_launch_silkit_prefixes} vehicle_sil/control_grpc/ ${_launch_probe_headers} ${_launch_endpoint_headers}
     probe/ endpoints/ usecases/)
 # usecases/ has no limit on the other parts, but it reaches no SIL Kit header: the SIL Kit parts of a run are
