@@ -36,15 +36,20 @@ env:
 jobs:
   # A pull request runs fewer jobs than a push to main, so that several open pull requests do not wait for
   # runners. A push to main (or workflow_dispatch) runs everything.
-  # - Only Markdown files changed: the checks that read the documents: the links and the schema and template checks
-  #   (python), the examples that the launcher's tests compare with the documents (linux-gcc-debug) when a changed
-  #   page is in `debug_reads_docs`, linux-gcc-control when it is in `control_reads`, the format of the GUI's READMEs
-  #   (gui) when a file is in gui/, the GUI server's tests (gui-server) and the timeline element's test (gui) when a
-  #   file is in `gui_doc_reads`, and the client library package check (`npm run pack:client` in gui) when a file is in
-  #   `pack_reads`.
+  # - Only Markdown files changed (excluding tools/knowledge/): the checks that read the documents: the links and
+  #   the schema and template checks (python on .python-version only), the examples that the launcher's tests
+  #   compare with the documents (linux-gcc-debug) when a changed page is in `debug_reads_docs`, linux-gcc-control
+  #   when it is in `control_reads`, the format of the GUI's READMEs (gui) when a file is in gui/, the GUI server's
+  #   tests (gui-server) and the timeline element's test (gui) when a file is in `gui_doc_reads`, and the client
+  #   library package check (`npm run pack:client` in gui) when a file is in `pack_reads`.
   # - Only the browser GUI changed (gui/web, gui/client, gui/timeline, gui/protocol/examples, examples/gui_client,
   #   examples/gui_starter): gui, gui-server and python (plus linux-gcc-debug when a changed file is in `cpp_reads_gui`).
-  #   When gui/server changes, linux-gcc-debug and linux-gcc-control also run.
+  #   When gui/server or gui/protocol/dashboard.schema.json changes without C++-tested docs, linux-gcc-control runs
+  #   scoped to `^(launch\.shared_values|schema\.)` plus the real-launcher GUI tests (which already run
+  #   record_launcher.py --compare), skipping linux-gcc-debug.
+  # - Only non-GUI scripts (the `non_gui_scripts` allowlist) changed: python plus linux-gcc-debug and Windows
+  #   scoped to `^(scripts|template)\.` (plus `^launch_run\.trace_files$` when scripts/trace-report.py changes),
+  #   skipping gui, gui-server, linux-tsan and linux-gcc-control.
   # - Otherwise: linux-gcc-debug, linux-gcc-control, linux-tsan (the thread sanitizer), Windows and python. The presets
   #   linux-gcc-release and linux-gcc-static and the oldest CMake are added when the pull request changes how
   #   things are built (the `build` list below). Every check that only one preset makes is in linux-gcc-debug
@@ -72,6 +77,7 @@ jobs:
       tsan: ${{ steps.look.outputs.tsan }}
       windows: ${{ steps.look.outputs.windows }}
       presets: ${{ steps.look.outputs.presets }}
+      ctest_filter: ${{ steps.look.outputs.ctest_filter }}
       cpp_hash: ${{ steps.cpp-hash.outputs.hash }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,6 +97,7 @@ jobs:
           gui_pack_docs=false
           tsan=true
           windows=true
+          ctest_filter=''
           # Paths outside gui/ that the gui and gui-server jobs' tests read: the launcher's reference timelines
           # (gui/timeline's and gui/web's tests) and the example dashboard and panels read by test_dashboard.py and
           # test_protocol_examples.py.
@@ -105,14 +112,18 @@ jobs:
           control_reads='^docs/howto/(first-ecu|operate-signals)\.md$'
           # Files under gui/ that C++ build/tests read (tests/launch/test_shared_values.cpp, CMakeLists.txt, record_launcher.py, test_real_*.py).
           cpp_reads_gui='^gui/(server/|protocol/dashboard\.schema\.json$|client/src/(client|protocol/server)\.ts$|web/src/app/run/(speed-picker|run-page)\.ts$)'
+          # Allowlist of scripts/ and script unit tests never executed or imported by gui/gui-server jobs.
+          # Scripts shared with GUI jobs (verify-gui.py, verify-web.py, web_i18n.py, busy_machine.py, run-gui.py,
+          # verify_common.py, job_summary.py) are intentionally omitted so changes to them still run gui/gui-server.
+          non_gui_scripts='^scripts/(check-commits|check-docs|doctor|hotspots|mutate|package|trace-report|verify|verify-python)\.py$|^tests/scripts/test_[^/]+\.py$'
           if [ "$EVENT" = pull_request ]; then
             files=$(git diff --name-only --no-renames HEAD^1 HEAD)
             echo "$files"
             if [ -n "$files" ]; then
-              if ! grep -qv '\.md$' <<<"$files"; then docs_only=true; fi
+              if ! grep -qv '\.md$' <<<"$files" && ! grep -qE '^tools/knowledge/' <<<"$files"; then docs_only=true; fi
               build='(^|/)CMakeLists\.txt$|\.cmake$|^cmake/|(^|/)CMakePresets\.json$|^patches/|^external/|^\.gitmodules$|^\.github/'
               if ! grep -qE "$build" <<<"$files"; then full=false; fi
-              not_gui='^(libs|tests|bridges|tools|cmake|patches|external|template|docs|schema)/|^examples/([^g]|g[^u]|gu[^i]|gui[^_])|(^|/)CMakeLists\.txt$|^CMakePresets\.json$|^\.gitmodules$'
+              not_gui="^(libs|tests|bridges|tools|cmake|patches|external|template|docs|schema)/|^examples/([^g]|g[^u]|gu[^i]|gui[^_])|(^|/)CMakeLists\\.txt$|^CMakePresets\\.json$|^\\.gitmodules$|$non_gui_scripts"
               if [ "$docs_only" = false ] && ! grep -qE "$gui_reads|$gui_doc_reads|$pack_reads" <<<"$files" && ! grep -qvE "$not_gui" <<<"$files"; then
                 gui=false
                 gui_server=false
@@ -149,12 +160,28 @@ jobs:
             windows=false
             gui=false
             gui_server=false
+          elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE "$non_gui_scripts" <<<"$files"; then
+            presets='["linux-gcc-debug"]'
+            if grep -qE '^scripts/trace-report\.py$' <<<"$files"; then
+              ctest_filter='^(scripts|template)\.|^launch_run\.trace_files$'
+            else
+              ctest_filter='^(scripts|template)\.'
+            fi
+            tsan=false
+            windows=true
+            gui=false
+            gui_server=false
           elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE '^(gui|examples/gui_(client|starter)|docs)/|\.md$' <<<"$files" && ! grep -qE "$cpp_reads_gui|$debug_reads_docs|$control_reads" <<<"$files"; then
             presets='[]'
             tsan=false
             windows=false
           elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE '^(gui|examples/gui_(client|starter)|docs)/|\.md$' <<<"$files" && ! grep -qE '^gui/(server/|protocol/dashboard\.schema\.json$)' <<<"$files" && ! grep -qE "$control_reads" <<<"$files"; then
             presets='["linux-gcc-debug"]'
+            tsan=false
+            windows=false
+          elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE '^(gui|examples/gui_(client|starter)|docs)/|\.md$' <<<"$files" && ! grep -qE "$debug_reads_docs|$control_reads" <<<"$files"; then
+            presets='["linux-gcc-control"]'
+            ctest_filter='^(launch\.shared_values|schema\.)'
             tsan=false
             windows=false
           elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE '^(gui|examples/gui_(client|starter)|docs)/|\.md$' <<<"$files"; then
@@ -178,6 +205,7 @@ jobs:
           echo "tsan=$tsan" | tee -a "$GITHUB_OUTPUT"
           echo "windows=$windows" | tee -a "$GITHUB_OUTPUT"
           echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
+          echo "ctest_filter=$ctest_filter" | tee -a "$GITHUB_OUTPUT"
       - name: C++ build input hash
         id: cpp-hash
         run: |
@@ -368,6 +396,7 @@ jobs:
         run: ccache -z
       - name: Configure, build and test
         env:
+          CTEST_FILTER: ${{ needs.changes.outputs.ctest_filter }}
           VEHICLE_SIL_REQUIRE_MULTI_HOST: ${{ matrix.preset == 'linux-gcc-debug' && '1' || '' }}
           # The Ethernet bridge on real interfaces (ethernet_bridge.netns.*): where the TAP device, the veth pair or
           # a packet socket cannot be made in the namespace, or setpriv or ethtool is missing, the test fails rather
@@ -386,6 +415,9 @@ jobs:
               extra+=(--cmake-arg="-DCMAKE_C_FLAGS_DEBUG=-O1 -g1" --cmake-arg="-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g1")
               ;;
           esac
+          if [ -n "$CTEST_FILTER" ]; then
+            extra+=(--tests "$CTEST_FILTER")
+          fi
           if [ "${{ matrix.preset }}" = "linux-gcc-control" ] && [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ steps.grpc-src.outputs.cache-hit }}" = "true" ]; then
             mkdir -p build/linux-gcc-control/_deps
             rm -rf build/linux-gcc-control/_deps/grpc-src
@@ -420,7 +452,7 @@ jobs:
       # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server
       # are skipped and said so: the preset is built without it; linux-gcc-control compares them.)
       - name: The GUI's recordings against this launcher
-        if: matrix.preset == 'linux-gcc-debug'
+        if: matrix.preset == 'linux-gcc-debug' && needs.changes.outputs.ctest_filter == ''
         run: python3 gui/server/tests/record_launcher.py --launcher build/linux-gcc-debug/tools/launch/vehicle_sil_launch --compare
       # The Python client's tests and the examples of examples/launch_control are added only where CMake finds a
       # Python with grpcio and grpcio-tools (here the uv environment); without one they would be left out silently.
@@ -807,7 +839,14 @@ jobs:
           python -c "import sys, yaml; print('Python', sys.version.split()[0], 'PyYAML', yaml.__version__)"
           python -c "import jsonschema, importlib.metadata; print('jsonschema', importlib.metadata.version('jsonschema'))"
       - name: Configure, build and test
-        run: python scripts/verify.py windows-mingw-release --tag ci
+        env:
+          CTEST_FILTER: ${{ needs.changes.outputs.ctest_filter }}
+        run: |
+          extra=()
+          if [ -n "$CTEST_FILTER" ]; then
+            extra+=(--tests "$CTEST_FILTER")
+          fi
+          python scripts/verify.py windows-mingw-release --tag ci "${extra[@]}"
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
@@ -976,6 +1015,7 @@ jobs:
           retention-days: 14
 
   python:
+    needs: changes
     name: python (3.11, .python-version, lowest dependencies)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -1015,7 +1055,16 @@ jobs:
       - name: Links in the documents
         run: python3 scripts/check-docs.py --require-english
       - name: Python checks
-        run: python3 scripts/verify-python.py --tag ci
+        env:
+          DOCS_ONLY: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}
+        run: |
+          if [ "$DOCS_ONLY" = "true" ]; then
+            py_ver=$(tr -d '[:space:]' < .python-version)
+            test -n "$py_ver"
+            python3 scripts/verify-python.py --python "$py_ver" --skip-lowest --only schema,template --tag ci
+          else
+            python3 scripts/verify-python.py --tag ci
+          fi
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

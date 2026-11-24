@@ -299,6 +299,62 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
         self.assertIn("::warning::linux-clang-tsan failed", warn["run"])
         self.assertIn("GITHUB_STEP_SUMMARY", warn["run"])
 
+    def test_python_docs_only_fast_path_and_ctest_filter_wiring(self):
+        self.assertEqual(JOBS["changes"]["outputs"]["ctest_filter"], "${{ steps.look.outputs.ctest_filter }}")
+
+        python_job = JOBS["python"]
+        needs = python_job.get("needs")
+        needs = [needs] if isinstance(needs, str) else list(needs or [])
+        self.assertIn("changes", needs)
+        py_step = next(s for s in python_job["steps"] if s.get("name") == "Python checks")
+        self.assertEqual(
+            py_step["env"]["DOCS_ONLY"],
+            "${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}",
+        )
+        self.assertIn(".python-version", py_step["run"])
+        self.assertIn("--skip-lowest --only schema,template", py_step["run"])
+
+        for job_name in ("linux", "windows"):
+            step = next(s for s in JOBS[job_name]["steps"] if s.get("name") == "Configure, build and test")
+            self.assertEqual(step["env"]["CTEST_FILTER"], "${{ needs.changes.outputs.ctest_filter }}", job_name)
+            self.assertIn('--tests "$CTEST_FILTER"', step["run"], job_name)
+
+        recordings_step = next(
+            s for s in JOBS["linux"]["steps"] if s.get("name") == "The GUI's recordings against this launcher"
+        )
+        self.assertIn("needs.changes.outputs.ctest_filter == ''", recordings_step["if"])
+
+    def test_non_gui_scripts_allowlist_has_no_gui_script_imports(self):
+        look = next(s for s in JOBS["changes"]["steps"] if s.get("id") == "look")["run"]
+        m = re.search(r"non_gui_scripts='([^']+)'", look)
+        self.assertIsNotNone(m)
+        pattern = re.compile(m.group(1))
+        gui_scripts = {
+            "busy_machine.py",
+            "job_summary.py",
+            "run-gui.py",
+            "verify_common.py",
+            "verify-gui.py",
+            "verify-web.py",
+            "web_i18n.py",
+        }
+        non_gui_modules: set[str] = set()
+        for path in sorted((ROOT / "scripts").glob("*.py")):
+            rel = path.relative_to(ROOT).as_posix()
+            if pattern.search(rel):
+                self.assertNotIn(path.name, gui_scripts, f"{rel} is shared with GUI jobs and must not be in non_gui_scripts")
+                non_gui_modules.add(path.stem.replace("-", "_"))
+            else:
+                self.assertIn(path.name, gui_scripts, f"classify new script {rel} in ci.yml non_gui_scripts or gui_scripts")
+
+        for name in sorted(gui_scripts):
+            text = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+            for mod in sorted(non_gui_modules):
+                self.assertIsNone(
+                    re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", text, re.MULTILINE),
+                    f"GUI/shared script {name} imports {mod}; remove it from non_gui_scripts",
+                )
+
 
 @unittest.skipIf(
     BASH is None or any(shutil.which(cmd) is None for cmd in ("grep", "tee")),
@@ -334,11 +390,15 @@ class ChangesTruthTable(unittest.TestCase):
 
     def test_pull_request_and_push_truth_table(self):
         debug = '["linux-gcc-debug"]'
+        control = '["linux-gcc-control"]'
         std = '["linux-gcc-debug", "linux-gcc-control"]'
         full_pr = '["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-gcc-control"]'
         full_main = '["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-gcc-control", "linux-clang-asan"]'
+        gui_server_filter = r"^(launch\.shared_values|schema\.)"
+        scripts_filter = r"^(scripts|template)\."
+        trace_scripts_filter = r"^(scripts|template)\.|^launch_run\.trace_files$"
         cases = [
-            # (description, event, files, expected outputs)
+            # (description, event, files, expected outputs — ctest_filter defaults to "")
             (
                 "pure docs / CHANGELOG",
                 "pull_request",
@@ -431,18 +491,73 @@ class ChangesTruthTable(unittest.TestCase):
                  "gui_docs": "true", "gui_pack_docs": "true", "tsan": "false", "windows": "false", "presets": "[]"},
             ),
             (
-                "GUI server runs debug and control alongside gui and gui-server",
+                "GUI server fast path runs scoped linux-gcc-control alongside gui and gui-server",
                 "pull_request",
                 ["gui/server/src/vehicle_sil_gui/server.py"],
+                {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false",
+                 "presets": control, "ctest_filter": gui_server_filter},
+            ),
+            (
+                "dashboard.schema.json fast path runs scoped linux-gcc-control alongside gui and gui-server",
+                "pull_request",
+                ["gui/protocol/dashboard.schema.json"],
+                {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false",
+                 "presets": control, "ctest_filter": gui_server_filter},
+            ),
+            (
+                "GUI server + shared_values frontend file stays on scoped linux-gcc-control (runs launch.shared_values)",
+                "pull_request",
+                ["gui/server/src/vehicle_sil_gui/launcher.py", "gui/client/src/client.ts", "docs/gui.md"],
+                {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false",
+                 "presets": control, "ctest_filter": gui_server_filter},
+            ),
+            (
+                "GUI server + C++-tested reference doc falls back to full debug and control",
+                "pull_request",
+                ["gui/server/src/vehicle_sil_gui/server.py", "docs/simulation-config.md"],
                 {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
                  "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false", "presets": std},
             ),
             (
-                "dashboard.schema.json runs debug and control alongside gui and gui-server",
+                "GUI server + control-server-tested guide falls back to full debug and control",
                 "pull_request",
-                ["gui/protocol/dashboard.schema.json"],
+                ["gui/server/src/vehicle_sil_gui/server.py", "docs/howto/first-ecu.md"],
                 {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
                  "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false", "presets": std},
+            ),
+            (
+                "pure non-GUI scripts and script tests run python plus scoped debug and Windows",
+                "pull_request",
+                ["scripts/package.py", "scripts/hotspots.py", "scripts/verify.py", "tests/scripts/test_package.py"],
+                {"docs_only": "false", "full": "false", "gui": "false", "gui_server": "false",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "true",
+                 "presets": debug, "ctest_filter": scripts_filter},
+            ),
+            (
+                "pure scripts/trace-report.py also runs launch_run.trace_files",
+                "pull_request",
+                ["scripts/trace-report.py", "tests/scripts/test_trace_report.py"],
+                {"docs_only": "false", "full": "false", "gui": "false", "gui_server": "false",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "true",
+                 "presets": debug, "ctest_filter": trace_scripts_filter},
+            ),
+            (
+                "GUI-related and shared scripts still run gui, gui-server, debug, control, tsan and Windows",
+                "pull_request",
+                ["scripts/verify-gui.py", "scripts/verify-web.py", "scripts/web_i18n.py",
+                 "scripts/busy_machine.py", "scripts/run-gui.py", "scripts/verify_common.py", "scripts/job_summary.py"],
+                {"docs_only": "false", "full": "false", "gui": "true", "gui_server": "true",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "true", "windows": "true", "presets": std},
+            ),
+            (
+                "non-GUI script mixed with C++ skips gui/gui-server and runs full C++",
+                "pull_request",
+                ["scripts/package.py", "libs/launch/src/run.cpp"],
+                {"docs_only": "false", "full": "false", "gui": "false", "gui_server": "false",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "true", "windows": "true", "presets": std},
             ),
             (
                 "C++ libraries, bridges, tools and tests skip gui and gui-server",
@@ -476,6 +591,13 @@ class ChangesTruthTable(unittest.TestCase):
                 "tools/knowledge/ runs python only",
                 "pull_request",
                 ["tools/knowledge/shared_edit.py", "tools/knowledge/test_shared_edit.py"],
+                {"docs_only": "false", "full": "false", "gui": "false", "gui_server": "false",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false", "presets": "[]"},
+            ),
+            (
+                "tools/knowledge/ templates (.md) are not docs_only so full knowledge Python tests still run",
+                "pull_request",
+                ["tools/knowledge/templates/STATE.md"],
                 {"docs_only": "false", "full": "false", "gui": "false", "gui_server": "false",
                  "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "false", "presets": "[]"},
             ),
@@ -517,7 +639,7 @@ class ChangesTruthTable(unittest.TestCase):
         ]
         for description, event, files, expected in cases:
             with self.subTest(description=description, event=event):
-                self.assertEqual(self.evaluate(event, files), expected, description)
+                self.assertEqual(self.evaluate(event, files), {"ctest_filter": "", **expected}, description)
 
 
 if __name__ == "__main__":
