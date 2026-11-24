@@ -5,6 +5,7 @@
 // through its controls (run_controls.hpp). Internal; the commands: docs/simulation-events.md.
 #pragma once
 
+#include "vehicle_sil/core/controller_snapshot.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/runner/command.hpp"
 #include "vehicle_sil/runner/control_rules.hpp"
@@ -18,12 +19,14 @@
 #include <optional>
 #include <string>
 #include <string_view>
-
-namespace vehicle_sil {
-class SimulationController;
-} // namespace vehicle_sil
+#include <utility>
+#include <vector>
 
 namespace vehicle_sil::runner {
+
+namespace detail {
+struct TimeCommandsAccess;
+} // namespace detail
 
 /// A time command that changed how the simulation's time goes: a pause (also at a time), a step,
 /// a run_until, or a speed other than 1 (also max). A resume, a speed of 1 and run --start-paused
@@ -185,17 +188,15 @@ public:
     /// first call is the run's for good: a later one changes nothing.
     void set_time_lock(const config::TimeLock& lock);
 
-    /// The run's part. attach(): from now on the commands go to `controller` (its time gate,
-    /// made with `step_ms`); std::logic_error before set_time_lock(). First it is given the speed
-    /// (`speed`, or the last speed command) and the pause (start paused, or the last pause or
-    /// resume command, and the steps since). detach(): before the controller goes; the commands
-    /// are refused from then on (those that still wait for the time lock too, each with its
-    /// event), a hold ends and wait_paused() returns.
-    void attach(SimulationController& controller, std::int64_t step_ms, std::optional<double> speed);
+    /// The run's part. Controller attachment is internal to libs/runner (via
+    /// detail::attach_controller()); detach() runs before the controller goes: the commands are
+    /// refused from then on (those that still wait for the time lock too, each with its event),
+    /// a hold ends and wait_paused() returns.
     void detach();
-    /// `f` is called in detach() with the controller (if one is attached), under this object's
-    /// mutex, before it goes: the last look at it (short, must not wait). Set before the run.
-    void set_on_detach(std::function<void(SimulationController& controller)> f);
+    /// `f` is called in detach() with the controller's final ended snapshot (if one is attached),
+    /// under this object's mutex, before it goes: the last look at it (short, must not wait).
+    /// Set before the run.
+    void set_on_detach(std::function<void(const ControllerSnapshot& snapshot)> f);
 
     /// How hold_before_start() ended.
     enum class Hold
@@ -216,16 +217,20 @@ public:
     /// handler or from callbacks running under this object's mutex.
     void wake_hold();
 
-    /// Where the run stands, for a control server: SettingUp (before attach()), Attached,
+    /// Where the run stands, for a control server: SettingUp (before attach), Attached,
     /// Detached.
     using Stage = ControlStage;
-    /// While attached, calls `f` with the controller and whether the run holds before its first
-    /// step, under this object's mutex (`f` must be short and must not wait). Returns the stage.
-    Stage inspect(const std::function<void(SimulationController& controller, bool holding)>& f);
+    /// While attached, calls `f` with the controller's current TimeView, participant lifecycle
+    /// states, or left participant, under this object's mutex (`f` must be short and must not wait).
+    /// Returns the stage.
+    Stage inspect_time(const std::function<void(const TimeView& view)>& f);
+    Stage inspect_participants(
+        const std::function<void(const std::vector<std::pair<std::string, std::string>>& participants)>& f);
+    Stage inspect_left_participant(const std::function<void(const std::optional<LeftParticipant>& left)>& f);
 
     /// Waits up to `timeout` until the simulation stands still: the time it stands at (0 in the
     /// hold), or empty on the timeout, once detached and once the controller's lifecycle has ended
-    /// (as SimulationController::wait_until_paused()).
+    /// (as the controller's wait_until_paused()).
     std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout);
 
     /// The first accepted command that changed how the time goes (TimeChange), or empty. apply()
@@ -234,6 +239,7 @@ public:
     std::optional<TimeChange> first_time_change();
 
 private:
+    friend struct detail::TimeCommandsAccess;
     struct State;
     std::unique_ptr<State> state_;
 };

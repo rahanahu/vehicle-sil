@@ -936,7 +936,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 終わった後の値
 
-`TimeCommands::detach()` が、controller を外す前に `set_on_detach()` の関数を呼び、`LaunchTimeControl` がそこで最後の時刻（結果の `sim_ms` と同じ数え方）、participant、去った participant を読みます。外れた後の `GetTime` は、その値を返します。
+`TimeCommands::detach()` が、controller を外す前に最終の `ControllerSnapshot`（結果の `sim_ms` と同じ数え方の最後の時刻、participant、去った participant）を取り、`set_on_detach()` の関数に渡します。`LaunchTimeControl` がそのスナップショットを保持し、外れた後の `GetTime` はその値を返します。
 
 ### 終わり方
 

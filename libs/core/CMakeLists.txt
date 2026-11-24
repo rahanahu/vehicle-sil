@@ -3,6 +3,7 @@
 # Protocol independent: must not depend on CAN, LIN or J1939 specifics.
 add_library(vehicle_sil_core STATIC
   src/bind_host.cpp
+  src/controller_snapshot.cpp
   src/deadline_waiter.cpp
   src/failure_check.cpp
   src/participant_configuration.cpp

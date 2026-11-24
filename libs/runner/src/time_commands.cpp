@@ -16,7 +16,7 @@
 // and nothing of them is decided; then they are decided in the order they came, under the mutex,
 // before any command that comes after (answer_waiting()). So no command is decided without the
 // lock, and the order of the command events stays the order in which the commands took effect.
-#include "vehicle_sil/runner/time_commands.hpp"
+#include "time_commands_internal.hpp"
 
 #include "vehicle_sil/config/config.hpp"
 
@@ -92,8 +92,8 @@ struct TimeCommands::State
     std::optional<std::optional<double>> gate_speed{};
     /// set_on_change().
     OnChange on_change{};
-    /// Called in detach() with the controller, before it goes (set_on_detach()).
-    std::function<void(SimulationController&)> on_detach{};
+    /// Called in detach() with the controller's final snapshot, before it goes (set_on_detach()).
+    std::function<void(const ControllerSnapshot&)> on_detach{};
     /// The first accepted command that changed how the time goes (first_time_change()).
     std::optional<TimeChange> first_change{};
 };
@@ -356,9 +356,10 @@ Command TimeCommands::apply(const Command& command, std::string_view source, con
     return decide_and_do(s, command, source, accepted);
 }
 
-void TimeCommands::attach(SimulationController& controller, std::int64_t step_ms, std::optional<double> speed)
+void detail::TimeCommandsAccess::attach(TimeCommands& commands, SimulationController& controller, std::int64_t step_ms,
+                                        std::optional<double> speed)
 {
-    State& s = *state_;
+    TimeCommands::State& s = *commands.state_;
     const std::lock_guard lock(s.mutex);
     if (!s.lock_given)
     {
@@ -368,7 +369,7 @@ void TimeCommands::attach(SimulationController& controller, std::int64_t step_ms
     }
     s.controller = &controller;
     s.step_ms = std::max<std::int64_t>(step_ms, 1);
-    controller.set_gate_observer([weak = std::weak_ptr<State::WaitSignal>(s.wait_signal)] {
+    controller.set_gate_observer([weak = std::weak_ptr<TimeCommands::State::WaitSignal>(s.wait_signal)] {
         if (auto signal = weak.lock())
         {
             signal->notify();
@@ -397,7 +398,7 @@ void TimeCommands::look(const std::function<void(const TimeFacts& facts)>& f)
     f(facts_of(s));
 }
 
-void TimeCommands::set_on_detach(std::function<void(SimulationController& controller)> f)
+void TimeCommands::set_on_detach(std::function<void(const ControllerSnapshot& snapshot)> f)
 {
     State& s = *state_;
     const std::lock_guard lock(s.mutex);
@@ -414,7 +415,7 @@ void TimeCommands::detach()
             static_cast<void>(facts_of(s)); // the gate's speed, for the facts from now on
             if (s.on_detach)
             {
-                s.on_detach(*s.controller);
+                s.on_detach(controller_snapshot_of(*s.controller, /*holding=*/false, /*ended=*/true));
             }
             s.controller->set_gate_observer({});
         }
@@ -543,7 +544,7 @@ void TimeCommands::set_time_lock(const config::TimeLock& lock)
     answer_waiting(s);
 }
 
-TimeCommands::Stage TimeCommands::inspect(const std::function<void(SimulationController& controller, bool holding)>& f)
+TimeCommands::Stage TimeCommands::inspect_time(const std::function<void(const TimeView& view)>& f)
 {
     State& s = *state_;
     const std::lock_guard lock(s.mutex);
@@ -555,7 +556,50 @@ TimeCommands::Stage TimeCommands::inspect(const std::function<void(SimulationCon
     {
         return Stage::SettingUp;
     }
-    f(*s.controller, s.holding);
+    if (f)
+    {
+        f(time_view_of(*s.controller, s.holding));
+    }
+    return Stage::Attached;
+}
+
+TimeCommands::Stage TimeCommands::inspect_participants(
+    const std::function<void(const std::vector<std::pair<std::string, std::string>>& participants)>& f)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    if (s.detached)
+    {
+        return Stage::Detached;
+    }
+    if (s.controller == nullptr)
+    {
+        return Stage::SettingUp;
+    }
+    if (f)
+    {
+        f(simulation_participants_of(*s.controller));
+    }
+    return Stage::Attached;
+}
+
+TimeCommands::Stage TimeCommands::inspect_left_participant(
+    const std::function<void(const std::optional<LeftParticipant>& left)>& f)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    if (s.detached)
+    {
+        return Stage::Detached;
+    }
+    if (s.controller == nullptr)
+    {
+        return Stage::SettingUp;
+    }
+    if (f)
+    {
+        f(left_participant_of(*s.controller));
+    }
     return Stage::Attached;
 }
 

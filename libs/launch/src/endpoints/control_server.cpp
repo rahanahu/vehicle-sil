@@ -11,17 +11,13 @@
 // The server's time operations are commands of the run like those on standard input: they go
 // through TimeCommands with the source "control_server" (one mutex for every source, the
 // command event before the effect, the same rules). Its view of the time and of the participants
-// is read through TimeCommands::inspect() while the run's controller is attached, and kept from
-// the last look once it is detached (the controller goes then), so no call of the server ever
-// reaches a controller that has gone.
+// is read through TimeCommands' snapshot queries while the run's controller is attached, and kept
+// from the final detach snapshot once it is detached (the controller goes then), so no call of
+// the server ever reaches a controller that has gone.
 #include "run_control_server.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_grpc/server.hpp"
-#include "vehicle_sil/core/failure_check.hpp"
-#include "vehicle_sil/core/participant_runtime.hpp"
-#include "vehicle_sil/core/simulation_controller.hpp"
-#include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/runner/stop_requests.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
@@ -60,21 +56,13 @@ public:
     {
         // The last look, as the controller goes: what the server reports from then on is where the
         // run ended (the result's sim_ms), not the last time someone happened to look.
-        commands_->set_on_detach([this](SimulationController& c) {
-            control_grpc::TimeView v = control_grpc::detail::time_view_of(c, false);
-            v.now = std::max(v.now, c.runtime().now()); // as the result's sim_ms
-            v.paused = false;
-            v.pause_target.reset();
-            v.running = false;
-            v.ended = true;
-            auto participants = control_grpc::detail::simulation_participants_of(c);
-            auto left = FailureCheck::left_participant(c);
+        commands_->set_on_detach([this](const ControllerSnapshot& snapshot) {
             const std::lock_guard lock(mutex_);
-            last_view_ = v;
-            last_participants_ = std::move(participants);
-            if (left)
+            last_view_ = snapshot.time;
+            last_participants_ = snapshot.participants;
+            if (snapshot.left_participant)
             {
-                last_left_ = std::move(left);
+                last_left_ = snapshot.left_participant;
             }
         });
     }
@@ -120,8 +108,8 @@ public:
         control_grpc::TimeView v;
         v.available = true;
         // Kept under TimeCommands' mutex too: a later look never loses to an earlier one.
-        const auto stage = commands->inspect([&](SimulationController& c, bool holding) {
-            v = control_grpc::detail::time_view_of(c, holding);
+        const auto stage = commands->inspect_time([&](const TimeView& view) {
+            v = view;
             const std::lock_guard lock(mutex_);
             last_view_ = v;
         });
@@ -202,8 +190,8 @@ public:
             }
         }
         std::vector<std::pair<std::string, std::string>> out;
-        const auto stage = commands->inspect([&](SimulationController& c, bool) {
-            out = control_grpc::detail::simulation_participants_of(c);
+        const auto stage = commands->inspect_participants([&](const std::vector<std::pair<std::string, std::string>>& current) {
+            out = current;
             const std::lock_guard lock(mutex_);
             last_participants_ = out;
         });
@@ -227,8 +215,8 @@ public:
             }
         }
         std::optional<LeftParticipant> left;
-        const auto stage = commands->inspect([&](SimulationController& c, bool) {
-            left = FailureCheck::left_participant(c);
+        const auto stage = commands->inspect_left_participant([&](const std::optional<LeftParticipant>& current) {
+            left = current;
             const std::lock_guard lock(mutex_);
             if (left)
             {

@@ -49,6 +49,7 @@ public:
     control_grpc::TimeView view = available();
     std::vector<std::pair<std::string, std::string>> members{{"Engine", ""}, {"Body", ""}};
     std::optional<LeftParticipant> left;
+    std::optional<SimTime> wait_paused_result;
     std::string participants_fail; ///< not empty: participants() throws this
     mutable std::atomic<int> state_reads{0};
     mutable std::atomic<int> participant_reads{0};
@@ -71,7 +72,11 @@ public:
     void run_until(SimTime) override {}
     void step(SimDuration) override {}
     void set_speed(std::optional<double>) override {}
-    std::optional<SimTime> wait_paused(std::chrono::milliseconds) override { return std::nullopt; }
+    std::optional<SimTime> wait_paused(std::chrono::milliseconds) override
+    {
+        const std::lock_guard lock(mutex);
+        return wait_paused_result;
+    }
     void stop(const std::string&) override {}
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> participants() const override
     {
@@ -697,4 +702,74 @@ TEST_CASE(control_server_shutdown_stops_monitor_before_time_control_is_destroyed
     server.simulation()->poll(); // no-op after stop()
     CHECK(server.simulation()->snapshot().version >= 1U);
     server.shutdown(); // idempotent
+}
+
+TEST_CASE(control_server_get_time_and_waiting_slices_do_not_poll_monitor)
+{
+    ScriptedTime time;
+    control_grpc::ServerOptions options;
+    options.time = &time;
+    options.monitor_period = 0ms; // only explicit poll(), mutating time RPCs, or WaitPaused completion poll
+    control_grpc::ControlServer server(options);
+    auto stub = v1::ControlService::NewStub(channel(server));
+
+    const int initial_participant_reads = time.participant_reads.load();
+    const int initial_state_reads = time.state_reads.load();
+    const std::uint64_t initial_version = server.simulation()->snapshot().version;
+
+    // Update TimeView directly: GetTime reads state() directly without triggering monitor_->poll().
+    time.change([](ScriptedTime& t) {
+        t.view.now = SimTime{} + 25ms;
+        t.view.paused = false;
+        t.wait_paused_result.reset();
+    });
+    {
+        grpc::ClientContext context;
+        v1::TimeState reply;
+        CHECK(stub->GetTime(&context, v1::GetTimeRequest{}, &reply).ok());
+        CHECK(reply.available() && !reply.paused() && reply.now_ns() == 25'000'000);
+    }
+    CHECK_EQ(time.state_reads.load(), initial_state_reads + 1);
+    CHECK_EQ(time.participant_reads.load(), initial_participant_reads);
+    CHECK_EQ(server.simulation()->snapshot().version, initial_version);
+
+    // WaitPaused (not paused, times out) does not trigger monitor_->poll() on wait slices.
+    {
+        grpc::ClientContext context;
+        v1::WaitPausedRequest request;
+        request.set_timeout_ms(10);
+        v1::TimeState reply;
+        CHECK(stub->WaitPaused(&context, request, &reply).error_code() == grpc::StatusCode::DEADLINE_EXCEEDED);
+    }
+    CHECK_EQ(time.participant_reads.load(), initial_participant_reads);
+    CHECK_EQ(server.simulation()->snapshot().version, initial_version);
+
+    // WaitPaused (pause reached) polls the monitor once so ListPeers and Watch reflect the pause point.
+    time.change([](ScriptedTime& t) {
+        t.view.paused = true;
+        t.members[0].second = "Running";
+        t.wait_paused_result = SimTime{} + 25ms;
+    });
+    {
+        grpc::ClientContext context;
+        v1::WaitPausedRequest request;
+        request.set_timeout_ms(500);
+        v1::TimeState reply;
+        CHECK(stub->WaitPaused(&context, request, &reply).ok());
+        CHECK(reply.available() && reply.paused() && reply.now_ns() == 25'000'000);
+    }
+    CHECK_EQ(time.participant_reads.load(), initial_participant_reads + 1);
+    const std::uint64_t after_wait_version = server.simulation()->snapshot().version;
+    CHECK(after_wait_version > initial_version);
+    CHECK(server.simulation()->snapshot().state_of("Engine") == "Running");
+
+    // A mutating time RPC (Pause) still polls the monitor so Watch streams see the change promptly.
+    time.change([](ScriptedTime& t) { t.view.now = SimTime{} + 35ms; });
+    {
+        grpc::ClientContext context;
+        v1::TimeState reply;
+        CHECK(stub->Pause(&context, v1::PauseRequest{}, &reply).ok());
+    }
+    CHECK_EQ(time.participant_reads.load(), initial_participant_reads + 2);
+    CHECK(server.simulation()->snapshot().version > after_wait_version);
 }

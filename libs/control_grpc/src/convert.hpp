@@ -6,6 +6,8 @@
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_grpc/simulation_monitor.hpp"
 #include "vehicle_sil/control/v1/control.pb.h"
+#include "vehicle_sil/ecu/describe.hpp"
+#include "vehicle_sil/ecu/monitor_names.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -71,12 +73,12 @@ static_assert(static_cast<int>(Causality::Parameter) + 1 == v1::CAUSALITY_PARAME
 static_assert(static_cast<int>(EventLevel::Error) + 1 == v1::EVENT_LEVEL_ERROR);
 
 /// A variable that vehicle-sil gives an ECU, not one its application declared: its name starts
-/// with "ecu." (every ECU's, such as "ecu.connected"), "peer." (a Peer's monitoring outputs) or
-/// "j1939." (a Peer's monitoring outputs of its J1939 networks). The one place that decides
-/// VariableInfo.builtin.
+/// with "ecu." (every ECU's, such as "ecu.connected"; is_builtin_variable()) or one of the
+/// reserved monitoring prefixes in monitor_names::kReservedPrefixes ("peer.", "j1939.", "can.",
+/// "lin.", "eth."). The one place that decides VariableInfo.builtin.
 inline bool builtin_variable(std::string_view name) noexcept
 {
-    return name.starts_with("ecu.") || name.starts_with("peer.") || name.starts_with("j1939.");
+    return is_builtin_variable(name) || monitor_names::reserved_prefix(name) != nullptr;
 }
 
 /// The one place that maps control::Availability to the wire enum (UNSPECIFIED is never sent

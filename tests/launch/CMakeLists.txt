@@ -83,7 +83,10 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
 # docs/architecture.md ("Layers in libs/launch"); a file that breaks the direction is moved or split,
 # not listed as an exception.
 set(_launch_silkit_prefixes silkit/ vehicle_sil/control_silkit/ vehicle_sil/can_silkit/ vehicle_sil/eth_silkit/
-                            vehicle_sil/lin_silkit/ vehicle_sil/core/participant_)
+                            vehicle_sil/lin_silkit/ vehicle_sil/core/participant_
+                            vehicle_sil/core/simulation_controller vehicle_sil/core/failure_check
+                            vehicle_sil/core/simulation_watch vehicle_sil/core/bind_host
+                            vehicle_sil/core/tick_scheduler vehicle_sil/core/real_time_pacer)
 set(_launch_probe_headers vehicle_sil/launch/probe)
 set(_launch_output_headers vehicle_sil/launch/events vehicle_sil/launch/run_sink vehicle_sil/launch/timeline_format
                            vehicle_sil/launch/error_result)
@@ -117,10 +120,16 @@ _launch_part_test(format_boundary format "run_sink.hpp;timeline_format.hpp;error
     ${_launch_silkit_prefixes} vehicle_sil/control_grpc/ ${_launch_probe_headers} ${_launch_endpoint_headers}
     probe/ endpoints/ usecases/)
 # usecases/ has no limit on the other parts, but it reaches no SIL Kit header: the SIL Kit parts of a run are
-# behind the runner, and the Control Server's file (endpoints/) is the one place in libs/launch that includes them.
+# behind the runner.
 _launch_part_test(usecases_boundary usecases "run.hpp;serve.hpp;execution_runtime.hpp;test.hpp;connections.hpp;checked.hpp" ${_launch_silkit_prefixes})
 _launch_part_test(endpoints_boundary endpoints "command_input.hpp"
-    ${_launch_probe_headers} vehicle_sil/launch/timeline_format probe/ format/)
+    ${_launch_silkit_prefixes} ${_launch_probe_headers} vehicle_sil/launch/timeline_format probe/ format/)
+# Every header and source of libs/launch includes no SIL Kit header, directly or indirectly, and of
+# core's headers only those of vehicle_sil::sim_base.
+add_test(NAME launch.no_silkit_boundary
+         COMMAND ${CMAKE_COMMAND} -DDIR=${PROJECT_SOURCE_DIR}/libs/launch
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckNoSilKit.cmake)
+set_tests_properties(launch.no_silkit_boundary PROPERTIES LABELS "unit;launch" TIMEOUT 60)
 # The check itself must reject a file that reaches a forbidden header through a header beside it
 # and through a private header of another part (found in the directory above: "request/shared.hpp"
 # included from probe/), and name the chain.

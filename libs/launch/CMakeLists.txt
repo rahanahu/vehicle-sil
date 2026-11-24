@@ -55,9 +55,7 @@ target_link_libraries(vehicle_sil_launch_lib PRIVATE rapidyaml)
 # that is asked for a control server has none to make (control_server_none.cpp).
 if(TARGET vehicle_sil::control_grpc)
   target_sources(vehicle_sil_launch_lib PRIVATE src/endpoints/control_server.cpp)
-  # control_server.cpp reads the controller's and the participant's SIL Kit types (the stop of the
-  # simulation, the failure check), so this is the only place where the launcher's library links core.
-  target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::control_grpc vehicle_sil::core)
+  target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::control_grpc)
 else()
   target_sources(vehicle_sil_launch_lib PRIVATE src/endpoints/control_server_none.cpp)
 endif()

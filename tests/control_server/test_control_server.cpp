@@ -544,7 +544,7 @@ TEST_CASE(control_server_time_control_of_matches_simulation_lifecycle)
     CHECK(before.available);
     CHECK(!before.running);
     CHECK(!before.ended);
-    const auto holding_before = control_grpc::detail::time_view_of(controller, /*holding=*/true);
+    const auto holding_before = time_view_of(controller, /*holding=*/true);
     CHECK(holding_before.available);
     CHECK(holding_before.paused);
     CHECK(!holding_before.running);
@@ -596,7 +596,7 @@ TEST_CASE(control_server_time_control_of_matches_simulation_lifecycle)
     CHECK(!(after.paused && after.ended));
     CHECK(!after.pause_target.has_value());
     CHECK(after.now >= controller.runtime().now());
-    const auto holding_after = control_grpc::detail::time_view_of(controller, /*holding=*/true);
+    const auto holding_after = time_view_of(controller, /*holding=*/true);
     CHECK(holding_after.available);
     CHECK(holding_after.ended);
     CHECK(!holding_after.paused);
@@ -664,7 +664,7 @@ TEST_CASE(control_server_time_view_of_holding_after_abort_reports_ended)
     const auto plain_finished = plain.wait_until_finished(30s);
     CHECK(plain_finished.has_value() && *plain_finished == orch::ParticipantState::Shutdown);
 
-    const auto holding_after = control_grpc::detail::time_view_of(controller, /*holding=*/true);
+    const auto holding_after = time_view_of(controller, /*holding=*/true);
     CHECK(holding_after.available);
     CHECK(holding_after.ended);
     CHECK(!holding_after.paused);

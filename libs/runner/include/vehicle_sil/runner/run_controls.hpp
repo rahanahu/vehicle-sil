@@ -137,7 +137,7 @@ struct RunState
 ///
 /// What takes TimeCommands' mutex here (allowed(), publish(), state(), set_phase()) must not be
 /// called from what runs under it: the observers `on_command` and `on_state`, the `accepted` of
-/// TimeCommands::apply(), the `f` of TimeCommands::inspect() and look(), on_detach, and `on_phase`. Such a call
+/// TimeCommands::apply(), the `f` of TimeCommands::inspect_*() and look(), on_detach, and `on_phase`. Such a call
 /// would wait for itself. Nor from a signal handler.
 class RunControls
 {

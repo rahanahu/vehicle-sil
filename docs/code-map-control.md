@@ -119,7 +119,6 @@ flowchart TD
     launch --> scenario
     launch --> config
     launch --> process
-    launch -.->|"only with the Control Server"| core
     launch -.-> rapidyaml
     launch -.-> json
     runner --> scenario
@@ -145,7 +144,8 @@ flowchart TD
     control_silkit --> core
     control_silkit --> SilKit["SilKit::SilKit"]
     control_grpc --> control
-    control_grpc --> core
+    control_grpc --> sim_base
+    control_grpc -.-> core
     control_grpc -.-> control_proto
     control_grpc -.-> ecu
     control_proto --> grpcpp

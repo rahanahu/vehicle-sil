@@ -10,6 +10,7 @@
 #include "silkit_test_util.hpp"
 
 #include "run_pacing.hpp"
+#include "time_commands_internal.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
 
@@ -262,8 +263,8 @@ TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_contro
         vehicle_sil::unit::InProcessRegistry other_registry;
         options.registry_uri = other_registry.uri;
         vehicle_sil::SimulationController other(options);
-        t.controls.time().attach(controller, 10, std::optional<double>(1.0));
-        with.controls.time().attach(other, 10, std::optional<double>(1.0));
+        vehicle_sil::runner::detail::attach_controller(t.controls.time(), controller, 10, std::optional<double>(1.0));
+        vehicle_sil::runner::detail::attach_controller(with.controls.time(), other, 10, std::optional<double>(1.0));
         t.controls.set_phase(Phase::Running);
         with.controls.set_phase(Phase::Running);
         check();

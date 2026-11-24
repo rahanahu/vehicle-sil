@@ -5,7 +5,7 @@
 #pragma once
 
 #include "vehicle_sil/control/hub.hpp"
-#include "vehicle_sil/core/failure_check.hpp"
+#include "vehicle_sil/core/controller_snapshot.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 
 #include <chrono>
@@ -25,19 +25,8 @@ class SimulationController;
 
 namespace vehicle_sil::control_grpc {
 
-/// Where the simulation time stands, as the server reports it.
-struct TimeView
-{
-    bool available = false; ///< false: this server does not control the time
-    SimTime now{};
-    bool paused = false;
-    std::optional<SimTime> pause_target;
-    std::optional<double> speed;
-    bool running = false;
-    bool ended = false; ///< the simulation ran and is over (it will not stand still again)
-
-    bool operator==(const TimeView&) const = default;
-};
+/// Where the simulation time stands, as the server reports it (vehicle_sil::TimeView).
+using TimeView = vehicle_sil::TimeView;
 
 /// The time operations the server offers. All are thread safe and do not wait, except
 /// wait_paused(). Errors: std::invalid_argument or std::logic_error (reported to the client as
@@ -219,7 +208,7 @@ struct ServerOptions
     /// How often the server reads `time` for Watch, ListPeers and simulation() (0: only when
     /// simulation()->poll() is called), and the grace of its failure check (SimulationMonitor).
     std::chrono::milliseconds monitor_period{50};
-    std::chrono::steady_clock::duration leave_grace = FailureCheck::kDefaultGrace;
+    std::chrono::steady_clock::duration leave_grace = kDefaultLeaveGrace;
 };
 
 class SimulationMonitor;
@@ -248,13 +237,5 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
-
-namespace detail {
-
-[[nodiscard]] TimeView time_view_of(SimulationController& controller, bool holding = false);
-[[nodiscard]] std::vector<std::pair<std::string, std::string>> simulation_participants_of(
-    SimulationController& controller);
-
-} // namespace detail
 
 } // namespace vehicle_sil::control_grpc

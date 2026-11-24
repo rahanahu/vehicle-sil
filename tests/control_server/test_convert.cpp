@@ -182,3 +182,27 @@ TEST_CASE(control_convert_availability_maps_each_state_and_declaration)
     to_proto(info, declared);
     CHECK(declared.availability() == v1::AVAILABILITY_UNKNOWN);
 }
+
+TEST_CASE(control_convert_builtin_variable_matches_ecu_and_monitor_prefixes)
+{
+    for (const char* name : {"ecu.connected", "peer.steps", "j1939.can0.frames_sent", "can.can0.frames_sent",
+                             "lin.lin0.frames_sent", "eth.eth0.frames_sent"})
+    {
+        CHECK(builtin_variable(name));
+        VariableInfo info;
+        info.name = name;
+        v1::VariableInfo wire;
+        to_proto(info, wire);
+        CHECK(wire.builtin());
+    }
+    for (const char* name : {"", "value", "ecu_mode", "ecu", "peer", "peers.x", "j1939", "can", "can_id", "lin",
+                             "lin_speed", "eth", "ethernet.rx", "spy.rpm"})
+    {
+        CHECK(!builtin_variable(name));
+        VariableInfo info;
+        info.name = name;
+        v1::VariableInfo wire;
+        to_proto(info, wire);
+        CHECK(!wire.builtin());
+    }
+}
