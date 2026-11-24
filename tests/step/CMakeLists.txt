@@ -2,7 +2,7 @@
 # driver (on a clock the test moves). Links only vehicle_sil::step, so building it checks that the
 # library needs neither CAN nor SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_step_tests
-  PREFIX step LABELS unit step TIMEOUT 60
+  PREFIX step LABELS unit step TIMEOUT 60 BATCHABLE
   SOURCES test_step_host.cpp
   LINK vehicle_sil::step)
 

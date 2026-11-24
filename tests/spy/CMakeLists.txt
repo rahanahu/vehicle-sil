@@ -5,7 +5,7 @@
 # written by hand (hand_written_messages.hpp) and those of the guide's example (cal_messages.yaml).
 vehicle_sil_add_j1939_codec(vehicle_sil_spy_cal_messages cal_messages.yaml)
 vehicle_sil_add_harness_tests(vehicle_sil_spy_tests
-  PREFIX j1939_spy LABELS unit j1939 TIMEOUT 60
+  PREFIX j1939_spy LABELS unit j1939 TIMEOUT 60 BATCHABLE
   SOURCES test_spy.cpp test_spy_watch.cpp test_spy_analysis.cpp
   LINK vehicle_sil::spy vehicle_sil::local vehicle_sil::simulation vehicle_sil_codec_test_messages
        vehicle_sil_spy_cal_messages)

@@ -2,7 +2,7 @@
 # building it checks that the stack needs none. Uses no example: added with or without
 # VEHICLE_SIL_BUILD_EXAMPLES.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
-  PREFIX j1939 LABELS unit j1939 TIMEOUT 60
+  PREFIX j1939 LABELS unit j1939 TIMEOUT 60 BATCHABLE
   SOURCES
     test_j1939_address_claim.cpp
     test_j1939_address_management.cpp
@@ -26,7 +26,7 @@ target_include_directories(vehicle_sil_j1939_tests PRIVATE ${CMAKE_CURRENT_SOURC
 
 # The Listener: public API only. With the test kit's recorder on the same network.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_listener_tests
-  PREFIX j1939 LABELS unit j1939 TIMEOUT 60
+  PREFIX j1939 LABELS unit j1939 TIMEOUT 60 BATCHABLE
   SOURCES test_j1939_listener.cpp
   LINK vehicle_sil::j1939 vehicle_sil::testkit)
 target_include_directories(vehicle_sil_j1939_listener_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -34,7 +34,7 @@ target_include_directories(vehicle_sil_j1939_listener_tests PRIVATE ${CMAKE_CURR
 # The listener's seat of the engine (detail::FrameSeat): an internal header, so this binary has
 # the engine's src/ on its include path. With the test kit's recorder on the same network.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_seat_tests
-  PREFIX j1939 LABELS unit j1939 TIMEOUT 60
+  PREFIX j1939 LABELS unit j1939 TIMEOUT 60 BATCHABLE
   SOURCES test_j1939_seat.cpp
   LINK vehicle_sil::j1939 vehicle_sil::testkit)
 target_include_directories(vehicle_sil_j1939_seat_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/j1939/src)
@@ -43,7 +43,7 @@ target_include_directories(vehicle_sil_j1939_seat_tests PRIVATE ${CMAKE_CURRENT_
 # address commander): built only from the engine's public API
 # and toolbox; the boundary test checks their sources and links.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_parts_tests
-  PREFIX j1939_parts LABELS unit j1939 TIMEOUT 60
+  PREFIX j1939_parts LABELS unit j1939 TIMEOUT 60 BATCHABLE
   SOURCES
     test_j1939_diagnostics.cpp
     test_j1939_dm13.cpp
@@ -116,7 +116,7 @@ endforeach()
 vehicle_sil_add_j1939_codec(vehicle_sil_codec_test_messages codec/codec_test_messages.yaml
                             codec/codec_tricky_names.yaml codec/codec_profiles.yaml)
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_codec_tests
-  PREFIX j1939_codec LABELS unit j1939 TIMEOUT 60
+  PREFIX j1939_codec LABELS unit j1939 TIMEOUT 60 BATCHABLE
   SOURCES
     test_j1939_codec.cpp
     test_j1939_codec_node.cpp
@@ -161,7 +161,7 @@ set_tests_properties(j1939_codec.independent_check_rejects_the_engine PROPERTIES
 
 # Replaces the global operator new to count allocations in steady-state steps: its own binary.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_allocation_tests
-  PREFIX j1939 LABELS unit j1939 TIMEOUT 60
+  PREFIX j1939 LABELS unit j1939 TIMEOUT 60 BATCHABLE
   SOURCES test_j1939_allocation.cpp
   LINK vehicle_sil::j1939 vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester
        vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander vehicle_sil::j1939_exchange
@@ -174,7 +174,7 @@ target_include_directories(vehicle_sil_j1939_allocation_tests PRIVATE ${CMAKE_CU
 # (vehicle_sil::can_netsim, which is not built without SIL Kit's rapidyaml).
 if(TARGET vehicle_sil_can_netsim)
   vehicle_sil_add_harness_tests(vehicle_sil_j1939_silkit_tests
-    PREFIX j1939_silkit LABELS unit j1939 TIMEOUT 180
+    PREFIX j1939_silkit LABELS unit j1939 TIMEOUT 180 BATCHABLE
     SOURCES test_j1939_silkit.cpp
     LINK vehicle_sil::j1939 vehicle_sil::can_silkit vehicle_sil::can_netsim vehicle_sil::testkit)
 endif()

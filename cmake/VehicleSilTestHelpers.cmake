@@ -11,6 +11,12 @@ include_guard(GLOBAL)
 set(VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT "1" CACHE STRING
     "The factor on the tests' upper bounds of waiting when VEHICLE_SIL_TEST_TIMEOUT_SCALE is not set (digits, such as 4 or 2.5)")
 
+# Opt-in batching of pure unit TEST_CASE entries per source file into fewer CTest processes
+# (for CI, where sanitizer and Windows process startup dominates thousands of tiny unit tests).
+# Kept OFF by default so local `ctest -R <prefix>.<case>` and per-case crash isolation stay unchanged.
+option(VEHICLE_SIL_BATCH_UNIT_TESTS
+       "Batch fast unit test cases per source file into fewer CTest processes (for CI)" OFF)
+
 # <out_factor> = <text> rounded up to a whole factor, at least 1 and at most 1000000000 (1e9, matching
 # whole_timeout_factor in tests/unit/test_timeout_scale.hpp), and <out_ok> = TRUE when <text>
 # is digits with at most one point, finite in IEEE-754 double, and greater than 0 (such as 3, 2.5
@@ -106,11 +112,18 @@ endfunction()
 #   vehicle_sil_add_harness_tests(<target>
 #     PREFIX <prefix> LABELS <label>... TIMEOUT <seconds>
 #     SOURCES <file>... LINK <target>...
-#     [RUN_SERIAL <regex>]    # tests whose name matches run alone (wall-clock sensitive)
-#     [REGISTRATION <name>])  # the name of the check below, when one prefix is shared by targets of
-#                             # several directories (a directory cannot see the tests of another)
+#     [BATCHABLE]                   # opt in to per-file batching when VEHICLE_SIL_BATCH_UNIT_TESTS=ON
+#     [NO_BATCH_SOURCES <file>...]  # sources kept per-case even when BATCHABLE (e.g. Skipped / process-global state)
+#     [RUN_SERIAL <regex>]          # tests whose name matches run alone (wall-clock sensitive)
+#     [REGISTRATION <name>])        # the name of the check below, when one prefix is shared by targets of
+#                                   # several directories (a directory cannot see the tests of another)
 function(vehicle_sil_add_harness_tests target)
-  cmake_parse_arguments(ARG "" "PREFIX;TIMEOUT;RUN_SERIAL;REGISTRATION" "LABELS;SOURCES;LINK" ${ARGN})
+  cmake_parse_arguments(ARG "BATCHABLE" "PREFIX;TIMEOUT;RUN_SERIAL;REGISTRATION" "LABELS;SOURCES;LINK;NO_BATCH_SOURCES" ${ARGN})
+  foreach(_nb IN LISTS ARG_NO_BATCH_SOURCES)
+    if(NOT "${_nb}" IN_LIST ARG_SOURCES)
+      message(FATAL_ERROR "vehicle_sil_add_harness_tests(${target}): NO_BATCH_SOURCES entry '${_nb}' is not in SOURCES")
+    endif()
+  endforeach()
   _vehicle_sil_scaled_ctest_timeout(timeout ${ARG_TIMEOUT})
   add_executable(${target} ${ARG_SOURCES})
   target_link_libraries(${target} PRIVATE vehicle_sil_test_main ${ARG_LINK})
@@ -122,9 +135,28 @@ function(vehicle_sil_add_harness_tests target)
     get_filename_component(path "${source}" ABSOLUTE)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${path}")
     file(STRINGS "${path}" cases REGEX "^[ \t]*TEST_CASE[ \t]*\\([ \t]*[A-Za-z0-9_]+[ \t]*\\)")
+    set(_can_batch_source FALSE)
+    if(VEHICLE_SIL_BATCH_UNIT_TESTS AND ARG_BATCHABLE AND NOT "${source}" IN_LIST ARG_NO_BATCH_SOURCES)
+      set(_can_batch_source TRUE)
+    endif()
+    set(_individual "")
+    set(_batchable "")
     foreach(line IN LISTS cases)
       string(REGEX REPLACE "^[ \t]*TEST_CASE[ \t]*\\([ \t]*([A-Za-z0-9_]+)[ \t]*\\).*" "\\1" name "${line}")
       list(APPEND names ${name})
+      if(_can_batch_source AND NOT (ARG_RUN_SERIAL AND name MATCHES "${ARG_RUN_SERIAL}"))
+        list(APPEND _batchable ${name})
+      else()
+        list(APPEND _individual ${name})
+      endif()
+    endforeach()
+    list(LENGTH _batchable _batch_len)
+    if(_batch_len EQUAL 1)
+      list(APPEND _individual ${_batchable})
+      set(_batchable "")
+      set(_batch_len 0)
+    endif()
+    foreach(name IN LISTS _individual)
       set(test "${ARG_PREFIX}.${name}")
       add_test(NAME ${test} COMMAND ${target} ${name})
       # 77: the test cannot run on this machine (vehicle_sil::unit::Skipped).
@@ -134,6 +166,19 @@ function(vehicle_sil_add_harness_tests target)
         set_tests_properties(${test} PROPERTIES RUN_SERIAL TRUE)
       endif()
     endforeach()
+    if(_batch_len GREATER 1)
+      get_filename_component(_stem "${source}" NAME_WE)
+      set(_batch_name "${ARG_PREFIX}.batch.${_stem}")
+      get_property(_seen_batches GLOBAL PROPERTY VEHICLE_SIL_BATCH_TEST_NAMES)
+      if(TEST "${_batch_name}" OR "${_batch_name}" IN_LIST _seen_batches)
+        set(_batch_name "${ARG_PREFIX}.batch.${target}.${_stem}")
+      endif()
+      set_property(GLOBAL APPEND PROPERTY VEHICLE_SIL_BATCH_TEST_NAMES "${_batch_name}")
+      list(JOIN _batchable "," _cases_csv)
+      add_test(NAME ${_batch_name} COMMAND ${target} --cases ${_cases_csv})
+      set_tests_properties(${_batch_name} PROPERTIES LABELS "${ARG_LABELS}" TIMEOUT ${timeout} SKIP_RETURN_CODE 77)
+      _vehicle_sil_tell_ctest_timeout_factor(${_batch_name})
+    endif()
   endforeach()
 
   # Guards the scan above: every test case in the binary must have been registered.

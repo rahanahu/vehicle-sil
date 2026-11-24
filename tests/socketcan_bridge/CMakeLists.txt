@@ -13,7 +13,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 vehicle_sil_add_harness_tests(vehicle_sil_socketcan_tests
-  PREFIX socketcan_bridge LABELS socketcan_bridge unit TIMEOUT 60
+  PREFIX socketcan_bridge LABELS socketcan_bridge unit TIMEOUT 60 BATCHABLE
   SOURCES
     test_bridge_options.cpp
     test_can_interfaces.cpp

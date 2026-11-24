@@ -6,7 +6,7 @@ endif()
 
 vehicle_sil_add_harness_tests(vehicle_sil_scenario_tests
   REGISTRATION launch.registration.vehicle_sil_scenario_tests
-  PREFIX launch LABELS unit launch scenario TIMEOUT 60
+  PREFIX launch LABELS unit launch scenario TIMEOUT 60 BATCHABLE
   SOURCES
     test_scenario.cpp
     test_scenario_line.cpp

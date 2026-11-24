@@ -238,6 +238,9 @@ def main() -> int:
     parser.add_argument("--no-sync", action="store_true",
                         help="do not run uv sync --locked (use the existing .venv)")
     parser.add_argument("-k", dest="keyword", help="only the server tests matching this pytest -k expression")
+    parser.add_argument("-n", "--workers", type=int, metavar="N",
+                        help="pytest-xdist workers for the server step (default: up to 4 on a full run, serial with "
+                        "-k or TEST targets; 1 disables xdist)")
     parser.add_argument("--tag", default="gui", help="prefix of the log names (default: gui)")
     parser.add_argument("--json", action="store_true",
                         help='print the summary as JSON ({"vehicle_sil_verify_gui": 1, "ok": ..., "steps": [...]})')
@@ -248,6 +251,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.wait_limit < 0:
         die_usage("--wait-limit must be 0 or more minutes")
+    if args.workers is not None and args.workers < 1:
+        die_usage("--workers must be 1 or more")
     real_specs: list[str] = []
     for raw_spec in args.real_spec or []:
         spec = raw_spec.strip()
@@ -291,7 +296,10 @@ def main() -> int:
               f"--junitxml={junit}"]
     if args.keyword:
         pytest += ["-k", args.keyword]
-    if not server_only:
+    if args.workers is not None:
+        if args.workers > 1:
+            pytest += ["-n", str(args.workers)]
+    elif not server_only:
         pytest += ["-n", str(min(os.cpu_count() or 1, 4))]
     steps = [] if args.no_sync else [Step("sync", [uv, "sync", "--locked"])]
     skipped_server = "--skip-server" if args.skip_server else None

@@ -48,7 +48,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(_eth_link_linux_tests test_linux_link_state.cpp)
 endif()
 vehicle_sil_add_harness_tests(vehicle_sil_eth_link_tests
-  PREFIX eth_link LABELS unit eth_link TIMEOUT 60
+  PREFIX eth_link LABELS unit eth_link TIMEOUT 60 BATCHABLE
   SOURCES
     test_fake_link.cpp
     test_frame_filter.cpp
