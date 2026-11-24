@@ -15,7 +15,7 @@ from conftest import CONFIGS, Client, Gui, REPLAY
 
 from vehicle_sil_gui import __version__
 from vehicle_sil_gui.launcher import Launcher, REQUIRED_FEATURES
-from vehicle_sil_gui.runtime import DEFAULT_ESCALATE_WAIT_S, RunSink, RunSpec
+from vehicle_sil_gui.runtime import ConfigInspection, DEFAULT_ESCALATE_WAIT_S, HotDecision, RunSink, RunSpec
 from vehicle_sil_gui.server import GuiServer, Options
 
 DEFAULT_FEATURES = (
@@ -152,6 +152,16 @@ class FakeRun:
         self.sink.on_stdout_line(json.dumps(payload))
         return payload
 
+    def emit_event(self, event: str, **fields) -> dict:
+        """Emits one already-parsed launcher event dict to the server sink."""
+        assert self.sink is not None
+        payload = {"event": event, "seq": self._seq, "t_ms": self._t_ms, **fields}
+        self._seq += 1
+        self._t_ms += 10
+        size = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8", "surrogatepass"))
+        self.sink.on_stdout_event(payload, size)
+        return payload
+
     def emit_raw(self, line: str | None) -> None:
         assert self.sink is not None
         self.sink.on_stdout_line(line)
@@ -254,6 +264,12 @@ class FakeRuntime:
                       enable: tuple[str, ...] = (), manual: tuple[str, ...] = (),
                       want_control: bool = True) -> dict:
         return self.status()
+
+    async def inspect_config(self, config: str, *, variant: str | None = None, disable: tuple[str, ...] = (),
+                             enable: tuple[str, ...] = (), manual: tuple[str, ...] = (),
+                             want_control: bool = True, need_metadata: bool = True,
+                             allow_prepare_on_resident: bool = True) -> ConfigInspection:
+        return ConfigInspection(hot=HotDecision(False, "fake-runtime"))
 
     async def release_config(self, config: str) -> None:
         return

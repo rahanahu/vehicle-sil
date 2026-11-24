@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,6 +52,8 @@ SCENARIO_STEP_EVENT = "scenario_step"
 FEATURE_TIMELINE = "timeline"
 FEATURE_RUN_STOP_AT = "run-stop-at"
 FEATURE_SERVE = "serve"
+FEATURE_CHECK_FILE_ONLY = "check-file-only"
+FEATURE_SERVE_PREPARE = "serve-prepare"
 
 
 class LauncherNotFound(Exception):
@@ -443,6 +446,28 @@ def check_command(launcher: Launcher, file: str, request: Path) -> list[str]:
     return launcher.prefix + ["check", "--json", "--request", str(request), "--", file]
 
 
+def file_only_check_command(
+    launcher: Launcher,
+    file: str,
+    *,
+    variant: str | None = None,
+    disable: Sequence[str] = (),
+    enable: Sequence[str] = (),
+    manual: Sequence[str] = (),
+) -> list[str]:
+    """Builds the `vehicle_sil_launch check --file-only --json` invocation."""
+    argv = launcher.prefix + ["check", "--file-only", "--json"]
+    if variant is not None:
+        argv += ["--variant", variant]
+    for name in disable:
+        argv += ["--disable", name]
+    for name in enable:
+        argv += ["--enable", name]
+    for name in manual:
+        argv += ["--manual", name]
+    return argv + ["--", file]
+
+
 def text_check_command(launcher: Launcher, file: str, request: Path, descriptions: Path) -> list[str]:
     """The check of a text that the caller writes to the launcher's standard input, as if it were the file's (the
     paths in it are from the file's directory). It starts no process: each participant's description is the one
@@ -506,6 +531,29 @@ def serve_run_command(request: Path, timeline: Path | None = None, command_id: i
     return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
 
 
+def serve_prepare_command(
+    *,
+    variant: str | None = None,
+    disable: Sequence[str] = (),
+    enable: Sequence[str] = (),
+    manual: Sequence[str] = (),
+    command_id: int | None = None,
+) -> bytes:
+    """Builds the NDJSON `prepare` command written to `vehicle_sil_launch serve` stdin."""
+    payload: dict[str, object] = {"command": "prepare"}
+    if variant is not None:
+        payload["variant"] = variant
+    if disable:
+        payload["disable"] = list(disable)
+    if enable:
+        payload["enable"] = list(enable)
+    if manual:
+        payload["manual"] = list(manual)
+    if command_id is not None:
+        payload["id"] = command_id
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+
+
 def with_participant_timeouts(argv: list[str], start_timeout_ms: int, stop_timeout_ms: int) -> list[str]:
     """Inserts non-default participant start/stop timeout options before the trailing `-- <file>`."""
     options: list[str] = []
@@ -526,16 +574,50 @@ def hide_request(value: object, path: Path, said: str = REQUEST_NAME) -> object:
     value: a text, or what json.loads made of the launcher's output. said: another name for another such file (the
     saved descriptions)."""
     name = str(path)
+    pattern = re.compile(re.escape(name) + r"(?:, line \d+)?")
     if isinstance(value, str):
-        return re.sub(re.escape(name) + r"(?:, line \d+)?", said, value)
-    if isinstance(value, list):
-        return [hide_request(v, path, said) for v in value]
-    if isinstance(value, dict):
-        out = {k: hide_request(v, path, said) for k, v in value.items()}
-        if value.get("file") == name and "line" in out:
-            out["line"] = None
-        return out
-    return value
+        return pattern.sub(said, value)
+    if not isinstance(value, (list, dict)):
+        return value
+
+    root: list[object] | dict[object, object] = [] if isinstance(value, list) else {}
+    stack: list[tuple[list | dict, list | dict]] = [(value, root)]
+    while stack:
+        src, dst = stack.pop()
+        if isinstance(src, list):
+            assert isinstance(dst, list)
+            for item in src:
+                if isinstance(item, str):
+                    dst.append(pattern.sub(said, item))
+                elif isinstance(item, list):
+                    child_list: list[object] = []
+                    dst.append(child_list)
+                    stack.append((item, child_list))
+                elif isinstance(item, dict):
+                    child_dict: dict[object, object] = {}
+                    dst.append(child_dict)
+                    stack.append((item, child_dict))
+                else:
+                    dst.append(item)
+        else:
+            assert isinstance(src, dict) and isinstance(dst, dict)
+            hide_line = src.get("file") == name
+            for k, item in src.items():
+                if hide_line and k == "line":
+                    dst[k] = None
+                elif isinstance(item, str):
+                    dst[k] = pattern.sub(said, item)
+                elif isinstance(item, list):
+                    child_list = []
+                    dst[k] = child_list
+                    stack.append((item, child_list))
+                elif isinstance(item, dict):
+                    child_dict = {}
+                    dst[k] = child_dict
+                    stack.append((item, child_dict))
+                else:
+                    dst[k] = item
+    return root
 
 
 def hide_request_in_line(line: str, path: Path) -> str:
@@ -547,3 +629,26 @@ def hide_request_in_line(line: str, path: Path) -> str:
         return json.dumps(hide_request(json.loads(line), path), ensure_ascii=False, separators=(",", ":"))
     except (ValueError, RecursionError):
         return hide_request(line, path)
+
+
+def _contains_text(value: object, needle: str) -> bool:
+    stack: list[object] = [value]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, str):
+            if needle in cur:
+                return True
+        elif isinstance(cur, list):
+            stack.extend(cur)
+        elif isinstance(cur, dict):
+            stack.extend(cur.values())
+    return False
+
+
+def hide_request_in_event(event: dict, path: Path, said: str = REQUEST_NAME) -> dict:
+    """One parsed launcher event, with hide_request applied when it names the request file."""
+    if not _contains_text(event, str(path)):
+        return event
+    hidden = hide_request(event, path, said)
+    assert isinstance(hidden, dict)
+    return hidden

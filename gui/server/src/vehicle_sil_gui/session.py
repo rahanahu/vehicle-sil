@@ -323,33 +323,51 @@ class Session:
 
     # ------------------------------------------------------------ input
 
-    def feed_line(self, line: str) -> list[dict]:
-        """Takes one line of the launcher's standard output; returns the messages for the screens."""
+    def _with_silence(self, fn: Callable[[], list[dict]]) -> list[dict]:
         self.last_line_at = time.monotonic()
         if self.silent_s is not None:  # it was silent, and writes again
             self.silent_s = None
-            return [self.message(), *self._feed(line)]
-        return self._feed(line)
+            return [self.message(), *fn()]
+        return fn()
 
-    def _feed(self, line: str) -> list[dict]:
+    def feed_line(self, line: str) -> list[dict]:
+        """Takes one line of the launcher's standard output; returns the messages for the screens."""
         try:
             event = json.loads(line, parse_constant=_no_constant, parse_float=_finite)
         except (ValueError, RecursionError):
             event = None
         if not isinstance(event, dict) or not isinstance(event.get("event"), str):
+            return self._with_silence(lambda: self.problem(
+                "launcher-output",
+                "the launcher wrote a line that is not an event (a JSON object with \"event\"): "
+                "the line is ignored; if it repeats, the launcher and this GUI do not match",
+                self._cut(line),
+            ))
+        size = len(line.encode("utf-8", "surrogatepass"))
+        return self._with_silence(lambda: self._feed_event(event, size, detail=line))
+
+    def feed_event(self, event: dict, size: int) -> list[dict]:
+        """Takes one already-parsed event dict and its UTF-8 byte size; returns the messages for the screens."""
+        return self._with_silence(lambda: self._feed_event(event, size))
+
+    def _feed_event(self, event: dict, size: int, *, detail: str | None = None) -> list[dict]:
+        def problem_detail() -> str:
+            return self._cut(detail if detail is not None else repr(event))
+
+        if not isinstance(event, dict) or not isinstance(event.get("event"), str):
             return self.problem("launcher-output",
                                 "the launcher wrote a line that is not an event (a JSON object with \"event\"): "
                                 "the line is ignored; if it repeats, the launcher and this GUI do not match",
-                                self._cut(line))
+                                problem_detail())
         seq = event.get("seq")
         if not _is_count(seq):
             return self.problem("launcher-output",
                                 f"the launcher wrote a '{self._cut(event['event'])}' event without a seq that is an "
-                                f"integer from 0 to 2^53: it is ignored", self._cut(line))
+                                f"integer from 0 to 2^53: it is ignored", problem_detail())
         if self.last_seq is not None and seq <= self.last_seq:
             return self.problem("seq-order",
                                 f"the launcher wrote seq {seq} after {self.last_seq}: the event is ignored "
-                                "(events must come in order)", self._cut(line))
+                                "(events must come in order)", problem_detail())
         out: list[dict] = []
         expected = 0 if self.last_seq is None else self.last_seq + 1
         if seq != expected:
@@ -369,8 +387,8 @@ class Session:
         if wrong is not None:
             return out + self.problem("bad-event", f"the launcher wrote a '{kind}' event whose {wrong}: it is "
                                                    "ignored (not shown); the launcher and this GUI may not match",
-                                      self._cut(line))
-        out += self._apply(event, len(line))
+                                      problem_detail())
+        out += self._apply(event, size)
         out.append({"type": "event", "session": self.id, "event": event})
         return out
 

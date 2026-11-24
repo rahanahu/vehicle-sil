@@ -691,6 +691,70 @@ def test_one_line_that_cannot_be_passed_on_does_not_stop_the_reading() -> None:
     assert "ZeroDivisionError" in sent[2]["message"]
 
 
+def test_relay_event_handles_non_finite_dict_and_feed_exceptions() -> None:
+    from conftest import CONFIGS, REPLAY
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+
+    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="t"))
+    session = new_session()
+    sent: list[dict] = []
+    server.hub.broadcast = lambda messages, log_key=None, real=server.hub.broadcast: (
+        sent.extend(messages), real(messages, log_key))[1]
+    feed = session.feed_event
+    calls = iter([
+        lambda ev, sz: [{"type": "event", "session": 1, "event": {"event": "time", "seq": 1, "x": float("inf")}}],
+        lambda ev, sz: 1 / 0,
+    ])
+    session.feed_event = lambda ev, sz: next(calls, feed)(ev, sz)
+    server.relay_event(session, {"event": "time", "seq": 1, "t_ms": 1, "sim_ms": 1}, 40)
+    server.relay_event(session, {"event": "time", "seq": 2, "t_ms": 2, "sim_ms": 2}, 40)
+    server.relay_event(session, {"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 2}, 50)
+    assert kinds(sent[1:]) == ["error:bad-event", "error:bad-event", "event"]
+    assert "ZeroDivisionError" in sent[2]["message"]
+
+
+def test_session_feed_event_parity_limits_and_zero_json_loads(monkeypatch) -> None:
+    import vehicle_sil_gui.session as session_mod
+
+    s_line = new_session(log_line_bytes=20, object_bytes=80, state_bytes=60, findings_bytes=70)
+    s_ev = new_session(log_line_bytes=20, object_bytes=80, state_bytes=60, findings_bytes=70)
+    events = [
+        {"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 2, "pid": 12},
+        {"event": "log", "seq": 1, "t_ms": 1, "source": "A", "line": "ok"},
+        {"event": "log", "seq": 2, "t_ms": 2, "source": "A", "line": "too long for log_line_bytes"},
+        {"event": "log_dropped", "seq": 3, "t_ms": 3, "count": 2, "sources": {"A": 2}},
+        {"event": "finding", "seq": 4, "t_ms": 4, "severity": "warning", "message": "small"},
+        {"event": "finding", "seq": 5, "t_ms": 5, "severity": "warning", "message": "exceeds findings_bytes " * 3},
+        {"event": "state", "seq": 6, "t_ms": 6, "rev": 1, "allowed": {"pause": {"ok": True}}, "pad": "x" * 80},
+        {"event": "check", "seq": 7, "t_ms": 7, "check": {"result": "passed", "participants": [], "pad": "x" * 100}},
+        {"event": "result", "seq": 8, "t_ms": 8, "result": {"result": "passed", "extra": "x" * 100}},
+    ]
+    for ev in events:
+        raw = json.dumps(ev, separators=(",", ":"))
+        s_line.feed_line(raw)
+
+    monkeypatch.setattr(session_mod.json, "loads", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("unexpected json.loads")))
+    for ev in events:
+        raw = json.dumps(ev, separators=(",", ":"))
+        s_ev.feed_event(ev, len(raw.encode("utf-8", "surrogatepass")))
+
+    # Silent recovery clears silent_s cleanly
+    s_ev.silent_s = 5
+    msgs = s_ev.feed_event({"event": "time", "seq": 9, "t_ms": 9, "sim_ms": 9}, 35)
+    assert [m["type"] for m in msgs] == ["session", "event"]
+    assert s_ev.silent_s is None
+
+    # Compare summaries on the shared prefix (seq 0..8)
+    s_line.silent_s = None
+    assert s_line.check == s_ev.check
+    assert s_line.result == s_ev.result
+    assert s_line.launcher_state == s_ev.launcher_state
+    assert s_line.findings == s_ev.findings and s_line.findings_omitted == s_ev.findings_omitted
+    assert s_line.log_key("A") == s_ev.log_key("A")
+    assert s_line.replay(None) == s_ev.replay(None)
+
+
 def test_messages_are_valid_utf_8() -> None:
     sent, _ = run_hub([{"type": "event", "session": 1, "event": {"event": "log", "seq": 0, "source": "A",
                                                                  "line": "a\ud800b 日"}}])
@@ -1144,6 +1208,77 @@ def test_the_name_of_the_request_file_is_hidden_from_what_the_launcher_says(tmp_
     assert str(path) not in hide_request_in_line(line, path) and json.loads(hide_request_in_line(line, path))["line"] is None
     assert hide_request_in_line("not JSON " + str(path) + ", line 2", path) == "not JSON the request"
     assert hide_request_in_line('{"event":"time"}', path) == '{"event":"time"}'
+
+    from vehicle_sil_gui.launcher import hide_request_in_event
+    unrelated = {"event": "time", "seq": 1, "sim_ms": 10}
+    assert hide_request_in_event(unrelated, path) is unrelated
+    nested = {"event": "check", "check": {"findings": [dict(finding), dict(other)]}}
+    snapshot = json.dumps(nested)
+    redacted = hide_request_in_event(nested, path)
+    assert redacted is not nested
+    assert redacted["check"]["findings"][0]["file"] == "the request"
+    assert redacted["check"]["findings"][0]["line"] is None
+    assert redacted["check"]["findings"][1] == other
+    assert json.dumps(nested) == snapshot
+
+
+def test_hide_request_in_event_deep_nesting_without_recursion_error(tmp_path: Path) -> None:
+    from vehicle_sil_gui.launcher import hide_request_in_event
+
+    path = tmp_path / "vehicle-sil-gui-request-deep.json"
+
+    def make_deep_event(leaf: object, depth: int = 1000) -> dict:
+        node: object = leaf
+        for i in range(depth):
+            node = [node] if i % 2 else {"nested": node}
+        return {"event": "finding", "seq": 1, "t_ms": 1, "data": node}
+
+    def unwrap(ev: dict, depth: int = 1000) -> dict:
+        cur: object = ev["data"]
+        for i in range(depth - 1, -1, -1):
+            cur = cur[0] if i % 2 else cur["nested"]  # type: ignore[index]
+        assert isinstance(cur, dict)
+        return cur
+
+    unrelated = make_deep_event({"file": "a.yaml", "line": 3, "message": "ok"})
+    assert hide_request_in_event(unrelated, path) is unrelated
+
+    leaf = {"file": str(path), "line": 42, "message": f"{path}, line 42: deep error"}
+    with_req = make_deep_event(dict(leaf))
+    redacted = hide_request_in_event(with_req, path)
+    assert redacted is not with_req
+    assert unwrap(redacted) == {"file": "the request", "line": None, "message": "the request: deep error"}
+    assert unwrap(with_req) == leaf
+
+
+def test_relay_event_guards_redaction_exception_and_redacts_detail(tmp_path: Path, monkeypatch) -> None:
+    from conftest import CONFIGS, REPLAY
+    from vehicle_sil_gui import server as server_mod
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+
+    srv = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="t"))
+    session = new_session()
+    sent: list[dict] = []
+    srv.hub.broadcast = lambda messages, log_key=None, real=srv.hub.broadcast: (
+        sent.extend(messages), real(messages, log_key))[1]
+    req_path = tmp_path / "vehicle-sil-gui-request-secret.json"
+    fake_run = type("_R", (), {"request": req_path, "session": session})()
+
+    def boom(_ev, _path):
+        raise RuntimeError("redaction boom")
+
+    monkeypatch.setattr(server_mod, "hide_request_in_event", boom)
+    srv.relay_event(
+        session,
+        {"event": "finding", "seq": 0, "t_ms": 0, "message": f"{req_path}, line 9: secret"},
+        64,
+        fake_run,  # type: ignore[arg-type]
+    )
+    assert kinds(sent) == ["error:bad-event"]
+    assert "RuntimeError" in sent[0]["message"]
+    assert str(req_path) not in str(sent[0]["detail"])
+    assert "the request" in str(sent[0]["detail"])
 
 
 

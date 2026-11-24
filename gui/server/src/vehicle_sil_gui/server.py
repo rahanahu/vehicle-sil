@@ -24,18 +24,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiohttp import WSCloseCode, WSMsgType, web
-import yaml
 
 from . import __version__, control, dashboard, process
 from .allowed import Facts, Numbered, allowed as allowed_of, allowed_save, allowed_start
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, NO_CONNECTION, REQUEST_FIELDS,
+from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, FEATURE_CHECK_FILE_ONLY,
+                       NO_CONNECTION, REQUEST_FIELDS,
                        FEATURE_RUN_STOP_AT, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, TEXT_FIELDS,
                        InvalidRequest, Launcher,
                        check_command, check_connect, check_disable, check_enable, check_fields, check_manual,
                        check_network, check_params, check_run_millis, check_speed, check_strict, check_name_list, check_time_command, check_time_policy,
                        check_variant, connections_command, describe_command, hide_request,
-                       hide_request_in_line, save_check_command, text_check_command,
+                       hide_request_in_event, hide_request_in_line, save_check_command, text_check_command,
                        with_participant_timeouts, write_request_file)
 from . import client_files
 from .config_save import (check_text, check_unchanged, decide, existing_file, new_file, replace_file, save_request,
@@ -157,6 +157,24 @@ def count_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+_MAX_CONFIG_HASH_BYTES = 16 * 1024 * 1024
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        with path.open("rb") as f:
+            h = hashlib.sha256()
+            total = 0
+            while chunk := f.read(65536):
+                total += len(chunk)
+                if total > _MAX_CONFIG_HASH_BYTES:
+                    return None
+                h.update(chunk)
+            return h.hexdigest()
+    except OSError:
+        return None
+
+
 def _read_at_most(path: Path, size: int) -> bytes:
     with open(path, "rb") as f:
         return f.read(size)
@@ -262,7 +280,11 @@ class _PreStartGate:
             ev = json.loads(text)
         except (ValueError, RecursionError):
             return
-        if not isinstance(ev, dict):
+        if isinstance(ev, dict):
+            self.inspect_event(ev)
+
+    def inspect_event(self, ev: dict) -> None:
+        if self.decision.is_set():
             return
         kind = ev.get("event")
         if kind == "check" and isinstance(ev.get("check"), dict):
@@ -298,54 +320,6 @@ class _PreStartGate:
             self.pass_check(None)
 
 
-def _read_config_metadata(path: Path, variant: str | None) -> tuple[tuple[int, int], list[str] | None, list[str] | None]:
-    """Reads file stamp plus participant and network names from the same open file descriptor."""
-    with path.open("rb") as f:
-        data = f.read(MAX_TEXT + 1)
-        st = os.fstat(f.fileno())
-    stamp = (st.st_mtime_ns, st.st_size)
-    if len(data) > MAX_TEXT:
-        return stamp, None, None
-    try:
-        doc = yaml.safe_load(data.decode("utf-8"))
-    except (UnicodeDecodeError, yaml.YAMLError):
-        return stamp, None, None
-    if not isinstance(doc, dict):
-        return stamp, None, None
-
-    participants: list[str] | None = None
-    raw_participants = doc.get("participants")
-    if isinstance(raw_participants, list):
-        names: list[str] = [
-            entry["name"]
-            for entry in raw_participants
-            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
-        ]
-        if variant is not None and isinstance(doc.get("variants"), dict):
-            if variant not in doc["variants"]:
-                names = []
-                participants = None
-            else:
-                var_cfg = doc["variants"].get(variant)
-                if isinstance(var_cfg, dict) and isinstance(var_cfg.get("participants"), dict):
-                    for pname in var_cfg["participants"]:
-                        if isinstance(pname, str) and pname not in names:
-                            names.append(pname)
-                participants = names
-        else:
-            participants = names
-
-    networks: list[str] | None = None
-    raw_networks = doc.get("networks")
-    if isinstance(raw_networks, list):
-        networks = [
-            entry["name"]
-            for entry in raw_networks
-            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
-        ]
-    return stamp, participants, networks
-
-
 class _RunSink:
     """Routes runtime lifecycle callbacks for one run to GuiServer, Session, Variables, and Hub."""
 
@@ -353,6 +327,17 @@ class _RunSink:
         self._server = server
         self._run = run
         self._gate = gate
+
+    def on_stdout_event(self, event: dict, size: int) -> None:
+        gate = self._gate
+        if gate is not None and not gate.live:
+            if gate.discard:
+                return
+            gate.buffer.append(("event", event, size))
+            gate.inspect_event(event)
+            return
+        run = self._run
+        self._server.relay_event(run.session, event, size, run)
 
     def on_stdout_line(self, line: str | None) -> None:
         gate = self._gate
@@ -465,13 +450,16 @@ class GuiServer:
         self.o = options
         self.root = ConfigRoot(options.root)
         self.launcher = options.launcher
+        self._checks: set[asyncio.subprocess.Process] = set()  # the checks and the launcher's version probes
         self.runtime: LauncherRuntime = options.runtime or ServeRuntime(
             self.launcher, cwd=self.root.root,
             participant_start_timeout_ms=options.participant_start_timeout_ms,
             participant_stop_timeout_ms=options.participant_stop_timeout_ms,
+            check_timeout_s=options.check_timeout_s,
             max_line=MAX_LINE, escalate_wait_s=ESCALATE_WAIT_S,
             finish_timeout_s=process.OUTPUT_GRACE_S + 1 + VARIABLES_CLOSE_S,
             on_status=self._on_runtime_status,
+            track=self._checks,
         )
         self.runtime.sync_launcher()
         self.instance = secrets.token_hex(8)
@@ -494,12 +482,12 @@ class GuiServer:
         self.numbered = Numbered()  # the numbering of `allowed` that every place that carries it shares
         self._check_lock = asyncio.Lock()
         self._check_waiting = 0
-        self._checks: set[asyncio.subprocess.Process] = set()  # the checks and the launcher's version probes
         self.launcher.track = self._checks
         self._names: dict[tuple[str, str | None], tuple[tuple, list[str]]] = {}
+        self._networks: dict[tuple[str, str | None], tuple[tuple, list[str]]] = {}
         # Of each (file, network), the targets that its last list (POST api/connections) gave as usable, with the
-        # file's stamp then: the only targets that a check or a run passes on (see _check_targets).
-        self._targets: dict[tuple[str, str], tuple[tuple, tuple[str, ...]]] = {}
+        # file's stamp and SHA-256 then: the only targets that a check or a run passes on (see _check_targets).
+        self._targets: dict[tuple[str, str], tuple[tuple, str | None, tuple[str, ...]]] = {}
         self._sockets: dict[web.WebSocketResponse, web.BaseRequest] = {}
         self._unauthenticated: dict[web.WebSocketResponse, None] = {}  # oldest first
         self._authenticated: set[web.WebSocketResponse] = set()
@@ -784,7 +772,7 @@ class GuiServer:
                           "permissions, then save again") from None
         self.descriptions.forget(config.relative)
         await self.runtime.release_config(config.relative)
-        for kept in (self._names, self._targets):
+        for kept in (self._names, self._networks, self._targets):
             for key in [k for k in kept if k[0] == config.relative]:
                 del kept[key]
 
@@ -919,7 +907,7 @@ class GuiServer:
         """The request file's keys of a check or run request: (intent, disable, manual). The shapes are checked
         here; what the values mean for the file (is there such a variant, can these be used together) is the
         launcher's to say. For api/check, unknown disable/manual names are checked against the launcher's known
-        participants; for api/run, YAML metadata validates them without spawning a pre-check subprocess."""
+        participants; for api/run, C++ metadata (or cached check names) validates them without spawning a full pre-check."""
         variant = check_variant(body.get("variant"))
         params = check_params(body.get("params"))
         enable = check_enable(body.get("enable"))
@@ -956,29 +944,50 @@ class GuiServer:
                   "late_tolerance_ms": late_tolerance_ms}
         return {k: v for k, v in intent.items() if v is not None}, disable, manual
 
-    def _check_targets(self, relative: str, connect: dict[str, str], networks: list[str] | None,
-                       checked_stamp: tuple | None = None) -> None:
+    def _check_targets(
+        self,
+        relative: str,
+        connect: dict[str, str],
+        networks: list[str] | None,
+        checked_stamp: tuple | None = None,
+        checked_sha256: str | None = None,
+    ) -> None:
         """The guard between the browser and the bridges' devices: a target other than "none" of a network of the
         configuration (or any target if networks could not be read) is passed on only when the last list of that
         network of that file (POST api/connections), made from the file as it is now, gave it as usable, exactly
-        so written. Refused 400 target-not-listed otherwise. checked_stamp (a run): the file's stamp before its
-        metadata read; a file changed since may have that network now, so every target other than "none" is refused."""
-        for network, target in connect.items():
-            if target == NO_CONNECTION:
-                continue
-            if checked_stamp is not None and checked_stamp != self._stamp(relative):
+        so written. Refused 400 target-not-listed otherwise. checked_stamp / checked_sha256 (a run): the file's
+        stamp and SHA-256 before its metadata read; a file changed since may have that network now, so every
+        target other than "none" is refused."""
+        external = [(network, target) for network, target in connect.items() if target != NO_CONNECTION]
+        if not external:
+            return
+        current_stamp = self._stamp(relative)
+        need_sha256 = checked_sha256 is not None or any(
+            (listed := self._targets.get((relative, network))) is not None and listed[1] is not None
+            for network, _ in external
+        )
+        current_sha256 = _file_sha256(self.root.resolve(relative).absolute) if need_sha256 else None
+        for network, target in external:
+            if (
+                (checked_stamp is not None and checked_stamp != current_stamp)
+                or (checked_sha256 is not None and current_sha256 != checked_sha256)
+            ):
                 raise Refused(400, "target-not-listed",
                               f"{relative} has changed since this run was checked, so the networks that it connects "
                               "may be others: start the run again", {"network": network, "target": target})
             if networks is not None and network not in networks:
                 continue
             listed = self._targets.get((relative, network))
-            if listed is None or listed[0] != self._stamp(relative):
+            if (
+                listed is None
+                or listed[0] != current_stamp
+                or (listed[1] is not None and current_sha256 != listed[1])
+            ):
                 why = (f"there is no list of where {network!r} of {relative} can be connected" if listed is None else
                        f"{relative} has changed since {network!r} was listed")
-            elif target not in listed[1]:
+            elif target not in listed[2]:
                 why = (f"the last list of {network!r} of {relative} does not have {target!r} as usable "
-                       f"({usable_text(listed[1])})")
+                       f"({usable_text(listed[2])})")
             else:
                 continue
             raise Refused(400, "target-not-listed",
@@ -1154,14 +1163,53 @@ class GuiServer:
         await self._usable()
         scenario = self._scenario(config, body)
         variant = check_variant(body.get("variant"))
-        try:
-            checked_stamp, yaml_participants, yaml_networks = await asyncio.to_thread(
-                _read_config_metadata, config.absolute, variant,
-            )
-        except OSError as e:
-            raise _unreadable(config.relative, e) from None
+        raw_disable = check_name_list("disable", body.get("disable"))
+        raw_manual = check_name_list("manual", body.get("manual"))
+        raw_enable = check_enable(body.get("enable"))
+        raw_connect = check_connect(body.get("connect"))
+        has_external_connect = any(target != NO_CONNECTION for target in raw_connect.values())
+        need_metadata = bool(raw_disable or raw_manual or has_external_connect)
+        want_control_hint = (
+            self.o.variables
+            and control.FEATURE in self.launcher.features
+            and (self.o.source is not None or self._no_library is None)
+        )
+        checked_stamp = self._stamp(config.relative)
+        inspection = await self.runtime.inspect_config(
+            config.relative,
+            variant=variant,
+            disable=tuple(raw_disable),
+            enable=tuple(raw_enable),
+            manual=tuple(raw_manual),
+            want_control=want_control_hint,
+            need_metadata=need_metadata,
+        )
+        known_participants = inspection.participants
+        known_networks = inspection.networks
+        checked_sha256 = inspection.file_sha256
+        if (raw_disable or raw_manual) and known_participants is None:
+            cached_names = self._names.get((config.relative, variant))
+            if cached_names and cached_names[0] == checked_stamp:
+                known_participants = cached_names[1]
+            elif FEATURE_CHECK_FILE_ONLY in self.launcher.features:
+                base = await self.runtime.inspect_config(
+                    config.relative,
+                    variant=variant,
+                    want_control=want_control_hint,
+                    need_metadata=True,
+                    allow_prepare_on_resident=False,
+                )
+                known_participants = base.participants
+                if known_networks is None:
+                    known_networks = base.networks
+                if checked_sha256 is None:
+                    checked_sha256 = base.file_sha256
+        if known_networks is None and FEATURE_CHECK_FILE_ONLY not in self.launcher.features:
+            cached_nets = self._networks.get((config.relative, variant))
+            if cached_nets and cached_nets[0] == checked_stamp:
+                known_networks = cached_nets[1]
         intent, disable, manual = await self._intent(
-            config, body, scenario, known_participants=yaml_participants, fetch_names=False,
+            config, body, scenario, known_participants=known_participants, fetch_names=False,
         )
         speed, start_paused = intent.get("speed"), intent.get("start_paused", False)
         why_not = await self._no_variables()
@@ -1182,7 +1230,13 @@ class GuiServer:
         try:
             # The last await is above: from here to the launcher's start no other request runs, so the targets are
             # compared with the lists and the file as they are when the launcher is started.
-            self._check_targets(config.relative, intent.get("connect", {}), yaml_networks, checked_stamp)
+            self._check_targets(
+                config.relative,
+                intent.get("connect", {}),
+                known_networks,
+                checked_stamp,
+                checked_sha256,
+            )
             request = self._make_request(intent)
         except BaseException:
             control.remove(credentials)
@@ -1198,6 +1252,7 @@ class GuiServer:
                 disable=tuple(disable),
                 enable=tuple(intent.get("enable", ())),
                 manual=tuple(manual),
+                hot_decision=inspection.hot,
             ))
         except BaseException:
             control.remove(credentials)
@@ -1316,7 +1371,9 @@ class GuiServer:
             while gate.buffer:
                 item = gate.buffer.pop(0)
                 kind = item[0]
-                if kind == "stdout":
+                if kind == "event":
+                    sink.on_stdout_event(item[1], item[2])
+                elif kind == "stdout":
                     sink.on_stdout_line(item[1])
                 elif kind == "stderr":
                     sink.on_stderr_line(item[1])
@@ -1644,6 +1701,8 @@ class GuiServer:
         names = [p["name"] for p in result["participants"] if isinstance(p, dict) and isinstance(p.get("name"), str)]
         if names or result.get("result") not in ("usage",):
             remember(self._names, (relative, intent.get("variant")), (stamp, names))
+        if result.get("result") == "passed":
+            remember(self._networks, (relative, intent.get("variant")), (stamp, network_names(result)))
         return code, result
 
     def _participant_timeouts(self, argv: list[str]) -> list[str]:
@@ -1681,6 +1740,7 @@ class GuiServer:
         """connections --json of one network (in the queue of the checks). Its usable targets replace those of the
         last list of (file, network); a list that fails leaves none."""
         stamp = self._stamp(relative)
+        sha256 = _file_sha256(self.root.resolve(relative).absolute)
         self._targets.pop((relative, network), None)
         try:
             code, out, err = await process.run_to_end(connections_command(self.launcher, relative, network),
@@ -1708,7 +1768,7 @@ class GuiServer:
             for t in n["list"]["targets"]
             if isinstance(t, dict) and t.get("usable") is True and isinstance(t.get("value"), str)))
         if code != USAGE_EXIT_CODE:  # no such network: nothing to remember
-            remember(self._targets, (relative, network), (stamp, usable))
+            remember(self._targets, (relative, network), (stamp, sha256, usable))
         return code, result
 
     # ------------------------------------------------------------ the launcher's run
@@ -1766,21 +1826,24 @@ class GuiServer:
             await asyncio.sleep(min(1.0, self.o.silent_after_s / 4))
             self.hub.broadcast(session.check_silence(time.monotonic(), self.o.silent_after_s))
 
+    def _dispatch_messages(self, session: Session, messages: list[dict], run: Run | None) -> bool:
+        sent = self.hub.broadcast(messages, session.log_key)
+        if run is not None:
+            for m in messages:
+                if m["type"] != "event":
+                    continue
+                if m["event"]["event"] == control.EVENT:
+                    self._control_started(run, m["event"])
+                elif m["event"]["event"] == "phase" and m["event"].get("phase") == "stopping":
+                    run.variables.read_last()  # the simulation is over: its control server closes soon
+        return sent
+
     def relay(self, session: Session, line: str, run: Run | None = None) -> None:
         """One line of the launcher's events: into the summary and to the screens. Nothing that goes wrong with
         one line stops the reading: the line becomes a bad-event problem, and the next line is read."""
         try:
             messages = session.feed_line(line)
-            sent = self.hub.broadcast(messages, session.log_key)
-            if run is not None:
-                for m in messages:
-                    if m["type"] != "event":
-                        continue
-                    if m["event"]["event"] == control.EVENT:
-                        self._control_started(run, m["event"])
-                    elif m["event"]["event"] == "phase" and m["event"].get("phase") == "stopping":
-                        run.variables.read_last()  # the simulation is over: its control server closes soon
-            if sent:
+            if self._dispatch_messages(session, messages, run):
                 return
             error: str = "a message for the screens could not be made of it"
         except Exception as e:  # a shape the checks did not foresee
@@ -1788,6 +1851,24 @@ class GuiServer:
             error = type(e).__name__
         self.hub.broadcast(session.problem("bad-event", f"the server could not pass on an event ({error}): it is "
                                                         "ignored", session._cut(line)))
+
+    def relay_event(self, session: Session, event: dict, size: int, run: Run | None = None) -> None:
+        """One already-parsed launcher event: into the summary and to the screens."""
+        try:
+            cleaned = hide_request_in_event(event, run.request) if run is not None and run.request is not None else event
+            messages = session.feed_event(cleaned, size)
+            if self._dispatch_messages(session, messages, run):
+                return
+            error: str = "a message for the screens could not be made of it"
+        except Exception as e:  # a shape the checks did not foresee
+            log.exception("reading an event")
+            error = type(e).__name__
+        detail = session._cut(repr(event))
+        if run is not None and run.request is not None:
+            redacted = hide_request(detail, run.request)
+            detail = redacted if isinstance(redacted, str) else detail
+        self.hub.broadcast(session.problem("bad-event", f"the server could not pass on an event ({error}): it is "
+                                                        "ignored", detail))
 
     # ------------------------------------------------------------ the server's end
 
