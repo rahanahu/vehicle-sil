@@ -11,7 +11,7 @@
 //
 // Exit codes: 0 the result is passed, 1 failed (check errors, a failed run, a server error, a timeout), 2 usage error.
 
-const PROTOCOL = 3; // the API version this client reads (vehicle_sil_gui in api/app and hello)
+const PROTOCOL = 4; // the API version this client reads (vehicle_sil_gui in api/app and hello)
 
 function usage(message) {
   console.error(`run.mjs: ${message}`);
@@ -115,7 +115,7 @@ async function main() {
   console.log(`check: ${check.result} (errors ${check.errors ?? 0})`);
   if (check.result !== "passed") finish(1);
 
-  let session = null; // the session ID of the run we started (null until api/run answers)
+  let runId = null; // the run ID of the run we started (null until api/run answers)
   let synced = false;
   const ended = new Map(); // summaries of runs whose end arrived before the answer
   const end = (summary) => {
@@ -143,7 +143,7 @@ async function main() {
           break;
         case "event": {
           // Events that arrive before the answer belong to our run too (the server runs one at a time)
-          if (session !== null && message.session !== session) break;
+          if (runId !== null && message.run_id !== runId) break;
           const event = message.event;
           if (event.event === "phase") console.log(`phase: ${event.phase}`);
           if (event.event === "participant")
@@ -156,7 +156,7 @@ async function main() {
         case "session": {
           const summary = message.session;
           if (summary.state !== "ended") break;
-          if (summary.id === session) end(summary);
+          if (summary.id === runId) end(summary);
           else ended.set(summary.id, summary);
           break;
         }
@@ -182,9 +182,9 @@ async function main() {
   await started;
 
   const answer = await call("POST", "api/run", intent);
-  session = answer.session.id;
-  console.log(`started: session ${session}`);
-  if (ended.has(session)) end(ended.get(session));
+  runId = answer.run_id;
+  console.log(`started: session ${runId}`);
+  if (ended.has(runId)) end(ended.get(runId));
   setTimeout(
     () => finish(1, `no result after ${timeoutS} s`),
     timeoutS * 1000,

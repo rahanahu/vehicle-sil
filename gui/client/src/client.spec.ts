@@ -155,14 +155,14 @@ describe('createClient', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('outside a browser, sends the server origin itself (the server takes no other)', async () => {
-    const response = (await httpExamples()).find((example) => example.name === 'run')?.response;
-    const { calls, fetch } = fakeFetch(() =>
-      json({ ...(response as object), instance: 'test-instance' }),
-    );
+    const app = (await httpExamples()).find((example) => example.name === 'app')?.response;
+    const run = (await httpExamples()).find((example) => example.name === 'run')?.response;
+    let call = 0;
+    const { calls, fetch } = fakeFetch(() => json(call++ === 0 ? app : run));
     vi.stubGlobal('fetch', fetch);
     const client = createClient({ baseUrl: 'http://127.0.0.1:8765/', token: 'secret' });
-    await client.fetchSession();
-    await client.run.stop();
+    await client.loadApp();
+    await client.run.start({ file: 'a.yaml', disable: [] });
     expect(calls.map((c) => (c.init.headers as Record<string, string>)['Origin'])).toEqual([
       undefined,
       'http://127.0.0.1:8765',
@@ -235,7 +235,7 @@ describe('createClient', () => {
       fake.last().open();
       fake.last().send({
         type: 'hello',
-        vehicle_sil_gui: 3,
+        vehicle_sil_gui: 4,
         instance: 'i',
         session: null,
         replay: null,
@@ -247,9 +247,7 @@ describe('createClient', () => {
       client.connect();
       expect(fake.sockets).toHaveLength(2);
       fake.last().open();
-      expect(fake.last().greeting).toEqual([
-        { type: 'auth', token: 'secret', session_without_check: true },
-      ]);
+      expect(fake.last().greeting).toEqual([{ type: 'auth', token: 'secret' }]);
       client.close();
     } finally {
       vi.useRealTimers();
@@ -270,7 +268,7 @@ describe('createClient', () => {
     client.close();
   });
 
-  it('does not connect without a token, and asks for summaries without the check', () => {
+  it('does not connect without a token, and authenticates on connect', () => {
     const fake = new FakeWebSockets();
     let token: string | null = null;
     const client = createClient({
@@ -285,9 +283,7 @@ describe('createClient', () => {
     client.connect();
     fake.last().open();
     expect(fake.last().url).toBe('wss://example.test/gui/ws');
-    expect(fake.last().greeting).toEqual([
-      { type: 'auth', token: 'secret', session_without_check: true },
-    ]);
+    expect(fake.last().greeting).toEqual([{ type: 'auth', token: 'secret' }]);
     client.close();
     expect(fake.last().closedByClient).toBe(true);
   });

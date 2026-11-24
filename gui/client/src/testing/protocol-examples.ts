@@ -75,21 +75,3 @@ export async function webSocketExamples(dir?: string): Promise<WebSocketExample[
     .filter(([, value]) => typeof value === 'object' && value !== null && 'server' in value)
     .map(([name, value]) => ({ name, ...(value as Omit<WebSocketExample, 'name'>) }));
 }
-
-/**
- * The launcher's events of a recorded run (`out` of each line of gui/server/tests/recordings/<name>.jsonl), in their
- * order, without `seq` (the GUI server adds it). Node only (the unit tests of the library).
- */
-export async function recordedLauncherEvents(
-  name: string,
-): Promise<{ event: string; [key: string]: unknown }[]> {
-  const fsName = 'node:fs';
-  const fs = (await import(/* @vite-ignore */ fsName)) as NodeFs;
-  const process = (globalThis as unknown as { process: NodeProcess }).process;
-  const text = fs.readFileSync(`${process.cwd()}/../server/tests/recordings/${name}.jsonl`, 'utf8');
-  return text
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .map((line) => (JSON.parse(line) as { out?: { event: string } }).out)
-    .filter((out): out is { event: string } => out !== undefined);
-}

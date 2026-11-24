@@ -59,7 +59,7 @@ export function createVariableEditor(front: Front, ref: VariableRef): VariableEd
         !closed &&
         client.session.ready.get() &&
         current !== null &&
-        current.session === client.variables.state.get().session &&
+        current.run_id === client.variables.state.get().session &&
         view.can_write &&
         bound.block === null &&
         !waiting,
@@ -81,7 +81,7 @@ export function createVariableEditor(front: Front, ref: VariableRef): VariableEd
     if (closed) return;
     if (
       current?.instance !== target?.instance ||
-      current?.session !== target?.session ||
+      current?.run_id !== target?.run_id ||
       !shown.view.can_write
     ) {
       reset();

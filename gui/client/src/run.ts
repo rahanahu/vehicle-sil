@@ -1,12 +1,12 @@
 import { HttpError, HttpTransport, errorMessage } from './http';
 import {
   ProtocolError,
+  RunAck,
   RunRequest,
-  SessionSummary,
+  readRunResponse,
   readSessionInstance,
-  readSessionResponse,
 } from './protocol';
-import { SessionFeed } from './session';
+import { RunTarget, SessionFeed } from './session';
 import { isRunActive } from './session-state';
 import { ErrorSink, Readable, Writable, derived, rethrowLater } from './values';
 
@@ -28,13 +28,13 @@ function answerMissing(path: string, error: HttpError): string | null {
 /** Why an action was refused, and the run at that time (once the run changes, the old reason is no longer shown). */
 interface ActionFailure {
   message: string;
-  session: number | null;
+  session: string | null;
   running: boolean;
 }
 
 export interface StopCapture {
   readonly key: object | string;
-  readonly send: (force: boolean) => Promise<SessionSummary | null>;
+  readonly send: (force: boolean) => Promise<RunAck>;
 }
 
 /** Run control and its state (GuiClient.run). */
@@ -50,40 +50,34 @@ export interface ClientRun {
   /** Why the last action was refused (the server's text, unchanged). null once a run starts or ends. */
   readonly error: Readable<string | null>;
   /**
-   * Starts a run (`POST api/run`). Resolves with the summary in the answer; rejects with an HttpError if refused.
-   * The server may check the configuration file again as part of the start, so this waits up to twice the check limit
-   * (waiting its turn, then checking) plus a margin. If there is still no answer, it rejects with an HttpError with
-   * `timedOut` and error says that no answer came (the WebSocket state tells whether the run started). The server may
-   * have started it.
+   * Starts a run (`POST api/run`). Resolves with the `{instance, run_id}` acknowledgement; rejects with an HttpError
+   * if refused. The server may check the configuration file again as part of the start, so this waits up to twice the
+   * check limit (waiting its turn, then checking) plus a margin. If there is still no answer, it rejects with an
+   * HttpError with `timedOut` and error says that no answer came (the WebSocket state tells whether the run started).
    */
-  start(request: RunRequest): Promise<SessionSummary | null>;
+  start(request: RunRequest): Promise<RunAck>;
   /**
-   * Stops the session currently seen by this client. During its own pending start, waits for the answer and targets
-   * that session. If the ID or server instance is unknown, or the start answer is lost, rejects without sending an
-   * unscoped stop. An older server without `api/stop-session` is refused, rather than stopping an unrelated run.
+   * Stops the session currently seen by this client (`POST api/stop-session`). During its own pending start, waits for
+   * the answer and targets that session. If the ID or server instance is unknown, or the start answer is lost, rejects
+   * without sending an unscoped stop.
    */
-  stop(): Promise<SessionSummary | null>;
+  stop(): Promise<RunAck>;
   /** Stops without waiting for participants. A stop during this client's pending start is targeted the same way. */
-  forceStop(): Promise<SessionSummary | null>;
+  forceStop(): Promise<RunAck>;
 }
 
 /**
  * Run control: start (`POST api/run`), stop in order or without waiting (`POST api/stop-session`), and their state.
  *
- * - The answer to an action (the current summary) is applied to the session copy without waiting for the notification
- *   (no stale display right after a click).
- * - A stop requested while a start is pending waits for its answer, then names that session in the stop request. The
- *   server checks the ID atomically, so a later run cannot be stopped by the delayed request.
+ * - HTTP commands return `{instance, run_id}` acknowledgements; state transitions arrive over the single WebSocket
+ *   stream.
+ * - A stop requested while a start is pending waits for its answer, then names that `run_id` and `instance` in the
+ *   stop request. The server checks the ID atomically, so a later run cannot be stopped by the delayed request.
  * - error holds the reason for a refusal (the server's English text). It is cleared once a run starts or ends.
- * - The Promises of start() and stop() resolve with the summary in the answer (null if unreadable) and reject with an
- *   HttpError when refused. No answer (`timedOut`) is not a refusal: the session copy tells whether the run started.
- *   The state (starting and so on) has already changed when the Promise resolves.
  */
 export class RunControl implements ClientRun {
-  private startOperation: Promise<{
-    summary: SessionSummary | null;
-    instance: string | null;
-  }> | null = null;
+  private startOperation: Promise<RunAck> | null = null;
+  private startedTarget: { target: RunTarget; sessionBefore: unknown } | null = null;
   private readonly pendingStops = new Set<{
     action: StopAction;
     starting: boolean;
@@ -122,7 +116,7 @@ export class RunControl implements ClientRun {
       () => {
         const key = this.startSending.get()
           ? this.startOperation
-          : JSON.stringify(feed.currentTarget());
+          : JSON.stringify(this.activeTarget());
         return (
           [...this.pendingStops].filter((pending) => pending.key === key).at(-1)?.action ?? null
         );
@@ -131,6 +125,9 @@ export class RunControl implements ClientRun {
       onError,
     );
     this.stopWhileStarting = this.stopAskedWhileStarting.readonly();
+    feed.session.subscribe(() => {
+      this.startedTarget = null;
+    });
     this.error = derived(
       [this.failure, feed.session],
       () => {
@@ -147,51 +144,51 @@ export class RunControl implements ClientRun {
   }
 
   /** Starts a run. */
-  start(request: RunRequest): Promise<SessionSummary | null> {
+  start(request: RunRequest): Promise<RunAck> {
     if (this.startSending.get()) return Promise.reject(new Error('a start is already pending'));
-    let resolveStart!: (result: {
-      summary: SessionSummary | null;
-      instance: string | null;
-    }) => void;
+    let resolveStart!: (result: RunAck) => void;
     let rejectStart!: (reason: unknown) => void;
-    const operation = new Promise<{ summary: SessionSummary | null; instance: string | null }>(
-      (resolve, reject) => {
-        resolveStart = resolve;
-        rejectStart = reject;
-      },
-    );
+    const operation = new Promise<RunAck>((resolve, reject) => {
+      resolveStart = resolve;
+      rejectStart = reject;
+    });
     // Publish the operation before notifying subscribers of `starting`: one of them can ask to stop immediately.
     this.startOperation = operation;
+    this.startedTarget = null;
     this.stopAskedWhileStarting.set(false);
     this.startSending.set(true);
-    let instance: string | null = null;
-    this.send(
-      'api/run',
-      request,
-      this.startTimeoutMs() || undefined,
-      () => {
-        this.startSending.set(false);
-      },
-      (seen) => {
-        instance = seen;
-      },
-    ).then((summary) => resolveStart({ summary, instance }), rejectStart);
-    return operation.then(({ summary }) => summary);
+    this.send('api/run', request, this.startTimeoutMs() || undefined, (ack) => {
+      if (ack && this.feed.currentTarget()?.run_id !== ack.run_id) {
+        this.startedTarget = {
+          target: { run_id: ack.run_id, instance: ack.instance },
+          sessionBefore: this.feed.session.get(),
+        };
+      }
+      this.startSending.set(false);
+    }).then(resolveStart, rejectStart);
+    return operation;
+  }
+
+  activeTarget(): RunTarget | null {
+    if (this.startedTarget && this.feed.session.get() === this.startedTarget.sessionBefore) {
+      return this.startedTarget.target;
+    }
+    return this.feed.currentTarget();
   }
 
   /** Stops in order (waits for the participants to end). Asking again never turns it into a stop without waiting. */
-  stop(): Promise<SessionSummary | null> {
+  stop(): Promise<RunAck> {
     return this.requestStop(false);
   }
 
   /** Stops without waiting (kills the participants). */
-  forceStop(): Promise<SessionSummary | null> {
+  forceStop(): Promise<RunAck> {
     return this.requestStop(true);
   }
 
   captureStop(): StopCapture {
     const starting = this.startSending.get() ? this.startOperation : null;
-    const target = starting ? null : this.feed.currentTarget();
+    const target = starting ? null : this.activeTarget();
     return {
       key: starting ?? JSON.stringify(target),
       send: (force) => this.requestStop(force, starting, target),
@@ -201,8 +198,8 @@ export class RunControl implements ClientRun {
   private requestStop(
     force: boolean,
     starting = this.startSending.get() ? this.startOperation : null,
-    target = starting ? null : this.feed.currentTarget(),
-  ): Promise<SessionSummary | null> {
+    target: RunTarget | null = starting ? null : this.activeTarget(),
+  ): Promise<RunAck> {
     const session = this.feed.session.get();
     const pending = {
       action: force ? ('force' as const) : ('stop' as const),
@@ -236,22 +233,12 @@ export class RunControl implements ClientRun {
     this.stopAskedWhileStarting.set(true);
     return starting
       .then(
-        ({ summary, instance }) => {
-          if (!summary || !instance) {
-            const message = 'the start answer did not identify the run; no stop was sent';
-            const session = this.feed.session.get();
-            this.failure.set({
-              message,
-              session: session?.id ?? null,
-              running: isRunActive(session),
-            });
-            throw new Error(message);
-          }
-          pending.key = JSON.stringify({ session: summary.id, instance });
+        (ack) => {
+          pending.key = JSON.stringify({ run_id: ack.run_id, instance: ack.instance });
           this.pendingRevision.update((n) => n + 1);
           return this.send(
             'api/stop-session',
-            { force, session: summary.id, instance },
+            { force, run_id: ack.run_id, instance: ack.instance },
             undefined,
             () => undefined,
           );
@@ -270,16 +257,15 @@ export class RunControl implements ClientRun {
   }
 
   /**
-   * Sends and applies the summary in the answer. done is called after the answer (failures too), before the Promise
-   * settles.
+   * Sends an HTTP command and reads its `{instance, run_id}` acknowledgement. done is called after the answer
+   * (failures too), before the Promise settles.
    */
   private send(
     path: string,
     body: object,
     timeoutMs: number | undefined,
-    done: () => void,
-    onInstance?: (instance: string | null) => void,
-  ): Promise<SessionSummary | null> {
+    done: (ack?: RunAck) => void,
+  ): Promise<RunAck> {
     const incompatible = this.feed.incompatible.get();
     if (incompatible) {
       done();
@@ -307,45 +293,48 @@ export class RunControl implements ClientRun {
           reject(failure);
           return;
         }
-        let summary: SessionSummary | null = null;
+        let ack: RunAck;
         try {
-          const instance =
-            path === 'api/stop-session'
-              ? (body as { instance: string }).instance
-              : readSessionInstance(outcome.body);
-          summary = readSessionResponse(outcome.body);
-          if (
-            path === 'api/stop-session' &&
-            (!summary || summary.id !== (body as { session: number }).session)
-          ) {
-            throw new Error('the stop answer did not identify the requested session');
+          if (path === 'api/stop-session') {
+            const target = body as RunTarget;
+            const raw =
+              typeof outcome.body === 'object' && outcome.body !== null
+                ? (outcome.body as Record<string, unknown>)
+                : {};
+            ack = readRunResponse({
+              instance: raw['instance'] ?? target.instance,
+              run_id: raw['run_id'],
+            });
+            if (ack.run_id !== target.run_id || ack.instance !== target.instance) {
+              throw new Error('the stop answer did not identify the requested session');
+            }
+          } else {
+            readSessionInstance(outcome.body);
+            ack = readRunResponse(outcome.body);
           }
-          onInstance?.(instance);
-          this.feed.adopt(summary, instance);
         } catch (error) {
-          // An answer whose summary core is unreadable is reported, and the summary of the next notification takes over
           this.feed.report(
             error instanceof ProtocolError ? `unreadable answer: ${error.message}` : String(error),
           );
           const missingInstance =
             error instanceof ProtocolError && error.path === 'response.instance';
-          if (path === 'api/stop-session' || missingInstance) {
-            const message = missingInstance
-              ? `${error.message}. The run may have started. Check the current run before retrying`
-              : 'the stop answer was unreadable: check the session before trying again';
-            const session = this.feed.session.get();
-            this.failure.set({
-              message,
-              session: session?.id ?? null,
-              running: isRunActive(session),
-            });
-            done();
-            reject(new Error(message));
-            return;
-          }
+          const message = missingInstance
+            ? `${error.message}. The run may have started. Check the current run before retrying`
+            : path === 'api/stop-session'
+              ? 'the stop answer was unreadable: check the session before trying again'
+              : 'the start answer did not identify the run; no stop was sent';
+          const session = this.feed.session.get();
+          this.failure.set({
+            message,
+            session: session?.id ?? null,
+            running: isRunActive(session),
+          });
+          done();
+          reject(new Error(message));
+          return;
         }
-        done();
-        resolve(summary);
+        done(ack);
+        resolve(ack);
       });
     });
   }

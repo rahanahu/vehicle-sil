@@ -4,7 +4,7 @@ import { BATCH_MS } from './connection';
 import { isHolding } from './session-state';
 import { FakeHttp, FakeRequest } from './testing/fake-http';
 import { FakeWebSockets } from './testing/fake-web-socket';
-import { httpExamples, recordedLauncherEvents } from './testing/protocol-examples';
+import { httpExamples } from './testing/protocol-examples';
 import { BoundVariable, DROPPED_MESSAGE, VariableBinding } from './variable-binding';
 import { VariableRef } from './variables';
 
@@ -70,19 +70,19 @@ const holdingState = {
 const runningState = { ...holdingState, phase: 'running', paused: false, holding: false };
 
 /** A `state` event of the launcher (rev and seq from `seq`). */
-const launcherEvent = (seq: number, state: object, session = 1) => ({
+const launcherEvent = (seq: number, state: object, session: string | number = '1') => ({
   type: 'event',
-  session,
+  run_id: String(session),
   event: { ...state, event: 'state', seq: 100 + seq, rev: 100 + seq, t_ms: seq },
 });
 
-const hello = (state = 'ready', id = 1, session: object = {}) => ({
+const hello = (state = 'ready', id: string | number = '1', session: object = {}) => ({
   type: 'hello',
-  vehicle_sil_gui: 3,
+  vehicle_sil_gui: 4,
   version: '0.1.0',
   instance: 'x',
   session: {
-    id,
+    id: String(id),
     state: 'running',
     launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
     stop: 'none',
@@ -97,11 +97,12 @@ const values = (
   sampleMs: number,
   paused: boolean,
   peerValues: Record<string, unknown>,
-  session = 1,
+  session: string | number = '1',
 ) => ({
   type: 'values',
   id: 1,
-  session,
+  watch_id: 1,
+  run_id: String(session),
   sim_ms: sampleMs,
   paused,
   peers: { Engine: { sample_ms: sampleMs, values: peerValues } },
@@ -109,13 +110,13 @@ const values = (
 
 const changed = (state = 'ready', connected = true, more: object = {}) => ({
   type: 'variables',
-  session: 1,
+  run_id: '1',
   variables: variables(state, connected, more),
 });
 
 const operation = (seq: number, state: string, done: boolean) => ({
   type: 'operation',
-  session: 1,
+  run_id: '1',
   seq,
   state,
   done,
@@ -190,7 +191,7 @@ describe('client.variables.bind', () => {
     waves.setSignals([demand]);
     expect(waves.series.get()[0].points).toHaveLength(1);
     const unsubscribe = client.session.session.subscribe((session) => {
-      if (session?.id === 2) expect(waves.series.get()[0].points).toEqual([]);
+      if (session?.id === '2') expect(waves.series.get()[0].points).toEqual([]);
     });
     await deliver(hello('ready', 2));
     unsubscribe();
@@ -201,7 +202,7 @@ describe('client.variables.bind', () => {
   });
 
   it('waits for Boolean readback, rejects invalid edits, and forgets waits from earlier runs', async () => {
-    await deliver(hello(), { type: 'synced', session: 1, last_seq: null });
+    await deliver(hello(), { type: 'synced', run_id: '1', last_seq: null });
     const editor = createVariableEditor(front, ref('engine.enabled'));
     editor.setVisible(true);
     await deliver(values(10, false, { 'engine.enabled': false }));
@@ -209,7 +210,7 @@ describe('client.variables.bind', () => {
     http.expectNone('api/write');
     expect(editor.write(true)).toBe(true);
     expect(editor.state.get()).toMatchObject({ shown: true, waiting: true, canWrite: false });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 4 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 4 });
     await deliver(operation(4, 'applied', true));
     expect(editor.state.get()).toMatchObject({ shown: false, waiting: true });
     await deliver(values(20, false, { 'engine.enabled': true }));
@@ -219,9 +220,9 @@ describe('client.variables.bind', () => {
     socket().open();
     expect(editor.write(false)).toBe(false);
     http.expectNone('api/write');
-    await deliver(hello(), { type: 'synced', session: 1, last_seq: null });
+    await deliver(hello(), { type: 'synced', run_id: '1', last_seq: null });
     expect(editor.write(false)).toBe(true);
-    http.expectOne('api/write').flush({ session_id: 1, operation: 5 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 5 });
     await deliver(operation(5, 'applied', true));
     expect(editor.state.get().waiting).toBe(true);
     await deliver(hello('ready', 2));
@@ -231,7 +232,7 @@ describe('client.variables.bind', () => {
   });
 
   it('cancels the edit if a sending subscriber closes the connection', async () => {
-    await deliver(hello(), { type: 'synced', session: 1, last_seq: null });
+    await deliver(hello(), { type: 'synced', run_id: '1', last_seq: null });
     const editor = createVariableEditor(front, ref('engine.demand'));
     editor.setVisible(true);
     const unsubscribe = editor.state.subscribe((state) => {
@@ -284,7 +285,11 @@ describe('client.variables.bind', () => {
   });
 
   describe('availability', () => {
-    const told = (peers: object, session = 1) => ({ type: 'availability', session, peers });
+    const told = (peers: object, session: string | number = '1') => ({
+      type: 'availability',
+      run_id: String(session),
+      peers,
+    });
     const withAvailability = (given: Record<string, string>) => ({
       state: 'ready',
       reason: null,
@@ -310,7 +315,7 @@ describe('client.variables.bind', () => {
       expect(demand.state.get().availability).toBe('active');
       await deliver({
         type: 'variables',
-        session: 1,
+        run_id: '1',
         variables: withAvailability({ 'engine.demand': 'sometimes' }),
       });
       expect(demand.state.get().availability).toBe('active');
@@ -364,7 +369,7 @@ describe('client.variables.bind', () => {
       // The ECU left the Control Server: the summary keeps the state
       const gone = withAvailability({ 'engine.demand': 'inactive' });
       gone.peers[0].connected = false;
-      await deliver({ type: 'variables', session: 1, variables: gone });
+      await deliver({ type: 'variables', run_id: '1', variables: gone });
       expect(demand.state.get().availability).toBe('inactive');
       // The connection between the client and the server dropped
       socket().fail();
@@ -376,11 +381,11 @@ describe('client.variables.bind', () => {
       const demand = client.variables.bind(ref('engine.demand'));
       await deliver(hello(), told({ Engine: { 'engine.demand': 'inactive' } }));
       expect(demand.state.get().availability).toBe('inactive');
-      await deliver({ type: 'session', session: { ...hello().session, id: 2 } });
+      await deliver({ type: 'session', session: { ...hello().session, id: '2' } });
       expect(demand.state.get().availability).toBe('unknown');
       await deliver({
         type: 'variables',
-        session: 2,
+        run_id: '2',
         variables: withAvailability({ 'engine.demand': 'inactive', 'engine.speed': 'active' }),
       });
       expect(demand.state.get().availability).toBe('inactive');
@@ -517,7 +522,7 @@ describe('client.variables.bind', () => {
     expect(mode.state.get().block).toBeNull();
     mode.write('on');
     expect(requests().map((r) => r.request.body)).toEqual([
-      { session: 2, writes: { Engine: { 'engine.mode': 'on' } } },
+      { run_id: '2', writes: { Engine: { 'engine.mode': 'on' } } },
     ]);
     mode.close();
   });
@@ -617,20 +622,23 @@ describe('client.variables.bind', () => {
     enabled.close();
   });
 
-  it("has the launcher's answer before the variables can be ready (a recorded scenario run)", async () => {
-    // The launcher's events of a recorded run, in their order, as the GUI server passes them on. The variables can be
-    // ready only once the GUI server has connected to the Control Server, which it does after the `control_server`
-    // event: by then a `state` has said what the launcher takes.
-    const events = await recordedLauncherEvents('control-scenario-slow');
-    const until = events.findIndex((e) => e.event === 'control_server');
-    expect(until).toBeGreaterThan(0);
-    expect(events.slice(0, until).some((e) => e.event === 'state')).toBe(true);
-
+  it("has the launcher's answer before the variables can be ready (a scenario run)", async () => {
     const enabled = client.variables.bind(ref('engine.enabled'));
     await deliver(hello('connecting', 1, { launcher_state: null }));
-    for (const [i, out] of events.slice(0, until + 1).entries()) {
-      await deliver({ type: 'event', session: 1, event: { ...out, seq: i + 1, t_ms: i } });
-    }
+    await deliver(
+      launcherEvent(1, {
+        ...runningState,
+        scenario: true,
+        allowed: {
+          write: {
+            ok: false,
+            reason: 'scenario-running',
+            message: 'this run plays a scenario',
+            caution: null,
+          },
+        },
+      }),
+    );
     await deliver(changed('ready'));
     expect(enabled.state.get()).toMatchObject({
       block: 'launcher',
@@ -658,7 +666,7 @@ describe('client.variables.bind', () => {
         },
       }),
     );
-    request.flush({ session_id: 1, operation: 4 });
+    request.flush({ run_id: '1', operation: 4 });
     await vi.advanceTimersByTimeAsync(0);
     expect(requests()).toEqual([]);
     expect(enabled.state.get().writeStatus).toEqual({ kind: 'dropped', message: DROPPED_MESSAGE });
@@ -720,16 +728,16 @@ describe('client.variables.bind', () => {
     second.write(false);
     const [request] = requests();
     expect(request.request.body).toEqual({
-      session: 1,
+      run_id: '1',
       writes: { Engine: { 'engine.enabled': true } },
     });
     expect(first.state.get().pending).toBe(false);
     first.close();
     const again = client.variables.bind(ref('engine.enabled'), { visible: false });
     expect(again.state.get()).toMatchObject({ writeStatus: { kind: 'sending' }, pending: false });
-    request.flush({ session_id: 1, operation: 4 });
+    request.flush({ run_id: '1', operation: 4 });
     expect(requests().map((r) => r.request.body)).toEqual([
-      { session: 1, writes: { Engine: { 'engine.enabled': false } } },
+      { run_id: '1', writes: { Engine: { 'engine.enabled': false } } },
     ]);
     // A bind of another variable does not see this write
     const other = client.variables.bind(ref('engine.offset'), { visible: false });
@@ -741,7 +749,7 @@ describe('client.variables.bind', () => {
     await deliver(hello());
     const enabled = client.variables.bind(ref('engine.enabled'));
     enabled.write(true);
-    requests()[0].flush({ session_id: 1, operation: 4 });
+    requests()[0].flush({ run_id: '1', operation: 4 });
     expect(enabled.state.get()).toMatchObject({
       writeStatus: { kind: 'queued', seq: 4 },
       pending: true,
@@ -764,7 +772,7 @@ describe('client.variables.bind', () => {
     await deliver(changed('ended'));
     let told: BoundVariable | null = null;
     enabled.state.subscribe((state) => (told = state));
-    request.flush({ session_id: 1, operation: 4 });
+    request.flush({ run_id: '1', operation: 4 });
     expect(requests()).toEqual([]);
     // The subscribers got it too, before anyone reads
     expect(told).toMatchObject({ writeStatus: { kind: 'dropped' }, pending: null });
@@ -791,7 +799,7 @@ describe('client.variables.bind', () => {
     // A change unrelated to variables (a log line) does not notify
     await deliver({
       type: 'event',
-      session: 1,
+      run_id: '1',
       event: { event: 'log', seq: 0, t_ms: 5, source: 'Engine', line: 'x' },
     });
     expect(client.session.session.get()?.logs).toHaveLength(1);

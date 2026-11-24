@@ -1,9 +1,15 @@
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { FakeWebSockets, HttpExample, httpExamples } from '@vehicle-sil/gui-client/testing';
+import { BATCH_MS } from '@vehicle-sil/gui-client';
+import {
+  FakeWebSockets,
+  HttpExample,
+  httpExamples,
+  webSocketExamples,
+} from '@vehicle-sil/gui-client/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
-import { GUI_FRONT, SOCKET_FACTORY } from '../core/session/gui-client';
+import { SOCKET_FACTORY } from '../core/session/gui-client';
 import { SimulationTime } from '../core/session/simulation-time';
 import { RunSession } from './run-session';
 
@@ -11,21 +17,25 @@ import { RunSession } from './run-session';
 // （開始中の停止、断られた理由をいつまで出すか）は gui/client の試験（run.spec.ts）。
 describe('RunSession', () => {
   let examples: Map<string, HttpExample>;
+  let wsExamples: Map<string, unknown[]>;
+  let fake: FakeWebSockets;
   let http: HttpTestingController;
   let run: RunSession;
 
   beforeAll(async () => {
     examples = new Map((await httpExamples()).map((example) => [example.name, example]));
+    wsExamples = new Map((await webSocketExamples()).map((e) => [e.name, e.server]));
   });
 
   beforeEach(() => {
     sessionStorage.setItem('vehicle-sil-gui-token', 'secret');
+    fake = new FakeWebSockets();
     TestBed.configureTestingModule({
       providers: [
         RunSession,
         provideHttpClient(withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
-        { provide: SOCKET_FACTORY, useValue: new FakeWebSockets().factory },
+        { provide: SOCKET_FACTORY, useValue: fake.factory },
       ],
     });
     http = TestBed.inject(HttpTestingController);
@@ -34,7 +44,28 @@ describe('RunSession', () => {
 
   afterEach(() => sessionStorage.clear());
 
-  it('starts, and shows the new session from the answer at once', () => {
+  function runningSummary(id = '1'): Record<string, unknown> {
+    const msg = (wsExamples.get('ws-pass') ?? [])[3] as {
+      session: Record<string, unknown>;
+    };
+    return { ...msg.session, id };
+  }
+
+  async function deliverSession(id = '1', streamSeq = 1): Promise<void> {
+    if (fake.sockets.length > 0 && fake.last().greeting.length === 0) {
+      fake.last().open();
+      fake.last().send((wsExamples.get('ws-pass') ?? [])[0]);
+      fake.last().send((wsExamples.get('ws-pass') ?? [])[1]);
+    }
+    fake.last().send({
+      type: 'session',
+      stream_seq: streamSeq,
+      session: runningSummary(id),
+    });
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 5));
+  }
+
+  it('starts, and shows the new session from the answer at once', async () => {
     run.start({ disable: ['B'], speed: 'max', start_paused: false }, 'a.yaml');
     expect(run.starting()).toBe(true);
     const request = http.expectOne('api/run');
@@ -46,14 +77,15 @@ describe('RunSession', () => {
     });
     request.flush(examples.get('run')?.response as object);
     expect(run.starting()).toBe(false);
-    expect(run.launcherRunning()).toBe(true);
     // 正面の口の status: ランチャーはまだ段階を言っていない
     expect(run.status().run).toBe('starting');
     expect(run.status().result).toBeNull();
+    await deliverSession('1', 1);
+    expect(run.launcherRunning()).toBe(true);
   });
 
   it('does not show a pending stop of the previous run on the next run', async () => {
-    const response = examples.get('run')?.response as { session: Record<string, unknown> };
+    const response = examples.get('run')?.response as { instance: string; run_id: string };
     run.start({}, 'a.yaml');
     http.expectOne('api/run').flush({ ...response, instance: '0123456789abcdef' });
     await Promise.resolve();
@@ -61,12 +93,9 @@ describe('RunSession', () => {
     run.stop();
     const oldStop = http.expectOne('api/stop-session');
     expect(run.stopping()).toBe('stop');
-    void TestBed.inject(GUI_FRONT).low.fetchSession();
-    http
-      .expectOne('api/session')
-      .flush({ instance: '0123456789abcdef', session: { ...response.session, id: 2 } });
+    await deliverSession('2', 2);
     expect(run.stopping()).toBeNull();
-    oldStop.flush({ session: response.session });
+    oldStop.flush({ instance: '0123456789abcdef', run_id: '1' });
     await new Promise((resolve) => setTimeout(resolve));
   });
 
@@ -96,6 +125,7 @@ describe('RunSession', () => {
     http
       .expectOne('api/run')
       .flush({ ...(examples.get('run')?.response as object), instance: '0123456789abcdef' });
+    await deliverSession('1', 1);
     run.stop();
     http
       .expectOne('api/stop-session')

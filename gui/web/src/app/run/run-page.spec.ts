@@ -527,8 +527,12 @@ describe('RunPage', () => {
     await advance(BATCH_MS);
     TestBed.tick();
     expect(input.value).toBe('321');
-    const otherSession = structuredClone(server('ws-pass')[49]) as { session: { id: number } };
-    otherSession.session.id = 2;
+    const otherSession = structuredClone(server('ws-pass')[49]) as {
+      stream_seq?: number;
+      session: { id: string };
+    };
+    otherSession.stream_seq = 100;
+    otherSession.session.id = '2';
     fake.last().send(otherSession);
     await advance(BATCH_MS);
     TestBed.tick();
@@ -596,7 +600,7 @@ describe('RunPage', () => {
       'vehicle-sil-gui-carry',
       JSON.stringify({
         run: {
-          session: 1,
+          session: '1',
           chosen: 'forever.yaml',
           file: 'forever.yaml',
           disable: [],
@@ -625,7 +629,7 @@ describe('RunPage', () => {
         'vehicle-sil-gui-carry',
         JSON.stringify({
           run: {
-            session: 1,
+            session: '1',
             chosen: 'simulation.yaml',
             file: 'simulation.yaml',
             disable: [],
@@ -672,17 +676,23 @@ describe('RunPage', () => {
       '[data-testid="stop-at-ms"]',
     )!;
     expect(input.value).toBe('1000');
-    const summary = structuredClone(server('ws-pass')[3]) as { session: { id: number } };
-    summary.session.id = 2;
+    const summary = structuredClone(server('ws-pass')[3]) as {
+      stream_seq?: number;
+      session: { id: string };
+    };
+    summary.stream_seq = 100;
+    summary.session.id = '2';
     fake.last().send(summary);
     await advance(BATCH_MS);
     TestBed.tick();
     expect(input.value).toBe('');
     const check = structuredClone(server('ws-pass')[8]) as {
-      session: number;
+      stream_seq?: number;
+      run_id: string;
       event: { check: { stop_at_ms: number } };
     };
-    check.session = 2;
+    check.stream_seq = 101;
+    check.run_id = '2';
     check.event.check.stop_at_ms = 2000;
     fake.last().send(check);
     await advance(BATCH_MS);
@@ -793,7 +803,7 @@ describe('RunPage', () => {
 
 describe('readRunChoices', () => {
   const choices = {
-    session: 3,
+    session: '3',
     chosen: 'a.yaml',
     file: 'a.yaml',
     disable: ['Logger'],

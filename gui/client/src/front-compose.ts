@@ -43,6 +43,10 @@ export interface Snapshot {
   limits: AppInfo['limits'];
   /** Operations of this page whose request has not been answered yet. */
   busy: ReadonlySet<OperationName>;
+  /** A start of this page succeeded (`POST api/run` returned `run_id`), waiting for its WebSocket session summary. */
+  awaitingRunSession?: boolean;
+  /** A stop of this page for the current run was confirmed by `POST api/stop-session`. */
+  stopConfirmed?: boolean;
 }
 
 // --- link, run, result ----------------------------------------------------------------------------
@@ -58,7 +62,9 @@ const NOT_PACED: Pacing = 'not-paced';
 
 /** Whether a start is on its way: this page's request, or another page's (the server says `starting`). */
 function startOnItsWay(s: Snapshot): boolean {
-  return s.busy.has('start') || s.allowed?.start.reason === 'starting';
+  return (
+    s.busy.has('start') || s.awaitingRunSession === true || s.allowed?.start.reason === 'starting'
+  );
 }
 
 export function runOf(s: Snapshot): RunState {
@@ -68,7 +74,7 @@ export function runOf(s: Snapshot): RunState {
   const outcome = runOutcome(session);
   if (outcome === 'crashed') return starting ? 'starting' : 'crashed';
   if (outcome === 'ended' || outcome === 'finishing') return starting ? 'starting' : 'ended';
-  if (outcome === 'stopping' || outcome === 'forcing') return 'stopping';
+  if (outcome === 'stopping' || outcome === 'forcing' || s.stopConfirmed) return 'stopping';
   const state = session.launcherState;
   const phase = state?.phase || session.phase;
   const paused = state?.paused ?? null;
@@ -262,13 +268,18 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
   const session = s.session;
   const live = isRunActive(session) && run !== 'ended' && run !== 'crashed';
   const state = session?.launcherState ?? null;
-  const stopsAsked = session?.stopRequests ?? 0;
+  const stopsAsked = Math.max(session?.stopRequests ?? 0, s.stopConfirmed ? 1 : 0);
 
   // start: the GUI server owns it. The client adds the connection and its own request on its way.
   let start: Control;
   if (link === 'rejected' || link === 'incompatible') start = control(false, down);
   else if (s.busy.has('start')) start = control(false, busyReason('start'));
   else if (down) start = control(false, down);
+  else if (s.awaitingRunSession)
+    start = control(
+      false,
+      reason('already-running', 'a run is going: stop it before you start another'),
+    );
   else if (s.allowed) start = fromServer(s.allowed.start, 'the server does not start a run now');
   else
     start = live

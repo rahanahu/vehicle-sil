@@ -18,7 +18,6 @@ import {
   SaveConfigRequest,
   SavedConfig,
   ScenarioList,
-  SessionSummary,
   readAppInfo,
   readCheckResponse,
   readConfigList,
@@ -29,10 +28,6 @@ import {
   readRecording,
   readScenarioList,
   readSavedConfig,
-  readSessionAllowed,
-  readSessionInstance,
-  readSessionResponse,
-  readSessionRuntime,
 } from './protocol';
 import { ClientRun, RunControl } from './run';
 import { ClientSession, SessionFeed } from './session';
@@ -167,8 +162,6 @@ export interface GuiClient {
   connections(request: ConnectionsRequest): Promise<Connections>;
   /** `POST api/prepare`: prepares a persistent launcher when eligible. */
   prepare(request: PrepareRequest): Promise<PrepareResponse>;
-  /** `GET api/session`: summary of the current session (null if none). Also applied to the session copy. */
-  fetchSession(): Promise<SessionSummary | null>;
   /**
    * `GET api/dashboard`: reads the dashboard file next to the configuration file (relative to root) in the form the
    * server checked (found is false if there is none; problems are in errors).
@@ -244,13 +237,12 @@ export function buildClient(options: ClientOptions): ClientParts {
         type: 'auth',
         token: token() ?? '',
         ...feed?.resumeFields(),
-        session_without_check: true,
       },
     ],
     afterGreeting: () => variablesFeed?.resume() ?? [],
     onError,
   });
-  feed = new SessionFeed(connection, onError);
+  feed = new SessionFeed(connection, onError, (instance) => variablesFeed?.onInstance(instance));
   const session = feed;
   variablesFeed = new VariablesFeed(
     {
@@ -262,8 +254,6 @@ export function buildClient(options: ClientOptions): ClientParts {
     () => limits.get(),
   );
   const variables = variablesFeed;
-  session.onSnapshotVersion(() => variables.snapshotVersion());
-  session.onInstance((instance) => variables.adoptInstance(instance));
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
@@ -420,52 +410,7 @@ export function buildClient(options: ClientOptions): ClientParts {
           timeoutMs: longRequestMs(limits.get()),
         },
         readPrepareResponse,
-        (res) => session.adoptRuntime(res.runtime),
       ),
-    fetchSession: () => {
-      const resyncFrom = session.currentInstance();
-      const snapshotVersion = variables.snapshotVersion();
-      return new Promise<SessionSummary | null>((resolve, reject) =>
-        http({ method: 'GET', path: 'api/session' }, (outcome) => {
-          if (!outcome.ok) {
-            reject(outcome.error);
-            return;
-          }
-          try {
-            const summary = readSessionResponse(outcome.body);
-            const instance = readSessionInstance(outcome.body);
-            const runtime = readSessionRuntime(outcome.body);
-            const adoption = session.adopt(summary, instance, resyncFrom);
-            if (adoption !== null) {
-              if (runtime !== undefined) session.adoptRuntime(runtime);
-              const rawSession = (
-                outcome.body as { session?: { variables?: { rev?: unknown } } } | null
-              )?.session;
-              const rev = rawSession?.variables?.rev;
-              const current = () =>
-                variables.isSnapshotCurrent(
-                  snapshotVersion,
-                  adoption.instance,
-                  adoption.session,
-                  Number.isSafeInteger(rev) && (rev as number) >= 0 ? (rev as number) : null,
-                );
-              if (session.sameRun(adoption)) session.adoptAllowed(readSessionAllowed(outcome.body));
-              const sameRun = () => session.sameRun(adoption);
-              if (sameRun()) variables.adoptInstance(instance);
-              if (sameRun())
-                variables.adoptSummary(
-                  (outcome.body as { session?: unknown } | null)?.session,
-                  sameRun,
-                  current,
-                );
-            }
-            resolve(summary);
-          } catch (error) {
-            reject(error);
-          }
-        }),
-      );
-    },
   };
   clientErrorSinks.set(client, onError);
   return { client, http, onError, runControl: run };

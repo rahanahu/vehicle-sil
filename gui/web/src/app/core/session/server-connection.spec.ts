@@ -44,9 +44,7 @@ describe('ServerConnection', () => {
     expect(fake.last().url).toMatch(/^ws:\/\/.*\/ws$/);
     expect(run.connectionState()).toBe('connecting');
     fake.last().open();
-    expect(fake.last().greeting).toEqual([
-      { type: 'auth', token: 'secret', session_without_check: true },
-    ]);
+    expect(fake.last().greeting).toEqual([{ type: 'auth', token: 'secret' }]);
     expect(run.connectionState()).toBe('open');
     expect(run.ready()).toBe(false);
 

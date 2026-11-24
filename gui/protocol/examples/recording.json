@@ -7,7 +7,7 @@
   "status": 200,
   "response": {
     "recording": {
-      "session_id": 1,
+      "run_id": "1",
       "file": "forever.yaml",
       "state": "running",
       "available": true,

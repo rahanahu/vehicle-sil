@@ -78,6 +78,8 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     allowed: low.session.allowed.get(),
     limits: low.limits.get(),
     busy: actions.busyForCurrent(),
+    awaitingRunSession: actions.isAwaitingRunSession(),
+    stopConfirmed: actions.isStopConfirmed(),
   });
 
   const sources: Readable<unknown>[] = [
@@ -111,7 +113,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     stamp,
   });
   const controlsValue = derived(
-    [...sources, actions.busy],
+    [...sources, actions.busy, actions.startedRunId, actions.stopConfirmedFor],
     () => {
       const s = snapshot();
       return controlsOf(s, runOf(s));
@@ -121,7 +123,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
   );
 
   const writeControl = derived(
-    [...sources, actions.busy],
+    [...sources, actions.busy, actions.startedRunId, actions.stopConfirmedFor],
     () => {
       const s = snapshot();
       return writeOf(s, runOf(s));
@@ -131,7 +133,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
   );
 
   const status: Readable<FrontStatus> = derived(
-    [...sources, actions.busy, actions.failure],
+    [...sources, actions.busy, actions.startedRunId, actions.stopConfirmedFor, actions.failure],
     () => {
       const s = snapshot();
       const base = statusOf(s, initialFile());
@@ -218,7 +220,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
           ...(prepareOptions.manual !== undefined ? { manual: prepareOptions.manual } : {}),
         })
         .then(
-          (res) => res.runtime,
+          (res) => res.runtime ?? low.session.runtime.get(),
           (error: unknown) => {
             throw actionError(error);
           },

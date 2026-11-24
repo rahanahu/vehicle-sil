@@ -130,11 +130,11 @@ describe('TimeControl', () => {
     expect(step.request.body).toEqual({
       command: 'step',
       ms: 25,
-      session: 1,
+      run_id: '1',
       instance: '0123456789abcdef',
     });
     expect(time.sending()).toBe('step');
-    step.flush({ session_id: 1, command: { command: 'step', ms: 25 } });
+    step.flush({ run_id: '1', command: { command: 'step', ms: 25 } });
     // No further command is sent until the launcher's answer (the command event) arrives (a double click does not
     // advance twice)
     expect(time.sending()).toBe('step');
@@ -182,7 +182,7 @@ describe('TimeControl', () => {
     expect(sent.request.body).toEqual({
       command: 'run_until',
       at_ms: 500,
-      session: 1,
+      run_id: '1',
       instance: '0123456789abcdef',
     });
     expect(time.sending()).toBe('run_until');
@@ -193,7 +193,7 @@ describe('TimeControl', () => {
     await play(socket, 'ws-time', 0, standing);
     socket.send({
       type: 'event',
-      session: 1,
+      run_id: '1',
       event: {
         event: 'time',
         seq: 1000,
@@ -214,7 +214,7 @@ describe('TimeControl', () => {
   /** Sends and advances to the server's answer (200). The launcher's answer has not come yet. */
   async function sendStep(time: TimeView): Promise<void> {
     expect(time.step(10)).toEqual({ sent: true });
-    http.expectOne('api/time').flush({ session_id: 1, command: { command: 'step', ms: 10 } });
+    http.expectOne('api/time').flush({ run_id: '1', command: { command: 'step', ms: 10 } });
     expect(time.sending()).toBe('step');
   }
 
@@ -251,7 +251,7 @@ describe('TimeControl', () => {
     await sendStep(time);
     const next = lastSummary((s) => {
       running(s);
-      s['id'] = 2;
+      s['id'] = '2';
       s['last_command'] = null;
     });
     socket.send({ type: 'session', session: next });
@@ -265,9 +265,9 @@ describe('TimeControl', () => {
     await sendStep(time);
     socket.send({
       type: 'hello',
-      vehicle_sil_gui: 3,
+      vehicle_sil_gui: 4,
       instance: 'restarted',
-      replay: { from_seq: null },
+      replay: { after_stream_seq: null },
       session: lastSummary((s) => {
         running(s);
         s['last_command'] = null;
@@ -279,7 +279,7 @@ describe('TimeControl', () => {
     expect(time.error()).toBeNull();
     expect(time.step(10)).toEqual({ sent: true });
     expect(http.expectOne('api/time').request.body).toMatchObject({
-      session: 1,
+      run_id: '1',
       instance: 'restarted',
     });
   });
@@ -290,9 +290,9 @@ describe('TimeControl', () => {
     await sendStep(time);
     const hello = (seq: number) => ({
       type: 'hello',
-      vehicle_sil_gui: 3,
+      vehicle_sil_gui: 4,
       instance: '0123456789abcdef',
-      replay: { from_seq: null },
+      replay: { after_stream_seq: null },
       session: lastSummary((s) => {
         running(s);
         s['last_command'] = {
@@ -341,7 +341,7 @@ describe('TimeControl', () => {
     expect(time.sending()).toBeNull(); // Not sent: no answer to wait for
     time.pause();
     expect(time.error()).toBeNull();
-    http.expectOne('api/time').flush({ session_id: 1, command: { command: 'pause' } });
+    http.expectOne('api/time').flush({ run_id: '1', command: { command: 'pause' } });
   });
 
   it('counts the lateness of a run that fell behind real time', async () => {

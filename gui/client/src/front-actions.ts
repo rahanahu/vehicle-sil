@@ -16,10 +16,10 @@ import type {
   CheckTextRequest,
   ConfigText,
   LauncherEvent,
+  RunAck,
   SavedConfig,
   RunRequest,
   ServerMessage,
-  SessionSummary,
 } from './protocol';
 import { ErrorSink, Readable, Writable } from './values';
 
@@ -80,7 +80,7 @@ interface Waiting {
   op: TimeOperation;
   /** The step's or run_until's own request: the amount for a step, the time for a run_until. */
   amount: number;
-  session: number;
+  run_id: string;
   instance: string;
   stage: 'sent' | 'moving';
   /** moving: the virtual time that has to be reached, and the time it started from. */
@@ -149,6 +149,8 @@ export const noFileError = (): ActionError =>
 export class FrontActions {
   private readonly busyValue: Writable<ReadonlySet<OperationName>>;
   private readonly failureValue: Writable<Failure | null>;
+  private readonly startedRunIdValue: Writable<string | null>;
+  private readonly stopConfirmedForValue: Writable<string | null>;
   private readonly waiting = new Map<number, Waiting>();
   private readonly inFlight = new Map<
     'stop' | 'force_stop',
@@ -166,6 +168,8 @@ export class FrontActions {
 
   readonly busy: Readable<ReadonlySet<OperationName>>;
   readonly failure: Readable<Failure | null>;
+  readonly startedRunId: Readable<string | null>;
+  readonly stopConfirmedFor: Readable<string | null>;
 
   constructor(
     private readonly src: ActionSources,
@@ -176,11 +180,18 @@ export class FrontActions {
     this.closing.catch(() => undefined); // no check may wait when the client closes
     this.busyValue = new Writable<ReadonlySet<OperationName>>(new Set(), Object.is, src.onError);
     this.failureValue = new Writable<Failure | null>(null, Object.is, src.onError);
+    this.startedRunIdValue = new Writable<string | null>(null, Object.is, src.onError);
+    this.stopConfirmedForValue = new Writable<string | null>(null, Object.is, src.onError);
     this.busy = this.busyValue.readonly();
     this.failure = this.failureValue.readonly();
+    this.startedRunId = this.startedRunIdValue.readonly();
+    this.stopConfirmedFor = this.stopConfirmedForValue.readonly();
     this.stops.push(
       src.low.session.onMessages((batch) => this.onMessages(batch)),
-      src.low.session.session.subscribe(() => this.evaluate()),
+      src.low.session.session.subscribe(() => {
+        this.startedRunIdValue.set(null);
+        this.evaluate();
+      }),
     );
   }
 
@@ -188,19 +199,36 @@ export class FrontActions {
 
   start(
     intent: Intent = {},
-    options: { file?: string; onStarted?: (session: SessionSummary) => void } = {},
+    options: { file?: string; onStarted?: (started: RunAck) => void } = {},
   ): Promise<void> {
     const request = this.requestOf(intent, options);
     if (request instanceof ActionError) return this.fail(request);
     const own = this.refusalOfStart();
     if (own) return this.fail(own);
+    this.stopConfirmedForValue.set(null);
     // Reserve the low-level start before notifying Front subscribers: a subscriber may stop synchronously.
     const start = this.src.low.run.start(request);
     return this.guarded('start', () =>
       start.then((started) => {
-        if (started) options.onStarted?.(started);
+        if (started) {
+          if (this.src.low.session.session.get()?.id !== started.run_id) {
+            this.startedRunIdValue.set(started.run_id);
+          }
+          options.onStarted?.(started);
+        }
       }),
     );
+  }
+
+  isAwaitingRunSession(): boolean {
+    const id = this.startedRunIdValue.get();
+    return id !== null && this.src.low.session.session.get()?.id !== id;
+  }
+
+  isStopConfirmed(): boolean {
+    const id = this.stopConfirmedForValue.get();
+    const session = this.src.low.session.session.get();
+    return id !== null && session !== null && isRunActive(session) && session.id === id;
   }
 
   /**
@@ -389,15 +417,17 @@ export class FrontActions {
     return this.once('stop', false);
   }
 
-  forceStop(target?: { session: number; instance: string }): Promise<void> {
-    const current = this.src.low.session.currentTarget();
-    if (target && (current?.session !== target.session || current.instance !== target.instance))
-      return this.fail(
-        new ActionError('session-changed', 'the confirmed run has changed', 'refused'),
-      );
+  forceStop(target?: RunTarget): Promise<void> {
     if (this.src.low.run.starting.get())
       return this.fail(
         new ActionError('starting', 'wait until the new run can be identified', 'refused'),
+      );
+    const current = this.src.low.session.currentTarget();
+    const startedId = this.startedRunIdValue.get();
+    const effectiveRunId = startedId ?? current?.run_id ?? null;
+    if (target && (effectiveRunId !== target.run_id || current?.instance !== target.instance))
+      return this.fail(
+        new ActionError('session-changed', 'the confirmed run has changed', 'refused'),
       );
     return this.once('force_stop', true);
   }
@@ -436,7 +466,8 @@ export class FrontActions {
     if (this.busyValue.get().has(name)) this.busyValue.set(new Set(this.busyValue.get()));
     else this.setBusy(name, true);
     operation.then(
-      () => {
+      (ack) => {
+        this.stopConfirmedForValue.set(ack.run_id);
         if (this.inFlight.get(name) === entry) {
           this.inFlight.delete(name);
           this.setBusy(name, false);
@@ -616,7 +647,7 @@ export class FrontActions {
       if (event.event === 'time') sim = event.sim_ms;
       if (event.event !== 'command') continue;
       const mine = event.id === null ? undefined : this.waiting.get(event.id);
-      if (mine && mine.session === message.session) this.answered(mine, event, sim);
+      if (mine && mine.run_id === message.run_id) this.answered(mine, event, sim);
       else if (event.accepted && event.command !== null && MOVES.has(event.command)) {
         // Another sender's command: a step on its way no longer ends where it was to
         this.interruptMoving(
@@ -691,7 +722,7 @@ export class FrontActions {
       if (
         !session ||
         !isRunActive(session) ||
-        session.id !== w.session ||
+        session.id !== w.run_id ||
         instance !== w.instance ||
         session.result
       ) {

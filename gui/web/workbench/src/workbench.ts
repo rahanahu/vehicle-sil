@@ -57,10 +57,10 @@ type Selection = VariableRef & { type: string; unit: string };
 type Point = { sampleMs: number; value: number | boolean | null };
 type WaveEntry = { key: string; trace: Selection | null; revision: number; actor: string };
 type WaveMessage =
-  | { kind: 'request'; instance: string; session: number | null; requester: string }
+  | { kind: 'request'; instance: string; session: string | null; requester: string }
   | { kind: 'snapshot'; instance: string; target: string; entries: WaveEntry[] }
   | { kind: 'selection'; instance: string; entries: WaveEntry[] }
-  | { kind: 'history'; instance: string; session: number; histories: [string, Point[]][] };
+  | { kind: 'history'; instance: string; session: string; histories: [string, Point[]][] };
 const locationQuery = new URLSearchParams(location.search);
 // Retain the URL token in memory as well: storage can be unavailable or not copied to a new tab.
 const pageToken = takeToken(window);
@@ -183,7 +183,7 @@ export class Workbench {
   readonly startPaused = signal(false);
   readonly pending = signal(false);
   readonly recordNext = signal(false);
-  readonly recordedRun = signal<number | null>(null);
+  readonly recordedRun = signal<string | null>(null);
   readonly notice = signal('');
   readonly check = signal<CheckResult | null>(null);
   readonly configText = signal('');
@@ -227,7 +227,7 @@ export class Workbench {
     this.session();
     return this.front()?.low.session.currentInstance() ?? null;
   });
-  readonly waveSession = computed(() => this.runTarget()?.session ?? null);
+  readonly waveSession = computed(() => this.runTarget()?.run_id ?? null);
   readonly histories = computed(() =>
     this.traces().map((trace) => {
       const key = refKey(trace);
@@ -423,7 +423,7 @@ export class Workbench {
               entries: [...this.waveEntries.values()],
             } satisfies WaveMessage);
           }
-          if (target && data.session === target.session) {
+          if (target && data.session === target.run_id) {
             const histories = this.traces().map((trace, i): [string, Point[]] => [
               refKey(trace),
               this.histories()[i],
@@ -431,7 +431,7 @@ export class Workbench {
             channel.postMessage({
               kind: 'history',
               instance,
-              session: target.session,
+              session: target.run_id,
               histories,
             } satisfies WaveMessage);
           }
@@ -441,7 +441,7 @@ export class Workbench {
           Array.isArray(data.entries)
         ) {
           this.mergeWaveEntries(data.entries);
-        } else if (data.kind === 'history' && target && data.session === target.session) {
+        } else if (data.kind === 'history' && target && data.session === target.run_id) {
           this.inheritedHistories.update((histories) => {
             const result = new Map(histories);
             for (const [key, points] of data.histories) {
@@ -596,11 +596,11 @@ export class Workbench {
       // The answer identifies this start even if session notifications are delayed or another
       // run starts before they arrive. RunControl adopts that same summary into the session feed.
       const intent = this.intent();
-      let startedId: number | null = null;
+      let startedId: string | null = null;
       await front.run.start(intent, {
         file: this.selectedFile(),
         onStarted: (started) => {
-          startedId = started.id;
+          startedId = started.run_id;
         },
       });
       if (startedId !== null) {
@@ -825,10 +825,10 @@ export class Workbench {
 
   async loadRecording() {
     const recording = await this.front()!.recording();
-    if (!recording?.yaml || recording.session_id !== this.recordedRun()) {
+    if (!recording?.yaml || recording.run_id !== this.recordedRun()) {
       throw new Error(recording?.reason ?? 'No applied I/O writes were recorded in this run.');
     }
-    this.yamlName.set(`run-${recording.session_id}.yaml`);
+    this.yamlName.set(`run-${recording.run_id}.yaml`);
     this.yaml.set(recording.yaml);
     if (recording.omitted)
       this.notice.set(`${recording.omitted} writes were omitted from the recording.`);

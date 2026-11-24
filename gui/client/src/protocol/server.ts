@@ -57,16 +57,19 @@ import {
  * read a hello or an api/app of another version (their fields may mean something else). When to raise the version:
  * "Versioning and compatibility" in gui/protocol/README.md.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 // --- GUI server: common --------------------------------------------------------------------------
+
+const nonEmptyString: Reader<string> = (value, path) => {
+  if (typeof value !== 'string' || !value) throw new ProtocolError(path, 'a non-empty string');
+  return value;
+};
 
 /**
  * A server notice (an API error, a WebSocket error, problems of the session). message is shown in English, unchanged.
  */
 export interface ServerProblem {
-  /** Monotonic per-run diagnostic identifier, absent on older servers. */
-  problem_seq?: number;
   code: string;
   message: string;
   /** For launcher-stderr, the number of lines dropped at this point (`detail.skipped`). Other notices lack it. */
@@ -82,8 +85,6 @@ export const readServerProblem: Reader<ServerProblem> = (value, path) => {
     code: field(f, path, 'code', string),
     message: field(f, path, 'message', string),
   };
-  if (Number.isSafeInteger(f['problem_seq']) && (f['problem_seq'] as number) >= 0)
-    problem.problem_seq = f['problem_seq'] as number;
   // The contents of detail differ by code. Take only what is used, and only when its shape fits
   const detail = f['detail'];
   if (typeof detail === 'object' && detail !== null && 'skipped' in detail) {
@@ -376,7 +377,7 @@ export const readScenarioList = (value: unknown): ScenarioList => {
  * YAML. The server writes no file (the screen hands it over as a browser download).
  */
 export interface Recording {
-  session_id: number;
+  run_id: string;
   /** The run's configuration file (relative to root). */
   file: string;
   state: Open<'running' | 'ended'>;
@@ -400,7 +401,7 @@ export const readRecording = (value: unknown): Recording | null => {
   if (r === null) return null;
   const path = 'response.recording';
   return {
-    session_id: field(r, path, 'session_id', integer),
+    run_id: field(r, path, 'run_id', nonEmptyString),
     file: field(r, path, 'file', string),
     state: field(r, path, 'state', string),
     available: field(r, path, 'available', boolean),
@@ -572,15 +573,16 @@ export interface PrepareRequest {
 
 export interface PrepareResponse {
   instance: string;
-  runtime: RuntimeStatus;
+  runtime?: RuntimeStatus;
 }
 
 export const readPrepareResponse = (value: unknown): PrepareResponse => {
   const path = 'response';
   const f = object(value, path);
+  const runtime = field(f, path, 'runtime', optional(readRuntimeStatus, undefined));
   return {
-    instance: field(f, path, 'instance', string),
-    runtime: field(f, path, 'runtime', readRuntimeStatus),
+    instance: field(f, path, 'instance', nonEmptyString),
+    ...(runtime === undefined ? {} : { runtime }),
   };
 };
 
@@ -640,9 +642,9 @@ const readLogCounts: Reader<LogCounts> = (value, path) => {
  * authoritative).
  */
 export interface SessionSummary {
-  id: number;
-  /** Server capture order within this instance and run; absent on older servers. */
-  snapshot_rev?: number | null;
+  id: string;
+  /** Baseline launcher t_ms at run start (0 on cold runs). */
+  run_t0_ms?: number | null;
   /** Path relative to root. */
   file: string;
   disable: string[];
@@ -682,8 +684,7 @@ export interface SessionSummary {
    */
   allowed?: ServerAllowed | null;
   /**
-   * The check result of this run (the check event). null until it arrives. The `session` notifications of a connection
-   * that asked for `session_without_check` lack the field and read it as null (the local check result is used as is).
+   * The check result of this run (the check event). null until it arrives.
    */
   check: CheckResult | null;
   /** The checked stop time when the full check was too large to keep. */
@@ -695,8 +696,6 @@ export interface SessionSummary {
   log: Record<string, LogCounts>;
   problems: ServerProblem[];
   problems_omitted: number;
-  /** Highest diagnostic identifier allocated by the server, including omitted diagnostics. */
-  problem_seq?: number | null;
   /** Progress of the scenario run (`scenario` of `api/run`). null for a run without a scenario. */
   scenario: SummaryScenario | null;
   /**
@@ -759,10 +758,10 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   const timePath = `${path}.time`;
   const stopAt = field(f, path, 'stop_at_ms', soft(nullable(integer), undefined, u));
   const summary: Omit<SessionSummary, 'unreadable'> = {
-    id: field(f, path, 'id', integer),
-    ...(f['snapshot_rev'] === undefined
+    id: field(f, path, 'id', nonEmptyString),
+    ...(f['run_t0_ms'] === undefined
       ? {}
-      : { snapshot_rev: field(f, path, 'snapshot_rev', soft(nullable(integer), null, u)) }),
+      : { run_t0_ms: field(f, path, 'run_t0_ms', soft(nullable(number), null, u)) }),
     state: field(f, path, 'state', string),
     launcher: field(f, path, 'launcher', readSummaryLauncher),
     stop: field(f, path, 'stop', string),
@@ -850,9 +849,6 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
     log: field(f, path, 'log', soft(partlyRecord(readLogCounts, u), {}, u)),
     problems: field(f, path, 'problems', items(readServerProblem, u)),
     problems_omitted: field(f, path, 'problems_omitted', soft(integer, 0, u)),
-    ...(f['problem_seq'] === undefined
-      ? {}
-      : { problem_seq: field(f, path, 'problem_seq', soft(nullable(integer), null, u)) }),
     scenario: field(
       f,
       path,
@@ -890,12 +886,6 @@ export interface ServerSaveItem extends ServerAllowedItem {
  * `launcher_state.allowed`.
  */
 export interface ServerAllowed {
-  /**
-   * Goes up by one each time what `allowed` says changes, the same in every place that carries it (`hello`,
-   * `api/session`, the summary, the `allowed` message): keep the one with the larger rev. 0 from a server that does not
-   * number it.
-   */
-  rev: number;
   start: ServerAllowedItem;
   stop: ServerAllowedItem;
   force: ServerAllowedItem;
@@ -920,7 +910,6 @@ const readServerSaveItem: Reader<ServerSaveItem> = (value, path) => ({
 export const readServerAllowed: Reader<ServerAllowed> = (value, path) => {
   const f = object(value, path);
   return {
-    rev: field(f, path, 'rev', optional(integer, 0)),
     start: field(f, path, 'start', readServerAllowedItem),
     stop: field(f, path, 'stop', readServerAllowedItem),
     force: field(f, path, 'force', readServerAllowedItem),
@@ -941,17 +930,32 @@ function partlyRecord<T>(read: Reader<T>, u?: Unreadable): Reader<Record<string,
   };
 }
 
-/** Answer of GET api/session, POST api/run and POST api/stop (the current session; null if none). */
+/** Answer of GET api/session (the current session; null if none). */
 export const readSessionResponse = (value: unknown): SessionSummary | null =>
   field(object(value, 'response'), 'response', 'session', nullable(readSessionSummary));
 
-/** GET api/session and POST api/run must identify the GUI server that supplied the run ID. */
+/** GET api/session, POST api/run and POST api/stop-session must identify the GUI server that supplied the run ID. */
 export const readSessionInstance = (value: unknown): string =>
   field(object(value, 'response'), 'response', 'instance', (instance, path) => {
     if (typeof instance !== 'string' || !instance)
       throw new ProtocolError(path, 'a server instance ID. Use the GUI server from this release');
     return instance;
   });
+
+/** Answer of POST api/run and POST api/stop-session. */
+export interface RunAck {
+  instance: string;
+  run_id: string;
+}
+
+export const readRunResponse = (value: unknown): RunAck => {
+  const path = 'response';
+  const f = object(value, path);
+  return {
+    instance: readSessionInstance(value),
+    run_id: field(f, path, 'run_id', nonEmptyString),
+  };
+};
 
 /** What the server accepts, from `allowed` of an `api/session` response: also there when there is no run. */
 export const readSessionAllowed = (value: unknown): ServerAllowed | null =>
@@ -972,15 +976,12 @@ export const readSessionRuntime = (value: unknown): RuntimeStatus | null | undef
   );
 
 /**
- * Body of POST api/stop. force: false stops in order (asking again has no further effect); true stops without waiting.
+ * POST api/stop-session: the server stops only this session. force: false stops in order (asking again has no further
+ * effect); true stops without waiting.
  */
-export interface StopRequestBody {
+export interface StopSessionRequestBody {
   force: boolean;
-}
-
-/** POST api/stop-session: the server stops only this session. */
-export interface StopSessionRequestBody extends StopRequestBody {
-  session: number;
+  run_id: string;
   instance: string;
 }
 
@@ -988,7 +989,7 @@ export interface StopSessionRequestBody extends StopRequestBody {
 export type TimeCommandName = 'pause' | 'resume' | 'step' | 'run_until' | 'speed';
 
 /**
- * The command sent in POST api/time. The GUI Client adds the run's session and server instance to the request.
+ * The command sent in POST api/time. The GUI Client adds the run's run_id and server instance to the request.
  * The server passes the command to the launcher as one line. The answer arrives as a command event.
  */
 export type TimeCommand = (
@@ -1008,9 +1009,9 @@ export type TimeCommand = (
   id?: number;
 };
 
-/** Answer of POST api/time: the number of the run it was sent to, and the command passed to the launcher. */
+/** Answer of POST api/time: the run_id of the run it was sent to, and the command passed to the launcher. */
 export interface TimeAnswer {
-  session_id: number;
+  run_id: string;
   command: TimeCommandName;
   /** The `id` the request had (null if none). */
   id: number | null;
@@ -1021,7 +1022,7 @@ export const readTimeResponse = (value: unknown): TimeAnswer => {
   const f = object(value, path);
   const command = field(f, path, 'command', object);
   return {
-    session_id: field(f, path, 'session_id', integer),
+    run_id: field(f, path, 'run_id', nonEmptyString),
     command: field(command, `${path}.command`, 'command', string) as TimeCommandName,
     id: field(command, `${path}.command`, 'id', optional(nullable(integer), null)),
   };
@@ -1084,8 +1085,6 @@ export interface OperationReport {
 
 /** `variables` of the summary: state of the variable API, variables per participant, recent operations. */
 export interface VariablesSummary {
-  /** Server capture order for variable snapshots and availability deltas; absent on older servers. */
-  rev?: number | null;
   state: Open<'off' | 'connecting' | 'ready' | 'failed' | 'ended'>;
   reason: string | null;
   peers: { name: string; connected: boolean; variables: VariableSummary[] }[];
@@ -1193,9 +1192,6 @@ export const readVariablesReport = (
 ): VariablesSummary => {
   const f = object(value, path);
   return {
-    ...(f['rev'] === undefined
-      ? {}
-      : { rev: field(f, path, 'rev', soft(nullable(nonNegativeInteger), null, u)) }),
     state: field(f, path, 'state', lenient(string, 'unknown', u)),
     reason: field(f, path, 'reason', soft(nullable(string), null, u)),
     peers: field(
@@ -1258,7 +1254,8 @@ export interface ValuesMessage {
   type: 'values';
   /** id of the watch. */
   id: number;
-  session: number;
+  watch_id: number;
+  run_id: string;
   /** The controller's virtual time (ms; null if unknown). */
   sim_ms: number | null;
   /** true: paused, and the values include every step that began before sim_ms. */
@@ -1271,7 +1268,7 @@ export interface ValuesMessage {
 
 /** Answer of `api/write`. */
 export interface WriteAnswer {
-  session_id: number;
+  run_id: string;
   /** Operation number. The result arrives in `operation` notifications. */
   operation: number;
 }
@@ -1279,7 +1276,7 @@ export interface WriteAnswer {
 export const readWriteResponse = (value: unknown): WriteAnswer => {
   const f = object(value, 'response');
   return {
-    session_id: field(f, 'response', 'session_id', integer),
+    run_id: field(f, 'response', 'run_id', nonEmptyString),
     operation: field(f, 'response', 'operation', integer),
   };
 };
@@ -1460,29 +1457,26 @@ export type WatchMessage =
 export interface AuthMessage {
   type: 'auth';
   token: string;
-  session?: number;
-  from_seq?: number;
-  /**
-   * If true, the summaries in this connection's `session` notifications leave out `check` (it arrives in the `hello`
-   * summary and the `check` event), because the check result is large and does not change during the run.
-   */
-  session_without_check?: boolean;
+  instance?: string;
+  run_id?: string;
+  after_stream_seq?: number;
 }
 
 /** replay of hello: where the resend starts (null: from the beginning). */
 export interface Replay {
-  from_seq: number | null;
+  after_stream_seq: number | null;
 }
 
 const readReplay: Reader<Replay> = (value, path) => {
   const f = object(value, path);
-  return { from_seq: field(f, path, 'from_seq', nullable(integer)) };
+  return { after_stream_seq: field(f, path, 'after_stream_seq', nullable(integer)) };
 };
 
 /** dropped: how much was not sent to this screen. */
 export interface Dropped {
   type: 'dropped';
-  session: number | null;
+  stream_seq?: number;
+  run_id: string | null;
   /**
    * not-kept: the server no longer holds it (before the resend); slow-client: the screen read too slowly and the server
    * dropped some of what it was to send.
@@ -1504,47 +1498,48 @@ export type ServerMessage =
   | {
       type: 'hello';
       instance: string;
+      stream_seq?: number;
       session: SessionSummary | null;
       /** What the server accepts now; also there when `session` is null. null from a server that does not say. */
       allowed: ServerAllowed | null;
       replay: Replay | null;
       runtime?: RuntimeStatus | null;
     }
-  | { type: 'runtime'; runtime: RuntimeStatus }
+  | { type: 'runtime'; stream_seq?: number; runtime: RuntimeStatus }
   /**
    * What the server accepts changed with no `session` to carry it (a start begins or fails, the server begins to end).
-   * session is the current run's id (null if none). Other changes arrive in the summary.
+   * run_id is the current run's id (null if none). Other changes arrive in the summary.
    */
-  | { type: 'allowed'; session: number | null; allowed: ServerAllowed }
+  | { type: 'allowed'; stream_seq?: number; run_id: string | null; allowed: ServerAllowed }
   /** A launcher event (resent log lines as well as new events). */
-  | { type: 'event'; session: number; event: LauncherEvent }
+  | { type: 'event'; stream_seq?: number; run_id: string; event: LauncherEvent }
   /** The resend has finished. */
-  | { type: 'synced'; session: number | null; last_seq: number | null }
+  | { type: 'synced'; stream_seq?: number; run_id: string | null; last_seq: number | null }
   /** The session summary changed (started, stop requested, the launcher exited, the run ended). */
-  | { type: 'session'; session: SessionSummary }
+  | { type: 'session'; stream_seq?: number; session: SessionSummary }
   /**
    * A server notice (a gap in seq, an invalid line from the launcher, an end without a result, failed authentication
    * and so on).
    */
-  | ({ type: 'error'; session: number | null } & ServerProblem)
+  | ({ type: 'error'; stream_seq?: number; run_id: string | null } & ServerProblem)
   /** How much was not sent. */
   | Dropped
   /** The screen read too slowly and messages were dropped. Everything is sent again, starting with hello. */
   | { type: 'resync'; message: string }
   /** The state or the list of the variable API changed (also once right after a run starts). */
-  | { type: 'variables'; session: number; variables: VariablesSummary }
+  | { type: 'variables'; stream_seq?: number; run_id: string; variables: VariablesSummary }
   /** Values of the watched variables. */
   | ValuesMessage
   /** The result of a write changed. */
-  | ({ type: 'operation'; session: number } & OperationReport)
+  | ({ type: 'operation'; stream_seq?: number; run_id: string } & OperationReport)
   /**
    * Whether ECUs use their variables changed. For each participant listed, the state of every variable it reports
    * (replaces what came before for that participant; a variable not listed is `active`).
    */
   | {
       type: 'availability';
-      session: number;
-      rev?: number | null;
+      stream_seq?: number;
+      run_id: string;
       peers: Record<string, Record<string, VariableAvailability>>;
     };
 
@@ -1556,13 +1551,17 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
   const path = 'message';
   const f = object(value, path);
   const type = field(f, path, 'type', string);
+  const streamSeq =
+    f['stream_seq'] === undefined ? undefined : field(f, path, 'stream_seq', nonNegativeInteger);
+  const seqField = streamSeq === undefined ? {} : { stream_seq: streamSeq };
   switch (type) {
     case 'hello': {
       version(f, path, 'vehicle_sil_gui', PROTOCOL_VERSION);
       const runtime = field(f, path, 'runtime', optional(nullable(readRuntimeStatus), undefined));
       return {
         type,
-        instance: field(f, path, 'instance', string),
+        ...seqField,
+        instance: field(f, path, 'instance', nonEmptyString),
         session: field(f, path, 'session', nullable(readSessionSummary)),
         allowed: field(f, path, 'allowed', optional(nullable(readServerAllowed), null)),
         replay: field(f, path, 'replay', nullable(readReplay)),
@@ -1570,29 +1569,34 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
       };
     }
     case 'runtime':
-      return { type, runtime: field(f, path, 'runtime', readRuntimeStatus) };
+      return { type, ...seqField, runtime: field(f, path, 'runtime', readRuntimeStatus) };
     case 'event': {
       const event = field(f, path, 'event', (v, p) => readLauncherEvent(v, p, true));
-      return event && { type, session: field(f, path, 'session', integer), event };
+      return (
+        event && { type, ...seqField, run_id: field(f, path, 'run_id', nonEmptyString), event }
+      );
     }
     case 'synced':
       return {
         type,
-        session: field(f, path, 'session', nullable(integer)),
+        ...seqField,
+        run_id: field(f, path, 'run_id', nullable(nonEmptyString)),
         last_seq: field(f, path, 'last_seq', nullable(integer)),
       };
     case 'session':
-      return { type, session: field(f, path, 'session', readSessionSummary) };
+      return { type, ...seqField, session: field(f, path, 'session', readSessionSummary) };
     case 'error':
       return {
         type,
-        session: field(f, path, 'session', nullable(integer)),
+        ...seqField,
+        run_id: field(f, path, 'run_id', nullable(nonEmptyString)),
         ...readServerProblem(value, path),
       };
     case 'dropped':
       return {
         type,
-        session: field(f, path, 'session', nullable(integer)),
+        ...seqField,
+        run_id: field(f, path, 'run_id', nullable(nonEmptyString)),
         reason: field(f, path, 'reason', string),
         log: field(f, path, 'log', record(integer)),
         at_least: field(f, path, 'at_least', array(string)),
@@ -1601,7 +1605,8 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
     case 'allowed':
       return {
         type,
-        session: field(f, path, 'session', nullable(integer)),
+        ...seqField,
+        run_id: field(f, path, 'run_id', nullable(nonEmptyString)),
         allowed: field(f, path, 'allowed', readServerAllowed),
       };
     case 'resync':
@@ -1609,14 +1614,20 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
     case 'variables':
       return {
         type,
-        session: field(f, path, 'session', integer),
+        ...seqField,
+        run_id: field(f, path, 'run_id', nonEmptyString),
         variables: field(f, path, 'variables', readVariables),
       };
-    case 'values':
+    case 'values': {
+      const watchId =
+        f['watch_id'] !== undefined
+          ? field(f, path, 'watch_id', integer)
+          : field(f, path, 'id', integer);
       return {
         type,
-        id: field(f, path, 'id', integer),
-        session: field(f, path, 'session', integer),
+        id: watchId,
+        watch_id: watchId,
+        run_id: field(f, path, 'run_id', nonEmptyString),
         sim_ms: field(f, path, 'sim_ms', nullable(number)),
         paused: field(f, path, 'paused', boolean),
         peers: field(
@@ -1640,19 +1651,19 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
           }),
         ),
       };
+    }
     case 'operation':
       return {
         type,
-        session: field(f, path, 'session', integer),
+        ...seqField,
+        run_id: field(f, path, 'run_id', nonEmptyString),
         ...readOperationReport(value, path),
       };
     case 'availability':
       return {
         type,
-        session: field(f, path, 'session', integer),
-        ...(f['rev'] === undefined
-          ? {}
-          : { rev: field(f, path, 'rev', optional(nullable(integer), null)) }),
+        ...seqField,
+        run_id: field(f, path, 'run_id', nonEmptyString),
         peers: field(
           f,
           path,

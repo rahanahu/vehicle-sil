@@ -56,13 +56,13 @@ const TAKES_WRITES = {
   outside: [],
 };
 
-const hello = (id = 1, more: object = {}) => ({
+const hello = (id: string | number = '1', more: object = {}) => ({
   type: 'hello',
-  vehicle_sil_gui: 3,
+  vehicle_sil_gui: 4,
   version: '0.1.0',
   instance: 'x',
   session: {
-    id,
+    id: String(id),
     state: 'running',
     launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
     stop: 'none',
@@ -77,7 +77,7 @@ const peers = (state: string) => ({
 });
 const operation = (seq: number, state: string, done: boolean) => ({
   type: 'operation',
-  session: 1,
+  run_id: '1',
   seq,
   state,
   done,
@@ -180,7 +180,7 @@ describe('the writes of a bound variable', () => {
     writes.write(OFFSET, 50);
     expect(status()).toEqual({ kind: 'sending' });
     expect(pending()).toBe(50);
-    requests()[0].flush({ session_id: 1, operation: 4 });
+    requests()[0].flush({ run_id: '1', operation: 4 });
     expect(status()).toEqual({ kind: 'queued', seq: 4 });
     expect(pending()).toBe(50);
     await deliver(operation(4, 'applied', true));
@@ -195,7 +195,7 @@ describe('the writes of a bound variable', () => {
   ] as const) {
     it(`drops the value sent when a write taken before an input was refused is ${result}`, async () => {
       writes.write(OFFSET, 50);
-      requests()[0].flush({ session_id: 1, operation: 4 });
+      requests()[0].flush({ run_id: '1', operation: 4 });
       await deliver(operation(4, 'queued', false));
       writes.reject(OFFSET, 'not a number');
       // The input error does not touch the waiting write: the value sent is still shown
@@ -208,7 +208,7 @@ describe('the writes of a bound variable', () => {
       const next = expectNextIsSent(60);
       expect(status()).toEqual({ kind: 'sending' });
       expect(pending()).toBe(60);
-      next.flush({ session_id: 1, operation: 5 });
+      next.flush({ run_id: '1', operation: 5 });
       await deliver(operation(5, 'applied', true));
       expect(status()).toEqual({ kind: 'applied', atMs: 200 });
       expect(pending()).toBeNull();
@@ -233,7 +233,7 @@ describe('the writes of a bound variable', () => {
       expect(pending()).toBeNull();
       expect(status()).toEqual({ kind: 'invalid', message: 'not a number' });
       const next = expectNextIsSent(60);
-      next.flush({ session_id: 1, operation: 5 });
+      next.flush({ run_id: '1', operation: 5 });
       expect(status()).toEqual({ kind: 'queued', seq: 5 });
     });
   }
@@ -246,7 +246,7 @@ describe('the writes of a bound variable', () => {
     expect(pending()).toBe(60);
     writes.reject(OFFSET, 'not a number');
     expect(requests()).toHaveLength(0);
-    first.flush({ session_id: 1, operation: 4 });
+    first.flush({ run_id: '1', operation: 4 });
     const [second] = requests();
     expect(valueOf(second)).toBe(60);
     expect(status()).toEqual({ kind: 'sending' });
@@ -254,7 +254,7 @@ describe('the writes of a bound variable', () => {
     await deliver(operation(4, 'applied', true));
     expect(status()).toEqual({ kind: 'sending' });
     expect(pending()).toBe(60);
-    second.flush({ session_id: 1, operation: 5 });
+    second.flush({ run_id: '1', operation: 5 });
     await deliver(operation(5, 'late', true));
     expect(status()).toMatchObject({ kind: 'failed' });
     expect(pending()).toBeNull();
@@ -274,13 +274,13 @@ describe('the writes of a bound variable', () => {
 
   it('shows the result of the older write only while no newer one was sent', async () => {
     writes.write(OFFSET, 50);
-    requests()[0].flush({ session_id: 1, operation: 4 });
+    requests()[0].flush({ run_id: '1', operation: 4 });
     writes.write(OFFSET, 60); // 4 has been received, so this is sent at once
     const [second] = requests();
     await deliver(operation(4, 'late', true));
     expect(status()).toEqual({ kind: 'sending' });
     expect(pending()).toBe(60);
-    second.flush({ session_id: 1, operation: 5 });
+    second.flush({ run_id: '1', operation: 5 });
     await deliver(operation(5, 'applied', true));
     expect(status()).toEqual({ kind: 'applied', atMs: 200 });
     expect(pending()).toBeNull();
@@ -293,18 +293,18 @@ describe('the writes of a bound variable', () => {
     await deliver(hello(2));
     expect(status()).toEqual({ kind: 'idle' });
     expect(pending()).toBeNull();
-    first.flush({ session_id: 1, operation: 4 });
+    first.flush({ run_id: '1', operation: 4 });
     await turn();
     expect(requests()).toHaveLength(0);
     expect(status()).toEqual({ kind: 'idle' });
     expect(pending()).toBeNull();
     const next = expectNextIsSent(70);
-    expect(next.request.body).toMatchObject({ session: 2 });
+    expect(next.request.body).toMatchObject({ run_id: '2' });
   });
 
   it('gives up a write that waits for its result when the next run starts', async () => {
     writes.write(OFFSET, 50);
-    requests()[0].flush({ session_id: 1, operation: 4 });
+    requests()[0].flush({ run_id: '1', operation: 4 });
     writes.reject(OFFSET, 'not a number');
     await deliver(hello(2));
     expect(status()).toEqual({ kind: 'idle' });
@@ -315,7 +315,7 @@ describe('the writes of a bound variable', () => {
   it('keeps waiting for its own open write after a reconnection with many operations after it', async () => {
     // A write while paused: does not settle until time advances
     writes.write(OFFSET, 50);
-    requests()[0].flush({ session_id: 1, operation: 1 });
+    requests()[0].flush({ run_id: '1', operation: 1 });
     await deliver(operation(1, 'queued', false));
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
@@ -335,7 +335,7 @@ describe('the writes of a bound variable', () => {
 
   it('gives up a write whose result was lost while the connection was down', async () => {
     writes.write(OFFSET, 50);
-    requests()[0].flush({ session_id: 1, operation: 1 });
+    requests()[0].flush({ run_id: '1', operation: 1 });
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
     socket().open();

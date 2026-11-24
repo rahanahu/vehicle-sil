@@ -8,8 +8,8 @@
   "response": {
     "instance": "0123456789abcdef",
     "session": {
-      "snapshot_rev": 1,
-      "id": 1,
+      "id": "1",
+      "run_t0_ms": 0,
       "file": "simulation.yaml",
       "disable": [],
       "manual": [],
@@ -440,7 +440,6 @@
         "outside": []
       },
       "allowed": {
-        "rev": 5,
         "start": {
           "ok": true,
           "reason": null,
@@ -877,10 +876,8 @@
       },
       "problems": [],
       "problems_omitted": 0,
-      "problem_seq": 0,
       "scenario": null,
       "variables": {
-        "rev": 1,
         "state": "off",
         "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
@@ -892,7 +889,6 @@
       }
     },
     "allowed": {
-      "rev": 5,
       "start": {
         "ok": true,
         "reason": null,

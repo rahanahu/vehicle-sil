@@ -173,7 +173,7 @@ interface Sent {
  * alone.
  */
 interface Entry {
-  session: number;
+  session: string;
   key: string;
   ref: VariableRef;
   status: WriteStatus;
@@ -196,7 +196,7 @@ const IDLE: WriteStatus = { kind: 'idle' };
  */
 export class VariableBinder {
   private entries = new Map<string, Entry>();
-  private entriesSession: number | null = null;
+  private entriesSession: string | null = null;
   /** Per variable, the functions to call when the write status changes (the binds listen). */
   private readonly listeners = new Map<string, Set<() => void>>();
   /** Lookup table of the list (rebuilt when peers change). */

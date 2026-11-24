@@ -86,13 +86,13 @@ const launcherState = (write: object = TAKES) => ({
   outside: [],
 });
 
-const hello = (state = 'ready', id = 1, write: object = TAKES) => ({
+const hello = (state = 'ready', id: string | number = '1', write: object = TAKES) => ({
   type: 'hello',
-  vehicle_sil_gui: 3,
+  vehicle_sil_gui: 4,
   version: '0.1.0',
   instance: 'x',
   session: {
-    id,
+    id: String(id),
     state: 'running',
     launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
     stop: 'none',
@@ -106,11 +106,11 @@ const values = (
   sampleMs: number,
   paused: boolean,
   peerValues: Record<string, unknown>,
-  session = 1,
+  session: string | number = '1',
 ) => ({
   type: 'values',
-  id: 1,
-  session,
+  watch_id: 1,
+  run_id: String(session),
   sim_ms: sampleMs,
   paused,
   peers: { Engine: { sample_ms: sampleMs, values: peerValues } },
@@ -118,7 +118,7 @@ const values = (
 
 const operation = (seq: number, state: string, done: boolean, peer: object = {}) => ({
   type: 'operation',
-  session: 1,
+  run_id: '1',
   seq,
   state,
   done,
@@ -198,14 +198,18 @@ describe('variable widgets', () => {
     // ECU が切れた: 値は残すが、古いと言う（色だけでなく印と文で）
     await deliver(fixture, {
       type: 'variables',
-      session: 1,
+      run_id: '1',
       variables: {
         ...variables(),
         peers: [{ name: 'Engine', connected: false, variables: SCHEMA }],
       },
     });
     expect(text(fixture, 'widget-condition')).toBe('⚠ 古い値: ECU がつながっていません');
-    await deliver(fixture, { type: 'variables', session: 1, variables: variables('ended', false) });
+    await deliver(fixture, {
+      type: 'variables',
+      run_id: '1',
+      variables: variables('ended', false),
+    });
     expect(text(fixture, 'widget-condition')).toBe('■ 終わった実行の最後の値');
     expect(text(fixture, 'widget-value')).toBe('1460 rpm');
   });
@@ -218,14 +222,14 @@ describe('variable widgets', () => {
     expect(element(fixture, '.unused')).toBeNull();
     await deliver(fixture, {
       type: 'availability',
-      session: 1,
+      run_id: '1',
       peers: { Engine: { 'engine.enabled': 'unknown' } },
     });
     expect(frame().getAttribute('data-availability')).toBe('unknown');
     expect(element(fixture, '.unused')).toBeNull();
     await deliver(fixture, {
       type: 'availability',
-      session: 1,
+      run_id: '1',
       peers: { Engine: { 'engine.enabled': 'inactive' } },
     });
     expect(frame().getAttribute('data-availability')).toBe('inactive');
@@ -280,12 +284,12 @@ describe('variable widgets', () => {
     fixture.detectChanges();
     const [request] = writes();
     expect(request.request.body).toEqual({
-      session: 1,
+      run_id: '1',
       writes: { Engine: { 'engine.enabled': true } },
     });
     expect(text(fixture, 'widget-write')).toBe('… 送っています');
     expect(button.getAttribute('aria-checked')).toBe('true');
-    request.flush({ session_id: 1, operation: 5 });
+    request.flush({ run_id: '1', operation: 5 });
     fixture.detectChanges();
     expect(text(fixture, 'widget-write')).toBe(
       '… 受け付けました。ECU のステップで反映されるのを待っています',
@@ -310,10 +314,10 @@ describe('variable widgets', () => {
     fixture.detectChanges();
     const [request] = writes();
     expect(request.request.body).toEqual({
-      session: 1,
+      run_id: '1',
       writes: { Engine: { 'ecu.connected': false } },
     });
-    request.flush({ session_id: 1, operation: 5 });
+    request.flush({ run_id: '1', operation: 5 });
     await deliver(fixture, operation(5, 'applied', true, { applied_at_ms: 200 }));
     await deliver(fixture, values(200, false, { 'ecu.connected': false }));
     expect(host.dataset['connected']).toBe('false');
@@ -345,7 +349,7 @@ describe('variable widgets', () => {
   it('shows a write that was not applied', async () => {
     const fixture = await render(SwitchWidget, 'engine.enabled');
     element<HTMLButtonElement>(fixture, 'button[role="switch"]').click();
-    writes()[0].flush({ session_id: 1, operation: 3 });
+    writes()[0].flush({ run_id: '1', operation: 3 });
     await deliver(fixture, operation(3, 'late', true, { reason: 'its time had passed' }));
     expect(text(fixture, 'widget-error')).toBe(
       '✗ 反映されませんでした: the write (operation 3) was not applied: Engine: late (its time had passed)',
@@ -375,14 +379,14 @@ describe('variable widgets', () => {
     release(60);
     const first = writes();
     expect(first.map((r) => r.request.body)).toEqual([
-      { session: 1, writes: { Engine: { 'engine.demand': 40 } } },
+      { run_id: '1', writes: { Engine: { 'engine.demand': 40 } } },
     ]);
-    first[0].flush({ session_id: 1, operation: 1 });
+    first[0].flush({ run_id: '1', operation: 1 });
     const second = writes();
     expect(second.map((r) => r.request.body)).toEqual([
-      { session: 1, writes: { Engine: { 'engine.demand': 60 } } },
+      { run_id: '1', writes: { Engine: { 'engine.demand': 60 } } },
     ]);
-    second[0].flush({ session_id: 1, operation: 2 });
+    second[0].flush({ run_id: '1', operation: 2 });
     await deliver(
       fixture,
       operation(1, 'applied', true, { applied_at_ms: 200 }),
@@ -412,7 +416,7 @@ describe('variable widgets', () => {
     fixture.detectChanges();
     const [request] = writes();
     expect(request.request.body).toEqual({
-      session: 1,
+      run_id: '1',
       writes: { Engine: { 'engine.offset': 12.5 } },
     });
     request.flush(
@@ -524,7 +528,7 @@ describe('variable widgets', () => {
     const fixture = await render(SwitchWidget, 'engine.enabled');
     await deliver(fixture, {
       type: 'variables',
-      session: 1,
+      run_id: '1',
       variables: variables('ready', false),
     });
     const button = element<HTMLButtonElement>(fixture, 'button[role="switch"]');
@@ -561,7 +565,7 @@ describe('variable widgets', () => {
     fixture.detectChanges();
     expect(text(fixture, 'widget-value')).toBe('70.00 %');
     // 動かしている途中で実行が終わった: change は来ない
-    await deliver(fixture, { type: 'variables', session: 1, variables: variables('ended') });
+    await deliver(fixture, { type: 'variables', run_id: '1', variables: variables('ended') });
     expect(text(fixture, 'widget-value')).toBe('20.00 %');
     expect(writes()).toHaveLength(0);
   });
@@ -587,7 +591,7 @@ describe('variable widgets', () => {
     option.click();
     fixture.detectChanges();
     expect(writes().map((r) => r.request.body)).toEqual([
-      { session: 1, writes: { Engine: { 'engine.gear': 3 } } },
+      { run_id: '1', writes: { Engine: { 'engine.gear': 3 } } },
     ]);
   });
 
@@ -616,7 +620,7 @@ describe('variable widgets', () => {
     const button = element<HTMLButtonElement>(fixture, 'button[role="switch"]');
     button.click();
     fixture.detectChanges();
-    writes()[0].flush({ session_id: 1, operation: 4 });
+    writes()[0].flush({ run_id: '1', operation: 4 });
     fixture.detectChanges();
     expect(text(fixture, 'widget-write')).toMatch(/受け付けました/);
     expect(button.getAttribute('aria-checked')).toBe('true');
@@ -635,8 +639,8 @@ describe('variable widgets', () => {
     button.click(); // 前の書き込みを待つ間: 覚えておくだけ
     fixture.detectChanges();
     const [request] = writes();
-    await deliver(fixture, { type: 'variables', session: 1, variables: variables('ended') });
-    request.flush({ session_id: 1, operation: 4 });
+    await deliver(fixture, { type: 'variables', run_id: '1', variables: variables('ended') });
+    request.flush({ run_id: '1', operation: 4 });
     fixture.detectChanges();
     expect(writes()).toHaveLength(0);
     expect(text(fixture, 'widget-error')).toMatch(

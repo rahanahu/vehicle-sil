@@ -26,8 +26,8 @@ export interface TimeFailure {
    */
   message: string;
   command: TimeCommandName;
-  /** Number of the run it was sent to. */
-  session: number | null;
+  /** Run identifier it was sent to. */
+  session: string | null;
 }
 
 /** Lateness figures (meaningful only while the speed is paced, such as at real-time speed). */
@@ -169,7 +169,7 @@ export class TimeControl implements ClientTime {
   send(command: TimeCommand): SendResult {
     const session = this.session.get();
     const target = this.currentTarget();
-    if (!session || target?.session !== session.id) return { sent: false, reason: 'no-session' };
+    if (!session || target?.run_id !== session.id) return { sent: false, reason: 'no-session' };
     if (this.state.get().sending !== null) return { sent: false, reason: 'waiting' };
     this.failureValue.set(null);
     const pending: Pending = {
@@ -195,7 +195,7 @@ export class TimeControl implements ClientTime {
             kind: 'server',
             message: errorMessage(outcome.error),
             command: pending.command,
-            session: target.session,
+            session: target.run_id,
           },
         });
       },
@@ -222,7 +222,7 @@ export class TimeControl implements ClientTime {
           `the launcher did not answer the command (${pending.command}) within ` +
           `${this.answerTimeoutMs / 1000} s; it may not read its input. You can send it again.`,
         command: pending.command,
-        session: pending.target.session,
+        session: pending.target.run_id,
       },
     });
   }

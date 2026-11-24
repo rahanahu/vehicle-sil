@@ -31,7 +31,7 @@ import { ServerInfo } from '../core/session/server-info';
         <button
           matButton="tonal"
           type="button"
-          (click)="save(r.yaml, r.file, r.session_id)"
+          (click)="save(r.yaml, r.file, r.run_id)"
           data-testid="recording-save"
           i18n
         >
@@ -87,7 +87,7 @@ export class RecordingPanel {
   private readonly document = inject(DOCUMENT);
 
   /** 実行の番号と、ランチャーが動いているか（終わったら読み直す）。 */
-  readonly session = input.required<number>();
+  readonly session = input.required<string>();
   readonly running = input(false);
 
   /** この実行の、確定した操作（確定するたびに読み直す）。 */
@@ -110,7 +110,7 @@ export class RecordingPanel {
   /** この実行の記録（替わり目に別の実行の記録が届いたら、出さない）。 */
   protected readonly current = computed(() => {
     const r = this.recording.hasValue() ? this.recording.value() : null;
-    return r && r.session_id === this.session() ? r : null;
+    return r && r.run_id === this.session() ? r : null;
   });
 
   protected readonly saved = signal<string | null>(null);
@@ -120,7 +120,7 @@ export class RecordingPanel {
   }
 
   /** YAML をファイルとしてブラウザに渡す（名前は構成ファイルと実行の番号から）。 */
-  protected save(yaml: string, file: string, session: number): void {
+  protected save(yaml: string, file: string, session: string): void {
     const stem = (file.split('/').pop() ?? 'simulation').replace(/\.ya?ml$/i, '');
     const name = `${stem}-run${session}.yaml`;
     const url = URL.createObjectURL(new Blob([yaml], { type: 'application/yaml' }));

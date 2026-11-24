@@ -9,12 +9,12 @@
   "server": [
     {
       "type": "hello",
-      "vehicle_sil_gui": 3,
+      "vehicle_sil_gui": 4,
       "version": "<version>",
       "instance": "0123456789abcdef",
+      "stream_seq": 0,
       "session": null,
       "allowed": {
-        "rev": 1,
         "start": {
           "ok": true,
           "reason": null,
@@ -48,14 +48,15 @@
     },
     {
       "type": "synced",
-      "session": null,
+      "stream_seq": 0,
+      "run_id": null,
       "last_seq": null
     },
     {
       "type": "allowed",
-      "session": null,
+      "stream_seq": 1,
+      "run_id": null,
       "allowed": {
-        "rev": 2,
         "start": {
           "ok": false,
           "reason": "starting",
@@ -81,9 +82,10 @@
     },
     {
       "type": "session",
+      "stream_seq": 2,
       "session": {
-        "snapshot_rev": 1,
-        "id": 1,
+        "id": "1",
+        "run_t0_ms": 0,
         "file": "large-fields.yaml",
         "disable": [],
         "manual": [],
@@ -115,7 +117,6 @@
         "last_command": null,
         "launcher_state": null,
         "allowed": {
-          "rev": 3,
           "start": {
             "ok": false,
             "reason": "already-running",
@@ -142,15 +143,14 @@
         "log": {},
         "problems": [],
         "problems_omitted": 0,
-        "problem_seq": 0,
         "scenario": null
       }
     },
     {
       "type": "variables",
-      "session": 1,
+      "stream_seq": 3,
+      "run_id": "1",
       "variables": {
-        "rev": 1,
         "state": "off",
         "reason": "this launcher was built without a control server, so the variables of the ECUs cannot be read",
         "peers": [],
@@ -163,7 +163,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 4,
+      "run_id": "1",
       "event": {
         "event": "hello",
         "seq": 0,
@@ -185,7 +186,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 5,
+      "run_id": "1",
       "event": {
         "event": "phase",
         "seq": 1,
@@ -195,7 +197,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 6,
+      "run_id": "1",
       "event": {
         "event": "state",
         "seq": 2,
@@ -265,7 +268,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 7,
+      "run_id": "1",
       "event": {
         "event": "check",
         "seq": 3,
@@ -540,7 +544,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 8,
+      "run_id": "1",
       "event": {
         "event": "phase",
         "seq": 4,
@@ -550,7 +555,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 9,
+      "run_id": "1",
       "event": {
         "event": "state",
         "seq": 5,
@@ -620,7 +626,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 10,
+      "run_id": "1",
       "event": {
         "event": "registry",
         "seq": 6,
@@ -630,7 +637,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 11,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 7,
@@ -641,7 +649,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 12,
+      "run_id": "1",
       "event": {
         "event": "state",
         "seq": 8,
@@ -711,7 +720,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 13,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 9,
@@ -722,17 +732,18 @@
     },
     {
       "type": "error",
-      "session": 1,
+      "stream_seq": 14,
+      "run_id": "1",
       "code": "kept-limit",
       "message": "the launcher wrote a 'participant' event larger than 4096 bytes: only its name, state, pid, exit_code, signal, reason, stop_requested, control_link and the fields that fit are kept for a screen opened later (the others are named in omitted_fields)",
       "detail": {
         "what": "participant"
-      },
-      "problem_seq": 1
+      }
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 15,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 10,
@@ -755,7 +766,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 16,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 11,
@@ -766,7 +778,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 17,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 12,
@@ -788,7 +801,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 18,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 13,
@@ -799,7 +813,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 19,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 14,
@@ -816,7 +831,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 20,
+      "run_id": "1",
       "event": {
         "event": "phase",
         "seq": 15,
@@ -826,7 +842,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 21,
+      "run_id": "1",
       "event": {
         "event": "state",
         "seq": 16,
@@ -896,7 +913,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 22,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 17,
@@ -907,7 +925,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 23,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 18,
@@ -918,7 +937,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 24,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 19,
@@ -929,7 +949,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 25,
+      "run_id": "1",
       "event": {
         "event": "control_link",
         "seq": 20,
@@ -941,7 +962,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 26,
+      "run_id": "1",
       "event": {
         "event": "control_link",
         "seq": 21,
@@ -953,7 +975,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 27,
+      "run_id": "1",
       "event": {
         "event": "control_link",
         "seq": 22,
@@ -964,7 +987,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 28,
+      "run_id": "1",
       "event": {
         "event": "phase",
         "seq": 23,
@@ -974,7 +998,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 29,
+      "run_id": "1",
       "event": {
         "event": "state",
         "seq": 24,
@@ -1044,7 +1069,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 30,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 25,
@@ -1055,7 +1081,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 31,
+      "run_id": "1",
       "event": {
         "event": "time",
         "seq": 26,
@@ -1070,7 +1097,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 32,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 27,
@@ -1081,7 +1109,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 33,
+      "run_id": "1",
       "event": {
         "event": "time",
         "seq": 28,
@@ -1096,7 +1125,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 34,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 29,
@@ -1107,7 +1137,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 35,
+      "run_id": "1",
       "event": {
         "event": "state",
         "seq": 30,
@@ -1177,7 +1208,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 36,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 31,
@@ -1188,7 +1220,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 37,
+      "run_id": "1",
       "event": {
         "event": "phase",
         "seq": 32,
@@ -1198,7 +1231,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 38,
+      "run_id": "1",
       "event": {
         "event": "state",
         "seq": 33,
@@ -1268,7 +1302,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 39,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 34,
@@ -1279,7 +1314,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 40,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 35,
@@ -1292,7 +1328,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 41,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 36,
@@ -1303,7 +1340,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 42,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 37,
@@ -1316,7 +1354,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 43,
+      "run_id": "1",
       "event": {
         "event": "log",
         "seq": 38,
@@ -1327,7 +1366,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 44,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 39,
@@ -1338,7 +1378,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 45,
+      "run_id": "1",
       "event": {
         "event": "participant",
         "seq": 40,
@@ -1351,7 +1392,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 46,
+      "run_id": "1",
       "event": {
         "event": "phase",
         "seq": 41,
@@ -1361,7 +1403,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 47,
+      "run_id": "1",
       "event": {
         "event": "state",
         "seq": 42,
@@ -1431,7 +1474,8 @@
     },
     {
       "type": "event",
-      "session": 1,
+      "stream_seq": 48,
+      "run_id": "1",
       "event": {
         "event": "result",
         "seq": 43,
@@ -1842,9 +1886,10 @@
     },
     {
       "type": "session",
+      "stream_seq": 49,
       "session": {
-        "snapshot_rev": 2,
-        "id": 1,
+        "id": "1",
+        "run_t0_ms": 0,
         "file": "large-fields.yaml",
         "disable": [],
         "manual": [],
@@ -2269,7 +2314,6 @@
           "outside": []
         },
         "allowed": {
-          "rev": 5,
           "start": {
             "ok": true,
             "reason": null,
@@ -2710,12 +2754,10 @@
             "message": "the launcher wrote a 'participant' event larger than 4096 bytes: only its name, state, pid, exit_code, signal, reason, stop_requested, control_link and the fields that fit are kept for a screen opened later (the others are named in omitted_fields)",
             "detail": {
               "what": "participant"
-            },
-            "problem_seq": 1
+            }
           }
         ],
         "problems_omitted": 0,
-        "problem_seq": 1,
         "scenario": null
       }
     }

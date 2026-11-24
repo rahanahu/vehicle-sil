@@ -83,12 +83,12 @@ editor.setVisible(true);
 
 ### クライアント
 
-| 種類 | 名前                                                                                                                                                                                                                                                                                   |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 関数 | `createClient(options)`                                                                                                                                                                                                                                                                |
-| 型   | `ClientOptions`（`baseUrl`、`token`、`origin`、`http`、`socket`、`answerTimeoutMs`、`onError`）                                                                                                                                                                                        |
-| 型   | `GuiClient`（`connection`、`session`、`run`、`time`、`variables`、`app`、`limits`、`connect()`、`close()`、`loadApp()`、`configs()`、`config(file)`、`check()`、`describe()`、`saveConfig()`、`connections()`、`fetchSession()`、`dashboard(file)`、`scenarios(file)`、`recording()`） |
-| 定数 | `DEFAULT_LIMITS`                                                                                                                                                                                                                                                                       |
+| 種類 | 名前                                                                                                                                                                                                                                                                              |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 関数 | `createClient(options)`                                                                                                                                                                                                                                                           |
+| 型   | `ClientOptions`（`baseUrl`、`token`、`origin`、`http`、`socket`、`answerTimeoutMs`、`onError`）                                                                                                                                                                                   |
+| 型   | `GuiClient`（`connection`、`session`、`run`、`time`、`variables`、`app`、`limits`、`connect()`、`close()`、`loadApp()`、`configs()`、`config(file)`、`check()`、`describe()`、`saveConfig()`、`prepare()`、`connections()`、`dashboard(file)`、`scenarios(file)`、`recording()`） |
+| 定数 | `DEFAULT_LIMITS`                                                                                                                                                                                                                                                                  |
 
 ### 正面の口
 
@@ -118,17 +118,17 @@ editor.setVisible(true);
 
 ### セッションのコピー
 
-| 種類 | 名前                                                                                                                                                                                |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 型   | `ClientSession`（`session`、`currentTarget`、`currentInstance`、`ready`、`allowed`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
-| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`、`LauncherAnswer`                                       |
-| 関数 | `runOutcome`、`phaseIndex`、`isHolding`、`launcherAnswer`                                                                                                                           |
+| 種類 | 名前                                                                                                                                                                                           |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 型   | `ClientSession`（`session`、`currentTarget`、`currentInstance`、`ready`、`allowed`、`runtime`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
+| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`、`LauncherAnswer`                                                  |
+| 関数 | `runOutcome`、`phaseIndex`、`isHolding`、`launcherAnswer`                                                                                                                                      |
 
-`ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`。それぞれ `ok`、理由のコード `reason`、文 `message`。`rev` の大きい方が勝ちます。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。`launcherAnswer(launcherState, name)` は、1 つの操作（`write`、`pause` など）について、それが言うことを読みます: `reason`（受けるなら `null`）と `caution`。まだ言っていないランチャー（`state` がまだない、その操作の項目がない）は、受けないものとします（`unsupported`）。正面の口の `controls` と `variables.bind` は、これでランチャーを読みます。
+`ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`、`save`。それぞれ `ok`、理由のコード `reason`、文 `message`。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。`launcherAnswer(launcherState, name)` は、1 つの操作（`write`、`pause` など）について、それが言うことを読みます: `reason`（受けるなら `null`）と `caution`。まだ言っていないランチャー（`state` がまだない、その操作の項目がない）は、受けないものとします（`unsupported`）。正面の口の `controls` と `variables.bind` は、これでランチャーを読みます。
 
-サーバーが付ける session と変数の revision は、HTTP と WebSocket の要約の前後関係を示します。旧サーバーには番号がないため、両者の順序は最善を尽くす扱いです。revision によって replay、コマンドの応答、確定済み操作結果は捨てません。
+順序付きの通知（`session`、`event`、`allowed`、`runtime`、`variables`、`availability`、`operation`、`error`、`dropped`、`synced`）は、`(instance, run_id, stream_seq)` で順序付けられた単一の WebSocket ストリームで届きます。HTTP の変更操作（`api/run`、`api/stop-session`、`api/prepare`、`api/time`、`api/write`）は受領応答だけを返し、状態の更新は WebSocket ストリームで届きます。
 
-`currentTarget()` は現在の `{session, instance}` を返し、不明なら `null` を返します。`currentInstance()` は実行がなくても直近に認証したサーバーのインスタンスを返し、切断中も保持します。再接続ではサーバーが保持する履歴を先頭から再送してもらい、再起動前のカーソルを別のインスタンスに使いません。HTTP のみの利用者は、サーバー再起動後に `fetchSession()` でコピーを更新できます。
+`currentTarget()` は現在の `{run_id, instance}` を返し、不明なら `null` を返します。`currentInstance()` は実行がなくても直近に認証したサーバーのインスタンスを返し、切断中も保持します。同じインスタンスと実行への再接続では `{instance, run_id, after_stream_seq}` を送ってそのカーソル以後のログイベントだけを再送してもらい、サーバーのインスタンスが変わったときは新しい `hello` から取り直します。
 
 ### 実行の操作
 
@@ -654,7 +654,7 @@ watch.close();
 - 反映されていないとわかってから送り直します。
 - 値を足し込むような（同じ書き込みを 2 回すると結果が変わる）使い方では、特に守ります。同じ値を書くだけなら、2 回書いても結果は同じです。
 
-**再接続**: 結果を待つ間に接続が切断されても、再接続した後の要約（`hello`、`fetchSession()`）で続きがわかります。要約には、サーバーが覚えている未確定の操作の全部と、番号が `operations_from_seq` 以上の操作の全部が入っています（サーバーが受け取るもののうち。シナリオ自身の書き込みの操作は届きません）。
+**再接続**: 結果を待つ間に接続が切断されても、再接続した後の要約（`hello`）で続きがわかります。要約には、サーバーが覚えている未確定の操作の全部と、番号が `operations_from_seq` 以上の操作の全部が入っています（サーバーが受け取るもののうち。シナリオ自身の書き込みの操作は届きません）。
 
 | 自分の操作                                           | ライブラリの扱い                                            |
 | ---------------------------------------------------- | ----------------------------------------------------------- |

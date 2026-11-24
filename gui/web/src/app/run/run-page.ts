@@ -67,7 +67,7 @@ const MANUAL_STAYS = ' (started by you, manual) has not left the simulation';
  * 速度は、持ち越したときと同じセッション（なければ、セッションがないまま）の間だけ戻す（次の実行の値は上書きしない）。
  */
 interface RunChoices {
-  session: number | null;
+  session: string | null;
   chosen: string | null;
   /** 外す participant を選んだときのファイル。 */
   file: string | null;
@@ -77,7 +77,7 @@ interface RunChoices {
   speed: Speed;
   stopAt?: string;
   stopAtEdited?: boolean;
-  stopSession?: number | null;
+  stopSession?: string | null;
   /** 止めた状態で始めるか（古い持ち越しにはない）。 */
   startPaused?: boolean;
   logSource: string;
@@ -91,7 +91,7 @@ export function readRunChoices(value: unknown): RunChoices | null {
   const v = value as Record<string, unknown>;
   const speedOk = v['speed'] === null || v['speed'] === 'max' || typeof v['speed'] === 'number';
   if (
-    !(v['session'] === null || typeof v['session'] === 'number') ||
+    !(v['session'] === null || isText(v['session'])) ||
     !(v['chosen'] === null || isText(v['chosen'])) ||
     !(v['file'] === null || isText(v['file'])) ||
     !Array.isArray(v['disable']) ||
@@ -101,11 +101,7 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !(v['startPaused'] === undefined || typeof v['startPaused'] === 'boolean') ||
     !(v['stopAt'] === undefined || typeof v['stopAt'] === 'string') ||
     !(v['stopAtEdited'] === undefined || typeof v['stopAtEdited'] === 'boolean') ||
-    !(
-      v['stopSession'] === undefined ||
-      v['stopSession'] === null ||
-      typeof v['stopSession'] === 'number'
-    ) ||
+    !(v['stopSession'] === undefined || v['stopSession'] === null || isText(v['stopSession'])) ||
     (v['stopAtEdited'] === true && typeof v['stopAt'] !== 'string') ||
     !isText(v['logSource'])
   ) {
@@ -238,7 +234,12 @@ export class RunPage {
   /** 前の実行と違う構成ファイルを選んでいる（出ている結果は前の実行のもの。選ぶ、照合を先に並べる）。 */
   protected readonly otherFile = computed(() => {
     const session = this.session();
-    return !!session && !this.running() && this.selected() !== session.file;
+    return (
+      !!session &&
+      !this.running() &&
+      this.run.status().run !== 'starting' &&
+      this.selected() !== session.file
+    );
   });
 
   /** 外す participant。ファイルを変えたら、そのファイルのセッションで外したもの（なければ空）に戻す。 */
@@ -389,7 +390,7 @@ export class RunPage {
   });
   /** 空欄なら自動停止せず、値があれば仮想時刻の上限にする。 */
   protected readonly stopAt = linkedSignal<
-    { file: string | null; id: number | null; value: string },
+    { file: string | null; id: string | null; value: string },
     string
   >({
     source: this.stopAtSource,
@@ -746,11 +747,11 @@ export class RunPage {
   }
 
   /** 持ち越した選択。持ち越したときと同じセッションの間だけ使う。 */
-  private carriedFor(session: number | null): RunChoices | null {
+  private carriedFor(session: string | null): RunChoices | null {
     return this.carried && this.carried.session === session ? this.carried : null;
   }
 
-  private carriedStopFor(session: number | null): RunChoices | null {
+  private carriedStopFor(session: string | null): RunChoices | null {
     return this.carried &&
       (this.carried.stopSession === undefined ? this.carried.session : this.carried.stopSession) ===
         session
@@ -765,6 +766,7 @@ export class RunPage {
   protected start(): void {
     const file = this.selected();
     if (file === null) return;
+    this.document.querySelector('mat-sidenav-content')?.scrollTo(0, 0);
     this.run.start(this.intent(), file);
   }
 

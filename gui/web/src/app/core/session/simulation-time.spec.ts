@@ -88,7 +88,7 @@ describe('SimulationTime', () => {
     expect(request.request.headers.get('Authorization')).toBe('Bearer secret');
     expect(time.waiting()).toBe(true);
     expect(time.controls().step.reason?.code).toBe('busy');
-    request.flush({ session_id: 1, command: { command: 'step', ms: 25 } });
+    request.flush({ run_id: '1', command: { command: 'step', ms: 25 } });
     expect(time.waiting()).toBe(true);
     // 答えを待つ間に同じ命令を送っても、2 つ目は送らない
     await time.step(25);
@@ -101,7 +101,7 @@ describe('SimulationTime', () => {
   it('pairs the last command with the problem when the launcher did not answer', async () => {
     const time = openPaused();
     const sent = time.step(10);
-    http.expectOne('api/time').flush({ session_id: 1, command: { command: 'step', ms: 10 } });
+    http.expectOne('api/time').flush({ run_id: '1', command: { command: 'step', ms: 10 } });
     await vi.advanceTimersByTimeAsync(ANSWER_MS);
     await sent;
     expect(time.waiting()).toBe(false);

@@ -82,7 +82,7 @@ describe('EcuVariables', () => {
     const request = http.expectOne('api/write');
     expect(request.request.headers.get('Authorization')).toBe('Bearer secret');
     expect(request.request.body).toEqual({
-      session: 1,
+      run_id: '1',
       writes: { Engine: { 'engine.speed': 900 } },
     });
     request.flush(refused?.response ?? null, { status: 400, statusText: 'Bad Request' });

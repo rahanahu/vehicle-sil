@@ -41,7 +41,7 @@ const GUARD_MS = 200;
 })
 class Host {
   readonly session = signal<SessionView | null>(null);
-  target = { session: 1, instance: 'one' };
+  target = { run_id: '1', instance: 'one' };
   readonly currentTarget = () => this.target;
   forces = 0;
   readonly ready = signal(true);
@@ -126,7 +126,7 @@ class Host {
 
 function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
   return {
-    id: 1,
+    id: '1',
     file: 'sim.yaml',
     disable: [],
     manual: [],
@@ -137,6 +137,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     stop: 'none',
     last_seq: 3,
     last_t_ms: null,
+    run_t0_ms: 0,
     sim_ms: null,
     time_omitted_fields: [],
     time: null,
@@ -262,7 +263,7 @@ describe('RunStatus', () => {
     } as never);
     await show(sessionViewFrom(summary(), summary({ stop: 'requested' })));
     (query('force-stop') as HTMLButtonElement).click();
-    host.target = { session: 1, instance: 'two' };
+    host.target = { run_id: '1', instance: 'two' };
     answer.next(true);
     answer.complete();
     expect(host.forces).toBe(0);
