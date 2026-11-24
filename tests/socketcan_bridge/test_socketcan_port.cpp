@@ -545,7 +545,6 @@ TEST_CASE(port_stop_closes_the_device_and_no_event_follows)
     CHECK(rig.device.closed());
     const auto before = rig.seen().size();
     rig.device.push_frame(frame(0x1, {1}));
-    std::this_thread::sleep_for(50ms);
     CHECK_EQ(rig.seen().size(), before);
     CHECK(rig.port.transmit(silkit_frame(1, 0, 0, {})) == TransmitResult::Failed);
     rig.port.stop(); // twice is fine

@@ -105,6 +105,7 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     plan.outside_lost_after = limits.outside_lost_after;
     plan.timeout = choices.timeout;
     plan.control_hello_timeout = limits.control_hello_timeout;
+    plan.ecu_start_margin = limits.ecu_start_margin;
     return plan;
 }
 

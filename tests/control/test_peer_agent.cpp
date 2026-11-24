@@ -12,8 +12,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -241,27 +243,50 @@ TEST_CASE(control_peer_agent_wakes_a_real_time_peer)
     // they take effect within a fraction of that, again and again. stop() cancels what is still
     // waiting, and a later submit is refused without touching the peer.
     InProcessRegistry registry;
-    std::atomic<int> value{0};
+    std::mutex value_mutex;
+    std::condition_variable value_cv;
+    int value = 0;
+    bool stepped = false;
     PeerOptions o;
     o.participant = "RealTimeAgent";
     o.registry_uri = registry.uri;
     o.virtual_time = std::nullopt;
     o.max_idle = 2s;
     Peer peer(o);
-    peer.input("value", [&] { return value.load(); }, [&](int v) { value = v; });
+    peer.input(
+        "value",
+        [&] {
+            const std::lock_guard lock(value_mutex);
+            if (!stepped)
+            {
+                stepped = true;
+                value_cv.notify_all();
+            }
+            return value;
+        },
+        [&](int v) {
+            {
+                const std::lock_guard lock(value_mutex);
+                value = v;
+            }
+            value_cv.notify_all();
+        });
     auto& agent = peer.agent();
     peer.start();
-    std::this_thread::sleep_for(50ms);
+    {
+        std::unique_lock lock(value_mutex);
+        CHECK(value_cv.wait_for(lock, vehicle_sil::test::scaled_timeout(5s), [&] { return stepped; }));
+    }
     for (int i = 1; i <= 3; ++i)
     {
         const auto begin = std::chrono::steady_clock::now();
         CHECK(agent.submit(Command{static_cast<std::uint64_t>(i), {{"value", std::int64_t{i}}}, std::nullopt}).status
               == SubmitStatus::Queued);
-        while (value.load() != i && std::chrono::steady_clock::now() - begin < 5s)
         {
-            std::this_thread::sleep_for(1ms);
+            std::unique_lock lock(value_mutex);
+            CHECK(value_cv.wait_for(lock, vehicle_sil::test::scaled_timeout(5s), [&] { return value == i; }));
+            CHECK_EQ(value, i);
         }
-        CHECK_EQ(value.load(), i);
         CHECK(std::chrono::steady_clock::now() - begin < 1s);
     }
     // Far in the future: still waiting when the peer stops.
@@ -274,7 +299,10 @@ TEST_CASE(control_peer_agent_wakes_a_real_time_peer)
     CHECK_EQ(results.size(), std::size_t{4});
     CHECK(results[3].seq == 4);
     CHECK(results[3].status == CommandStatus::Cancelled);
-    CHECK_EQ(value.load(), 3);
+    {
+        const std::lock_guard lock(value_mutex);
+        CHECK_EQ(value, 3);
+    }
 }
 
 TEST_CASE(control_peer_agent_monitors_the_networks)

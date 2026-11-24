@@ -505,7 +505,8 @@ struct HoldRun
 
 HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& dir, bool stuck, bool start_paused,
                  vehicle_sil::runner::RunControls& controls, std::optional<std::chrono::milliseconds> timeout,
-                 const std::function<void()>& during_hold, std::int64_t stop_timeout_ms = 10000)
+                 const std::function<void()>& during_hold, std::int64_t stop_timeout_ms = 10000,
+                 std::int64_t start_timeout_ms = 2000, std::chrono::milliseconds ecu_start_margin = 10000ms)
 {
     vehicle_sil::runner::TimeCommands& commands = controls.time();
     std::string config = std::string("vehicle_sil_simulation: 2\n") +
@@ -523,12 +524,12 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     HoldRun out;
     launch::RunRequest asked = sim_of(dir);
     asked.intent.stop_at_ms = 200;
-    asked.host.start_timeout_ms = 2000;
-    asked.intent.stop_at_ms = 200;
+    asked.host.start_timeout_ms = start_timeout_ms;
     asked.host.stop_timeout_ms = stop_timeout_ms;
     vehicle_sil::runner::RunObservers watching;
     launch::RunLent lent;
     vehicle_sil::runner::RunLimits limits;
+    limits.ecu_start_margin = ecu_start_margin;
     asked.intent.start_paused = start_paused;
     controls.set_control_server(true); // the endpoint below is the run's control server
     lent.controls = &controls;
@@ -594,11 +595,13 @@ vehicle_sil::runner::Command resume_command()
 /// The start's limit is start_timeout_ms before the hold and again after it, never in it.
 void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
+    constexpr std::int64_t kStartTimeoutMs = 1000;
+    constexpr std::int64_t kStopTimeoutMs = 500;
     {
         // Without the hold: a participant that never gets ready ends the start at its limit.
         vehicle_sil::runner::StopRequests stops;
         vehicle_sil::runner::RunControls controls(stops, false);
-        const HoldRun run = hold_run(ecu, helper, dir, true, false, controls, std::nullopt, [] {}, 1000);
+        const HoldRun run = hold_run(ecu, helper, dir, true, false, controls, std::nullopt, [] {}, kStopTimeoutMs, kStartTimeoutMs);
         require(!run.held, "no hold without --start-paused" + shown(run));
         require(run.report.run && run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::NotStarted &&
                     run.report.run->start.error.find("did not all get to their first step within") != std::string::npos &&
@@ -612,20 +615,23 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
                 "a stop while the participants end after a failed start is refused" + shown(run));
     }
     {
-        // With the hold: it stands still longer than start_timeout_ms (2000 ms), then the start
+        // With the hold: it stands still longer than start_timeout_ms (1000 ms), then the start
         // has start_timeout_ms again from the resume.
         vehicle_sil::runner::StopRequests stops;
         vehicle_sil::runner::RunControls controls(stops, true);
         vehicle_sil::runner::TimeCommands& commands = controls.time();
         std::chrono::steady_clock::time_point resumed{};
-        const HoldRun run = hold_run(ecu, helper, dir, true, true, controls, std::nullopt, [&] {
-            std::this_thread::sleep_for(3000ms);
-            resumed = std::chrono::steady_clock::now();
-            require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
-        }, 1000);
+        const HoldRun run = hold_run(
+            ecu, helper, dir, true, true, controls, std::nullopt,
+            [&] {
+                std::this_thread::sleep_for(1500ms);
+                resumed = std::chrono::steady_clock::now();
+                require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
+            },
+            kStopTimeoutMs, kStartTimeoutMs);
         require(run.held, "the run held before the first step" + shown(run));
         require(run.report.run && run.report.run->end.simulation == vehicle_sil::runner::SimulationEnd::NotStarted &&
-                    run.report.run->start.error.find("within 2000 ms after the run stopped standing still before it") !=
+                    run.report.run->start.error.find("within 1000 ms after the run stopped standing still before it") !=
                         std::string::npos &&
                     run.report.run->start.error.find("Stuck (") != std::string::npos,
                 "the start ended start_timeout_ms after the resume" + shown(run));
@@ -636,20 +642,30 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
 /// The ECUs wait as long as the run stands still before the first step: the limit the launcher
 /// gives them for their own wait for the start (it ends an ECU that never sees the simulation
 /// start) does not end the hold. Stands still longer than that limit would be without the hold
-/// (start_timeout_ms + stop_timeout_ms + 10 s), then resumes: the run passes.
+/// (start_timeout_ms + stop_timeout_ms + margin), then resumes: the run passes.
 void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    config::SimulationConfig limits;
-    const std::chrono::milliseconds without_hold{vehicle_sil::runner::detail::ecu_start_timeout_ms({}, false, 2000, 1000)};
-    require(without_hold == 13000ms, "the limit of an ECU without the hold is the one this test stands still for");
+    // Verify the production default 10 s margin, then run the live hold with a shorter test margin
+    // (RunLimits::ecu_start_margin) so the test does not sleep 14.5 s in real time.
+    require(vehicle_sil::runner::detail::ecu_start_timeout_ms({}, false, 2000, 1000) == 13000,
+            "the default limit of an ECU without the hold includes the 10 s margin");
+    constexpr std::int64_t kStartTimeoutMs = 1000;
+    constexpr std::int64_t kStopTimeoutMs = 500;
+    constexpr std::chrono::milliseconds kMargin{500};
+    const std::chrono::milliseconds without_hold{
+        vehicle_sil::runner::detail::ecu_start_timeout_ms({}, false, kStartTimeoutMs, kStopTimeoutMs, kMargin.count())};
+    require(without_hold == 2000ms, "the limit of an ECU without the hold is the one this test stands still for");
     vehicle_sil::runner::StopRequests stops;
     vehicle_sil::runner::RunControls controls(stops, true);
     vehicle_sil::runner::TimeCommands& commands = controls.time();
-    const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [&] {
-        // The ECU began its wait before the hold: this is longer than its limit would be.
-        std::this_thread::sleep_for(without_hold + 1500ms);
-        require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
-    }, 1000);
+    const HoldRun run = hold_run(
+        ecu, helper, dir, false, true, controls, std::nullopt,
+        [&] {
+            // The ECU began its wait before the hold: this is longer than its limit would be.
+            std::this_thread::sleep_for(without_hold + 300ms);
+            require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
+        },
+        kStopTimeoutMs, kStartTimeoutMs, kMargin);
     require(run.held, "the run held before the first step" + shown(run));
     require(run.took >= without_hold, "the run stood still longer than the limit" + shown(run));
     require(run.report.result() == launch::RunResult::Passed && run.report.run &&
