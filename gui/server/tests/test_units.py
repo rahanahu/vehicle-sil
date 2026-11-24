@@ -1319,3 +1319,232 @@ def test_timeout_scale(monkeypatch) -> None:
 
     monkeypatch.setattr(conftest, "TIMEOUT_SCALE", 2.5)
     assert conftest.scaled(4.0) == 10.0
+
+
+def test_serve_status_and_stop_command_lines() -> None:
+    from vehicle_sil_gui.launcher import serve_status_command, stop_command_line
+
+    assert serve_status_command() == b'{"command":"status"}\n'
+    assert serve_status_command(command_id=12) == b'{"command":"status","id":12}\n'
+    assert stop_command_line() == b'{"command":"stop"}\n'
+    assert stop_command_line("r-1") == b'{"command":"stop","run":"r-1"}\n'
+    assert stop_command_line("r-1", force=True) == b'{"command":"stop","run":"r-1","force":true}\n'
+    assert stop_command_line("r-1", force=False) == b'{"command":"stop","run":"r-1","force":false}\n'
+
+
+def test_allowed_run_facts_and_stop_requests_projection() -> None:
+    from vehicle_sil_gui.allowed import Facts, RunFacts, allowed, project_run_facts, stop_of
+
+    assert stop_of("none", None) == "none"
+    assert stop_of("none", 0) == "none"
+    assert stop_of("none", 1) == "requested"
+    assert stop_of("none", 2) == "forced"
+    assert stop_of("none", 5) == "forced"
+    assert stop_of("requested", 0) == "requested"
+    assert stop_of("requested", 2) == "forced"
+    assert stop_of("forced", 1) == "forced"
+
+    # Cold mode ignores execution_status and preserves exact Session boolean semantics.
+    cold_facts = project_run_facts(
+        True,
+        True,
+        "none",
+        launcher_mode="cold",
+        execution_status={"launcher_state": "ready", "run_state": {"stop": {"requests": 2}}},
+    )
+    assert cold_facts == RunFacts(running=True, stoppable=True, stop="none")
+
+    # Hot mode with running launcher_state and C++ stop.requests == 1.
+    hot_stopping = project_run_facts(
+        True,
+        True,
+        "none",
+        launcher_mode="hot",
+        execution_status={"launcher_state": "running", "run_state": {"stop": {"requests": 1}}},
+    )
+    assert hot_stopping == RunFacts(running=True, stoppable=True, stop="requested")
+    ans = allowed(Facts(), hot_stopping)
+    assert ans["start"]["reason"] == "already-running"
+    assert ans["stop"]["reason"] == "already-stopping"
+    assert ans["force"]["ok"] is True
+
+    # Hot post-result async drain window: session is still running, but C++ launcher_state left "running".
+    hot_draining = project_run_facts(
+        True,
+        True,
+        "none",
+        launcher_mode="hot",
+        execution_status={"launcher_state": "ready", "run_state": None},
+    )
+    assert hot_draining == RunFacts(running=True, stoppable=False, stop="none")
+    ans_drain = allowed(Facts(), hot_draining)
+    assert ans_drain["start"]["reason"] == "already-running"
+    assert ans_drain["stop"]["reason"] == "not-running"
+    assert ans_drain["force"]["reason"] == "not-running"
+
+    # Closing overrides everything.
+    ans_closing = allowed(Facts(closing=True), hot_stopping)
+    assert ans_closing["start"]["reason"] == "shutting-down"
+    assert ans_closing["stop"]["reason"] == "shutting-down"
+    assert ans_closing["force"]["reason"] == "shutting-down"
+
+    # Hot mode with execution_status=None (e.g. launcher_ends=True async drain) never falls back to Cold stoppable=True.
+    assert project_run_facts(
+        True,
+        True,
+        "none",
+        launcher_mode="hot",
+        execution_status=None,
+    ) == RunFacts(running=True, stoppable=False, stop="none")
+
+
+def test_session_allowed_uses_hot_execution_status_projection() -> None:
+    s = Session(1, "simulation.yaml", [], None, False, launcher_mode="hot")
+    cur_status: dict | None = {"launcher_state": "running", "run_state": {"stop": {"requests": 0}}}
+    s.execution_status = lambda: cur_status
+
+    a1 = s.allowed()
+    assert a1["start"]["reason"] == "already-running"
+    assert a1["stop"]["ok"] is True
+    assert a1["force"]["ok"] is True
+
+    # C++ reports 2 stop requests via ExecutionStatus -> force becomes already-forced without local request_stop().
+    cur_status = {"launcher_state": "running", "run_state": {"stop": {"requests": 2}}}
+    a2 = s.allowed()
+    assert a2["rev"] == a1["rev"] + 1
+    assert a2["stop"]["reason"] == "already-stopping"
+    assert a2["force"]["reason"] == "already-forced"
+
+    # C++ result arrived before session.ended(): stoppable drops to False while start stays already-running.
+    cur_status = {"launcher_state": "ready", "run_state": None}
+    a3 = s.allowed()
+    assert a3["rev"] == a2["rev"] + 1
+    assert a3["start"]["reason"] == "already-running"
+    assert a3["stop"]["reason"] == "not-running"
+    assert a3["force"]["reason"] == "not-running"
+
+    # Calling allowed() again with unchanged state keeps rev stable.
+    assert s.allowed()["rev"] == a3["rev"]
+
+
+def test_project_runtime_status_covers_all_cpp_launcher_states() -> None:
+    from vehicle_sil_gui.runtime import project_runtime_status
+
+    # Without serve feature -> Cold unsupported.
+    assert project_runtime_status(has_serve=False) == {
+        "mode": "cold",
+        "state": "cold",
+        "config": None,
+        "reason": "launcher-unsupported",
+        "message": "this launcher was built without serve mode: running each simulation in its own launcher",
+    }
+
+    # Transition states override live resident status.
+    assert project_runtime_status(
+        has_serve=True, resetting=True, resetting_config="a.yaml", resident_alive=True,
+    )["state"] == "resetting"
+    assert project_runtime_status(
+        has_serve=True, spawning_config="a.yaml", resident_alive=False,
+    ) == {"mode": "hot", "state": "preparing", "config": "a.yaml", "reason": None, "message": None}
+    assert project_runtime_status(
+        has_serve=True, preparing_config="a.yaml", resident_alive=True,
+    ) == {"mode": "hot", "state": "preparing", "config": "a.yaml", "reason": None, "message": None}
+
+    # All 6 C++ LauncherState values.
+    for cpp_state, expected_state, expected_cfg in (
+        ("preparing", "preparing", "a.yaml"),
+        ("ready", "ready", "a.yaml"),
+        ("running", "running", "a.yaml"),
+        ("ending", "idle", None),
+        ("contaminated", "idle", None),
+    ):
+        st = project_runtime_status(
+            has_serve=True,
+            resident_config="a.yaml",
+            resident_alive=True,
+            execution_status={
+                "launcher_state": cpp_state,
+                "config": "a.yaml",
+                "eligibility": {"eligible": True, "reason": None, "message": None},
+                "launcher_allowed": {"prepare": {"ok": True}, "run": {"ok": True}},
+            },
+        )
+        assert st == {"mode": "hot", "state": expected_state, "config": expected_cfg, "reason": None, "message": None}
+
+    # Real C++ Idle pre-prepare or after run without prepare():
+    # eligibility.eligible is False (reason=None) while launcher_allowed.run.ok is True -> ready.
+    assert project_runtime_status(
+        has_serve=True,
+        resident_config="a.yaml",
+        resident_alive=True,
+        execution_status={
+            "launcher_state": "idle",
+            "config": "a.yaml",
+            "eligibility": {"eligible": False, "reason": None, "message": None},
+            "launcher_allowed": {"prepare": {"ok": True, "reason": None}, "run": {"ok": True, "reason": None}},
+        },
+    ) == {"mode": "hot", "state": "ready", "config": "a.yaml", "reason": None, "message": None}
+
+    # Idle with ineligible config -> cold with eligibility reason.
+    assert project_runtime_status(
+        has_serve=True,
+        resident_config="fixed.yaml",
+        resident_alive=True,
+        execution_status={
+            "launcher_state": "idle",
+            "config": "fixed.yaml",
+            "eligibility": {"eligible": False, "reason": "fixed-registry", "message": "fixed registry"},
+            "launcher_allowed": {"run": {"ok": False, "reason": "fixed-registry"}},
+        },
+    ) == {"mode": "cold", "state": "cold", "config": "fixed.yaml", "reason": "fixed-registry", "message": "fixed registry"}
+
+    # Idle with no config / run blocked -> idle (including explicit config: None with empty launcher_allowed).
+    assert project_runtime_status(
+        has_serve=True,
+        resident_alive=True,
+        execution_status={
+            "launcher_state": "idle",
+            "config": "",
+            "eligibility": {"eligible": False, "reason": None, "message": None},
+            "launcher_allowed": {"run": {"ok": False, "reason": "not-prepared"}},
+        },
+    ) == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+    assert project_runtime_status(
+        has_serve=True,
+        resident_config="a.yaml",
+        resident_alive=True,
+        execution_status={
+            "launcher_state": "idle",
+            "config": None,
+            "launcher_allowed": {},
+        },
+    ) == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+
+    # release_config() mid-run marks resident ending while current_run is active -> stays running until run ends.
+    assert project_runtime_status(
+        has_serve=True,
+        resident_config="a.yaml",
+        resident_alive=True,
+        resident_ending=True,
+        current_run_active=True,
+        execution_status={
+            "launcher_state": "running",
+            "config": "a.yaml",
+            "eligibility": {"eligible": True, "reason": None, "message": None},
+            "launcher_allowed": {"prepare": {"ok": False, "reason": "busy"}, "run": {"ok": False, "reason": "busy"}},
+        },
+    ) == {"mode": "hot", "state": "running", "config": "a.yaml", "reason": None, "message": None}
+    assert project_runtime_status(
+        has_serve=True,
+        resident_config="a.yaml",
+        resident_alive=True,
+        resident_ending=True,
+        current_run_active=False,
+        execution_status={"launcher_state": "ready", "config": "a.yaml"},
+    ) == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+
+    # Cold fallback when no resident alive.
+    assert project_runtime_status(
+        has_serve=True,
+        cold_fallback=("a.yaml", "resident-failed", "boom"),
+    ) == {"mode": "cold", "state": "cold", "config": "a.yaml", "reason": "resident-failed", "message": "boom"}

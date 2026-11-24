@@ -121,7 +121,7 @@ class FakeRun:
     def can_send(self) -> bool:
         return self.input_open
 
-    def send_stop(self, count: int) -> bool:
+    def send_stop(self, count: int, *, force: bool | None = None) -> bool:
         if not self.input_open:
             return False
         self.stops.append(count)
@@ -259,6 +259,9 @@ class FakeRuntime:
             "reason": "fake-runtime",
             "message": None,
         }
+
+    def execution_status(self) -> dict | None:
+        return None
 
     async def prepare(self, config: str, *, variant: str | None = None, disable: tuple[str, ...] = (),
                       enable: tuple[str, ...] = (), manual: tuple[str, ...] = (),

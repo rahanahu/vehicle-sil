@@ -28,6 +28,61 @@ class Facts:
     command_changes_allowed: bool = False  # it also saves what changes the commands that run (--allow-command-changes)
 
 
+@dataclass(frozen=True)
+class RunFacts:
+    """Projected UI-facing state of the active run (from C++ ExecutionStatus in Hot mode or Session in Cold mode)."""
+    running: bool = False
+    stoppable: bool = False
+    stop: str = "none"
+
+
+_STOP_RANK = {"none": 0, "requested": 1, "forced": 2}
+
+
+def stop_of(local_stop: str, stop_requests: int | None = None) -> str:
+    """Combines the server's local stop state with C++ `run_state.stop.requests`."""
+    rank = _STOP_RANK.get(local_stop, 0)
+    if isinstance(stop_requests, int) and not isinstance(stop_requests, bool):
+        if stop_requests >= 2:
+            rank = max(rank, 2)
+        elif stop_requests == 1:
+            rank = max(rank, 1)
+    return ("none", "requested", "forced")[rank]
+
+
+def project_run_facts(
+    session_running: bool = False,
+    launcher_running: bool = False,
+    local_stop: str = "none",
+    *,
+    launcher_mode: str = "cold",
+    execution_status: dict | None = None,
+) -> RunFacts:
+    """Projects RunFacts from C++ ExecutionStatus in Hot mode or Session state in Cold mode."""
+    running = bool(session_running)
+    if launcher_mode == "hot":
+        if not isinstance(execution_status, dict):
+            return RunFacts(
+                running=running,
+                stoppable=False,
+                stop=local_stop,
+            )
+        stoppable = running and execution_status.get("launcher_state") == "running"
+        run_state = execution_status.get("run_state")
+        stop_info = run_state.get("stop") if isinstance(run_state, dict) else None
+        requests = stop_info.get("requests") if isinstance(stop_info, dict) else None
+        return RunFacts(
+            running=running,
+            stoppable=stoppable,
+            stop=stop_of(local_stop, requests if type(requests) is int else None),
+        )
+    return RunFacts(
+        running=running,
+        stoppable=running and bool(launcher_running),
+        stop=local_stop,
+    )
+
+
 def _answer(reason: str | None = None, message: str | None = None) -> dict:
     return {"ok": reason is None, "reason": reason, "message": message}
 
@@ -110,6 +165,12 @@ class Numbered:
         return {"rev": self.rev, **answer}
 
 
-def allowed(facts: Facts, running: bool, stoppable: bool, stop: str) -> dict:
-    return {"start": allowed_start(facts, running), "stop": allowed_stop(facts, stoppable, stop),
-            "force": allowed_force(facts, stoppable, stop), "save": allowed_save(facts)}
+def allowed(
+    facts: Facts,
+    running: bool | RunFacts = False,
+    stoppable: bool = False,
+    stop: str = "none",
+) -> dict:
+    run = running if isinstance(running, RunFacts) else RunFacts(running=running, stoppable=stoppable, stop=stop)
+    return {"start": allowed_start(facts, run.running), "stop": allowed_stop(facts, run.stoppable, run.stop),
+            "force": allowed_force(facts, run.stoppable, run.stop), "save": allowed_save(facts)}

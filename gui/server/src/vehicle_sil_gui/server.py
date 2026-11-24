@@ -26,7 +26,7 @@ from pathlib import Path
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
-from .allowed import Facts, Numbered, allowed as allowed_of, allowed_save, allowed_start
+from .allowed import Facts, Numbered, RunFacts, allowed as allowed_of, allowed_save, allowed_start, project_run_facts
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME, FEATURE_CHECK_FILE_ONLY,
                        NO_CONNECTION, REQUEST_FIELDS,
@@ -478,6 +478,9 @@ class GuiServer:
         self._starts_in_flight = 0  # post_run() calls not yet past registration and buffered-event drain
         self._started = asyncio.Event()  # set when no post_run() is in flight
         self._started.set()
+        self._prepares_in_flight = 0
+        self._prepared = asyncio.Event()  # set when no post_prepare() is in flight
+        self._prepared.set()
         self._next_session_id = 1
         self.numbered = Numbered()  # the numbering of `allowed` that every place that carries it shares
         self._check_lock = asyncio.Lock()
@@ -520,13 +523,27 @@ class GuiServer:
                      launcher_message="" if usable else "; ".join(p["message"] for p in self.launcher.problems),
                      save=self.o.save, command_changes_allowed=self.o.command_changes_allowed)
 
+    def _run_facts(self) -> RunFacts:
+        s = self.session
+        if s is None:
+            return RunFacts()
+        return project_run_facts(
+            s.state == "running",
+            s.launcher_running,
+            s.stop,
+            launcher_mode=s.launcher_mode,
+            execution_status=self.runtime.execution_status(),
+        )
+
     def allowed(self) -> dict:
         """The `allowed` of the run the screens see; with no run, what the server accepts (start)."""
         return self.session.allowed() if self.session else self.numbered.stamp(
-            allowed_of(self.facts(), False, False, "none"))
+            allowed_of(self.facts(), self._run_facts()))
 
     def _on_runtime_status(self, status: dict) -> None:
         self.hub.broadcast([{"type": "runtime", "runtime": status}])
+        if not self._starting:
+            self._push_allowed()
 
     def _push_allowed(self) -> None:
         """Tells the screens an `allowed` that changed with no `session` message to carry it (a start begins or
@@ -1093,9 +1110,12 @@ class GuiServer:
 
     async def post_prepare(self, request: web.Request) -> web.Response:
         """Prepares the persistent runtime for a configuration when eligible."""
+        self._prepares_in_flight += 1
+        self._prepared.clear()
         try:
             self._not_closing()
-            if self._starting or (self.session is not None and self.session.state == "running"):
+            start = allowed_start(self.facts(), self._run_facts().running)
+            if start["reason"] in ("already-running", "starting"):
                 raise Refused(409, "already-running", "a simulation is running: stop it before preparing another")
             body = await self._body(request)
             check_fields("api/prepare", body, ("file", "variant", "disable", "enable", "manual"))
@@ -1116,6 +1136,10 @@ class GuiServer:
             )
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
+        finally:
+            self._prepares_in_flight -= 1
+            if self._prepares_in_flight == 0:
+                self._prepared.set()
         return web.json_response({"instance": self.instance, "runtime": status})
 
     async def post_run(self, request: web.Request) -> web.Response:
@@ -1125,8 +1149,7 @@ class GuiServer:
             check_fields("api/run", body, REQUEST_FIELDS)
             self._not_closing()
             # The rules of a start are `allowed_start`'s (the same as the `allowed.start` the screens see).
-            running = self.session is not None and self.session.state == "running"
-            start = allowed_start(self.facts(), running)
+            start = allowed_start(self.facts(), self._run_facts().running)
             if start["reason"] in ("already-running", "starting"):  # the others are answered below, in order
                 raise Refused(409, start["reason"], start["message"])
         except (InvalidRequest, Refused) as e:
@@ -1269,6 +1292,7 @@ class GuiServer:
                           limits=self.o.limits, launcher_pid=handle.pid, launcher_mode=handle.mode,
                           scenario=scenario, manual=manual)
         session.facts = self.facts
+        session.execution_status = self.runtime.execution_status
         session.numbered = self.numbered
         preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
         gate = _PreStartGate(config.relative, request) if getattr(handle, "waits_for_check", True) else None
@@ -1303,7 +1327,7 @@ class GuiServer:
             except BaseException as exc:
                 gate.discard = True
                 try:
-                    handle.send_stop(2)
+                    handle.send_stop(2, force=True)
                     if not gate.cleanup_done.is_set():
                         with contextlib.suppress(TimeoutError, Exception):
                             async with asyncio.timeout(min(1.0, wait_cap)):
@@ -1557,10 +1581,14 @@ class GuiServer:
         """Records a stop request and writes its commands to the launcher's input (no await); whether something
         was written that may need draining."""
         session = run.session
+        run_facts = self._run_facts()
+        if session.launcher_mode == "hot":
+            if not run_facts.stoppable or run_facts.stop == "forced" or (not force and run_facts.stop != "none"):
+                return False
         commands = session.request_stop(force)
         if not commands:
             return False
-        delivered = run.handle.send_stop(commands)
+        delivered = run.handle.send_stop(commands, force=force)
         messages = []
         if not delivered:
             messages = session.problem("stop-not-delivered", "the stop could not be written to the launcher's "
@@ -1836,6 +1864,8 @@ class GuiServer:
                     self._control_started(run, m["event"])
                 elif m["event"]["event"] == "phase" and m["event"].get("phase") == "stopping":
                     run.variables.read_last()  # the simulation is over: its control server closes soon
+                elif m["event"]["event"] == "state" and run.session.launcher_mode == "hot":
+                    self._push_allowed()
         return sent
 
     def relay(self, session: Session, line: str, run: Run | None = None) -> None:
@@ -1890,6 +1920,11 @@ class GuiServer:
         except TimeoutError:
             log.warning("a run was still starting when the server stopped")
         await self.runtime.shutdown(self._hurry, self.o.stop_timeout_s)
+        try:
+            async with asyncio.timeout(START_WAIT_S):
+                await self._prepared.wait()
+        except TimeoutError:
+            log.warning("a prepare was still running when the server stopped")
         for proc in list(self._checks):  # one that was starting when the end began
             process.kill_tree(proc)
         for pid in self.runtime.active_pids():

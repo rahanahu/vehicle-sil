@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
@@ -24,6 +25,7 @@ from .launcher import (
     serve_command,
     serve_prepare_command,
     serve_run_command,
+    serve_status_command,
     stop_command_line,
     with_participant_timeouts,
 )
@@ -115,7 +117,7 @@ class RunHandle(Protocol):
 
     def can_send(self) -> bool: ...
 
-    def send_stop(self, count: int) -> bool: ...
+    def send_stop(self, count: int, *, force: bool | None = None) -> bool: ...
 
     def send_time(self, command: dict) -> bool: ...
 
@@ -136,6 +138,8 @@ class LauncherRuntime(Protocol):
     def sync_launcher(self) -> None: ...
 
     def status(self) -> dict: ...
+
+    def execution_status(self) -> dict | None: ...
 
     async def prepare(self, config: str, *, variant: str | None = None, disable: tuple[str, ...] = (),
                       enable: tuple[str, ...] = (), manual: tuple[str, ...] = (),
@@ -290,7 +294,7 @@ class OneShotRunHandle:
     def can_send(self) -> bool:
         return self._proc.stdin is not None and not self._proc.stdin.is_closing()
 
-    def send_stop(self, count: int) -> bool:
+    def send_stop(self, count: int, *, force: bool | None = None) -> bool:
         if not self.can_send():
             return False
         try:
@@ -432,6 +436,9 @@ class OneShotRuntime:
             "message": None,
         }
 
+    def execution_status(self) -> dict | None:
+        return None
+
     async def prepare(self, config: str, *, variant: str | None = None, disable: tuple[str, ...] = (),
                       enable: tuple[str, ...] = (), manual: tuple[str, ...] = (),
                       want_control: bool = True) -> dict:
@@ -494,12 +501,20 @@ class ServeRunHandle:
             and not proc.stdin.is_closing()
         )
 
-    def send_stop(self, count: int) -> bool:
-        if not self.can_send():
+    def send_stop(self, count: int, *, force: bool | None = None) -> bool:
+        if not self.can_send() or count <= 0:
             return False
         assert self._resident.proc.stdin is not None and self._run_id is not None
+        if force is not None and self._resident.supports_stop_force:
+            line = (
+                stop_command_line(self._run_id, force=True)
+                if force
+                else stop_command_line(self._run_id, force=False) * count
+            )
+        else:
+            line = stop_command_line(self._run_id) * count
         try:
-            self._resident.proc.stdin.write(stop_command_line(self._run_id) * count)
+            self._resident.proc.stdin.write(line)
         except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
             return False
         return True
@@ -561,6 +576,120 @@ class ServeRunHandle:
             self._drain_done.set()
 
 
+_EXECUTION_STATUS_KEYS = (
+    "instance",
+    "status_rev",
+    "launcher_state",
+    "config",
+    "eligibility",
+    "launcher_allowed",
+    "active_run_id",
+    "last_run_id",
+    "run_state",
+)
+
+
+def _extract_execution_status(raw: dict) -> dict:
+    return {k: copy.deepcopy(raw[k]) for k in _EXECUTION_STATUS_KEYS if k in raw}
+
+
+def project_runtime_status(
+    *,
+    has_serve: bool,
+    cold_fallback: tuple[str | None, str | None, str | None] | None = None,
+    resetting: bool = False,
+    resetting_config: str | None = None,
+    spawning_config: str | None = None,
+    preparing_config: str | None = None,
+    resident_config: str | None = None,
+    resident_alive: bool = False,
+    resident_ending: bool = False,
+    current_run_active: bool = False,
+    execution_status: dict | None = None,
+) -> dict:
+    """Projects Protocol v3 RuntimeStatus from C++ ExecutionStatus plus GUI-local transition/fallback state."""
+    if not has_serve:
+        cfg = cold_fallback[0] if cold_fallback is not None else None
+        return {
+            "mode": "cold",
+            "state": "cold",
+            "config": cfg,
+            "reason": "launcher-unsupported",
+            "message": _UNSUPPORTED_MSG,
+        }
+    if resetting:
+        return {
+            "mode": "hot",
+            "state": "resetting",
+            "config": resetting_config,
+            "reason": None,
+            "message": None,
+        }
+    if spawning_config is not None or preparing_config is not None:
+        return {
+            "mode": "hot",
+            "state": "preparing",
+            "config": spawning_config if spawning_config is not None else preparing_config,
+            "reason": None,
+            "message": None,
+        }
+    if resident_alive and (not resident_ending or current_run_active):
+        if isinstance(execution_status, dict):
+            lstate = execution_status.get("launcher_state")
+            if "config" in execution_status:
+                raw_cfg = execution_status.get("config")
+                cfg = raw_cfg if isinstance(raw_cfg, str) and raw_cfg else None
+            else:
+                cfg = resident_config
+            elig = execution_status.get("eligibility")
+            elig_dict = elig if isinstance(elig, dict) else {}
+            allowed_map = execution_status.get("launcher_allowed")
+            run_allowed = allowed_map.get("run") if isinstance(allowed_map, dict) else None
+            run_ok = run_allowed.get("ok") if isinstance(run_allowed, dict) else None
+
+            if lstate == "preparing":
+                return {"mode": "hot", "state": "preparing", "config": cfg, "reason": None, "message": None}
+            if lstate == "running":
+                return {"mode": "hot", "state": "running", "config": cfg, "reason": None, "message": None}
+            if lstate == "ready":
+                return {"mode": "hot", "state": "ready", "config": cfg, "reason": None, "message": None}
+            if lstate == "idle":
+                elig_reason = elig_dict.get("reason")
+                has_reason = isinstance(elig_reason, str) and bool(elig_reason)
+                if elig_dict.get("eligible") is False and (
+                    has_reason or (bool(cfg) and run_ok is False)
+                ):
+                    reason = elig_reason if has_reason else None
+                    raw_msg = elig_dict.get("message")
+                    message = raw_msg if isinstance(raw_msg, str) and raw_msg else None
+                    return {"mode": "cold", "state": "cold", "config": cfg, "reason": reason, "message": message}
+                if cfg and run_ok is not False:
+                    return {"mode": "hot", "state": "ready", "config": cfg, "reason": None, "message": None}
+                return {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+            if lstate in ("ending", "contaminated"):
+                return {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+            return {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+        if resident_config:
+            return {"mode": "hot", "state": "ready", "config": resident_config, "reason": None, "message": None}
+        return {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+    if cold_fallback is not None:
+        cfg, reason, message = cold_fallback
+        return {
+            "mode": "cold",
+            "state": "cold",
+            "config": cfg,
+            "reason": reason,
+            "message": message,
+        }
+    return {
+        "mode": "hot",
+        "state": "idle",
+        "config": None,
+        "reason": None,
+        "message": None,
+    }
+
+
 @dataclass(eq=False)
 class _Resident:
     config: str
@@ -568,6 +697,7 @@ class _Resident:
     proc: asyncio.subprocess.Process
     credentials: Path | None
     token: str | None
+    supports_stop_force: bool = False
     hello: dict | None = None
     hello_size: int = 0
     idle: asyncio.Event = field(default_factory=asyncio.Event)
@@ -578,6 +708,9 @@ class _Resident:
     exit_code: int | None = None
     pending_run: ServeRunHandle | None = None
     pending_prepare: tuple[int | None, asyncio.Future[dict]] | None = None
+    pending_status: tuple[int | None, asyncio.Future[dict]] | None = None
+    execution_status: dict | None = None
+    status_rev: int = -1
     current_run: ServeRunHandle | None = None
     line_seq: int = 0
     run_t0: int = 0
@@ -587,6 +720,24 @@ class _Resident:
     def next_command_id(self) -> int:
         self.command_seq += 1
         return self.command_seq
+
+
+def _initial_execution_status(resident: _Resident) -> dict:
+    instance = (resident.hello or {}).get("launcher")
+    return {
+        "instance": instance if isinstance(instance, str) else None,
+        "status_rev": 0,
+        "launcher_state": "idle",
+        "config": resident.config,
+        "eligibility": {"eligible": True, "reason": None, "message": None},
+        "launcher_allowed": {
+            "prepare": {"ok": True, "reason": None, "message": None},
+            "run": {"ok": True, "reason": None, "message": None},
+        },
+        "active_run_id": None,
+        "last_run_id": None,
+        "run_state": None,
+    }
 
 
 class ServeRuntime:
@@ -631,14 +782,12 @@ class ServeRuntime:
         self._closing = False
         self.resident_starts = 0
         self.runs_completed = 0
-        has_serve = FEATURE_SERVE in launcher.features
-        self._status: dict = {
-            "mode": "hot" if has_serve else "cold",
-            "state": "idle" if has_serve else "cold",
-            "config": None,
-            "reason": None if has_serve else "launcher-unsupported",
-            "message": None if has_serve else _UNSUPPORTED_MSG,
-        }
+        self._cold_fallback: tuple[str | None, str | None, str | None] | None = None
+        self._spawning_config: str | None = None
+        self._preparing_config: str | None = None
+        self._resetting = False
+        self._resetting_config: str | None = None
+        self._last_status: dict = self._projected_status()
 
     @property
     def resident_pid(self) -> int | None:
@@ -646,42 +795,128 @@ class ServeRuntime:
             return self._resident.proc.pid
         return None
 
-    def sync_launcher(self) -> None:
-        has_serve = FEATURE_SERVE in self._launcher.features
-        if not has_serve and self._status["config"] is None and self._resident is None:
-            self._status = {
-                "mode": "cold",
-                "state": "cold",
-                "config": None,
-                "reason": "launcher-unsupported",
-                "message": _UNSUPPORTED_MSG,
-            }
-        elif has_serve and self._status["reason"] == "launcher-unsupported" and self._resident is None:
-            self._status = {
-                "mode": "hot",
-                "state": "idle",
-                "config": None,
-                "reason": None,
-                "message": None,
-            }
+    def execution_status(self) -> dict | None:
+        resident = self._resident
+        if (
+            resident is not None
+            and not resident.exited
+            and resident.proc.returncode is None
+            and (not resident.ending or resident.current_run is not None)
+            and resident.execution_status is not None
+        ):
+            return copy.deepcopy(resident.execution_status)
+        return None
 
-    def status(self) -> dict:
-        return dict(self._status)
+    def _projected_status(self) -> dict:
+        resident = self._resident
+        resident_alive = resident is not None and not resident.exited and resident.proc.returncode is None
+        return project_runtime_status(
+            has_serve=FEATURE_SERVE in self._launcher.features,
+            cold_fallback=self._cold_fallback,
+            resetting=self._resetting,
+            resetting_config=self._resetting_config,
+            spawning_config=self._spawning_config,
+            preparing_config=self._preparing_config,
+            resident_config=resident.config if resident is not None else None,
+            resident_alive=resident_alive,
+            resident_ending=resident.ending if resident is not None else False,
+            current_run_active=resident.current_run is not None if resident is not None else False,
+            execution_status=resident.execution_status if resident is not None else None,
+        )
 
-    def _set_status(self, mode: str, state: str, config: str | None,
-                    reason: str | None = None, message: str | None = None, *, notify: bool = True) -> dict:
-        new_status = {
-            "mode": mode,
-            "state": state,
-            "config": config,
-            "reason": reason,
-            "message": message,
-        }
-        changed = new_status != self._status
-        self._status = new_status
+    def _sync_status(self, *, notify: bool = True) -> dict:
+        new_status = self._projected_status()
+        changed = new_status != self._last_status
+        self._last_status = new_status
         if changed and notify and self._on_status is not None:
             self._on_status(dict(new_status))
         return dict(new_status)
+
+    def _schedule_sync_status(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._sync_status()
+            return
+        loop.call_soon(self._sync_status_if_open)
+
+    def _sync_status_if_open(self) -> None:
+        if not self._closing:
+            self._sync_status()
+
+    def sync_launcher(self) -> None:
+        has_serve = FEATURE_SERVE in self._launcher.features
+        if has_serve and self._cold_fallback is not None and self._cold_fallback[1] == "launcher-unsupported":
+            self._cold_fallback = None
+        self._sync_status(notify=False)
+
+    def status(self) -> dict:
+        return self._projected_status()
+
+    def _apply_execution_status(self, resident: _Resident, raw: dict) -> bool:
+        if not isinstance(raw, dict) or not isinstance(raw.get("launcher_state"), str):
+            return False
+        expected_instance = (resident.hello or {}).get("launcher")
+        incoming_instance = raw.get("instance")
+        if isinstance(expected_instance, str) and expected_instance:
+            if not isinstance(incoming_instance, str) or incoming_instance != expected_instance:
+                return False
+        rev = raw.get("status_rev")
+        if type(rev) is not int or rev < resident.status_rev:
+            return False
+        if (current := resident.current_run) is not None and current.run_id is not None:
+            lstate = raw.get("launcher_state")
+            if lstate != "running" and raw.get("last_run_id") != current.run_id:
+                return False
+            active_id = raw.get("active_run_id")
+            if isinstance(active_id, str) and active_id and active_id != current.run_id:
+                return False
+        resident.status_rev = rev
+        resident.execution_status = _extract_execution_status(raw)
+        return True
+
+    async def _send_status(self, resident: _Resident) -> dict | None:
+        stdin = resident.proc.stdin
+        if stdin is None or stdin.is_closing() or resident.proc.returncode is not None or resident.ending:
+            return None
+        cmd_id = resident.next_command_id()
+        fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+        resident.pending_status = (cmd_id, fut)
+        try:
+            stdin.write(serve_status_command(command_id=cmd_id))
+        except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
+            resident.pending_status = None
+            return None
+        try:
+            async with asyncio.timeout(self._check_timeout_s):
+                return await fut
+        except (TimeoutError, RuntimeError):
+            return None
+        finally:
+            if resident.pending_status is not None and resident.pending_status[0] == cmd_id:
+                resident.pending_status = None
+
+    async def query_status(self) -> dict | None:
+        if self._closing or FEATURE_SERVE_PREPARE not in self._launcher.features:
+            return self.execution_status()
+        resident = self._resident
+        if resident is None or resident.exited or resident.ending or resident.proc.returncode is not None:
+            return None
+        await self._send_status(resident)
+        return self.execution_status()
+
+    async def _reset_resident(self, resident: _Resident, config: str | None) -> None:
+        self._resetting = True
+        self._resetting_config = config
+        if not self._closing:
+            self._sync_status()
+        try:
+            await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+        finally:
+            self._resetting = False
+            self._resetting_config = None
+            if not self._closing:
+                self._sync_status()
 
     async def _run_file_only_check(
         self,
@@ -789,20 +1024,30 @@ class ServeRuntime:
             and resident.want_control == want_control
             and resident.idle.is_set()
         ):
-            ev = await self._send_prepare(
-                resident, variant=variant, disable=disable, enable=enable, manual=manual,
-            )
+            prev_preparing = self._preparing_config
+            self._preparing_config = config
+            self._sync_status()
+            try:
+                ev = await self._send_prepare(
+                    resident, variant=variant, disable=disable, enable=enable, manual=manual,
+                )
+            except BaseException:
+                self._preparing_config = prev_preparing
+                await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+                raise
+            finally:
+                self._preparing_config = prev_preparing
+                if not self._closing:
+                    self._sync_status()
             if self._closing:
                 raise Refused(503, "shutting-down", "the GUI server is stopping")
             if ev is not None:
                 parsed = parse_prepare_event(ev)
                 if parsed is not None:
                     return parsed, resident
-            self._set_status("hot", "resetting", config)
-            await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+            await self._reset_resident(resident, config)
             if self._closing:
                 raise Refused(503, "shutting-down", "the GUI server is stopping")
-            self._set_status("hot", "idle", None)
 
         if FEATURE_CHECK_FILE_ONLY in self._launcher.features:
             return await self._run_file_only_check(
@@ -871,38 +1116,64 @@ class ServeRuntime:
             )
             decision = inspection.hot
             if not decision.hot:
-                if self._resident is not None:
-                    self._set_status("hot", "resetting", None if decision.reason == "launcher-unsupported" else config)
-                    await self._close_resident(self._resident, asyncio.Event(), self._escalate_wait_s)
                 status_cfg = None if decision.reason == "launcher-unsupported" else config
-                return self._set_status("cold", "cold", status_cfg, decision.reason, decision.message)
-            resident = await self._ensure_resident(config, want_control=want_control)
-            if resident is None:
-                return self.status()
-            already_prepared = (
+                self._cold_fallback = (status_cfg, decision.reason, decision.message)
+                if self._resident is not None:
+                    await self._reset_resident(self._resident, status_cfg)
+                return self._sync_status()
+
+            already_prepared_hint = (
                 prepared_resident is not None
-                and resident is inspected_resident
-                and resident is prepared_resident
+                and prepared_resident is inspected_resident
+                and prepared_resident is self._resident
             )
-            if FEATURE_SERVE_PREPARE in self._launcher.features and not already_prepared:
-                ev = await self._send_prepare(
-                    resident, variant=variant, disable=disable, enable=enable, manual=manual,
+            self._cold_fallback = None
+            if not already_prepared_hint:
+                self._preparing_config = config
+                self._sync_status()
+            try:
+                resident = await self._ensure_resident(config, want_control=want_control)
+                if resident is None:
+                    self._preparing_config = None
+                    return self._sync_status()
+                already_prepared = (
+                    prepared_resident is not None
+                    and resident is inspected_resident
+                    and resident is prepared_resident
                 )
-                if self._closing:
-                    await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
-                    raise Refused(503, "shutting-down", "the GUI server is stopping")
-                parsed = parse_prepare_event(ev) if ev is not None else None
-                if parsed is None:
-                    await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
-                    return self._set_status(
-                        "cold", "cold", config, "resident-failed",
-                        "the persistent launcher could not prepare the configuration",
-                    )
-                if not parsed.hot.hot:
-                    self._set_status("hot", "resetting", config)
-                    await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
-                    return self._set_status("cold", "cold", config, parsed.hot.reason, parsed.hot.message)
-            return self._set_status("hot", "ready", config)
+                if FEATURE_SERVE_PREPARE in self._launcher.features and not already_prepared:
+                    try:
+                        ev = await self._send_prepare(
+                            resident, variant=variant, disable=disable, enable=enable, manual=manual,
+                        )
+                    except BaseException:
+                        self._preparing_config = None
+                        await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+                        raise
+                    if self._closing:
+                        self._preparing_config = None
+                        await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                        raise Refused(503, "shutting-down", "the GUI server is stopping")
+                    parsed = parse_prepare_event(ev) if ev is not None else None
+                    if parsed is None:
+                        self._preparing_config = None
+                        self._cold_fallback = (
+                            config,
+                            "resident-failed",
+                            "the persistent launcher could not prepare the configuration",
+                        )
+                        await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                        return self._sync_status()
+                    if not parsed.hot.hot:
+                        self._preparing_config = None
+                        self._cold_fallback = (config, parsed.hot.reason, parsed.hot.message)
+                        await self._reset_resident(resident, config)
+                        return self._sync_status()
+            finally:
+                self._preparing_config = None
+                if not self._closing:
+                    self._sync_status()
+            return self.status()
 
     async def release_config(self, config: str) -> None:
         async with self._lock:
@@ -911,16 +1182,8 @@ class ServeRuntime:
             if self._resident.current_run is not None or self._resident.pending_run is not None:
                 self._resident.ending = True
                 return
-            self._set_status("hot", "resetting", None)
-            await self._close_resident(self._resident, asyncio.Event(), self._escalate_wait_s)
-            if not self._closing:
-                has_serve = FEATURE_SERVE in self._launcher.features
-                self._set_status(
-                    "hot" if has_serve else "cold",
-                    "idle" if has_serve else "cold",
-                    None,
-                    None if has_serve else "launcher-unsupported",
-                )
+            self._cold_fallback = None
+            await self._reset_resident(self._resident, None)
 
     async def _start_cold(self, spec: RunSpec) -> RunHandle:
         if self._closing:
@@ -948,13 +1211,14 @@ class ServeRuntime:
                 )
                 decision = inspection.hot
             if not decision.hot:
-                if self._resident is not None:
-                    self._set_status("hot", "resetting", None if decision.reason == "launcher-unsupported" else spec.config)
-                    await self._close_resident(self._resident, asyncio.Event(), self._escalate_wait_s)
                 status_cfg = None if decision.reason == "launcher-unsupported" else spec.config
-                self._set_status("cold", "cold", status_cfg, decision.reason, decision.message)
+                self._cold_fallback = (status_cfg, decision.reason, decision.message)
+                if self._resident is not None:
+                    await self._reset_resident(self._resident, status_cfg)
+                self._sync_status()
                 return await self._start_cold(spec)
 
+            self._cold_fallback = None
             resident = await self._ensure_resident(spec.config, want_control=want_control)
             if self._closing:
                 raise Refused(503, "shutting-down", "the GUI server is stopping")
@@ -978,9 +1242,13 @@ class ServeRuntime:
                     wrote = False
             if not wrote:
                 resident.pending_run = None
-                self._set_status("cold", "cold", spec.config, "resident-failed",
-                                 "the persistent launcher closed unexpectedly before starting the run")
+                self._cold_fallback = (
+                    spec.config,
+                    "resident-failed",
+                    "the persistent launcher closed unexpectedly before starting the run",
+                )
                 await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                self._sync_status()
                 return await self._start_cold(spec)
 
             try:
@@ -988,10 +1256,21 @@ class ServeRuntime:
                     await handle._started_event.wait()
             except TimeoutError:
                 resident.pending_run = None
-                self._set_status("cold", "cold", spec.config, "resident-failed",
-                                 "the persistent launcher did not answer run_start in time")
+                self._cold_fallback = (
+                    spec.config,
+                    "resident-failed",
+                    "the persistent launcher did not answer run_start in time",
+                )
                 await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                self._sync_status()
                 return await self._start_cold(spec)
+            except BaseException:
+                if resident.pending_run is handle:
+                    resident.pending_run = None
+                await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+                if not self._closing:
+                    self._sync_status()
+                raise
 
             if self._closing:
                 await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
@@ -1000,11 +1279,12 @@ class ServeRuntime:
             if handle._run_id is None:
                 resident.pending_run = None
                 reason_msg = handle._startup_refusal or resident.startup_error or "the persistent launcher could not start the run"
-                self._set_status("cold", "cold", spec.config, "resident-failed", reason_msg)
+                self._cold_fallback = (spec.config, "resident-failed", reason_msg)
                 await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                self._sync_status()
                 return await self._start_cold(spec)
 
-            self._set_status("hot", "running", spec.config)
+            self._sync_status()
             return handle
 
     async def _ensure_resident(self, config: str, *, want_control: bool) -> _Resident | None:
@@ -1026,76 +1306,114 @@ class ServeRuntime:
                     return resident
             except TimeoutError:
                 pass
-            self._set_status("hot", "resetting", config)
-            await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+            await self._reset_resident(resident, config)
         elif resident is not None:
-            self._set_status("hot", "resetting", config)
-            await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+            await self._reset_resident(resident, config)
 
-        self._set_status("hot", "preparing", config)
         return await self._spawn_resident(config, want_control=want_control)
 
     async def _spawn_resident(self, config: str, *, want_control: bool) -> _Resident | None:
+        self._spawning_config = config
+        self._sync_status()
         credentials: Path | None = None
         token: str | None = None
-        if want_control:
+        proc: asyncio.subprocess.Process | None = None
+        resident: _Resident | None = None
+        try:
+            if want_control:
+                making = asyncio.ensure_future(asyncio.to_thread(control.credentials_file))
+                try:
+                    credentials, token = await asyncio.shield(making)
+                except asyncio.CancelledError:
+                    making.add_done_callback(
+                        lambda f: not f.cancelled() and f.exception() is None and control.remove(f.result()[0])
+                    )
+                    raise
+                except OSError as e:
+                    self._cold_fallback = (
+                        config,
+                        "resident-failed",
+                        f"cannot create serve credentials ({e}): falling back to cold run",
+                    )
+                    return None
+                if self._closing:
+                    control.remove(credentials)
+                    credentials = None
+                    raise Refused(503, "shutting-down", "the GUI server is stopping")
+
+            argv = with_participant_timeouts(
+                serve_command(self._launcher, config, credentials),
+                self._participant_start_timeout_ms,
+                self._participant_stop_timeout_ms,
+            )
             try:
-                credentials, token = await asyncio.to_thread(control.credentials_file)
+                proc = await process.start(argv, cwd=self._cwd)
             except OSError as e:
-                self._set_status("cold", "cold", config, "resident-failed",
-                                 f"cannot create serve credentials ({e}): falling back to cold run")
+                control.remove(credentials)
+                credentials = None
+                self._cold_fallback = (
+                    config,
+                    "resident-failed",
+                    f"cannot start {self._launcher.path} serve: {e}",
+                )
                 return None
             if self._closing:
+                process.kill_tree(proc)
+                process.close_pipes(proc)
                 control.remove(credentials)
+                credentials = None
+                proc = None
                 raise Refused(503, "shutting-down", "the GUI server is stopping")
 
-        argv = with_participant_timeouts(
-            serve_command(self._launcher, config, credentials),
-            self._participant_start_timeout_ms,
-            self._participant_stop_timeout_ms,
-        )
-        try:
-            proc = await process.start(argv, cwd=self._cwd)
-        except OSError as e:
-            control.remove(credentials)
-            self._set_status("cold", "cold", config, "resident-failed",
-                             f"cannot start {self._launcher.path} serve: {e}")
-            return None
-        if self._closing:
-            process.kill_tree(proc)
-            process.close_pipes(proc)
-            control.remove(credentials)
-            raise Refused(503, "shutting-down", "the GUI server is stopping")
+            self.resident_starts += 1
+            resident = _Resident(
+                config=config,
+                want_control=want_control,
+                proc=proc,
+                credentials=credentials,
+                token=token,
+                supports_stop_force=FEATURE_SERVE_PREPARE in self._launcher.features,
+            )
+            credentials = None
+            proc = None
+            self._residents.add(resident)
+            self._resident = resident
+            resident.follow_task = asyncio.create_task(self._follow_resident(resident))
 
-        self.resident_starts += 1
-        resident = _Resident(
-            config=config,
-            want_control=want_control,
-            proc=proc,
-            credentials=credentials,
-            token=token,
-        )
-        self._residents.add(resident)
-        self._resident = resident
-        resident.follow_task = asyncio.create_task(self._follow_resident(resident))
+            try:
+                async with asyncio.timeout(RESIDENT_READY_TIMEOUT_S):
+                    await resident.ready_or_ended.wait()
+            except TimeoutError:
+                resident.startup_error = "the persistent launcher did not become idle in time"
 
-        try:
-            async with asyncio.timeout(RESIDENT_READY_TIMEOUT_S):
-                await resident.ready_or_ended.wait()
-        except TimeoutError:
-            resident.startup_error = "the persistent launcher did not become idle in time"
+            if self._closing:
+                await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                resident = None
+                raise Refused(503, "shutting-down", "the GUI server is stopping")
 
-        if self._closing:
-            await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
-            raise Refused(503, "shutting-down", "the GUI server is stopping")
+            if resident.exited or resident.ending or resident.startup_error is not None or not resident.idle.is_set():
+                msg = resident.startup_error or "the persistent launcher failed during startup"
+                await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                resident = None
+                self._cold_fallback = (config, "resident-failed", msg)
+                return None
 
-        if resident.exited or resident.ending or resident.startup_error is not None or not resident.idle.is_set():
-            msg = resident.startup_error or "the persistent launcher failed during startup"
-            await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
-            self._set_status("cold", "cold", config, "resident-failed", msg)
-            return None
-
-        return resident
+            ready_resident = resident
+            resident = None
+            return ready_resident
+        except BaseException:
+            if resident is not None:
+                await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+            elif proc is not None:
+                process.kill_tree(proc)
+                process.close_pipes(proc)
+            if credentials is not None:
+                control.remove(credentials)
+            raise
+        finally:
+            self._spawning_config = None
+            if not self._closing:
+                self._sync_status()
 
     async def _follow_resident(self, resident: _Resident) -> None:
         proc = resident.proc
@@ -1123,10 +1441,14 @@ class ServeRuntime:
                 _, fut = prep
                 if not fut.done():
                     fut.set_exception(RuntimeError("the persistent launcher exited during prepare"))
+            if (stat := resident.pending_status) is not None:
+                resident.pending_status = None
+                _, fut = stat
+                if not fut.done():
+                    fut.set_exception(RuntimeError("the persistent launcher exited during status"))
             if not self._closing and self._resident is resident:
                 self._resident = None
-                if current is None and self._status.get("state") in ("ready", "preparing", "running"):
-                    self._set_status("hot", "idle", None)
+                self._sync_status()
         finally:
             reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
@@ -1136,6 +1458,8 @@ class ServeRuntime:
             self._residents.discard(resident)
             if self._resident is resident:
                 self._resident = None
+                if not self._closing:
+                    self._sync_status()
 
     async def _read_resident(self, resident: _Resident) -> None:
         assert resident.proc.stdout is not None and resident.proc.stderr is not None
@@ -1180,12 +1504,41 @@ class ServeRuntime:
                 resident.startup_error = f"serve wrote events format {version!r}, expected 3"
                 resident.ending = True
                 resident.ready_or_ended.set()
+            elif resident.execution_status is None:
+                resident.execution_status = _initial_execution_status(resident)
+                resident.status_rev = max(resident.status_rev, 0)
             return
 
         if kind == "idle":
             if current is None and not resident.ending:
+                if resident.execution_status is None:
+                    resident.execution_status = _initial_execution_status(resident)
+                    resident.status_rev = max(resident.status_rev, 0)
+                else:
+                    st = resident.execution_status
+                    if st.get("launcher_state") == "running":
+                        elig = st.get("eligibility")
+                        elig_ok = elig.get("eligible", True) if isinstance(elig, dict) else True
+                        st["launcher_state"] = "ready" if elig_ok and st.get("config") else "idle"
+                    st["active_run_id"] = None
+                    st["run_state"] = None
+                    elig = st.get("eligibility")
+                    elig_reason = elig.get("reason") if isinstance(elig, dict) else None
+                    elig_blocked = (
+                        isinstance(elig, dict)
+                        and elig.get("eligible") is False
+                        and isinstance(elig_reason, str)
+                        and bool(elig_reason)
+                    )
+                    allowed = st.setdefault("launcher_allowed", {})
+                    if isinstance(allowed, dict):
+                        allowed["prepare"] = {"ok": True, "reason": None, "message": None}
+                        if not elig_blocked and st.get("config"):
+                            allowed["run"] = {"ok": True, "reason": None, "message": None}
                 resident.idle.set()
                 resident.ready_or_ended.set()
+                if self._resident is resident:
+                    self._schedule_sync_status()
             return
 
         if kind == "run_start":
@@ -1200,6 +1553,20 @@ class ServeRuntime:
                 resident.pending_run = None
                 resident.current_run = pending
                 resident.idle.clear()
+                if resident.execution_status is None:
+                    resident.execution_status = _initial_execution_status(resident)
+                    resident.status_rev = max(resident.status_rev, 0)
+                resident.status_rev = max(resident.status_rev + 1, 1)
+                st = resident.execution_status
+                st["status_rev"] = resident.status_rev
+                st["launcher_state"] = "running"
+                st["active_run_id"] = run_id
+                st["run_state"] = None
+                allowed = st.setdefault("launcher_allowed", {})
+                if isinstance(allowed, dict):
+                    busy = {"ok": False, "reason": "busy", "message": "a run is under way"}
+                    allowed["prepare"] = dict(busy)
+                    allowed["run"] = dict(busy)
                 t_val = ev.get("t_ms")
                 resident.run_t0 = t_val if type(t_val) is int else 0
                 resident.line_seq = 1
@@ -1217,22 +1584,46 @@ class ServeRuntime:
                 }
                 pending.enqueue(("event", hello_event, resident.hello_size))
                 pending._started_event.set()
+                if self._resident is resident:
+                    self._schedule_sync_status()
             return
 
         ev_run = ev.get("run")
         if kind == "prepare" and ev_run is None:
+            if isinstance(ev.get("status"), dict):
+                if not self._apply_execution_status(resident, ev["status"]):
+                    return
+                if self._resident is resident:
+                    self._schedule_sync_status()
             if (prep := resident.pending_prepare) is not None:
                 req_id, fut = prep
-                if req_id is None or ev.get("id") in (None, req_id):
+                if req_id is None or ev.get("id") == req_id:
                     resident.pending_prepare = None
                     if not fut.done():
                         fut.set_result(ev)
             return
 
         if kind == "status" and ev_run is None:
+            if not self._apply_execution_status(resident, ev):
+                return
+            if self._resident is resident:
+                self._schedule_sync_status()
+            if (stat := resident.pending_status) is not None:
+                req_id, fut = stat
+                if req_id is None or ev.get("id") == req_id:
+                    resident.pending_status = None
+                    if not fut.done():
+                        fut.set_result(_extract_execution_status(ev))
             return
 
         if current is not None and ev_run == current.run_id:
+            if kind == "state" and resident.execution_status is not None:
+                rs = {k: v for k, v in ev.items() if k not in ("event", "seq", "t_ms", "run")}
+                cur_rs = resident.execution_status.get("run_state")
+                new_rev = rs.get("rev")
+                cur_rev = cur_rs.get("rev") if isinstance(cur_rs, dict) else None
+                if type(new_rev) is int and (type(cur_rev) is not int or new_rev >= cur_rev):
+                    resident.execution_status["run_state"] = rs
             norm = {k: v for k, v in ev.items() if k not in ("run", "launcher_ends")}
             norm["seq"] = resident.line_seq
             resident.line_seq += 1
@@ -1246,6 +1637,39 @@ class ServeRuntime:
                 self.runs_completed += 1
                 if launcher_ends:
                     resident.ending = True
+                resident.status_rev = max(resident.status_rev + 1, 1)
+                if resident.execution_status is not None:
+                    st = resident.execution_status
+                    st["status_rev"] = resident.status_rev
+                    st["last_run_id"] = ev_run
+                    st["active_run_id"] = None
+                    st["run_state"] = None
+                    if launcher_ends:
+                        if st.get("launcher_state") != "contaminated":
+                            st["launcher_state"] = "ending"
+                        allowed = st.setdefault("launcher_allowed", {})
+                        if isinstance(allowed, dict):
+                            ending = {"ok": False, "reason": "launcher-ending", "message": "the launcher is ending"}
+                            allowed["prepare"] = dict(ending)
+                            allowed["run"] = dict(ending)
+                    else:
+                        elig = st.get("eligibility")
+                        elig_ok = elig.get("eligible", True) if isinstance(elig, dict) else True
+                        elig_reason = elig.get("reason") if isinstance(elig, dict) else None
+                        elig_blocked = (
+                            isinstance(elig, dict)
+                            and elig.get("eligible") is False
+                            and isinstance(elig_reason, str)
+                            and bool(elig_reason)
+                        )
+                        st["launcher_state"] = "ready" if elig_ok and st.get("config") else "idle"
+                        allowed = st.setdefault("launcher_allowed", {})
+                        if isinstance(allowed, dict):
+                            allowed["prepare"] = {"ok": True, "reason": None, "message": None}
+                            if not elig_blocked and st.get("config"):
+                                allowed["run"] = {"ok": True, "reason": None, "message": None}
+                if self._resident is resident:
+                    self._schedule_sync_status()
                 current.enqueue(("finish", False, not launcher_ends))
             return
 
@@ -1287,35 +1711,20 @@ class ServeRuntime:
                 _, fut = prep
                 if not fut.done():
                     fut.set_exception(RuntimeError(resident.startup_error))
+            if (stat := resident.pending_status) is not None:
+                resident.pending_status = None
+                _, fut = stat
+                if not fut.done():
+                    fut.set_exception(RuntimeError(resident.startup_error))
             return
 
         if kind == "heartbeat" and ev_run is None:
             return
 
     def _on_hot_run_finished(self, handle: ServeRunHandle) -> None:
-        resident = handle._resident
         if self._closing:
             return
-        if self._resident is resident:
-            if not resident.exited and not resident.ending and resident.proc.returncode is None:
-                self._set_status("hot", "ready", resident.config)
-            else:
-                has_serve = FEATURE_SERVE in self._launcher.features
-                self._set_status(
-                    "hot" if has_serve else "cold",
-                    "idle" if has_serve else "cold",
-                    None,
-                    None if has_serve else "launcher-unsupported",
-                )
-        elif self._resident is None:
-            has_serve = FEATURE_SERVE in self._launcher.features
-            if self._status.get("mode") != "cold":
-                self._set_status(
-                    "hot" if has_serve else "cold",
-                    "idle" if has_serve else "cold",
-                    None,
-                    None if has_serve else "launcher-unsupported",
-                )
+        self._sync_status()
 
     async def _close_resident(self, resident: _Resident, hurry: asyncio.Event,
                               stop_timeout_s: float | None) -> None:

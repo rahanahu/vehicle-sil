@@ -145,6 +145,40 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
     seq += 1
     run_counter = 0
     current_run = None
+    last_run = None
+    status_rev = 0
+    launcher_state = "idle"
+    elig_state = {"eligible": True, "reason": None, "message": None}
+    stop_requests = 0
+
+    def current_status_payload():
+        busy = launcher_state in ("preparing", "running")
+        prep_allowed = {"ok": not busy, "reason": "busy" if busy else None, "message": "busy" if busy else None}
+        if busy:
+            run_allowed = {"ok": False, "reason": "busy", "message": "busy"}
+        elif not elig_state.get("eligible", True):
+            run_allowed = {"ok": False, "reason": elig_state.get("reason"), "message": elig_state.get("message")}
+        else:
+            run_allowed = {"ok": True, "reason": None, "message": None}
+        run_state = None
+        if current_run is not None:
+            run_state = {
+                "rev": 1, "phase": "running", "paused": False, "paused_at_ms": None,
+                "holding": False, "speed": 1.0, "pacing": "realtime",
+                "stop": {"requests": stop_requests, "by": "stdin" if stop_requests else None},
+                "scenario": None, "allowed": {}, "outside": {},
+            }
+        return {
+            "instance": "feed000000000001",
+            "status_rev": status_rev,
+            "launcher_state": launcher_state,
+            "config": cfg,
+            "eligibility": elig_state,
+            "launcher_allowed": {"prepare": prep_allowed, "run": run_allowed},
+            "active_run_id": current_run,
+            "last_run_id": last_run,
+            "run_state": run_state,
+        }
 
     for raw in sys.stdin:
         line = raw.strip()
@@ -154,45 +188,52 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
         name = cmd.get("command")
         log_event({"pid": os.getpid(), "config": cfg, "cmd": cmd, "cred_exists": cred_path.exists() if cred_path else None})
 
-        if name == "prepare":
+        if name == "status":
+            emit({"event": "status", "seq": seq, "t_ms": t_ms, "id": cmd.get("id"), **current_status_payload()})
+            seq += 1
+        elif name == "prepare":
             prior_prepares = 0
             if mode_file.exists():
                 prior_prepares = sum(
                     1 for ln in mode_file.read_text(encoding="utf-8").splitlines()
                     if '"command": "prepare"' in ln or '"command":"prepare"' in ln
                 )
-            if mode == "crash-second-prepare" and prior_prepares == 2:
+            if mode in ("crash-first-prepare", "crash-second-prepare") and prior_prepares == (1 if mode == "crash-first-prepare" else 2):
                 os._exit(9)
-            if mode == "refuse-second-prepare" and prior_prepares == 2:
+            if mode in ("refuse-first-prepare", "refuse-second-prepare") and prior_prepares == (1 if mode == "refuse-first-prepare" else 2):
                 emit({
                     "event": "prepare", "seq": seq, "t_ms": t_ms, "id": cmd.get("id"),
                     "accepted": False, "reason": "busy", "message": "cannot prepare right now",
+                    "status": current_status_payload(),
                 })
                 seq += 1
                 continue
             if mode == "hang-second-prepare" and prior_prepares == 2:
+                status_rev += 1
+                launcher_state = "preparing"
+                emit({"event": "status", "seq": seq, "t_ms": t_ms, "id": None, **current_status_payload()})
+                seq += 1
                 import time as _time
                 _time.sleep(5.0)
                 continue
             _, doc = inspect_cfg(cfg, cmd.get("disable", ()), cmd.get("enable", ()), cmd.get("manual", ()))
-            elig = doc["hot_eligibility"]
+            elig_state = doc["hot_eligibility"]
+            status_rev += 1
+            launcher_state = "preparing"
             emit({
                 "event": "status", "seq": seq, "t_ms": t_ms,
-                "instance": "feed000000000001", "status_rev": 1,
-                "launcher_state": "ready" if elig["eligible"] else "idle",
-                "config": cfg, "eligibility": elig,
-                "launcher_allowed": {}, "active_run_id": None, "last_run_id": None, "run_state": None,
+                "instance": "feed000000000001", "status_rev": status_rev,
+                "launcher_state": "ready" if elig_state["eligible"] else "idle",
+                "config": cfg, "eligibility": elig_state,
+                "launcher_allowed": {}, "active_run_id": None, "last_run_id": last_run, "run_state": None,
             })
             seq += 1
+            status_rev += 1
+            launcher_state = "ready" if elig_state["eligible"] else "idle"
             emit({
                 "event": "prepare", "seq": seq, "t_ms": t_ms, "id": cmd.get("id"),
                 "accepted": True, "reason": None, "message": None,
-                "status": {
-                    "instance": "feed000000000001", "status_rev": 2,
-                    "launcher_state": "ready" if elig["eligible"] else "idle",
-                    "config": cfg, "eligibility": elig,
-                    "launcher_allowed": {}, "active_run_id": None, "last_run_id": None, "run_state": None,
-                },
+                "status": current_status_payload(),
                 "metadata": {
                     "participants": [p["name"] for p in doc["participants"]],
                     "networks": [], "variants": [], "file_sha256": doc["file_sha256"],
@@ -204,6 +245,13 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
             run_counter += 1
             run_id = f"feed-{run_counter}"
             current_run = run_id
+            stop_requests = 0
+            status_rev += 1
+            launcher_state = "running"
+            if mode == "hang-run-start":
+                import time as _time
+                _time.sleep(5.0)
+                continue
             t_ms += 100
             emit({"event": "run_start", "seq": seq, "t_ms": t_ms, "run": run_id, "id": cmd.get("id")})
             seq += 1
@@ -229,7 +277,10 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 emit({"event": "result", "seq": seq, "t_ms": t_ms + 2, "run": run_id, "launcher_ends": False,
                       "result": {"result": "check_failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []}})
                 seq += 1
+                last_run = current_run
                 current_run = None
+                status_rev += 1
+                launcher_state = "ready" if elig_state["eligible"] else "idle"
                 emit({"event": "idle", "seq": seq, "t_ms": t_ms + 3})
                 seq += 1
                 continue
@@ -271,7 +322,10 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 emit({"event": "result", "seq": seq, "t_ms": t_ms + 30, "run": run_id, "launcher_ends": False,
                       "result": {"result": "failed", "errors": 1, "warnings": 0, "notes": 0, "findings": []}})
                 seq += 1
+                last_run = current_run
                 current_run = None
+                status_rev += 1
+                launcher_state = "ready" if elig_state["eligible"] else "idle"
                 emit({"event": "idle", "seq": seq, "t_ms": t_ms + 35})
                 seq += 1
             elif mode == "heartbeat-until-stop":
@@ -281,11 +335,14 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 _time.sleep(0.15)
                 emit({"event": "heartbeat", "seq": seq, "t_ms": t_ms + 200, "run": run_id})
                 seq += 1
-            elif mode != "wait-stop":
+            elif mode not in ("wait-stop", "stop-ends", "natural-pass", "natural-ends"):
                 emit({"event": "result", "seq": seq, "t_ms": t_ms + 30, "run": run_id, "launcher_ends": False,
                       "result": {"result": "passed", "errors": 0, "warnings": 0, "notes": 0, "findings": []}})
                 seq += 1
+                last_run = current_run
                 current_run = None
+                status_rev += 1
+                launcher_state = "ready" if elig_state["eligible"] else "idle"
                 emit({"event": "idle", "seq": seq, "t_ms": t_ms + 35})
                 seq += 1
         elif name in ("stop", "pause", "resume", "step", "run_until", "speed"):
@@ -298,14 +355,48 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 })
                 seq += 1
             elif name == "stop":
+                f = cmd.get("force")
+                if f is True:
+                    stop_requests = max(stop_requests, 2)
+                elif f is False:
+                    stop_requests = max(stop_requests, 1)
+                else:
+                    stop_requests = 1 if stop_requests < 1 else 2
                 t_ms += 40
                 emit({"event": "command", "seq": seq, "t_ms": t_ms, "run": current_run,
                       "command": "stop", "accepted": True, "ms": 0})
                 seq += 1
+                ends_now = mode == "stop-ends"
                 emit({"event": "result", "seq": seq, "t_ms": t_ms + 5, "run": current_run,
-                      "launcher_ends": False, "result": {"result": "stopped", "errors": 0, "warnings": 0, "notes": 0, "findings": []}})
+                      "launcher_ends": ends_now, "result": {"result": "stopped", "errors": 0, "warnings": 0, "notes": 0, "findings": []}})
                 seq += 1
+                last_run = current_run
                 current_run = None
+                status_rev += 1
+                if ends_now:
+                    launcher_state = "ending"
+                    sys.exit(0)
+                launcher_state = "ready" if elig_state["eligible"] else "idle"
+                emit({"event": "idle", "seq": seq, "t_ms": t_ms + 10})
+                seq += 1
+            elif name == "resume" and mode in ("natural-pass", "natural-ends"):
+                ends_now = mode == "natural-ends"
+                t_ms += 40
+                emit({"event": "command", "seq": seq, "t_ms": t_ms, "run": current_run,
+                      "command": "resume", "accepted": True, "ms": 0})
+                seq += 1
+                emit({"event": "result", "seq": seq, "t_ms": t_ms + 5, "run": current_run,
+                      "launcher_ends": ends_now,
+                      "result": {"result": "interrupted" if ends_now else "passed",
+                                 "errors": 0, "warnings": 0, "notes": 0, "findings": []}})
+                seq += 1
+                last_run = current_run
+                current_run = None
+                status_rev += 1
+                if ends_now:
+                    launcher_state = "ending"
+                    sys.exit(0)
+                launcher_state = "ready" if elig_state["eligible"] else "idle"
                 emit({"event": "idle", "seq": seq, "t_ms": t_ms + 10})
                 seq += 1
 """).replace('"__VEHICLE_SIL_VERSION__"', json.dumps(__version__))
@@ -1259,6 +1350,8 @@ def test_inspect_config_restores_idle_state_after_closing_failed_resident(tmp_pa
 
 def test_cancelling_prepare_mid_send_prepare_clears_pending_prepare(tmp_path: Path) -> None:
     async def run() -> None:
+        from vehicle_sil_gui.runtime import HotDecision, RunSpec
+
         root = tmp_path / "cfg"
         root.mkdir()
         script = tmp_path / "fake_serve.py"
@@ -1273,6 +1366,8 @@ def test_cancelling_prepare_mid_send_prepare_clears_pending_prepare(tmp_path: Pa
             path=script,
         )
         rt = ServeRuntime(launcher, cwd=root, escalate_wait_s=0.1)
+        req_file = tmp_path / "req.json"
+        req_file.write_text('{"vehicle_sil_run_request":1}\n', encoding="utf-8")
         try:
             st1 = await rt.prepare("a.yaml")
             assert st1["state"] == "ready"
@@ -1282,10 +1377,33 @@ def test_cancelling_prepare_mid_send_prepare_clears_pending_prepare(tmp_path: Pa
             task = asyncio.create_task(rt.prepare("a.yaml", variant="fast"))
             while res.pending_prepare is None:
                 await asyncio.sleep(0.01)
+            assert rt.status()["state"] == "preparing"
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert res.pending_prepare is None
+            assert rt.active_pids() == []
+            assert rt.status() == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+
+            # Subsequent Hot start_run spawns a clean resident and succeeds in Hot mode (never stuck "busy").
+            class _NoopSink:
+                def __init__(self) -> None:
+                    self.events: list[dict] = []
+                def on_stdout_line(self, line: str | None) -> None: pass
+                def on_stdout_event(self, event: dict, size: int) -> None: self.events.append(event)
+                def on_stderr_line(self, line: str) -> None: pass
+                def on_problem(self, code: str, message: str, detail: object = None) -> None: pass
+                def on_process_exited(self, returncode: int | None) -> None: pass
+                async def on_run_finished(self, *, output_cut: bool = False, launcher_alive: bool = False) -> None: pass
+                async def on_run_cleanup(self) -> None: pass
+
+            os.environ["FAKE_SERVE_BEHAVIOR"] = "normal"
+            handle = await rt.start_run(RunSpec(config="a.yaml", request=req_file, hot_decision=HotDecision(True)))
+            assert handle.mode == "hot"
+            sink = _NoopSink()
+            handle.start(sink)
+            await handle._drain_done.wait()
+            assert any(e.get("event") == "result" and e["result"]["result"] == "passed" for e in sink.events)
         finally:
             await rt.shutdown(asyncio.Event(), 0.1)
             if prev_log is None:
@@ -1296,5 +1414,577 @@ def test_cancelling_prepare_mid_send_prepare_clears_pending_prepare(tmp_path: Pa
                 os.environ.pop("FAKE_SERVE_BEHAVIOR", None)
             else:
                 os.environ["FAKE_SERVE_BEHAVIOR"] = prev_beh
+
+    asyncio.run(run())
+
+
+def test_cancelling_prepare_mid_spawn_closes_resident_and_restores_idle(tmp_path: Path) -> None:
+    async def run() -> None:
+        root = tmp_path / "cfg"
+        root.mkdir()
+        script = tmp_path / "fake_serve.py"
+        log_path = tmp_path / "calls.jsonl"
+        _write_configs(root, script)
+        prev_log = os.environ.get("FAKE_SERVE_LOG")
+        os.environ["FAKE_SERVE_LOG"] = str(log_path)
+        launcher = FakeLauncher(
+            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
+            path=script,
+        )
+        rt = ServeRuntime(launcher, cwd=root, escalate_wait_s=0.1)
+
+        import threading
+        th_gate = threading.Event()
+        entered = threading.Event()
+        orig_creds = control.credentials_file
+        created_creds: list[Path] = []
+
+        def blocking_creds():
+            entered.set()
+            th_gate.wait(timeout=2.0)
+            path, tok = orig_creds()
+            created_creds.append(path)
+            return path, tok
+
+        control.credentials_file = blocking_creds  # type: ignore[assignment]
+        try:
+            prep_task = asyncio.create_task(rt.prepare("a.yaml", want_control=True))
+            while not entered.is_set():
+                await asyncio.sleep(0.005)
+            assert rt.status()["state"] == "preparing"
+            prep_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await prep_task
+            th_gate.set()
+            await asyncio.sleep(0.05)
+            assert created_creds and not created_creds[0].exists()
+            assert rt.status() == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+            assert rt.active_pids() == []
+            assert not rt._residents
+        finally:
+            for p in created_creds:
+                control.remove(p)
+            control.credentials_file = orig_creds  # type: ignore[assignment]
+            await rt.shutdown(asyncio.Event(), 0.1)
+            if prev_log is None:
+                os.environ.pop("FAKE_SERVE_LOG", None)
+            else:
+                os.environ["FAKE_SERVE_LOG"] = prev_log
+
+    asyncio.run(run())
+
+
+def test_cancelling_start_run_mid_wait_clears_pending_and_closes_resident(tmp_path: Path) -> None:
+    async def run() -> None:
+        from vehicle_sil_gui.runtime import RunSpec
+
+        root = tmp_path / "cfg"
+        root.mkdir()
+        script = tmp_path / "fake_serve.py"
+        log_path = tmp_path / "calls.jsonl"
+        _write_configs(root, script)
+        prev_log = os.environ.get("FAKE_SERVE_LOG")
+        prev_beh = os.environ.get("FAKE_SERVE_BEHAVIOR")
+        os.environ["FAKE_SERVE_LOG"] = str(log_path)
+        os.environ["FAKE_SERVE_BEHAVIOR"] = "hang-run-start"
+        launcher = FakeLauncher(
+            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
+            path=script,
+        )
+        rt = ServeRuntime(launcher, cwd=root, escalate_wait_s=0.1)
+        req_file = tmp_path / "req.json"
+        req_file.write_text('{"vehicle_sil_run_request":1}\n', encoding="utf-8")
+        try:
+            await rt.prepare("a.yaml", want_control=False)
+            res = rt._resident
+            assert res is not None
+
+            task = asyncio.create_task(rt.start_run(RunSpec(config="a.yaml", request=req_file)))
+            while res.pending_run is None:
+                await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert res.pending_run is None
+            assert rt.resident_pid is None
+            assert rt.active_pids() == []
+            assert rt.status() == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+        finally:
+            await rt.shutdown(asyncio.Event(), 0.1)
+            if prev_log is None:
+                os.environ.pop("FAKE_SERVE_LOG", None)
+            else:
+                os.environ["FAKE_SERVE_LOG"] = prev_log
+            if prev_beh is None:
+                os.environ.pop("FAKE_SERVE_BEHAVIOR", None)
+            else:
+                os.environ["FAKE_SERVE_BEHAVIOR"] = prev_beh
+
+    asyncio.run(run())
+
+
+def test_serve_status_command_and_monotonic_execution_status_adoption(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st, _ = await c.post("api/prepare", {"file": "a.yaml"})
+            assert st == 200
+            queried = await rt.query_status()
+            assert queried is not None
+            assert queried["launcher_state"] == "ready"
+            assert queried["launcher_allowed"]["run"]["ok"] is True
+            cur_rev = queried["status_rev"]
+
+            res = rt._resident
+            assert res is not None
+            # Stale status_rev and mismatched instance are ignored.
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "status", "seq": 900, "t_ms": 900,
+                "instance": "feed000000000001", "status_rev": cur_rev - 1,
+                "launcher_state": "contaminated", "config": "a.yaml",
+            }))
+            assert rt.status()["state"] == "ready"
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "status", "seq": 901, "t_ms": 901,
+                "instance": "wrong-instance", "status_rev": cur_rev + 10,
+                "launcher_state": "contaminated", "config": "a.yaml",
+            }))
+            assert rt.status()["state"] == "ready"
+
+            # Newer status_rev on matching instance updates runtime status via WS.
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "status", "seq": 902, "t_ms": 902,
+                "instance": "feed000000000001", "status_rev": cur_rev + 1,
+                "launcher_state": "preparing", "config": "a.yaml",
+                "eligibility": {"eligible": True, "reason": None, "message": None},
+                "launcher_allowed": {"prepare": {"ok": False, "reason": "busy"}, "run": {"ok": False, "reason": "busy"}},
+            }))
+            prep_msg = await sock.until(lambda m: m["type"] == "runtime" and m["runtime"]["state"] == "preparing")
+            assert prep_msg[-1]["runtime"]["config"] == "a.yaml"
+
+            # Restore ready before run.
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "status", "seq": 903, "t_ms": 903,
+                "instance": "feed000000000001", "status_rev": cur_rev + 2,
+                "launcher_state": "ready", "config": "a.yaml",
+                "eligibility": {"eligible": True, "reason": None, "message": None},
+                "launcher_allowed": {"prepare": {"ok": True, "reason": None}, "run": {"ok": True, "reason": None}},
+            }))
+            await sock.until(lambda m: m["type"] == "runtime" and m["runtime"]["state"] == "ready")
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_allowed_projects_cpp_stop_requests_and_post_result_drain(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 200
+            await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+            res = rt._resident
+            assert res is not None and res.current_run is not None
+            run_id = res.current_run.run_id
+            assert run_id is not None
+
+            # C++ state event with stop.requests == 1 updates allowed.stop without Session.request_stop().
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "state", "seq": 95, "t_ms": 200, "run": run_id,
+                "rev": 5, "phase": "running", "paused": False,
+                "stop": {"requests": 1, "by": "control_server"},
+                "allowed": {},
+            }))
+            stopping_msg = await sock.until(
+                lambda m: m["type"] == "allowed" and m["allowed"]["stop"]["reason"] == "already-stopping"
+            )
+            assert stopping_msg[-1]["allowed"]["force"]["ok"] is True
+
+            # C++ state event with stop.requests == 2 updates allowed.force -> already-forced.
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "state", "seq": 96, "t_ms": 205, "run": run_id,
+                "rev": 6, "phase": "stopping", "paused": False,
+                "stop": {"requests": 2, "by": "control_server"},
+                "allowed": {},
+            }))
+            forced_msg = await sock.until(
+                lambda m: m["type"] == "allowed" and m["allowed"]["force"]["reason"] == "already-forced"
+            )
+            assert forced_msg[-1]["allowed"]["start"]["reason"] == "already-running"
+
+            # Check post-result drain window: while session is still running, stoppable drops to False.
+            sess = server.session
+            assert sess is not None
+            # Simulate result arriving on execution_status before session.ended() runs:
+            assert res.execution_status is not None
+            res.execution_status["launcher_state"] = "ready"
+            drain_allowed = sess.allowed()
+            assert drain_allowed["start"]["reason"] == "already-running"
+            assert drain_allowed["stop"]["reason"] == "not-running"
+            assert drain_allowed["force"]["reason"] == "not-running"
+
+            # Restore running so normal stop completes cleanly.
+            res.execution_status["launcher_state"] = "running"
+            res.execution_status["run_state"]["stop"]["requests"] = 0
+            await c.post("api/stop", {"force": True})
+            await sock.until(is_ended)
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_prepare_early_returns_clear_preparing_config_without_spurious_ws_event(tmp_path: Path) -> None:
+    async def run() -> None:
+        (tmp_path / "case1").mkdir()
+        (tmp_path / "case2").mkdir()
+        # 1. parsed is None (_send_prepare refused/crashed on freshly spawned resident) -> returns cold, never preparing.
+        async with _serve_gui(tmp_path / "case1", variables=False, env={"FAKE_SERVE_BEHAVIOR": "refuse-first-prepare"}) as (server, c, _):
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            st, body = await c.post("api/prepare", {"file": "a.yaml"})
+            assert st == 200
+            assert body["runtime"]["mode"] == "cold"
+            assert body["runtime"]["state"] == "cold"
+            assert body["runtime"]["reason"] == "resident-failed"
+            assert server.runtime._preparing_config is None  # type: ignore[attr-defined]
+            await sock.close()
+
+        # 2. not parsed.hot.hot (without check-file-only, serve prepare returns eligible=False) -> returns cold, no preparing after resetting.
+        async with _serve_gui(
+            tmp_path / "case2",
+            features=(*DEFAULT_FEATURES, "serve", "serve-prepare"),
+            variables=False,
+        ) as (server, c, _):
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            st, body = await c.post("api/prepare", {"file": "fixed.yaml"})
+            assert st == 200
+            assert body["runtime"] == {
+                "mode": "cold",
+                "state": "cold",
+                "config": "fixed.yaml",
+                "reason": "fixed-registry",
+                "message": "configuration uses a fixed registry_uri",
+            }
+            cold_msgs = await sock.until(lambda m: m["type"] == "runtime" and m["runtime"]["state"] == "cold")
+            states = [m["runtime"]["state"] for m in cold_msgs if m["type"] == "runtime"]
+            reset_idx = states.index("resetting")
+            assert "preparing" not in states[reset_idx:]
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_execution_status_validation_and_pre_run_equal_rev_protection(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            st, _ = await c.post("api/prepare", {"file": "a.yaml"})
+            assert st == 200
+            res = rt._resident
+            assert res is not None
+            cur_rev = res.status_rev
+
+            # Reject missing/non-int/bool status_rev and missing/None/non-str instance.
+            for bad in (
+                {"launcher_state": "contaminated", "instance": "feed000000000001", "status_rev": None},
+                {"launcher_state": "contaminated", "instance": "feed000000000001"},
+                {"launcher_state": "contaminated", "instance": "feed000000000001", "status_rev": False},
+                {"launcher_state": "contaminated", "instance": "feed000000000001", "status_rev": "99"},
+                {"launcher_state": "contaminated", "instance": "feed000000000001", "status_rev": float(cur_rev + 1)},
+                {"launcher_state": "contaminated", "instance": None, "status_rev": cur_rev + 10},
+                {"launcher_state": "contaminated", "status_rev": cur_rev + 10},
+                {"launcher_state": "contaminated", "instance": 12345, "status_rev": cur_rev + 10},
+                {"launcher_state": "contaminated", "instance": "", "status_rev": cur_rev + 10},
+            ):
+                assert rt._apply_execution_status(res, bad) is False
+
+            # Foreign/mismatched status and prepare events with id=None do NOT resolve pending futures.
+            loop = asyncio.get_running_loop()
+            fut_status: asyncio.Future[dict] = loop.create_future()
+            res.pending_status = (999, fut_status)
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "status", "seq": 910, "t_ms": 910, "id": None,
+                "instance": "feed000000000001", "status_rev": cur_rev, "launcher_state": "ready", "config": "a.yaml",
+            }))
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "status", "seq": 911, "t_ms": 911, "id": 999,
+                "instance": None, "status_rev": cur_rev + 5, "launcher_state": "contaminated", "config": "a.yaml",
+            }))
+            assert not fut_status.done()
+            res.pending_status = None
+
+            fut_prep: asyncio.Future[dict] = loop.create_future()
+            res.pending_prepare = (998, fut_prep)
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "prepare", "seq": 912, "t_ms": 912, "id": None, "accepted": True,
+                "status": {
+                    "instance": "feed000000000001", "status_rev": cur_rev, "launcher_state": "ready",
+                    "config": "a.yaml", "eligibility": {"eligible": True, "reason": None, "message": None},
+                },
+                "metadata": {"participants": ["Engine"], "networks": [], "variants": []},
+            }))
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "prepare", "seq": 913, "t_ms": 913, "id": 998, "accepted": True,
+                "status": {
+                    "instance": "wrong-instance", "status_rev": cur_rev + 5, "launcher_state": "ready",
+                    "config": "a.yaml", "eligibility": {"eligible": True, "reason": None, "message": None},
+                },
+                "metadata": {"participants": ["Engine"], "networks": [], "variants": []},
+            }))
+            assert not fut_prep.done()
+            res.pending_prepare = None
+
+            # Start run and verify equal-status_rev pre-run status cannot regress "running" -> "ready",
+            # and bool run_state.rev cannot overwrite integer run_state.rev.
+            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 200
+            await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+            assert res.current_run is not None
+            run_id = res.current_run.run_id
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "status", "seq": 914, "t_ms": 914,
+                "instance": "feed000000000001", "status_rev": cur_rev,
+                "launcher_state": "ready", "config": "a.yaml",
+            }))
+            assert res.execution_status is not None and res.execution_status["launcher_state"] == "running"
+
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "state", "seq": 915, "t_ms": 915, "run": run_id,
+                "rev": 3, "phase": "running", "paused": False,
+                "stop": {"requests": 0, "by": None}, "allowed": {},
+            }))
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "state", "seq": 916, "t_ms": 916, "run": run_id,
+                "rev": False, "phase": "stopping", "paused": False,
+                "stop": {"requests": 2, "by": "bad"}, "allowed": {},
+            }))
+            assert res.execution_status["run_state"]["rev"] == 3
+
+            await c.post("api/stop", {"force": False})
+            await sock.until(is_ended)
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_external_stop_does_not_escalate_on_graceful_api_stop_and_release_mid_run(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, log_path):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 200
+            await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+            res = rt._resident
+            assert res is not None and res.current_run is not None
+            run_id = res.current_run.run_id
+
+            # release_config() mid-run marks resident ending while keeping rt.status() == "running".
+            await rt.release_config("a.yaml")
+            assert res.ending is True
+            assert rt.status()["state"] == "running"
+
+            # External C++ stop sets stop.requests == 1; POST api/stop {force: false} must NOT escalate.
+            rt._handle_stdout_line(res, json.dumps({
+                "event": "state", "seq": 95, "t_ms": 200, "run": run_id,
+                "rev": 5, "phase": "stopping", "paused": False,
+                "stop": {"requests": 1, "by": "control_server"}, "allowed": {},
+            }))
+            await sock.until(lambda m: m["type"] == "allowed" and m["allowed"]["stop"]["reason"] == "already-stopping")
+
+            st_grace, grace_body = await c.post("api/stop", {"force": False})
+            assert st_grace == 200
+            assert grace_body["session"]["allowed"]["stop"]["reason"] == "already-stopping"
+            assert grace_body["session"]["allowed"]["force"]["ok"] is True
+
+            # Verify no unforced stop line was written while already stopping, and force=True sends {"force": true}.
+            st_force, force_body = await c.post("api/stop", {"force": True})
+            assert st_force == 200
+            await sock.until(is_ended)
+            assert rt.status()["state"] == "idle"
+
+            entries = [json.loads(ln) for ln in log_path.read_text(encoding="utf-8").splitlines()]
+            stop_cmds = [e["cmd"] for e in entries if isinstance(e.get("cmd"), dict) and e["cmd"].get("command") == "stop"]
+            assert len(stop_cmds) == 1
+            assert stop_cmds[0].get("force") is True
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_launcher_ends_post_result_async_drain_keeps_stoppable_false(tmp_path: Path) -> None:
+    async def run() -> None:
+        class _SlowCloseSource(_FakeControlSource):
+            def __init__(self, address: str, token: str):
+                super().__init__(address, token)
+                self.close_gate = asyncio.Event()
+
+            async def close(self) -> None:
+                await self.close_gate.wait()
+                await super().close()
+
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "stop-ends"}) as (server, c, _):
+            # Enable slow variables close via source hook so post-result async drain stays observable.
+            sources: list[_SlowCloseSource] = []
+            server.o.variables = True
+            server.o.source = lambda addr, tok: sources.append(_SlowCloseSource(addr, tok)) or sources[-1]
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 200
+            await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+
+            st_stop, _ = await c.post("api/stop", {"force": False})
+            assert st_stop == 200
+            # Wait for result to clear current_run and set resident.ending while _SlowCloseSource.close() holds drain.
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            for _ in range(100):
+                if rt.execution_status() is None and server.session is not None and server.session.state == "running":
+                    break
+                await asyncio.sleep(0.01)
+            assert server.session is not None and server.session.state == "running"
+            assert rt.execution_status() is None
+
+            st_sess, sess_body = await c.get("api/session")
+            assert st_sess == 200
+            al = sess_body["allowed"]
+            assert al["start"]["reason"] == "already-running"
+            assert al["stop"]["reason"] == "not-running"
+            assert al["force"]["reason"] == "not-running"
+
+            sources[0].close_gate.set()
+            await sock.until(is_ended)
+            await sock.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("launcher_ends", [False, True])
+def test_hot_post_result_async_drain_stop_is_noop_without_spurious_problem(
+    tmp_path: Path, launcher_ends: bool,
+) -> None:
+    async def run() -> None:
+        class _SlowCloseSource(_FakeControlSource):
+            def __init__(self, address: str, token: str):
+                super().__init__(address, token)
+                self.close_entered = asyncio.Event()
+                self.close_gate = asyncio.Event()
+
+            async def close(self) -> None:
+                self.close_entered.set()
+                await self.close_gate.wait()
+                await super().close()
+
+        behavior = "natural-ends" if launcher_ends else "natural-pass"
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": behavior}) as (server, c, log_path):
+            sources: list[_SlowCloseSource] = []
+            server.o.variables = True
+            server.o.source = lambda addr, tok: sources.append(_SlowCloseSource(addr, tok)) or sources[-1]
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            st, started = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 200, started
+            sid = started["session"]["id"]
+            await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+
+            st_res, _ = await c.post("api/time", {"command": "resume"})
+            assert st_res == 200
+
+            await asyncio.wait_for(sources[0].close_entered.wait(), timeout=5.0)
+            assert server.session is not None and server.session.state == "running"
+            assert server.session.launcher_running is True
+            assert server.session.result is not None
+
+            st_sess, sess_body = await c.get("api/session")
+            assert st_sess == 200
+            assert sess_body["session"]["stop"] == "none"
+            assert sess_body["session"]["problems"] == []
+            assert sess_body["allowed"]["stop"]["ok"] is False
+            assert sess_body["allowed"]["stop"]["reason"] == "not-running"
+            assert sess_body["allowed"]["force"]["ok"] is False
+            assert sess_body["allowed"]["force"]["reason"] == "not-running"
+
+            for endpoint, payload in (
+                ("api/stop", {"force": False}),
+                ("api/stop", {"force": True}),
+                ("api/stop-session", {"session": sid, "instance": server.instance, "force": False}),
+                ("api/stop-session", {"session": sid, "instance": server.instance, "force": True}),
+            ):
+                st_stop, stop_body = await c.post(endpoint, payload)
+                assert st_stop == 200, (endpoint, payload, stop_body)
+                assert stop_body["session"]["stop"] == "none"
+                assert stop_body["session"]["problems"] == []
+                assert stop_body["session"]["allowed"]["stop"]["reason"] == "not-running"
+                assert stop_body["session"]["allowed"]["force"]["reason"] == "not-running"
+
+            sources[0].close_gate.set()
+            msgs = await sock.until(is_ended)
+            end_sess = msgs[-1]["session"]
+            expected_result = "interrupted" if launcher_ends else "passed"
+            assert end_sess["state"] == "ended"
+            assert end_sess["stop"] == "none"
+            assert end_sess["problems"] == []
+            assert end_sess["result"]["result"] == expected_result
+            assert not any(m["type"] == "error" for m in msgs)
+
+            entries = [json.loads(ln) for ln in log_path.read_text(encoding="utf-8").splitlines()]
+            assert not [e for e in entries if isinstance(e.get("cmd"), dict) and e["cmd"].get("command") == "stop"]
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_shutdown_waits_for_in_flight_post_prepare(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=True) as (server, c, _):
+            import threading
+            th_gate = threading.Event()
+            entered = threading.Event()
+            orig_creds = control.credentials_file
+            created_creds: list[Path] = []
+
+            def blocking_creds():
+                entered.set()
+                th_gate.wait(timeout=2.0)
+                path, tok = orig_creds()
+                created_creds.append(path)
+                return path, tok
+
+            control.credentials_file = blocking_creds  # type: ignore[assignment]
+            try:
+                prep_task = asyncio.create_task(c.post("api/prepare", {"file": "a.yaml"}))
+                while not entered.is_set():
+                    await asyncio.sleep(0.005)
+                shut_task = asyncio.create_task(server.shutdown())
+                await asyncio.sleep(0.05)
+                assert not shut_task.done()
+                th_gate.set()
+                st, body = await prep_task
+                await shut_task
+                assert st == 503 and body["error"]["code"] == "shutting-down"
+                assert server.runtime.active_pids() == []
+                assert created_creds and not created_creds[0].exists()
+            finally:
+                for p in created_creds:
+                    control.remove(p)
+                control.credentials_file = orig_creds  # type: ignore[assignment]
 
     asyncio.run(run())

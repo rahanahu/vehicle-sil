@@ -323,3 +323,346 @@ def test_real_hot_runs_reuse_resident_and_isolate_variables(tmp_path: Path) -> N
             assert got2[-1]["session"]["result"]["result"] == "stopped"
             await ws.close()
         run_async(talk, gui)
+
+
+def test_real_hot_execution_status_and_cold_fallback_runtime_and_allowed(tmp_path: Path) -> None:
+    """Real vehicle_sil_launch transitions runtime and allowed consistently across prepare, run, stop, and Cold fallback."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    sim_text = (configs / "simulation.yaml").read_text(encoding="utf-8")
+    (configs / "fixed.yaml").write_text(
+        sim_text + "registry_uri: silkit://127.0.0.1:8500\n",
+        encoding="utf-8",
+    )
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        async def talk(c: Client) -> None:
+            ws = await c.ws()
+            await ws.until(is_synced)
+
+            st, prep = await c.post("api/prepare", {"file": "forever.yaml"})
+            assert st == 200, prep
+            assert prep["runtime"] == {
+                "mode": "hot",
+                "state": "ready",
+                "config": "forever.yaml",
+                "reason": None,
+                "message": None,
+            }
+            await ws.until(lambda m: m["type"] == "runtime" and m["runtime"]["state"] == "ready")
+
+            st, started = await c.post("api/run", {"file": "forever.yaml", "speed": 1, "start_paused": True})
+            assert st == 200, started
+            await ws.until(lambda m: m["type"] == "runtime" and m["runtime"]["state"] == "running")
+            _, mid = await c.get("api/session")
+            assert mid["runtime"]["mode"] == "hot" and mid["runtime"]["state"] == "running"
+            assert mid["allowed"]["start"]["reason"] == "already-running"
+            assert mid["allowed"]["stop"]["ok"] is True
+            assert mid["allowed"]["force"]["ok"] is True
+
+            st, stopped = await c.post("api/stop", {"force": False})
+            assert st == 200, stopped
+            assert stopped["session"]["allowed"]["stop"]["reason"] == "already-stopping"
+            got = await ws.until(is_ended)
+            assert got[-1]["session"]["result"]["result"] == "stopped"
+            if not any(m["type"] == "runtime" and m["runtime"]["state"] == "ready" for m in got):
+                await ws.until(lambda m: m["type"] == "runtime" and m["runtime"]["state"] == "ready")
+            _, after = await c.get("api/session")
+            assert after["runtime"]["state"] == "ready"
+            assert after["allowed"]["start"]["ok"] is True
+            assert after["allowed"]["stop"]["reason"] == "not-running"
+
+            # Cold fallback via manual participant override:
+            st, manual_prep = await c.post("api/prepare", {"file": "forever.yaml", "manual": ["Engine"]})
+            assert st == 200, manual_prep
+            assert manual_prep["runtime"]["mode"] == "cold"
+            assert manual_prep["runtime"]["state"] == "cold"
+            assert manual_prep["runtime"]["reason"] == "manual-participants"
+            _, after_manual = await c.get("api/session")
+            assert after_manual["runtime"]["mode"] == "cold"
+            assert after_manual["allowed"]["start"]["ok"] is True
+
+            # Cold fallback via fixed registry_uri:
+            st, fixed_prep = await c.post("api/prepare", {"file": "fixed.yaml"})
+            assert st == 200, fixed_prep
+            assert fixed_prep["runtime"]["mode"] == "cold"
+            assert fixed_prep["runtime"]["reason"] == "fixed-registry"
+            await ws.close()
+
+        run_async(talk, gui)
+
+
+def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_path: Path) -> None:
+    """Real vehicle_sil_launch Idle without prepare() (both pre-prepare and post-run) projects Hot ready, never Cold."""
+    import asyncio
+    import aiohttp
+    from aiohttp.test_utils import TestServer
+    from conftest import Gui
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.runtime import ServeRuntime
+    from vehicle_sil_gui.server import GuiServer, Options
+
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+
+    async def run() -> None:
+        launcher = Launcher(Path(LAUNCHER))
+        await launcher.probe()
+
+        # 1. Pre-prepare serve resident status -> Idle with eligible=False, reason=None, run.ok=True -> Hot ready.
+        rt_direct = ServeRuntime(launcher, cwd=configs)
+        try:
+            res = await rt_direct._spawn_resident("simulation.yaml", want_control=False)
+            assert res is not None
+            pre_status = await rt_direct.query_status()
+            assert pre_status is not None
+            assert pre_status["launcher_state"] == "idle"
+            assert pre_status["eligibility"] == {"eligible": False, "reason": None, "message": None}
+            assert pre_status["launcher_allowed"]["run"]["ok"] is True
+            assert rt_direct.status() == {
+                "mode": "hot",
+                "state": "ready",
+                "config": "simulation.yaml",
+                "reason": None,
+                "message": None,
+            }
+        finally:
+            await rt_direct.shutdown(asyncio.Event(), 2.0)
+
+        # 2. GuiServer run without prepare() -> post-run Idle -> query_status() still projects Hot ready.
+        import socket
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+
+        server = GuiServer(Options(
+            root=configs,
+            launcher=launcher,
+            port=port,
+            token="test-token",
+            stop_timeout_s=2.0,
+            variables=False,
+        ))
+        test_server = TestServer(server.app(), host="127.0.0.1", port=port)
+        await test_server.start_server()
+        http = aiohttp.ClientSession()
+        gui = Gui(proc=None, port=port, token="test-token", url=f"http://127.0.0.1:{port}/#token=test-token",
+                  stderr=tmp_path / ".err")
+        c = Client(gui, http)
+        try:
+            ws = await c.ws()
+            await ws.until(is_synced)
+
+            st, r1 = await c.post("api/run", {"file": "simulation.yaml", "speed": 1, "stop_at_ms": 200})
+            assert st == 200, r1
+            pid1 = r1["session"]["launcher"]["pid"]
+            got1 = await ws.until(is_ended)
+            assert got1[-1]["session"]["result"]["result"] == "passed"
+
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            post_status = await rt.query_status()
+            assert post_status is not None
+            assert post_status["launcher_state"] == "idle"
+            assert post_status["eligibility"] == {"eligible": False, "reason": None, "message": None}
+            assert post_status["launcher_allowed"]["run"]["ok"] is True
+            assert rt.status() == {
+                "mode": "hot",
+                "state": "ready",
+                "config": "simulation.yaml",
+                "reason": None,
+                "message": None,
+            }
+
+            st2, r2 = await c.post("api/run", {"file": "simulation.yaml", "speed": 1, "stop_at_ms": 200})
+            assert st2 == 200, r2
+            assert r2["session"]["launcher"]["pid"] == pid1
+            got2 = await ws.until(is_ended)
+            assert got2[-1]["session"]["result"]["result"] == "passed"
+            await ws.close()
+        finally:
+            await http.close()
+            await server.shutdown()
+            await test_server.close()
+
+    asyncio.run(run())
+
+
+def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path: Path) -> None:
+    """Real vehicle_sil_launch: POST api/stop {force:false} never escalates stop.requests=1 to 2; {force:true} does."""
+    import asyncio
+    import aiohttp
+    from aiohttp.test_utils import TestServer
+    from conftest import Gui
+    from vehicle_sil_gui.launcher import Launcher, stop_command_line
+    from vehicle_sil_gui.runtime import ServeRuntime
+    from vehicle_sil_gui.server import GuiServer, Options
+
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+
+    async def run() -> None:
+        launcher = Launcher(Path(LAUNCHER))
+        await launcher.probe()
+
+        import socket
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+
+        server = GuiServer(Options(
+            root=configs,
+            launcher=launcher,
+            port=port,
+            token="test-token",
+            stop_timeout_s=2.0,
+            participant_start_timeout_ms=10000,
+            participant_stop_timeout_ms=10000,
+            variables=False,
+        ))
+        test_server = TestServer(server.app(), host="127.0.0.1", port=port)
+        await test_server.start_server()
+        http = aiohttp.ClientSession()
+        gui = Gui(proc=None, port=port, token="test-token", url=f"http://127.0.0.1:{port}/#token=test-token",
+                  stderr=tmp_path / ".err")
+        c = Client(gui, http)
+        try:
+            ws = await c.ws()
+            await ws.until(is_synced)
+
+            st, started = await c.post("api/run", {"file": "not-joined.yaml"})
+            assert st == 200, started
+            await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "state")
+
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            res = rt._resident
+            assert res is not None and res.current_run is not None
+            run_id = res.current_run.run_id
+            assert run_id is not None and res.proc.stdin is not None
+
+            # External graceful stop (force=False) raises C++ stop.requests to 1 without terminating sleep(100) yet.
+            res.proc.stdin.write(stop_command_line(run_id, force=False))
+            await res.proc.stdin.drain()
+            await ws.until(
+                lambda m: m["type"] == "allowed" and m["allowed"]["stop"]["reason"] == "already-stopping"
+            )
+
+            # Graceful POST /api/stop {force: false} must NOT escalate C++ stop.requests to 2.
+            st_grace, grace_body = await c.post("api/stop", {"force": False})
+            assert st_grace == 200, grace_body
+            assert grace_body["session"]["allowed"]["stop"]["reason"] == "already-stopping"
+            assert grace_body["session"]["allowed"]["force"]["ok"] is True
+
+            # Verify direct ServeRunHandle.send_stop(..., force=False) also stays idempotent at requests=1 in C++.
+            assert res.current_run.send_stop(1, force=False) is True
+            await res.current_run.drain(1.0)
+            queried = await rt.query_status()
+            assert queried is not None and queried["run_state"] is not None
+            assert queried["run_state"]["stop"]["requests"] == 1
+
+            # Explicit POST /api/stop {force: true} escalates C++ stop.requests to 2 and ends the run.
+            st_force, _ = await c.post("api/stop", {"force": True})
+            assert st_force == 200
+            got = await ws.until(is_ended)
+            assert got[-1]["session"]["result"]["result"] == "stopped"
+            stop_states = [
+                m["event"]["stop"]["requests"]
+                for m in got
+                if m["type"] == "event" and m["event"]["event"] == "state"
+            ]
+            assert 2 in stop_states
+            await ws.close()
+        finally:
+            await http.close()
+            await server.shutdown()
+            await test_server.close()
+
+    asyncio.run(run())
+
+
+def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_path: Path) -> None:
+    """Real vehicle_sil_launch: POST api/stop and api/stop-session during post-result drain leave stop='none' and problems=[]."""
+    import asyncio
+    import aiohttp
+    from aiohttp.test_utils import TestServer
+    from conftest import Gui
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+
+    async def run() -> None:
+        launcher = Launcher(Path(LAUNCHER))
+        await launcher.probe()
+
+        import socket
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+
+        server = GuiServer(Options(
+            root=configs,
+            launcher=launcher,
+            port=port,
+            token="test-token",
+            stop_timeout_s=2.0,
+            variables=False,
+        ))
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        orig_close = server._close_variables
+
+        async def gated_close(run_obj) -> None:
+            entered.set()
+            await release.wait()
+            await orig_close(run_obj)
+
+        server._close_variables = gated_close  # type: ignore[method-assign]
+        test_server = TestServer(server.app(), host="127.0.0.1", port=port)
+        await test_server.start_server()
+        http = aiohttp.ClientSession()
+        gui = Gui(proc=None, port=port, token="test-token", url=f"http://127.0.0.1:{port}/#token=test-token",
+                  stderr=tmp_path / ".err")
+        c = Client(gui, http)
+        try:
+            ws = await c.ws()
+            await ws.until(is_synced)
+
+            st, started = await c.post("api/run", {"file": "simulation.yaml", "speed": 1, "stop_at_ms": 200})
+            assert st == 200, started
+            sid = started["session"]["id"]
+
+            await asyncio.wait_for(entered.wait(), timeout=15.0)
+            assert server.session is not None and server.session.state == "running"
+            assert server.session.launcher_running is True
+
+            for endpoint, payload in (
+                ("api/stop", {"force": False}),
+                ("api/stop", {"force": True}),
+                ("api/stop-session", {"session": sid, "instance": server.instance, "force": False}),
+                ("api/stop-session", {"session": sid, "instance": server.instance, "force": True}),
+            ):
+                st_stop, stop_body = await c.post(endpoint, payload)
+                assert st_stop == 200, (endpoint, payload, stop_body)
+                assert stop_body["session"]["stop"] == "none"
+                assert stop_body["session"]["problems"] == []
+                assert stop_body["session"]["allowed"]["stop"]["reason"] == "not-running"
+                assert stop_body["session"]["allowed"]["force"]["reason"] == "not-running"
+
+            release.set()
+            got = await ws.until(is_ended)
+            end_sess = got[-1]["session"]
+            assert end_sess["state"] == "ended"
+            assert end_sess["stop"] == "none"
+            assert end_sess["problems"] == []
+            assert end_sess["result"]["result"] == "passed"
+            assert not any(m["type"] == "error" for m in got)
+            await ws.close()
+        finally:
+            release.set()
+            await http.close()
+            await server.shutdown()
+            await test_server.close()
+
+    asyncio.run(run())
