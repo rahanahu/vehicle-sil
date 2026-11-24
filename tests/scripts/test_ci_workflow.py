@@ -327,9 +327,14 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
                 job_name,
             )
 
-        for job_name in ("linux-tsan", "linux-oldest-cmake"):
-            step = next(s for s in JOBS[job_name]["steps"] if s.get("name") == "Configure, build and test")
-            self.assertIn("-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON", step["run"], job_name)
+        oldest_step = next(
+            s for s in JOBS["linux-oldest-cmake"]["steps"] if s.get("name") == "Configure, build and test"
+        )
+        self.assertIn("-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON", oldest_step["run"])
+
+        # TSan stays unbatched to avoid libstdc++ trivial ~std::mutex() stack-slot aliasing in TSan's deadlock detector.
+        tsan_step = next(s for s in JOBS["linux-tsan"]["steps"] if s.get("name") == "Configure, build and test")
+        self.assertNotIn("VEHICLE_SIL_BATCH_UNIT_TESTS=ON", tsan_step["run"])
 
         recordings_step = next(
             s for s in JOBS["linux"]["steps"] if s.get("name") == "The GUI's recordings against this launcher"

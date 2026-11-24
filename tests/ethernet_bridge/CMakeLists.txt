@@ -4,7 +4,7 @@
 # with real SIL Kit (in-process registry on a free port) and a fake link, and two bridges on pcap
 # links on one device of the fake pcap library (tests/eth_link/fake_pcap).
 vehicle_sil_add_harness_tests(vehicle_sil_ethernet_bridge_tests
-  PREFIX ethernet_bridge LABELS unit ethernet_bridge TIMEOUT 60
+  PREFIX ethernet_bridge LABELS unit ethernet_bridge TIMEOUT 60 BATCHABLE
   SOURCES
     test_bridge_app.cpp
     test_bridge_format.cpp

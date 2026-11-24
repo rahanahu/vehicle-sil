@@ -9,7 +9,8 @@ endif()
 vehicle_sil_target_defaults(vehicle_sil_process_helper)
 
 vehicle_sil_add_harness_tests(vehicle_sil_process_tests
-  PREFIX process LABELS unit process TIMEOUT 120
+  PREFIX process LABELS unit process TIMEOUT 120 BATCHABLE
+  NO_BATCH_SOURCES test_process.cpp
   SOURCES
     test_child_process.cpp
     test_process.cpp

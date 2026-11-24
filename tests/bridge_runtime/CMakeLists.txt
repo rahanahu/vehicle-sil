@@ -3,6 +3,7 @@
 # does not answer, also against what SIL Kit really throws; what a bridge writes for --describe,
 # against vehicle_sil::to_json() and vehicle_sil::config's reader (read_description).
 vehicle_sil_add_harness_tests(vehicle_sil_bridge_runtime_tests
-  PREFIX bridge_runtime LABELS unit bridge_runtime TIMEOUT 60
+  PREFIX bridge_runtime LABELS unit bridge_runtime TIMEOUT 60 BATCHABLE
+  NO_BATCH_SOURCES test_device_mark.cpp
   SOURCES test_describe.cpp test_device_mark.cpp test_link_line.cpp test_nothing_came_hint.cpp test_run_bridge.cpp test_registry_failure.cpp
   LINK vehicle_sil::bridge_runtime vehicle_sil::core vehicle_sil::ecu vehicle_sil::config)

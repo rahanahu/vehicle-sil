@@ -591,12 +591,14 @@ jobs:
           restore-keys: ccache-linux-clang-tsan-
       - name: Zero compiler cache statistics
         run: ccache -z
+      # Keep VEHICLE_SIL_BATCH_UNIT_TESTS=OFF on TSan: libstdc++'s trivial ~std::mutex() never calls
+      # pthread_mutex_destroy(), so TSan's deadlock detector retains destroyed stack mutex addresses across
+      # sequential TEST_CASE calls in one process and can report phantom lock-order inversions.
       - name: Configure, build and test
         run: >-
           python3 scripts/verify.py linux-clang-tsan --tag ci
           --cmake-arg="-DCMAKE_C_FLAGS_DEBUG=-O1 -g1"
           --cmake-arg="-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g1"
-          --cmake-arg=-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |

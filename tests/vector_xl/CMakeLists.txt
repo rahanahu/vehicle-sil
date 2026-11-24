@@ -23,7 +23,7 @@ set(_can_bridge_tests "${PROJECT_SOURCE_DIR}/tests/can_bridge")
 
 # In-process tests, one CTest test per case (each in its own process).
 vehicle_sil_add_harness_tests(vehicle_sil_vector_xl_tests
-  PREFIX vector_xl LABELS vector_xl unit TIMEOUT 60
+  PREFIX vector_xl LABELS vector_xl unit TIMEOUT 60 BATCHABLE
   SOURCES
     test_bridge_options.cpp
     test_bridge_silkit.cpp

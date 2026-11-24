@@ -3,7 +3,7 @@
 # numbers of the random sequence, which must be the same on every platform. Links only
 # vehicle_sil::signal, so building it checks that the header needs nothing else.
 vehicle_sil_add_harness_tests(vehicle_sil_signal_tests
-  PREFIX signal LABELS unit signal TIMEOUT 60
+  PREFIX signal LABELS unit signal TIMEOUT 60 BATCHABLE
   SOURCES test_waveform.cpp
   LINK vehicle_sil::signal)
 

@@ -2,7 +2,7 @@
 # owned and driven by an ECU (vehicle_sil::Ecu: Peer with an in-process registry, LocalBench,
 # Simulation on both).
 vehicle_sil_add_harness_tests(vehicle_sil_control_tests
-  PREFIX control LABELS unit control TIMEOUT 120
+  PREFIX control LABELS unit control TIMEOUT 120 BATCHABLE
   SOURCES
     test_agent.cpp
     test_ecu_variables.cpp

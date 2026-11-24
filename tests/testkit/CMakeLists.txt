@@ -2,7 +2,7 @@
 # kit (vehicle_sil::testkit): J1939 networks on a local virtual bus, recorders, fault injection.
 # Links no SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_testkit_tests
-  PREFIX testkit LABELS unit testkit j1939 TIMEOUT 60
+  PREFIX testkit LABELS unit testkit j1939 TIMEOUT 60 BATCHABLE
   SOURCES
     test_local_ecus.cpp
     test_testkit.cpp
@@ -16,7 +16,7 @@ if(NOT TARGET vehicle_sil_ecu_pair_messages)
                               ${PROJECT_SOURCE_DIR}/examples/j1939/ecu_pair/ecu_pair_messages.yaml)
 endif()
 vehicle_sil_add_harness_tests(vehicle_sil_ecu_api_tests
-  PREFIX ecu_api LABELS unit testkit j1939 TIMEOUT 60
+  PREFIX ecu_api LABELS unit testkit j1939 TIMEOUT 60 BATCHABLE
   SOURCES test_ecu_personas.cpp
   LINK vehicle_sil::testkit vehicle_sil_ecu_pair_messages vehicle_sil::j1939_diagnostics
        vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester vehicle_sil::j1939_monitor
@@ -35,7 +35,7 @@ if(NOT TARGET vehicle_sil_param_service)
   vehicle_sil_target_defaults(vehicle_sil_param_service)
 endif()
 vehicle_sil_add_harness_tests(vehicle_sil_param_service_tests
-  PREFIX param_service LABELS unit testkit j1939 TIMEOUT 60
+  PREFIX param_service LABELS unit testkit j1939 TIMEOUT 60 BATCHABLE
   SOURCES test_param_service.cpp
   LINK vehicle_sil::testkit vehicle_sil_param_service)
 add_test(NAME param_service.boundary

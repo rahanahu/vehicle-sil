@@ -1,7 +1,7 @@
 # vehicle_sil::can (base of the J1939 stack): frame values, virtual bus, host and step
 # driver. Links only vehicle_sil::can, so building it checks that the library needs no SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_can_tests
-  PREFIX can LABELS unit can TIMEOUT 60
+  PREFIX can LABELS unit can TIMEOUT 60 BATCHABLE
   SOURCES
     test_can_bus_model.cpp
     test_can_faults.cpp
@@ -17,7 +17,7 @@ target_include_directories(vehicle_sil_can_tests PRIVATE ${CMAKE_CURRENT_SOURCE_
 # The SIL Kit port of vehicle_sil::can: against a fake controller, and on real participants
 # (in-process registry), where the traces must equal the virtual bus's.
 vehicle_sil_add_harness_tests(vehicle_sil_can_silkit_tests
-  PREFIX can_silkit LABELS unit can TIMEOUT 120
+  PREFIX can_silkit LABELS unit can TIMEOUT 120 BATCHABLE
   SOURCES
     test_can_silkit_runs.cpp
     test_silkit_can_port.cpp
@@ -28,7 +28,7 @@ target_include_directories(vehicle_sil_can_silkit_tests PRIVATE ${CMAKE_CURRENT_
 # registry), compared with the virtual bus; its configuration file; and the executable.
 if(TARGET vehicle_sil_can_bus_simulator)
   vehicle_sil_add_harness_tests(vehicle_sil_can_netsim_tests
-    PREFIX can_netsim LABELS unit can TIMEOUT 120
+    PREFIX can_netsim LABELS unit can TIMEOUT 120 BATCHABLE
     SOURCES test_can_netsim.cpp
     LINK vehicle_sil::can_netsim vehicle_sil::can_silkit vehicle_sil::process)
   target_include_directories(vehicle_sil_can_netsim_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

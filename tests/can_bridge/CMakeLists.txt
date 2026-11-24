@@ -3,7 +3,7 @@
 # (fake_external_port.hpp) and the frame matrix (frame_matrix.hpp) are also used by the tests of
 # the Vector XL bridge (tests/vector_xl).
 vehicle_sil_add_harness_tests(vehicle_sil_can_bridge_tests
-  PREFIX can_bridge LABELS can_bridge unit TIMEOUT 60
+  PREFIX can_bridge LABELS can_bridge unit TIMEOUT 60 BATCHABLE
   SOURCES
     test_can_bridge.cpp
     test_external_port_adapter.cpp
