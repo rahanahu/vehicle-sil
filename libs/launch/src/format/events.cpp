@@ -1111,14 +1111,29 @@ void EventStream::state(const runner::RunState& state)
     emit("state", object([&](Writer& w) { write_run_state_members(w, state); }), Kind::State);
 }
 
-bool EventStream::result(std::string members, const std::function<bool()>& give_up, bool seal)
+void EventStream::enqueue_result(std::string members, bool seal)
 {
     std::uint64_t order = 0;
     const Kind kind = (window_ && seal) ? Kind::ResultFinal : Kind::Result;
-    if (!emit("result", std::move(members), kind, {}, &order))
+    if (emit("result", std::move(members), kind, {}, &order))
+    {
+        result_order_ = order;
+        result_enqueued_ = true;
+    }
+    else
+    {
+        result_order_ = 0;
+        result_enqueued_ = false;
+    }
+}
+
+bool EventStream::wait_result(const std::function<bool()>& give_up, bool seal)
+{
+    if (!result_enqueued_)
     {
         return false;
     }
+    const std::uint64_t order = result_order_;
     // The stream's result (or a window's result that seals the stream) is the last line; an
     // unsealed window's result is written when the writer has come past it.
     const auto written = [this, order, seal](const State& s) { return (window_ && !seal) ? s.done_order >= order : s.finished; };
@@ -1150,6 +1165,12 @@ bool EventStream::result(std::string members, const std::function<bool()>& give_
         s.changed.wait_for(lock, std::chrono::milliseconds(10));
     }
     return written(s);
+}
+
+bool EventStream::result(std::string members, const std::function<bool()>& give_up, bool seal)
+{
+    enqueue_result(std::move(members), seal);
+    return wait_result(give_up, seal);
 }
 
 } // namespace vehicle_sil::launch

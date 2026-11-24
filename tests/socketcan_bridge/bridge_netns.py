@@ -544,15 +544,28 @@ def launch(world: World) -> None:
                 "    step_ms: 10\n")
     # The launcher finds the bridge on PATH (it is not next to vehicle_sil_launch in the build).
     env = dict(os.environ, PATH=os.path.dirname(world.bridge_path) + os.pathsep + os.environ.get("PATH", ""))
-    run = subprocess.Popen([world.args.launch, "run", "--events", "--stop-at-ms", "3000", "--speed", "1", "--log-dir", "logs", "--connect", "J1939_CAN=vcan0", "sim.yaml"],
-                           cwd=world.work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    run = subprocess.Popen([world.args.launch, "serve", "--once", "--log-dir", "logs", "sim.yaml"],
+                           cwd=world.work, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, start_new_session=True)
+    lines: list[str] = []
+    reader = threading.Thread(target=lambda: lines.extend(run.stdout), daemon=True)
+    reader.start()
     try:
-        text, _ = run.communicate(timeout=4 * WAIT)
+        run.stdin.write(json.dumps({
+            "command": "run",
+            "intent": {"stop_at_ms": 3000, "speed": 1, "connect": {"J1939_CAN": "vcan0"}},
+        }) + "\n")
+        run.stdin.flush()
+        run.wait(timeout=4 * WAIT)
+        reader.join(10)
+        text = "".join(lines)
     except subprocess.TimeoutExpired:
         os.killpg(run.pid, signal.SIGKILL)
-        fail("the run did not end:\n" + (run.communicate()[0] or ""))
+        reader.join(5)
+        fail("the run did not end:\n" + "".join(lines))
     finally:
+        run.stdin.close()
+        run.stdout.close()
         stop.set()
         for t in threads:
             t.join(5)

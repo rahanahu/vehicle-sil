@@ -439,8 +439,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `participants[]` | participant の配列（設定ファイルの順） |
 | `networks[]` | ネットワークの配列（設定ファイルの順） |
 | `findings[]` | 指摘の配列（人向けと同じ順） |
-| `file_sha256` | `--file-only` のときだけ存在: 生の設定ファイルバイト列の小文字 16 進 SHA-256（読めない・未読時は `null`） |
-| `hot_eligibility` | `--file-only` のときだけ存在: `vehicle_sil_launch serve` 向け適格性 `{ "eligible": bool, "reason": string\|null, "message": string\|null }`（`reason` は `"usage"`、`"config-unreadable"`、`"fixed-registry"`、`"manual-participants"`、`"trace-enabled"`、適格時は `null`） |
+| `file_sha256` | 生の設定ファイルバイト列の小文字 16 進 SHA-256（読めない・未読時は `null`） |
+| `hot_eligibility` | `vehicle_sil_launch serve` 向け適格性 `{ "eligible": bool, "reason": string\|null, "message": string\|null }`（`reason` は `"usage"`、`"config-unreadable"`、`"fixed-registry"`、`"manual-participants"`、`"trace-enabled"`、適格時は `null`） |
 
 - `--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます。
 - `params` の要素は、`name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`）です。
@@ -683,7 +683,13 @@ participants:
       "message": "network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)",
       "detail": null
     }
-  ]
+  ],
+  "file_sha256": "c34efb597077f856df9a19f08690c2fdc28c9e482d85f7a4c550f925393c5e27",
+  "hot_eligibility": {
+    "eligible": true,
+    "reason": null,
+    "message": null
+  }
 }
 ```
 

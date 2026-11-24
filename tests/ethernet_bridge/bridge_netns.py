@@ -180,11 +180,15 @@ def outer(args: argparse.Namespace) -> None:
 class Proc:
     """A program in the namespace, its output read line by line."""
 
-    def __init__(self, argv: list[str], cwd: str, env: dict[str, str] | None = None):
+    def __init__(self, argv: list[str], cwd: str, env: dict[str, str] | None = None, stdin_line: str | None = None):
         self.lines: list[str] = []
         self.lock = threading.Condition()
-        self.p = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        self.p = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE if stdin_line is not None else subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   text=True, start_new_session=True, env=env)
+        if stdin_line is not None and self.p.stdin is not None:
+            self.p.stdin.write(stdin_line + "\n")
+            self.p.stdin.flush()
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
 
@@ -389,8 +393,8 @@ class World:
                 time.sleep(0.05)
         self.peer: Proc | None = None
 
-    def run(self, argv: list[str], env: dict[str, str] | None = None) -> Proc:
-        p = Proc(argv, self.work, env)
+    def run(self, argv: list[str], env: dict[str, str] | None = None, stdin_line: str | None = None) -> Proc:
+        p = Proc(argv, self.work, env, stdin_line=stdin_line)
         self.procs.append(p)
         return p
 
@@ -935,9 +939,18 @@ def launch(world: World, backend: str = "packet") -> None:
                 f"    within_ms: {int(WAIT * 1000)}\n")
     # The launcher finds the bridge on PATH (it is not next to vehicle_sil_launch in the build).
     env = dict(os.environ, PATH=os.path.dirname(world.bridge_path) + os.pathsep + os.environ.get("PATH", ""))
-    run = world.run([world.args.launch, "run", "--events", "--scenario", "answers.yaml", "--speed", "1", "--strict",
-                     "--stop-at-ms", "600000", "--late-tolerance-ms", "60000",
-                     "--log-dir", "logs", "--connect", f"ETH_EXT={target}", "sim.yaml"], env)
+    run_cmd = json.dumps({
+        "command": "run",
+        "intent": {
+            "scenario": "answers.yaml",
+            "speed": 1,
+            "strict": True,
+            "stop_at_ms": 600000,
+            "late_tolerance_ms": 60000,
+            "connect": {"ETH_EXT": target},
+        },
+    })
+    run = world.run([world.args.launch, "serve", "--once", "--log-dir", "logs", "sim.yaml"], env, stdin_line=run_cmd)
     code = run.wait(4 * WAIT)
     done.set()
     answering.join(5)

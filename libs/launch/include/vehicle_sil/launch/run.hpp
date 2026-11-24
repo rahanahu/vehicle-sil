@@ -164,7 +164,7 @@ struct RunLent
     /// server with it. run_file() starts it as it starts its own; it must stay usable while
     /// run_file() runs, and the caller ends it after run_file().
     ControlEndpoint* control_endpoint = nullptr;
-    /// run --events: what happens, as events (run_sink.hpp; EventStream of events.hpp is one
+    /// serve: what happens, as events (run_sink.hpp; EventStream of events.hpp is one
     /// implementation) instead of RunObservers::write_line():
     /// the phases, the check, the participants, the lines, the run's findings, the virtual time.
     /// run_file() writes every event but hello and the result (the caller writes them). No call

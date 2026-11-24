@@ -69,9 +69,10 @@ void scenario(const Options& o)
 
     // The events: each step begins and is decided, in the order of the virtual time.
     std::vector<std::string> event_args = args;
-    event_args.push_back("--events");
+    event_args[0] = "serve";
+    event_args.insert(event_args.begin() + 1, "--once");
     const Captured events = launch(o, event_args, dir);
-    expect_code(events, 0, "run --scenario --events");
+    expect_code(events, 0, "serve --once --scenario");
     std::vector<std::string> steps;
     std::istringstream in(lf(events.standard_output));
     for (std::string line; std::getline(in, line);)
@@ -174,7 +175,7 @@ void scenario_same(const Options& o)
     // With the time commands: paused in the middle and stepped on, the result is the same. (Slow
     // enough that the pause comes long before the end: 260 ms take 2.6 s.)
     {
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "--scenario", "s.yaml", "--speed", "0.1", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "--scenario", "s.yaml", "--speed", "0.1", "sim.yaml"});
         live.wait_for({"\"event\":\"scenario_step\"", "\"line\":6,", "\"status\":\"passed\""});
         live.write("{\"command\":\"pause\"}\n");
         live.wait_paused();
@@ -486,7 +487,7 @@ void scenario_dither(const Options& o)
     const std::vector<std::vector<std::string>> without = {
         {"check", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"},
         {"run", "--json", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_step.yaml"},
-        {"run", "--events", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_step.yaml"},
+        {"serve", "--once", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_step.yaml"},
         {"run", "simulation.yaml", "--stop-at-ms", "1000", "--scenario", "scenarios/throttle_step.yaml"},
     };
     for (const auto& args : without)
@@ -498,7 +499,7 @@ void scenario_dither(const Options& o)
         require(!contains(out, "\"after_line\"") && !contains(out, "\"dither\"") && !contains(out, "first_write") && !contains(out, "\ninput "),
                 "a scenario without a dither has no inputs and no lines (" + args[0] + " " + args[1] + "):\n" + out);
         const bool json = args[1] == "--json";
-        const bool events = args[1] == "--events";
+        const bool events = args[0] == "serve";
         require(!json || contains(out, "\n    \"inputs\": [],\n    \"lines\": []"),
                 "the lists are there, empty (" + args[0] + " " + args[1] + "):\n" + out);
         require(!events || contains(out, "\"inputs\":[],\"lines\":[]"),
@@ -541,7 +542,7 @@ void live(const Options& o)
             "the check of simulation.live.yaml has no finding:\n" + checked.standard_output);
 
     const auto began = std::chrono::steady_clock::now();
-    Live run(o, dir, {"run", "--events", "--stdin-commands", "--speed", "1", "simulation.live.yaml"});
+    Live run(o, dir, {"serve", "--once", "--stdin-commands", "--speed", "1", "simulation.live.yaml"});
     run.wait_for({"\"phase\":\"running\""});
     // Past the end of simulation.yaml. (Events of the time come at most every 100 ms.)
     std::int64_t reached = 0;
@@ -795,7 +796,7 @@ void scenario_failures(const Options& o)
         const fs::path dir = scenario_ecus(o, "",
                                            head + "  - set: { Body.level: 5 }\n"
                                                   "  - wait_until: { Door.level: 6 }\n    timeout_ms: 600000\n");
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "--scenario", "s.yaml", "--speed", "1", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "--scenario", "s.yaml", "--speed", "1", "sim.yaml"});
         live.wait_for({"\"event\":\"scenario_step\"", "\"line\":4,", "\"status\":\"running\""});
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();

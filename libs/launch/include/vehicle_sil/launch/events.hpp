@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// The machine interface of vehicle_sil_launch: the events of `run --events` and of `serve` (one JSON
+// The machine interface of vehicle_sil_launch: the events of `serve` and `serve --once` (one JSON
 // object per line) and `version --json`; the commands of `run --stdin-commands` and of `serve` are
 // read by command_input.hpp. Internal; the format: docs/simulation-events.md.
 #pragma once
@@ -123,7 +123,7 @@ struct EventStreamOptions
     std::function<std::int64_t()> now_ms{};
 };
 
-/// The events of `run --events`: one JSON object per line, each with "event", "seq" and "t_ms".
+/// The events of `serve`: one JSON object per line, each with "event", "seq" and "t_ms".
 ///
 /// The threads. Any thread makes events (main; the reader of each participant's output; the reader
 /// of standard input): it puts a line into a queue and returns. One thread, the writer, takes the
@@ -191,7 +191,7 @@ struct EventStreamOptions
 /// no line of a run follows its result. While a window is open, a "heartbeat" has its "run" too,
 /// so every line from "run_start" to the result has it; "log_dropped" and "state" belong to the
 /// window that made them (a waiting "state" is only replaced by one of the same window). Between
-/// the windows the stream writes the launcher's own lines (idle(), refused(), heartbeats) without
+/// the windows the stream writes the launcher's own lines (status(), prepare(), refused(), heartbeats) without
 /// "run", and is never sealed: only a result() of the stream itself (the launcher ends at its
 /// start) is the last line. One window is open at a time (the caller's rule).
 class EventStream : public RunEventSink
@@ -287,6 +287,8 @@ public:
     /// milliseconds, and true closes the stream (`give_up` takes the result from no reader that
     /// reads).
     bool result(std::string members, const std::function<bool()>& give_up = {}, bool seal = false);
+    void enqueue_result(std::string members, bool seal = false) override;
+    bool wait_result(const std::function<bool()>& give_up = {}, bool seal = false) override;
 
     /// Waits up to `timeout` until every event given so far has been written; false if the time
     /// is over or the stream has closed.
@@ -331,6 +333,8 @@ private:
     std::shared_ptr<State> state_;
     /// Set: this object is a run's window (open_run()), not the stream.
     std::shared_ptr<Window> window_;
+    std::uint64_t result_order_ = 0;
+    bool result_enqueued_ = false;
 };
 
 } // namespace vehicle_sil::launch

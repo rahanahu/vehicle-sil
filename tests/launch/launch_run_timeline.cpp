@@ -80,13 +80,13 @@ void timeline(const Options& o)
     require(contains(lf(late.standard_output), "[behind-real-time]"), "the run fell behind real time:\n" + lf(late.standard_output));
     expect_text(read_text(dir / "late.json"), file, "the timeline of a run that fell behind real time");
     write_file(dir / "Body.behaviour", "scenario-variables\n");
-    // With --events the line is a log event, and the result names the file.
-    const Captured events = launch(o, with({"--events", "--timeline", "fourth.json"}), dir);
-    expect_code(events, 0, "run --events --timeline");
+    // With serve --once the line is a log event, and the result names the file.
+    const Captured events = launch(o, {"serve", "--once", "sim.yaml", "--scenario", "s.yaml", "--timeline", "fourth.json"}, dir);
+    expect_code(events, 0, "serve --once --timeline");
     require(contains(lf(events.standard_output), "\"line\":\"timeline: fourth.json\"") &&
                 contains(lf(events.standard_output), "\"timeline\":\"fourth.json\""),
             "the events name the timeline:\n" + lf(events.standard_output));
-    expect_text(read_text(dir / "fourth.json"), file, "the timeline with --events");
+    expect_text(read_text(dir / "fourth.json"), file, "the timeline with serve --once");
 
     // A file that cannot be opened: said before anything starts, as a set-up error.
     const Captured closed = launch(o, with({"--timeline", "s.yaml/in-a-file.json"}), dir);

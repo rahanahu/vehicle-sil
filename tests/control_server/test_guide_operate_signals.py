@@ -139,9 +139,11 @@ class TheGuide(unittest.TestCase):
         name = "standard input of run --start-paused --stdin-commands"
         commands = block(f"{name}: the input").splitlines()
         expected = block(f"{name}: the lines of the Dashboard").splitlines()
-        run = subprocess.Popen([LAUNCH, "run", "--events", "--start-paused", "--stdin-commands", "--stop-at-ms", "1000", CONFIG],
+        run = subprocess.Popen([LAUNCH, "serve", "--once", CONFIG],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         try:
+            run.stdin.write(json.dumps({"command": "run", "intent": {"start_paused": True, "stop_at_ms": 1000}}) + "\n")
+            run.stdin.flush()
             seen, sent = [], 0
             for line in run.stdout:
                 event = json.loads(line)

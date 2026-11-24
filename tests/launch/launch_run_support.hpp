@@ -96,6 +96,18 @@ std::string lf(std::string text);
 /// Add any run options declared in the test fixture as `# run-option --flag value`.
 std::vector<std::string> fixture_run_arguments(const fs::path& dir, const std::vector<std::string>& args);
 
+struct ServeOnceInvocation
+{
+    std::vector<std::string> cli_args;
+    std::string run_command_line;
+    bool passthrough = false;
+};
+
+/// Splits a `serve --once` test invocation (which may include per-run flags from `# run-option` or
+/// test helpers) into the `vehicle_sil_launch serve --once` CLI arguments and the initial
+/// `{"command":"run",...}\n` stdin line.
+ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::vector<std::string>& raw_args);
+
 void write_file(const fs::path& path, const std::string& text);
 
 /// A YAML scalar in single quotes (a path with '\' or spaces as it is).
@@ -263,12 +275,28 @@ public:
             // hold(): the reader of the launcher's output stops here, and its pipes fill.
             changed_.wait(lock, [this] { return !held_; });
         };
-        std::vector<std::string> all = fixture_run_arguments(dir, args);
+        std::vector<std::string> all;
+        std::string initial_input;
+        if (!args.empty() && args.front() == "serve")
+        {
+            serve_once_ = true;
+            ServeOnceInvocation inv = split_serve_once_arguments(dir, args);
+            all = std::move(inv.cli_args);
+            initial_input = std::move(inv.run_command_line);
+        }
+        else
+        {
+            all = fixture_run_arguments(dir, args);
+        }
         if (detached)
         {
             all.insert(all.begin(), {"--run-detached", shown_path(o.launch)});
         }
         process_ = std::make_unique<vehicle_sil::process::Process>(detached ? o.helper : o.launch, all, std::move(options));
+        if (!initial_input.empty())
+        {
+            static_cast<void>(process_->write_input(initial_input));
+        }
     }
 
     ~Live()
@@ -396,7 +424,19 @@ public:
         require(seen && count >= n, std::to_string(n) + " events with " + parts.front() + " did not come:\n" + text_locked());
     }
 
-    void write(const std::string& text) { require(process_->write_input(text), "cannot write to the launcher"); }
+    void write(const std::string& text)
+    {
+        std::string to_send = text;
+        if (serve_once_ && contains(to_send, "\"command\":\"stop\"") && !contains(to_send, "\"force\""))
+        {
+            if (++stops_sent_ >= 2)
+            {
+                const auto pos = to_send.find("\"command\":\"stop\"");
+                to_send.replace(pos, 16, "\"command\":\"stop\",\"force\":true");
+            }
+        }
+        require(process_->write_input(to_send), "cannot write to the launcher");
+    }
 
     /// Waits until its standard error makes `done` true, or it has ended (up to 120 s, scaled); returns
     /// the standard error.
@@ -463,6 +503,8 @@ private:
     std::vector<std::string> out_;
     std::string err_;
     bool held_ = false;
+    bool serve_once_ = false;
+    int stops_sent_ = 0;
     std::unique_ptr<vehicle_sil::process::Process> process_;
 };
 

@@ -268,6 +268,13 @@ public:
                             const std::optional<std::string>& asked_run) = 0;
     virtual std::unique_ptr<RunEventSink> open_run(const std::string& run_id,
                                                    std::optional<std::int64_t> command_id) = 0;
+    /// Called under ExecutionRuntime::mutex_ in Step 2 right after ActiveRun teardown and state_
+    /// transition, before ExecutionRuntime::mutex_ is released and before finish_run() waits for
+    /// output flush. Must be noexcept and non-blocking (leaf lock only).
+    virtual void on_run_result(RunEventSink& /*window*/, const RunReport& /*report*/,
+                               bool /*launcher_ends*/, const ExecutionStatus& /*status*/) noexcept
+    {
+    }
     virtual bool finish_run(RunEventSink& window, const RunReport& report, bool launcher_ends,
                             const ExecutionStatus& status, const std::function<bool()>& give_up) = 0;
     [[nodiscard]] virtual bool closed() const = 0;

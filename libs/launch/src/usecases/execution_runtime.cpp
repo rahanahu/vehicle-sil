@@ -544,6 +544,12 @@ CommandReply ExecutionRuntime::stop_run(const std::string& run_id, StopMode mode
         if (options_.single_run && current_ == nullptr)
         {
             end_.mark(runner::stop_source::kStopCommand);
+            if (run_id.empty() && last_run_id_.has_value())
+            {
+                const std::string msg = "the simulation is not running";
+                refuse_locked(stop_cmd, source, "not-running", msg, std::nullopt);
+                return CommandReply{false, false, "not-running", msg, std::nullopt, 0};
+            }
         }
         const std::string asked = run_id.empty() ? (last_run_id_.value_or("1")) : run_id;
         const std::string msg =
@@ -594,6 +600,12 @@ CommandReply ExecutionRuntime::send_time_command(const std::string& run_id, cons
     }
     if (current_ == nullptr || (!run_id.empty() && current_->id != run_id))
     {
+        if (options_.single_run && run_id.empty() && current_ == nullptr && last_run_id_.has_value())
+        {
+            const std::string msg = "the simulation is not running";
+            refuse_locked(command, source, "not-running", msg, std::nullopt);
+            return CommandReply{false, false, "not-running", msg, std::nullopt, 0};
+        }
         const std::string asked = run_id.empty() ? (last_run_id_.value_or("1")) : run_id;
         const std::string msg =
             "the run " + asked + " is not the current run" +
@@ -798,6 +810,7 @@ ExecutionEnd ExecutionRuntime::run_loop()
             }
             ++status_rev_;
             settled_status = snapshot_locked(nullptr);
+            sink_.on_run_result(*window, report, ends, settled_status);
             changed_.notify_all();
         }
 

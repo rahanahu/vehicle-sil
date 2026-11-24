@@ -1579,7 +1579,13 @@ passed: 0 errors, 1 warning, 1 note
       "locked": false,
       "because": []
     },
-    "findings": []
+    "findings": [],
+    "file_sha256": "ac4f0ee1fb9346d58d80d2b8a994c4b95b6e8194ecffdb41a06f3acf204d7f1b",
+    "hot_eligibility": {
+      "eligible": true,
+      "reason": null,
+      "message": null
+    }
   }
 }
 ```

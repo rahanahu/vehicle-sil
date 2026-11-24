@@ -150,7 +150,7 @@ void late(const Options& o)
     require(message.rfind(expected, 0) == 0, "the warning:\n" + message + "\nexpected to start with\n" + expected);
     // --strict fails on it; the events have it before the participants are ended, and the time
     // events count the late steps as they come.
-    const Captured strict = launch(o, {"run", "--strict", "--events", "sim.yaml"}, dir);
+    const Captured strict = launch(o, {"serve", "--once", "--strict", "sim.yaml"}, dir);
     expect_code(strict, 1, "--strict fails a run that fell behind");
     const auto lines = check_events(strict.standard_output);
     const auto at = [&lines](const std::string& part) {
@@ -229,7 +229,7 @@ void stall(const Options& o)
     // by now; the result has the stall as a late step and in the time the run took.
     {
         const fs::path dir = one_ecu(o, "# run-option --participant-stop-timeout-ms 300\n# run-option --speed 1\n", "hang-at-ms 500");
-        const Captured events = launch(o, {"run", "--events", "--timeout-ms", "3000", "sim.yaml"}, dir);
+        const Captured events = launch(o, {"serve", "--once", "--timeout-ms", "3000", "sim.yaml"}, dir);
         expect_code(events, 1, "a run that ends in a stall");
         const auto lines = check_events(events.standard_output);
         const auto stalled = events_with(lines, {"\"event\":\"time\"", "\"sim_ms\":500,"});
@@ -299,7 +299,7 @@ void run_until_stdin(const Options& o)
     // the controller's 10 ms) and stands still there; the state says the command is taken, and a
     // line without a time is refused with the form of a step's.
     const fs::path dir = one_ecu(o, "", "pid");
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "sim.yaml"});
     live.wait_standing(0);
     live.wait_for({"\"event\":\"state\"", "\"paused\":true,", "\"run_until\":{\"ok\":true,\"reason\":null,"});
     live.write("{\"command\":\"run_until\",\"at_ms\":95,\"id\":5}\n");
@@ -316,7 +316,7 @@ void run_until_stdin(const Options& o)
     std::this_thread::sleep_for(300ms);
     require(events_with(live.lines(), {"\"sim_ms\":110,"}).empty(), "a time that has passed moves nothing");
     live.write("{\"command\":\"run_until\",\"id\":6}\n");
-    live.wait_for({"\"command\":\"run_until\"", "\"accepted\":false", "\"reason\":\"invalid-argument\",\"id\":6}"});
+    live.wait_for({"\"command\":\"run_until\"", "\"accepted\":false", "\"reason\":\"invalid-argument\",\"id\":6"});
     live.write("{\"command\":\"stop\"}\n");
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
@@ -329,7 +329,7 @@ void run_until_stdin(const Options& o)
     // simulation stands still at once and the command's own state says where.)
     {
         const fs::path fast = one_ecu(o, "", "pid");
-        Live run(o, fast, {"run", "--events", "--stdin-commands", "sim.yaml"});
+        Live run(o, fast, {"serve", "--once", "--stdin-commands", "sim.yaml"});
         run.wait_for_count({"\"event\":\"time\""}, 2);
         run.write("{\"command\":\"run_until\",\"at_ms\":0,\"id\":3}\n");
         const std::vector<std::string> sent{"\"command\":\"run_until\"", "\"accepted\":true,", "\"id\":3}"};
@@ -377,7 +377,7 @@ void state_on_arrival(const Options& o)
     // time event and, right after it, the state that says paused: a reader that sends its next command
     // once the latest state says paused has both before that command's event.
     const fs::path dir = one_ecu(o, "", "pid");
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "sim.yaml"});
     const std::string stateEvent = "\"event\":\"state\"";
     const auto says_paused = [](const std::string& state) { return contains(state, "\"paused\":true,\"paused_at_ms\":"); };
     // Waits for the time event that stands still at `ms`, then until the latest state says paused.
@@ -486,7 +486,7 @@ void speed_change(const Options& o)
     // are left take a quarter of their time, counted from where the change came. Lower bounds:
     // 1000 ms of virtual time never take less than 200 + 800 / 4 ms.
     const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 1000\n# run-option --speed 1\n# run-option --late-tolerance-ms 100000\n");
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "sim.yaml"});
     // The third time event after the one at 0: 200 ms or more have passed (they are 100 ms apart).
     live.wait_for_count({"\"event\":\"time\""}, 4);
     const std::int64_t reached = std::stoll(value_of(events_with(live.lines(), {"\"event\":\"time\""})[3], "sim_ms"));
@@ -671,7 +671,7 @@ void pause_step(const Options& o)
 {
     // No stop_at_ms: it runs until it is stopped. Started paused, stepped, resumed, paced, paused.
     const fs::path dir = one_ecu(o, "", "pid");
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+    Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "sim.yaml"});
     live.wait_standing(0);
     // The state says the same, and that a step is taken now.
     live.wait_for({"\"event\":\"state\"", "\"phase\":\"running\",\"paused\":true,\"paused_at_ms\":0,\"holding\":false,\"speed\":\"max\","
@@ -805,7 +805,7 @@ void paused_failures(const Options& o)
                                           "  - name: Brake\n"
                                           "    command: [" + ecu(o) + "]\n",
                                           {{"Engine", "exit-after-wall-ms 1500 3"}, {"Brake", "pid"}});
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "--timeout-ms", "60000", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "--timeout-ms", "60000", "sim.yaml"});
         const auto [status, lines] = live.finish();
         const bool gone = all_gone(dir, {"Brake.pid"}, 30s);
         require(status && status->code == 1, "a participant that fails while it stands still fails the run (1)");
@@ -826,7 +826,7 @@ void paused_failures(const Options& o)
     // --timeout-ms counts the time it stands still (wall-clock time).
     {
         const fs::path dir = one_ecu(o, "", "pid");
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "--timeout-ms", "1500", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "--timeout-ms", "1500", "sim.yaml"});
         const auto [status, lines] = live.finish();
         const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
         require(status && status->code == 1 && contains(lines.back(), "\"code\":\"timeout\""),
@@ -838,7 +838,7 @@ void paused_failures(const Options& o)
     if (can_request_stop())
     {
         const fs::path dir = one_ecu(o, "", "pid");
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "sim.yaml"});
         live.wait_standing(0);
 #ifdef _WIN32
         static_cast<void>(live.process().request_stop());
@@ -856,7 +856,7 @@ void paused_failures(const Options& o)
         const auto start_timeout = std::max(600ms, scaled_timeout(300ms));
         const fs::path dir = one_ecu(o, "# run-option --stop-at-ms 100\n# run-option --participant-start-timeout-ms " +
                                             std::to_string(start_timeout.count()) + "\n");
-        Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+        Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "sim.yaml"});
         // The event comes once the simulation stands still: the launcher's count of that time has begun.
         // Sleep slightly longer than start_timeout so paused_ms is strictly >= start_timeout even if the
         // sleep wakes a moment early or the launcher started counting right after emitting the event.
