@@ -55,6 +55,18 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicl
     set_tests_properties(control_server.launcher PROPERTIES
       LABELS "control;control_server;python;launch;integration" TIMEOUT ${_control_launcher_timeout} ${_vehicle_sil_tsan_processors} COST 12
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=${_example_dir};VEHICLE_SIL_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata;VEHICLE_SIL_LAUNCH_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/launcher_scratch;VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT=${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
+    add_test(NAME control_server.serve_unit
+             COMMAND "${_control_python}" -m unittest -v test_serve_unit
+             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(control_server.serve_unit PROPERTIES
+      LABELS "unit;control;control_server;python" TIMEOUT 60
+      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python")
+    add_test(NAME control_server.serve_client
+             COMMAND "${_control_python}" -m unittest -v test_serve_client
+             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(control_server.serve_client PROPERTIES
+      LABELS "control;control_server;python;launch;integration" TIMEOUT ${_control_launcher_timeout} ${_vehicle_sil_tsan_processors} COST 12
+      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=${_example_dir};VEHICLE_SIL_LAUNCH_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/serve_client_scratch;VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT=${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
     add_test(NAME control_server.example_write_before_start
              COMMAND "${_control_python}" "${PROJECT_SOURCE_DIR}/examples/launch_control/write_before_start.py"
                      --launch $<TARGET_FILE:vehicle_sil_launch> $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/../simulation.yaml)

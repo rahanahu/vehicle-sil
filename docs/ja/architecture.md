@@ -71,7 +71,7 @@ vehicle-sil/
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（クライアント向けの ControlServer。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
 ├── libs/trace/       vehicle_sil::trace  ステップと書き込みのプロファイリングのトレース。VEHICLE_SIL_TRACE のときに取る（標準ライブラリーだけ。内部用）
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
-├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、`vehicle_sil_launch run --control` を子プロセスで動かす助け
+├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、`vehicle_sil_launch run --control` や `serve` を子プロセスで動かす助け
 ├── bridges/common/  ブリッジの実行ファイルが共有する run_bridge()（止め方、監視のループ、止める順、終了コード。内部用）
 ├── bridges/can/     CAN ブリッジが共有する CanBridge と、別ターゲットの ExternalPortAdapter（移植可能、内部用）
 ├── bridges/vector-xl/ Vector XL CAN Bridge（チャネルの選択と引数はどこでも、XL バックエンドと実行ファイルは Windows 専用）
