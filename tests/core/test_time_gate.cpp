@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -913,12 +914,25 @@ TEST_CASE(virtual_time_watch_wakes_promptly_on_wake_waiters)
     CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
 
     std::atomic<bool> stop{false};
+    std::promise<void> waiting;
+    auto waitingFuture = waiting.get_future();
+    std::atomic<bool> signaled{false};
     WatchOptions opts;
     opts.poll = scaled_timeout(10s);
-    opts.interrupted = [&] { return stop.load(std::memory_order_acquire); };
+    opts.interrupted = [&] {
+        if (stop.load(std::memory_order_acquire))
+        {
+            return true;
+        }
+        if (!signaled.exchange(true, std::memory_order_acq_rel))
+        {
+            waiting.set_value();
+        }
+        return false;
+    };
     WatchResult result;
     std::thread watcher([&] { result = watch_simulation(*sim.controller, opts); });
-    std::this_thread::sleep_for(30ms);
+    CHECK(waitingFuture.wait_for(scaled_timeout(5s)) == std::future_status::ready);
     const auto t0 = Wall::now();
     stop.store(true, std::memory_order_release);
     sim.controller->runtime().wake_waiters();

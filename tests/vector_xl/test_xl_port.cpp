@@ -666,6 +666,7 @@ TEST_CASE(xl_port_a_lost_receipt_does_not_make_a_working_bus_look_stuck)
     const auto timeout = scaled_timeout(50ms);
     XlCanPortOptions options;
     options.transmit_timeout = timeout;
+    options.drain_timeout = 0ms;
     BlockedBusFixture f(options);
     fake_xl::lose_next_receipt(kHardware1);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);

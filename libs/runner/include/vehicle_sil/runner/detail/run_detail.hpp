@@ -47,7 +47,8 @@ namespace detail {
 /// with a control server): either may take any time, and the ECU is not Running until it is over.
 /// The launcher's own limits (before and after the wait) still end a start that does not come.
 [[nodiscard]] std::int64_t ecu_start_timeout_ms(const config::SimulationConfig& config, bool stands_still_before_start,
-                                              std::int64_t start_timeout_ms, std::int64_t stop_timeout_ms);
+                                              std::int64_t start_timeout_ms, std::int64_t stop_timeout_ms,
+                                              std::int64_t margin_ms = 10000);
 
 /// The arguments that run starts the participant with, after its executable; the command to start
 /// it by hand (manual) and the events show the same ones. An ecu_main executable (describe:
@@ -63,7 +64,8 @@ namespace detail {
                                                              bool stands_still_before_start,
                                                              bool sample_every_step,
                                                              std::int64_t start_timeout_ms = 30000,
-                                                             std::int64_t stop_timeout_ms = 10000);
+                                                             std::int64_t stop_timeout_ms = 10000,
+                                                             std::int64_t ecu_start_margin_ms = 10000);
 
 /// One line for this system's shell that starts `executable` (as given) with `arguments`: on
 /// Windows for cmd.exe, quoted as the C runtimes read a command line back (an argument in double
