@@ -40,13 +40,21 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        id: setup-node
         with:
           node-version-file: gui/web/.nvmrc
-          cache: npm
-          cache-dependency-path: gui/web/package-lock.json
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: web-node-modules
+        with:
+          path: gui/web/node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-node.outputs.node-version }}-${{ hashFiles('gui/web/package-lock.json') }}
       - name: Install the packages
+        if: steps.web-node-modules.outputs.cache-hit != 'true'
         working-directory: gui/web
         run: npm ci
+      - name: Runner image version
+        id: runner-img
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - name: Playwright version
         id: pw-ver
         run: |
@@ -57,7 +65,7 @@ jobs:
         id: apt-pw
         with:
           path: ~/.cache/apt-debs/playwright
-          key: apt-pw-ubuntu2404-${{ env.ImageVersion || 'unknown' }}-${{ steps.pw-ver.outputs.version }}
+          key: apt-pw-ubuntu2404-${{ steps.runner-img.outputs.version }}-${{ steps.pw-ver.outputs.version }}
       - name: Install the browser of the unit tests of the GUI parts
         working-directory: gui/web
         run: |
@@ -65,15 +73,15 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-pw.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            mkdir -p "$deb_dir/partial"
-            if sudo apt-get install -y -q --no-download --no-install-recommends \
-                 -o Dir::Cache::archives="$deb_dir" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 "$deb_dir"/*.deb &&
+            if sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive dpkg -i --no-triggers "$deb_dir"/*.deb &&
+               sudo ldconfig &&
+               (! command -v fc-cache > /dev/null 2>&1 || sudo fc-cache) &&
                npx playwright install-deps --dry-run chromium > /dev/null 2>&1; then
               ok=true
+            else
+              sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get update -q -o Acquire::Languages=none
+              sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -f -y -q
             fi
-            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
@@ -118,33 +126,32 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Runner image version
+        id: runner-img
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: apt-release-tools
         with:
           path: ~/.cache/apt-debs/release-tools
-          key: apt-release-tools-ubuntu2204-${{ env.ImageVersion || 'unknown' }}
+          key: apt-release-tools-ubuntu2204-${{ steps.runner-img.outputs.version }}
       - name: Install GCC 12, Ninja and ccache
         run: |
           deb_dir="$HOME/.cache/apt-debs/release-tools"
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-release-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            mkdir -p "$deb_dir/partial"
-            if sudo apt-get install -y -q --no-download --no-install-recommends \
-                 -o Dir::Cache::archives="$deb_dir" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 "$deb_dir"/*.deb &&
+            if sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive dpkg -i --no-triggers "$deb_dir"/*.deb &&
+               sudo ldconfig &&
                dpkg -s g++-12 ninja-build ccache > /dev/null 2>&1; then
               ok=true
             fi
-            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
             sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
             mkdir -p "$deb_dir/partial"
             sudo apt-get update -q -o Acquire::Languages=none
-            sudo apt-get install -y -q \
+            sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -f -y -q \
               -o Dir::Cache::archives="$deb_dir" \
               -o APT::Keep-Downloaded-Packages=true \
               g++-12 ninja-build ccache
@@ -196,33 +203,32 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Runner image version
+        id: runner-img
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: apt-release-tools
         with:
           path: ~/.cache/apt-debs/release-tools
-          key: apt-release-tools-ubuntu2204-${{ env.ImageVersion || 'unknown' }}
+          key: apt-release-tools-ubuntu2204-${{ steps.runner-img.outputs.version }}
       - name: Install GCC 12, Ninja and ccache
         run: |
           deb_dir="$HOME/.cache/apt-debs/release-tools"
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-release-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            mkdir -p "$deb_dir/partial"
-            if sudo apt-get install -y -q --no-download --no-install-recommends \
-                 -o Dir::Cache::archives="$deb_dir" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 "$deb_dir"/*.deb &&
+            if sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive dpkg -i --no-triggers "$deb_dir"/*.deb &&
+               sudo ldconfig &&
                dpkg -s g++-12 ninja-build ccache > /dev/null 2>&1; then
               ok=true
             fi
-            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
             sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
             mkdir -p "$deb_dir/partial"
             sudo apt-get update -q -o Acquire::Languages=none
-            sudo apt-get install -y -q \
+            sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -f -y -q \
               -o Dir::Cache::archives="$deb_dir" \
               -o APT::Keep-Downloaded-Packages=true \
               g++-12 ninja-build ccache

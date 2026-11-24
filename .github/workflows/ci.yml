@@ -72,6 +72,7 @@ jobs:
       tsan: ${{ steps.look.outputs.tsan }}
       windows: ${{ steps.look.outputs.windows }}
       presets: ${{ steps.look.outputs.presets }}
+      cpp_hash: ${{ steps.cpp-hash.outputs.hash }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -177,6 +178,26 @@ jobs:
           echo "tsan=$tsan" | tee -a "$GITHUB_OUTPUT"
           echo "windows=$windows" | tee -a "$GITHUB_OUTPUT"
           echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
+      - name: C++ build input hash
+        id: cpp-hash
+        run: |
+          trees=$(git rev-parse \
+            HEAD:.github/workflows/ci.yml \
+            HEAD:CMakeLists.txt \
+            HEAD:CMakePresets.json \
+            HEAD:.gitmodules \
+            HEAD:cmake \
+            HEAD:external \
+            HEAD:patches \
+            HEAD:proto \
+            HEAD:libs \
+            HEAD:tools \
+            HEAD:bridges \
+            HEAD:tests \
+            HEAD:examples)
+          hash=$(printf '%s\n' "$trees" | sha256sum | cut -c1-16)
+          test -n "$hash"
+          echo "hash=$hash" | tee -a "$GITHUB_OUTPUT"
 
   linux:
     needs: changes
@@ -208,11 +229,14 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Runner image version
+        id: runner-img
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: apt-tools
         with:
           path: ~/.cache/apt-debs/linux-tools
-          key: apt-linux-tools-ubuntu2404-${{ env.ImageVersion || 'unknown' }}
+          key: apt-linux-tools-ubuntu2404-${{ steps.runner-img.outputs.version }}
       # ethtool: ethernet_bridge.netns.packet turns an offload off with it.
       # libpcap0.8: ethernet_bridge.netns.pcap loads the library at run time (nothing is built against it).
       - name: Install Ninja, ccache, ethtool and libpcap
@@ -221,23 +245,19 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            mkdir -p "$deb_dir/partial"
-            if sudo apt-get install -y -q --no-download --no-install-recommends \
-                 -o Dir::Cache::archives="$deb_dir" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 "$deb_dir"/*.deb &&
+            if sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive dpkg -i --no-triggers "$deb_dir"/*.deb &&
+               sudo ldconfig &&
                dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
                (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
               ok=true
             fi
-            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
             sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
             mkdir -p "$deb_dir/partial"
             sudo apt-get update -q -o Acquire::Languages=none
-            sudo apt-get install -y -q \
+            sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -f -y -q \
               -o Dir::Cache::archives="$deb_dir" \
               -o APT::Keep-Downloaded-Packages=true \
               ninja-build ccache ethtool libpcap0.8
@@ -248,13 +268,29 @@ jobs:
         run: uv sync --locked
       # A pull request builds the control server against Ubuntu's gRPC (find_package finds it), so that it does
       # not wait for the build of gRPC when the compiler cache has gone. A push to main installs nothing here
-      # and builds the pinned version with FetchContent, as a user without gRPC does.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # and builds the pinned version with FetchContent, as a user without gRPC does, while warming the
+      # apt-grpc cache (download-only) so first pushes of pull requests hit main's cache instead of apt mirrors.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: apt-grpc
-        if: matrix.preset == 'linux-gcc-control' && github.event_name == 'pull_request'
+        if: matrix.preset == 'linux-gcc-control' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
         with:
           path: ~/.cache/apt-debs/grpc
-          key: apt-grpc-ubuntu2404-${{ env.ImageVersion || 'unknown' }}
+          key: apt-grpc-ubuntu2404-${{ steps.runner-img.outputs.version }}
+          lookup-only: ${{ github.event_name != 'pull_request' }}
+      - name: Warm gRPC package cache (main)
+        if: matrix.preset == 'linux-gcc-control' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.apt-grpc.outputs.cache-hit != 'true'
+        run: |
+          deb_dir="$HOME/.cache/apt-debs/grpc"
+          rm -rf "$deb_dir"
+          mkdir -p "$deb_dir/partial"
+          sudo apt-get update -q -o Acquire::Languages=none
+          sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --download-only --no-install-recommends \
+            -o Dir::Cache::archives="$deb_dir" \
+            -o APT::Keep-Downloaded-Packages=true \
+            libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+          sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
+          sudo chown -R "$(id -u):$(id -g)" "$deb_dir"
+          compgen -G "$deb_dir/*.deb" > /dev/null
       - name: gRPC of the distribution (pull requests)
         if: matrix.preset == 'linux-gcc-control' && github.event_name == 'pull_request'
         run: |
@@ -262,28 +298,29 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-grpc.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            mkdir -p "$deb_dir/partial"
-            if sudo apt-get install -y -q --no-download --no-install-recommends \
-                 -o Dir::Cache::archives="$deb_dir" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 "$deb_dir"/*.deb &&
+            if sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive dpkg -i --no-triggers "$deb_dir"/*.deb &&
+               sudo ldconfig &&
                dpkg -s libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc > /dev/null 2>&1; then
               ok=true
             fi
-            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
             sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
             mkdir -p "$deb_dir/partial"
             sudo apt-get update -q -o Acquire::Languages=none
-            sudo apt-get install -y -q --no-install-recommends \
+            sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -f -y -q --no-install-recommends \
               -o Dir::Cache::archives="$deb_dir" \
               -o APT::Keep-Downloaded-Packages=true \
               libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
             sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
             sudo chown -R "$(id -u):$(id -g)" "$deb_dir"
           fi
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.preset == 'linux-gcc-control' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') && steps.apt-grpc.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/apt-debs/grpc
+          key: apt-grpc-ubuntu2404-${{ steps.runner-img.outputs.version }}
       # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
       - name: Address space layout for the sanitizers
         if: matrix.preset == 'linux-clang-asan'
@@ -322,9 +359,10 @@ jobs:
           key: grpc-src-${{ steps.grpc-ver.outputs.version }}
       # The compiler cache: SIL Kit and everything else compiles once per cache, then comes from here.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: ccache-restore
         with:
           path: .ccache
-          key: ccache-${{ matrix.preset }}-${{ github.sha }}
+          key: ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-${{ matrix.preset }}-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -341,8 +379,11 @@ jobs:
         run: |
           extra=()
           case "${{ matrix.preset }}" in
-            linux-gcc-debug|linux-gcc-control|linux-clang-asan)
+            linux-gcc-debug|linux-gcc-control)
               extra+=(--cmake-arg=-DCMAKE_C_FLAGS_DEBUG=-g1 --cmake-arg=-DCMAKE_CXX_FLAGS_DEBUG=-g1)
+              ;;
+            linux-clang-asan)
+              extra+=(--cmake-arg="-DCMAKE_C_FLAGS_DEBUG=-O1 -g1" --cmake-arg="-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g1")
               ;;
           esac
           if [ "${{ matrix.preset }}" = "linux-gcc-control" ] && [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ steps.grpc-src.outputs.cache-hit }}" = "true" ]; then
@@ -417,18 +458,17 @@ jobs:
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ steps.ccache-restore.outputs.cache-hit }}" != "true" ]; then
             ccache -c
           fi
           ccache -s
-      # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
-      # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
-      # of main would be the ones thrown out.
-      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+      # Only a run on main saves the compiler cache, and only when the C++ input hash missed (so non-C++ merges
+      # do not re-upload 2+ GiB and evict other caches). A pull request reads the newest one of main.
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.ccache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-${{ matrix.preset }}-${{ github.sha }}
+          key: ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -463,34 +503,33 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Runner image version
+        id: runner-img
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: apt-tools
         with:
           path: ~/.cache/apt-debs/linux-tools
-          key: apt-linux-tools-ubuntu2404-${{ env.ImageVersion || 'unknown' }}
+          key: apt-linux-tools-ubuntu2404-${{ steps.runner-img.outputs.version }}
       - name: Install Ninja, ccache, ethtool and libpcap
         run: |
           deb_dir="$HOME/.cache/apt-debs/linux-tools"
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            mkdir -p "$deb_dir/partial"
-            if sudo apt-get install -y -q --no-download --no-install-recommends \
-                 -o Dir::Cache::archives="$deb_dir" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 "$deb_dir"/*.deb &&
+            if sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive dpkg -i --no-triggers "$deb_dir"/*.deb &&
+               sudo ldconfig &&
                dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
                (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
               ok=true
             fi
-            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
             sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
             mkdir -p "$deb_dir/partial"
             sudo apt-get update -q -o Acquire::Languages=none
-            sudo apt-get install -y -q \
+            sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -f -y -q \
               -o Dir::Cache::archives="$deb_dir" \
               -o APT::Keep-Downloaded-Packages=true \
               ninja-build ccache ethtool libpcap0.8
@@ -503,26 +542,38 @@ jobs:
       - name: Address space layout for the sanitizer
         run: sudo sysctl -w vm.mmap_rnd_bits=28 && clang++ --version | head -n 1
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: ccache-restore
         with:
           path: .ccache
-          key: ccache-linux-clang-tsan-${{ github.sha }}
+          key: ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-linux-clang-tsan-
       - name: Zero compiler cache statistics
         run: ccache -z
       - name: Configure, build and test
-        run: python3 scripts/verify.py linux-clang-tsan --tag ci --cmake-arg=-DCMAKE_C_FLAGS_DEBUG=-g1 --cmake-arg=-DCMAKE_CXX_FLAGS_DEBUG=-g1
+        run: >-
+          python3 scripts/verify.py linux-clang-tsan --tag ci
+          --cmake-arg="-DCMAKE_C_FLAGS_DEBUG=-O1 -g1"
+          --cmake-arg="-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g1"
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ steps.ccache-restore.outputs.cache-hit }}" != "true" ]; then
             ccache -c
           fi
           ccache -s
-      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.ccache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-clang-tsan-${{ github.sha }}
+          key: ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
+      - name: Warn on PR TSan failure
+        if: failure() && github.event_name == 'pull_request'
+        run: |
+          echo "::warning::linux-clang-tsan failed (unwaited on PR; will fail main after merge)"
+          {
+            echo "> [!WARNING]"
+            echo "> **linux-clang-tsan failed on this PR.** Because \`linux-tsan\` uses \`continue-on-error\` on pull requests, \`all checks\` does not wait for it — **merging this PR as-is will fail \`main\` CI** and block releases. Inspect \`logs-linux-clang-tsan\` before merging."
+          } >> "$GITHUB_STEP_SUMMARY"
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -552,34 +603,33 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Runner image version
+        id: runner-img
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: apt-tools
         with:
           path: ~/.cache/apt-debs/linux-tools
-          key: apt-linux-tools-ubuntu2404-${{ env.ImageVersion || 'unknown' }}
+          key: apt-linux-tools-ubuntu2404-${{ steps.runner-img.outputs.version }}
       - name: Install Ninja, ccache, ethtool and libpcap
         run: |
           deb_dir="$HOME/.cache/apt-debs/linux-tools"
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-tools.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            mkdir -p "$deb_dir/partial"
-            if sudo apt-get install -y -q --no-download --no-install-recommends \
-                 -o Dir::Cache::archives="$deb_dir" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 "$deb_dir"/*.deb &&
+            if sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive dpkg -i --no-triggers "$deb_dir"/*.deb &&
+               sudo ldconfig &&
                dpkg -s ninja-build ccache ethtool > /dev/null 2>&1 &&
                (dpkg -s libpcap0.8t64 > /dev/null 2>&1 || dpkg -s libpcap0.8 > /dev/null 2>&1); then
               ok=true
             fi
-            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb
             sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
             mkdir -p "$deb_dir/partial"
             sudo apt-get update -q -o Acquire::Languages=none
-            sudo apt-get install -y -q \
+            sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -f -y -q \
               -o Dir::Cache::archives="$deb_dir" \
               -o APT::Keep-Downloaded-Packages=true \
               ninja-build ccache ethtool libpcap0.8
@@ -606,9 +656,10 @@ jobs:
         run: uv sync --locked
       # Dedicated compiler cache for CMake 3.21.7 (CMake 3.21 vs 3.28+ flag/CMP0128 diffs miss the 3.28+ Release cache).
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: ccache-restore
         with:
           path: .ccache
-          key: ccache-linux-oldest-cmake-${{ github.sha }}
+          key: ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-linux-oldest-cmake-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -622,15 +673,15 @@ jobs:
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ steps.ccache-restore.outputs.cache-hit }}" != "true" ]; then
             ccache -c
           fi
           ccache -s
-      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.ccache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-oldest-cmake-${{ github.sha }}
+          key: ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -679,6 +730,12 @@ jobs:
               try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop } catch { Write-Host "Defender exclusion skipped for ${p}: $_" }
             }
           }
+      - name: Runner image version
+        id: runner-img
+        shell: pwsh
+        run: |
+          $ver = if ($env:ImageVersion) { $env:ImageVersion } else { 'unknown' }
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - name: MSYS2 package key
         id: msys2-key
         shell: pwsh
@@ -694,7 +751,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}\msys64
-          key: msys64-ucrt64-v1-${{ env.ImageVersion || 'unknown' }}-${{ steps.msys2-key.outputs.hash }}
+          key: msys64-ucrt64-v1-${{ steps.runner-img.outputs.version }}-${{ steps.msys2-key.outputs.hash }}
       - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         if: steps.msys2-cache.outputs.cache-hit != 'true'
         with:
@@ -710,7 +767,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}\msys64
-          key: msys64-ucrt64-v1-${{ env.ImageVersion || 'unknown' }}-${{ steps.msys2-key.outputs.hash }}
+          key: msys64-ucrt64-v1-${{ steps.runner-img.outputs.version }}-${{ steps.msys2-key.outputs.hash }}
       - name: Configure cached MSYS2 shell
         if: steps.msys2-cache.outputs.cache-hit == 'true'
         shell: pwsh
@@ -732,9 +789,10 @@ jobs:
       - name: Where ccache keeps its files
         run: echo "CCACHE_DIR=$(cygpath -m "$GITHUB_WORKSPACE/.ccache")" >> "$GITHUB_ENV"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: ccache-restore
         with:
           path: .ccache
-          key: ccache-windows-mingw-release-${{ github.sha }}
+          key: ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-windows-mingw-release-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -753,18 +811,17 @@ jobs:
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ steps.ccache-restore.outputs.cache-hit }}" != "true" ]; then
             ccache -c
           fi
           ccache -s
-      # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
-      # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
-      # of main would be the ones thrown out.
-      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+      # Only a run on main saves the compiler cache, and only when the C++ input hash missed (so non-C++ merges
+      # do not re-upload and evict other caches). A pull request reads the newest one of main.
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.ccache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-windows-mingw-release-${{ github.sha }}
+          key: ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -785,18 +842,27 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        id: setup-node
         with:
           node-version-file: gui/web/.nvmrc
-          cache: npm
-          cache-dependency-path: gui/web/package-lock.json
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: web-node-modules
+        with:
+          path: gui/web/node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-node.outputs.node-version }}-${{ hashFiles('gui/web/package-lock.json') }}
       - name: Install the packages
+        if: steps.web-node-modules.outputs.cache-hit != 'true'
         working-directory: gui/web
         run: npm ci
       - name: Format of the documents (a pull request that changes only Markdown files)
         if: needs.changes.outputs.docs_only == 'true'
         working-directory: gui/web
         run: npm run format:check
+      - name: Runner image version
+        id: runner-img
+        if: needs.changes.outputs.docs_only != 'true'
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - name: Playwright version
         id: pw-ver
         if: needs.changes.outputs.docs_only != 'true'
@@ -809,7 +875,7 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true'
         with:
           path: ~/.cache/apt-debs/playwright
-          key: apt-pw-ubuntu2404-${{ env.ImageVersion || 'unknown' }}-${{ steps.pw-ver.outputs.version }}
+          key: apt-pw-ubuntu2404-${{ steps.runner-img.outputs.version }}-${{ steps.pw-ver.outputs.version }}
       - name: Install the browser of the end-to-end tests
         if: needs.changes.outputs.docs_only != 'true'
         working-directory: gui/web
@@ -818,15 +884,15 @@ jobs:
           mkdir -p "$deb_dir"
           ok=false
           if [ "${{ steps.apt-pw.outputs.cache-hit }}" = "true" ] && compgen -G "$deb_dir/*.deb" > /dev/null; then
-            mkdir -p "$deb_dir/partial"
-            if sudo apt-get install -y -q --no-download --no-install-recommends \
-                 -o Dir::Cache::archives="$deb_dir" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 "$deb_dir"/*.deb &&
+            if sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive dpkg -i --no-triggers "$deb_dir"/*.deb &&
+               sudo ldconfig &&
+               (! command -v fc-cache > /dev/null 2>&1 || sudo fc-cache) &&
                npx playwright install-deps --dry-run chromium > /dev/null 2>&1; then
               ok=true
+            else
+              sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get update -q -o Acquire::Languages=none
+              sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -f -y -q
             fi
-            sudo rm -rf "$deb_dir/partial" "$deb_dir/lock"
           fi
           if [ "$ok" != "true" ]; then
             rm -f "$deb_dir"/*.deb

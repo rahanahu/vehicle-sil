@@ -10,6 +10,7 @@ kind of change without leaving `linux` with an unguarded empty matrix.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,7 +21,10 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+CI_TEXT = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+RELEASE_TEXT = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+WORKFLOW = yaml.safe_load(CI_TEXT)
+RELEASE_WORKFLOW = yaml.safe_load(RELEASE_TEXT)
 ON = WORKFLOW.get("on") or WORKFLOW.get(True)
 JOBS = WORKFLOW["jobs"]
 GATE = "all-checks"
@@ -107,14 +111,193 @@ class AllChecks(unittest.TestCase):
                 )
 
     def test_release_workflow_decouples_cpp_builds_from_web(self):
-        release = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))
-        rjobs = release["jobs"]
+        rjobs = RELEASE_WORKFLOW["jobs"]
         for builder in ("build-linux", "build-windows"):
             self.assertIn(builder, rjobs)
             self.assertNotIn("needs", rjobs[builder])
         self.assertEqual(sorted(rjobs["package-linux"]["needs"]), ["build-linux", "web"])
         self.assertEqual(sorted(rjobs["package-windows"]["needs"]), ["build-windows", "web"])
         self.assertEqual(sorted(rjobs["draft"]["needs"]), ["package-linux", "package-windows", "web"])
+
+
+class WorkflowCachesAndSanitizers(unittest.TestCase):
+    """Checks cache keys, apt-grpc warming, ccache content-hash gating, node_modules cache, and sanitizer flags."""
+
+    def test_no_broken_env_image_version_in_workflows(self):
+        for name, text, wf in (
+            ("ci.yml", CI_TEXT, WORKFLOW),
+            ("release.yml", RELEASE_TEXT, RELEASE_WORKFLOW),
+        ):
+            self.assertNotIn("env.ImageVersion", text, f"{name} must read ImageVersion via a runner-img step output")
+            for job_name, job in wf["jobs"].items():
+                steps = job.get("steps", [])
+                seen_runner_img = False
+                for step in steps:
+                    if step.get("id") == "runner-img":
+                        seen_runner_img = True
+                    key = str((step.get("with") or {}).get("key", ""))
+                    if "steps.runner-img.outputs.version" in key:
+                        self.assertTrue(
+                            seen_runner_img,
+                            f"{name}:{job_name} references steps.runner-img.outputs.version before defining runner-img",
+                        )
+
+    def test_apt_grpc_warms_on_main_without_installing_and_installs_on_prs(self):
+        steps = JOBS["linux"]["steps"]
+        restore = next(s for s in steps if s.get("id") == "apt-grpc")
+        self.assertTrue(str(restore.get("uses", "")).startswith("actions/cache/restore@"))
+        self.assertIn("github.event_name == 'pull_request'", restore["if"])
+        self.assertIn("github.ref == 'refs/heads/main'", restore["if"])
+        self.assertEqual(restore["with"]["key"], "apt-grpc-ubuntu2404-${{ steps.runner-img.outputs.version }}")
+        self.assertEqual(restore["with"]["lookup-only"], "${{ github.event_name != 'pull_request' }}")
+
+        warm = next(s for s in steps if s.get("name") == "Warm gRPC package cache (main)")
+        self.assertIn("github.event_name != 'pull_request'", warm["if"])
+        self.assertIn("github.ref == 'refs/heads/main'", warm["if"])
+        self.assertIn("steps.apt-grpc.outputs.cache-hit != 'true'", warm["if"])
+        self.assertIn("--download-only", warm["run"])
+
+        pr_install = next(s for s in steps if s.get("name") == "gRPC of the distribution (pull requests)")
+        self.assertIn("github.event_name == 'pull_request'", pr_install["if"])
+        self.assertIn("dpkg -i --no-triggers", pr_install["run"])
+        self.assertIn("ldconfig", pr_install["run"])
+        self.assertIn("dpkg -s libgrpc++-dev", pr_install["run"])
+
+        saves = [
+            s for s in steps
+            if str(s.get("uses", "")).startswith("actions/cache/save@")
+            and (s.get("with") or {}).get("path") == "~/.cache/apt-debs/grpc"
+        ]
+        self.assertEqual(len(saves), 1)
+        self.assertIn("steps.apt-grpc.outputs.cache-hit != 'true'", saves[0]["if"])
+        self.assertEqual(saves[0]["with"]["key"], restore["with"]["key"])
+
+    def test_ccache_uses_content_hash_and_skips_save_on_exact_hit(self):
+        self.assertEqual(JOBS["changes"]["outputs"]["cpp_hash"], "${{ steps.cpp-hash.outputs.hash }}")
+        expected_jobs = {
+            "linux": (
+                "ccache-${{ matrix.preset }}-",
+                "ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+            ),
+            "linux-tsan": (
+                "ccache-linux-clang-tsan-",
+                "ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+            ),
+            "linux-oldest-cmake": (
+                "ccache-linux-oldest-cmake-",
+                "ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+            ),
+            "windows": (
+                "ccache-windows-mingw-release-",
+                "ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-"
+                "${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}",
+            ),
+        }
+        for job_name, (prefix, expected_key) in expected_jobs.items():
+            steps = JOBS[job_name]["steps"]
+            restore = next(s for s in steps if s.get("id") == "ccache-restore")
+            self.assertTrue(str(restore.get("uses", "")).startswith("actions/cache/restore@"), job_name)
+            self.assertEqual(restore["with"]["key"], expected_key, job_name)
+            self.assertEqual(restore["with"]["restore-keys"], prefix, job_name)
+
+            saves = [
+                s for s in steps
+                if str(s.get("uses", "")).startswith("actions/cache/save@")
+                and (s.get("with") or {}).get("path") == ".ccache"
+            ]
+            self.assertEqual(len(saves), 1, job_name)
+            save_if = str(saves[0]["if"])
+            self.assertIn("github.ref == 'refs/heads/main'", save_if, job_name)
+            self.assertIn("steps.ccache-restore.outputs.cache-hit != 'true'", save_if, job_name)
+            self.assertEqual(saves[0]["with"]["key"], expected_key, job_name)
+
+    @unittest.skipIf(
+        BASH is None or any(shutil.which(cmd) is None for cmd in ("git", "sha256sum", "tee")),
+        "bash, git, sha256sum and tee are needed to run the cpp-hash step",
+    )
+    def test_cpp_hash_paths_exist_and_produce_hex_digest(self):
+        step = next(s for s in JOBS["changes"]["steps"] if s.get("id") == "cpp-hash")
+        paths = re.findall(r"HEAD:([^\s\\)]+)", step["run"])
+        self.assertGreaterEqual(len(paths), 13)
+        for required in (".github/workflows/ci.yml", "CMakeLists.txt", "CMakePresets.json", ".gitmodules", "libs", "tests"):
+            self.assertIn(required, paths)
+        for rel in paths:
+            self.assertTrue((ROOT / rel).exists(), f"cpp-hash path missing on HEAD: {rel}")
+
+        wrapper = 'export PATH="/usr/bin:/bin:$PATH"\nset -euo pipefail\n' + step["run"]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "github_output.txt"
+            env = {**os.environ, "GITHUB_OUTPUT": out.as_posix()}
+            proc = subprocess.run(
+                [BASH, "-c", wrapper],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
+            lines = [line.strip() for line in out.read_text(encoding="utf-8").splitlines() if "=" in line]
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertRegex(outputs["hash"], r"^[0-9a-f]{16}$")
+
+    def test_fast_offline_dpkg_install_retains_verification_and_fallback(self):
+        checked = [
+            (JOBS["linux"], "Install Ninja, ccache, ethtool and libpcap", "dpkg -s ninja-build"),
+            (JOBS["linux-tsan"], "Install Ninja, ccache, ethtool and libpcap", "dpkg -s ninja-build"),
+            (JOBS["linux-oldest-cmake"], "Install Ninja, ccache, ethtool and libpcap", "dpkg -s ninja-build"),
+            (JOBS["gui"], "Install the browser of the end-to-end tests", "playwright install-deps --dry-run"),
+            (RELEASE_WORKFLOW["jobs"]["web"], "Install the browser of the unit tests of the GUI parts", "playwright install-deps --dry-run"),
+            (RELEASE_WORKFLOW["jobs"]["build-linux"], "Install GCC 12, Ninja and ccache", "dpkg -s g++-12"),
+            (RELEASE_WORKFLOW["jobs"]["package-linux"], "Install GCC 12, Ninja and ccache", "dpkg -s g++-12"),
+        ]
+        for job, step_name, verify_marker in checked:
+            step = next(s for s in job["steps"] if s.get("name") == step_name)
+            script = step["run"]
+            self.assertIn("NEEDRESTART_SUSPEND=1", script, step_name)
+            self.assertIn("DEBIAN_FRONTEND=noninteractive", script, step_name)
+            self.assertIn("dpkg -i --no-triggers", script, step_name)
+            self.assertIn("ldconfig", script, step_name)
+            self.assertIn(verify_marker, script, step_name)
+            if "playwright" in verify_marker:
+                self.assertIn("fc-cache", script, step_name)
+                self.assertIn("npx playwright install-deps chromium", script, step_name)
+            else:
+                self.assertIn("apt-get install -f", script, step_name)
+
+    def test_web_node_modules_cached_consistently_in_ci_and_release(self):
+        expected_key = (
+            "node-modules-${{ runner.os }}-${{ runner.arch }}-"
+            "${{ steps.setup-node.outputs.node-version }}-"
+            "${{ hashFiles('gui/web/package-lock.json') }}"
+        )
+        for name, job in (("ci:gui", JOBS["gui"]), ("release:web", RELEASE_WORKFLOW["jobs"]["web"])):
+            steps = job["steps"]
+            setup_node = next(s for s in steps if str(s.get("uses", "")).startswith("actions/setup-node@"))
+            self.assertEqual(setup_node.get("id"), "setup-node", name)
+            self.assertNotIn("cache", setup_node.get("with") or {}, name)
+
+            nm_cache = next(s for s in steps if s.get("id") == "web-node-modules")
+            self.assertEqual(nm_cache["with"]["path"], "gui/web/node_modules", name)
+            self.assertEqual(nm_cache["with"]["key"], expected_key, name)
+
+            install = next(s for s in steps if s.get("name") == "Install the packages")
+            self.assertEqual(install["if"], "steps.web-node-modules.outputs.cache-hit != 'true'", name)
+
+    def test_ci_sanitizers_use_o1_g1_and_tsan_warns_on_pr_failure(self):
+        linux_run = next(s for s in JOBS["linux"]["steps"] if s.get("name") == "Configure, build and test")["run"]
+        self.assertIn("linux-clang-asan)", linux_run)
+        self.assertIn('-DCMAKE_C_FLAGS_DEBUG=-O1 -g1', linux_run)
+        self.assertIn('-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g1', linux_run)
+
+        tsan_steps = JOBS["linux-tsan"]["steps"]
+        tsan_run = next(s for s in tsan_steps if s.get("name") == "Configure, build and test")["run"]
+        self.assertIn('-DCMAKE_C_FLAGS_DEBUG=-O1 -g1', tsan_run)
+        self.assertIn('-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g1', tsan_run)
+
+        warn = next(s for s in tsan_steps if s.get("name") == "Warn on PR TSan failure")
+        self.assertEqual(warn["if"], "failure() && github.event_name == 'pull_request'")
+        self.assertIn("::warning::linux-clang-tsan failed", warn["run"])
+        self.assertIn("GITHUB_STEP_SUMMARY", warn["run"])
 
 
 @unittest.skipIf(
