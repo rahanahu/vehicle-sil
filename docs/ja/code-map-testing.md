@@ -48,7 +48,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 
 - 1 つのテストは、テストの実行ファイルに名前を渡すと動きます（`<実行ファイル> <名前>`。ctest もそうしています）。
 - 接頭辞だけを指定するときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.`、`j1939_spy.` にも一致します。
-- ラベルで選ぶときは `-L` を使います（[テストのラベル](#テストのラベル)）。
+- ラベルや名前で選ぶ・除くときは、`ctest` または `scripts/verify.py` に `-L`、`-LE`、`-E` を渡します（`scripts/verify.py` に `--no-build` を付けると configure と build を省きます。[テストのラベル](#テストのラベル)）。
 
 ### リスクに応じて検証を選ぶ
 
@@ -56,14 +56,15 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 
 | 変更 | 手元で実行するもの |
 |---|---|
-| どの変更でも（既定） | 1 つのプリセットと、触ったもののテスト: `scripts/verify.py linux-gcc-debug --tests '<正規表現>'` |
-| 並行性、スレッド、時間 | 同じテストを `linux-clang-tsan` でも |
+| どの変更でも（既定） | 1 つのプリセットと、触ったもののテスト: `scripts/verify.py linux-gcc-debug --tests '<正規表現>'`（`--targets <target>` と `-L <label>` や `--no-build` でさらに絞れる） |
+| 並行性、スレッド、状態遷移、時間 | 触ったテストを `linux-gcc-release`（`-O3`）と `linux-clang-tsan` でも `--repeat` 付きで実行し、マージ前に `gh run view --json jobs` で `linux (linux-clang-tsan)` の `conclusion == "success"` を確かめる（`all checks` は待たない） |
 | 多くのターゲットが含む公開ヘッダーや、クラス・関数テンプレート | 触ったターゲットを `linux-clang-tsan` でビルドする: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
 | ランチャーが出力・計数するもの（所見、イベント、`run` の出力）と、それを写したドキュメント | `^launch`、`^multi_host\.`、`^schema\.`、`^template\.`（ECU のプロジェクトテンプレート）。ドキュメントと照合します（[ドキュメントの例とテスト](#ドキュメントの例とテスト)） |
 | GUI が再生するランチャーの出力（`gui/server/tests/recordings/`）、または Control API | `scripts/verify.py linux-gcc-control --tests '^control'`、続けて `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
-| ブラウザ GUI だけ | `scripts/verify-web.py --skip-install`（`--e2e-grep <パターン>` は、名前が一致する e2e テストだけを実行。`--summarize-junit build/logs/web-e2e.junit.xml` は、ファイルごとの所要時間と遅いテストを表示） |
+| ブラウザ GUI だけ | 反復中は `scripts/verify-web.py --only format,lint` や `--only e2e --e2e-spec e2e/<file>.spec.ts`、あるいは単一ファイルの `vitest` / `ng test --watch=false --include` / `playwright test` を直接実行する（ブラウザを使う直接実行は `scripts/busy_machine.py` が `(none)` のとき）。PR 前は `scripts/verify-web.py --skip-install`（`--e2e-grep <パターン>` は名前が一致する e2e テストだけを実行、`--summarize-junit build/logs/web-e2e.junit.xml` はファイルごとの所要時間と遅いテストを表示） |
+| GUI サーバーだけ | 反復中は `scripts/verify-gui.py --no-sync gui/server/tests/<file>.py`（または `-k <式>`。どちらもサーバーテストだけを実行）やインプロセスの `uv run --no-sync pytest gui/server/tests/<file>.py`、PR 前は `scripts/verify-gui.py --skip-web` |
 | ドキュメントだけ | `scripts/check-docs.py` |
-| スクリプトだけ | `python3 tests/scripts/test_<name>.py` |
+| スクリプトや Python のみのコード | `python3 tests/scripts/test_<name>.py` と `scripts/verify-python.py --only <step>`（`--only scripts` や `--only control` など）。`scripts/` で OS による分岐（`os.name == "nt"` やプラットフォーム判定）を触ったときは、Linux で動く `os.name == "nt"` モック単体テストを追加する |
 
 作業の報告と pull request の説明は、次の 2 行で終えます。
 
@@ -110,6 +111,12 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 ### 待ち時間と倍率
 
 起きるはずのことは、`eventually(条件, 上限)`（`test_harness.hpp`）か、起きたことを通知する手段で待ちます。決まった時間だけ眠って「進んだはず」としません。
+
+避けるべきタイミングテストのパターン:
+
+- 固定時間の `sleep` / `waitForTimeout` や上限のないスピンループ: イベント、バリア、条件変数、Vitest では `vi.useFakeTimers()` を使う。
+- サンプリング周期のずれ: ステップ幅と `sample_period` を確認区間に合わせ、周期サンプルがステップ境界と競合しないようにする。
+- 遅延描画をタイマーで待つ: Playwright の E2E では、固定待ちの代わりに `@defer` のプレースホルダーをビューポートにスクロールしてから検証する。
 
 待ちの上限には倍率が掛かります。
 

@@ -48,7 +48,7 @@ Rules for areas (the directories directly under `tests/`):
 
 - To run one test, pass its name to the test executable (`<executable> <name>`). This is also how ctest runs it.
 - To select one prefix only, write the pattern up to and including `\.`. `^j1939` also matches `j1939_parts.`, `j1939_codec.`, `j1939_silkit.` and `j1939_spy.`.
-- To select by label, use `-L` (see [Test labels](#test-labels)).
+- To select or exclude by label or name, use `-L`, `-LE` or `-E` with `ctest` or `scripts/verify.py` (add `--no-build` to `scripts/verify.py` to skip configure and build; see [Test labels](#test-labels)).
 
 ### Choose the verification by risk
 
@@ -56,14 +56,15 @@ Run on your computer what the change can break; leave the full matrix of presets
 
 | Change | Run on your computer |
 |---|---|
-| Any change (the default) | One preset and the tests of what you touched: `scripts/verify.py linux-gcc-debug --tests '<regular expression>'` |
-| Concurrency, threads or time | The same tests also with `linux-clang-tsan` |
+| Any change (the default) | One preset and the tests of what you touched: `scripts/verify.py linux-gcc-debug --tests '<regular expression>'` (add `--targets <target>` and `-L <label>` or `--no-build` to stay narrow) |
+| Concurrency, threads, state transitions or time | Run the touched tests also with `linux-gcc-release` (`-O3`) and `linux-clang-tsan` using `--repeat`, and confirm `linux (linux-clang-tsan)` has `conclusion == "success"` via `gh run view --json jobs` before merging (`all checks` does not wait for it) |
 | A public header or a class or function template that many targets include | Build the touched targets with `linux-clang-tsan`: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
 | What the launcher prints or counts (findings, events, `run` output), or the documentation that copies it | `^launch`, `^multi_host\.`, `^schema\.` and `^template\.` (the ECU project template), which compare the documentation (see [Documentation examples and tests](#documentation-examples-and-tests)) |
 | Launcher output that the GUI replays (`gui/server/tests/recordings/`), or the Control API | `scripts/verify.py linux-gcc-control --tests '^control'`, then `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
-| The browser GUI only | `scripts/verify-web.py --skip-install` (`--e2e-grep <pattern>` runs only the matching e2e tests; `--summarize-junit build/logs/web-e2e.junit.xml` lists per-file times and the slowest tests) |
+| The browser GUI only | During iteration, narrow with `scripts/verify-web.py --only format,lint`, `--only e2e --e2e-spec e2e/<file>.spec.ts`, or a direct single-file `vitest` / `ng test --watch=false --include` / `playwright test` run (when `scripts/busy_machine.py` reports `(none)`). Before a PR, run `scripts/verify-web.py --skip-install` (`--e2e-grep <pattern>` runs only matching e2e tests; `--summarize-junit build/logs/web-e2e.junit.xml` lists per-file times and the slowest tests) |
+| The GUI server only | During iteration, `scripts/verify-gui.py --no-sync gui/server/tests/<file>.py` (or `-k <expr>`, both run server tests only) or direct in-process `uv run --no-sync pytest gui/server/tests/<file>.py`; before a PR, `scripts/verify-gui.py --skip-web` |
 | Documentation only | `scripts/check-docs.py` |
-| A script only | `python3 tests/scripts/test_<name>.py` |
+| A script or Python-only code | `python3 tests/scripts/test_<name>.py` and `scripts/verify-python.py --only <step>` (for example `--only scripts` or `--only control`). When a change under `scripts/` branches on the OS (`os.name == "nt"` or platform helpers), add Linux-runnable unit tests that mock `os.name == "nt"` |
 
 End the report of the work and the description of the pull request with two lines:
 
@@ -110,6 +111,12 @@ A scenario that needs a fixed port shown in the documentation (such as 8500 for 
 ### Timeouts and the scale factor
 
 Wait for something that is expected to happen with `eventually(condition, limit)` (`test_harness.hpp`) or with a mechanism that signals that it happened. Do not sleep for a fixed time and assume that things have progressed.
+
+Common timing-test anti-patterns to avoid:
+
+- Fixed `sleep` / `waitForTimeout` or unbounded spin loops: use events, barriers, condition variables, or `vi.useFakeTimers()` in Vitest instead.
+- Sampling-period mismatches: align simulation step size and `sample_period` with the assertion window so periodic samples do not race step boundaries.
+- Waiting on deferred UI with a timer: in Playwright E2E, scroll `@defer` placeholders into view before asserting on deferred content.
 
 Wait limits are multiplied by a scale factor.
 

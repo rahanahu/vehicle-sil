@@ -21,13 +21,15 @@ failed step. A stopped run (Ctrl-C, SIGTERM) stops the whole process group of th
 server or GUI server is left behind. --summarize-junit summarizes an existing JUnit XML file (overall counts,
 per-file cumulative durations and the slowest individual tests).
 
-Before each heavy step (unit tests, build, e2e) it waits while a C++ build or test run (ninja, ctest) or the
+Before each heavy step (unit tests, e2e) it waits while a C++ build or test run (ninja, ninja-build, ctest) or the
 Windows VM (qemu-system-x86*) runs on this machine, because the browser tests are timing-sensitive and so are
 the C++ tests (scripts/busy_machine.py). It gives up after --wait-limit minutes and goes on with a warning.
 
-While working on the end-to-end tests, --e2e-grep, --e2e-repeat and --skip-checks narrow a run (they are
-passed to Playwright as --grep and --repeat-each; --skip-checks leaves out the format check, lint, unit
-tests and the i18n step, not the build). --i18n-only runs only the i18n step; --i18n-update rewrites the
+While working on one area or on end-to-end tests, --only, --skip-checks, --skip-build, --e2e-spec, --e2e-grep and
+--e2e-repeat narrow a run (--only runs only the named steps in canonical order; --skip-checks leaves out format,
+lint, unit tests, i18n and package, keeping build, bundle and e2e; --skip-build also leaves out build, bundle and
+package when gui/web/dist/browser already exists; --e2e-spec, --e2e-grep and --e2e-repeat are passed to Playwright).
+--i18n-only runs only the i18n step; --i18n-update rewrites the
 translation files to match the extraction (new messages get "target": null, obsolete ones are dropped and
 printed) and stops; the i18n step fails until each null is translated. --allow-untranslated lets the i18n step
 pass with messages not translated yet, for work in progress on one's own machine (CI does not pass it).
@@ -76,6 +78,7 @@ ERROR_LINES = {
     "lint": re.compile(r"^\S.*\.(ts|html)$|^\s+\d+:\d+\s+(error|warning)\s|problems?\s*\(|Error"),
     "test": re.compile(r"\bFAIL\b|×|AssertionError|Error:|^\s+(Test Files|Tests)\s"),
     "client": re.compile(r"\bFAIL\b|×|AssertionError|Error:|error TS\d+|^\s+(Test Files|Tests)\s"),
+    "timeline": re.compile(r"not ok|✖|AssertionError|Error:|out of date"),
     "i18n": re.compile(r"\[ERROR\]|error TS\d+|^Error|rror:"),
     "build": re.compile(r"^\s*(✘|X)\s*\[ERROR\]|\[ERROR\]|error TS\d+|^Error|budget"),
     "bundle": re.compile(r"\[ERROR\]|^Error|rror:|Cannot find module"),
@@ -83,6 +86,22 @@ ERROR_LINES = {
     "e2e": E2E_ERRORS,
     "e2e-dev": E2E_ERRORS,
 }
+
+# Canonical pipeline order for --only.
+ALL_STEPS = (
+    "install",
+    "format",
+    "lint",
+    "test",
+    "client",
+    "timeline",
+    "i18n",
+    "build",
+    "bundle",
+    "package",
+    "e2e",
+    "e2e-dev",
+)
 
 # A line that sums up a passed step.
 E2E_SUMMARY = re.compile(r"^\s+\d+ passed")
@@ -108,7 +127,7 @@ BROWSER_HINT = ("The browser of the unit tests is not installed. Install it with
                 "--only-shell chromium` in gui/web (add --with-deps on a fresh Linux); scripts/doctor.py checks it.")
 
 # Steps that wait while timing-sensitive work runs on the machine.
-HEAVY = {"test", "client", "i18n", "build", "e2e", "e2e-dev"}
+HEAVY = {"test", "client", "e2e", "e2e-dev"}
 
 # Warnings worth showing even when a step passes.
 NOTE_LINES = {"build": re.compile(r"budget", re.IGNORECASE)}
@@ -390,8 +409,11 @@ def main() -> int:
         "  scripts/verify-web.py                  # everything, from a clean npm ci\n"
         "  scripts/verify-web.py --skip-install   # keep node_modules\n"
         "  scripts/verify-web.py --skip-e2e       # no browser, no GUI server\n"
+        "  scripts/verify-web.py --only format,lint\n"
+        "  scripts/verify-web.py --only e2e --e2e-spec e2e/app.spec.ts\n"
         "  scripts/verify-web.py --tag web-ci     # logs as build/logs/web-ci-*.log\n"
-        "  scripts/verify-web.py --no-wait        # do not wait for ninja, ctest or the VM\n"
+        "  scripts/verify-web.py --no-wait        # do not wait for ninja, ninja-build, ctest or the VM\n"
+        "  scripts/verify-web.py --skip-install --skip-checks --skip-build --e2e-spec e2e/app.spec.ts\n"
         "  scripts/verify-web.py --skip-install --skip-checks --e2e-grep 'double click' --e2e-repeat 5\n"
         "  scripts/verify-web.py --i18n-only      # only compare the messages with the translation files\n"
         "  scripts/verify-web.py --i18n-update    # add new messages to the files as not translated yet\n"
@@ -403,6 +425,9 @@ def main() -> int:
                         help="run nothing; summarize a Playwright JUnit XML file (per-file cumulative time and slowest tests)")
     parser.add_argument("--top", type=int, default=20, metavar="N",
                         help="number of slowest tests to list with --summarize-junit (default: %(default)s)")
+    parser.add_argument("--only", action="append", metavar="STEPS",
+                        help="run only these comma-separated steps in canonical order (repeatable; valid: "
+                        + ", ".join(ALL_STEPS) + ")")
     parser.add_argument("--skip-install", action="store_true", help="do not run npm ci (use the node_modules there)")
     parser.add_argument("--skip-e2e", action="store_true", help="do not run the Playwright tests")
     parser.add_argument("--e2e-dev", action="store_true",
@@ -411,13 +436,17 @@ def main() -> int:
     parser.add_argument("--tag", default="web", help="prefix of the log names (default: web)")
     parser.add_argument("--json", action="store_true", help='print the summary as JSON ({"vehicle_sil_verify_web": 1, ...})')
     parser.add_argument("--no-wait", action="store_true",
-                        help="do not wait while ninja, ctest or the Windows VM (qemu-system-x86*) runs")
+                        help="do not wait while ninja, ninja-build, ctest or the Windows VM (qemu-system-x86*) runs")
     parser.add_argument("--wait-limit", type=float, default=DEFAULT_LIMIT_S / 60, metavar="MIN",
                         help="stop waiting for them after MIN minutes and go on with a warning (default: %(default)g)")
     parser.add_argument("--skip-checks", action="store_true",
-                        help="do not run the format check, lint, unit tests (gui/web, gui/client and gui/timeline) and "
-                        "the i18n step (the build and e2e still run)")
+                        help="do not run format, lint, unit tests (gui/web, gui/client, gui/timeline), i18n or package "
+                        "(build, bundle and e2e still run)")
+    parser.add_argument("--skip-build", action="store_true",
+                        help="do not run build, bundle or package (reuse existing gui/web/dist/browser for e2e)")
     parser.add_argument("--workbench", action="store_true", help="build the alternate GUI and run its browser test")
+    parser.add_argument("--e2e-spec", action="append", metavar="PATH",
+                        help="run only this Playwright spec file (repeatable, e.g. e2e/app.spec.ts)")
     parser.add_argument("--e2e-grep", metavar="PATTERN", help="run only the e2e tests whose title matches PATTERN")
     parser.add_argument("--e2e-repeat", type=int, default=1, metavar="N", help="run each e2e test N times")
     parser.add_argument("--i18n-only", action="store_true",
@@ -439,6 +468,27 @@ def main() -> int:
         die_usage("--e2e-repeat must be 1 or more")
     if args.wait_limit < 0:
         die_usage("--wait-limit must be 0 or more minutes")
+    e2e_specs: list[str] = []
+    for raw_spec in args.e2e_spec or []:
+        spec = raw_spec.strip()
+        if not spec or spec.startswith("-"):
+            die_usage(f"--e2e-spec {raw_spec!r}: give a Playwright spec path, not an option or empty value")
+        e2e_specs.append(spec)
+    only_steps: list[str] | None = None
+    if args.only:
+        conflicts = [flag for flag, active in (
+            ("--skip-install", args.skip_install),
+            ("--skip-checks", args.skip_checks),
+            ("--skip-e2e", args.skip_e2e),
+            ("--skip-build", args.skip_build),
+            ("--e2e-dev", args.e2e_dev),
+            ("--i18n-only", args.i18n_only),
+            ("--i18n-update", args.i18n_update),
+            ("--workbench", args.workbench),
+        ) if active]
+        if conflicts:
+            die_usage(f"--only cannot be combined with {', '.join(conflicts)}")
+        only_steps = verify_common.parse_steps("verify-web", args.only, ALL_STEPS)
     verify_common.validate_tag("verify-web", args.tag)
 
     node, npm = shutil.which("node"), shutil.which("npm")
@@ -448,40 +498,72 @@ def main() -> int:
     for tool, path in (("node", node), ("npm", npm)):
         if tool in engines:
             check_engine(tool, path, engines[tool])
-    i18n_alone = args.i18n_only or args.i18n_update
-    if args.workbench and i18n_alone:
-        die_usage("--workbench cannot be used with the i18n-only options")
-    if not i18n_alone and not args.skip_e2e and shutil.which("uv") is None:
-        die_usage("uv is not on PATH; the e2e tests start the GUI server with uv (or pass --skip-e2e)")
-    if (args.skip_install or i18n_alone) and not (WEB / "node_modules").is_dir():
-        die_usage("gui/web/node_modules is missing; run npm ci in gui/web (or verify-web.py without --skip-install)")
 
-    steps = []
-    if args.i18n_only:
-        steps.append(Step("i18n", [npm, "run", "i18n:extract"]))
-    elif args.i18n_update:
-        pass
-    elif not args.skip_install:
-        steps.append(Step("install", [npm, "ci", "--no-fund", "--no-audit"]))
-    if args.workbench:
-        if not args.skip_install:
-            steps.append(Step("install-workbench", [npm, "--prefix", "workbench", "ci", "--no-fund", "--no-audit"]))
-        steps.append(Step("build", [npm, "run", "build:workbench"]))
-    if not i18n_alone and not args.workbench and not args.skip_checks:
-        steps += [Step("format", [npm, "run", "format:check"]), Step("lint", [npm, "run", "lint"]),
-                  Step("test", [npm, "test"]), Step("client", [npm, "run", "test:client"]),
-                  Step("timeline", [npm, "run", "test:timeline"]), Step("i18n", [npm, "run", "i18n:extract"])]
-    if not i18n_alone and not args.workbench:
-        steps += [Step("build", [npm, "run", "build"]), Step("bundle", [npm, "run", "build:client"]),
-                  Step("package", [npm, "run", "pack:client"])]
-    if not i18n_alone and not args.skip_e2e:
-        grep = args.e2e_grep or ("workbench" if args.workbench else None)
-        narrow = (["--grep", grep] if grep else []) + \
-            (["--repeat-each", str(args.e2e_repeat)] if args.e2e_repeat > 1 else [])
-        extra = ["--", *narrow] if narrow else []
-        steps += [Step("e2e", [npm, "run", "e2e", *extra])]
-        if args.e2e_dev:
-            steps += [Step("e2e-dev", [npm, "run", "e2e:dev", *extra])]
+    grep = args.e2e_grep or ("workbench" if args.workbench else None)
+    narrow = [*e2e_specs, *(["--grep", grep] if grep else []),
+              *(["--repeat-each", str(args.e2e_repeat)] if args.e2e_repeat > 1 else [])]
+    extra = ["--", *narrow] if narrow else []
+
+    if only_steps is not None:
+        if ("e2e" in only_steps or "e2e-dev" in only_steps) and shutil.which("uv") is None:
+            die_usage("uv is not on PATH; the e2e tests start the GUI server with uv")
+        if "install" not in only_steps and not (WEB / "node_modules").is_dir():
+            die_usage("gui/web/node_modules is missing; run npm ci in gui/web (or include install in --only)")
+        if "e2e" in only_steps and "build" not in only_steps and not (WEB / "dist" / "browser").is_dir():
+            die_usage("gui/web/dist/browser is missing; include build in --only or omit --skip-build")
+        step_cmds = {
+            "install": [npm, "ci", "--no-fund", "--no-audit"],
+            "format": [npm, "run", "format:check"],
+            "lint": [npm, "run", "lint"],
+            "test": [npm, "test"],
+            "client": [npm, "run", "test:client"],
+            "timeline": [npm, "run", "test:timeline"],
+            "i18n": [npm, "run", "i18n:extract"],
+            "build": [npm, "run", "build"],
+            "bundle": [npm, "run", "build:client"],
+            "package": [npm, "run", "pack:client"],
+            "e2e": [npm, "run", "e2e", *extra],
+            "e2e-dev": [npm, "run", "e2e:dev", *extra],
+        }
+        steps = [Step(name, step_cmds[name]) for name in only_steps]
+    else:
+        i18n_alone = args.i18n_only or args.i18n_update
+        if args.workbench and i18n_alone:
+            die_usage("--workbench cannot be used with the i18n-only options")
+        if args.skip_build and (args.workbench or i18n_alone):
+            die_usage("--skip-build cannot be used with --workbench or the i18n-only options")
+        if not i18n_alone and not args.skip_e2e and shutil.which("uv") is None:
+            die_usage("uv is not on PATH; the e2e tests start the GUI server with uv (or pass --skip-e2e)")
+        if (args.skip_install or i18n_alone) and not (WEB / "node_modules").is_dir():
+            die_usage("gui/web/node_modules is missing; run npm ci in gui/web (or verify-web.py without --skip-install)")
+        if args.skip_build and not args.skip_e2e and not (WEB / "dist" / "browser").is_dir():
+            die_usage("gui/web/dist/browser is missing; include build in --only or omit --skip-build")
+
+        steps = []
+        if args.i18n_only:
+            steps.append(Step("i18n", [npm, "run", "i18n:extract"]))
+        elif args.i18n_update:
+            pass
+        elif not args.skip_install:
+            steps.append(Step("install", [npm, "ci", "--no-fund", "--no-audit"]))
+        if args.workbench:
+            if not args.skip_install:
+                steps.append(Step("install-workbench", [npm, "--prefix", "workbench", "ci", "--no-fund", "--no-audit"]))
+            steps.append(Step("build", [npm, "run", "build:workbench"]))
+        if not i18n_alone and not args.workbench and not args.skip_checks:
+            steps += [Step("format", [npm, "run", "format:check"]), Step("lint", [npm, "run", "lint"]),
+                      Step("test", [npm, "test"]), Step("client", [npm, "run", "test:client"]),
+                      Step("timeline", [npm, "run", "test:timeline"]), Step("i18n", [npm, "run", "i18n:extract"])]
+        if not i18n_alone and not args.workbench and not args.skip_build:
+            steps += [Step("build", [npm, "run", "build"]), Step("bundle", [npm, "run", "build:client"])]
+            if not args.skip_checks:
+                steps.append(Step("package", [npm, "run", "pack:client"]))
+        if not i18n_alone and not args.skip_e2e:
+            steps += [Step("e2e", [npm, "run", "e2e", *extra])]
+            if args.e2e_dev:
+                steps += [Step("e2e-dev", [npm, "run", "e2e:dev", *extra])]
+        if not steps and not args.i18n_update:
+            die_usage("nothing to run: every step was skipped")
 
     env = {**os.environ, "CI": "1", "NG_CLI_ANALYTICS": "false", "FORCE_COLOR": "0"}
     if args.workbench:

@@ -32,9 +32,9 @@ The full output of each step goes to build/logs/<tag>-<step>.log (the web steps:
 The summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the
 first failed step. A stopped run (Ctrl-C, SIGTERM) stops the whole process group of the running step.
 
-Before the server and web steps it waits while a C++ build or test run (ninja, ctest) or the Windows VM
-(qemu-system-x86*) runs on this machine, because these tests are timing-sensitive and so are the C++ tests
-(scripts/busy_machine.py; verify-web.py also waits before each of its heavy steps). It gives up after
+Before the server, example and real steps it waits while a C++ build or test run (ninja, ninja-build, ctest) or
+the Windows VM (qemu-system-x86*) runs on this machine, because these tests are timing-sensitive and so are the
+C++ tests (scripts/busy_machine.py; verify-web.py waits before each of its own heavy steps). It gives up after
 --wait-limit minutes and goes on with a warning.
 
 Exit codes: 0 every step passed, 1 a step failed, 2 usage error (uv missing; verify-web.py's own usage errors,
@@ -116,6 +116,30 @@ def clean_lines(text: str) -> list[str]:
     return verify_common.clean_lines(text, LINE_CHARS)
 
 
+def stale_launcher_source(launcher: Path, root: Path | None = None) -> Path | None:
+    """Return the newest source file under libs/ or tools/launch/ newer than `launcher`, or None."""
+    base_root = ROOT if root is None else root
+    try:
+        newest_mtime = launcher.stat().st_mtime
+    except OSError:
+        return None
+    newest_path: Path | None = None
+    for base in (base_root / "libs", base_root / "tools" / "launch"):
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            try:
+                if not path.is_file():
+                    continue
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime > newest_mtime:
+                newest_mtime = mtime
+                newest_path = path
+    return newest_path
+
+
 stop_group = verify_common.stop_group
 
 
@@ -154,7 +178,7 @@ def run_step(step: Step, env: dict[str, str], log: Path, junit: Path | None = No
         errors = [ln for ln in lines[1:] if ln.strip() and ERROR_LINES[step.name].search(ln)]
         step.errors = errors[:MAX_ERROR_LINES] or [ln for ln in lines[1:] if ln.strip()][-8:]
         if step.name == "server" and step.code == 5:
-            step.errors.append("no test was run: check the -k expression")
+            step.errors.append("no test was run: check the -k expression or TEST targets")
 
 
 def read_web(step: Step, out: str, lines: list[str]) -> None:
@@ -181,17 +205,24 @@ def main() -> int:
         "  scripts/verify-gui.py                    # everything\n"
         "  scripts/verify-gui.py --skip-web         # only the server (no Node needed)\n"
         "  scripts/verify-gui.py --skip-server      # only the screen and the examples\n"
+        "  scripts/verify-gui.py --no-sync gui/server/tests/test_availability.py\n"
+        "                                           # only one server test file\n"
         "  scripts/verify-gui.py -k security        # only the server tests whose names match\n"
         "  scripts/verify-gui.py --skip-install --skip-e2e   # passed on to verify-web.py\n"
         "  scripts/verify-gui.py --no-wait          # do not wait for ninja, ctest or the VM\n"
         "  scripts/verify-gui.py --launcher build/linux-gcc-release/tools/launch/vehicle_sil_launch\n"
-        "                                           # also against the real launcher and the example ECUs",
+        "                                           # also against the real launcher and the example ECUs\n"
+        "  scripts/verify-gui.py --skip-server --skip-web --no-sync --launcher <path> --real-spec e2e/real/scenario.spec.ts\n"
+        "                                           # only one real-launcher E2E spec",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("targets", nargs="*", metavar="TEST",
+                        help="specific server pytest files or nodeids (implies server tests only)")
     parser.add_argument("--skip-web", action="store_true", help="do not run scripts/verify-web.py")
     parser.add_argument("--skip-server", action="store_true",
                         help="do not run the server step (CI runs it in a job of its own, at the same time); the "
-                        "web, example and real steps still run; not with --skip-web or -k")
+                        "web, example and real steps still run; not with -k or TEST targets (with --skip-web, "
+                        "requires --launcher without --skip-e2e)")
     parser.add_argument("--launcher", metavar="PATH",
                         help="a real vehicle_sil_launch (build/<preset>/tools/launch/vehicle_sil_launch, with the "
                         "ecu_main example built next to it): also run the tests against it (default: "
@@ -200,6 +231,10 @@ def main() -> int:
     parser.add_argument("--skip-e2e", action="store_true", help="passed on to verify-web.py (no browser tests)")
     parser.add_argument("--e2e-dev", action="store_true",
                         help="passed on to verify-web.py (also the browser tests through the dev server)")
+    parser.add_argument("--real-spec", action="append", metavar="PATH",
+                        help="run only this Playwright spec file in the real step (repeatable, e.g. e2e/real/scenario.spec.ts)")
+    parser.add_argument("--real-grep", metavar="PATTERN",
+                        help="run only the real-step e2e tests whose title matches PATTERN")
     parser.add_argument("--no-sync", action="store_true",
                         help="do not run uv sync --locked (use the existing .venv)")
     parser.add_argument("-k", dest="keyword", help="only the server tests matching this pytest -k expression")
@@ -207,22 +242,41 @@ def main() -> int:
     parser.add_argument("--json", action="store_true",
                         help='print the summary as JSON ({"vehicle_sil_verify_gui": 1, "ok": ..., "steps": [...]})')
     parser.add_argument("--no-wait", action="store_true",
-                        help="do not wait while ninja, ctest or the Windows VM (qemu-system-x86*) runs")
+                        help="do not wait while ninja, ninja-build, ctest or the Windows VM (qemu-system-x86*) runs")
     parser.add_argument("--wait-limit", type=float, default=DEFAULT_LIMIT_S / 60, metavar="MIN",
                         help="stop waiting for them after MIN minutes and go on with a warning (default: %(default)g)")
     args = parser.parse_args()
     if args.wait_limit < 0:
         die_usage("--wait-limit must be 0 or more minutes")
-    if args.skip_server and (args.skip_web or args.keyword):
-        die_usage("--skip-server leaves out the server step: with --skip-web or -k nothing would be left to run")
+    real_specs: list[str] = []
+    for raw_spec in args.real_spec or []:
+        spec = raw_spec.strip()
+        if not spec or spec.startswith("-"):
+            die_usage(f"--real-spec {raw_spec!r}: give a Playwright spec path, not an option or empty value")
+        real_specs.append(spec)
+    server_only = bool(args.keyword or args.targets)
+    launcher = args.launcher or os.environ.get("VEHICLE_SIL_GUI_LAUNCHER") or None
+    if args.skip_server and server_only:
+        die_usage("--skip-server leaves out the server step: cannot be combined with -k or TEST targets")
+    if args.skip_server and args.skip_web and (launcher is None or args.skip_e2e):
+        die_usage("--skip-server with --skip-web leaves nothing to run (pass --launcher <path> without --skip-e2e to run real E2E only)")
     verify_common.validate_tag("verify-gui", args.tag)
     uv = shutil.which("uv")
     if uv is None:
         die_usage("uv is not on PATH: install it (https://docs.astral.sh/uv/), then run this again")
 
-    launcher = args.launcher or os.environ.get("VEHICLE_SIL_GUI_LAUNCHER") or None
-    if launcher is not None and not Path(launcher).is_file():
-        die_usage(f"--launcher {launcher}: no such file (build/<preset>/tools/launch/vehicle_sil_launch)")
+    if launcher is not None:
+        launcher_path = Path(launcher)
+        if not launcher_path.is_file():
+            die_usage(f"--launcher {launcher}: no such file (build/<preset>/tools/launch/vehicle_sil_launch)")
+        stale = stale_launcher_source(launcher_path)
+        if stale is not None:
+            print(
+                f"verify-gui: warning: launcher {launcher} is older than {rel(stale)}; "
+                "rebuild it before trusting real-launcher tests",
+                file=sys.stderr,
+                flush=True,
+            )
     if args.no_sync:
         venv = Path(os.environ.get("UV_PROJECT_ENVIRONMENT") or ROOT / ".venv")
         if not venv.is_dir():
@@ -231,22 +285,30 @@ def main() -> int:
     junit = LOG_DIR / f"{args.tag}-server.xml"
     example_tests = "gui/server/tests/test_example_client.py"
     uv_run_flag = "--no-sync" if args.no_sync else "--locked"
-    pytest = [uv, "run", uv_run_flag, "pytest", "gui/server/tests", "-q", "-rs", f"--ignore={example_tests}",
+    pytest_targets = args.targets or ["gui/server/tests"]
+    ignore_args = [] if args.targets else [f"--ignore={example_tests}"]
+    pytest = [uv, "run", uv_run_flag, "pytest", *pytest_targets, "-q", "-rs", *ignore_args,
               f"--junitxml={junit}"]
     if args.keyword:
         pytest += ["-k", args.keyword]
-    else:
+    if not server_only:
         pytest += ["-n", str(min(os.cpu_count() or 1, 4))]
     steps = [] if args.no_sync else [Step("sync", [uv, "sync", "--locked"])]
     skipped_server = "--skip-server" if args.skip_server else None
     if skipped_server is None:
         steps.append(Step("server", pytest))
-    skipped_example = "--skip-web" if args.skip_web else "-k (only server tests)" if args.keyword else None
+    server_only_reason = (
+        "-k / targets (only server tests)" if args.keyword and args.targets
+        else "targets (only server tests)" if args.targets
+        else "-k (only server tests)"
+    )
+    skipped_web = "--skip-web" if args.skip_web else (server_only_reason if server_only else None)
+    skipped_example = "--skip-web" if args.skip_web else (server_only_reason if server_only else None)
     if skipped_example is None:
         if shutil.which("node") is None:
             die_usage("node is not on PATH: the example step runs examples/gui_client/run.mjs (Node 22 or later; "
                       "or pass --skip-web)")
-    if not args.skip_web:
+    if skipped_web is None:
         web = [sys.executable, str(ROOT / "scripts" / "verify-web.py"), "--json", "--tag", f"{args.tag}-web"]
         web += ["--skip-install"] * args.skip_install + ["--skip-e2e"] * args.skip_e2e + ["--e2e-dev"] * args.e2e_dev
         web += ["--no-wait"] if args.no_wait else ["--wait-limit", f"{args.wait_limit:g}"]
@@ -258,13 +320,15 @@ def main() -> int:
         skipped_real = "no launcher (--launcher <path> or VEHICLE_SIL_GUI_LAUNCHER)"
     elif args.skip_e2e:
         skipped_real = "--skip-e2e"
-    elif args.keyword:
-        skipped_real = "-k (only server tests)"
+    elif server_only:
+        skipped_real = server_only_reason
     else:
         npm = shutil.which("npm")
         if npm is None:
             die_usage("npm is not on PATH: the real step runs the browser tests (gui/web/README.md)")
-        steps.append(Step("real", [npm, "--prefix", "gui/web", "run", "e2e:real"]))
+        real_narrow = [*real_specs, *(["--grep", args.real_grep] if args.real_grep else [])]
+        real_extra = ["--", *real_narrow] if real_narrow else []
+        steps.append(Step("real", [npm, "--prefix", "gui/web", "run", "e2e:real", *real_extra]))
 
     # The tests of the ECUs' variables need grpcio-tools (uv sync installs it): here they fail without it, not skip.
     env = {**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1", "VEHICLE_SIL_GUI_REQUIRE_CONTROL": "1"}
@@ -282,7 +346,7 @@ def main() -> int:
     done: list[Step] = []
     try:
         for step in steps:
-            if step.name != "sync" and not args.no_wait:
+            if step.name not in ("sync", "web") and not args.no_wait:
                 wait_until_quiet("verify-gui", args.wait_limit * 60)
             run_step(step, env, logs[step.name], real_junit if step.name == "real" else None)
             done.append(step)
@@ -310,8 +374,8 @@ def main() -> int:
         return 130
 
     failed = [s for s in done if not s.ok]
-    skipped = [(name, reason) for name, reason in (("server", skipped_server), ("example", skipped_example),
-                                                   ("real", skipped_real))
+    skipped = [(name, reason) for name, reason in (("server", skipped_server), ("web", skipped_web),
+                                                   ("example", skipped_example), ("real", skipped_real))
                if reason is not None]
     if not failed and not args.json:
         for name, reason in skipped:

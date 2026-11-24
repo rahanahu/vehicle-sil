@@ -393,10 +393,10 @@ def rel(path: Path) -> str:
 
 def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None,
                cmake: str | None = None, ctest: str | None = None) -> Result:
-    cmake_bin = cmake or shutil.which("cmake")
+    cmake_bin = None if args.no_build else (cmake or shutil.which("cmake"))
     ctest_bin = ctest or shutil.which("ctest")
-    if cmake_bin is None or ctest_bin is None:
-        missing = "cmake" if cmake_bin is None else "ctest"
+    if (not args.no_build and cmake_bin is None) or ctest_bin is None:
+        missing = "cmake" if (not args.no_build and cmake_bin is None) else "ctest"
         die_usage(f"{missing} is not on PATH; install CMake 3.21 or newer")
 
     result = Result(name=preset, kind="preset")
@@ -406,7 +406,7 @@ def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None,
     for stale in [*logs.values(), junit]:
         stale.unlink(missing_ok=True)
 
-    if not args.no_configure:
+    if not args.no_configure and not args.no_build:
         cmd = [cmake_bin, "--preset", preset]
         if not args.no_werror:
             cmd.append("-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON")
@@ -418,19 +418,20 @@ def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None,
             result.errors = first_errors(read_text(logs["configure"]))
             return result
 
-    cmd = [cmake_bin, "--build", "--preset", preset, "-j", str(args.jobs)]
-    if args.targets:
-        cmd += ["--target", *args.targets]
-    code, result.seconds["build"] = run_step(cmd, logs["build"])
-    result.logs["build"] = rel(logs["build"])
-    if code != 0:
-        text = read_text(logs["build"])
-        result.ok, result.stage = False, "build"
-        result.errors = first_errors(text)
-        targets = failed_targets(text)
-        if targets:
-            result.note = "failed: " + "; ".join(targets)
-        return result
+    if not args.no_build:
+        cmd = [cmake_bin, "--build", "--preset", preset, "-j", str(args.jobs)]
+        if args.targets:
+            cmd += ["--target", *args.targets]
+        code, result.seconds["build"] = run_step(cmd, logs["build"])
+        result.logs["build"] = rel(logs["build"])
+        if code != 0:
+            text = read_text(logs["build"])
+            result.ok, result.stage = False, "build"
+            result.errors = first_errors(text)
+            targets = failed_targets(text)
+            if targets:
+                result.note = "failed: " + "; ".join(targets)
+            return result
 
     # The test preset already sets the output on failure and the parallelism: override the parallelism on request,
     # or when this computer has fewer CPUs than the preset runs tests at once.
@@ -439,6 +440,12 @@ def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None,
         cmd += ["-j", str(test_jobs)]
     if args.tests:
         cmd += ["-R", args.tests]
+    if args.exclude:
+        cmd += ["-E", args.exclude]
+    if args.labels:
+        cmd += ["-L", args.labels]
+    if args.exclude_labels:
+        cmd += ["-LE", args.exclude_labels]
     if args.repeat > 1:
         cmd += ["--repeat", f"until-fail:{args.repeat}"]
     if args.timeout is not None:
@@ -511,7 +518,8 @@ def main() -> int:
         "goes to build/logs/. Exit code 0 if every preset passed, 1 if one failed, 2 on a usage error.",
         epilog="examples:\n"
         "  scripts/verify.py --linux                       # the default Linux presets to pass before a commit\n"
-        "  scripts/verify.py linux-gcc-debug --tests '^launch'\n"
+        "  scripts/verify.py linux-gcc-debug --no-configure --targets vehicle_sil_config_tests -L config\n"
+        "  scripts/verify.py linux-gcc-debug --no-build --tests '^launch\\.' -LE integration\n"
         "  scripts/verify.py --linux --repeat 3 --tag nightly\n"
         "  scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -524,6 +532,9 @@ def main() -> int:
     parser.add_argument("--summarize", nargs="+", metavar="LOG", help="run nothing; summarize existing ctest or build logs")
     parser.add_argument("--tag", default="verify", help="prefix of the log names (default: verify)")
     parser.add_argument("--tests", metavar="REGEX", help="run only the tests that match (ctest -R)")
+    parser.add_argument("-E", "--exclude", metavar="REGEX", help="skip tests whose names match (ctest -E)")
+    parser.add_argument("-L", "--labels", metavar="REGEX", help="run only tests whose labels match (ctest -L)")
+    parser.add_argument("-LE", "--exclude-labels", metavar="REGEX", help="skip tests whose labels match (ctest -LE)")
     parser.add_argument("--targets", nargs="+", metavar="T", help="build only these targets")
     parser.add_argument("--repeat", type=int, default=1, metavar="N", help="ctest --repeat until-fail:N (default: 1)")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4, metavar="N", help="build jobs (default: the number of CPUs)")
@@ -532,6 +543,7 @@ def main() -> int:
     parser.add_argument("--no-werror", action="store_true",
                         help="do not pass -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON (the CMake cache keeps its earlier value)")
     parser.add_argument("--no-configure", action="store_true", help="skip the configure step")
+    parser.add_argument("--no-build", action="store_true", help="skip configure and build steps and run ctest only")
     parser.add_argument("--cmake-arg", action="append", metavar="ARG",
                         help="one more configure argument (repeatable, e.g. --cmake-arg=-DFOO=ON)")
     parser.add_argument("--json", action="store_true", help='print the summary as JSON ({"vehicle_sil_verify": 1, ...})')
@@ -553,6 +565,8 @@ def main() -> int:
     else:
         if not args.presets and not args.linux and not args.all_linux:
             die_usage("name at least one preset, or use --linux, --all-linux or --summarize (see --help)")
+        if args.no_build and (args.targets or args.cmake_arg):
+            die_usage("--no-build cannot be combined with --targets or --cmake-arg")
         if args.repeat < 1 or args.jobs < 1 or (args.test_jobs is not None and args.test_jobs < 1):
             die_usage("--repeat, --jobs and --test-jobs must be 1 or more")
         verify_common.validate_tag("verify", args.tag)
@@ -572,7 +586,7 @@ def main() -> int:
         if foreign:
             die_usage(f"{', '.join(foreign)} cannot run on this {here} host (the presets require another host system)")
         tools: dict[str, str] = {}
-        for tool in ("cmake", "ctest"):
+        for tool in (("ctest",) if args.no_build else ("cmake", "ctest")):
             resolved = shutil.which(tool)
             if resolved is None:
                 die_usage(f"{tool} is not on PATH; install CMake 3.21 or newer")
@@ -582,7 +596,7 @@ def main() -> int:
         try:
             for preset in presets:
                 test_jobs = args.test_jobs if args.test_jobs is not None else default_test_jobs(known[preset]["test_jobs"])
-                r = run_preset(preset, args, test_jobs, tools["cmake"], tools["ctest"])
+                r = run_preset(preset, args, test_jobs, tools.get("cmake"), tools["ctest"])
                 results.append(r)
                 if not args.json:
                     print_result(r)

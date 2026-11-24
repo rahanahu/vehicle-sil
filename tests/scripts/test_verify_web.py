@@ -8,14 +8,18 @@ exit code 2, and distinct non-colliding JUnit paths for web-e2e, real, and workb
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -365,6 +369,368 @@ class VerifyWebJUnitTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertIn("run --no-sync pytest", calls[0])
         self.assertNotIn("sync --locked", calls[0])
+
+
+class VerifyWebFilteringTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.web_dir = self.dir / "web"
+        self.web_dir.mkdir()
+        (self.web_dir / "package.json").write_text(
+            json.dumps({"engines": {"node": "^24.15.0 || ^26.0.0", "npm": ">=11.12.1"}}),
+            encoding="utf-8",
+        )
+        self.log_dir = self.dir / "logs"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run_main(
+        self,
+        argv: list[str],
+        *,
+        has_node_modules: bool = True,
+        has_dist: bool = True,
+        has_uv: bool = True,
+    ) -> tuple[int, str, str, list[tuple[str, list[str]]], list[str]]:
+        nm = self.web_dir / "node_modules"
+        dist_browser = self.web_dir / "dist" / "browser"
+        if has_node_modules:
+            nm.mkdir(exist_ok=True)
+        elif nm.exists():
+            shutil.rmtree(nm)
+        if has_dist:
+            dist_browser.mkdir(parents=True, exist_ok=True)
+        elif dist_browser.exists():
+            shutil.rmtree(dist_browser)
+
+        ran: list[tuple[str, list[str]]] = []
+        waits: list[str] = []
+
+        def fake_which(cmd: str) -> str | None:
+            if cmd == "uv" and not has_uv:
+                return None
+            return f"/fake/{cmd}"
+
+        def fake_run_step(step, _env, _log, _junit=None) -> None:
+            ran.append((step.name, list(step.command)))
+            step.ok = True
+            step.code = 0
+
+        def fake_wait(prog: str, _limit_s: float = 0) -> None:
+            waits.append(prog)
+
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        with (
+            mock.patch.object(verify_web_mod, "WEB", self.web_dir),
+            mock.patch.object(verify_web_mod, "LOG_DIR", self.log_dir),
+            mock.patch.object(verify_web_mod.shutil, "which", side_effect=fake_which),
+            mock.patch.object(verify_web_mod, "check_engine"),
+            mock.patch.object(verify_web_mod, "run_step", side_effect=fake_run_step),
+            mock.patch.object(verify_web_mod, "check_translations"),
+            mock.patch.object(verify_web_mod, "wait_until_quiet", side_effect=fake_wait),
+            mock.patch.object(verify_web_mod.verify_common, "install_sigterm_handler"),
+            mock.patch.object(sys, "argv", ["scripts/verify-web.py", *argv]),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            try:
+                code = verify_web_mod.main()
+            except SystemExit as exc:
+                code = exc.code if isinstance(exc.code, int) else 1
+        return code, out.getvalue(), err.getvalue(), ran, waits
+
+    def test_heavy_steps_exclude_i18n_and_build(self) -> None:
+        self.assertEqual(verify_web_mod.HEAVY, {"test", "client", "e2e", "e2e-dev"})
+        self.assertNotIn("i18n", verify_web_mod.HEAVY)
+        self.assertNotIn("build", verify_web_mod.HEAVY)
+
+    def test_only_canonical_order_and_repeated_flags(self) -> None:
+        code, _out, err, ran, waits = self._run_main(
+            ["--only", "e2e,build", "--only", "lint"],
+            has_dist=False,  # build is included, so missing dist/browser is allowed
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual([name for name, _ in ran], ["lint", "build", "e2e"])
+        # Only e2e is HEAVY; lint and build do not call wait_until_quiet
+        self.assertEqual(waits, ["verify-web"])
+
+    def test_only_format_lint_skips_uv_and_busy_wait(self) -> None:
+        code, _out, err, ran, waits = self._run_main(["--only", "format,lint"], has_uv=False, has_dist=False)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([name for name, _ in ran], ["format", "lint"])
+        self.assertEqual(waits, [])
+
+    def test_only_e2e_dev_does_not_require_dist_browser(self) -> None:
+        code, _out, err, ran, _waits = self._run_main(["--only", "e2e-dev", "--no-wait"], has_dist=False)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([name for name, _ in ran], ["e2e-dev"])
+
+    def test_only_unknown_empty_and_conflicts_exit_two(self) -> None:
+        for bad in ("bogus", "", "lint,,format"):
+            code, _out, err, ran, _ = self._run_main(["--only", bad])
+            self.assertEqual(code, 2, (bad, err))
+            self.assertEqual(ran, [])
+            self.assertIn("verify-web: error:", err)
+
+        for conflict in (
+            "--skip-install",
+            "--skip-checks",
+            "--skip-e2e",
+            "--skip-build",
+            "--e2e-dev",
+            "--i18n-only",
+            "--i18n-update",
+            "--workbench",
+        ):
+            code, _out, err, ran, _ = self._run_main(["--only", "lint", conflict])
+            self.assertEqual(code, 2, (conflict, err))
+            self.assertEqual(ran, [])
+            self.assertIn(conflict, err)
+
+    def test_only_missing_prereqs_exit_two(self) -> None:
+        code, _out, err, ran, _ = self._run_main(["--only", "lint"], has_node_modules=False)
+        self.assertEqual(code, 2)
+        self.assertIn("node_modules", err)
+        self.assertEqual(ran, [])
+
+        code, _out, err, ran, _ = self._run_main(["--only", "e2e"], has_dist=False)
+        self.assertEqual(code, 2)
+        self.assertIn("dist/browser", err)
+        self.assertEqual(ran, [])
+
+        code, _out, err, ran, _ = self._run_main(["--only", "e2e"], has_uv=False)
+        self.assertEqual(code, 2)
+        self.assertIn("uv", err)
+        self.assertEqual(ran, [])
+
+    def test_skip_checks_omits_package_while_default_keeps_package(self) -> None:
+        # --skip-checks drops format..i18n AND package (keeps build, bundle, e2e)
+        code, _out, err, ran, _ = self._run_main(["--skip-install", "--skip-checks", "--no-wait"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual([name for name, _ in ran], ["build", "bundle", "e2e"])
+
+        # Release / CI invocation (--skip-install --skip-e2e, without --skip-checks) still runs package
+        code, _out, err, ran, _ = self._run_main(["--skip-install", "--skip-e2e", "--no-wait"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            [name for name, _ in ran],
+            ["format", "lint", "test", "client", "timeline", "i18n", "build", "bundle", "package"],
+        )
+
+    def test_skip_build_and_all_skipped_and_conflicts(self) -> None:
+        code, _out, err, ran, _ = self._run_main(["--skip-install", "--skip-checks", "--skip-build", "--no-wait"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual([name for name, _ in ran], ["e2e"])
+
+        # Missing dist/browser with --skip-build -> exit 2
+        code, _out, err, ran, _ = self._run_main(
+            ["--skip-install", "--skip-checks", "--skip-build", "--no-wait"], has_dist=False
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("dist/browser", err)
+        self.assertEqual(ran, [])
+
+        # All skipped -> exit 2
+        code, _out, err, ran, _ = self._run_main(
+            ["--skip-install", "--skip-checks", "--skip-build", "--skip-e2e"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("nothing to run", err)
+
+        # Conflict with --workbench / --i18n-only -> exit 2
+        for flag in ("--workbench", "--i18n-only"):
+            code, _out, err, _ran, _ = self._run_main(["--skip-build", flag])
+            self.assertEqual(code, 2, (flag, err))
+
+    def test_e2e_spec_forwarding_and_validation(self) -> None:
+        code, _out, err, ran, _ = self._run_main([
+            "--only", "e2e", "--no-wait",
+            "--e2e-spec", "e2e/app.spec.ts",
+            "--e2e-spec", "e2e/run.spec.ts",
+            "--e2e-grep", "double click",
+            "--e2e-repeat", "2",
+        ])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(ran), 1)
+        self.assertEqual(
+            ran[0][1],
+            ["/fake/npm", "run", "e2e", "--", "e2e/app.spec.ts", "e2e/run.spec.ts",
+             "--grep", "double click", "--repeat-each", "2"],
+        )
+
+        for bad in ("", "   ", "--grep"):
+            code, _out, err, ran, _ = self._run_main(["--only", "e2e", "--e2e-spec", bad])
+            self.assertEqual(code, 2, (bad, err))
+            self.assertIn("--e2e-spec", err)
+            self.assertEqual(ran, [])
+
+
+class VerifyGuiFilteringTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.log_dir = self.dir / "logs"
+        self.venv = self.dir / "venv"
+        self.venv.mkdir()
+        self.launcher = self.dir / "vehicle_sil_launch"
+        self.launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run_main(
+        self,
+        argv: list[str],
+        *,
+        has_node: bool = True,
+        env_extra: dict[str, str] | None = None,
+    ) -> tuple[int, str, str, list[tuple[str, list[str]]], list[str]]:
+        ran: list[tuple[str, list[str]]] = []
+        waited_steps: list[str] = []
+
+        def fake_which(cmd: str) -> str | None:
+            if cmd == "node" and not has_node:
+                return None
+            return f"/fake/{cmd}"
+
+        def fake_run_step(step, _env, _log, _junit=None) -> None:
+            ran.append((step.name, list(step.command)))
+            step.ok = True
+            step.code = 0
+
+        def fake_wait(_prog: str, _limit_s: float = 0) -> None:
+            waited_steps.append(f"before:{len(ran)}")
+
+        env = {k: v for k, v in os.environ.items() if k != "VEHICLE_SIL_GUI_LAUNCHER"}
+        env["UV_PROJECT_ENVIRONMENT"] = str(self.venv)
+        if env_extra:
+            env.update(env_extra)
+
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        with (
+            mock.patch.object(verify_gui_mod, "LOG_DIR", self.log_dir),
+            mock.patch.object(verify_gui_mod.shutil, "which", side_effect=fake_which),
+            mock.patch.object(verify_gui_mod, "run_step", side_effect=fake_run_step),
+            mock.patch.object(verify_gui_mod, "wait_until_quiet", side_effect=fake_wait),
+            mock.patch.object(verify_gui_mod.verify_common, "install_sigterm_handler"),
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(sys, "argv", ["scripts/verify-gui.py", *argv]),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            try:
+                code = verify_gui_mod.main()
+            except SystemExit as exc:
+                code = exc.code if isinstance(exc.code, int) else 1
+        return code, out.getvalue(), err.getvalue(), ran, waited_steps
+
+    def test_k_skips_web_example_and_real_without_skip_web(self) -> None:
+        code, out, err, ran, _ = self._run_main(
+            ["--no-sync", "--no-wait", "-k", "security", "--json"], has_node=False
+        )
+        self.assertEqual(code, 0, err + out)
+        self.assertEqual([name for name, _ in ran], ["server"])
+        cmd = ran[0][1]
+        self.assertIn("gui/server/tests", cmd)
+        self.assertIn("-k", cmd)
+        self.assertNotIn("-n", cmd)
+        payload = json.loads(out)
+        skipped_names = {entry["step"] for entry in payload.get("skipped", [])}
+        self.assertEqual(skipped_names, {"web", "example", "real"})
+
+    def test_positional_targets_implies_server_only_without_n_or_ignore(self) -> None:
+        target = "gui/server/tests/test_availability.py"
+        code, out, err, ran, _ = self._run_main(["--no-sync", "--no-wait", target], has_node=False)
+        self.assertEqual(code, 0, err + out)
+        self.assertEqual([name for name, _ in ran], ["server"])
+        cmd = ran[0][1]
+        self.assertIn(target, cmd)
+        self.assertNotIn("gui/server/tests", cmd)
+        self.assertNotIn("-n", cmd)
+        self.assertFalse(any(a.startswith("--ignore=") for a in cmd), cmd)
+
+    def test_skip_server_validation_and_real_only_mode(self) -> None:
+        # --skip-server with positional target or -k -> exit 2
+        for argv in (["--skip-server", "gui/server/tests/test_availability.py"], ["--skip-server", "-k", "foo"]):
+            code, _out, err, ran, _ = self._run_main(argv)
+            self.assertEqual(code, 2, (argv, err))
+            self.assertEqual(ran, [])
+
+        # --skip-server --skip-web without launcher -> exit 2
+        code, _out, err, ran, _ = self._run_main(["--skip-server", "--skip-web"])
+        self.assertEqual(code, 2, err)
+        self.assertEqual(ran, [])
+
+        # --skip-server --skip-web --skip-e2e with launcher -> exit 2
+        code, _out, err, ran, _ = self._run_main(
+            ["--skip-server", "--skip-web", "--skip-e2e", "--launcher", str(self.launcher)]
+        )
+        self.assertEqual(code, 2, err)
+        self.assertEqual(ran, [])
+
+        # --skip-server --skip-web --no-sync --launcher <path> runs real only with --real-spec & --real-grep
+        code, out, err, ran, _ = self._run_main([
+            "--skip-server", "--skip-web", "--no-sync", "--no-wait",
+            "--launcher", str(self.launcher),
+            "--real-spec", "e2e/real/scenario.spec.ts",
+            "--real-grep", "stops cleanly",
+        ])
+        self.assertEqual(code, 0, err + out)
+        self.assertEqual([name for name, _ in ran], ["real"])
+        self.assertEqual(
+            ran[0][1],
+            ["/fake/npm", "--prefix", "gui/web", "run", "e2e:real", "--",
+             "e2e/real/scenario.spec.ts", "--grep", "stops cleanly"],
+        )
+
+        # Invalid --real-spec -> exit 2
+        for bad in ("", "--grep"):
+            code, _out, err, ran, _ = self._run_main([
+                "--skip-server", "--skip-web", "--no-sync", "--launcher", str(self.launcher), "--real-spec", bad,
+            ])
+            self.assertEqual(code, 2, (bad, err))
+            self.assertIn("--real-spec", err)
+
+    def test_wait_until_quiet_skipped_for_sync_and_web(self) -> None:
+        code, out, err, ran, waited = self._run_main(["--launcher", str(self.launcher)])
+        self.assertEqual(code, 0, err + out)
+        self.assertEqual([name for name, _ in ran], ["sync", "server", "web", "example", "real"])
+        # Waits before server (index 1), example (index 3), real (index 4); NOT before sync (0) or web (2)
+        self.assertEqual(waited, ["before:1", "before:3", "before:4"])
+
+    def test_stale_launcher_prints_non_fatal_warning(self) -> None:
+        fake_root = self.dir / "repo"
+        src_file = fake_root / "libs" / "launch" / "src" / "run.cpp"
+        src_file.parent.mkdir(parents=True)
+        src_file.write_text("// edited\n", encoding="utf-8")
+        # Make launcher strictly older than src_file
+        os.utime(self.launcher, (1_700_000_000, 1_700_000_000))
+        os.utime(src_file, (1_700_000_100, 1_700_000_100))
+
+        self.assertEqual(verify_gui_mod.stale_launcher_source(self.launcher, fake_root), src_file)
+
+        with mock.patch.object(verify_gui_mod, "ROOT", fake_root):
+            code, out, err, ran, _ = self._run_main(
+                ["--skip-server", "--skip-web", "--no-sync", "--no-wait", "--launcher", str(self.launcher)]
+            )
+        self.assertEqual(code, 0, err + out)
+        self.assertEqual([name for name, _ in ran], ["real"])
+        self.assertIn("warning: launcher", err)
+        self.assertIn("libs/launch/src/run.cpp", err)
+
+        # Fresh launcher (newer than source) produces no stale warning
+        os.utime(self.launcher, (1_700_000_200, 1_700_000_200))
+        self.assertIsNone(verify_gui_mod.stale_launcher_source(self.launcher, fake_root))
+        with mock.patch.object(verify_gui_mod, "ROOT", fake_root):
+            code2, out2, err2, _ran2, _ = self._run_main(
+                ["--skip-server", "--skip-web", "--no-sync", "--no-wait", "--launcher", str(self.launcher)]
+            )
+        self.assertEqual(code2, 0, err2 + out2)
+        self.assertNotIn("warning: launcher", err2)
 
 
 if __name__ == "__main__":

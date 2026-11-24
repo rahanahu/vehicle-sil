@@ -133,20 +133,24 @@ These steps are a trial. They are advice: no CI check enforces them, and their e
 | `scripts/run-gui.py` | Starts the browser GUI from the repository (for anything missing, it names the command that builds it; it builds nothing itself) |
 | `scripts/trace-report.py` | Summarizes a profiling trace of one run: the critical path of each virtual-time step across the processes, and where each scenario write's time goes ([docs/internals/trace.md](docs/internals/trace.md)) |
 
-- Run the GUI tests through `verify-web.py` and `verify-gui.py`; do not call pytest, ng or Playwright directly. Before their timing-sensitive tests, these 2 scripts wait while a build, a test run or a Windows VM is running on this computer, because tests that run at the same time fail their timing conditions (`--wait-limit`).
+- **Fast local iteration vs full GUI verification:**
+  - For non-timing-sensitive checks (`npm --prefix gui/web run format:check`, `lint`, `test:timeline`; `npx vitest run --config ../client/vitest.config.mjs --project node` or a single client spec; pure in-process `uv run --no-sync pytest gui/server/tests/<file>.py`), you may call the tool directly or use `scripts/verify-web.py --only ...` / `scripts/verify-gui.py --no-sync <file>`.
+  - For browser or subprocess tests (`ng test`, Playwright, full `gui/server/tests`, `e2e:real`), prefer `scripts/verify-web.py` (`--only`, `--e2e-spec`, `--e2e-grep`) and `scripts/verify-gui.py` (which wait via `scripts/busy_machine.py` while a C++ build, test run or Windows VM runs, enforce `VEHICLE_SIL_GUI_REQUIRE_CONTROL=1`, and clean up process groups; `--wait-limit`). Direct single-spec runs (`npx ng test --watch=false --include ...`, `npx playwright test e2e/<file>.spec.ts`) are allowed during local iteration when `scripts/busy_machine.py` reports `(none)`.
+  - Before finishing a pull request, run the risk-appropriate `scripts/verify*.py` command and record the exact scope in `Verified:` / `Not run:`.
 - On a slow or loaded computer, extend how long the tests wait with the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for example, `3`). The CTest `TIMEOUT` takes the value at configure time, so reconfigure after you change the value. The rules are in "Timeouts and the scale factor" under "Test names and how to run tests" in [docs/code-map-testing.md](docs/code-map-testing.md#timeouts-and-the-scale-factor).
 
 ```sh
 scripts/doctor.py                                    # first: is everything in place?
 scripts/verify.py --linux                            # default Linux presets (--all-linux for all)
-scripts/verify.py linux-gcc-debug --tests '^launch'  # some tests on one preset
+scripts/verify.py linux-gcc-debug --targets vehicle_sil_config_tests -L config  # narrow target + label (--no-build to skip build)
 scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
 scripts/check-commits.py                             # the staged changes (--range origin/main..HEAD: each commit in the range)
 scripts/check-docs.py                                # after you change docs
 scripts/mutate.py mutations.toml --check             # only checks that the places to mutate are found
 scripts/hotspots.py libs/launch tests/launch         # optional: large, busy or shared files among the paths you plan to touch
-scripts/verify-python.py                             # Python code
-scripts/verify-gui.py                                # GUI (--skip-web: the server only)
+scripts/verify-python.py                             # Python code (--only scripts,control to narrow)
+scripts/verify-web.py --only format,lint             # narrow web steps (--only e2e --e2e-spec e2e/app.spec.ts)
+scripts/verify-gui.py                                # GUI (--skip-web: server only; --no-sync <file>: one server test file)
 scripts/run-gui.py                                   # starts the GUI from the repository
 scripts/package.py tools && scripts/package.py verify build/dist/vehicle-sil-tools-*-linux-x86_64.tar.gz
 ```
