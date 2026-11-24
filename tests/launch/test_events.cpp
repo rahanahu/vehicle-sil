@@ -427,6 +427,93 @@ TEST_CASE(a_reader_that_went_away_closes_the_stream_and_the_caller_is_told_once_
     check_text(shape(sink.lines()), "phase \"phase\":\"running\"}\n");
 }
 
+TEST_CASE(wait_on_closed_waits_for_on_closed_callback_with_a_timeout)
+{
+    // 1. Open stream: returns true immediately.
+    {
+        Sink sink;
+        EventStream& e = sink.start();
+        CHECK(e.wait_on_closed(0ms));
+    }
+    // 2. Closed before result(): waits until on_closed returns (or timeout expires).
+    {
+        struct Shared
+        {
+            std::mutex mu;
+            std::condition_variable cv;
+            bool entered = false;
+            bool release = false;
+            std::atomic<bool> note_written{false};
+            std::atomic<bool> fail_write{false};
+        };
+        auto st = std::make_shared<Shared>();
+
+        EventStreamOptions options = Sink::quiet();
+        EventStream e(
+            [st](std::string_view bytes) {
+                EventWrite out;
+                if (st->fail_write.load())
+                {
+                    out.failed = true;
+                    out.error = "broken pipe";
+                }
+                else
+                {
+                    out.bytes = bytes.size();
+                }
+                return out;
+            },
+            [st](const std::string&) {
+                {
+                    const std::lock_guard lock(st->mu);
+                    st->entered = true;
+                }
+                st->cv.notify_all();
+                std::unique_lock lock(st->mu);
+                st->cv.wait(lock, [&] { return st->release; });
+                st->note_written.store(true);
+            },
+            options);
+
+        e.phase(Phase::Running);
+        CHECK(e.wait_written(10s));
+        st->fail_write.store(true);
+        e.log("Engine", "triggers close");
+        {
+            std::unique_lock lock(st->mu);
+            CHECK(st->cv.wait_for(lock, 10s, [&] { return st->entered; }));
+        }
+        CHECK(e.closed());
+        // While on_closed is still running, wait_on_closed respects the timeout.
+        CHECK(!e.wait_on_closed(30ms));
+        CHECK(!st->note_written.load());
+        // Once on_closed is allowed to finish, wait_on_closed observes its completion.
+        std::thread releaser([st] {
+            std::this_thread::sleep_for(20ms);
+            {
+                const std::lock_guard lock(st->mu);
+                st->release = true;
+            }
+            st->cv.notify_all();
+        });
+        CHECK(e.wait_on_closed(10s));
+        CHECK(st->note_written.load());
+        releaser.join();
+    }
+    // 3. Closed after result() sealed the stream (on_closed not called): returns true immediately.
+    {
+        Sink sink;
+        EventStreamOptions options = Sink::quiet();
+        options.stall_timeout = 100ms;
+        EventStream& e = sink.start(options);
+        sink.block();
+        CHECK(!e.result(format_result_event(RunReport{})));
+        CHECK(e.closed());
+        CHECK(e.wait_on_closed(0ms));
+        CHECK(sink.closed().empty());
+    }
+}
+
 TEST_CASE(no_maker_of_events_waits_for_a_reader_that_does_not_read_and_only_log_events_are_dropped)
 {
     Sink sink;
