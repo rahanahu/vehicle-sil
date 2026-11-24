@@ -13,6 +13,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_connect_tool.cpp
     test_connections.cpp
     test_events.cpp
+    test_execution_runtime.cpp
     test_request.cpp
     test_request_file.cpp
     test_run.cpp
@@ -86,8 +87,8 @@ set(_launch_probe_headers vehicle_sil/launch/probe)
 set(_launch_output_headers vehicle_sil/launch/events vehicle_sil/launch/run_sink vehicle_sil/launch/timeline_format
                            vehicle_sil/launch/error_result)
 set(_launch_endpoint_headers vehicle_sil/launch/command_input)
-set(_launch_usecase_headers vehicle_sil/launch/run. vehicle_sil/launch/serve. vehicle_sil/launch/connections vehicle_sil/launch/test
-                            vehicle_sil/launch/checked)
+set(_launch_usecase_headers vehicle_sil/launch/run. vehicle_sil/launch/serve. vehicle_sil/launch/execution_runtime.
+                            vehicle_sil/launch/connections vehicle_sil/launch/test vehicle_sil/launch/checked)
 set(_launch_include_check ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DONLY_PREFIXES=ON)
 set(_launch_include_script -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 
@@ -116,7 +117,7 @@ _launch_part_test(format_boundary format "run_sink.hpp;timeline_format.hpp;error
     probe/ endpoints/ usecases/)
 # usecases/ has no limit on the other parts, but it reaches no SIL Kit header: the SIL Kit parts of a run are
 # behind the runner, and the Control Server's file (endpoints/) is the one place in libs/launch that includes them.
-_launch_part_test(usecases_boundary usecases "run.hpp;serve.hpp;test.hpp;connections.hpp;checked.hpp" ${_launch_silkit_prefixes})
+_launch_part_test(usecases_boundary usecases "run.hpp;serve.hpp;execution_runtime.hpp;test.hpp;connections.hpp;checked.hpp" ${_launch_silkit_prefixes})
 _launch_part_test(endpoints_boundary endpoints "command_input.hpp"
     ${_launch_probe_headers} vehicle_sil/launch/timeline_format probe/ format/)
 # The check itself must reject a file that reaches a forbidden header through a header beside it

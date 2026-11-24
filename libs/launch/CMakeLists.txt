@@ -14,6 +14,7 @@ endif()
 add_library(vehicle_sil_launch_lib STATIC
   src/usecases/check.cpp
   src/usecases/connections.cpp
+  src/usecases/execution_runtime.cpp
   src/usecases/run_file.cpp
   src/usecases/serve.cpp
   src/usecases/test.cpp

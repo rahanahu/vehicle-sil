@@ -165,7 +165,7 @@ Command decide_and_do(S& s, const Command& command, std::string_view source, con
         entry ? decide(situation_of(s), *entry, command_operation(name), name, &command)
               : Decision{false, reason::kUnknownSource,
                          "the command came from '" + std::string(source) +
-                             "', which is no entry of a run's commands (stdin, control_server): it is refused"};
+                             "', which is no entry of a run's commands (stdin, control_server, api): it is refused"};
     if (!decision.ok)
     {
         out.accepted = false;

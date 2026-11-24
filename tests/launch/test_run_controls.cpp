@@ -558,7 +558,7 @@ TEST_CASE(a_command_of_a_source_that_is_no_entry_is_refused_and_changes_nothing)
         const vehicle_sil::runner::Command done = t.controls.time().apply(command("pause"), source);
         CHECK(!done.accepted);
         CHECK(done.reason == "unknown-source");
-        CHECK(done.message.find("no entry of a run's commands (stdin, control_server)") != std::string::npos);
+        CHECK(done.message.find("no entry of a run's commands (stdin, control_server, api)") != std::string::npos);
     }
     CHECK(!t.controls.state().paused);
 }

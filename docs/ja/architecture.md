@@ -239,7 +239,7 @@ flowchart LR
     scenario --> config
 ```
 
-`libs/launch/src` の 5 つの部分（`include/vehicle_sil/launch/` の公開ヘッダーは平らなままで、実装する部分に属します。`request.hpp` は `request/`、`probe.hpp` は `probe/`、`events.hpp`、`run_sink.hpp`、`error_result.hpp`、`timeline_format.hpp` は `format/`、`command_input.hpp` は `endpoints/`、`run.hpp`、`checked.hpp`、`connections.hpp`、`test.hpp` は `usecases/`）:
+`libs/launch/src` の 5 つの部分（`include/vehicle_sil/launch/` の公開ヘッダーは平らなままで、実装する部分に属します。`request.hpp` は `request/`、`probe.hpp` は `probe/`、`events.hpp`、`run_sink.hpp`、`error_result.hpp`、`timeline_format.hpp` は `format/`、`command_input.hpp` は `endpoints/`、`run.hpp`、`execution_runtime.hpp`、`serve.hpp`、`checked.hpp`、`connections.hpp`、`test.hpp` は `usecases/`）:
 
 ```mermaid
 flowchart TB
@@ -256,7 +256,7 @@ flowchart TB
 
 | 部分 | 持つもの | include しないもの |
 |---|---|---|
-| `usecases/` | `check_file()`、`list_connections()`、`run_file()`、`run_tests()`: 調べ役、規則、計画、runner、出力の順 | （制限なし） |
+| `usecases/` | `check_file()`、`list_connections()`、`run_file()`、`ExecutionRuntime`、`Serve`、`run_tests()`: 調べ役、規則、計画、runner、出力の順 | （制限なし） |
 | `request/` | `RunRequest`、要求ファイルの読み取り、一緒に使えない欄の規則 | `runner`、`scenario`、`process`、SIL Kit、ほかの部分、利用場面のヘッダー |
 | `probe/` | 計算機を調べること（ファイル、環境、起動する道具）。結果は値で返す。`check --write-descriptions` が書く、保存した説明のファイルも | `runner`、SIL Kit、出力、受け口、利用場面 |
 | `format/` | check、run、test、events、timeline、connections の出力（JSON とテキスト）、終了コードの表 | `probe.hpp`、SIL Kit、`control_grpc`、受け口、利用場面のソース（書き出す結果の型は `run.hpp`、`test.hpp`、`connections.hpp` から読む） |

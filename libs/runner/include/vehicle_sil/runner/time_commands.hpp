@@ -31,7 +31,7 @@ namespace vehicle_sil::runner {
 struct TimeChange
 {
     std::string command;     ///< "pause", "step", "run_until" or "speed"
-    std::string source;      ///< as apply() was given it ("stdin", "control_server")
+    std::string source;      ///< as apply() was given it ("stdin", "control_server", "api")
     std::int64_t sim_ms = 0; ///< the virtual time when it was accepted (0 before the start)
     /// step: how far (whole steps of the controller) and where it was to stand still after it;
     /// pause at a time, run_until: where it was to stand still. As the command event says.
@@ -137,9 +137,14 @@ public:
     /// is returned with Command::pending (not accepted, no reason), and its event, its effect and
     /// OnCommand come when the lock is given (see above). The command events are the answer then.
     ///
-    /// `source` must be the entry_name() of an entry ("stdin", "control_server"): a command of
+    /// `source` must be the entry_name() of an entry ("stdin", "control_server", "api"): a command of
     /// any other source is refused (reason::kUnknownSource) and written with that source, so that
     /// a misspelt or new source is never taken by the rules of another entry.
+    ///
+    /// Precondition: callers must set `command.accepted = true` before calling apply() (as
+    /// parse_command() and programmatic command builders do); a command with `command.accepted == false`
+    /// is passed to OnCommand as-is and ignored without invoking `accepted` or taking effect even
+    /// when decide() succeeds.
     Command apply(const Command& command, std::string_view source);
     /// As apply(command, source), and if the command is accepted, `accepted` is called before
     /// apply() returns, under this object's mutex (short, must not wait): before any later

@@ -41,7 +41,7 @@ constexpr Operation kAllOperations[] = {Operation::Pause, Operation::Resume, Ope
                                         Operation::Speed, Operation::Stop,   Operation::Write, Operation::Unknown};
 constexpr Operation kTimeOperations[] = {Operation::Pause, Operation::Resume, Operation::Step, Operation::RunUntil,
                                          Operation::Speed};
-constexpr Entry kEntries[] = {Entry::Stdin, Entry::ControlServer};
+constexpr Entry kEntries[] = {Entry::Stdin, Entry::ControlServer, Entry::Api};
 constexpr ControlStage kStages[] = {ControlStage::SettingUp, ControlStage::Attached, ControlStage::Detached};
 
 ControlSituation situation(ControlStage stage, bool paused = false, bool scenario = false, bool locked = false,
@@ -119,11 +119,14 @@ TEST_CASE(control_rules_name_the_operations_and_the_entries)
     CHECK(command_operation("Pause") == Operation::Unknown);
     check_text(entry_name(Entry::Stdin), "stdin");
     check_text(entry_name(Entry::ControlServer), "control_server");
+    check_text(entry_name(Entry::Api), "api");
     CHECK(entry_of("control_server") == Entry::ControlServer);
     CHECK(entry_of("stdin") == Entry::Stdin);
+    CHECK(entry_of("api") == Entry::Api);
     // No other text is an entry: nothing falls to the entry with the fewer rules.
     CHECK(!entry_of("anything else"));
     CHECK(!entry_of("Control_Server"));
+    CHECK(!entry_of("API"));
     CHECK(!entry_of(""));
 }
 
@@ -256,7 +259,7 @@ TEST_CASE(control_rules_row_not_running_refuses_everything_once_detached_but_a_s
     {
         for (const Operation o : kAllOperations)
         {
-            if (o == Operation::Write || (o == Operation::Stop && entry == Entry::Stdin))
+            if (o == Operation::Write || (o == Operation::Stop && (entry == Entry::Stdin || entry == Entry::Api)))
             {
                 continue;
             }
@@ -266,17 +269,21 @@ TEST_CASE(control_rules_row_not_running_refuses_everything_once_detached_but_a_s
                               " works from the start of the run until the simulation ends");
         }
     }
-    // The difference of the entries: a stop from standard input is a stop request whenever it
+    // The difference of the entries: a stop from standard input or api is a stop request whenever it
     // comes; a control server's is refused once the simulation is over (its result stays).
     const Command stop = command(Operation::Stop);
     CHECK(decide_command(s, Entry::Stdin, stop).ok);
+    CHECK(decide_command(s, Entry::Api, stop).ok);
     check_refused(decide_command(s, Entry::ControlServer, stop), "not-running",
                   "the simulation is not running (it is over, or it did not start): stop works from the start of the "
                   "run until the simulation ends");
     // A write does not go through the time commands: the row does not look at it. (Standard
-    // input has no write: there the name is refused as any other, as before the end.)
+    // input and api have no write: there the name is refused as any other, as before the end.)
     CHECK(decide(s, Entry::ControlServer, Operation::Write, "write", nullptr).ok);
     check_refused(decide(s, Entry::Stdin, Operation::Write, "write", nullptr), "not-running",
+                  "the simulation is not running (it is over, or it did not start): write works from the start of the "
+                  "run until the simulation ends");
+    check_refused(decide(s, Entry::Api, Operation::Write, "write", nullptr), "not-running",
                   "the simulation is not running (it is over, or it did not start): write works from the start of the "
                   "run until the simulation ends");
     // Before a command's arguments: a step out of range is told that the run is over.
@@ -296,6 +303,8 @@ TEST_CASE(control_rules_row_not_a_time_command_refuses_other_names)
                           "'jump' is no time command: the time commands are pause, resume, step, run_until and speed");
         }
         check_refused(decide(situation(stage), Entry::Stdin, Operation::Write, "write", nullptr), "not-a-time-command",
+                      "'write' is no time command: the time commands are pause, resume, step, run_until and speed");
+        check_refused(decide(situation(stage), Entry::Api, Operation::Write, "write", nullptr), "not-a-time-command",
                       "'write' is no time command: the time commands are pause, resume, step, run_until and speed");
     }
     Command none;
@@ -536,13 +545,16 @@ TEST_CASE(control_rules_allowed_answers_without_arguments_and_gives_the_ranges)
     // The entries: a write, a scenario, a stop once detached.
     CHECK(allowed(paused, Entry::ControlServer, Operation::Write).ok);
     check_text(allowed(paused, Entry::Stdin, Operation::Write).reason, "not-a-time-command");
+    check_text(allowed(paused, Entry::Api, Operation::Write).reason, "not-a-time-command");
     const ControlSituation playing = situation(ControlStage::Attached, false, true);
     check_text(allowed(playing, Entry::ControlServer, Operation::Write).reason, "scenario-running");
     check_text(allowed(playing, Entry::ControlServer, Operation::Write).message, kScenarioMessage);
     CHECK(allowed(playing, Entry::ControlServer, Operation::Pause).ok);
     CHECK(allowed(playing, Entry::Stdin, Operation::Pause).ok);
+    CHECK(allowed(playing, Entry::Api, Operation::Pause).ok);
     CHECK(allowed(playing, Entry::ControlServer, Operation::Stop).ok);
     CHECK(allowed(situation(ControlStage::Detached), Entry::Stdin, Operation::Stop).ok);
+    CHECK(allowed(situation(ControlStage::Detached), Entry::Api, Operation::Stop).ok);
     check_text(allowed(situation(ControlStage::Detached), Entry::ControlServer, Operation::Stop).reason, "not-running");
 }
 
@@ -565,9 +577,10 @@ TEST_CASE(control_rules_always_refused_is_the_write_of_a_control_server_while_a_
                 CHECK(!always_refused(scenario, entry, o));
             }
         }
-        // Standard input has no write: its refusal is not one reason for the whole run (the name
-        // is no time command, and once the run is over that is what is said).
+        // Standard input and api have no write: their refusal is not one reason for the whole run
+        // (the name is no time command, and once the run is over that is what is said).
         CHECK(!always_refused(scenario, Entry::Stdin, Operation::Write));
+        CHECK(!always_refused(scenario, Entry::Api, Operation::Write));
     }
 
     // The same from the controls of a run, whenever it is asked.
@@ -717,6 +730,7 @@ TEST_CASE(time_commands_take_a_stop_of_stdin_after_the_run_and_refuse_under_the_
     over.detach();
     const Command stop = command(Operation::Stop);
     CHECK(over.apply(stop, "stdin").accepted);
+    CHECK(over.apply(stop, "api").accepted);
     CHECK(!over.apply(stop, "control_server").accepted);
 
     // The time lock: what moves the time away from real time is refused with its event, and
@@ -889,24 +903,25 @@ TEST_CASE(time_commands_take_a_stop_at_once_before_the_time_lock)
     TimeCommands commands(false, told.writer());
     CHECK(commands.apply(command(Operation::Pause), "stdin").pending);
     int stopped = 0;
-    for (const char* const source : {"stdin", "control_server"})
+    for (const char* const source : {"stdin", "control_server", "api"})
     {
         const Command stop = commands.apply(command(Operation::Stop), source, [&stopped] { ++stopped; });
         CHECK(!stop.pending);
         CHECK(stop.accepted);
     }
-    CHECK_EQ(stopped, 2);
+    CHECK_EQ(stopped, 3);
     // The stops have their events; the pause still waits behind them.
     std::vector<std::string> lines = told.all();
-    CHECK_EQ(lines.size(), std::size_t{2});
+    CHECK_EQ(lines.size(), std::size_t{3});
     commands.set_time_lock(kLocked);
     lines = told.all();
-    CHECK_EQ(lines.size(), std::size_t{3});
-    if (lines.size() == 3)
+    CHECK_EQ(lines.size(), std::size_t{4});
+    if (lines.size() == 4)
     {
         check_text(lines[0], "stop stdin accepted");
         check_text(lines[1], "stop control_server accepted");
-        check_text(lines[2], "pause stdin outside-real-time");
+        check_text(lines[2], "stop api accepted");
+        check_text(lines[3], "pause stdin outside-real-time");
     }
 }
 

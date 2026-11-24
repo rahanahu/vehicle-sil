@@ -239,7 +239,7 @@ flowchart LR
     scenario --> config
 ```
 
-The five parts of `libs/launch/src` (the public headers in `include/vehicle_sil/launch/` stay flat and belong to the part that implements them: `request.hpp` to `request/`, `probe.hpp` to `probe/`, `events.hpp`, `run_sink.hpp`, `error_result.hpp` and `timeline_format.hpp` to `format/`, `command_input.hpp` to `endpoints/`, and `run.hpp`, `checked.hpp`, `connections.hpp` and `test.hpp` to `usecases/`):
+The five parts of `libs/launch/src` (the public headers in `include/vehicle_sil/launch/` stay flat and belong to the part that implements them: `request.hpp` to `request/`, `probe.hpp` to `probe/`, `events.hpp`, `run_sink.hpp`, `error_result.hpp` and `timeline_format.hpp` to `format/`, `command_input.hpp` to `endpoints/`, and `run.hpp`, `execution_runtime.hpp`, `serve.hpp`, `checked.hpp`, `connections.hpp` and `test.hpp` to `usecases/`):
 
 ```mermaid
 flowchart TB
@@ -256,7 +256,7 @@ flowchart TB
 
 | Part | Holds | Does not include |
 |---|---|---|
-| `usecases/` | `check_file()`, `list_connections()`, `run_file()`, `run_tests()`: probe, then the rules, then the plan, then the runner, then the output | (no limit) |
+| `usecases/` | `check_file()`, `list_connections()`, `run_file()`, `ExecutionRuntime`, `Serve`, `run_tests()`: probe, then the rules, then the plan, then the runner, then the output | (no limit) |
 | `request/` | `RunRequest`, reading a request file, the rules about fields that do not go together | `runner`, `scenario`, `process`, SIL Kit, any other part, the headers of the use cases |
 | `probe/` | Looking at the computer (files, environment, the tools it starts); returns values. Also the file of saved descriptions that `check --write-descriptions` writes | `runner`, SIL Kit, the outputs, the endpoints, the use cases |
 | `format/` | The outputs of check, run, test, events, timeline and connections (JSON and text), the table of exit codes | `probe.hpp`, SIL Kit, `control_grpc`, the endpoints, the sources of the use cases (it reads their result types from `run.hpp`, `test.hpp` and `connections.hpp`, which it formats) |
