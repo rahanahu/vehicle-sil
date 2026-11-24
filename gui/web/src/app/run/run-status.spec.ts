@@ -168,17 +168,21 @@ const ENDED = {
   } as unknown as SessionSummary['result'],
 } satisfies Partial<SessionSummary>;
 
-const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 describe('RunStatus', () => {
   let fixture: ComponentFixture<Host>;
   let host: Host;
 
   beforeEach(async () => {
+    vi.useFakeTimers();
     TestBed.configureTestingModule({ providers: [{ provide: ACTION_GUARD, useValue: GUARD_MS }] });
     fixture = TestBed.createComponent(Host);
     host = fixture.componentInstance;
     await settle();
+  });
+
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    vi.useRealTimers();
   });
 
   function query(testId: string): HTMLElement | null {
@@ -190,9 +194,9 @@ describe('RunStatus', () => {
 
   /** 変わった後、押せるようになったボタンが押せるまで待つ。 */
   async function settle(): Promise<void> {
-    await fixture.whenStable();
-    await pause(GUARD_MS + 50);
-    await fixture.whenStable();
+    TestBed.tick();
+    await vi.advanceTimersByTimeAsync(GUARD_MS);
+    TestBed.tick();
   }
 
   async function show(session: SessionView | null): Promise<void> {
@@ -221,14 +225,14 @@ describe('RunStatus', () => {
 
   it('ignores a press right after a button became pressable (a double click, a repeated Enter)', async () => {
     host.session.set(sessionViewFrom(summary()));
-    await fixture.whenStable();
+    TestBed.tick();
     // 停止は押せるようになったばかり: 薄く出て、押しても何もしない
     expect(stopButton().getAttribute('aria-disabled')).not.toBe('true');
     expect(stopButton().getAttribute('data-armed')).toBe('false');
     stopButton().click();
     expect(host.stops).toBe(0);
-    await pause(GUARD_MS + 50);
-    await fixture.whenStable();
+    await vi.advanceTimersByTimeAsync(GUARD_MS);
+    TestBed.tick();
     expect(stopButton().getAttribute('data-armed')).toBe('true');
     stopButton().click();
     expect(host.stops).toBe(1);
@@ -238,15 +242,15 @@ describe('RunStatus', () => {
     const running = sessionViewFrom(summary());
     await show(running);
     host.session.set(sessionViewFrom(summary(), summary(ENDED)));
-    await fixture.whenStable();
+    TestBed.tick();
     // 利用者は同じ位置（停止）を押す: 停止は押せない。開始は別の位置にあり、押せるようになったばかり
     stopButton().click();
     startButton().click();
     expect(host.stops).toBe(0);
     expect(host.starts).toBe(0);
     expect(startButton().textContent).toContain('もう一度実行');
-    await pause(GUARD_MS + 50);
-    await fixture.whenStable();
+    await vi.advanceTimersByTimeAsync(GUARD_MS);
+    TestBed.tick();
     startButton().click();
     expect(host.starts).toBe(1);
   });
@@ -278,7 +282,7 @@ describe('RunStatus', () => {
     await show(running);
     stopButton().click();
     host.stopping.set('stop');
-    await fixture.whenStable();
+    TestBed.tick();
     stopButton().click();
     // 停止を受け付けた要約が当たった後の 2 回目のクリック
     host.stopping.set(null);

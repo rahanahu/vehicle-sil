@@ -28,6 +28,7 @@ describe('RunPage', () => {
   }
 
   beforeEach(async () => {
+    vi.useFakeTimers();
     sessionStorage.setItem('vehicle-sil-gui-token', 'secret');
     fake = new FakeWebSockets();
     await TestBed.configureTestingModule({
@@ -43,7 +44,11 @@ describe('RunPage', () => {
     http = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => sessionStorage.clear());
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    vi.useRealTimers();
+    sessionStorage.clear();
+  });
 
   function text(fixture: ComponentFixture<RunPage>, testId: string): string {
     const element = fixture.nativeElement as HTMLElement;
@@ -62,7 +67,11 @@ describe('RunPage', () => {
   const disabled = (b: HTMLButtonElement) =>
     b.disabled || b.getAttribute('aria-disabled') === 'true';
 
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const advance = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+  const settle = async () => {
+    await advance(0);
+    TestBed.tick();
+  };
 
   /** シナリオの一覧の要求（ファイルを選ぶたび、実行が終わるたび）に、例の一覧で答える。 */
   function answerScenarios(): void {
@@ -75,7 +84,7 @@ describe('RunPage', () => {
   /** 照合を頼むまでの間を待って、照合の要求を 1 つ受け取る。 */
   async function checkRequest() {
     answerScenarios();
-    await sleep(CHECK_DELAY_MS + 20);
+    await advance(CHECK_DELAY_MS);
     answerScenarios();
     return http.expectOne('api/check');
   }
@@ -98,7 +107,7 @@ describe('RunPage', () => {
     fake.last().open();
     fake.last().send(server('ws-pass')[0]);
     fake.last().send(server('ws-pass')[1]);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     return fixture;
   }
@@ -110,7 +119,7 @@ describe('RunPage', () => {
     http.expectOne('api/configs').flush(response('configs'));
     fake.last().open();
     fake.last().send({ ...(server('ws-pass')[0] as object), vehicle_sil_gui: 2 });
-    await sleep(CHECK_DELAY_MS + BATCH_MS + 20);
+    await advance(CHECK_DELAY_MS + BATCH_MS);
     TestBed.tick();
     expect(text(fixture, 'incompatible')).toContain('server speaks version 2');
     http.expectNone('api/check');
@@ -120,7 +129,7 @@ describe('RunPage', () => {
   it('asks to be opened from the server URL when there is no token', async () => {
     sessionStorage.clear();
     const fixture = TestBed.createComponent(RunPage);
-    await fixture.whenStable();
+    await settle();
     expect(text(fixture, 'no-token')).toContain('#token=');
     http.expectNone('api/app');
     expect(fake.sockets).toHaveLength(0);
@@ -138,7 +147,7 @@ describe('RunPage', () => {
     });
     expect(first.request.headers.get('Authorization')).toBe('Bearer secret');
     first.flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
 
     expect(text(fixture, 'check-outcome')).toContain('通った');
     expect(disabled(button(fixture, 'start'))).toBe(false);
@@ -152,7 +161,7 @@ describe('RunPage', () => {
       speed: 1,
     });
     again.flush(response('check-disabled'));
-    await fixture.whenStable();
+    await settle();
     expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
 
     // 自分で起動する
@@ -172,7 +181,7 @@ describe('RunPage', () => {
   it('does not start while the check finds errors, and says why', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-failed'));
-    await fixture.whenStable();
+    await settle();
     expect(disabled(button(fixture, 'start'))).toBe(true);
     expect(text(fixture, 'blocked')).toContain('誤り 1 件');
     expect(text(fixture, 'check-card')).toContain('step-mismatch');
@@ -181,10 +190,10 @@ describe('RunPage', () => {
   it('starts with the chosen settings', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     expect(button(fixture, 'start').textContent).toContain('開始');
-    await sleep(10);
-    await fixture.whenStable();
+    await advance(1);
+    await settle();
     button(fixture, 'start').click();
     const run = http.expectOne('api/run');
     expect(run.request.method).toBe('POST');
@@ -196,7 +205,7 @@ describe('RunPage', () => {
     });
     // 応答の要約をその場で当てる（通知を待たずに、停止が押せて、開始は押せない）
     run.flush(response('run'));
-    await fixture.whenStable();
+    await settle();
     expect(disabled(button(fixture, 'stop'))).toBe(false);
     expect(disabled(button(fixture, 'start'))).toBe(true);
   });
@@ -204,7 +213,7 @@ describe('RunPage', () => {
   it('checks and starts with the same optional stop time, and rejects invalid input', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
       '[data-testid="stop-at-ms"]',
     )!;
@@ -236,8 +245,8 @@ describe('RunPage', () => {
     expect(checked.request.body).toMatchObject({ speed: 1, stop_at_ms: 1003 });
     expect(pageIntent.get().stop_at_ms).toBe(1003);
     checked.flush(response('check-passed'));
-    await fixture.whenStable();
-    await sleep(10);
+    await settle();
+    await advance(1);
     button(fixture, 'start').click();
     expect(http.expectOne('api/run').request.body).toMatchObject({ speed: 1, stop_at_ms: 1003 });
   });
@@ -245,9 +254,9 @@ describe('RunPage', () => {
   it('shows under the status bar why the server refused the start (the problem of the front door)', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
-    await sleep(10);
-    await fixture.whenStable();
+    await settle();
+    await advance(1);
+    await settle();
     expect(text(fixture, 'action-error')).toBe('');
     button(fixture, 'start').click();
     http
@@ -256,8 +265,8 @@ describe('RunPage', () => {
         { error: { code: 'shutting-down', message: 'the server is shutting down', detail: null } },
         { status: 503, statusText: 'Service Unavailable' },
       );
-    await sleep(0);
-    await fixture.whenStable();
+    await advance(0);
+    await settle();
     expect(text(fixture, 'action-error')).toContain('操作を受け付けられませんでした');
     const english = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-testid="action-error"] [lang="en"]',
@@ -268,7 +277,7 @@ describe('RunPage', () => {
   it('starts paused when asked to, and shows the pause and resume buttons', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     // 実行がない間は、一時停止と再開のボタンを出さない（帯を高くしない）
     const element = fixture.nativeElement as HTMLElement;
     expect(element.querySelector('[data-testid="pause"]')).toBeNull();
@@ -280,13 +289,13 @@ describe('RunPage', () => {
     const paused = await checkRequest();
     expect(paused.request.body).toMatchObject({ start_paused: true });
     paused.flush(response('check-passed'));
-    await fixture.whenStable();
-    await sleep(10);
-    await fixture.whenStable();
+    await settle();
+    await advance(1);
+    await settle();
     button(fixture, 'start').click();
     expect(http.expectOne('api/run').request.body).toMatchObject({ start_paused: true });
     // 開始を頼んだら、停止の後に一時停止と再開（動き出すまでは押せない）
-    await fixture.whenStable();
+    await settle();
     const actions = [...element.querySelectorAll('app-run-status .actions button')].map((b) =>
       b.getAttribute('data-testid'),
     );
@@ -299,7 +308,7 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     const first = await checkRequest();
     first.flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     // 続けて 2 回切り替える: 最後の組み合わせで 1 回だけ
     toggle(fixture, 'Dashboard');
     toggle(fixture, 'Engine');
@@ -312,7 +321,7 @@ describe('RunPage', () => {
     });
     // 応答の前に切り替える: 前の照合の応答が来るまで、次は送らない
     toggle(fixture, 'Engine');
-    await sleep(CHECK_DELAY_MS + 20);
+    await advance(CHECK_DELAY_MS);
     http.expectNone('api/check');
     once.flush(response('check-passed'));
     const next = await checkRequest();
@@ -323,7 +332,7 @@ describe('RunPage', () => {
       speed: 1,
     });
     next.flush(response('check-disabled'));
-    await fixture.whenStable();
+    await settle();
     // 古い応答（Engine も外したもの）は使わず、最後の組み合わせの結果を出す
     expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
     expect(disabled(button(fixture, 'start'))).toBe(false);
@@ -337,13 +346,13 @@ describe('RunPage', () => {
     fake.last().open();
     // A run of simulation.yaml with a scenario has ended: its scenario is chosen for the next run
     for (const message of server('ws-scenario')) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(text(fixture, 'blocked')).toBe('シナリオの一覧を読んでいます。');
     for (const request of http.match((r) => r.url.startsWith('api/scenarios'))) {
       request.flush('', { status: 500, statusText: 'Internal Server Error' });
     }
-    await sleep(CHECK_DELAY_MS + 20);
+    await advance(CHECK_DELAY_MS);
     TestBed.tick();
     for (const request of http.match('api/check')) request.flush(response('check-passed'));
     TestBed.tick();
@@ -357,13 +366,13 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
     for (const message of server('ws-participant-crash').slice(2)) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     // 終わったので、選んだファイル（セッションのもの）を照合し直す
-    await sleep(CHECK_DELAY_MS + 20);
+    await advance(CHECK_DELAY_MS);
     for (const request of http.match('api/check')) request.flush(response('check-passed'));
     answerScenarios();
-    await fixture.whenStable();
+    await settle();
 
     expect(text(fixture, 'result')).toContain('失敗');
     expect(text(fixture, 'result-card')).toContain('participant-failed');
@@ -376,7 +385,7 @@ describe('RunPage', () => {
   it('checks and starts with the networks the parts chose to connect outside, and says so by the start button', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     // 照合の can のネットワークに選択がある。最初は「つながない」
     const part = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-testid="connect-J1939_CAN"] vsil-connect',
@@ -396,10 +405,10 @@ describe('RunPage', () => {
         connect: { ETH_EXT: 'fake0' },
       });
       again.flush(response('check-passed'));
-      await fixture.whenStable();
+      await settle();
       expect(text(fixture, 'connect-summary')).toContain('ETH_EXT → fake0');
-      await sleep(10);
-      await fixture.whenStable();
+      await advance(1);
+      await settle();
       button(fixture, 'start').click();
       expect(http.expectOne('api/run').request.body).toEqual({
         file: 'bad-lines.yaml',
@@ -416,7 +425,7 @@ describe('RunPage', () => {
   it('writes its choices into the page intent, so that a part checks the same intent in one check', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     expect(pageIntent.get()).toEqual({ disable: [], manual: [], speed: 1 });
     // 部品のネットワークに先を選んだ: 部品（約 200 ms 後）と画面（CHECK_DELAY_MS 後）が同じ意図を照合する
     pageIntent.update({ connect: { J1939_CAN: 'can0' } });
@@ -432,7 +441,7 @@ describe('RunPage', () => {
       '[data-testid="connect-J1939_CAN"] vsil-connect',
     );
     expect(part?.getAttribute('data-chosen')).toBe('can0');
-    await sleep(CHECK_DELAY_MS + 20);
+    await advance(CHECK_DELAY_MS);
     answerScenarios();
     const once = http.expectOne('api/check');
     expect(once.request.body).toEqual({
@@ -443,7 +452,7 @@ describe('RunPage', () => {
       connect: { J1939_CAN: 'can0' },
     });
     once.flush(response('check-disabled'));
-    await fixture.whenStable();
+    await settle();
     expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
     http.expectNone('api/check');
 
@@ -459,7 +468,7 @@ describe('RunPage', () => {
   it('writes the choices of another file when the file changes, and writes nothing while a run goes on', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     toggle(fixture, 'Dashboard');
     expect(pageIntent.get()).toMatchObject({ disable: ['Dashboard'] });
     const page = fixture.componentInstance as unknown as {
@@ -479,16 +488,16 @@ describe('RunPage', () => {
     const messages = server('ws-participant-crash');
     // 実行が始まったところまで（要約と最初の事象）
     for (const message of messages.slice(2, 6)) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(page.running()).toBe(true);
     expect(pageIntent.get()).toMatchObject({ disable: ['Other'] });
     for (const message of messages.slice(6)) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(page.running()).toBe(false);
     expect(pageIntent.get()).toMatchObject({ disable: [] });
-    await sleep(CHECK_DELAY_MS + 20);
+    await advance(CHECK_DELAY_MS);
     for (const request of http.match('api/check')) request.flush(response('check-passed'));
     answerScenarios();
   });
@@ -496,7 +505,7 @@ describe('RunPage', () => {
   it('does not carry a stop time to another configuration and restores the session value', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
       '[data-testid="stop-at-ms"]',
     )!;
@@ -515,13 +524,13 @@ describe('RunPage', () => {
 
     // A summary and its check arrive from another session; its stop belongs only to that file.
     for (const message of server('ws-pass').slice(2)) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(input.value).toBe('321');
     const otherSession = structuredClone(server('ws-pass')[49]) as { session: { id: number } };
     otherSession.session.id = 2;
     fake.last().send(otherSession);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(input.value).toBe('321');
     expect(pageIntent.get().stop_at_ms).toBe(321);
@@ -544,11 +553,11 @@ describe('RunPage', () => {
     expect(input.disabled).toBe(true);
     const messages = server('ws-replay');
     fake.last().send(messages[0]);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(input.disabled).toBe(true);
     for (const message of messages.slice(1)) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(input.disabled).toBe(false);
     expect(input.value).toBe('1000');
@@ -557,7 +566,7 @@ describe('RunPage', () => {
   it('keeps an edited stop time through a reconnect to the same session', async () => {
     const fixture = await openWithFiles();
     for (const message of server('ws-pass').slice(2)) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
       '[data-testid="stop-at-ms"]',
@@ -570,12 +579,12 @@ describe('RunPage', () => {
     before.fail();
     TestBed.tick();
     expect(input.disabled).toBe(true);
-    await sleep(600);
+    await advance(600);
     const after = fake.last();
     expect(after).not.toBe(before);
     after.open();
     for (const message of server('ws-replay')) after.send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(input.disabled).toBe(false);
     expect(input.value).toBe('123');
@@ -602,7 +611,7 @@ describe('RunPage', () => {
     );
     const fixture = await openWithFiles();
     for (const message of server('ws-pass').slice(2)) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
       '[data-testid="stop-at-ms"]',
@@ -636,7 +645,7 @@ describe('RunPage', () => {
       summary.session.ended_at = '2026-01-01T00:00:01Z';
       summary.session.launcher.running = false;
       fake.last().send(summary);
-      await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+      await advance(BATCH_MS);
       TestBed.tick();
       const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
         '[data-testid="stop-at-ms"]',
@@ -648,7 +657,7 @@ describe('RunPage', () => {
         TestBed.tick();
       }
       fake.last().send(server('ws-pass')[8]);
-      await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+      await advance(BATCH_MS);
       TestBed.tick();
       expect(input.value).toBe(mode === 'untouched' ? '1000' : mode === 'edit-now' ? '250' : '');
     });
@@ -657,7 +666,7 @@ describe('RunPage', () => {
   it('clears the prior stop time when another session starts for the same configuration', async () => {
     const fixture = await openWithFiles();
     for (const message of server('ws-pass').slice(2)) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
       '[data-testid="stop-at-ms"]',
@@ -666,7 +675,7 @@ describe('RunPage', () => {
     const summary = structuredClone(server('ws-pass')[3]) as { session: { id: number } };
     summary.session.id = 2;
     fake.last().send(summary);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(input.value).toBe('');
     const check = structuredClone(server('ws-pass')[8]) as {
@@ -676,7 +685,7 @@ describe('RunPage', () => {
     check.session = 2;
     check.event.check.stop_at_ms = 2000;
     fake.last().send(check);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
     expect(input.value).toBe('2000');
   });
@@ -684,7 +693,7 @@ describe('RunPage', () => {
   it('checks the speed and the paused start with the rest, and does not start on what the check refuses', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     const element = fixture.nativeElement as HTMLElement;
     pageIntent.update({ connect: { ETH_EXT: 'fake0' } });
     try {
@@ -718,7 +727,7 @@ describe('RunPage', () => {
       refused.check.findings[0]!.code = 'outside-real-time';
       refused.check.findings[0]!.message = 'the run keeps real time: leave the speed out.';
       checked.flush(refused);
-      await fixture.whenStable();
+      await settle();
       expect(text(fixture, 'check-card')).toContain('outside-real-time');
       expect(disabled(button(fixture, 'start'))).toBe(true);
       // 倍率を直すまでは、速度の誤りが開始を止める
@@ -731,13 +740,13 @@ describe('RunPage', () => {
   it('does not send a participant both left out and started by hand', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     (fixture.nativeElement as HTMLElement)
       .querySelector<HTMLButtonElement>('[data-testid="manual-Engine"] button[role="switch"]')
       ?.click();
     TestBed.tick();
     (await checkRequest()).flush(response('check-passed'));
-    await fixture.whenStable();
+    await settle();
     // 外すと「自分で起動する」も外れる（check-panel）。ランチャーは両方に入った名前を照合で断る
     toggle(fixture, 'Engine');
     const again = await checkRequest();
@@ -771,12 +780,12 @@ describe('RunPage', () => {
       );
     expect(JSON.stringify(messages)).not.toContain(failed);
     for (const message of messages) fake.last().send(message);
-    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    await advance(BATCH_MS);
     TestBed.tick();
-    await sleep(CHECK_DELAY_MS + 20);
+    await advance(CHECK_DELAY_MS);
     for (const request of http.match('api/check')) request.flush(response('check-passed'));
     answerScenarios();
-    await fixture.whenStable();
+    await settle();
     expect(text(fixture, 'result-card')).toContain('connect-lost');
     expect(text(fixture, 'result-card')).toContain(lost.message);
   });

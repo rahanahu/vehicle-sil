@@ -20,14 +20,15 @@ describe('DesignPage', () => {
     structuredClone((examples.get(name) as { server: unknown[] }).server);
   const response = (name: string) =>
     structuredClone((examples.get(name) as { response: object }).response);
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const advance = (ms: number) => vi.advanceTimersByTimeAsync(ms);
   /** 要求の応答を待たずに、画面を更新する（応答待ちの要求があると whenStable は終わらない）。 */
   const settle = async () => {
-    await sleep(20);
+    await advance(0);
     TestBed.tick();
   };
 
   beforeEach(async () => {
+    vi.useFakeTimers();
     sessionStorage.setItem('vehicle-sil-gui-token', 'secret');
     fake = new FakeWebSockets();
     await TestBed.configureTestingModule({
@@ -41,7 +42,11 @@ describe('DesignPage', () => {
     http = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => sessionStorage.clear());
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    vi.useRealTimers();
+    sessionStorage.clear();
+  });
 
   const element = (f: ComponentFixture<DesignPage>) => f.nativeElement as HTMLElement;
   const text = (f: ComponentFixture<DesignPage>, id: string) =>
@@ -61,13 +66,13 @@ describe('DesignPage', () => {
     const messages = server('ws-pass') as { allowed?: { save: unknown } }[];
     if (save) for (const m of messages) if (m.allowed) m.allowed.save = save;
     for (const m of messages.slice(0, 3)) fake.last().send(m);
-    await sleep(BATCH_MS + 20);
+    await advance(BATCH_MS);
     http.expectOne('api/app').flush(response('app'));
     http.expectOne('api/configs').flush(response('configs'));
     await settle();
     http.expectOne((r) => r.url.startsWith('api/config?')).flush(response('config'));
     await settle();
-    await sleep(DESIGN_CHECK_DELAY_MS + 20);
+    await advance(DESIGN_CHECK_DELAY_MS);
     const body = response('check-text') as { check: Record<string, unknown> };
     mutate(body.check);
     http.expectOne('api/check').flush(body);
@@ -82,7 +87,7 @@ describe('DesignPage', () => {
     http.expectOne('api/configs').flush(response('configs'));
     fake.last().open();
     fake.last().send({ ...(server('ws-pass')[0] as object), vehicle_sil_gui: 2 });
-    await sleep(DESIGN_CHECK_DELAY_MS + BATCH_MS + 20);
+    await advance(DESIGN_CHECK_DELAY_MS + BATCH_MS);
     TestBed.tick();
     expect(text(fixture, 'design-connection-error')).toContain('server speaks version 2');
     http.expectNone((request) => request.url.startsWith('api/config?'));
@@ -166,7 +171,7 @@ describe('DesignPage', () => {
     await settle();
     http.expectOne((r) => r.url.startsWith('api/config?')).flush(response('config'));
     await settle();
-    await sleep(DESIGN_CHECK_DELAY_MS + 20);
+    await advance(DESIGN_CHECK_DELAY_MS);
     http
       .expectOne('api/check')
       .flush(
@@ -188,7 +193,7 @@ describe('DesignPage', () => {
       area.dispatchEvent(new Event('input'));
       TestBed.tick();
     }
-    await sleep(DESIGN_CHECK_DELAY_MS + 20);
+    await advance(DESIGN_CHECK_DELAY_MS);
     const check = http.expectOne('api/check');
     expect(check.request.body).toMatchObject({ file: 'bad-lines.yaml', text: 'a: 3\n' });
     expect(text(fixture, 'design-outcome')).toContain('照合しています');
@@ -237,7 +242,7 @@ describe('DesignPage', () => {
     area.dispatchEvent(new Event('input'));
     TestBed.tick();
     saved.flush({ file: 'bad-lines.yaml', stamp: 'f'.repeat(64) });
-    await sleep(100);
+    await advance(100);
     TestBed.tick();
     http.expectNone((r) => r.method === 'GET' && r.url.startsWith('api/config?'));
     expect(area.value).toContain('# typed while saving');
@@ -251,7 +256,7 @@ describe('DesignPage', () => {
     http
       .expectOne((r) => r.method === 'POST' && r.url === 'api/config')
       .flush({ file: 'bad-lines.yaml', stamp: 'f'.repeat(64) });
-    await sleep(100);
+    await advance(100);
     TestBed.tick();
     expect(text(fixture, 'saved')).not.toBe('');
     const area = element(fixture).querySelector(
@@ -274,7 +279,7 @@ describe('DesignPage', () => {
     (element(fixture).querySelector('[data-testid="describe-again"]') as HTMLButtonElement).click();
     TestBed.tick();
     http.expectOne('api/describe').flush(response('describe'));
-    await sleep(DESIGN_CHECK_DELAY_MS + 100);
+    await advance(DESIGN_CHECK_DELAY_MS + 100);
     TestBed.tick();
     const body = response('check-text') as { check: Record<string, unknown> };
     stuckCheck(body.check);
@@ -335,7 +340,7 @@ describe('DesignPage', () => {
   it('asks to be opened from the server URL when there is no token', async () => {
     sessionStorage.clear();
     const fixture = TestBed.createComponent(DesignPage);
-    await fixture.whenStable();
+    await settle();
     expect(text(fixture, 'no-token')).toContain('#token=');
   });
 });
