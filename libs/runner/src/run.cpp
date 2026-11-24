@@ -153,6 +153,7 @@
 // left for the caller is to end the process without the destructors of static objects (the thread
 // is inside SIL Kit): OutcomeClose::not_closed_ms.
 #include "runner_impl.hpp"
+#include "time_commands_internal.hpp"
 
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 
@@ -376,7 +377,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
             [this, t = connection->transport.get(), c = connection->controller.get()](const StartWindow& window) {
                 start_.window(*t, *c, window);
             });
-        ctx_.commands.attach(*connection->controller, ctx_.plan.timing.time_step_ms, ctx_.plan.timing.speed);
+        detail::attach_controller(ctx_.commands, *connection->controller, ctx_.plan.timing.time_step_ms, ctx_.plan.timing.speed);
         // Every sample the hub takes, in every run: for the traffic of the result, and for
         // the scenario.
         samples_.tap(control_.hub(), std::chrono::milliseconds(ctx_.plan.timing.time_step_ms),

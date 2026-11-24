@@ -84,7 +84,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 | `vehicle_sil_can_bus_simulator` | `can_netsim` |
 | `vehicle_sil_launch` | `launch` と `process` |
 | `vehicle_sil_launch`（Windows） | `shell32` も |
-| `vehicle_sil_launch`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`） | `control_grpc` と `core` も |
+| `vehicle_sil_launch`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`） | `control_grpc` も |
 
 ## 変更するときに一緒に直すもの
 

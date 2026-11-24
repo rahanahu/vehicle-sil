@@ -3,6 +3,8 @@
 // When a participant that left a running simulation has failed it (vehicle_sil::core).
 #pragma once
 
+#include "vehicle_sil/core/controller_snapshot.hpp"
+
 #include <chrono>
 #include <optional>
 #include <string>
@@ -10,17 +12,6 @@
 namespace vehicle_sil {
 
 class SimulationController;
-
-/// A required participant seen to have left the running simulation
-/// (SimulationController::failed_participant()).
-struct LeftParticipant
-{
-    std::string name;
-    /// Its SIL Kit lifecycle state as text ("unknown" if none was seen).
-    std::string state;
-    /// The state is Error: it failed (a step handler exception, a crash) or lost its connection.
-    bool error = false;
-};
 
 /// A participant that failed the simulation.
 struct ParticipantFailure
@@ -44,7 +35,7 @@ struct ParticipantFailure
 class FailureCheck
 {
 public:
-    static constexpr std::chrono::milliseconds kDefaultGrace{5000};
+    static constexpr std::chrono::milliseconds kDefaultGrace = kDefaultLeaveGrace;
 
     /// `grace` >= 0 (std::invalid_argument).
     explicit FailureCheck(std::chrono::steady_clock::duration grace = kDefaultGrace);

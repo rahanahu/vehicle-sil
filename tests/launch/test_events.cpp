@@ -7,6 +7,7 @@
 // input; version --json.
 #include "launch_test_util.hpp"
 #include "silkit_test_util.hpp"
+#include "time_commands_internal.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
@@ -1175,7 +1176,7 @@ TEST_CASE(time_commands_between_the_controller_and_the_start_take_effect_at_the_
     TimeCommands commands(true);
     commands.set_time_lock({});
     CHECK(commands.apply(command(R"({"command":"speed","value":0.5})"), "stdin").accepted);
-    commands.attach(controller, 10, std::optional<double>(2.0));
+    vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::optional<double>(2.0));
     // The speed command before attach() wins over the configuration's speed; the run starts paused.
     TimeState s = controller.time_state();
     CHECK(s.speed == std::optional<double>(0.5));
@@ -1217,7 +1218,7 @@ TEST_CASE(an_accepted_step_says_where_it_ends_in_its_command_event)
     // Not started paused: the gate goes on (here it waits for the start) until a pause.
     TimeCommands commands(false, [&events](const Command& c, std::string_view source) { events.command(c, source); });
     commands.set_time_lock({});
-    commands.attach(controller, 10, std::nullopt);
+    vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
     // Refused (not paused): no "at_ms".
     Command step = commands.apply(command(R"({"command":"step","ms":10,"id":1})"), "stdin");
     CHECK(!step.accepted && !step.at_ms);
@@ -1270,7 +1271,7 @@ TEST_CASE(a_step_after_a_pause_counts_from_the_pause_and_not_from_the_run_until_
     const auto at = [](std::int64_t ms) { return std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(ms)); };
     TimeCommands commands(false);
     commands.set_time_lock({});
-    commands.attach(controller, 10, std::nullopt);
+    vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
     CHECK(commands.apply(command(R"({"command":"run_until","at_ms":100000})"), "stdin").accepted);
     CHECK(target() == at(100000));
     CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
@@ -1305,7 +1306,7 @@ TEST_CASE(a_step_after_a_pause_counts_from_where_the_simulation_stands_and_not_f
     const auto at = [](std::int64_t ms) { return std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(ms)); };
     TimeCommands commands(true);
     commands.set_time_lock({});
-    commands.attach(controller, 10, std::nullopt);
+    vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
     vehicle_sil::unit::start_together(controller, {&peer}, vehicle_sil::test::scaled_timeout(30s));
     CHECK(commands.apply(command(R"({"command":"run_until","at_ms":50})"), "stdin").accepted);
     CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)) == at(50));
@@ -1384,7 +1385,7 @@ TEST_CASE(time_commands_from_another_thread_never_reach_a_controller_that_is_gon
             options.time_control = TimeControlOptions{.step = std::chrono::milliseconds(10)};
             SimulationController controller(options);
             wait_calls(20);
-            commands.attach(controller, 10, std::nullopt);
+            vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
             wait_calls(20);
             commands.detach();
             detached = true;
@@ -1419,7 +1420,7 @@ TEST_CASE(time_commands_of_a_control_server_run_until_and_pause_at_a_time_and_ar
     Command until = command("run_until");
     until.at_ms = 25;
     CHECK(!commands.apply(until, "control_server").accepted); // no controller yet
-    commands.attach(controller, 10, std::nullopt);
+    vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
     until = commands.apply(until, "control_server");
     CHECK(until.accepted && until.at_ms == std::optional<std::int64_t>(30));
     CHECK(controller.time_state().pause_target == std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(30)));
@@ -1469,7 +1470,7 @@ TEST_CASE(time_commands_note_the_first_that_changed_how_the_time_goes)
     CHECK(commands.apply(command(R"({"command":"speed","value":1})"), "stdin").accepted);
     CHECK(!commands.apply(command(R"({"command":"step","ms":10})"), "stdin").accepted);
     CHECK(commands.apply(command(R"({"command":"stop"})"), "stdin").accepted);
-    commands.attach(controller, 10, std::nullopt);
+    vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
     CHECK(!commands.apply(command(R"({"command":"step","ms":10})"), "stdin").accepted); // not paused
     CHECK(!commands.first_time_change());
     // The first that does is kept, with where it was to stand still.
@@ -1486,7 +1487,7 @@ TEST_CASE(time_commands_note_the_first_that_changed_how_the_time_goes)
     // A step, with how far it goes in whole steps and where it was to stand after it.
     TimeCommands stepped(true);
     stepped.set_time_lock({});
-    stepped.attach(controller, 10, std::nullopt);
+    vehicle_sil::runner::detail::attach_controller(stepped, controller, 10, std::nullopt);
     CHECK(stepped.apply(command(R"({"command":"step","ms":25})"), "stdin").accepted);
     stepped.detach();
     const std::optional<TimeChange> step = stepped.first_time_change();
@@ -1518,7 +1519,7 @@ TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up
     {
         TimeCommands commands(true);
         commands.set_time_lock({});
-        commands.attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
         std::atomic<int> result{-1};
         std::atomic<int> began{0};
         std::thread window([&] {
@@ -1526,9 +1527,24 @@ TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up
         });
         // In the hold: it stands still at 0, and neither a pause nor a speed lets it go.
         CHECK(commands.wait_paused(std::chrono::seconds(10)) == std::optional<SimTime>(SimTime{}));
+        TimeView view;
+        CHECK(commands.inspect_time([&view](const TimeView& current) { view = current; }) == TimeCommands::Stage::Attached);
+        CHECK(view.available && view.paused && !view.running && !view.ended && view.now == SimTime{});
         bool held = false;
-        CHECK(commands.inspect([&held](SimulationController&, bool holding) { held = holding; }) == TimeCommands::Stage::Attached);
+        commands.look([&held](const TimeFacts& facts) { held = facts.holding; });
         CHECK(held);
+        std::vector<std::pair<std::string, std::string>> participants;
+        CHECK(commands.inspect_participants([&participants](const std::vector<std::pair<std::string, std::string>>& current) {
+                  participants = current;
+              }) == TimeCommands::Stage::Attached);
+        CHECK(participants.size() == 1 && participants[0].first == "NeverJoins");
+        bool saw_left_callback = false;
+        std::optional<LeftParticipant> left;
+        CHECK(commands.inspect_left_participant([&](const std::optional<LeftParticipant>& current) {
+                  saw_left_callback = true;
+                  left = current;
+              }) == TimeCommands::Stage::Attached);
+        CHECK(saw_left_callback && !left.has_value());
         CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
         CHECK(commands.apply(command(R"({"command":"speed","value":2})"), "stdin").accepted);
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
@@ -1553,7 +1569,7 @@ TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up
     // A give-up ends it, and so does the end of the run.
     TimeCommands commands(true);
     commands.set_time_lock({});
-    commands.attach(controller, 10, std::nullopt);
+    vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
     std::atomic<bool> give_up{false};
     std::atomic<int> result{-1};
     std::thread window([&] { result = static_cast<int>(commands.hold_before_start([&] { return give_up.load(); }, std::chrono::milliseconds(5))); });
@@ -1561,19 +1577,35 @@ TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up
     window.join();
     CHECK(result.load() == static_cast<int>(Hold::GaveUp));
     bool held = true;
-    static_cast<void>(commands.inspect([&held](SimulationController&, bool holding) { held = holding; }));
+    commands.look([&held](const TimeFacts& facts) { held = facts.holding; });
     CHECK(!held); // not left holding
+    TimeView after_hold;
+    CHECK(commands.inspect_time([&after_hold](const TimeView& current) { after_hold = current; }) ==
+          TimeCommands::Stage::Attached);
+    CHECK(after_hold.available && !after_hold.paused && !after_hold.ended);
     std::thread again([&] { result = static_cast<int>(commands.hold_before_start([] { return false; }, std::chrono::milliseconds(5))); });
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     int detached = 0;
-    commands.set_on_detach([&detached](SimulationController&) { ++detached; });
+    ControllerSnapshot detached_snapshot;
+    commands.set_on_detach([&](const ControllerSnapshot& snapshot) {
+        ++detached;
+        detached_snapshot = snapshot;
+    });
     commands.detach();
     again.join();
     CHECK(result.load() == static_cast<int>(Hold::GaveUp));
     commands.detach();
     CHECK(detached == 1); // the last look, once, while the controller is there
+    CHECK(detached_snapshot.time.available && detached_snapshot.time.ended && !detached_snapshot.time.paused &&
+          !detached_snapshot.time.running && !detached_snapshot.time.pause_target.has_value());
+    CHECK(detached_snapshot.participants.size() == 1 && detached_snapshot.participants[0].first == "NeverJoins");
+    CHECK(!detached_snapshot.left_participant.has_value());
     CHECK(!commands.wait_paused(std::chrono::seconds(10)));
-    CHECK(commands.inspect([](SimulationController&, bool) {}) == TimeCommands::Stage::Detached);
+    CHECK(commands.inspect_time([](const TimeView&) {}) == TimeCommands::Stage::Detached);
+    CHECK(commands.inspect_participants([](const std::vector<std::pair<std::string, std::string>>&) {}) ==
+          TimeCommands::Stage::Detached);
+    CHECK(commands.inspect_left_participant([](const std::optional<LeftParticipant>&) {}) ==
+          TimeCommands::Stage::Detached);
     CHECK(commands.hold_before_start([] { return false; }, std::chrono::milliseconds(5)) == Hold::GaveUp);
     // A stop of a control server is refused once the run is over (its result stays).
     Command stop;
@@ -1604,13 +1636,13 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
         TimeCommands before(true);
         before.set_time_lock({});
         CHECK(before.apply(command(R"({"command":"resume"})"), "control_server").accepted);
-        before.attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(before, controller, 10, std::nullopt);
         CHECK(hold(before) == Hold::None);
         CHECK(!controller.time_state().pause_target); // it goes on from 0
         before.detach();
         TimeCommands after(true);
         after.set_time_lock({});
-        after.attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(after, controller, 10, std::nullopt);
         CHECK(after.apply(command(R"({"command":"resume"})"), "stdin").accepted);
         CHECK(hold(after) == Hold::None);
         after.detach();
@@ -1619,7 +1651,7 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
         // A step before the window: done from 0 (it stands still at 20), without a hold.
         TimeCommands commands(true);
         commands.set_time_lock({});
-        commands.attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
         CHECK(commands.apply(command(R"({"command":"step","ms":15})"), "stdin").accepted);
         CHECK(hold(commands) == Hold::None);
         CHECK(controller.time_state().pause_target == std::optional<SimTime>(SimTime{} + std::chrono::milliseconds(20)));
@@ -1629,7 +1661,7 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
         // A resume and then a pause: it holds again.
         TimeCommands commands(true);
         commands.set_time_lock({});
-        commands.attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
         CHECK(commands.apply(command(R"({"command":"resume"})"), "stdin").accepted);
         CHECK(commands.apply(command(R"({"command":"pause"})"), "control_server").accepted);
         CHECK(hold(commands) == Hold::GaveUp);
@@ -1640,7 +1672,7 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
         TimeCommands commands(false);
         commands.set_time_lock({});
         CHECK(commands.apply(command(R"({"command":"pause"})"), "stdin").accepted);
-        commands.attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
         CHECK(hold(commands) == Hold::GaveUp);
         commands.detach();
     }
@@ -1648,7 +1680,7 @@ TEST_CASE(the_commands_before_the_window_decide_whether_the_run_holds)
         // Not started paused, nothing asked: no hold.
         TimeCommands commands(false);
         commands.set_time_lock({});
-        commands.attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
         CHECK(hold(commands) == Hold::None);
         commands.detach();
     }

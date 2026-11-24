@@ -3,6 +3,7 @@
 // System controller for a coordinated, virtual-time simulation (vehicle_sil::core).
 #pragma once
 
+#include "vehicle_sil/core/controller_snapshot.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/real_time_pacer.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
@@ -385,5 +386,23 @@ private:
     std::atomic<std::int64_t> wall_start_ns_{-1};
     std::atomic<std::int64_t> wall_stop_ns_{-1};
 };
+
+/// Extracts the observable time view of `controller`.
+/// `holding`: the run is holding before its first step (stands still at 0 unless already finished).
+/// `ended`: produces the final ended view (clamping `now` to `runtime().now()`, clearing paused/pause_target/running).
+[[nodiscard]] TimeView time_view_of(SimulationController& controller, bool holding = false, bool ended = false);
+
+/// Returns each required participant of `controller` and its SIL Kit lifecycle state ("" if not seen yet).
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> simulation_participants_of(SimulationController& controller);
+
+/// The first required participant that has left the running simulation, with its state; empty if none.
+[[nodiscard]] std::optional<LeftParticipant> left_participant_of(SimulationController& controller);
+
+/// Re-reads connected participants' lifecycle statuses from SIL Kit for `controller`.
+void refresh_peer_statuses(SimulationController& controller);
+
+/// Extracts a complete snapshot of `controller` (time, participants, left_participant).
+[[nodiscard]] ControllerSnapshot controller_snapshot_of(SimulationController& controller, bool holding = false,
+                                                        bool ended = false);
 
 } // namespace vehicle_sil

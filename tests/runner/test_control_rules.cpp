@@ -11,6 +11,7 @@
 
 #include "launch_test_util.hpp"
 #include "silkit_test_util.hpp"
+#include "time_commands_internal.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/config/config.hpp"
@@ -650,7 +651,7 @@ TEST_CASE(control_rules_allowed_and_apply_agree_in_every_state_of_the_time_comma
                         std::thread window;
                         if (state != State::Before && state != State::BeforePaused)
                         {
-                            commands.attach(controller, 10, std::nullopt);
+                            vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
                         }
                         if (state == State::Paused)
                         {
@@ -1004,7 +1005,7 @@ TEST_CASE(time_commands_refuse_a_controller_before_the_time_lock)
     bool thrown = false;
     try
     {
-        commands.attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
     }
     catch (const std::logic_error& e)
     {
@@ -1012,10 +1013,14 @@ TEST_CASE(time_commands_refuse_a_controller_before_the_time_lock)
         CHECK(std::string(e.what()).find("set_time_lock() has not been called") != std::string::npos);
     }
     CHECK(thrown);
-    CHECK(commands.inspect([](SimulationController&, bool) {}) == TimeCommands::Stage::SettingUp);
+    CHECK(commands.inspect_time([](const TimeView&) {}) == TimeCommands::Stage::SettingUp);
+    CHECK(commands.inspect_participants([](const std::vector<std::pair<std::string, std::string>>&) {}) ==
+          TimeCommands::Stage::SettingUp);
+    CHECK(commands.inspect_left_participant([](const std::optional<LeftParticipant>&) {}) ==
+          TimeCommands::Stage::SettingUp);
     // With the lock, the command that waited is given to the controller when it is attached.
     commands.set_time_lock(kFree);
-    commands.attach(controller, 10, std::nullopt);
+    vehicle_sil::runner::detail::attach_controller(commands, controller, 10, std::nullopt);
     commands.look([](const TimeFacts& facts) { CHECK(facts.standing); });
     commands.detach();
 }

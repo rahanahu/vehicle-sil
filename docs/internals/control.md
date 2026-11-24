@@ -936,7 +936,7 @@ In such a run, in every phase, `give_up` watches for a stop request (an interrup
 
 ### Values after the end
 
-`TimeCommands::detach()` calls the function set with `set_on_detach()` before it detaches the controller. In that function, `LaunchTimeControl` reads the last time (counted the same way as the result's `sim_ms`), the participants and the participants that left. `GetTime` after detachment returns those values.
+`TimeCommands::detach()` captures the final `ControllerSnapshot` (the last time counted the same way as the result's `sim_ms`, the participants and the participant that left) and passes it to the function set with `set_on_detach()` before detaching the controller. `LaunchTimeControl` stores that snapshot, and `GetTime` after detachment returns those values.
 
 ### How it ends
 

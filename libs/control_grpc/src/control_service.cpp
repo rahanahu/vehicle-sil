@@ -587,6 +587,17 @@ public:
 
     // ---- time ----------------------------------------------------------------------------
 
+    static grpc::Status refused_status(grpc::ServerContext* context, const Refused& e)
+    {
+        // Why, for a program: sent as metadata, so only a word that is one there.
+        if (context != nullptr && !e.reason().empty() &&
+            e.reason().find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") == std::string::npos)
+        {
+            context->AddTrailingMetadata(kRefusalReasonKey, e.reason());
+        }
+        return error_status(e);
+    }
+
     template <typename F>
     grpc::Status with_time(v1::TimeState* reply, F&& f, const Call* call = nullptr, const char* what = nullptr)
     {
@@ -619,13 +630,7 @@ public:
         }
         catch (const Refused& e)
         {
-            // Why, for a program: sent as metadata, so only a word that is one there.
-            if (context != nullptr && !e.reason().empty() &&
-                e.reason().find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") == std::string::npos)
-            {
-                context->AddTrailingMetadata(kRefusalReasonKey, e.reason());
-            }
-            return error_status(e);
+            return refused_status(context, e);
         }
         catch (const std::exception& e)
         {
@@ -642,7 +647,19 @@ public:
                 reply->set_available(false);
                 return grpc::Status::OK;
             }
-            return with_time(reply, [](TimeControl&) {});
+            try
+            {
+                detail::time_to_proto(options_.time->state(), *reply);
+            }
+            catch (const Refused& e)
+            {
+                return refused_status(context, e);
+            }
+            catch (const std::exception& e)
+            {
+                return error_status(e);
+            }
+            return grpc::Status::OK;
         });
     }
     grpc::Status GetSnapshot(grpc::ServerContext* context, const v1::GetSnapshotRequest* request, v1::GetSnapshotReply* reply) override
@@ -728,17 +745,47 @@ public:
         return guarded(context, "WaitPaused", [&](const Call&) -> grpc::Status {
             return wait_in_slices(context, r->timeout_ms(), "the simulation did not stand still in time",
                                   [&](std::chrono::milliseconds slice) -> std::optional<grpc::Status> {
-                                      bool reached = false;
-                                      bool ended = false;
-                                      auto status = with_time(reply, [&](TimeControl& t) {
-                                          reached = t.wait_paused(slice).has_value();
-                                          ended = !reached && t.state().ended;
-                                      });
-                                      if (!status.ok() || reached)
+                                      if (options_.time == nullptr)
                                       {
-                                          return status;
+                                          reply->set_available(false);
+                                          return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                                                              "this server does not control the time");
                                       }
-                                      if (ended)
+                                      bool reached = false;
+                                      TimeView state;
+                                      try
+                                      {
+                                          reached = options_.time->wait_paused(slice).has_value();
+                                          if (reached)
+                                          {
+                                              // Refresh the monitor once at the pause point so ListPeers and Watch
+                                              // immediately reflect the reached state (e.g. ReadyToRun -> Running).
+                                              monitor_->poll();
+                                              state = options_.time->state();
+                                          }
+                                          else
+                                          {
+                                              state = options_.time->state();
+                                              if (state.ended)
+                                              {
+                                                  monitor_->poll();
+                                              }
+                                          }
+                                      }
+                                      catch (const Refused& e)
+                                      {
+                                          return refused_status(context, e);
+                                      }
+                                      catch (const std::exception& e)
+                                      {
+                                          return error_status(e);
+                                      }
+                                      if (reached)
+                                      {
+                                          detail::time_to_proto(state, *reply);
+                                          return grpc::Status::OK;
+                                      }
+                                      if (state.ended)
                                       {
                                           // It will not stand still again (and wait_paused() returns at once: no busy loop).
                                           return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "the simulation has ended");

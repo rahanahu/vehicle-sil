@@ -11,6 +11,7 @@
 
 #include "endpoints/run_control_server.hpp"
 #include "run_pacing.hpp"
+#include "time_commands_internal.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
@@ -457,7 +458,7 @@ TEST_CASE(the_state_says_what_is_taken_before_during_and_after_the_simulation)
     options.time_control = vehicle_sil::TimeControlOptions{.step = std::chrono::milliseconds(10)};
     vehicle_sil::SimulationController controller(options);
     const std::size_t before = t.states.size();
-    t.controls.time().attach(controller, 10, std::optional<double>(2.0));
+    vehicle_sil::runner::detail::attach_controller(t.controls.time(), controller, 10, std::optional<double>(2.0));
     // Attached: one more state; a run_until is taken, a step only while paused.
     CHECK_EQ(t.states.size(), before + 1);
     s = t.states.back();
@@ -848,7 +849,7 @@ TEST_CASE(ended_control_server_survives_controls_destruction_after_start_and_end
         auto controls = std::make_unique<RunControls>(*stops);
         controls->set_control_server(true);
         controls->set_time_lock({});
-        controls->time().attach(controller, 10, std::nullopt);
+        vehicle_sil::runner::detail::attach_controller(controls->time(), controller, 10, std::nullopt);
 
         vehicle_sil::launch::ControlHost host;
         host.listen = "127.0.0.1:0";

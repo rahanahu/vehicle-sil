@@ -84,7 +84,7 @@ Each one links `vehicle_sil_cli` (`tools/common`, header-only) privately.
 | `vehicle_sil_can_bus_simulator` | `can_netsim` |
 | `vehicle_sil_launch` | `launch` and `process` |
 | `vehicle_sil_launch` (Windows) | `shell32` too |
-| `vehicle_sil_launch` (`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`) | `control_grpc` and `core` too |
+| `vehicle_sil_launch` (`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`) | `control_grpc` too |
 
 ## What to update together
 
