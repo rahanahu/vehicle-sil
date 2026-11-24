@@ -540,10 +540,12 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
                                      + " ms, state: " + orch::to_string(current));
         }
         // Wake immediately on own lifecycle transitions; bound the slice only while give_up needs
-        // periodic rechecks or while SIL Kit's starting handler is running in ReadyToRun.
+        // periodic rechecks or while SIL Kit's starting handler is running in ReadyToRun. Otherwise
+        // a coarse 1 s cap: kNoStartLimit makes `deadline` time_point::max(), which a libstdc++
+        // without pthread_cond_clockwait (MinGW) converts to system_clock and could overflow.
         const auto waitUntil = (give_up || (startingEntered && current == orch::ParticipantState::ReadyToRun))
                                    ? std::min(deadline, now + std::chrono::milliseconds(5))
-                                   : deadline;
+                                   : std::min(deadline, now + std::chrono::seconds(1));
         std::unique_lock lock(peers_mutex_);
         peers_cv_.wait_until(lock, waitUntil, [&] {
             return peer_generation_ != peerGen || wake_generation_ != wakeGen;
