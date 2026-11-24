@@ -490,15 +490,41 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
 def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path: Path) -> None:
     """Real vehicle_sil_launch: POST api/stop {force:false} never escalates stop.requests=1 to 2; {force:true} does."""
     import asyncio
+    import signal
+    import sys
     import aiohttp
     from aiohttp.test_utils import TestServer
-    from conftest import Gui
+    from conftest import Gui, alive, until_async
     from vehicle_sil_gui.launcher import Launcher, stop_command_line
     from vehicle_sil_gui.runtime import ServeRuntime
     from vehicle_sil_gui.server import GuiServer, Options
 
     configs = tmp_path / "configs"
     write(configs, EXAMPLES)
+    ready = tmp_path / "logger.ready"
+    ignore_stop = tmp_path / "ignore_stop.py"
+    ignore_stop.write_text(
+        "import os, signal, time\n"
+        "from pathlib import Path\n"
+        "for name in ('SIGTERM', 'SIGINT', 'SIGBREAK'):\n"
+        "    sig = getattr(signal, name, None)\n"
+        "    if sig is not None:\n"
+        "        signal.signal(sig, signal.SIG_IGN)\n"
+        f"tmp = Path({str(ready)!r} + '.tmp')\n"
+        "tmp.write_text(str(os.getpid()), encoding='utf-8')\n"
+        f"os.replace(tmp, {str(ready)!r})\n"
+        "while True:\n"
+        "    time.sleep(10)\n",
+        encoding="utf-8",
+    )
+    sim_text = (configs / "simulation.yaml").read_text(encoding="utf-8")
+    (configs / "ignore-stop-not-joined.yaml").write_text(
+        sim_text
+        + "  - name: Logger\n"
+        + f"    command: [{json.dumps(sys.executable)}, {json.dumps(str(ignore_stop))}]\n"
+        + "    describe: false\n",
+        encoding="utf-8",
+    )
 
     async def run() -> None:
         launcher = Launcher(Path(LAUNCHER))
@@ -525,13 +551,20 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
         gui = Gui(proc=None, port=port, token="test-token", url=f"http://127.0.0.1:{port}/#token=test-token",
                   stderr=tmp_path / ".err")
         c = Client(gui, http)
+        logger_pid: int | None = None
         try:
             ws = await c.ws()
             await ws.until(is_synced)
 
-            st, started = await c.post("api/run", {"file": "not-joined.yaml"})
+            st, started = await c.post("api/run", {"file": "ignore-stop-not-joined.yaml"})
             assert st == 200, started
             await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "state")
+
+            async def logger_ready() -> bool:
+                return ready.exists()
+
+            assert await until_async(logger_ready, timeout=10.0), "Logger did not install SIG_IGN handler"
+            logger_pid = int(ready.read_text(encoding="utf-8"))
 
             rt = server.runtime
             assert isinstance(rt, ServeRuntime)
@@ -540,7 +573,8 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
             run_id = res.current_run.run_id
             assert run_id is not None and res.proc.stdin is not None
 
-            # External graceful stop (force=False) raises C++ stop.requests to 1 without terminating sleep(100) yet.
+            # External graceful stop (force=False) raises C++ stop.requests to 1; Logger ignores SIGTERM so the run
+            # stays in stopping state until participant_stop_timeout_ms or an explicit force=True (SIGKILL).
             res.proc.stdin.write(stop_command_line(run_id, force=False))
             await res.proc.stdin.drain()
             await ws.until(
@@ -571,11 +605,18 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
                 if m["type"] == "event" and m["event"]["event"] == "state"
             ]
             assert 2 in stop_states
+            if sys.platform == "linux":
+                assert not alive(logger_pid), f"Logger pid {logger_pid} survived force stop"
             await ws.close()
         finally:
             await http.close()
             await server.shutdown()
             await test_server.close()
+            if sys.platform == "linux" and logger_pid is not None and alive(logger_pid):
+                try:
+                    os.kill(logger_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     asyncio.run(run())
 
