@@ -95,7 +95,7 @@ class _FakeStdin:
 
 
 class _FakeProcess:
-    """Mock Popen process speaking Format 3 NDJSON."""
+    """Mock Popen process speaking Events v4 NDJSON."""
 
     def __init__(self, command: list[str], handler=None, *, auto_hello: bool = True,
                  stderr_pipe: bool = False, on_eof=None) -> None:
@@ -113,14 +113,22 @@ class _FakeProcess:
                 "event": "hello",
                 "seq": 0,
                 "t_ms": 0,
-                "vehicle_sil_events": 3,
+                "vehicle_sil_events": 4,
                 "vehicle_sil": "0.3.0",
                 "pid": self.pid,
                 "file": command[-1],
                 "arguments": [],
                 "launcher": "0123456789abcdef",
             })
-            self.stdout.push_event({"event": "idle", "seq": 1, "t_ms": 1})
+            self.stdout.push_event({
+                "event": "status",
+                "seq": 1,
+                "t_ms": 1,
+                "id": None,
+                "instance": "0123456789abcdef",
+                "status_rev": 0,
+                "launcher_state": "unprepared",
+            })
 
     def _handle_line(self, cmd: dict) -> None:
         if self._handler is not None:
@@ -186,12 +194,19 @@ class ServeUnitTest(unittest.TestCase):
 
         support_path = _REPO_ROOT / "tests" / "serve" / "serve_support.py"
         support_tree = ast.parse(support_path.read_text(encoding="utf-8"))
+        imports_control = False
         for node in ast.walk(support_tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    self.assertFalse(alias.name.startswith("vehicle_sil_control"))
+                    self.assertNotIn("grpc", alias.name)
+                    if alias.name.startswith("vehicle_sil_control"):
+                        imports_control = True
             elif isinstance(node, ast.ImportFrom):
-                self.assertFalse((node.module or "").startswith("vehicle_sil_control"))
+                mod = node.module or ""
+                self.assertNotIn("grpc", mod)
+                if mod.startswith("vehicle_sil_control"):
+                    imports_control = True
+        self.assertTrue(imports_control)
 
     def test_sys_modules_poisoned_lifecycle(self) -> None:
         seq = [2]
@@ -236,9 +251,9 @@ class ServeUnitTest(unittest.TestCase):
                     "t_ms": 6,
                     "run": run_id,
                     "launcher_ends": False,
+                    "status": {"launcher_state": "ready", "active_run_id": None, "last_run_id": run_id},
                     "result": {"result": "stopped"},
                 })
-                proc.stdout.push_event({"event": "idle", "seq": next_seq(), "t_ms": 7})
 
         poisoned = {
             "grpc": None,
@@ -338,7 +353,7 @@ class ServeUnitTest(unittest.TestCase):
     def test_startup_fast_fail_trace_early_eof_and_timeout(self) -> None:
         def trace_popen(cmd, **kw):
             proc = _FakeProcess(cmd, auto_hello=False)
-            proc.stdout.push_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 3, "launcher": "0123456789abcdef"})
+            proc.stdout.push_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4, "launcher": "0123456789abcdef"})
             proc.stdout.push_event({
                 "event": "result",
                 "seq": 1,
@@ -346,7 +361,7 @@ class ServeUnitTest(unittest.TestCase):
                 "launcher_ends": True,
                 "result": {
                     "result": "usage",
-                    "findings": [{"severity": "error", "code": "usage", "message": "serve does not run with VEHICLE_SIL_TRACE set"}],
+                    "findings": [{"severity": "error", "code": "trace-enabled", "message": "serve does not run with VEHICLE_SIL_TRACE set"}],
                 },
             })
             proc.finish(4)
@@ -484,9 +499,9 @@ class ServeUnitTest(unittest.TestCase):
                     "t_ms": 3,
                     "run": run_id,
                     "launcher_ends": False,
+                    "status": {"launcher_state": "ready"},
                     "result": {"result": "passed"},
                 })
-                proc.stdout.push_event({"event": "idle", "seq": 22, "t_ms": 4})
 
         def make_proc(cmd, **kw):
             p = _FakeProcess(cmd, handler)
@@ -545,9 +560,9 @@ class ServeUnitTest(unittest.TestCase):
                     "t_ms": 3,
                     "run": run_id,
                     "launcher_ends": False,
+                    "status": {"launcher_state": "ready"},
                     "result": {"result": "stopped"},
                 })
-                proc.stdout.push_event({"event": "idle", "seq": 32, "t_ms": 4})
 
         def make_proc(cmd, **kw):
             p = _FakeProcess(cmd, handler)
@@ -616,9 +631,9 @@ class ServeUnitTest(unittest.TestCase):
                         "t_ms": 4,
                         "run": run_id,
                         "launcher_ends": False,
+                        "status": {"launcher_state": "ready"},
                         "result": {"result": "passed"},
                     })
-                    proc.stdout.push_event({"event": "idle", "seq": 43, "t_ms": 5})
             elif cmd["command"] == "stop":
                 run_id = cmd["run"]
                 proc.stdout.push_event({
@@ -627,9 +642,9 @@ class ServeUnitTest(unittest.TestCase):
                     "t_ms": 6,
                     "run": run_id,
                     "launcher_ends": False,
+                    "status": {"launcher_state": "ready"},
                     "result": {"result": "stopped"},
                 })
-                proc.stdout.push_event({"event": "idle", "seq": 45, "t_ms": 7})
 
         with mock.patch.dict(sys.modules, {"vehicle_sil_control.client": fake_client}), \
              mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=lambda cmd, **kw: _FakeProcess(cmd, handler)):
@@ -664,9 +679,9 @@ class ServeUnitTest(unittest.TestCase):
                     "t_ms": 3,
                     "run": cmd["run"],
                     "launcher_ends": False,
+                    "status": {"launcher_state": "ready"},
                     "result": {"result": "stopped"},
                 })
-                proc.stdout.push_event({"event": "idle", "seq": 53, "t_ms": 4})
 
         def make_proc(cmd, **kw):
             p = _FakeProcess(cmd, handler)

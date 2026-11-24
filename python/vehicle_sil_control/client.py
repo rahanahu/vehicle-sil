@@ -11,7 +11,16 @@ from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Union
 import grpc
 
 from . import __version__
-from ._stubs import _STUBS, pb, rpc
+from ._stubs import pb, rpc
+from .grpc_helpers import (
+    REASON_KEY,
+    RUN_KEY,
+    enum_name as _enum_name,
+    from_proto_value as _value,
+    proto_target_fields,
+    to_proto_value,
+    trailing_reason,
+)
 
 Number = Union[bool, int, float]
 
@@ -60,19 +69,8 @@ class ControlError(Exception):
         self.reason = reason
 
 
-REASON_KEY = "vehicle-sil-reason"  # the trailing metadata of a refusal (ControlError.reason)
-RUN_KEY = "vehicle-sil-run"  # the metadata that names the run a call is for (Control(run=...))
-
-
 def _error(e: grpc.RpcError) -> ControlError:
-    reason = ""
-    try:
-        for key, value in e.trailing_metadata() or ():
-            if key == REASON_KEY:
-                reason = value if isinstance(value, str) else value.decode("ascii", "replace")
-    except Exception:  # an error that is no call's (it has no metadata)
-        pass
-    return ControlError(e.code(), e.details(), reason)
+    return ControlError(e.code(), e.details(), trailing_reason(e) or "")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -197,13 +195,6 @@ class EventInfo:
     text: str
 
 
-def _enum_name(enum, value: int, prefix: str) -> str:
-    try:
-        return enum.Name(value)[len(prefix):].lower()
-    except ValueError:
-        return "unknown"  # a value from a newer server
-
-
 def _variable(v) -> Variable:
     return Variable(
         name=v.name,
@@ -225,26 +216,12 @@ def _peer(p) -> Peer:
                 p.simulation_state, p.virtual_time)
 
 
-def _value(v) -> Number:
-    kind = v.WhichOneof("kind")
-    return {"b": v.b, "i": v.i, "d": v.d}[kind] if kind else None
-
-
 def _to_value(x: Number):
-    if isinstance(x, bool):
-        return pb.Value(b=x)
-    if isinstance(x, int):
-        return pb.Value(i=x)
-    return pb.Value(d=float(x))
+    return to_proto_value(x, pb)
 
 
 def _operation(o) -> Operation:
-    targets = [
-        Target(t.peer, _enum_name(pb.TargetStatus, t.status, "TARGET_STATUS_"),
-               t.applied_at_ns if t.HasField("applied_at_ns") else None, t.late, t.reason,
-               t.applied_writes if t.HasField("applied_writes") else None,
-               t.failed_write if t.HasField("failed_write") else None) for t in o.targets
-    ]
+    targets = [Target(*proto_target_fields(t, pb)) for t in o.targets]
     return Operation(o.seq, targets, o.done)
 
 
@@ -398,29 +375,17 @@ class Control:
 
     def _check_release(self) -> None:
         """Before the first call: the server must be of this client's vehicle-sil release (one Ping, once
-        per Control; a Ping that fails is tried again at the next call). Another release, a server
-        that does not report its release, or stubs generated before the field: ControlError
-        FAILED_PRECONDITION."""
+        per Control; a Ping that fails is tried again at the next call). Another release:
+        ControlError FAILED_PRECONDITION."""
         if self._checked:
             return
         with self._check_lock:
             if self._checked:
                 return
-            missing = [f for f in ("vehicle_sil", "run") if f not in pb.PingReply.DESCRIPTOR.fields_by_name]
-            if missing:
-                raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
-                                   f"the Control API stubs in {_STUBS} are older than this vehicle_sil_control (their "
-                                   f"PingReply has no {missing[0]}): make them again with `python -m "
-                                   "vehicle_sil_control.generate` (with --out <directory> for VEHICLE_SIL_CONTROL_STUBS)")
             try:
                 reply = self._stub.Ping(pb.PingRequest(), timeout=self._timeout)
             except grpc.RpcError as e:
                 raise _error(e) from None
-            if not reply.vehicle_sil:
-                raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
-                                   "the control server does not report its vehicle-sil release (a 0.1.0 launcher, or "
-                                   f"one built before this check); this vehicle_sil_control is {__version__}: use the "
-                                   "vehicle_sil_control that came with the launcher")
             if reply.vehicle_sil != __version__:
                 raise ControlError(grpc.StatusCode.FAILED_PRECONDITION,
                                    f"the control server is vehicle-sil {reply.vehicle_sil}; this vehicle_sil_control is "

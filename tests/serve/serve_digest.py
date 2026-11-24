@@ -3,16 +3,11 @@
 
 - deterministic(result, timeline): the parts of a run's result (the object of run --json, and of the "result" of a
   serve Run's result event) and of its timeline file that are the same from run to run of one request, whichever
-  process ran it. Left out: what depends on the process, the computer or the wall clock (the registry URI with its
-  free port, timing.wall_ms and actual_speed, the paths of log files and of the timeline, the timeline's own file
-  names). digest() makes one short text of it; differences() names the keys where two of them differ.
-- stream_problems(events): the rules of the one stream of serve's events (one hello first, seq without gaps, t_ms
-  not going back, every line between a Run's run_start and its result carries that Run, no line of a Run after its
-  result, idle only between Runs, run_start only after idle, the Run IDs of one launcher). A list of sentences, empty
-  when every rule holds.
-
-The names of the stream that the launcher's documentation settles are in serve_support.py; this module takes them
-as arguments so that it needs no launcher.
+  process ran it.
+- stream_problems(events): the rules of the one Events v4 stream of serve's events (one hello first, seq without gaps,
+  t_ms not going back, initial status before any run_start, every line between a Run's run_start and its result carries
+  that Run or is a stream-level status/prepare/heartbeat/refusal, no line of a Run after its result, run_start only
+  after the previous result, no legacy idle event, the Run IDs of one launcher).
 """
 from __future__ import annotations
 
@@ -20,16 +15,59 @@ import hashlib
 import json
 from typing import Any, Iterable, List, Mapping, Optional, Sequence
 
-RESULT_KEYS = ("result", "end", "ok", "message", "strict", "errors", "warnings", "notes", "simulation",
-               "interrupted_by", "stop_at_ms")
-TIMING_KEYS = ("speed", "time_step_ms", "ecu_step_ms", "step_delay_ms", "late_tolerance_ms", "sim_ms",
-               "paced_steps", "late_steps", "max_late_ms", "slipped_ms", "late_ms", "paused_ms")
-PARTICIPANT_KEYS = ("name", "required", "enabled", "manual", "for_network", "ended", "exit_code", "signal",
-                    "left_processes", "control_link")
+RESULT_KEYS = (
+    "result",
+    "end",
+    "ok",
+    "message",
+    "strict",
+    "errors",
+    "warnings",
+    "notes",
+    "simulation",
+    "interrupted_by",
+    "stop_at_ms",
+)
+TIMING_KEYS = (
+    "speed",
+    "time_step_ms",
+    "ecu_step_ms",
+    "step_delay_ms",
+    "late_tolerance_ms",
+    "sim_ms",
+    "paced_steps",
+    "late_steps",
+    "max_late_ms",
+    "slipped_ms",
+    "late_ms",
+    "paused_ms",
+)
+PARTICIPANT_KEYS = (
+    "name",
+    "required",
+    "enabled",
+    "manual",
+    "for_network",
+    "ended",
+    "exit_code",
+    "signal",
+    "left_processes",
+    "control_link",
+)
 FINDING_KEYS = ("severity", "code", "participant", "network", "message", "detail")
 SCENARIO_KEYS = ("name", "status", "over_at_ms", "steps", "inputs", "lines")
-TIMELINE_KEYS = ("stage", "variant", "params", "time_step_ms", "variables", "steps", "series", "lines", "findings",
-                 "limits")
+TIMELINE_KEYS = (
+    "stage",
+    "variant",
+    "params",
+    "time_step_ms",
+    "variables",
+    "steps",
+    "series",
+    "lines",
+    "findings",
+    "limits",
+)
 
 
 def _findings(items: Optional[Iterable[Mapping]]) -> list:
@@ -37,16 +75,45 @@ def _findings(items: Optional[Iterable[Mapping]]) -> list:
 
 
 def _check(check: Optional[Mapping]) -> dict:
-    """The check's verdict, its findings and what each participant reported (the paths of the file and of the
-    commands are those of the request, the same in both kinds of run)."""
     check = check or {}
-    out = {k: check.get(k) for k in ("result", "strict", "errors", "warnings", "notes", "stop_at_ms", "time_step_ms",
-                                     "registry_uri", "commands", "time_lock")}
+    out = {
+        k: check.get(k)
+        for k in (
+            "result",
+            "strict",
+            "errors",
+            "warnings",
+            "notes",
+            "stop_at_ms",
+            "time_step_ms",
+            "registry_uri",
+            "commands",
+            "time_lock",
+        )
+    }
     out["findings"] = _findings(check.get("findings"))
-    out["participants"] = [{k: p.get(k) for k in ("name", "command", "describe", "required", "enabled", "manual",
-                                                  "role", "step_ms", "status", "reported", "variables", "network_map",
-                                                  "j1939_nodes", "control")}
-                           for p in check.get("participants") or ()]
+    out["participants"] = [
+        {
+            k: p.get(k)
+            for k in (
+                "name",
+                "command",
+                "describe",
+                "required",
+                "enabled",
+                "manual",
+                "role",
+                "step_ms",
+                "status",
+                "reported",
+                "variables",
+                "network_map",
+                "j1939_nodes",
+                "control",
+            )
+        }
+        for p in check.get("participants") or ()
+    ]
     out["networks"] = check.get("networks")
     return out
 
@@ -124,17 +191,16 @@ def first_points_ms(timeline: Mapping) -> List[int]:
     return [s["points"][0][0] for s in timeline.get("series") or () if s.get("points")]
 
 
-def stream_problems(events: Sequence[Mapping], *, run_key: str = "run", launcher_key: str = "launcher",
-                    window_free: Iterable[str] = ("heartbeat",), launcher_commands: str = "command",
-                    complete: bool = True, allow_replies: bool = False) -> List[str]:
-    """What breaks the rules of serve's event stream in `events` (all the lines of one launcher, in order).
-
-    `run_key`: the key that names the Run on a line. `launcher_key`: the key of hello with the launcher's instance.
-    `window_free`: events that may come inside a Run's window without the Run (heartbeat). `launcher_commands`: the
-    event of an answer of the launcher itself, which carries no Run and refuses (accepted false) wherever it comes.
-    `complete`: the stream ended (the process has ended): a Run that began has its result.
-    `allow_replies`: also allow launcher-level `prepare` and `status` reply events (both idle and inside a Run window).
-    """
+def stream_problems(
+    events: Sequence[Mapping],
+    *,
+    run_key: str = "run",
+    launcher_key: str = "launcher",
+    window_free: Iterable[str] = ("heartbeat", "status", "prepare"),
+    launcher_commands: str = "command",
+    complete: bool = True,
+) -> List[str]:
+    """What breaks the rules of serve's Events v4 stream in `events` (all the lines of one launcher, in order)."""
     problems: List[str] = []
 
     def bad(index: int, what: str) -> None:
@@ -149,14 +215,11 @@ def stream_problems(events: Sequence[Mapping], *, run_key: str = "run", launcher
     instance = events[0].get(launcher_key)
     if events[0].get("event") == "hello" and not isinstance(instance, str):
         bad(0, f"hello has no {launcher_key!r} (the launcher's instance)")
-    window_free = set(window_free)
-    reply_events = ("prepare", "status") if allow_replies else ()
-    window_free.update(reply_events)
-    current: Optional[str] = None  # the Run whose window is open
-    ended: set = set()  # Runs whose result was written
+    window_free_set = set(window_free)
+    current: Optional[str] = None
+    ended: set = set()
     started: List[str] = []
-    idle_since_result = True  # an idle came after the last result (or nothing ran yet)
-    seen_idle = False
+    seen_initial_status = False
     launcher_ends = False
     last_t = None
     rev_of: dict = {}
@@ -173,45 +236,41 @@ def stream_problems(events: Sequence[Mapping], *, run_key: str = "run", launcher
             last_t = t
         if name == "hello" and i != 0:
             bad(i, "a second hello")
+        if name == "idle":
+            bad(i, "legacy idle event in Events v4 stream")
+            continue
         run = e.get(run_key)
         if launcher_ends and i > 0:
             bad(i, "a line after the result that said the launcher ends")
         if run is not None and run in ended:
             bad(i, f"a line of Run {run} after its result")
+        if name in ("status", "prepare"):
+            if run is not None:
+                bad(i, f"{name} carries a Run")
+            seen_initial_status = True
         if name == "run_start":
             if current is not None:
                 bad(i, f"run_start while Run {current} has not written its result")
             if not isinstance(run, str):
                 bad(i, "run_start without a Run")
                 continue
-            if not idle_since_result:
-                bad(i, "run_start before the idle that follows the previous result")
-            if not seen_idle:
-                bad(i, "run_start before the first idle")
+            if not seen_initial_status:
+                bad(i, "run_start before the initial status")
             if run in started:
                 bad(i, f"Run {run} starts a second time")
             if isinstance(instance, str):
                 prefix = instance + "-"
-                number = run[len(prefix):] if run.startswith(prefix) else ""
+                number = run[len(prefix) :] if run.startswith(prefix) else ""
                 if not number.isdigit():
                     bad(i, f"Run ID {run} is not <launcher {instance}>-<number>")
                 elif int(number) != len(started) + 1:
                     bad(i, f"Run ID {run} is not the next number ({len(started) + 1}) of this launcher")
             started.append(run)
             current = run
-            idle_since_result = False
-            continue
-        if name == "idle":
-            seen_idle = True
-            if current is not None:
-                bad(i, f"idle inside the window of Run {current}")
-            if run is not None:
-                bad(i, "idle carries a Run")
-            idle_since_result = True
             continue
         if current is not None:
             refusal = name == launcher_commands and run is None and e.get("accepted") is False
-            if run is None and not (name in window_free or refusal):
+            if run is None and not (name in window_free_set or refusal):
                 bad(i, f"a line without the Run inside the window of Run {current}")
             elif run is not None and run != current:
                 bad(i, f"a line of Run {run} inside the window of Run {current}")
@@ -229,14 +288,12 @@ def stream_problems(events: Sequence[Mapping], *, run_key: str = "run", launcher
                 elif e["launcher_ends"]:
                     launcher_ends = True
             continue
-        # Outside every window: the launcher's own lines only.
         if run is not None:
             bad(i, f"a line of Run {run} outside its window")
         elif name == "result":
-            # Only the launcher's own end (a usage error at the start): the last line.
             if i != len(events) - 1:
                 bad(i, "the launcher's result is not the last line")
-        elif name not in ("hello", "heartbeat", launcher_commands, *reply_events):
+        elif name not in ("hello", "heartbeat", "status", "prepare", launcher_commands):
             bad(i, f"{name} outside a Run's window")
         elif name == launcher_commands and e.get("accepted") is not False:
             bad(i, "the launcher's own command line that is not a refusal")

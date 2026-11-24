@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: MIT
-"""vehicle_sil_launch run with its control server, from Python (standard library only).
+"""Thin 1-run helper over `vehicle_sil_launch serve --once` with its control server (standard library only).
 
     with Launch("build/.../vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch:
         with Control(launch.address) as c:
             ...
     print(launch.result["result"])
 
-The launcher writes its events on its standard output (run --events); the event "control_server"
-says where the server listens. See docs/control-api.md.
+The launcher writes its Events v4 stream on standard output (`serve --once`); the event
+`"control_server"` says where the server listens. See docs/control-api.md.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import os
 import subprocess
 import threading
 import time
-from typing import Iterable, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 
 class LaunchError(Exception):
@@ -24,7 +24,7 @@ class LaunchError(Exception):
 
 
 def control_address(events: Iterable[Union[str, bytes, Mapping]]) -> str:
-    """The address of the first "control_server" event among `events` (lines of run --events, or
+    """The address of the first "control_server" event among `events` (NDJSON lines, or
     events already read as dicts). LaunchError if the result comes, or the events end, first."""
     for event in events:
         if not isinstance(event, Mapping):
@@ -46,28 +46,119 @@ def _why(result_event: Mapping) -> str:
     return f"result {result.get('result')!r}" + (": " + "; ".join(errors) if errors else "")
 
 
+_HOST_VALUE_OPTIONS = frozenset({
+    "--control-credentials",
+    "--control-tls-cert",
+    "--control-tls-key",
+    "--control-audit-log",
+    "--log-dir",
+    "--timeout-ms",
+    "--describe-timeout-ms",
+    "--participant-start-timeout-ms",
+    "--participant-stop-timeout-ms",
+    "--events-stall-ms",
+})
+
+
+def _split_once_arguments(
+    arguments: Sequence[str],
+    *,
+    start_paused: bool,
+) -> Tuple[List[str], Dict[str, Any]]:
+    """Splits legacy single-run CLI `arguments` into `serve --once` host CLI flags and the initial
+    stdin `{"command": "run", ...}` payload."""
+    host_args: List[str] = []
+    intent: Dict[str, Any] = {}
+    run_cmd: Dict[str, Any] = {"command": "run"}
+    if start_paused:
+        intent["start_paused"] = True
+
+    i = 0
+    n = len(arguments)
+    while i < n:
+        arg = arguments[i]
+        if arg in _HOST_VALUE_OPTIONS and i + 1 < n:
+            host_args.extend((arg, arguments[i + 1]))
+            i += 2
+        elif arg == "--start-paused":
+            intent["start_paused"] = True
+            i += 1
+        elif arg == "--strict":
+            intent["strict"] = True
+            i += 1
+        elif arg == "--stop-at-ms" and i + 1 < n:
+            intent["stop_at_ms"] = int(arguments[i + 1])
+            i += 2
+        elif arg == "--late-tolerance-ms" and i + 1 < n:
+            intent["late_tolerance_ms"] = int(arguments[i + 1])
+            i += 2
+        elif arg == "--speed" and i + 1 < n:
+            val = arguments[i + 1]
+            intent["speed"] = "max" if val == "max" else float(val)
+            i += 2
+        elif arg == "--scenario" and i + 1 < n:
+            intent["scenario"] = arguments[i + 1]
+            i += 2
+        elif arg == "--variant" and i + 1 < n:
+            intent["variant"] = arguments[i + 1]
+            i += 2
+        elif arg == "--time-policy" and i + 1 < n:
+            intent["time_policy"] = arguments[i + 1]
+            i += 2
+        elif arg in ("--disable", "--enable", "--manual") and i + 1 < n:
+            key = arg[2:]
+            intent.setdefault(key, []).append(arguments[i + 1])
+            i += 2
+        elif arg == "--param" and i + 1 < n:
+            k, _, v = arguments[i + 1].partition("=")
+            intent.setdefault("params", {})[k] = v
+            i += 2
+        elif arg == "--connect" and i + 1 < n:
+            net, _, target = arguments[i + 1].partition("=")
+            intent.setdefault("connect", {})[net] = target
+            i += 2
+        elif arg == "--request" and i + 1 < n:
+            run_cmd["request"] = arguments[i + 1]
+            i += 2
+        elif arg == "--timeline" and i + 1 < n:
+            run_cmd["timeline"] = arguments[i + 1]
+            i += 2
+        else:
+            host_args.append(arg)
+            i += 1
+
+    if intent and "request" not in run_cmd:
+        run_cmd["intent"] = intent
+    return host_args, run_cmd
+
+
 class Launch:
-    """`vehicle_sil_launch run --events --stdin-commands --control <address> <config>` as a child
-    process. Its events are read on a thread of their own (`events`, `result`).
+    """`vehicle_sil_launch serve --once --control <address> <config>` as a 1-run child process.
+    Its Events v4 stream is read on a background thread (`events`, `result`)."""
 
-    `address`: where the server listens ("0": 127.0.0.1, any free port). `start_paused`: the
-    simulation stands still before its first step until a resume, step or run_until (a write
-    made then takes effect at 0). `arguments`: more arguments of run (--speed, --disable, ...).
-    `stderr`: where the launcher's own failures go (None: this process's standard error). A token
-    is never an argument: give --control-credentials <file> in `arguments`.
-
-    `stderr=subprocess.PIPE` is read on a thread of its own into `stderr_text` (the launcher writes
-    there only its own failures with --events). `events` keeps every event of the run, the "log"
-    events too (`keep_logs=False` leaves those out, for a long run with much output). A line of the
-    output that is no JSON is kept in `bad_lines` and skipped."""
-
-    def __init__(self, launcher: Union[str, os.PathLike], config: Union[str, os.PathLike], *, address: str = "0",
-                 start_paused: bool = False, arguments: Sequence[str] = (), cwd: Optional[str] = None, stderr=None,
-                 keep_logs: bool = True):
-        command = [os.fspath(launcher), "run", "--events", "--stdin-commands", "--control", address]
-        if start_paused:
-            command.append("--start-paused")
-        command += list(arguments) + ["--", os.fspath(config)]
+    def __init__(
+        self,
+        launcher: Union[str, os.PathLike],
+        config: Union[str, os.PathLike],
+        *,
+        address: str = "0",
+        start_paused: bool = False,
+        arguments: Sequence[str] = (),
+        cwd: Optional[str] = None,
+        stderr=None,
+        keep_logs: bool = True,
+    ):
+        host_args, run_cmd = _split_once_arguments(arguments, start_paused=start_paused)
+        command = [
+            os.fspath(launcher),
+            "serve",
+            "--once",
+            "--control",
+            address,
+            *host_args,
+            "--",
+            os.fspath(config),
+        ]
         self.events: List[dict] = []
         self.result: Optional[dict] = None
         self.bad_lines: List[bytes] = []
@@ -75,19 +166,28 @@ class Launch:
         self._keep_logs = keep_logs
         self._changed = threading.Condition()
         self._ended = False
-        self._process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr, cwd=cwd)
+        self._process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            cwd=cwd,
+        )
         self._reader = threading.Thread(target=self._read, name="vehicle_sil_launch events", daemon=True)
         self._reader.start()
         self._stderr_reader = None
         if stderr == subprocess.PIPE:
-            self._stderr_reader = threading.Thread(target=self._read_stderr, name="vehicle_sil_launch stderr", daemon=True)
+            self._stderr_reader = threading.Thread(
+                target=self._read_stderr, name="vehicle_sil_launch stderr", daemon=True
+            )
             self._stderr_reader.start()
+        self.send(run_cmd)
 
     def _read(self) -> None:
         try:
             for line in self._process.stdout:
                 if not line.endswith(b"\n"):
-                    break  # a line cut short: the launcher was ended
+                    break
                 try:
                     event = json.loads(line)
                 except ValueError:
@@ -101,7 +201,7 @@ class Launch:
                         self.result = event["result"]
                     self._changed.notify_all()
         except (OSError, ValueError):
-            pass  # the pipe was closed under the reader
+            pass
         finally:
             with self._changed:
                 self._ended = True
@@ -123,8 +223,11 @@ class Launch:
         with self._changed:
             while True:
                 for e in self.events:
-                    if (e.get("seq", -1) > after_seq and e.get("event") == event
-                            and all(e.get(k) == v for k, v in keys.items())):
+                    if (
+                        e.get("seq", -1) > after_seq
+                        and e.get("event") == event
+                        and all(e.get(k) == v for k, v in keys.items())
+                    ):
                         return e
                 if self.result is not None or self._ended:
                     why = _why({"result": self.result}) if self.result is not None else "its events ended"
@@ -142,10 +245,10 @@ class Launch:
     def send(self, command: Mapping) -> None:
         """One command on the launcher's standard input ({"command": "stop"}, ...)."""
         try:
-            self._process.stdin.write((json.dumps(command) + "\n").encode())
+            self._process.stdin.write((json.dumps(command, separators=(",", ":")) + "\n").encode())
             self._process.stdin.flush()
         except (BrokenPipeError, ValueError, OSError):
-            pass  # it has ended, or is ending
+            pass
 
     def stop(self) -> None:
         """Stops the run in order (as Ctrl+C)."""
@@ -179,14 +282,11 @@ class Launch:
         self.close()
 
     def close(self) -> None:
-        """Stops the launcher if it still runs (a stop, the end of its input, at most 60 s, then
-        it is killed) and closes the pipes. Called by `with`; safe to call more than once. After
-        Ctrl+C in a terminal the launcher got the interrupt too, so this stop is its second request:
-        it ends the participants without waiting for them."""
+        """Stops the launcher if it still runs and closes the pipes."""
         if self._process.poll() is None:
             self.stop()
         try:
-            self._process.stdin.close()  # the end of input stops it as well
+            self._process.stdin.close()
         except OSError:
             pass
         try:

@@ -183,27 +183,21 @@ class ServeWindowsAcceptanceTest(unittest.TestCase):
 
         # Running CTRL_BREAK_EVENT -> interrupted, launcher_ends: true, exit 130.
         with Serve(self.launch, cfg) as srv:
-            before = srv.ready()
-            cid = srv.run(req_long)
-            rid = srv.run_started(cid, after=before)["run"]
-            srv.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "running",
-                         "running")
+            srv.ready()
+            run_h = srv.start(request=req_long)
+            run_h.wait_for_event("phase", phase="running")
             os.kill(srv.process.pid, signal.CTRL_BREAK_EVENT)
-            res = srv.result_of(rid)
-            self.assertTrue(res["launcher_ends"])
-            self.assertEqual(res["result"]["result"], "interrupted")
+            res = run_h.wait()
+            self.assertTrue(run_h.launcher_ends)
+            self.assertEqual(res["result"], "interrupted")
             self.assertEqual(srv.wait(30), EXIT_INTERRUPTED)
             self.assertEqual(stream_problems(srv.snapshot()), [])
 
         # TerminateProcess kills child ECU via Job Object.
         with Serve(self.launch, cfg) as srv:
-            before = srv.ready()
-            cid = srv.run(req_long)
-            rid = srv.run_started(cid, after=before)["run"]
-            ev_p = srv.wait_for(
-                lambda e: e.get("event") == "participant" and e.get("run") == rid and e.get("state") == "started",
-                "participant started",
-            )
+            srv.ready()
+            run_h = srv.start(request=req_long)
+            ev_p = run_h.wait_for_event("participant", state="started")
             child_pid = ev_p["pid"]
             srv.process.kill()
             srv.process.wait(10)

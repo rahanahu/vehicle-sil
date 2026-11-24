@@ -1044,9 +1044,9 @@ class LauncherTest(unittest.TestCase):
 
     def test_launch_skips_what_is_no_event(self):
         # A "launcher" that writes a line that is no JSON first: the line is kept aside, and the
-        # events after it are read (Python runs the script "run" of the working directory).
+        # events after it are read (Python runs the script "serve" of the working directory).
         SCRATCH.mkdir(parents=True, exist_ok=True)
-        (SCRATCH / "run").write_text(
+        (SCRATCH / "serve").write_text(
             "print('no json')\n"
             "print('{\"event\":\"control_server\",\"seq\":0,\"address\":\"127.0.0.1:1\"}')\n"
             "print('{\"event\":\"result\",\"seq\":1,\"result\":{\"result\":\"passed\"}}')\n")

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 """The tools of tests/serve on made-up data, without a launcher: the digest leaves out exactly what changes from
-process to process, and the stream check finds each kind of broken stream (so that a passing serve test means the
-rules were checked, not that the checker saw nothing)."""
+process to process, and the Events v4 stream check finds each kind of broken stream."""
 import copy
 import os
 import unittest
@@ -58,7 +57,6 @@ class DigestTest(unittest.TestCase):
             change(r, t)
             self.assertNotEqual(digest(RESULT, TIMELINE), digest(r, t))
             self.assertNotEqual(differences(deterministic(RESULT, TIMELINE), deterministic(r, t)), [])
-        # A run without a timeline is not the same as one with it.
         self.assertNotEqual(digest(RESULT), digest(RESULT, TIMELINE))
 
     def test_differences_name_the_key(self):
@@ -103,22 +101,23 @@ def stream(*lines):
 def good():
     r1, r2 = f"{L}-1", f"{L}-2"
     return stream(
-        {"event": "hello", "launcher": L, "vehicle_sil_events": 3},
-        {"event": "idle"},
+        {"event": "hello", "launcher": L, "vehicle_sil_events": 4},
+        {"event": "status", "id": None, "launcher_state": "unprepared"},
         {"event": "heartbeat"},
         {"event": "run_start", "run": r1, "id": 7},
+        {"event": "status", "id": None, "launcher_state": "running", "active_run_id": r1},
         {"event": "phase", "run": r1, "phase": "checking"},
         {"event": "state", "run": r1, "rev": 1},
-        {"event": "heartbeat"},
+        {"event": "heartbeat", "run": r1},
         {"event": "command", "accepted": False, "reason": "busy", "id": 8},
         {"event": "state", "run": r1, "rev": 3},
         {"event": "log_dropped", "run": r1, "count": 2},
-        {"event": "result", "run": r1, "launcher_ends": False, "result": {"result": "passed"}},
+        {"event": "result", "run": r1, "launcher_ends": False, "status": {"launcher_state": "unprepared"}, "result": {"result": "passed"}},
         {"event": "command", "accepted": False, "reason": "run-changed", "asked_run": r1},
-        {"event": "idle"},
         {"event": "run_start", "run": r2, "id": 9},
+        {"event": "status", "id": None, "launcher_state": "running", "active_run_id": r2},
         {"event": "state", "run": r2, "rev": 1},
-        {"event": "result", "run": r2, "launcher_ends": True, "result": {"result": "passed"}},
+        {"event": "result", "run": r2, "launcher_ends": True, "status": {"launcher_state": "ending"}, "result": {"result": "passed"}},
     )
 
 
@@ -129,17 +128,16 @@ class StreamTest(unittest.TestCase):
 
     def test_a_good_stream_has_no_problem(self):
         self.assertEqual(stream_problems(good()), [])
-        # A launcher that ends at the start: hello and its own result.
         self.assertEqual(stream_problems(stream({"event": "hello", "launcher": L},
                                                 {"event": "result", "result": {"result": "usage"}})), [])
 
     def test_each_broken_rule_is_found(self):
         r1 = f"{L}-1"
         e = good()
-        del e[4]
+        del e[5]
         self.assertProblem(e, "a line is missing")
         e = good()
-        e[5]["t_ms"] = 1
+        e[6]["t_ms"] = 1
         self.assertProblem(e, "t_ms goes back")
         e = good()
         e[0], e[1] = e[1], e[0]
@@ -150,40 +148,41 @@ class StreamTest(unittest.TestCase):
         del e[0]["launcher"]
         self.assertProblem(e, "hello has no")
         e = good()
-        e[4] = {"event": "phase", "seq": 4, "t_ms": 4, "phase": "checking"}
+        e[5] = {"event": "phase", "seq": 5, "t_ms": 5, "phase": "checking"}
         self.assertProblem(e, "without the Run inside the window")
         e = good()
-        e[11] = {"event": "log", "seq": 11, "t_ms": 11, "run": r1}
+        e[12] = {"event": "log", "seq": 12, "t_ms": 12, "run": r1}
         self.assertProblem(e, f"a line of Run {r1} after its result")
         e = good()
-        e[12] = {"event": "heartbeat", "seq": 12, "t_ms": 12}
-        self.assertProblem(e, "run_start before the idle")
+        e[1] = {"event": "heartbeat", "seq": 1, "t_ms": 1}
+        self.assertProblem(e, "run_start before the initial status")
         e = good()
-        e[6] = {"event": "idle", "seq": 6, "t_ms": 6}
-        self.assertProblem(e, "idle inside the window")
+        e[7] = {"event": "idle", "seq": 7, "t_ms": 7}
+        self.assertProblem(e, "legacy idle event")
         e = good()
-        e[8]["rev"] = 1
+        e[9]["rev"] = 1
         self.assertProblem(e, "rev 1 does not grow")
         e = good()
         e[13]["run"] = f"{L}-3"
-        for x in e[14:]:
-            x["run"] = f"{L}-3"
+        for x in e[15:]:
+            if "run" in x:
+                x["run"] = f"{L}-3"
         self.assertProblem(e, "not the next number")
         e = good()
         e[13]["run"] = "fedcba9876543210-2"
-        for x in e[14:]:
-            x["run"] = "fedcba9876543210-2"
+        for x in e[15:]:
+            if "run" in x:
+                x["run"] = "fedcba9876543210-2"
         self.assertProblem(e, "is not <launcher")
         e = good()
-        del e[10]["launcher_ends"]
+        del e[11]["launcher_ends"]
         self.assertProblem(e, "without launcher_ends")
-        e = good() + stream(*[{}] * 16)[-1:]
-        e[-1] = {"event": "idle", "seq": 16, "t_ms": 16}
+        e = good() + [{"event": "status", "seq": 17, "t_ms": 17, "launcher_state": "ending"}]
         self.assertProblem(e, "after the result that said the launcher ends")
-        e = good()[:9]
+        e = good()[:10]
         self.assertProblem(e, "has no result")
         e = good()
-        e[11]["accepted"] = True
+        e[12]["accepted"] = True
         self.assertProblem(e, "not a refusal")
         e = good()
         e.insert(2, {"event": "phase", "phase": "checking"})
@@ -191,24 +190,24 @@ class StreamTest(unittest.TestCase):
             x["seq"], x["t_ms"] = i, i
         self.assertProblem(e, "phase outside a Run's window")
         e = good()
-        e[7]["accepted"] = True
+        e[8]["accepted"] = True
         self.assertProblem(e, "without the Run inside the window")
 
-    def test_allow_replies_permits_prepare_and_status_only_when_opted_in(self):
+    def test_status_and_prepare_events_allowed_in_events_v4(self):
         r1 = f"{L}-1"
         e = stream(
-            {"event": "hello", "launcher": L, "vehicle_sil_events": 3},
-            {"event": "idle"},
-            {"event": "prepare", "id": 1, "accepted": True},
+            {"event": "hello", "launcher": L, "vehicle_sil_events": 4},
+            {"event": "status", "id": None, "launcher_state": "unprepared"},
+            {"event": "status", "id": None, "launcher_state": "preparing"},
+            {"event": "prepare", "id": 1, "accepted": True, "status": {"launcher_state": "ready"}},
             {"event": "status", "id": 2, "launcher_state": "ready"},
             {"event": "run_start", "run": r1, "id": 3},
-            {"event": "status", "id": 4, "launcher_state": "running"},
+            {"event": "status", "id": None, "launcher_state": "running", "active_run_id": r1},
+            {"event": "status", "id": 4, "launcher_state": "running", "active_run_id": r1},
             {"event": "prepare", "id": 5, "accepted": False, "reason": "busy"},
-            {"event": "result", "run": r1, "launcher_ends": False, "result": {"result": "passed"}},
-            {"event": "idle"},
+            {"event": "result", "run": r1, "launcher_ends": False, "status": {"launcher_state": "ready"}, "result": {"result": "passed"}},
         )
-        self.assertNotEqual(stream_problems(e), [])
-        self.assertEqual(stream_problems(e, allow_replies=True), [])
+        self.assertEqual(stream_problems(e), [])
 
 
 if __name__ == "__main__":

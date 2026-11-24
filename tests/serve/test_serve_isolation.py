@@ -77,13 +77,13 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
                 stale_id_1 = 6000 + i
                 stale_id_2 = 7000 + i
                 payload = (
-                    json.dumps(run_command(req, tl, id=run_id_num)) + "\n"
+                    json.dumps(run_command(req, tl, command_id=run_id_num)) + "\n"
                     + json.dumps({"command": "stop", "run": prev_run, "id": stale_id_1}) + "\n"
                     + json.dumps({"command": "pause", "run": prev_run, "id": stale_id_2}) + "\n"
                 ).encode()
                 before = srv.ready()
                 srv.send_raw(payload)
-                rs = srv.run_started(run_id_num, after=before)
+                rs = srv.wait_event("run_start", after=before, id=run_id_num)
                 cur_run = rs["run"]
                 # Wait for phase ended, then immediately send a late stop for cur_run (must never leak to next Run).
                 srv.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == cur_run and e.get("phase") == "ended",
@@ -93,8 +93,7 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
                 for st in (e for e in win_before if e.get("event") == "state"):
                     self.assertEqual(st.get("stop", {}).get("requests", 0), 0, f"stale stop leaked into {cur_run}")
                 srv.send({"command": "stop", "run": cur_run, "id": 8000 + i})
-                res = srv.result_of(cur_run)
-                srv.wait_idle(after=res)
+                res = srv.wait_event("result", run=cur_run)
                 for cid in (stale_id_1, stale_id_2):
                     ref = srv.wait_for(lambda e, c=cid: e.get("event") == "command" and e.get("id") == c, f"refusal {cid}")
                     self.assertFalse(ref["accepted"])
@@ -126,18 +125,15 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
             for i in range(n):
                 if i % 10 == 5:
                     # Run with start_paused + step + resume.
-                    before = srv.ready()
-                    cid = srv.run(req_paused)
-                    rs = srv.run_started(cid, after=before)
-                    rid = rs["run"]
+                    srv.ready()
+                    run_handle = srv.start(request=req_paused)
+                    rid = run_handle.id
                     run_ids.append(rid)
-                    srv.wait_for(lambda e: e.get("event") == "state" and e.get("run") == rid and e.get("paused") is True,
-                                 f"paused in {rid}")
-                    srv.send({"command": "step", "run": rid, "ms": 20, "id": 9000 + i})
-                    srv.send({"command": "resume", "run": rid, "id": 9500 + i})
-                    res = srv.result_of(rid)
-                    self.assertEqual(res["result"]["result"], "passed")
-                    srv.wait_idle(after=res)
+                    run_handle.wait_for_event("state", paused=True)
+                    run_handle.send({"command": "step", "ms": 20, "id": 9000 + i})
+                    run_handle.send({"command": "resume", "id": 9500 + i})
+                    res = run_handle.wait()
+                    self.assertEqual(res["result"], "passed")
                 else:
                     rec = srv.run_once(req_scen)
                     run_ids.append(rec.run)
@@ -210,7 +206,7 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
             with Serve(self.launch, cfg, keep_logs=False) as srv:
                 srv.ready()
                 pid = srv.process.pid
-                srv.run(req_long, id=1)
+                srv.send(run_command(req_long, command_id=1))
                 if i % 3 == 1:
                     time.sleep(0.002)
                 elif i % 3 == 2:
@@ -243,19 +239,15 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
         with Serve(self.launch, cfg) as srv:
             srv.ready()
             for double_stop in (False, True):
-                before = srv.ready()
-                cid = srv.run(req_long)
-                rs = srv.run_started(cid, after=before)
-                rid = rs["run"]
-                srv.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "running",
-                             "running")
-                srv.send({"command": "stop", "run": rid, "id": 100})
+                srv.ready()
+                run_h = srv.start(request=req_long)
+                run_h.wait_for_event("phase", phase="running")
+                run_h.stop(id=100)
                 if double_stop:
-                    srv.send({"command": "stop", "run": rid, "id": 101})
-                res = srv.result_of(rid)
-                self.assertFalse(res["launcher_ends"])
-                self.assertIn(res["result"]["result"], ("stopped", "incomplete"))
-                srv.wait_idle(after=res)
+                    run_h.stop(id=101)
+                res = run_h.wait()
+                self.assertFalse(run_h.launcher_ends)
+                self.assertIn(res["result"], ("stopped", "incomplete"))
                 nxt = srv.run_once(req_vt0)
                 self.assertEqual(digest(nxt.result), digest(c_vt0.result))
             srv.close_input()
@@ -264,41 +256,35 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
 
         # (f) stdin EOF during Run -> interrupted ("end of input"), launcher_ends: true, exit 130.
         with Serve(self.launch, cfg) as srv:
-            before = srv.ready()
-            cid = srv.run(req_long)
-            rid = srv.run_started(cid, after=before)["run"]
-            srv.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "running",
-                         "running")
+            srv.ready()
+            run_h = srv.start(request=req_long)
+            run_h.wait_for_event("phase", phase="running")
             srv.close_input()
-            res = srv.result_of(rid)
-            self.assertTrue(res["launcher_ends"])
-            self.assertEqual(res["result"]["result"], "interrupted")
-            self.assertEqual(res["result"]["interrupted_by"], "end of input")
+            res = run_h.wait()
+            self.assertTrue(run_h.launcher_ends)
+            self.assertEqual(res["result"], "interrupted")
+            self.assertEqual(res["interrupted_by"], "end of input")
             self.assertEqual(srv.wait(30), EXIT_INTERRUPTED)
             self.assertEqual(stream_problems(srv.snapshot()), [])
 
         if not WINDOWS:
             # (d) SIGINT during Run -> interrupted, launcher_ends: true, no idle, exit 130.
             with Serve(self.launch, cfg) as srv:
-                before = srv.ready()
-                cid = srv.run(req_long)
-                rid = srv.run_started(cid, after=before)["run"]
-                srv.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "running",
-                             "running")
+                srv.ready()
+                run_h = srv.start(request=req_long)
+                run_h.wait_for_event("phase", phase="running")
                 srv.signal(signal.SIGINT)
-                res = srv.result_of(rid)
-                self.assertTrue(res["launcher_ends"])
-                self.assertEqual(res["result"]["result"], "interrupted")
+                res = run_h.wait()
+                self.assertTrue(run_h.launcher_ends)
+                self.assertEqual(res["result"], "interrupted")
                 self.assertEqual(srv.wait(30), EXIT_INTERRUPTED)
                 self.assertEqual(stream_problems(srv.snapshot()), [])
 
             # (e) Double SIGINT during Run -> skips waits, exit 130.
             with Serve(self.launch, cfg) as srv:
-                before = srv.ready()
-                cid = srv.run(req_long)
-                rid = srv.run_started(cid, after=before)["run"]
-                srv.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "running",
-                             "running")
+                srv.ready()
+                run_h = srv.start(request=req_long)
+                run_h.wait_for_event("phase", phase="running")
                 srv.signal(signal.SIGINT)
                 time.sleep(0.05)
                 srv.signal(signal.SIGINT)
@@ -306,13 +292,9 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
 
             # (g) SIGKILL launcher -> ECU children die via PDEATHSIG.
             with Serve(self.launch, cfg) as srv:
-                before = srv.ready()
-                cid = srv.run(req_long)
-                rid = srv.run_started(cid, after=before)["run"]
-                ev_p = srv.wait_for(
-                    lambda e: e.get("event") == "participant" and e.get("run") == rid and e.get("state") == "started",
-                    "participant started",
-                )
+                srv.ready()
+                run_h = srv.start(request=req_long)
+                ev_p = run_h.wait_for_event("participant", state="started")
                 child_pid = ev_p["pid"]
                 os.kill(srv.process.pid, signal.SIGKILL)
                 srv.process.wait(10)
@@ -327,18 +309,16 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
             env_h = dict(os.environ)
             env_h[FAULT_DELAY_ENV] = str(int(scaled(500)))
             with Serve(self.launch, cfg, env=env_h) as srv:
-                before = srv.ready()
-                cid = srv.run(req_vt0)
-                rid = srv.run_started(cid, after=before)["run"]
-                srv.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "stopping",
-                             "stopping")
-                time.sleep(0.15)
-                srv.send({"command": "stop", "run": rid, "id": 777})
-                res = srv.result_of(rid)
-                self.assertFalse(res["launcher_ends"], f"single late stop contaminated launcher: {res}")
-                codes = [f.get("code") for f in res["result"].get("findings", [])]
+                srv.ready()
+                run_h = srv.start(request=req_vt0)
+                run_h.wait_for_event("phase", phase="stopping")
+                run_h.wait_for_event("participant", state="ended")
+                time.sleep(0.05)
+                run_h.stop(id=777)
+                res = run_h.wait()
+                self.assertFalse(run_h.launcher_ends, f"single late stop contaminated launcher: {res}")
+                codes = [f.get("code") for f in res.get("findings", [])]
                 self.assertNotIn("connection-not-closed", codes)
-                srv.wait_idle(after=res)
                 # Next run matches Cold.
                 nxt = srv.run_once(req_vt0)
                 self.assertEqual(digest(nxt.result), digest(c_vt0.result))
@@ -362,12 +342,11 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
         env_timeout[FAULT_DELAY_ENV] = str(int(scaled(1000)))
         with Serve(self.launch, cfg, arguments=["--participant-stop-timeout-ms", "1000"], env=env_timeout) as srv:
             old_instance = srv.instance
-            before = srv.ready()
-            cid = srv.run(req_vt0)
-            rid = srv.run_started(cid, after=before)["run"]
-            res = srv.result_of(rid)
-            self.assertTrue(res["launcher_ends"])
-            codes = [f.get("code") for f in res["result"].get("findings", [])]
+            srv.ready()
+            run_h = srv.start(request=req_vt0)
+            res = run_h.wait()
+            self.assertTrue(run_h.launcher_ends)
+            codes = [f.get("code") for f in res.get("findings", [])]
             self.assertIn("connection-not-closed", codes, res)
             code = srv.wait(30)
             self.assertEqual(code, EXIT_CONTAMINATED)
@@ -380,16 +359,15 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
         env_force = dict(os.environ)
         env_force[FAULT_DELAY_ENV] = "15000"
         with Serve(self.launch, cfg, env=env_force) as srv_f:
-            before = srv_f.ready()
-            cid = srv_f.run(req_vt0)
-            rid = srv_f.run_started(cid, after=before)["run"]
-            srv_f.wait_for(lambda e: e.get("event") == "phase" and e.get("run") == rid and e.get("phase") == "stopping",
-                           "stopping")
-            time.sleep(0.15)
-            srv_f.send({"command": "stop", "run": rid, "id": 801})
-            srv_f.send({"command": "stop", "run": rid, "id": 802})
-            res = srv_f.result_of(rid)
-            self.assertTrue(res["launcher_ends"])
+            srv_f.ready()
+            run_h = srv_f.start(request=req_vt0)
+            run_h.wait_for_event("phase", phase="stopping")
+            run_h.wait_for_event("participant", state="ended")
+            time.sleep(0.05)
+            run_h.stop(id=801)
+            run_h.stop(force=True, id=802)
+            run_h.wait()
+            self.assertTrue(run_h.launcher_ends)
             self.assertEqual(srv_f.wait(30), EXIT_CONTAMINATED)
             self.assertEqual(stream_problems(srv_f.snapshot()), [])
 

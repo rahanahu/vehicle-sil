@@ -4,6 +4,7 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
+    "vehicle-sil-control",
     "vehicle-sil-dev",
     "vehicle-sil-gui",
 ]
@@ -1071,6 +1072,11 @@ wheels = [
 ]
 
 [[package]]
+name = "vehicle-sil-control"
+version = "0.3.0"
+source = { editable = "python" }
+
+[[package]]
 name = "vehicle-sil-dev"
 version = "0.3.0"
 source = { virtual = "." }
@@ -1083,6 +1089,7 @@ control = [
     { name = "grpcio" },
     { name = "grpcio-tools" },
     { name = "protobuf" },
+    { name = "vehicle-sil-control" },
 ]
 dev = [
     { name = "grpcio" },
@@ -1092,6 +1099,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "pyyaml" },
+    { name = "vehicle-sil-control" },
     { name = "vehicle-sil-gui", extra = ["variables"] },
 ]
 gui = [
@@ -1112,6 +1120,7 @@ control = [
     { name = "grpcio", specifier = ">=1.85.0" },
     { name = "grpcio-tools", specifier = ">=1.85.0" },
     { name = "protobuf", specifier = ">=7.35.1" },
+    { name = "vehicle-sil-control", editable = "python" },
 ]
 dev = [
     { name = "grpcio", specifier = ">=1.85.0" },
@@ -1121,6 +1130,7 @@ dev = [
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "vehicle-sil-control", editable = "python" },
     { name = "vehicle-sil-gui", extras = ["variables"], editable = "gui/server" },
 ]
 gui = [
@@ -1140,6 +1150,7 @@ source = { editable = "gui/server" }
 dependencies = [
     { name = "aiohttp" },
     { name = "pyyaml" },
+    { name = "vehicle-sil-control" },
 ]
 
 [package.optional-dependencies]
@@ -1154,6 +1165,7 @@ requires-dist = [
     { name = "grpcio", marker = "extra == 'variables'", specifier = ">=1.85.0" },
     { name = "protobuf", marker = "extra == 'variables'", specifier = ">=7.35.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "vehicle-sil-control", editable = "python" },
 ]
 provides-extras = ["variables"]
 
