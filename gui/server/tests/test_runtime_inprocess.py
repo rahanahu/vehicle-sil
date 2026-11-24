@@ -536,3 +536,30 @@ def test_shutdown_waits_for_prestart_gate_buffered_finish_and_cleanup(tmp_path: 
             assert not app.server._runs
 
     asyncio.run(main())
+
+
+def test_prestart_gate_buffers_and_replays_parsed_events(tmp_path: Path) -> None:
+    root = _simple_config(tmp_path)
+
+    def on_start(run: _GatedFakeRun) -> None:
+        run.emit_event("hello", vehicle_sil_events=2, pid=run.pid, file="simple.yaml")
+        run.emit_event("check", check=default_check_result("simple.yaml"))
+        run.emit_event("log", source="Engine", line="via event")
+
+    async def main() -> None:
+        runtime = _GatedFakeRuntime(on_start)
+        async with in_process_gui(root, runtime=runtime) as app:
+            sock = await app.client.ws()
+            await sock.until(is_synced)
+            st, body = await app.client.post("api/run", {"file": "simple.yaml"})
+            assert st == 200 and body["session"]["state"] == "running"
+            run = runtime.runs[0]
+            run.emit_event("result", result={"vehicle_sil_run": 2, "result": "passed", "end": "completed", "ok": True})
+            await run.finish(returncode=0)
+            msgs = await sock.until(is_ended)
+            assert any(m["type"] == "event" and m["event"]["event"] == "log" and m["event"]["line"] == "via event"
+                       for m in msgs)
+            assert msgs[-1]["session"]["result"]["result"] == "passed"
+            await sock.close()
+
+    asyncio.run(main())

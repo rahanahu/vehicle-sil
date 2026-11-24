@@ -299,14 +299,37 @@ def test_the_list_is_of_a_network_of_the_file(tmp_path: Path) -> None:
 
 
 def test_non_list_networks_yaml_fails_closed_on_connect(tmp_path: Path) -> None:
-    """When networks cannot be read from YAML metadata, non-'none' connect targets fail closed unless listed."""
-    from vehicle_sil_gui.server import _read_config_metadata
+    """When networks cannot be read from C++ metadata, non-'none' connect targets fail closed unless listed."""
+    from vehicle_sil_gui.runtime import parse_file_only_check, parse_prepare_event
 
-    cfg = tmp_path / "weird.yaml"
-    cfg.write_text("vehicle_sil_simulation: 2\nnetworks: not-a-list\nparticipants:\n  - name: Engine\n",
-                   encoding="utf-8")
-    _, participants, networks = _read_config_metadata(cfg, None)
-    assert participants == ["Engine"] and networks is None
+    failed = parse_file_only_check({
+        "result": "failed",
+        "participants": [{"name": "Engine"}],
+        "networks": [],
+        "file_sha256": "a" * 64,
+        "hot_eligibility": {"eligible": True, "reason": None, "message": None},
+    })
+    assert failed.participants == ["Engine"] and failed.networks is None and failed.file_sha256 == "a" * 64
+
+    for bad_result in ("usage", "unreadable"):
+        bad = parse_file_only_check({
+            "result": bad_result,
+            "participants": [{"name": "Engine"}],
+            "networks": [{"name": "CAN1"}],
+            "file_sha256": None,
+            "hot_eligibility": {"eligible": False, "reason": bad_result, "message": "bad"},
+        })
+        assert bad.participants is None and bad.networks is None
+
+    prep_failed = parse_prepare_event({
+        "event": "prepare",
+        "accepted": True,
+        "status": {"eligibility": {"eligible": True, "reason": None, "message": None}},
+        "metadata": {"participants": ["Engine"], "networks": [], "variants": [], "file_sha256": "b" * 64},
+        "findings": [{"severity": "error", "code": "networks", "message": "networks must be a list"}],
+    })
+    assert prep_failed is not None
+    assert prep_failed.participants == ["Engine"] and prep_failed.networks is None
 
     root = tmp_path / "root"
     root.mkdir()
@@ -318,6 +341,116 @@ def test_non_list_networks_yaml_fails_closed_on_connect(tmp_path: Path) -> None:
                             "target-not-listed")
             assert error["detail"] == {"network": "CAN1", "target": "fake0"}
         run_async(refuse, gui)
+
+
+def test_file_only_metadata_fail_closed_and_sha256_toctou(tmp_path: Path) -> None:
+    """With check-file-only enabled, non-passed checks fail closed and same-stamp content edits fail file_sha256 TOCTOU."""
+    from aiohttp.test_utils import TestServer
+    import aiohttp
+    import hashlib
+    from conftest import Gui
+    from vehicle_sil_gui import __version__
+    from vehicle_sil_gui.launcher import Launcher, REQUIRED_FEATURES
+    from vehicle_sil_gui.server import GuiServer, Options
+
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg = root / "sim.yaml"
+    original_text = "vehicle_sil_simulation: 2\nnetworks:\n  - name: ETH_EXT\n    kind: ethernet\nparticipants: []\n"
+    cfg.write_text(original_text, encoding="utf-8")
+    weird = root / "weird.yaml"
+    weird.write_text("vehicle_sil_simulation: 2\nnetworks: not-a-list\nparticipants: []\n", encoding="utf-8")
+
+    launcher_script = tmp_path / "file_only_launcher.py"
+    launcher_script.write_text(
+        "import hashlib, json, sys\n"
+        "a = sys.argv[1:]\n"
+        "if a == ['version', '--json']:\n"
+        "    print(json.dumps({'vehicle_sil_launch': 1, 'vehicle_sil': " + json.dumps(__version__) + ", "
+        "'features': " + json.dumps([*REQUIRED_FEATURES, 'timeline', 'run-stop-at', 'check-file-only']) + "}))\n"
+        "    sys.exit(0)\n"
+        "if a[:3] == ['check', '--file-only', '--json']:\n"
+        "    path = a[-1]\n"
+        "    raw = open(path, 'rb').read()\n"
+        "    sha = hashlib.sha256(raw).hexdigest()\n"
+        "    if path.endswith('weird.yaml'):\n"
+        "        print(json.dumps({'vehicle_sil_check': 1, 'result': 'failed', 'participants': [{'name': 'Engine'}], "
+        "'networks': [], 'file_sha256': sha, 'hot_eligibility': {'eligible': True, 'reason': None, 'message': None}}))\n"
+        "        sys.exit(1)\n"
+        "    print(json.dumps({'vehicle_sil_check': 1, 'result': 'passed', 'participants': [{'name': 'Engine'}], "
+        "'networks': [{'name': 'ETH_EXT'}], 'file_sha256': sha, 'hot_eligibility': {'eligible': False, 'reason': 'fixed-registry', 'message': 'fixed'}}))\n"
+        "    sys.exit(0)\n"
+        "if a[:1] == ['connections']:\n"
+        "    print(json.dumps({'vehicle_sil_connections': 1, 'result': 'listed', 'networks': [{'name': 'ETH_EXT', "
+        "'list': {'targets': [{'value': 'fake0', 'usable': True}]}}]}))\n"
+        "    sys.exit(0)\n",
+        encoding="utf-8",
+    )
+
+    async def main() -> None:
+        launcher = Launcher(launcher_script)
+        await launcher.probe()
+        assert launcher.usable, launcher.problems
+        server = GuiServer(Options(root=root, launcher=launcher, port=0, token="test-token", variables=False))
+        test_server = TestServer(server.app(), host="127.0.0.1")
+        await test_server.start_server()
+        assert test_server.port is not None
+        server.hosts = {f"127.0.0.1:{test_server.port}"}
+        server.origins = {f"http://127.0.0.1:{test_server.port}"}
+        gui = Gui(proc=None, port=test_server.port, token="test-token",
+                  url=f"http://127.0.0.1:{test_server.port}/#token=test-token", stderr=tmp_path / ".err")
+        orig_no_vars = server._no_variables
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_no_vars():
+            entered.set()
+            await release.wait()
+            return await orig_no_vars()
+
+        try:
+            async with aiohttp.ClientSession() as http:
+                c = Client(gui, http)
+                # 1. check --file-only returning exit code 1 ('failed') fails closed on unused connect
+                err_weird = refused(*await c.post("api/run", {"file": "weird.yaml", "connect": {"CAN1": "fake0"}}),
+                                    "target-not-listed")
+                assert err_weird["detail"] == {"network": "CAN1", "target": "fake0"}
+
+                # 2. Content edit preserving exact st_mtime_ns and st_size is caught by file_sha256 TOCTOU
+                await listed(c, {"file": "sim.yaml", "network": "ETH_EXT"})
+                st_before = cfg.stat()
+                edited_text = original_text.replace("ETH_EXT", "CAN_NEW")
+                assert len(edited_text.encode("utf-8")) == len(original_text.encode("utf-8"))
+                server._no_variables = slow_no_vars  # type: ignore[method-assign]
+                starting = asyncio.ensure_future(c.post("api/run", {"file": "sim.yaml", "connect": {"ETH_EXT": "fake0"}}))
+                try:
+                    try:
+                        await asyncio.wait_for(entered.wait(), timeout=5.0)
+                        cfg.write_text(edited_text, encoding="utf-8")
+                        os.utime(cfg, ns=(st_before.st_atime_ns, st_before.st_mtime_ns))
+                        assert (cfg.stat().st_mtime_ns, cfg.stat().st_size) == (
+                            st_before.st_mtime_ns, st_before.st_size
+                        )
+                        assert (
+                            hashlib.sha256(cfg.read_bytes()).hexdigest()
+                            != hashlib.sha256(original_text.encode("utf-8")).hexdigest()
+                        )
+                    finally:
+                        release.set()
+                    status, body = await asyncio.wait_for(starting, timeout=5.0)
+                except BaseException:
+                    if not starting.done():
+                        starting.cancel()
+                        await asyncio.gather(starting, return_exceptions=True)
+                    raise
+                err_sha = refused(status, body, "target-not-listed")
+                assert "sim.yaml has changed since this run was checked" in err_sha["message"]
+        finally:
+            release.set()
+            await server.shutdown()
+            await test_server.close()
+
+    asyncio.run(main())
 
 
 def test_lists_wait_in_the_queue_of_the_checks(tmp_path: Path) -> None:

@@ -18,12 +18,13 @@ import pytest
 from conftest import Client, Gui, is_ended
 from fake_runtime import DEFAULT_FEATURES, FakeLauncher, default_check_result
 from vehicle_sil_gui import __version__, control
-from vehicle_sil_gui.runtime import ServeRuntime, check_hot_eligibility
+from vehicle_sil_gui.runtime import ServeRuntime
 from vehicle_sil_gui.server import GuiServer, Options
 from vehicle_sil_gui.source import ListSample, PeerInfo, SnapshotInfo, SourceError, TimeInfo
 
 
 FAKE_SERVE_SCRIPT = textwrap.dedent("""\
+    import hashlib
     import json
     import os
     from pathlib import Path
@@ -36,14 +37,89 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
     mode_file = Path(os.environ["FAKE_SERVE_LOG"])
     mode = os.environ.get("FAKE_SERVE_BEHAVIOR", "normal")
     argv = sys.argv[1:]
-    cred_path = None
-    if "--control-credentials" in argv:
-        cred_path = Path(argv[argv.index("--control-credentials") + 1])
-    cfg = argv[-1]
 
     def log_event(entry):
         with mode_file.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\\n")
+
+    def inspect_cfg(cfg_path, disable=(), enable=(), manual=()):
+        p = Path(cfg_path)
+        try:
+            raw = p.read_bytes()
+            text = raw.decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            return 3, {
+                "vehicle_sil_check": 1, "vehicle_sil": "__VEHICLE_SIL_VERSION__",
+                "file": cfg_path, "result": "unreadable", "strict": False,
+                "errors": 1, "warnings": 0, "notes": 0,
+                "participants": [], "networks": [], "findings": [],
+                "file_sha256": None,
+                "hot_eligibility": {"eligible": False, "reason": "config-unreadable", "message": "configuration could not be read"},
+            }
+        sha = hashlib.sha256(raw).hexdigest()
+        known = []
+        for line in text.splitlines():
+            s = line.strip()
+            if s.startswith("- name:"):
+                known.append(s.split(":", 1)[1].strip())
+        if not known and "Engine" in text:
+            known = ["Engine"]
+        unknown = [n for n in (*disable, *manual) if n not in known]
+        conflict = set(disable) & set(manual)
+        if unknown or conflict:
+            return 4, {
+                "vehicle_sil_check": 1, "vehicle_sil": "__VEHICLE_SIL_VERSION__",
+                "file": cfg_path, "result": "usage", "strict": False,
+                "errors": 1, "warnings": 0, "notes": 0,
+                "participants": [], "networks": [],
+                "findings": [{"severity": "error", "code": "usage", "message": "invalid overrides"}],
+                "file_sha256": sha,
+                "hot_eligibility": {"eligible": False, "reason": "usage", "message": "invalid overrides"},
+            }
+        participants = []
+        for name in known:
+            enabled = name not in disable or name in enable
+            is_manual = ("manual: true" in text) or (name in manual)
+            participants.append({"name": name, "enabled": enabled, "manual": is_manual, "variables": []})
+        if "registry_uri:" in text:
+            elig = {"eligible": False, "reason": "fixed-registry", "message": "configuration uses a fixed registry_uri"}
+        elif any(p["enabled"] and p["manual"] for p in participants):
+            elig = {"eligible": False, "reason": "manual-participants", "message": "configuration waits for manual participants"}
+        elif os.environ.get("VEHICLE_SIL_TRACE"):
+            elig = {"eligible": False, "reason": "trace-enabled", "message": "serve does not run with VEHICLE_SIL_TRACE set"}
+        else:
+            elig = {"eligible": True, "reason": None, "message": None}
+        return 0, {
+            "vehicle_sil_check": 1, "vehicle_sil": "__VEHICLE_SIL_VERSION__",
+            "file": cfg_path, "result": "passed", "strict": False,
+            "errors": 0, "warnings": 0, "notes": 0,
+            "participants": participants, "networks": [], "findings": [],
+            "file_sha256": sha,
+            "hot_eligibility": elig,
+        }
+
+    if argv[:1] == ["check"] and "--file-only" in argv and "--json" in argv:
+        cfg = argv[-1]
+        dis, ena, man = [], [], []
+        i = 0
+        while i < len(argv):
+            if argv[i] == "--disable" and i + 1 < len(argv):
+                dis.append(argv[i + 1]); i += 2
+            elif argv[i] == "--enable" and i + 1 < len(argv):
+                ena.append(argv[i + 1]); i += 2
+            elif argv[i] == "--manual" and i + 1 < len(argv):
+                man.append(argv[i + 1]); i += 2
+            else:
+                i += 1
+        log_event({"cmd": "check-file-only", "config": cfg, "argv": argv})
+        code, doc = inspect_cfg(cfg, dis, ena, man)
+        emit(doc)
+        sys.exit(code)
+
+    cred_path = None
+    if "--control-credentials" in argv:
+        cred_path = Path(argv[argv.index("--control-credentials") + 1])
+    cfg = argv[-1]
 
     if mode == "startup-refuse":
         emit({
@@ -78,7 +154,53 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
         name = cmd.get("command")
         log_event({"pid": os.getpid(), "config": cfg, "cmd": cmd, "cred_exists": cred_path.exists() if cred_path else None})
 
-        if name == "run":
+        if name == "prepare":
+            prior_prepares = 0
+            if mode_file.exists():
+                prior_prepares = sum(
+                    1 for ln in mode_file.read_text(encoding="utf-8").splitlines()
+                    if '"command": "prepare"' in ln or '"command":"prepare"' in ln
+                )
+            if mode == "crash-second-prepare" and prior_prepares == 2:
+                os._exit(9)
+            if mode == "refuse-second-prepare" and prior_prepares == 2:
+                emit({
+                    "event": "prepare", "seq": seq, "t_ms": t_ms, "id": cmd.get("id"),
+                    "accepted": False, "reason": "busy", "message": "cannot prepare right now",
+                })
+                seq += 1
+                continue
+            if mode == "hang-second-prepare" and prior_prepares == 2:
+                import time as _time
+                _time.sleep(5.0)
+                continue
+            _, doc = inspect_cfg(cfg, cmd.get("disable", ()), cmd.get("enable", ()), cmd.get("manual", ()))
+            elig = doc["hot_eligibility"]
+            emit({
+                "event": "status", "seq": seq, "t_ms": t_ms,
+                "instance": "feed000000000001", "status_rev": 1,
+                "launcher_state": "ready" if elig["eligible"] else "idle",
+                "config": cfg, "eligibility": elig,
+                "launcher_allowed": {}, "active_run_id": None, "last_run_id": None, "run_state": None,
+            })
+            seq += 1
+            emit({
+                "event": "prepare", "seq": seq, "t_ms": t_ms, "id": cmd.get("id"),
+                "accepted": True, "reason": None, "message": None,
+                "status": {
+                    "instance": "feed000000000001", "status_rev": 2,
+                    "launcher_state": "ready" if elig["eligible"] else "idle",
+                    "config": cfg, "eligibility": elig,
+                    "launcher_allowed": {}, "active_run_id": None, "last_run_id": None, "run_state": None,
+                },
+                "metadata": {
+                    "participants": [p["name"] for p in doc["participants"]],
+                    "networks": [], "variants": [], "file_sha256": doc["file_sha256"],
+                },
+                "findings": doc["findings"],
+            })
+            seq += 1
+        elif name == "run":
             run_counter += 1
             run_id = f"feed-{run_counter}"
             current_run = run_id
@@ -92,12 +214,14 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 import time as _time
                 _time.sleep(5.0)
                 continue
-            if mode == "check-fail-first" and run_counter == 1:
+            if mode in ("check-fail-first", "check-fail-request") and run_counter == 1:
+                req_file = cmd.get("request", cfg) if mode == "check-fail-request" else cfg
                 emit({"event": "check", "seq": seq, "t_ms": t_ms, "run": run_id, "check": {
                     "vehicle_sil_check": 1, "result": "failed", "errors": 1, "warnings": 0, "notes": 0,
                     "participants": [], "networks": [],
-                    "findings": [{"severity": "error", "code": "step-mismatch", "file": cfg, "line": 1,
-                                  "participant": "Engine", "network": None, "message": "step mismatch"}],
+                    "findings": [{"severity": "error", "code": "step-mismatch", "file": req_file, "line": 1,
+                                  "participant": "Engine", "network": None,
+                                  "message": f"{req_file}, line 1: step mismatch"}],
                 }})
                 seq += 1
                 emit({"event": "phase", "seq": seq, "t_ms": t_ms + 1, "run": run_id, "phase": "ended"})
@@ -118,6 +242,12 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
             t_ms += 10
             emit({"event": "phase", "seq": seq, "t_ms": t_ms, "run": run_id, "phase": "running"})
             seq += 1
+            if mode == "finding-with-request":
+                req_path = cmd.get("request", "")
+                emit({"event": "finding", "seq": seq, "t_ms": t_ms, "run": run_id,
+                      "severity": "warning", "code": "note", "file": req_path, "line": 2,
+                      "message": f"{req_path}, line 2: live warning"})
+                seq += 1
             if cred_path is not None and mode != "no-control":
                 if not cred_path.exists():
                     emit({"event": "finding", "seq": seq, "t_ms": t_ms, "run": run_id,
@@ -252,7 +382,7 @@ def _write_configs(root: Path, launcher_script: Path) -> None:
 async def _serve_gui(
     tmp_path: Path,
     *,
-    features: Sequence[str] = (*DEFAULT_FEATURES, "serve"),
+    features: Sequence[str] = (*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
     variables: bool = True,
     silent_after_s: float = 5.0,
     stop_timeout_s: float = 1.0,
@@ -367,7 +497,7 @@ def test_serve_hot_scenario_aba_isolation_and_per_run_cleanup(tmp_path: Path) ->
             assert rt.resident_starts == 3
             assert rt.resident_pid != pid_b
             entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-            assert all(e["cred_exists"] is True for e in entries if e["cmd"]["command"] == "run")
+            assert all(e["cred_exists"] is True for e in entries if isinstance(e.get("cmd"), dict) and e["cmd"].get("command") == "run")
             assert s1["id"] != body["session"]["id"]
             await sock.close()
 
@@ -480,27 +610,45 @@ def test_hot_cold_auto_switch_all_five_reasons(tmp_path: Path) -> None:
         root = tmp_path / "cfg"
         root.mkdir()
         script = tmp_path / "fake_serve.py"
+        log_path = tmp_path / "calls.jsonl"
         _write_configs(root, script)
-
-        # 1. launcher-unsupported
-        no_serve = FakeLauncher(features=DEFAULT_FEATURES, path=script)
-        assert check_hot_eligibility(no_serve, root, "a.yaml").reason == "launcher-unsupported"
-
-        # 2. trace-enabled
-        with_serve = FakeLauncher(features=(*DEFAULT_FEATURES, "serve"), path=script)
-        os.environ["VEHICLE_SIL_TRACE"] = "/tmp/trace"
+        prev_log = os.environ.get("FAKE_SERVE_LOG")
+        os.environ["FAKE_SERVE_LOG"] = str(log_path)
         try:
-            assert check_hot_eligibility(with_serve, root, "a.yaml").reason == "trace-enabled"
+            # 1. launcher-unsupported
+            no_serve = FakeLauncher(features=DEFAULT_FEATURES, path=script)
+            rt_no_serve = ServeRuntime(no_serve, cwd=root)
+            assert (await rt_no_serve.inspect_config("a.yaml")).hot.reason == "launcher-unsupported"
+
+            # 2. trace-enabled (pre-launch Cold guard runs before spawning serve or check --file-only)
+            with_file_only = FakeLauncher(
+                features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
+                path=script,
+            )
+            rt_check = ServeRuntime(with_file_only, cwd=root)
+            os.environ["VEHICLE_SIL_TRACE"] = "/tmp/trace"
+            try:
+                assert (await rt_check.inspect_config("a.yaml", need_metadata=False)).hot.reason == "trace-enabled"
+                assert not log_path.exists()
+            finally:
+                os.environ.pop("VEHICLE_SIL_TRACE", None)
+
+            # 3. fixed-registry via check --file-only --json (never spawns serve)
+            fixed_prep = await rt_check.prepare("fixed.yaml", want_control=False)
+            assert fixed_prep["mode"] == "cold" and fixed_prep["reason"] == "fixed-registry"
+            assert rt_check.resident_starts == 0
+
+            # 4. manual-participants (YAML via check --file-only, request override pre-launch, disable override)
+            assert (await rt_check.inspect_config("manual.yaml")).hot.reason == "manual-participants"
+            assert (await rt_check.inspect_config("a.yaml", manual=("Engine",), need_metadata=False)).hot.reason == "manual-participants"
+            assert (await rt_check.inspect_config("manual.yaml", disable=("Engine",))).hot.hot is True
+            assert (await rt_check.inspect_config("missing.yaml")).hot.reason == "config-unreadable"
+            assert (await rt_check.inspect_config("a.yaml", disable=("Nobody",))).hot.reason == "usage"
         finally:
-            os.environ.pop("VEHICLE_SIL_TRACE", None)
-
-        # 3. fixed-registry
-        assert check_hot_eligibility(with_serve, root, "fixed.yaml").reason == "fixed-registry"
-
-        # 4. manual-participants (YAML and request override)
-        assert check_hot_eligibility(with_serve, root, "manual.yaml").reason == "manual-participants"
-        assert check_hot_eligibility(with_serve, root, "a.yaml", manual=("Engine",)).reason == "manual-participants"
-        assert check_hot_eligibility(with_serve, root, "manual.yaml", disable=("Engine",)).hot is True
+            if prev_log is None:
+                os.environ.pop("FAKE_SERVE_LOG", None)
+            else:
+                os.environ["FAKE_SERVE_LOG"] = prev_log
 
         # 5. resident-failed falls back to Cold via OneShotRuntime on prepare
         async with _serve_gui(tmp_path, env={"FAKE_SERVE_BEHAVIOR": "startup-refuse"}) as (server, c, _):
@@ -801,5 +949,352 @@ def test_serve_check_timeout_aborts_hung_launcher_and_recovers(tmp_path: Path) -
             assert st_ok == 200 and run_body["session"]["id"] == 1
             await sock.until(is_ended)
             await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_single_parse_zero_intermediate_json_dumps_and_loads(tmp_path: Path, monkeypatch) -> None:
+    import vehicle_sil_gui.runtime as runtime_mod
+    import vehicle_sil_gui.session as session_mod
+
+    dumps_in_handle = 0
+    loads_in_feed_event = 0
+    orig_dumps = runtime_mod.json.dumps
+    orig_loads = session_mod.json.loads
+    orig_handle = ServeRuntime._handle_stdout_line
+    orig_feed_event = session_mod.Session.feed_event
+    in_handle = False
+    in_feed_event = False
+
+    def spy_dumps(*args, **kwargs):
+        nonlocal dumps_in_handle
+        if in_handle:
+            dumps_in_handle += 1
+        return orig_dumps(*args, **kwargs)
+
+    def spy_loads(*args, **kwargs):
+        nonlocal loads_in_feed_event
+        if in_feed_event:
+            loads_in_feed_event += 1
+        return orig_loads(*args, **kwargs)
+
+    def wrapped_handle(self, resident, line):
+        nonlocal in_handle
+        in_handle = True
+        try:
+            return orig_handle(self, resident, line)
+        finally:
+            in_handle = False
+
+    def wrapped_feed_event(self, event, size):
+        nonlocal in_feed_event
+        in_feed_event = True
+        try:
+            return orig_feed_event(self, event, size)
+        finally:
+            in_feed_event = False
+
+    monkeypatch.setattr(runtime_mod.json, "dumps", spy_dumps)
+    monkeypatch.setattr(session_mod.json, "loads", spy_loads)
+    monkeypatch.setattr(ServeRuntime, "_handle_stdout_line", wrapped_handle)
+    monkeypatch.setattr(session_mod.Session, "feed_event", wrapped_feed_event)
+
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False) as (server, c, _):
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 200
+            msgs = await sock.until(is_ended)
+            assert msgs[-1]["session"]["result"]["result"] == "passed"
+            assert dumps_in_handle == 0
+            assert loads_in_feed_event == 0
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_non_finite_and_invalid_stdout_fallback_preserves_seq(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 200
+            before = await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+            assert rt._resident is not None and rt._resident.current_run is not None
+            run_id = rt._resident.current_run.run_id
+
+            for bad_line in (
+                json.dumps({"event": "time", "seq": 90, "t_ms": 10, "run": run_id, "sim_ms": 5}).replace("5}", "NaN}"),
+                '{"event":"time","seq":91,"t_ms":10,"run":"' + str(run_id) + '","sim_ms":5,"x":1e999}',
+                "not json at all",
+                "[1, 2, 3]",
+            ):
+                rt._handle_stdout_line(rt._resident, bad_line)
+
+            await c.post("api/stop", {"force": False})
+            msgs = await sock.until(is_ended)
+            end_sess = msgs[-1]["session"]
+            assert end_sess["result"]["result"] == "stopped"
+            output_problems = [p for p in end_sess["problems"] if p["code"] == "launcher-output"]
+            assert len(output_problems) == 4
+            seqs = [m["event"]["seq"] for m in (*before, *msgs) if m["type"] == "event"]
+            assert seqs == list(range(len(seqs)))
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_prestart_gate_and_live_finding_redact_request_path(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "check-fail-request"}) as (server, c, _):
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            st, bad = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 422 and bad["error"]["code"] == "check-failed"
+            finding = bad["error"]["detail"]["findings"][0]
+            assert finding["file"] == "the request"
+            assert finding["line"] is None
+            assert "vehicle-sil-gui-request-" not in finding["message"]
+
+            os.environ["FAKE_SERVE_BEHAVIOR"] = "finding-with-request"
+            st2, _ = await c.post("api/run", {"file": "b.yaml"})
+            assert st2 == 200
+            msgs = await sock.until(is_ended)
+            live_findings = [m["event"] for m in msgs if m["type"] == "event" and m["event"]["event"] == "finding"]
+            assert live_findings
+            assert live_findings[0]["file"] == "the request"
+            assert live_findings[0]["line"] is None
+            assert "vehicle-sil-gui-request-" not in live_findings[0]["message"]
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_file_only_single_call_serve_prepare_reuse_and_unknown_participant(tmp_path: Path) -> None:
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False) as (server, c, log_path):
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+
+            # Run 1: check --file-only --json runs ONCE (never twice) before spawning serve
+            st1, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st1 == 200
+            await sock.until(is_ended)
+            entries1 = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+            assert sum(1 for e in entries1 if e.get("cmd") == "check-file-only") == 1
+
+            # Run 2 on idle resident: uses serve prepare (0 new check --file-only calls!)
+            st2, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st2 == 200
+            await sock.until(is_ended)
+            entries2 = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+            assert sum(1 for e in entries2 if e.get("cmd") == "check-file-only") == 1
+            assert sum(1 for e in entries2 if isinstance(e.get("cmd"), dict) and e["cmd"].get("command") == "prepare") == 1
+
+            # Unknown participant triggers fallback --variant-only check --file-only and refuses 400 unknown-participant
+            st3, err = await c.post("api/run", {"file": "a.yaml", "disable": ["Nobody"]})
+            assert st3 == 400 and err["error"]["code"] == "unknown-participant"
+            assert "Engine" in err["error"]["message"]
+            await sock.close()
+
+    asyncio.run(run())
+
+
+def test_hot_deep_nested_event_flows_through_drain_without_recursion_error(tmp_path: Path) -> None:
+    def make_deep(leaf: object, depth: int = 1000) -> object:
+        cur = leaf
+        for i in range(depth):
+            cur = [cur] if i % 2 else {"nested": cur}
+        return cur
+
+    def unwrap(obj: object, depth: int = 1000) -> dict:
+        cur = obj
+        for i in range(depth - 1, -1, -1):
+            cur = cur[0] if i % 2 else cur["nested"]  # type: ignore[index]
+        assert isinstance(cur, dict)
+        return cur
+
+    async def run() -> None:
+        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
+            rt = server.runtime
+            assert isinstance(rt, ServeRuntime)
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            st, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st == 200
+            before = await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+            assert rt._resident is not None and rt._resident.current_run is not None
+            run_id = rt._resident.current_run.run_id
+            active_run = server.current
+            assert active_run is not None and active_run.request is not None
+            req_path = str(active_run.request)
+
+            next_seq = len([m for m in before if m["type"] == "event"])
+            ev_unrelated = {
+                "event": "finding", "seq": next_seq, "t_ms": 20, "run": run_id,
+                "severity": "note", "message": "deep unrelated",
+                "payload": make_deep({"file": "a.yaml", "line": 3}),
+            }
+            ev_with_req = {
+                "event": "finding", "seq": next_seq + 1, "t_ms": 21, "run": run_id,
+                "severity": "warning", "message": "deep request",
+                "payload": make_deep({"file": req_path, "line": 7, "message": f"{req_path}, line 7: deep"}),
+            }
+            rt._handle_stdout_line(rt._resident, json.dumps(ev_unrelated, separators=(",", ":")))
+            rt._handle_stdout_line(rt._resident, json.dumps(ev_with_req, separators=(",", ":")))
+
+            got_req = await sock.until(
+                lambda m: m["type"] == "event" and m["event"].get("message") == "deep request"
+            )
+            assert any(
+                m["type"] == "event" and m["event"].get("message") == "deep unrelated"
+                for m in got_req
+            )
+            deep_msg = got_req[-1]["event"]
+            assert unwrap(deep_msg["payload"]) == {
+                "file": "the request", "line": None, "message": "the request: deep",
+            }
+
+            await c.post("api/stop", {"force": False})
+            msgs = await sock.until(is_ended)
+            assert msgs[-1]["session"]["result"]["result"] == "stopped"
+            assert msgs[-1]["session"]["problems"] == []
+            await sock.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("behavior", ["crash-second-prepare", "refuse-second-prepare"])
+def test_prepare_sends_prepare_to_replacement_resident_after_prepare_failure(
+    tmp_path: Path, behavior: str,
+) -> None:
+    async def run() -> None:
+        root = tmp_path / "cfg"
+        root.mkdir()
+        script = tmp_path / "fake_serve.py"
+        log_path = tmp_path / "calls.jsonl"
+        _write_configs(root, script)
+        prev_log = os.environ.get("FAKE_SERVE_LOG")
+        prev_beh = os.environ.get("FAKE_SERVE_BEHAVIOR")
+        os.environ["FAKE_SERVE_LOG"] = str(log_path)
+        os.environ["FAKE_SERVE_BEHAVIOR"] = behavior
+        launcher = FakeLauncher(
+            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
+            path=script,
+        )
+        rt = ServeRuntime(launcher, cwd=root)
+        try:
+            st1 = await rt.prepare("a.yaml")
+            assert st1["state"] == "ready"
+            pid1 = rt.resident_pid
+            assert pid1 is not None
+
+            st2 = await rt.prepare("a.yaml", variant="fast", disable=("Engine",))
+            assert st2 == {"mode": "hot", "state": "ready", "config": "a.yaml", "reason": None, "message": None}
+            pid2 = rt.resident_pid
+            assert pid2 is not None and pid2 != pid1
+
+            entries = [json.loads(ln) for ln in log_path.read_text(encoding="utf-8").splitlines()]
+            pid2_prepares = [
+                e for e in entries
+                if e.get("pid") == pid2 and isinstance(e.get("cmd"), dict) and e["cmd"].get("command") == "prepare"
+            ]
+            assert len(pid2_prepares) == 1
+            assert pid2_prepares[0]["cmd"].get("variant") == "fast"
+            assert pid2_prepares[0]["cmd"].get("disable") == ["Engine"]
+        finally:
+            await rt.shutdown(asyncio.Event(), 0.2)
+            if prev_log is None:
+                os.environ.pop("FAKE_SERVE_LOG", None)
+            else:
+                os.environ["FAKE_SERVE_LOG"] = prev_log
+            if prev_beh is None:
+                os.environ.pop("FAKE_SERVE_BEHAVIOR", None)
+            else:
+                os.environ["FAKE_SERVE_BEHAVIOR"] = prev_beh
+
+    asyncio.run(run())
+
+
+def test_inspect_config_restores_idle_state_after_closing_failed_resident(tmp_path: Path) -> None:
+    async def run() -> None:
+        root = tmp_path / "cfg"
+        root.mkdir()
+        script = tmp_path / "fake_serve.py"
+        log_path = tmp_path / "calls.jsonl"
+        _write_configs(root, script)
+        prev_log = os.environ.get("FAKE_SERVE_LOG")
+        prev_beh = os.environ.get("FAKE_SERVE_BEHAVIOR")
+        os.environ["FAKE_SERVE_LOG"] = str(log_path)
+        os.environ["FAKE_SERVE_BEHAVIOR"] = "crash-second-prepare"
+        launcher = FakeLauncher(
+            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
+            path=script,
+        )
+        rt = ServeRuntime(launcher, cwd=root)
+        try:
+            st1 = await rt.prepare("a.yaml")
+            assert st1["state"] == "ready"
+            inspection = await rt.inspect_config("a.yaml", variant="fast")
+            assert inspection.hot.hot is True
+            assert rt._resident is None
+            assert rt.status() == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
+        finally:
+            await rt.shutdown(asyncio.Event(), 0.2)
+            if prev_log is None:
+                os.environ.pop("FAKE_SERVE_LOG", None)
+            else:
+                os.environ["FAKE_SERVE_LOG"] = prev_log
+            if prev_beh is None:
+                os.environ.pop("FAKE_SERVE_BEHAVIOR", None)
+            else:
+                os.environ["FAKE_SERVE_BEHAVIOR"] = prev_beh
+
+    asyncio.run(run())
+
+
+def test_cancelling_prepare_mid_send_prepare_clears_pending_prepare(tmp_path: Path) -> None:
+    async def run() -> None:
+        root = tmp_path / "cfg"
+        root.mkdir()
+        script = tmp_path / "fake_serve.py"
+        log_path = tmp_path / "calls.jsonl"
+        _write_configs(root, script)
+        prev_log = os.environ.get("FAKE_SERVE_LOG")
+        prev_beh = os.environ.get("FAKE_SERVE_BEHAVIOR")
+        os.environ["FAKE_SERVE_LOG"] = str(log_path)
+        os.environ["FAKE_SERVE_BEHAVIOR"] = "hang-second-prepare"
+        launcher = FakeLauncher(
+            features=(*DEFAULT_FEATURES, "serve", "check-file-only", "serve-prepare"),
+            path=script,
+        )
+        rt = ServeRuntime(launcher, cwd=root, escalate_wait_s=0.1)
+        try:
+            st1 = await rt.prepare("a.yaml")
+            assert st1["state"] == "ready"
+            res = rt._resident
+            assert res is not None
+
+            task = asyncio.create_task(rt.prepare("a.yaml", variant="fast"))
+            while res.pending_prepare is None:
+                await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert res.pending_prepare is None
+        finally:
+            await rt.shutdown(asyncio.Event(), 0.1)
+            if prev_log is None:
+                os.environ.pop("FAKE_SERVE_LOG", None)
+            else:
+                os.environ["FAKE_SERVE_LOG"] = prev_log
+            if prev_beh is None:
+                os.environ.pop("FAKE_SERVE_BEHAVIOR", None)
+            else:
+                os.environ["FAKE_SERVE_BEHAVIOR"] = prev_beh
 
     asyncio.run(run())
