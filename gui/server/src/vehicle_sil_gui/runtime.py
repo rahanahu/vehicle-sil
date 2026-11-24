@@ -1022,32 +1022,71 @@ class ServeRuntime:
             and resident.proc.returncode is None
             and resident.config == config
             and resident.want_control == want_control
-            and resident.idle.is_set()
         ):
-            prev_preparing = self._preparing_config
-            self._preparing_config = config
-            self._sync_status()
-            try:
-                ev = await self._send_prepare(
-                    resident, variant=variant, disable=disable, enable=enable, manual=manual,
-                )
-            except BaseException:
-                self._preparing_config = prev_preparing
-                await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
-                raise
-            finally:
-                self._preparing_config = prev_preparing
-                if not self._closing:
-                    self._sync_status()
-            if self._closing:
-                raise Refused(503, "shutting-down", "the GUI server is stopping")
-            if ev is not None:
-                parsed = parse_prepare_event(ev)
-                if parsed is not None:
-                    return parsed, resident
-            await self._reset_resident(resident, config)
-            if self._closing:
-                raise Refused(503, "shutting-down", "the GUI server is stopping")
+            if (
+                not resident.idle.is_set()
+                and resident.current_run is None
+                and resident.pending_run is None
+            ):
+                idle_wait = asyncio.create_task(resident.idle.wait())
+                wait_tasks: set[asyncio.Task[object]] = {idle_wait}
+                if resident.follow_task is not None:
+                    wait_tasks.add(resident.follow_task)
+                try:
+                    await asyncio.wait(
+                        wait_tasks,
+                        timeout=IDLE_WAIT_S,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    if not idle_wait.done():
+                        idle_wait.cancel()
+                    await asyncio.gather(idle_wait, return_exceptions=True)
+                if self._closing:
+                    raise Refused(503, "shutting-down", "the GUI server is stopping")
+                if (
+                    resident.follow_task is not None
+                    and resident.follow_task.done()
+                    and not resident.follow_task.cancelled()
+                    and (exc := resident.follow_task.exception()) is not None
+                ):
+                    log.warning("resident follow task failed during idle wait: %s", exc)
+
+            if (
+                self._resident is resident
+                and not resident.exited
+                and not resident.ending
+                and resident.proc.returncode is None
+                and resident.config == config
+                and resident.want_control == want_control
+                and resident.idle.is_set()
+                and resident.current_run is None
+                and resident.pending_run is None
+            ):
+                prev_preparing = self._preparing_config
+                self._preparing_config = config
+                self._sync_status()
+                try:
+                    ev = await self._send_prepare(
+                        resident, variant=variant, disable=disable, enable=enable, manual=manual,
+                    )
+                except BaseException:
+                    self._preparing_config = prev_preparing
+                    await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+                    raise
+                finally:
+                    self._preparing_config = prev_preparing
+                    if not self._closing:
+                        self._sync_status()
+                if self._closing:
+                    raise Refused(503, "shutting-down", "the GUI server is stopping")
+                if ev is not None:
+                    parsed = parse_prepare_event(ev)
+                    if parsed is not None:
+                        return parsed, resident
+                await self._reset_resident(resident, config)
+                if self._closing:
+                    raise Refused(503, "shutting-down", "the GUI server is stopping")
 
         if FEATURE_CHECK_FILE_ONLY in self._launcher.features:
             return await self._run_file_only_check(

@@ -114,8 +114,33 @@ export function widgetValue(page: Page, peer: string, name: string): Locator {
   return widget(page, peer, name).getByTestId('widget-value');
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** `@defer` のプレースホルダーを含めて、対象の部品が見える位置までスクロールする。 */
+export async function scrollWidgetIntoView(page: Page, peer: string, name: string): Promise<void> {
+  const placeholder = page
+    .getByRole('region', { name: peer, exact: true })
+    .getByTestId('widget-placeholder')
+    .filter({
+      has: page.locator('.name', { hasText: new RegExp(`^\\s*${escapeRegExp(name)}\\s*$`) }),
+    });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await widget(page, peer, name).or(placeholder).first().scrollIntoViewIfNeeded();
+      return;
+    } catch (error) {
+      if (attempt === 2 || !(error instanceof Error) || !/not attached/i.test(error.message)) {
+        throw error;
+      }
+    }
+  }
+}
+
 /** 部品の値を数として読む（単位を除く）。部品は見えている間だけ値を受け取るので、先に見えるところへ動かす。 */
 export async function numberOf(page: Page, peer: string, name: string): Promise<number> {
+  await scrollWidgetIntoView(page, peer, name);
   const value = widgetValue(page, peer, name);
   await value.scrollIntoViewIfNeeded();
   const text = (await value.textContent()) ?? '';
