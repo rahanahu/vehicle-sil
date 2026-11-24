@@ -43,7 +43,7 @@
       },
       "check": {
         "vehicle_sil_check": 1,
-        "vehicle_sil": "0.3.0",
+        "vehicle_sil": "<version>",
         "file": "ignore-stop.yaml",
         "result": "passed",
         "strict": false,
@@ -71,7 +71,7 @@
             "step_ms": null,
             "status": "described",
             "reported": {
-              "vehicle_sil": "0.3.0",
+              "vehicle_sil": "<version>",
               "name": "Engine",
               "step_ns": 10000000,
               "networks": [
@@ -171,7 +171,7 @@
             "step_ms": null,
             "status": "described",
             "reported": {
-              "vehicle_sil": "0.3.0",
+              "vehicle_sil": "<version>",
               "name": "Dashboard",
               "step_ns": 5000000,
               "networks": [
@@ -493,7 +493,7 @@
       },
       "result": {
         "vehicle_sil_run": 2,
-        "vehicle_sil": "0.3.0",
+        "vehicle_sil": "<version>",
         "file": "ignore-stop.yaml",
         "result": "stopped",
         "end": "stopped",
@@ -649,7 +649,7 @@
         ],
         "check": {
           "vehicle_sil_check": 1,
-          "vehicle_sil": "0.3.0",
+          "vehicle_sil": "<version>",
           "file": "ignore-stop.yaml",
           "result": "passed",
           "strict": false,
@@ -677,7 +677,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.3.0",
+                "vehicle_sil": "<version>",
                 "name": "Engine",
                 "step_ns": 10000000,
                 "networks": [
@@ -777,7 +777,7 @@
               "step_ms": null,
               "status": "described",
               "reported": {
-                "vehicle_sil": "0.3.0",
+                "vehicle_sil": "<version>",
                 "name": "Dashboard",
                 "step_ns": 5000000,
                 "networks": [

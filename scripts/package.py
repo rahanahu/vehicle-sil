@@ -52,11 +52,13 @@ Commands:
             release carries on its own (npm install <its URL>).
   version   prints the version and checks that every place that names it agrees: CMakeLists.txt (the source:
             project VERSION and VEHICLE_SIL_VERSION_PRERELEASE, x.y.z or x.y.z-rc.<n>), pyproject.toml,
-            gui/server/pyproject.toml, gui/server/src/vehicle_sil_gui/__init__.py (__version__),
-            python/vehicle_sil_control/__init__.py (__version__), template/get_tools.py (VERSION), the versions
-            that template/README*.md name, template/CMakeLists.txt (GIT_TAG v<version>), CHANGELOG.md (a heading
-            "## [<version>] - Unreleased" or "## [<version>] - YYYY-MM-DD"). --expect v<version> also checks a
-            tag, and that the heading has the release date.
+            gui/server/pyproject.toml, uv.lock (when present, PEP 440 form),
+            gui/server/src/vehicle_sil_gui/__init__.py (__version__), python/vehicle_sil_control/__init__.py
+            (__version__), template/get_tools.py (VERSION), the versions that template/README*.md name,
+            template/CMakeLists.txt (GIT_TAG v<version>), CHANGELOG.md (a heading "## [<version>] - Unreleased" or
+            "## [<version>] - YYYY-MM-DD"). --expect v<version> also checks a tag, and that the heading has the
+            release date. --check checks read-only (default); --sync updates the derived files and uv.lock (via
+            uv lock --offline) from CMakeLists.txt without modifying CHANGELOG.md (--dry-run previews).
 
 The full output of each step goes to build/logs/<tag>-<step>.log; the summary shows one line per step and, for a
 failed step, its first error lines and its log. Stops at the first failed step.
@@ -82,6 +84,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.error
 import urllib.request
 import zipfile
@@ -257,6 +260,38 @@ def text_versions(text: str) -> set[str]:
     return set(VERSION_IN_TEXT.findall(text))
 
 
+def pep440_version(version: str) -> str:
+    """Convert a SemVer version (x.y.z or x.y.z-(rc|beta|alpha).<n>) to PEP 440 for uv.lock."""
+    m = re.fullmatch(r"(\d+\.\d+\.\d+)(?:-(rc|beta|alpha)\.(0|[1-9][0-9]*))?", version)
+    if not m:
+        raise ValueError(f"unsupported version format for PEP 440 conversion: {version!r}")
+    if not m.group(2):
+        return m.group(1)
+    short = {"rc": "rc", "beta": "b", "alpha": "a"}[m.group(2)]
+    return f"{m.group(1)}{short}{m.group(3)}"
+
+
+def uv_lock_problems(version: str) -> list[str]:
+    """Check uv.lock workspace package versions when uv.lock exists (stdlib tomllib only, no uv invocation)."""
+    lock_path = ROOT / "uv.lock"
+    if not lock_path.is_file():
+        return []
+    want = pep440_version(version)
+    try:
+        data = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        return [f"uv.lock could not be parsed: {e}"]
+    packages = {pkg.get("name"): pkg.get("version") for pkg in data.get("package", []) if isinstance(pkg, dict)}
+    problems = []
+    for name in ("vehicle-sil-dev", "vehicle-sil-gui"):
+        got = packages.get(name)
+        if got is None:
+            problems.append(f"uv.lock has no package {name!r} (expected {want})")
+        elif got != want:
+            problems.append(f"uv.lock says {name}=={got}, CMakeLists.txt says {version}: run `uv lock` (expected {want})")
+    return problems
+
+
 def version_problems(version: str, release: bool = False) -> list[str]:
     """Where the version disagrees with CMakeLists.txt, and what to change. `release`: for the tag being made."""
     checks = [
@@ -281,10 +316,118 @@ def version_problems(version: str, release: bool = False) -> list[str]:
         if others:
             problems.append(f"template/{readme.name} names version {', '.join(others)}, CMakeLists.txt says {version}: "
                             f"make it {version}")
+    problems += uv_lock_problems(version)
     changelog = ROOT / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
     problems += changelog_problems(text, version, release)
     return problems
+
+
+def sync_versions(version: str, dry_run: bool = False) -> int:
+    """Sync derived version files and uv.lock from CMakeLists.txt; never modifies CHANGELOG.md."""
+    targets = [
+        ("pyproject.toml", r'(?m)^(version = )"[^"]*"', '"{}"'),
+        ("gui/server/pyproject.toml", r'(?m)^(version = )"[^"]*"', '"{}"'),
+        ("python/vehicle_sil_control/__init__.py", r'(?m)^(__version__ = )"[^"]*"', '"{}"'),
+        ("gui/server/src/vehicle_sil_gui/__init__.py", r'(?m)^(__version__ = )"[^"]*"', '"{}"'),
+        ("template/get_tools.py", r'(?m)^(VERSION = )"[^"]*"', '"{}"'),
+        ("template/CMakeLists.txt", r"(GIT_TAG\s+)\S+", "v{}"),
+    ]
+    updates: list[tuple[str, str]] = []
+    errors: list[str] = []
+    for rel, pattern, form in targets:
+        path = ROOT / rel
+        if not path.is_file():
+            errors.append(f"{rel}: file not found")
+            continue
+        text = path.read_text(encoding="utf-8")
+        want_value = form.format(version)
+        new_text, count = re.subn(pattern, lambda m, v=want_value: m.group(1) + v, text)
+        if count != 1:
+            errors.append(f"{rel}: expected 1 version match, found {count}")
+            continue
+        if new_text != text:
+            updates.append((rel, new_text))
+
+    readmes = sorted((ROOT / "template").glob("README*.md"))
+    if not readmes:
+        errors.append("template/README*.md: no README files found")
+    for readme in readmes:
+        rel = f"template/{readme.name}"
+        text = readme.read_text(encoding="utf-8")
+        if not text_versions(text):
+            errors.append(f"{rel}: no version found")
+            continue
+        new_text = VERSION_IN_TEXT.sub(lambda _: version, text)
+        if new_text != text:
+            updates.append((rel, new_text))
+
+    if errors:
+        for e in errors:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    pyproject_changed = any(rel in ("pyproject.toml", "gui/server/pyproject.toml") for rel, _ in updates)
+    need_uv_lock = (ROOT / "uv.lock").is_file() and (bool(uv_lock_problems(version)) or pyproject_changed)
+
+    if dry_run:
+        print(version)
+        if not updates and not need_uv_lock:
+            print("already in sync")
+        else:
+            for rel, _ in updates:
+                print(f"would update {rel}")
+            if need_uv_lock:
+                print("would update uv.lock (via uv lock --offline)")
+    else:
+        uv: str | None = None
+        if need_uv_lock:
+            uv = shutil.which("uv")
+            if not uv:
+                raise Usage("uv not found: install uv or run `uv lock` to update uv.lock")
+        snapshots: list[tuple[Path, bytes]] = [(ROOT / rel, (ROOT / rel).read_bytes()) for rel, _ in updates]
+        if need_uv_lock and (ROOT / "uv.lock").is_file():
+            lock_path = ROOT / "uv.lock"
+            snapshots.append((lock_path, lock_path.read_bytes()))
+
+        def rollback() -> None:
+            for path, raw in snapshots:
+                path.write_bytes(raw)
+
+        try:
+            for rel, new_text in updates:
+                (ROOT / rel).write_text(new_text, encoding="utf-8", newline="\n")
+            if need_uv_lock:
+                assert uv is not None
+                p = subprocess.run([uv, "lock", "--offline"], cwd=ROOT, capture_output=True, text=True)
+                if p.returncode != 0:
+                    rollback()
+                    msg = (p.stderr or p.stdout or f"exit code {p.returncode}").strip()
+                    print(f"error: uv lock --offline failed: {msg}", file=sys.stderr)
+                    return 1
+            remaining = [p for p in version_problems(version) if not p.startswith("CHANGELOG.md")]
+            if remaining:
+                rollback()
+                for p in remaining:
+                    print(f"error: {p}", file=sys.stderr)
+                return 1
+        except BaseException:
+            rollback()
+            raise
+        print(version)
+        if not updates and not need_uv_lock:
+            print("already in sync")
+        else:
+            for rel, _ in updates:
+                print(f"updated {rel}")
+            if need_uv_lock:
+                print("updated uv.lock")
+
+    changelog = ROOT / "CHANGELOG.md"
+    changelog_text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
+    for p in changelog_problems(changelog_text, version, release=False):
+        print(f"warning: {p} (CHANGELOG.md is not modified by --sync)", file=sys.stderr)
+    return 0
 
 
 def changelog_problems(text: str, version: str, release: bool = False) -> list[str]:
@@ -1324,10 +1467,20 @@ def template_command(args: argparse.Namespace) -> int:
 
 
 def version_command(args: argparse.Namespace) -> int:
+    sync = getattr(args, "sync", False)
+    dry_run = getattr(args, "dry_run", False)
+    check = getattr(args, "check", False)
+    expect = getattr(args, "expect", None)
+    if dry_run and not sync:
+        raise Usage("--dry-run requires --sync")
+    if sync and (expect or check):
+        raise Usage("--sync cannot be combined with --expect or --check")
     version = project_version()
-    problems = version_problems(version, release=bool(args.expect))
-    if args.expect and args.expect != f"v{version}":
-        problems.append(f"the tag is {args.expect}, the version {version}: tag v{version}, or change the version "
+    if sync:
+        return sync_versions(version, dry_run=dry_run)
+    problems = version_problems(version, release=bool(expect))
+    if expect and expect != f"v{version}":
+        problems.append(f"the tag is {expect}, the version {version}: tag v{version}, or change the version "
                         "(CMakeLists.txt and the places this command checks)")
     print(version)
     for p in problems:
@@ -1379,8 +1532,12 @@ def main() -> int:
     verify.add_argument("--tag", default="package-verify", help="prefix of the log names (default: package-verify)")
     template = sub.add_parser("template", help="the template archive with the tools' SHA-256, and SHA256SUMS")
     template.add_argument("--out", default=str(DIST), help="where both tools archives are (default: build/dist)")
-    version = sub.add_parser("version", help="print the version; check that every place agrees")
+    version = sub.add_parser("version", help="print the version; check that every place agrees or sync from CMakeLists.txt")
     version.add_argument("--expect", metavar="TAG", help="also check that the tag is v<version>")
+    version.add_argument("--check", action="store_true", help="check read-only that every place agrees (default)")
+    version.add_argument("--sync", action="store_true",
+                         help="sync derived files and uv.lock from CMakeLists.txt (preserves CHANGELOG.md)")
+    version.add_argument("--dry-run", action="store_true", help="with --sync, preview updates without writing files")
     args = parser.parse_args()
     if platform.machine().lower() not in ("x86_64", "amd64") and args.command in ("tools", "verify"):
         print(f"package: error: only x86_64 is packaged (this is {platform.machine()})", file=sys.stderr)

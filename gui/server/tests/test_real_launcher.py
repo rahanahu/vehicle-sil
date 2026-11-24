@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 from conftest import Client, alive, gui_server, is_ended, is_synced, run_async, scaled, wait_until
 from real_configs import NETWORKS, examples_dir, executables, usable, write
+from vehicle_sil_gui import __version__
 from vehicle_sil_gui.recording import scenario_yaml
 
 TESTS = Path(__file__).resolve().parent
@@ -42,6 +43,9 @@ def test_real_targeted_stop_does_not_stop_the_next_run(tmp_path: Path) -> None:
     write(configs, EXAMPLES)
 
     async def talk(c: Client) -> None:
+        _, app = await c.get("api/app")
+        assert app["version"] == __version__
+        assert app["launcher"]["version"]["vehicle_sil"] == __version__
         sock = await c.ws()
         await sock.until(is_synced)
         status, first = await c.post("api/run", {"file": "forever.yaml"})

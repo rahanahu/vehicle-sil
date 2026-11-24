@@ -17,7 +17,7 @@ import pytest
 
 from conftest import Client, Gui, is_ended
 from fake_runtime import DEFAULT_FEATURES, FakeLauncher, default_check_result
-from vehicle_sil_gui import control
+from vehicle_sil_gui import __version__, control
 from vehicle_sil_gui.runtime import ServeRuntime, check_hot_eligibility
 from vehicle_sil_gui.server import GuiServer, Options
 from vehicle_sil_gui.source import ListSample, PeerInfo, SnapshotInfo, SourceError, TimeInfo
@@ -48,7 +48,7 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
     if mode == "startup-refuse":
         emit({
             "event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 3,
-            "vehicle_sil": "0.3.0", "pid": os.getpid(), "file": cfg,
+            "vehicle_sil": "__VEHICLE_SIL_VERSION__", "pid": os.getpid(), "file": cfg,
             "arguments": argv, "launcher": "feed000000000001",
         })
         emit({
@@ -61,7 +61,7 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
     t_ms = 10
     emit({
         "event": "hello", "seq": seq, "t_ms": 0, "vehicle_sil_events": 3,
-        "vehicle_sil": "0.3.0", "pid": os.getpid(), "file": cfg,
+        "vehicle_sil": "__VEHICLE_SIL_VERSION__", "pid": os.getpid(), "file": cfg,
         "arguments": argv, "launcher": "feed000000000001",
     })
     seq += 1
@@ -178,7 +178,7 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
                 current_run = None
                 emit({"event": "idle", "seq": seq, "t_ms": t_ms + 10})
                 seq += 1
-""")
+""").replace('"__VEHICLE_SIL_VERSION__"', json.dumps(__version__))
 
 
 class _FakeControlSource:

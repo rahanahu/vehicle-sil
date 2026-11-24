@@ -223,5 +223,243 @@ class PackageWindowsExportTest(unittest.TestCase):
         self.assertTrue((self.log_dir / "test-win-export-export.log").is_file())
 
 
+class PackageVersionSyncTest(unittest.TestCase):
+    VERSION_FILES = (
+        "CMakeLists.txt",
+        "CHANGELOG.md",
+        "pyproject.toml",
+        "gui/server/pyproject.toml",
+        "python/vehicle_sil_control/__init__.py",
+        "gui/server/src/vehicle_sil_gui/__init__.py",
+        "template/get_tools.py",
+        "template/CMakeLists.txt",
+        "template/README.md",
+        "template/README.ja.md",
+    )
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def _copy_version_tree(self, *, with_uv_lock: bool = True) -> Path:
+        tree = self.dir / "repo"
+        names = [*self.VERSION_FILES]
+        if with_uv_lock:
+            names.append("uv.lock")
+        for rel in names:
+            dst = tree / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
+        return tree
+
+    def _set_cmake_version(self, tree: Path, base: str, prerelease: str = "") -> None:
+        text = (
+            f"cmake_minimum_required(VERSION 3.21)\n"
+            f"project(\n  vehicle_sil\n  VERSION {base}\n  LANGUAGES C CXX)\n"
+            f'set(VEHICLE_SIL_VERSION_PRERELEASE "{prerelease}")\n'
+        )
+        (tree / "CMakeLists.txt").write_text(text, encoding="utf-8", newline="\n")
+
+    def test_pep440_version_conversions_and_rejection(self) -> None:
+        self.assertEqual(package_mod.pep440_version("0.4.0"), "0.4.0")
+        self.assertEqual(package_mod.pep440_version("0.4.0-rc.1"), "0.4.0rc1")
+        self.assertEqual(package_mod.pep440_version("0.4.0-rc.10"), "0.4.0rc10")
+        self.assertEqual(package_mod.pep440_version("1.2.3-beta.2"), "1.2.3b2")
+        self.assertEqual(package_mod.pep440_version("1.2.3-alpha.0"), "1.2.3a0")
+        with self.assertRaises(ValueError):
+            package_mod.pep440_version("0.4.0-rc.01")
+
+    def test_uv_lock_problems_checks_workspace_packages_without_uv(self) -> None:
+        tree = self.dir / "lock-only"
+        tree.mkdir()
+        with mock.patch.object(package_mod, "ROOT", tree):
+            self.assertEqual(package_mod.uv_lock_problems("0.4.0-rc.1"), [])
+            (tree / "uv.lock").write_text(
+                'version = 1\n\n[[package]]\nname = "vehicle-sil-dev"\nversion = "0.4.0rc1"\n\n'
+                '[[package]]\nname = "vehicle-sil-gui"\nversion = "0.4.0rc1"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(package_mod.uv_lock_problems("0.4.0-rc.1"), [])
+            self.assertEqual(len(package_mod.uv_lock_problems("0.4.0")), 2)
+
+            (tree / "uv.lock").write_text(
+                'version = 1\n\n[[package]]\nname = "vehicle-sil-dev"\nversion = "0.4.0"\n',
+                encoding="utf-8",
+            )
+            problems = package_mod.uv_lock_problems("0.4.0")
+            self.assertEqual(len(problems), 1)
+            self.assertIn("vehicle-sil-gui", problems[0])
+
+    def test_sync_dry_run_does_not_modify_files_and_warns_on_changelog(self) -> None:
+        tree = self._copy_version_tree(with_uv_lock=True)
+        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        before = {rel: (tree / rel).read_text(encoding="utf-8") for rel in (*self.VERSION_FILES, "uv.lock")}
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(package_mod, "ROOT", tree),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=True))
+
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("0.4.0-rc.1", out.getvalue())
+        self.assertIn("would update pyproject.toml", out.getvalue())
+        self.assertIn("would update template/README.ja.md", out.getvalue())
+        self.assertIn("would update uv.lock (via uv lock --offline)", out.getvalue())
+        self.assertIn("warning: CHANGELOG.md", err.getvalue())
+        self.assertIn("not modified by --sync", err.getvalue())
+        for rel, content in before.items():
+            self.assertEqual((tree / rel).read_text(encoding="utf-8"), content, f"{rel} was modified during --dry-run")
+
+    def test_sync_updates_derived_files_and_uv_lock_and_is_idempotent(self) -> None:
+        tree = self._copy_version_tree(with_uv_lock=True)
+
+        def fake_uv_run(cmd, cwd=None, capture_output=False, text=False):
+            self.assertEqual(Path(cmd[0]).name, "uv")
+            self.assertEqual(cmd[1:], ["lock", "--offline"])
+            self.assertEqual(Path(cwd), tree)
+            ver = package_mod.project_version()
+            pep = package_mod.pep440_version(ver)
+            lock_text = (
+                f'version = 1\n\n[[package]]\nname = "vehicle-sil-dev"\nversion = "{pep}"\n\n'
+                f'[[package]]\nname = "vehicle-sil-gui"\nversion = "{pep}"\n'
+            )
+            (tree / "uv.lock").write_text(lock_text, encoding="utf-8", newline="\n")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        for base, pre, expected_ver in (("0.4.0", "rc.1", "0.4.0-rc.1"), ("0.4.0", "", "0.4.0")):
+            changelog_before = (tree / "CHANGELOG.md").read_text(encoding="utf-8")
+            self._set_cmake_version(tree, base, pre)
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch.object(package_mod, "ROOT", tree),
+                mock.patch.object(package_mod.shutil, "which", return_value="/usr/bin/uv"),
+                mock.patch.object(package_mod.subprocess, "run", side_effect=fake_uv_run) as run_mock,
+                contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(err),
+            ):
+                rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+                self.assertEqual(rc, 0, err.getvalue())
+                self.assertEqual(run_mock.call_count, 1)
+                self.assertEqual((tree / "CHANGELOG.md").read_text(encoding="utf-8"), changelog_before)
+                self.assertIn("warning: CHANGELOG.md", err.getvalue())
+
+                non_changelog = [p for p in package_mod.version_problems(expected_ver) if not p.startswith("CHANGELOG.md")]
+                self.assertEqual(non_changelog, [])
+
+                # Second run is a no-op and does not re-run uv lock.
+                out2, err2 = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out2), contextlib.redirect_stderr(err2):
+                    rc2 = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+                self.assertEqual(rc2, 0, err2.getvalue())
+                self.assertEqual(run_mock.call_count, 1)
+                self.assertIn("already in sync", out2.getvalue())
+
+            # Adding the heading makes read-only --check exit 0.
+            (tree / "CHANGELOG.md").write_text(
+                f"# Changelog\n\n## [{expected_ver}] - Unreleased\n\n- note\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            with mock.patch.object(package_mod, "ROOT", tree):
+                out3, err3 = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out3), contextlib.redirect_stderr(err3):
+                    rc3 = package_mod.version_command(argparse.Namespace(check=True))
+                self.assertEqual(rc3, 0, err3.getvalue())
+                self.assertEqual(out3.getvalue().strip(), expected_ver)
+
+    def test_sync_missing_uv_fails_before_modifying_any_files_and_dry_run_still_succeeds(self) -> None:
+        tree = self._copy_version_tree(with_uv_lock=True)
+        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        tracked = (*self.VERSION_FILES, "uv.lock")
+        before = {rel: (tree / rel).read_bytes() for rel in tracked}
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(package_mod, "ROOT", tree),
+            mock.patch.object(package_mod.shutil, "which", return_value=None),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            dry_rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=True))
+            self.assertEqual(dry_rc, 0, err.getvalue())
+            self.assertIn("would update uv.lock", out.getvalue())
+            for rel, content in before.items():
+                self.assertEqual((tree / rel).read_bytes(), content, f"{rel} changed during --dry-run")
+
+            with self.assertRaises(package_mod.Usage) as ctx:
+                package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+            self.assertIn("uv not found", str(ctx.exception))
+
+        for rel, content in before.items():
+            self.assertEqual((tree / rel).read_bytes(), content, f"{rel} was modified when uv was missing")
+
+    def test_sync_rolls_back_all_files_when_uv_lock_fails(self) -> None:
+        tree = self._copy_version_tree(with_uv_lock=True)
+        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        tracked = (*self.VERSION_FILES, "uv.lock")
+        before = {rel: (tree / rel).read_bytes() for rel in tracked}
+
+        def failing_uv(cmd, cwd=None, capture_output=False, text=False):
+            # Simulate partial uv.lock mutation before failing.
+            (Path(cwd) / "uv.lock").write_bytes(b"corrupted-partial-lock\n")
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="simulated offline failure")
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(package_mod, "ROOT", tree),
+            mock.patch.object(package_mod.shutil, "which", return_value="/usr/bin/uv"),
+            mock.patch.object(package_mod.subprocess, "run", side_effect=failing_uv),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+
+        self.assertEqual(rc, 1)
+        self.assertIn("uv lock --offline failed: simulated offline failure", err.getvalue())
+        for rel, content in before.items():
+            self.assertEqual((tree / rel).read_bytes(), content, f"{rel} was not rolled back after uv failure")
+
+    def test_sync_rolls_back_all_files_when_post_sync_check_fails(self) -> None:
+        tree = self._copy_version_tree(with_uv_lock=True)
+        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        tracked = (*self.VERSION_FILES, "uv.lock")
+        before = {rel: (tree / rel).read_bytes() for rel in tracked}
+
+        def noop_uv(cmd, cwd=None, capture_output=False, text=False):
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(package_mod, "ROOT", tree),
+            mock.patch.object(package_mod.shutil, "which", return_value="/usr/bin/uv"),
+            mock.patch.object(package_mod.subprocess, "run", side_effect=noop_uv),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+
+        self.assertEqual(rc, 1)
+        self.assertIn("uv.lock", err.getvalue())
+        for rel, content in before.items():
+            self.assertEqual((tree / rel).read_bytes(), content, f"{rel} was not rolled back on post-sync error")
+
+    def test_version_flag_validation_and_cli_exit_code_2(self) -> None:
+        with self.assertRaises(package_mod.Usage):
+            package_mod.version_command(argparse.Namespace(dry_run=True))
+        with self.assertRaises(package_mod.Usage):
+            package_mod.version_command(argparse.Namespace(sync=True, expect="v1.0.0"))
+        with self.assertRaises(package_mod.Usage):
+            package_mod.version_command(argparse.Namespace(sync=True, check=True))
+
+        for bad_args in (["--dry-run"], ["--sync", "--expect", "v1.0.0"], ["--sync", "--check"]):
+            p = subprocess.run([sys.executable, str(PACKAGE), "version", *bad_args], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 2, (bad_args, p.stdout, p.stderr))
+            self.assertIn("package: error:", p.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

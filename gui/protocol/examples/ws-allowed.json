@@ -10,7 +10,7 @@
     {
       "type": "hello",
       "vehicle_sil_gui": 3,
-      "version": "0.3.0",
+      "version": "<version>",
       "instance": "0123456789abcdef",
       "session": null,
       "allowed": {

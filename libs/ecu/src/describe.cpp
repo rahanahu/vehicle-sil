@@ -105,8 +105,6 @@ bool is_utf8(std::string_view text) noexcept
 
 } // namespace detail
 
-const char* version() noexcept { return VEHICLE_SIL_VERSION; }
-
 const char* to_string(NetworkKind kind)
 {
     const std::string_view name = detail::network_kind_name(kind);

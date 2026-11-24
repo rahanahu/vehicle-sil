@@ -51,7 +51,7 @@
 | `tests/scripts/test_verify_common.py` | `scripts/verify_common.py`: 共通のパス、stdio の再設定、使い方エラー、パス表記、`--tag` の検査、ANSI 行の整形、プロセスグループのヘルパー、`verify*.py` の取り込みと `--help` |
 | `tests/scripts/test_hotspots.py` | `scripts/hotspots.py`: 信号（大きさ、変更の頻度、stack、parallel）、下の層と独立した作業の分け方、数えないもの（マージ済み、閉じた、古い）、観測できなかった範囲の表示、HEAD にないパス、`gh` の失敗、無応答、想定外の応答（Windows では実行しません） |
 | `tests/scripts/test_trace_report.py` | `scripts/trace-report.py`: 作ったトレースで、各ステップを最後に終えた参加者、同期の時間、ランチャーの保持、書き込みごとの往復、終了コード |
-| `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 のライセンス収集と Windows の `--build-only` 出力 |
+| `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 のライセンス収集、Windows の `--build-only` 出力、`version --sync` |
 | `tests/template/test_get_tools.py` | `package.py template`、`version` |
 
 - `ctest -R`: `^template\.get_tools`、`^scripts\.`
@@ -101,8 +101,10 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 - `python/vehicle_sil_control/__init__.py` と `gui/server/src/vehicle_sil_gui/__init__.py` の `__version__`
 - `template/get_tools.py`
 - `template/CMakeLists.txt` の `GIT_TAG`
-- `template/README.md` のバージョン
+- `template/README.md` と `template/README.ja.md` のバージョン
 - `CHANGELOG.md` の見出し `## [<version>] - Unreleased`
+
+ルートの `CMakeLists.txt` を更新した後、`scripts/package.py version --sync` は上のファイル（`CHANGELOG.md` を除く）を更新し、`uv.lock` の更新が必要なときは `uv lock --offline` を実行します（`--dry-run` は書き換えずに予定を表示します）。
 
 リリースのとき:
 
@@ -112,7 +114,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 テスト:
 
-- `scripts/package.py version`（と `template.get_tools`）が、不整合を見つけます。
+- `scripts/package.py version`（または `--check`、および `template.get_tools`）が、`uv.lock` を含む不整合を見つけます。
 - `--expect v<version>`（リリースのワークフロー）は、日付のない見出しも拒否します。
 
 ### npm へのクライアントのライブラリの公開
