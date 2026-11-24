@@ -98,6 +98,7 @@ class AllChecks(unittest.TestCase):
         step = next(s for s in steps if s.get("name") == "The GUI server against this launcher")
         self.assertIn("-k test_real_", step["run"])
         self.assertIn("--no-sync", step["run"])
+        self.assertIn("--workers 4", step["run"])
         tests_dir = ROOT / "gui" / "server" / "tests"
         for path in sorted(tests_dir.rglob("test_*.py")):
             if path.relative_to(tests_dir).as_posix() == "test_example_client.py":
@@ -318,11 +319,35 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
             step = next(s for s in JOBS[job_name]["steps"] if s.get("name") == "Configure, build and test")
             self.assertEqual(step["env"]["CTEST_FILTER"], "${{ needs.changes.outputs.ctest_filter }}", job_name)
             self.assertIn('--tests "$CTEST_FILTER"', step["run"], job_name)
+            self.assertIn("-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON", step["run"], job_name)
+            # Batching must only be enabled when CTEST_FILTER is empty (in the else branch).
+            self.assertRegex(
+                step["run"],
+                r'if \[ -n "\$CTEST_FILTER" \]; then\s+extra\+=\(--tests "\$CTEST_FILTER"\)\s+else\s+extra\+=\(--cmake-arg=-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON\)\s+fi',
+                job_name,
+            )
+
+        for job_name in ("linux-tsan", "linux-oldest-cmake"):
+            step = next(s for s in JOBS[job_name]["steps"] if s.get("name") == "Configure, build and test")
+            self.assertIn("-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON", step["run"], job_name)
 
         recordings_step = next(
             s for s in JOBS["linux"]["steps"] if s.get("name") == "The GUI's recordings against this launcher"
         )
         self.assertIn("needs.changes.outputs.ctest_filter == ''", recordings_step["if"])
+        self.assertIn("--compare version check-simulation run-simulation control-scenario-passes", recordings_step["run"])
+
+    def test_ccache_maxsize_and_age_eviction_policy(self):
+        self.assertIn("matrix.preset == 'linux-clang-asan' && '700M'", JOBS["linux"]["env"]["CCACHE_MAXSIZE"])
+        self.assertEqual(JOBS["linux-tsan"]["env"]["CCACHE_MAXSIZE"], "700M")
+        for job_name in ("linux", "linux-tsan", "linux-oldest-cmake", "windows"):
+            step = next(s for s in JOBS[job_name]["steps"] if s.get("name") == "Compiler cache statistics and cleanup")
+            self.assertIn("ccache --evict-older-than 7d", step["run"], job_name)
+            self.assertLess(
+                step["run"].index("ccache --evict-older-than 7d"),
+                step["run"].index("ccache -c"),
+                job_name,
+            )
 
     def test_non_gui_scripts_allowlist_has_no_gui_script_imports(self):
         look = next(s for s in JOBS["changes"]["steps"] if s.get("id") == "look")["run"]
@@ -368,25 +393,53 @@ class ChangesTruthTable(unittest.TestCase):
         look = next(s for s in JOBS["changes"]["steps"] if s.get("id") == "look")
         cls.script = look["run"]
 
-    def evaluate(self, event: str, files: list[str]) -> dict[str, str]:
-        wrapper = (
+    def evaluate_many(self, inputs: list[tuple[str, list[str]]]) -> list[dict[str, str]]:
+        """Runs the `changes` bash script for all cases in one bash invocation (isolated per-case subshells)."""
+        runner = (
             'export PATH="/usr/bin:/bin:$PATH"\n'
-            "set -euo pipefail\n"
-            'git() { printf "%s\\n" "$MOCK_FILES"; }\n'
-            f"{self.script}\n"
+            "while IFS=$'\\t' read -r idx event; do\n"
+            '  [ -n "$idx" ] || continue\n'
+            "  (\n"
+            "    set -euo pipefail\n"
+            '    EVENT="$event"\n'
+            '    GITHUB_OUTPUT="$CASES_DIR/out_$idx.txt"\n'
+            '    MOCK_FILES=$(<"$CASES_DIR/in_$idx.txt")\n'
+            '    git() { printf "%s\\n" "$MOCK_FILES"; }\n'
+            '    source "$CASES_DIR/script.sh"\n'
+            '  ) >"$CASES_DIR/stdout_$idx.txt" 2>"$CASES_DIR/stderr_$idx.txt"\n'
+            '  printf "%s\\n" "$?" >"$CASES_DIR/rc_$idx.txt"\n'
+            'done <"$CASES_DIR/cases.txt"\n'
         )
         with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "github_output.txt"
-            env = {
-                **os.environ,
-                "EVENT": event,
-                "MOCK_FILES": "\n".join(files),
-                "GITHUB_OUTPUT": out.as_posix(),
-            }
-            proc = subprocess.run([BASH, "-c", wrapper], env=env, capture_output=True, text=True)
-            self.assertEqual(proc.returncode, 0, f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
-            lines = [line.strip() for line in out.read_text(encoding="utf-8").splitlines() if "=" in line]
-        return dict(line.split("=", 1) for line in lines)
+            tmp_path = Path(tmp)
+            (tmp_path / "script.sh").write_text(self.script + "\n", encoding="utf-8", newline="\n")
+            manifest_lines: list[str] = []
+            for idx, (event, files) in enumerate(inputs):
+                (tmp_path / f"in_{idx}.txt").write_text(
+                    "\n".join(files) + ("\n" if files else ""),
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                manifest_lines.append(f"{idx}\t{event}")
+            (tmp_path / "cases.txt").write_text("\n".join(manifest_lines) + "\n", encoding="utf-8", newline="\n")
+            env = {**os.environ, "CASES_DIR": tmp_path.as_posix()}
+            proc = subprocess.run([BASH, "-c", runner], env=env, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, f"batch runner failed:\nstdout: {proc.stdout}\nstderr: {proc.stderr}")
+            results: list[dict[str, str]] = []
+            for idx, (event, files) in enumerate(inputs):
+                rc_path = tmp_path / f"rc_{idx}.txt"
+                self.assertTrue(rc_path.is_file(), f"missing rc file for case {idx} ({event}, {files})")
+                rc = int(rc_path.read_text(encoding="utf-8").strip())
+                stdout = (tmp_path / f"stdout_{idx}.txt").read_text(encoding="utf-8")
+                stderr = (tmp_path / f"stderr_{idx}.txt").read_text(encoding="utf-8")
+                self.assertEqual(rc, 0, f"case {idx} ({event}, {files}) failed (rc={rc}):\nstdout: {stdout}\nstderr: {stderr}")
+                out_path = tmp_path / f"out_{idx}.txt"
+                lines = [line.strip() for line in out_path.read_text(encoding="utf-8").splitlines() if "=" in line]
+                results.append(dict(line.split("=", 1) for line in lines))
+        return results
+
+    def evaluate(self, event: str, files: list[str]) -> dict[str, str]:
+        return self.evaluate_many([(event, files)])[0]
 
     def test_pull_request_and_push_truth_table(self):
         debug = '["linux-gcc-debug"]'
@@ -637,9 +690,10 @@ class ChangesTruthTable(unittest.TestCase):
                  "gui_docs": "false", "gui_pack_docs": "false", "tsan": "true", "windows": "true", "presets": full_main},
             ),
         ]
-        for description, event, files, expected in cases:
+        actuals = self.evaluate_many([(event, files) for _, event, files, _ in cases])
+        for (description, event, _files, expected), actual in zip(cases, actuals, strict=True):
             with self.subTest(description=description, event=event):
-                self.assertEqual(self.evaluate(event, files), {"ctest_filter": "", **expected}, description)
+                self.assertEqual(actual, {"ctest_filter": "", **expected}, description)
 
 
 if __name__ == "__main__":

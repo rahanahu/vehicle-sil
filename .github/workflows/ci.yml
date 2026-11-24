@@ -196,16 +196,18 @@ jobs:
           if [ "$EVENT" != pull_request ]; then
             presets=${presets%]}', "linux-clang-asan"]'
           fi
-          echo "docs_only=$docs_only" | tee -a "$GITHUB_OUTPUT"
-          echo "full=$full" | tee -a "$GITHUB_OUTPUT"
-          echo "gui=$gui" | tee -a "$GITHUB_OUTPUT"
-          echo "gui_server=$gui_server" | tee -a "$GITHUB_OUTPUT"
-          echo "gui_docs=$gui_docs" | tee -a "$GITHUB_OUTPUT"
-          echo "gui_pack_docs=$gui_pack_docs" | tee -a "$GITHUB_OUTPUT"
-          echo "tsan=$tsan" | tee -a "$GITHUB_OUTPUT"
-          echo "windows=$windows" | tee -a "$GITHUB_OUTPUT"
-          echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
-          echo "ctest_filter=$ctest_filter" | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "docs_only=$docs_only"
+            echo "full=$full"
+            echo "gui=$gui"
+            echo "gui_server=$gui_server"
+            echo "gui_docs=$gui_docs"
+            echo "gui_pack_docs=$gui_pack_docs"
+            echo "tsan=$tsan"
+            echo "windows=$windows"
+            echo "presets=$presets"
+            echo "ctest_filter=$ctest_filter"
+          } | tee -a "$GITHUB_OUTPUT"
       - name: C++ build input hash
         id: cpp-hash
         run: |
@@ -246,8 +248,9 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESSLEVEL: "6"
       # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles (FetchContent gRPC uses -g0
-      # and CI Debug/Sanitizer presets use -g1 to stay within the repository cache budget).
-      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '1.3G' || matrix.preset == 'linux-gcc-static' && '200M' || '500M' }}
+      # and CI Debug/Sanitizer presets use -g1 to stay within the repository cache budget). ASan uses 700M so
+      # incremental builds have headroom without cleanups while staying inside GitHub's 10 GiB cache limit.
+      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '1.3G' || matrix.preset == 'linux-clang-asan' && '700M' || matrix.preset == 'linux-gcc-static' && '200M' || '500M' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       VEHICLE_SIL_LOG_ARTIFACT: logs-${{ matrix.preset }}
@@ -417,6 +420,8 @@ jobs:
           esac
           if [ -n "$CTEST_FILTER" ]; then
             extra+=(--tests "$CTEST_FILTER")
+          else
+            extra+=(--cmake-arg=-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON)
           fi
           if [ "${{ matrix.preset }}" = "linux-gcc-control" ] && [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ steps.grpc-src.outputs.cache-hit }}" = "true" ]; then
             mkdir -p build/linux-gcc-control/_deps
@@ -448,12 +453,16 @@ jobs:
         run: |
           cmake --preset linux-gcc-release -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON -DVEHICLE_SIL_TEST_FETCHCONTENT=ON -DCMAKE_C_FLAGS_DEBUG=-g1 -DCMAKE_CXX_FLAGS_DEBUG=-g1
           python3 scripts/verify.py linux-gcc-release --no-configure --tests '^fetchcontent\.template$' --tag ci-fetchcontent
-      # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): are they still what this
-      # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server
-      # are skipped and said so: the preset is built without it; linux-gcc-control compares them.)
+      # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): linux-gcc-control compares
+      # every case (including the control server) inside test_real_launcher.py; here we smoke-check a non-control
+      # build (version --json omitting control-server/scenario-control/scenario-time via control-scenario-passes,
+      # plus check and run).
       - name: The GUI's recordings against this launcher
         if: matrix.preset == 'linux-gcc-debug' && needs.changes.outputs.ctest_filter == ''
-        run: python3 gui/server/tests/record_launcher.py --launcher build/linux-gcc-debug/tools/launch/vehicle_sil_launch --compare
+        run: >-
+          python3 gui/server/tests/record_launcher.py
+          --launcher build/linux-gcc-debug/tools/launch/vehicle_sil_launch
+          --compare version check-simulation run-simulation control-scenario-passes
       # The Python client's tests and the examples of examples/launch_control are added only where CMake finds a
       # Python with grpcio and grpcio-tools (here the uv environment); without one they would be left out silently.
       - name: The control server's Python tests were run
@@ -485,12 +494,13 @@ jobs:
       - name: The GUI server against this launcher
         if: matrix.preset == 'linux-gcc-control'
         run: >-
-          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait --no-sync -k test_real_ --tag ci
+          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait --no-sync -k test_real_ --workers 4 --tag ci
           --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ steps.ccache-restore.outputs.cache-hit }}" != "true" ]; then
+            ccache --evict-older-than 7d
             ccache -c
           fi
           ccache -s
@@ -523,7 +533,7 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESSLEVEL: "6"
-      CCACHE_MAXSIZE: 500M
+      CCACHE_MAXSIZE: 700M
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       # Empty (not set): the preset's default factor (4) applies.
@@ -586,10 +596,12 @@ jobs:
           python3 scripts/verify.py linux-clang-tsan --tag ci
           --cmake-arg="-DCMAKE_C_FLAGS_DEBUG=-O1 -g1"
           --cmake-arg="-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g1"
+          --cmake-arg=-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ steps.ccache-restore.outputs.cache-hit }}" != "true" ]; then
+            ccache --evict-older-than 7d
             ccache -c
           fi
           ccache -s
@@ -701,11 +713,12 @@ jobs:
         run: |
           cmake --version | head -n 1
           cmake --version | grep -qxF "cmake version $CMAKE_OLDEST"
-          python3 scripts/verify.py linux-gcc-release --tag ci
+          python3 scripts/verify.py linux-gcc-release --tag ci --cmake-arg=-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ steps.ccache-restore.outputs.cache-hit }}" != "true" ]; then
+            ccache --evict-older-than 7d
             ccache -c
           fi
           ccache -s
@@ -845,12 +858,15 @@ jobs:
           extra=()
           if [ -n "$CTEST_FILTER" ]; then
             extra+=(--tests "$CTEST_FILTER")
+          else
+            extra+=(--cmake-arg=-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON)
           fi
           python scripts/verify.py windows-mingw-release --tag ci "${extra[@]}"
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ steps.ccache-restore.outputs.cache-hit }}" != "true" ]; then
+            ccache --evict-older-than 7d
             ccache -c
           fi
           ccache -s

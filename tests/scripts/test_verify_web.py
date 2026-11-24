@@ -642,6 +642,33 @@ class VerifyGuiFilteringTest(unittest.TestCase):
         skipped_names = {entry["step"] for entry in payload.get("skipped", [])}
         self.assertEqual(skipped_names, {"web", "example", "real"})
 
+    def test_workers_option_overrides_default_xdist_behavior(self) -> None:
+        # Explicit --workers 4 enables -n 4 even with -k (used by CI for test_real_).
+        code, out, err, ran, _ = self._run_main(
+            ["--no-sync", "--no-wait", "-k", "test_real_", "--workers", "4"], has_node=False
+        )
+        self.assertEqual(code, 0, err + out)
+        self.assertEqual([name for name, _ in ran], ["server"])
+        cmd = ran[0][1]
+        self.assertIn("-k", cmd)
+        idx = cmd.index("-n")
+        self.assertEqual(cmd[idx + 1], "4")
+
+        # --workers 1 disables -n even on a full server run.
+        code, out, err, ran, _ = self._run_main(
+            ["--skip-web", "--no-sync", "--no-wait", "--workers", "1"], has_node=False
+        )
+        self.assertEqual(code, 0, err + out)
+        self.assertEqual([name for name, _ in ran], ["server"])
+        self.assertNotIn("-n", ran[0][1])
+
+        # Invalid --workers -> exit 2.
+        for bad in ("0", "-2"):
+            code, _out, err, ran, _ = self._run_main(["--skip-web", "--no-sync", "--workers", bad], has_node=False)
+            self.assertEqual(code, 2, (bad, err))
+            self.assertIn("--workers", err)
+            self.assertEqual(ran, [])
+
     def test_positional_targets_implies_server_only_without_n_or_ignore(self) -> None:
         target = "gui/server/tests/test_availability.py"
         code, out, err, ran, _ = self._run_main(["--no-sync", "--no-wait", target], has_node=False)
