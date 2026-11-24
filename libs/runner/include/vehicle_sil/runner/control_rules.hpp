@@ -37,10 +37,11 @@ enum class Operation
 /// Where an operation came in.
 enum class Entry
 {
-    Stdin,         ///< run --stdin-commands
+    Stdin,         ///< run --stdin-commands / serve stdin
     ControlServer, ///< run --control
+    Api,           ///< in-process ExecutionRuntime API
 };
-/// "stdin", "control_server": the `source` of the command events.
+/// "stdin", "control_server", "api": the `source` of the command events.
 [[nodiscard]] const char* entry_name(Entry entry);
 /// The entry whose entry_name() is `source`; empty for any other text (TimeCommands::apply()
 /// refuses a command of such a source: nothing is taken as from the entry with the fewer rules).

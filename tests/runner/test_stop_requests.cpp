@@ -8,6 +8,7 @@
 #include "vehicle_sil/runner/stop_requests.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <string>
 #include <thread>
 #include <vector>
@@ -172,4 +173,147 @@ TEST_CASE(a_stop_source_has_the_kind_of_who_asked)
     CHECK(std::string(stop_kind_name(StopKind::Operator)) == std::string("operator"));
     CHECK(std::string(stop_kind_name(StopKind::Signal)) == std::string("signal"));
     CHECK(std::string(stop_kind_name(StopKind::Supervisor)) == std::string("supervisor"));
+}
+
+TEST_CASE(stop_requests_raise_to_is_idempotent_monotonic_and_preserves_first_source)
+{
+    StopRequests stops;
+    CHECK_EQ(stops.raise_to(kSignal, 0), 0);
+    CHECK_EQ(stops.raise_to(kSignal, -2), 0);
+    CHECK_EQ(stops.count(), 0);
+    CHECK_EQ(stops.first(), 0);
+
+    CHECK_EQ(stops.raise_to(kSignal, 1), 1);
+    CHECK_EQ(stops.count(), 1);
+    CHECK_EQ(stops.first(), kSignal);
+    CHECK_EQ(stops.raise_to(kOther, -1), 1);
+    CHECK_EQ(stops.raise_to(kOther, 0), 1);
+    CHECK_EQ(stops.count(), 1);
+    CHECK_EQ(stops.first(), kSignal);
+
+    // Repeating the same level is a no-op and preserves the first source.
+    CHECK_EQ(stops.raise_to(kOther, 1), 1);
+    CHECK_EQ(stops.count(), 1);
+    CHECK_EQ(stops.first(), kSignal);
+
+    // Escalating to 2 raises count_ to 2 and preserves the first source.
+    CHECK_EQ(stops.raise_to(kOther, 2), 2);
+    CHECK_EQ(stops.count(), 2);
+    CHECK_EQ(stops.first(), kSignal);
+
+    // Repeating 2 or passing a lower level never lowers count_.
+    CHECK_EQ(stops.raise_to(kEnd, 2), 2);
+    CHECK_EQ(stops.raise_to(kEnd, 1), 2);
+    CHECK_EQ(stops.raise_to(kEnd, 0), 2);
+    CHECK_EQ(stops.raise_to(kEnd, -1), 2);
+    CHECK_EQ(stops.count(), 2);
+    CHECK_EQ(stops.first(), kSignal);
+
+    // Direct jump from 0 to 2.
+    StopRequests direct;
+    CHECK_EQ(direct.raise_to(kOther, 2), 2);
+    CHECK_EQ(direct.count(), 2);
+    CHECK_EQ(direct.first(), kOther);
+
+    // Interaction with request() and request_first().
+    StopRequests mixed;
+    mixed.request(kSignal, 3);
+    CHECK_EQ(mixed.raise_to(kOther, 2), 3);
+    CHECK_EQ(mixed.count(), 3);
+    CHECK_EQ(mixed.first(), kSignal);
+
+    StopRequests mixed2;
+    CHECK_EQ(mixed2.raise_to(kSignal, 1), 1);
+    CHECK(!mixed2.request_first(kEnd, [] {}));
+    mixed2.request(kOther);
+    CHECK_EQ(mixed2.count(), 2);
+    CHECK_EQ(mixed2.first(), kSignal);
+}
+
+TEST_CASE(stop_requests_raise_to_under_multithreaded_contention)
+{
+    constexpr int kRounds = 8;
+    constexpr int kActiveThreads = 8;
+    constexpr int kNoOpThreads = 4;
+
+    struct ThreadResult
+    {
+        int r_neg = -1;
+        int r0 = -1;
+        int r1 = -1;
+        int first_after_r1 = 0;
+        int r2 = -1;
+        int r3 = -1;
+        int r_final_neg = -1;
+        int first_after_r2 = 0;
+    };
+
+    for (int round = 0; round < kRounds; ++round)
+    {
+        StopRequests stops;
+        std::atomic<bool> go{false};
+        std::vector<ThreadResult> active_results(kActiveThreads);
+        std::vector<ThreadResult> noop_results(kNoOpThreads);
+        std::vector<std::thread> threads;
+        threads.reserve(kActiveThreads + kNoOpThreads);
+
+        for (int i = 0; i < kActiveThreads; ++i)
+        {
+            threads.emplace_back([&, i, source = i + 1] {
+                while (!go.load())
+                {
+                    std::this_thread::yield();
+                }
+                ThreadResult& res = active_results[static_cast<std::size_t>(i)];
+                res.r_neg = stops.raise_to(source, -1);
+                res.r0 = stops.raise_to(source, 0);
+                res.r1 = stops.raise_to(source, 1);
+                res.first_after_r1 = stops.first();
+                res.r2 = stops.raise_to(source, 2);
+                res.r3 = stops.raise_to(source, 1);
+                res.r_final_neg = stops.raise_to(source, -1);
+                res.first_after_r2 = stops.first();
+            });
+        }
+        for (int j = 0; j < kNoOpThreads; ++j)
+        {
+            threads.emplace_back([&, j, source = 100 + j] {
+                while (!go.load())
+                {
+                    std::this_thread::yield();
+                }
+                ThreadResult& res = noop_results[static_cast<std::size_t>(j)];
+                res.r_neg = stops.raise_to(source, -1);
+                res.r0 = stops.raise_to(source, 0);
+            });
+        }
+
+        go = true;
+        for (std::thread& t : threads)
+        {
+            t.join();
+        }
+
+        CHECK_EQ(stops.count(), 2);
+        const int first = stops.first();
+        CHECK(first >= 1 && first <= kActiveThreads);
+
+        for (const ThreadResult& res : active_results)
+        {
+            CHECK(res.r_neg >= 0 && res.r_neg <= 2);
+            CHECK(res.r0 >= res.r_neg && res.r0 <= 2);
+            CHECK(res.r1 >= 1 && res.r1 <= 2);
+            CHECK(res.r1 >= res.r0);
+            CHECK_EQ(res.first_after_r1, first);
+            CHECK_EQ(res.r2, 2);
+            CHECK_EQ(res.r3, 2);
+            CHECK_EQ(res.r_final_neg, 2);
+            CHECK_EQ(res.first_after_r2, first);
+        }
+        for (const ThreadResult& res : noop_results)
+        {
+            CHECK(res.r_neg >= 0 && res.r_neg <= 2);
+            CHECK(res.r0 >= res.r_neg && res.r0 <= 2);
+        }
+    }
 }

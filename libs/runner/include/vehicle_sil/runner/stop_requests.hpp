@@ -82,8 +82,8 @@ inline constexpr int kControlStop = -4;
 /// its own); 0 means that nothing has asked.
 ///
 /// Threads and signals: every function may be called from any thread at any time. request(),
-/// count() and first() touch only the two lock-free atomics (no lock, no allocation, no output),
-/// so a signal handler or a console control handler may call them. request_first() calls
+/// raise_to(), count() and first() touch only the two lock-free atomics (no lock, no allocation, no
+/// output), so a signal handler or a console control handler may call them. request_first() calls
 /// `before`, so it is as safe as `before` is: not for a signal handler unless `before` is.
 class StopRequests
 {
@@ -96,6 +96,23 @@ public:
         int none = 0;
         first_.compare_exchange_strong(none, source);
         count_.fetch_add(count);
+    }
+
+    /// Atomically raises count_ to at least `level` (no-op if level <= 0 or count_ >= level).
+    /// Lock-free (safe from any thread or signal handler). Records `source` only if nothing asked before.
+    int raise_to(int source, int level) noexcept
+    {
+        if (level <= 0)
+        {
+            return count_.load();
+        }
+        int none = 0;
+        first_.compare_exchange_strong(none, source);
+        int cur = count_.load();
+        while (cur < level && !count_.compare_exchange_weak(cur, level))
+        {
+        }
+        return cur < level ? level : cur;
     }
 
     /// A request only if nothing has asked for a stop yet (never a second request). `before` runs

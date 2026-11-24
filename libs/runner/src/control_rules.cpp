@@ -40,11 +40,20 @@ Operation command_operation(std::string_view name)
     return Operation::Unknown;
 }
 
-const char* entry_name(Entry entry) { return entry == Entry::ControlServer ? "control_server" : "stdin"; }
+const char* entry_name(Entry entry)
+{
+    switch (entry)
+    {
+    case Entry::Stdin: return "stdin";
+    case Entry::ControlServer: return "control_server";
+    case Entry::Api: return "api";
+    }
+    return "";
+}
 
 std::optional<Entry> entry_of(std::string_view source)
 {
-    for (const Entry e : {Entry::Stdin, Entry::ControlServer})
+    for (const Entry e : {Entry::Stdin, Entry::ControlServer, Entry::Api})
     {
         if (source == entry_name(e))
         {
@@ -95,26 +104,26 @@ struct Rule
 //
 //   row                      entry           operation                          when
 //   scenario-running         control server  write                              a scenario plays
-//   not-running              standard input  all but stop                       detached
+//   not-running              stdin / api     all but stop                       detached
 //                            control server  all but write                      detached
-//   not-a-time-command       both            unknown                            always
-//                            standard input  write                              always
-//   outside-real-time        both            pause step run_until,              the time is locked (the run is
+//   not-a-time-command       all             unknown                            always
+//                            stdin / api     write                              always
+//   outside-real-time        all             pause step run_until,              the time is locked (the run is
 //                                            speed other than 1 (also max)      connected outside, --time-policy
 //                                                                               realtime)
-//   out-of-range (speed)     both            speed                              value not kMinSpeed..kMaxSpeed
-//   out-of-range (step)      both            step                               ms not 1..kMaxMillis
-//   missing-argument         both            run_until                          no at_ms
-//   out-of-range (time)      both            pause at a time, run_until         at_ms not 0..kMaxMillis
-//   not-set-up               both            step, pause at a time, run_until   setting up
-//   not-paused               both            step                               not paused
+//   out-of-range (speed)     all             speed                              value not kMinSpeed..kMaxSpeed
+//   out-of-range (step)      all             step                               ms not 1..kMaxMillis
+//   missing-argument         all             run_until                          no at_ms
+//   out-of-range (time)      all             pause at a time, run_until         at_ms not 0..kMaxMillis
+//   not-set-up               all             step, pause at a time, run_until   setting up
+//   not-paused               all             step                               not paused
 //
-// The time commands get the same answer from both entries, but for a stop: one from standard
-// input is taken whenever it comes (it is a stop request, and the run takes one until the process
-// ends); a control server's is refused once the simulation is over.
-// A write is a control server's alone (standard input has none: there the name is no time
-// command). It goes to the hub, not through the time commands: whether the run is over does not
-// matter to it here.
+// The time commands get the same answer from every entry, but for a stop: one from standard
+// input or the in-process API is taken whenever it comes (it is a stop request, and the run takes
+// one until the process ends); a control server's is refused once the simulation is over.
+// A write is a control server's alone (standard input and the in-process API have none: there the
+// name is no time command). It goes to the hub, not through the time commands: whether the run is
+// over does not matter to it here.
 //
 // A scenario: while it plays, nothing from outside writes a variable (a write that is not in the
 // scenario's file would change its result). The control server refuses those calls itself, before
@@ -136,7 +145,7 @@ constexpr std::array<Rule, 10> kRules{{
     {reason::kNotRunning,
      [](const Query& q) {
          return q.situation.stage == ControlStage::Detached &&
-                !(q.entry == Entry::Stdin && q.is(Operation::Stop)) &&
+                !((q.entry == Entry::Stdin || q.entry == Entry::Api) && q.is(Operation::Stop)) &&
                 !(q.entry == Entry::ControlServer && q.is(Operation::Write));
      },
      [](const Query& q) {
@@ -144,7 +153,10 @@ constexpr std::array<Rule, 10> kRules{{
                 " works from the start of the run until the simulation ends";
      }},
     {reason::kNotATimeCommand,
-     [](const Query& q) { return q.is(Operation::Unknown) || (q.entry == Entry::Stdin && q.is(Operation::Write)); },
+     [](const Query& q) {
+         return q.is(Operation::Unknown) ||
+                ((q.entry == Entry::Stdin || q.entry == Entry::Api) && q.is(Operation::Write));
+     },
      [](const Query& q) {
          return "'" + q.name_text() +
                 "' is no time command: the time commands are pause, resume, step, run_until and speed";
