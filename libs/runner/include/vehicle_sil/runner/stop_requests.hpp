@@ -18,6 +18,16 @@ enum class StopKind
     Supervisor,
 };
 
+/// The stop levels that a run distinguishes (StopRequests::count() / raise_to() / request()).
+namespace stop_level {
+/// No stop has been requested.
+inline constexpr int kNone = 0;
+/// First stop request: stops the simulation in order.
+inline constexpr int kGraceful = 1;
+/// Second (or immediate forceful) stop request: skips waits for participants to end.
+inline constexpr int kForce = 2;
+} // namespace stop_level
+
 /// The sources of a stop request that the library knows (negative; a source of 1 or more is the
 /// caller's own: a signal's number, a console event's code).
 namespace stop_source {
@@ -88,21 +98,22 @@ inline constexpr int kControlStop = -4;
 class StopRequests
 {
 public:
-    /// A request from `source`, counted `count` times: 1 as one Ctrl+C (the first stops the run in
-    /// order, the second skips the waits), 2 for a request that must not wait for a second one.
-    /// `source` is kept only if nothing asked before.
-    void request(int source, int count = 1) noexcept
+    /// A request from `source`, counted `count` times: stop_level::kGraceful (1) as one Ctrl+C
+    /// (the first stops the run in order, the second skips the waits), stop_level::kForce (2) for
+    /// a request that must not wait for a second one. `source` is kept only if nothing asked before.
+    void request(int source, int count = stop_level::kGraceful) noexcept
     {
         int none = 0;
         first_.compare_exchange_strong(none, source);
         count_.fetch_add(count);
     }
 
-    /// Atomically raises count_ to at least `level` (no-op if level <= 0 or count_ >= level).
-    /// Lock-free (safe from any thread or signal handler). Records `source` only if nothing asked before.
+    /// Atomically raises count_ to at least `level` (no-op if level <= stop_level::kNone or
+    /// count_ >= level). Lock-free (safe from any thread or signal handler). Records `source` only
+    /// if nothing asked before.
     int raise_to(int source, int level) noexcept
     {
-        if (level <= 0)
+        if (level <= stop_level::kNone)
         {
             return count_.load();
         }
@@ -128,8 +139,8 @@ public:
             return false;
         }
         before();
-        int zero = 0;
-        count_.compare_exchange_strong(zero, 1);
+        int zero = stop_level::kNone;
+        count_.compare_exchange_strong(zero, stop_level::kGraceful);
         return true;
     }
 

@@ -34,6 +34,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_lin_tests
     test_lin_cluster.cpp
     test_lin_protocol.cpp
     test_lin_virtual_time.cpp
+    test_silkit_lin_port.cpp
   LINK vehicle_sil::lin_silkit)
 
 # LIN cluster across processes: controller + LIN master (5 ms) + two LIN slaves (2 ms, 4 ms):

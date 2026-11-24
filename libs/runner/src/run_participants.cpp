@@ -343,7 +343,7 @@ int RunParticipants::look_at_children(bool before_start, bool bridges_only)
 int RunParticipants::gone_process(bool left)
 {
     int ended = -1;
-    static_cast<void>(wait_until(std::chrono::milliseconds(left ? 2000 : 0), 1, [&] {
+    static_cast<void>(wait_until(std::chrono::milliseconds(left ? 2000 : 0), stop_level::kGraceful, [&] {
         ended = look_at_children(true);
         return ended >= 0;
     }));
@@ -418,7 +418,7 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
     {
         // The first process of each and what it started: a wrapper (sh -c) may end before the
         // program it started has cleaned up.
-        const Waited waited = wait_until(stopTimeout, 1, [this, &asked] {
+        const Waited waited = wait_until(stopTimeout, stop_level::kGraceful, [this, &asked] {
             return std::all_of(asked.begin(), asked.end(), [this](std::size_t i) {
                 return children_[i]->poll().has_value() && !children_[i]->others_running();
             });

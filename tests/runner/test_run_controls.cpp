@@ -483,40 +483,41 @@ TEST_CASE(run_controls_raise_to_and_stop_wake_ignore_duplicate_levels)
     CHECK(enteredFuture.wait_for(scaled_timeout(2s)) == std::future_status::ready);
     std::this_thread::sleep_for(10ms);
 
+    namespace stop_level = vehicle_sil::runner::stop_level;
     const auto t0 = Clock::now();
     const Command first = controls.time().apply(named("stop"), "api", [&stops] {
-        static_cast<void>(stops.raise_to(vehicle_sil::runner::stop_source::kStopCommand, 1));
+        static_cast<void>(stops.raise_to(vehicle_sil::runner::stop_source::kStopCommand, stop_level::kGraceful));
     });
     CHECK(first.accepted);
     holder.join();
     const auto elapsed = Clock::now() - t0;
     CHECK(result == TimeCommands::Hold::GaveUp);
     CHECK_EQ(wakes.load(), 1);
-    CHECK_EQ(controls.state().stop_requests, 1);
+    CHECK_EQ(controls.state().stop_requests, stop_level::kGraceful);
     CHECK(controls.state().stopped_by == "stop command");
     CHECK(elapsed < scaled_timeout(500ms));
 
-    // Duplicate level 1 raise_to does not fire stop_wake again.
+    // Duplicate graceful raise_to does not fire stop_wake again.
     const Command dup1 = controls.time().apply(named("stop"), "api", [&stops] {
-        static_cast<void>(stops.raise_to(vehicle_sil::runner::stop_source::kStopCommand, 1));
+        static_cast<void>(stops.raise_to(vehicle_sil::runner::stop_source::kStopCommand, stop_level::kGraceful));
     });
     CHECK(dup1.accepted);
     CHECK_EQ(wakes.load(), 1);
-    CHECK_EQ(controls.state().stop_requests, 1);
+    CHECK_EQ(controls.state().stop_requests, stop_level::kGraceful);
 
-    // Escalation to level 2 fires stop_wake once more.
+    // Escalation to force fires stop_wake once more.
     const Command force = controls.time().apply(named("stop"), "api", [&stops] {
-        static_cast<void>(stops.raise_to(vehicle_sil::runner::stop_source::kStopCommand, 2));
+        static_cast<void>(stops.raise_to(vehicle_sil::runner::stop_source::kStopCommand, stop_level::kForce));
     });
     CHECK(force.accepted);
     CHECK_EQ(wakes.load(), 2);
-    CHECK_EQ(controls.state().stop_requests, 2);
+    CHECK_EQ(controls.state().stop_requests, stop_level::kForce);
 
-    // Duplicate level 2 raise_to does not fire stop_wake again.
+    // Duplicate force raise_to does not fire stop_wake again.
     const Command dup2 = controls.time().apply(named("stop"), "api", [&stops] {
-        static_cast<void>(stops.raise_to(vehicle_sil::runner::stop_source::kStopCommand, 2));
+        static_cast<void>(stops.raise_to(vehicle_sil::runner::stop_source::kStopCommand, stop_level::kForce));
     });
     CHECK(dup2.accepted);
     CHECK_EQ(wakes.load(), 2);
-    CHECK_EQ(controls.state().stop_requests, 2);
+    CHECK_EQ(controls.state().stop_requests, stop_level::kForce);
 }

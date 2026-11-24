@@ -174,6 +174,7 @@ template <typename S>
 Command decide_and_do(S& s, const Command& command, std::string_view source, const std::function<void()>& accepted)
 {
     Command out = command;
+    out.pending = false;
     /// An accepted step: where it ends (the command event's "at_ms").
     std::optional<SimTime> step_to;
     const std::string name = command.name.value_or("");
@@ -191,28 +192,34 @@ Command decide_and_do(S& s, const Command& command, std::string_view source, con
         out.message = std::move(decision.message);
         out.reason = std::move(decision.reason);
     }
-    else if (name == "step")
+    else
     {
-        // Whole steps of the controller: the simulation can stand still only at one of them.
-        out.ms = whole_steps(command.ms.value_or(1), s.step_ms);
-        if (SimulationController* c = s.controller)
+        out.accepted = true;
+        out.message.clear();
+        out.reason.clear();
+        if (name == "step")
         {
-            // From where it stands, or will stand after the steps asked for before. Read here,
-            // before the command's event, so that the event says where this step ends. The gate
-            // may go on between this look and run_until() below, but never past `step_to`: a step
-            // is taken only once a pause was asked for, so the gate stands still, or does at its
-            // next step or at its target, and each of those is at or before `step_to`. A pause()
-            // leaves no target ahead, so a step after it counts from `now`.
-            const TimeState t = c->time_state();
-            const SimTime from = t.pause_target && *t.pause_target > t.now ? *t.pause_target : t.now;
-            const SimDuration d = std::chrono::milliseconds(*out.ms);
-            step_to = d >= SimTime::max() - from ? SimTime::max() : from + d;
-            out.at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(step_to->time_since_epoch()).count();
+            // Whole steps of the controller: the simulation can stand still only at one of them.
+            out.ms = whole_steps(command.ms.value_or(1), s.step_ms);
+            if (SimulationController* c = s.controller)
+            {
+                // From where it stands, or will stand after the steps asked for before. Read here,
+                // before the command's event, so that the event says where this step ends. The gate
+                // may go on between this look and run_until() below, but never past `step_to`: a step
+                // is taken only once a pause was asked for, so the gate stands still, or does at its
+                // next step or at its target, and each of those is at or before `step_to`. A pause()
+                // leaves no target ahead, so a step after it counts from `now`.
+                const TimeState t = c->time_state();
+                const SimTime from = t.pause_target && *t.pause_target > t.now ? *t.pause_target : t.now;
+                const SimDuration d = std::chrono::milliseconds(*out.ms);
+                step_to = d >= SimTime::max() - from ? SimTime::max() : from + d;
+                out.at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(step_to->time_since_epoch()).count();
+            }
         }
-    }
-    else if (at_time)
-    {
-        out.at_ms = whole_steps(*command.at_ms, s.step_ms);
+        else if (at_time)
+        {
+            out.at_ms = whole_steps(*command.at_ms, s.step_ms);
+        }
     }
     if (s.on_command)
     {
@@ -331,6 +338,18 @@ Command TimeCommands::apply(const Command& command, std::string_view source, con
         State& s;
         ~Tell() { tell(s); }
     } const told{s};
+    // A command already refused before apply() (e.g. parse error) is never queued or executed.
+    if (command.is_refused())
+    {
+        Command out = command;
+        out.accepted = false;
+        out.pending = false;
+        if (s.on_command)
+        {
+            s.on_command(out, source);
+        }
+        return out;
+    }
     // Not known yet whether the time is locked: nothing but a stop is decided (a stop is taken
     // whatever the lock is, and must not wait behind the others).
     if (!s.lock_given && !s.detached && command.name != "stop")

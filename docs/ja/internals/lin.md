@@ -285,7 +285,7 @@ Slave のポートの `on_response()` には、go-to-sleep コマンドと自分
 
 ### SIL Kit のポート（`SilKitLinPort`）
 
-`SilKitLinPort(controller, role)` は、コンストラクターで SIL Kit のハンドラーを登録し、デストラクターで外します。コントローラーを所有しないので、participant より先に破棄します。型の変換（`LinFrame`、チェックサムモデル、状態）はこのポートの中だけにあります。
+`SilKitLinPort(controller, role)` は、コンストラクターで SIL Kit のハンドラーを登録し、`close()` で外します（実行中のコールバックの完了を待ち、デストラクターと `Peer::stop()` からも呼ばれます）。コントローラーを所有しないので、participant より先に閉じるか破棄します。型の変換（`LinFrame`、チェックサムモデル、状態）はこのポートの中だけにあります。
 
 - `open()` は、Master では `Init`（フレームの応答の設定は空）、Slave では `InitDynamic` です。
 - Slave のヘッダーのハンドラーだけは、`open()` の `InitDynamic` の後に登録します。SIL Kit の C API は、その前の登録を状態のエラーとしています。同じハンドラーの中なので、間にヘッダーは受信されません。

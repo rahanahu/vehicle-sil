@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace vehicle_sil::runner {
 
@@ -44,6 +45,22 @@ struct Command
     /// (TimeCommands), where the simulation will stand (the command event's "at_ms"), a whole
     /// number of the controller's steps. step: not read; once applied, where the step ends.
     std::optional<std::int64_t> at_ms{};
+
+    /// Constructs a well-formed command ready for TimeCommands::apply() or an accepted command event.
+    [[nodiscard]] static Command make(std::string name, std::optional<std::int64_t> id = std::nullopt)
+    {
+        Command c;
+        c.name = std::move(name);
+        c.id = id;
+        c.accepted = true;
+        return c;
+    }
+
+    /// Whether this command already carries a refusal (e.g. from parse_command() before apply()).
+    [[nodiscard]] bool is_refused() const noexcept
+    {
+        return !accepted && (!reason.empty() || !message.empty());
+    }
 
     [[nodiscard]] bool is_stop() const { return accepted && name == "stop"; }
     /// pause, resume, step, run_until or speed (TimeCommands applies it).

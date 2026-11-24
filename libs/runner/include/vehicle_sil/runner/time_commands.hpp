@@ -141,10 +141,12 @@ public:
     /// any other source is refused (reason::kUnknownSource) and written with that source, so that
     /// a misspelt or new source is never taken by the rules of another entry.
     ///
-    /// Precondition: callers must set `command.accepted = true` before calling apply() (as
-    /// parse_command() and programmatic command builders do); a command with `command.accepted == false`
-    /// is passed to OnCommand as-is and ignored without invoking `accepted` or taking effect even
-    /// when decide() succeeds.
+    /// Acceptance contract: a command that already carries a refusal (Command::is_refused(), e.g.
+    /// from parse_command()) is never accepted or executed: it is passed to OnCommand as refused
+    /// and returned unchanged (without waiting for set_time_lock() or invoking `accepted`). For any
+    /// other command (whether built with Command::make() or as a plain Command with `name` set),
+    /// decide() determines acceptance and apply() sets `accepted` on the returned Command
+    /// accordingly (an empty or unknown `name` is refused with reason::kNotATimeCommand).
     Command apply(const Command& command, std::string_view source);
     /// As apply(command, source), and if the command is accepted, `accepted` is called before
     /// apply() returns, under this object's mutex (short, must not wait): before any later

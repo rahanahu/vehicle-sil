@@ -548,10 +548,7 @@ CommandReply ExecutionRuntime::start_run(RunSubmission submission)
 CommandReply ExecutionRuntime::stop_run(const std::string& run_id, StopMode mode, std::string_view source,
                                         std::optional<std::int64_t> command_id)
 {
-    runner::Command stop_cmd;
-    stop_cmd.name = "stop";
-    stop_cmd.id = command_id;
-    stop_cmd.accepted = true;
+    const runner::Command stop_cmd = runner::Command::make("stop", command_id);
 
     const std::lock_guard lock(mutex_);
     if (run_id.empty())
@@ -576,12 +573,13 @@ CommandReply ExecutionRuntime::stop_run(const std::string& run_id, StopMode mode
         constexpr int stop_src = runner::stop_source::kStopCommand;
         switch (mode)
         {
-        case StopMode::Graceful: static_cast<void>(run.stops.raise_to(stop_src, 1)); break;
-        case StopMode::Force: static_cast<void>(run.stops.raise_to(stop_src, 2)); break;
+        case StopMode::Graceful: static_cast<void>(run.stops.raise_to(stop_src, runner::stop_level::kGraceful)); break;
+        case StopMode::Force: static_cast<void>(run.stops.raise_to(stop_src, runner::stop_level::kForce)); break;
         case StopMode::Escalate:
         {
             const int cur = run.stops.count();
-            static_cast<void>(run.stops.raise_to(stop_src, cur < 1 ? 1 : 2));
+            static_cast<void>(run.stops.raise_to(
+                stop_src, cur < runner::stop_level::kGraceful ? runner::stop_level::kGraceful : runner::stop_level::kForce));
             break;
         }
         }
@@ -592,7 +590,7 @@ CommandReply ExecutionRuntime::stop_run(const std::string& run_id, StopMode mode
 CommandReply ExecutionRuntime::send_time_command(const std::string& run_id, const runner::Command& command,
                                                  std::string_view source)
 {
-    if (!command.accepted && (!command.reason.empty() || !command.message.empty()))
+    if (command.is_refused())
     {
         const std::optional<std::string> asked =
             run_id.empty() ? std::nullopt : std::optional<std::string>(run_id);
@@ -600,20 +598,18 @@ CommandReply ExecutionRuntime::send_time_command(const std::string& run_id, cons
         sink_.on_refused(command, source, asked);
         return CommandReply{false, false, command.reason, command.message, asked, 0};
     }
-    runner::Command prepared = command;
-    prepared.accepted = true;
-    if (prepared.is_stop())
+    if (command.name == "stop")
     {
-        return stop_run(run_id, StopMode::Graceful, source, prepared.id);
+        return stop_run(run_id, StopMode::Graceful, source, command.id);
     }
     const std::lock_guard lock(mutex_);
     if (run_id.empty())
     {
         const std::string msg =
-            prepared.name.value_or("command") +
+            command.name.value_or("command") +
             " needs \"run\", the ID of the run it is for, as the event run_start gave it (serve runs one "
             "run after the other, and a command must not reach the next one)";
-        refuse_locked(prepared, source, serve_reason::kRunRequired, msg, std::nullopt);
+        refuse_locked(command, source, serve_reason::kRunRequired, msg, std::nullopt);
         return CommandReply{false, false, serve_reason::kRunRequired, msg, std::nullopt, 0};
     }
     if (current_ == nullptr || current_->id != run_id)
@@ -622,10 +618,10 @@ CommandReply ExecutionRuntime::send_time_command(const std::string& run_id, cons
             "the run " + run_id + " is not the current run" +
             (current_ == nullptr ? std::string(" (no run is under way)") : " (that is " + current_->id + ")") +
             ": it has ended, or is not of this launcher; the command is for no run";
-        refuse_locked(prepared, source, serve_reason::kRunChanged, msg, run_id);
+        refuse_locked(command, source, serve_reason::kRunChanged, msg, run_id);
         return CommandReply{false, false, serve_reason::kRunChanged, msg, run_id, 0};
     }
-    const runner::Command applied = current_->controls->time().apply(prepared, source);
+    const runner::Command applied = current_->controls->time().apply(command, source);
     return CommandReply{
         applied.accepted, applied.pending, applied.reason, applied.message, current_->id, current_->stops.count()};
 }
@@ -666,10 +662,7 @@ void ExecutionRuntime::request_shutdown(int stop_source)
         static_cast<void>(current_->stops.request_first(stop_source, [window, stop_source] {
             if (stop_source == runner::stop_source::kEndOfInput && window != nullptr)
             {
-                runner::Command stop;
-                stop.name = "stop";
-                stop.accepted = true;
-                window->command(stop, "eof");
+                window->command(runner::Command::make("stop"), "eof");
             }
         }));
         current_->controls->publish();
@@ -764,7 +757,7 @@ ExecutionEnd ExecutionRuntime::run_loop()
         // the run's count to 2+ (Force) or a launcher-end request cuts close_within.
         observers.close_cut = [this, stops](int stops_before_close) {
             const int now = stops->count();
-            return now > stops_before_close && (now >= 2 || end_.requested());
+            return now > stops_before_close && (now >= runner::stop_level::kForce || end_.requested());
         };
         RunReport report;
         bool contaminated = false;
@@ -811,8 +804,9 @@ ExecutionEnd ExecutionRuntime::run_loop()
         const bool end_before_result = end_.requested() || sink_.closed();
         const bool ends = contaminated || end_before_result;
         const int requests = end_.count();
-        const bool wrote = sink_.finish_run(*run->window, report, ends,
-                                            [this, requests] { return end_.count() > std::min(requests, 1); });
+        const bool wrote = sink_.finish_run(
+            *run->window, report, ends,
+            [this, requests] { return end_.count() > std::min(requests, runner::stop_level::kGraceful); });
         const bool output_failed = !wrote || sink_.closed();
         if (output_failed && !end_.requested())
         {

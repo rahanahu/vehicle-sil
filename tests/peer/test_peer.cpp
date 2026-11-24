@@ -1422,3 +1422,48 @@ TEST_CASE(peer_refuses_j1939_nodes_that_cannot_stand_and_what_add_node_refuses)
     CHECK(throws_with<std::invalid_argument>([&] { peer.j1939("BodyCAN").add_node({0x00, engine_name()}); },
                                              "is not arbitrary address capable: give an address of 0..253"));
 }
+
+TEST_CASE(peer_stop_closes_lin_ports_cleanly_while_traffic_runs)
+{
+    InProcessRegistry registry;
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"LinStopMaster", "LinStopSlave"};
+    control.stop_at = 30s;
+    SimulationController controller(control);
+
+    constexpr lin::LinId kRespId = 0x15;
+    std::atomic<std::size_t> masterOk{0};
+    std::atomic<std::size_t> slaveHeaders{0};
+
+    Peer masterPeer(coordinated("LinStopMaster", registry.uri, 5ms));
+    auto& master = masterPeer.lin_master(
+        "STOP_LIN", {{kRespId, 2, lin::LinChecksumModel::Enhanced, 10ms, lin::LinPublisher::Slave}});
+    master.on_result([&](const lin::LinScheduleResult& r) {
+        if (r.id == kRespId && r.status == lin::LinResultStatus::Ok)
+        {
+            masterOk.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+
+    Peer slavePeer(coordinated("LinStopSlave", registry.uri, 5ms));
+    auto& slave = slavePeer.lin_slave("STOP_LIN");
+    slavePeer.on_step([&](SimTime now) {
+        const std::uint8_t data[2]{0x12, 0x34};
+        slave.set_response(now, kRespId, data);
+        slaveHeaders.store(slave.statistics().responses_sent, std::memory_order_relaxed);
+    });
+
+    start_together(controller, {&masterPeer, &slavePeer});
+    CHECK(vehicle_sil::unit::eventually([&] { return masterOk.load(std::memory_order_relaxed) >= 2u; }, 30s));
+
+    // Stopping peers mid-run closes their LIN ports before destruction; repeated stop() is safe.
+    controller.stop("test stop");
+    masterPeer.stop("test stop");
+    slavePeer.stop("test stop");
+    masterPeer.stop("second stop");
+    slavePeer.stop("second stop");
+    CHECK(!masterPeer.failed());
+    CHECK(!slavePeer.failed());
+    CHECK(slaveHeaders.load(std::memory_order_relaxed) >= 2u);
+}

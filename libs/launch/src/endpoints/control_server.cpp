@@ -244,13 +244,7 @@ public:
     }
 
 private:
-    static runner::Command command(const char* name)
-    {
-        runner::Command c;
-        c.name = name;
-        c.accepted = true;
-        return c;
-    }
+    static runner::Command command(const char* name) { return runner::Command::make(name); }
 
     /// A time in whole milliseconds, rounded up; a time before 0 as -1 (refused).
     static std::int64_t at_ms(SimTime t)
