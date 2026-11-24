@@ -200,6 +200,7 @@ struct EventStream::State
     bool finished = false;       ///< the result has been written
     bool closed = false;
     bool told = false;           ///< on_closed has been called, or need not be
+    bool on_closed_done = false; ///< on_closed has returned, or need not be called
     std::string reason;
     bool ending = false;         ///< the destructor runs
     int threads = 0;
@@ -214,6 +215,7 @@ struct EventStream::State
         closed = true;
         reason = std::move(why);
         told = sealed || !on_closed; // after the result the run is over: result() says it
+        on_closed_done = told;
         queue.clear();
         dropping = nullptr;
         log_lines = log_bytes = other_events = 0;
@@ -452,6 +454,7 @@ void EventStream::watch(const std::shared_ptr<State>& state)
                 lock.unlock();
                 s.on_closed(reason);
                 lock.lock();
+                s.on_closed_done = true;
             }
             break;
         }
@@ -579,6 +582,17 @@ bool EventStream::wait_written(std::chrono::milliseconds timeout)
     State& s = *state_;
     std::unique_lock lock(s.mutex);
     return s.changed.wait_for(lock, timeout, [&s] { return s.closed || (s.queue.empty() && !s.writing); }) && !s.closed;
+}
+
+bool EventStream::wait_on_closed(std::chrono::milliseconds timeout)
+{
+    State& s = *state_;
+    std::unique_lock lock(s.mutex);
+    if (!s.closed)
+    {
+        return true;
+    }
+    return s.changed.wait_for(lock, timeout, [&s] { return s.on_closed_done || s.ending; }) && s.on_closed_done;
 }
 
 std::size_t EventStream::waiting_events() const

@@ -299,6 +299,11 @@ public:
     /// Waits up to `timeout` until every event given so far has been written; false if the time
     /// is over or the stream has closed.
     bool wait_written(std::chrono::milliseconds timeout);
+    /// If the stream has closed before its result (so `on_closed` runs on the watch thread), waits
+    /// up to `timeout` for `on_closed` to finish; true if the stream is not closed, if `on_closed`
+    /// need not run (sealed or empty), or once `on_closed` has returned; false if `timeout` ran out
+    /// first. Must not be called from `on_closed` itself.
+    bool wait_on_closed(std::chrono::milliseconds timeout);
     /// How many events but "log" wait to be written now (takes only the queue's mutex). The run
     /// makes no "time" event that says only that the time has moved while some wait: a reader that
     /// falls behind is not given up because of them (max_other_events).

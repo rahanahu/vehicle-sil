@@ -399,12 +399,23 @@ void note_from_thread(std::string_view line)
     }
 }
 
-/// The other threads write nothing more (the result has been written). Waits for a line that is
-/// being written, but not without a limit.
+/// The other threads write nothing more (the result has been written, or the launcher is ending).
+/// If the event stream closed before its result, waits up to kStderrWait for on_events_closed() to
+/// finish writing its stderr line before suppressing further thread notes; then waits up to
+/// kStderrWait for any other thread already writing to stderr.
 void finish_threads()
 {
+    if (shared().finished.load())
+    {
+        return;
+    }
+    const bool on_closed_done =
+        shared().events == nullptr || shared().events->wait_on_closed(kStderrWait);
     shared().finished.store(true);
-    const std::unique_lock lock(shared().stderr_mutex, kStderrWait);
+    if (on_closed_done)
+    {
+        const std::unique_lock lock(shared().stderr_mutex, kStderrWait);
+    }
 }
 
 /// Ends the process with `code` now, when the result has been written: without the destructors of
