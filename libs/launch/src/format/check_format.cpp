@@ -848,18 +848,16 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         w.null("time_lock");
     }
     detail::write_findings_json(w, report.file, report.findings);
-    if (checked.file_sha256)
-    {
-        optional_text("file_sha256", *checked.file_sha256);
-    }
-    if (checked.hot_eligibility)
-    {
-        w.begin_object("hot_eligibility");
-        w.boolean("eligible", checked.hot_eligibility->eligible);
-        optional_text("reason", checked.hot_eligibility->reason);
-        optional_text("message", checked.hot_eligibility->message);
-        w.end_object();
-    }
+    optional_text("file_sha256", checked.file_sha256);
+    const HotEligibility hot =
+        (checked.hot_eligibility.eligible || !checked.hot_eligibility.reason.empty())
+            ? checked.hot_eligibility
+            : evaluate_hot_eligibility(checked);
+    w.begin_object("hot_eligibility");
+    w.boolean("eligible", hot.eligible);
+    optional_text("reason", hot.reason);
+    optional_text("message", hot.message);
+    w.end_object();
     if (scenario != nullptr)
     {
         // Only with --scenario: a result without one is as it was before scenarios.

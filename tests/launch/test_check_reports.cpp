@@ -465,7 +465,13 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "message": "participant 'Logger': not checked",
       "detail": null
     }
-  ]
+  ],
+  "file_sha256": null,
+  "hot_eligibility": {
+    "eligible": true,
+    "reason": null,
+    "message": null
+  }
 }
 )");
     // A description without "variables" (an older ECU): not known.
@@ -489,7 +495,7 @@ TEST_CASE(the_json_report_has_the_time_lock_and_what_it_is_because_of)
                               "      \"Gateway\"\n"
                               "    ]\n"
                               "  },\n"
-                              "  \"findings\": []\n") != std::string::npos);
+                              "  \"findings\": [],\n") != std::string::npos);
     // Not locked (--time-policy free), but connected outside: the names all the same.
     r.time_lock.locked = false;
     CHECK(format_json(r).find("  \"time_lock\": {\n    \"locked\": false,\n    \"because\": [\n      \"ETH\",\n") != std::string::npos);
@@ -530,7 +536,13 @@ TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
       "message": "the file does not exist: check the path",
       "detail": null
     }
-  ]
+  ],
+  "file_sha256": null,
+  "hot_eligibility": {
+    "eligible": false,
+    "reason": "config-unreadable",
+    "message": "the file does not exist: check the path"
+  }
 }
 )");
 }
@@ -569,7 +581,13 @@ TEST_CASE(the_json_report_of_a_wrong_command_line)
       "message": "unknown option --bogus",
       "detail": null
     }
-  ]
+  ],
+  "file_sha256": null,
+  "hot_eligibility": {
+    "eligible": false,
+    "reason": "usage",
+    "message": "unknown option --bogus"
+  }
 }
 )");
 }
@@ -1265,16 +1283,16 @@ TEST_CASE(file_only_check_computes_raw_sha256_eligibility_and_sorted_findings_wi
         out << crlf_text;
     }
 
-    // Standard check_file (file_only = false) omits file_sha256 and hot_eligibility.
+    // Standard check_file (file_only = false) also populates file_sha256 and hot_eligibility.
     RunRequest std_req;
     std_req.host.config = lf_path.string();
     std_req.intent.variant = "fast";
     const Checked std_checked = check_file(std_req);
-    CHECK(!std_checked.file_sha256.has_value());
-    CHECK(!std_checked.hot_eligibility.has_value());
+    CHECK(std_checked.file_sha256 == vehicle_sil::launch::detail::sha256_hex(lf_text));
+    CHECK(std_checked.hot_eligibility == (HotEligibility{true, "", ""}));
     const std::string std_json = format_json(std_checked);
-    CHECK(std_json.find("\"file_sha256\"") == std::string::npos);
-    CHECK(std_json.find("\"hot_eligibility\"") == std::string::npos);
+    CHECK(std_json.find("  \"file_sha256\": \"" + vehicle_sil::launch::detail::sha256_hex(lf_text) + "\",\n") != std::string::npos);
+    CHECK(std_json.find("  \"hot_eligibility\": {\n") != std::string::npos);
 
     // file_only = true passes even though ./does_not_exist_ecu does not exist, and hashes LF vs CRLF bytes.
     CheckOptions file_only_opts;
@@ -1302,9 +1320,8 @@ TEST_CASE(file_only_check_computes_raw_sha256_eligibility_and_sorted_findings_wi
     CheckOptions trace_opts = file_only_opts;
     trace_opts.trace_enabled = true;
     const Checked trace_checked = check_file(std_req, trace_opts);
-    CHECK(trace_checked.hot_eligibility.has_value());
-    CHECK(!trace_checked.hot_eligibility->eligible);
-    CHECK(trace_checked.hot_eligibility->reason == "trace-enabled");
+    CHECK(!trace_checked.hot_eligibility.eligible);
+    CHECK(trace_checked.hot_eligibility.reason == "trace-enabled");
 
     // Usage error with readable file preserves file_sha256 and sets reason="usage".
     RunRequest bad_var = std_req;
@@ -1312,18 +1329,16 @@ TEST_CASE(file_only_check_computes_raw_sha256_eligibility_and_sorted_findings_wi
     const Checked var_checked = check_file(bad_var, file_only_opts);
     CHECK(var_checked.usage);
     CHECK(var_checked.file_sha256 == vehicle_sil::launch::detail::sha256_hex(lf_text));
-    CHECK(var_checked.hot_eligibility.has_value());
-    CHECK(!var_checked.hot_eligibility->eligible);
-    CHECK(var_checked.hot_eligibility->reason == "usage");
+    CHECK(!var_checked.hot_eligibility.eligible);
+    CHECK(var_checked.hot_eligibility.reason == "usage");
 
     // Unreadable file sets file_sha256 to empty ("null" in JSON) and reason="config-unreadable".
     RunRequest missing_req;
     missing_req.host.config = (dir / "missing.yaml").string();
     const Checked missing_checked = check_file(missing_req, file_only_opts);
     CHECK(!missing_checked.config.has_value());
-    CHECK(missing_checked.file_sha256 == std::optional<std::string>(std::string{}));
-    CHECK(missing_checked.hot_eligibility.has_value());
-    CHECK(missing_checked.hot_eligibility->reason == "config-unreadable");
+    CHECK(missing_checked.file_sha256.empty());
+    CHECK(missing_checked.hot_eligibility.reason == "config-unreadable");
     const std::string missing_json = format_json(missing_checked);
     CHECK(missing_json.find("  \"file_sha256\": null,\n") != std::string::npos);
 
@@ -1339,8 +1354,7 @@ TEST_CASE(file_only_check_computes_raw_sha256_eligibility_and_sorted_findings_wi
     const Checked bad_yaml_checked = check_file(bad_yaml_req, file_only_opts);
     CHECK(!bad_yaml_checked.config.has_value());
     CHECK(bad_yaml_checked.file_sha256 == vehicle_sil::launch::detail::sha256_hex(bad_yaml_text));
-    CHECK(bad_yaml_checked.hot_eligibility.has_value());
-    CHECK(bad_yaml_checked.hot_eligibility->reason == "config-unreadable");
+    CHECK(bad_yaml_checked.hot_eligibility.reason == "config-unreadable");
 
     // sort_findings runs before early return: errors precede warnings/notes.
     const std::filesystem::path warn_err_cfg = dir / "warn_err.yaml";
@@ -1362,9 +1376,9 @@ TEST_CASE(file_only_check_computes_raw_sha256_eligibility_and_sorted_findings_wi
     CHECK(!sorted_checked.findings.empty());
     CHECK(sorted_checked.findings.front().severity == Severity::Error);
 
-    // format_usage_json(..., file_only=true) includes file_sha256: null and hot_eligibility.
+    // format_usage_json(...) includes file_sha256: null and hot_eligibility.
     const std::string usage_json = format_usage_json(
-        CommandKind::Check, "x.yaml", {Finding{Severity::Error, "usage", "bad flag", 0, "", ""}}, {}, true);
+        CommandKind::Check, "x.yaml", {Finding{Severity::Error, "usage", "bad flag", 0, "", ""}});
     CHECK(usage_json.find("  \"file_sha256\": null,\n") != std::string::npos);
     CHECK(usage_json.find("  \"hot_eligibility\": {\n"
                           "    \"eligible\": false,\n"
