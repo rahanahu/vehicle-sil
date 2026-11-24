@@ -285,8 +285,11 @@ std::optional<runner::Command> parse(std::string_view line, ServeCommand* serve)
         out.reason = runner::reason::kUnknownCommand;
         return out;
     }
-    out.accepted = true;
-    return out;
+    runner::Command accepted = runner::Command::make(std::move(*out.name), out.id);
+    accepted.ms = out.ms;
+    accepted.speed = out.speed;
+    accepted.at_ms = out.at_ms;
+    return accepted;
 }
 
 } // namespace

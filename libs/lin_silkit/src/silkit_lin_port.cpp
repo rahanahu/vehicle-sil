@@ -16,20 +16,22 @@ namespace experimental_lin = SilKit::Experimental::Services::Lin;
 // Only used by a detailed (network simulator) LIN simulation; the trivial simulation ignores it.
 constexpr silkit_lin::LinBaudRate kBaudRate = 19200;
 
-/// Removes a SIL Kit handler in a destructor. The participant may already be going away, in
-/// which case nothing else can call the handler.
+/// Removes a SIL Kit handler during close() or cleanup. The participant may already be going
+/// away, in which case nothing else can call the handler.
 template <typename Remove>
-void remove_handler(const std::optional<SilKit::Util::HandlerId>& id, Remove&& remove) noexcept
+void remove_handler(std::optional<SilKit::Util::HandlerId>& id, Remove&& remove) noexcept
 {
     if (!id)
     {
         return;
     }
+    const auto handle = *id;
+    id.reset();
     try
     {
-        remove(*id);
+        remove(handle);
     }
-    catch (const std::exception&)
+    catch (...)
     {
     }
 }
@@ -89,8 +91,30 @@ const char* role_name(LinRole role) noexcept
 
 } // namespace
 
+class SilKitLinPort::CallbackScope
+{
+public:
+    explicit CallbackScope(SilKitLinPort& port) noexcept : port_(port), active_(port.enter_callback()) {}
+    ~CallbackScope() noexcept
+    {
+        if (active_)
+        {
+            port_.leave_callback();
+        }
+    }
+    CallbackScope(const CallbackScope&) = delete;
+    CallbackScope& operator=(const CallbackScope&) = delete;
+
+    [[nodiscard]] explicit operator bool() const noexcept { return active_; }
+
+private:
+    SilKitLinPort& port_;
+    bool active_;
+};
+
 SilKitLinPort::SilKitLinPort(silkit_lin::ILinController& controller, LinRole role) : controller_(controller), role_(role)
 {
+    const std::lock_guard lock(lifecycle_mutex_);
     try
     {
         if (role_ == LinRole::Slave)
@@ -99,6 +123,11 @@ SilKitLinPort::SilKitLinPort(silkit_lin::ILinController& controller, LinRole rol
             // adding it before that a state error.
             sleep_handler_ = controller_.AddGoToSleepHandler(
                 [this](silkit_lin::ILinController*, const silkit_lin::LinGoToSleepEvent& event) {
+                    const CallbackScope guard(*this);
+                    if (!guard)
+                    {
+                        return;
+                    }
                     if (auto* listener = listener_.load(std::memory_order_acquire))
                     {
                         listener->on_go_to_sleep(from_silkit_time(event.timestamp));
@@ -106,9 +135,21 @@ SilKitLinPort::SilKitLinPort(silkit_lin::ILinController& controller, LinRole rol
                 });
         }
         status_handler_ = controller_.AddFrameStatusHandler(
-            [this](silkit_lin::ILinController*, const silkit_lin::LinFrameStatusEvent& event) { on_frame_status(event); });
+            [this](silkit_lin::ILinController*, const silkit_lin::LinFrameStatusEvent& event) {
+                const CallbackScope guard(*this);
+                if (!guard)
+                {
+                    return;
+                }
+                on_frame_status(event);
+            });
         wakeup_handler_ =
             controller_.AddWakeupHandler([this](silkit_lin::ILinController*, const silkit_lin::LinWakeupEvent& event) {
+                const CallbackScope guard(*this);
+                if (!guard)
+                {
+                    return;
+                }
                 // TX: the pulse this node sent itself.
                 if (event.direction != SilKit::Services::TransmitDirection::RX)
                 {
@@ -122,14 +163,56 @@ SilKitLinPort::SilKitLinPort(silkit_lin::ILinController& controller, LinRole rol
     }
     catch (...)
     {
-        remove_handlers(); // the ones added so far
+        close_locked(); // remove handlers added so far and drain any in-flight callback
         throw;
     }
 }
 
 SilKitLinPort::~SilKitLinPort()
 {
+    close();
+}
+
+bool SilKitLinPort::enter_callback() noexcept
+{
+    const std::lock_guard lock(callback_mutex_);
+    if (closed_.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+    ++in_flight_callbacks_;
+    return true;
+}
+
+void SilKitLinPort::leave_callback() noexcept
+{
+    // Notify while holding callback_mutex_ so close_locked() cannot observe
+    // in_flight_callbacks_ == 0 and allow ~SilKitLinPort() to destroy callback_cv_
+    // before notify_all() finishes.
+    const std::lock_guard lock(callback_mutex_);
+    --in_flight_callbacks_;
+    if (in_flight_callbacks_ == 0 && closed_.load(std::memory_order_acquire))
+    {
+        callback_cv_.notify_all();
+    }
+}
+
+void SilKitLinPort::close() noexcept
+{
+    const std::lock_guard lock(lifecycle_mutex_);
+    close_locked();
+}
+
+void SilKitLinPort::close_locked() noexcept
+{
+    {
+        const std::lock_guard cb_lock(callback_mutex_);
+        closed_.store(true, std::memory_order_release);
+    }
+    listener_.store(nullptr, std::memory_order_release);
     remove_handlers();
+    std::unique_lock cb_lock(callback_mutex_);
+    callback_cv_.wait(cb_lock, [this] { return in_flight_callbacks_ == 0; });
 }
 
 void SilKitLinPort::remove_handlers() noexcept
@@ -168,6 +251,11 @@ void SilKitLinPort::require_frame(LinId id, std::size_t data_length, const char*
 
 void SilKitLinPort::open()
 {
+    const std::lock_guard lock(lifecycle_mutex_);
+    if (closed_.load(std::memory_order_acquire))
+    {
+        return;
+    }
     if (role_ == LinRole::Master)
     {
         // No frame responses here: send_header() configures each identifier when it first
@@ -186,6 +274,11 @@ void SilKitLinPort::open()
         // In the same SIL Kit handler as InitDynamic(), so no header arrives in between.
         header_handler_ = experimental_lin::AddFrameHeaderHandler(
             &controller_, [this](silkit_lin::ILinController*, const experimental_lin::LinFrameHeaderEvent& event) {
+                const CallbackScope guard(*this);
+                if (!guard)
+                {
+                    return;
+                }
                 if (auto* listener = listener_.load(std::memory_order_acquire))
                 {
                     listener->on_header(from_silkit_time(event.timestamp), event.id);
@@ -198,6 +291,10 @@ void SilKitLinPort::send_header(SimTime /*now*/, LinId id, std::uint8_t data_len
 {
     require_role(LinRole::Master, "send_header()");
     require_frame(id, data_length, "send_header()");
+    if (is_closed())
+    {
+        return;
+    }
     // The master receives a slave's response only for an identifier configured for reception;
     // SIL Kit compares the response's length and checksum model with this configuration.
     if (!configured_.test(id))
@@ -219,12 +316,20 @@ void SilKitLinPort::send_frame(SimTime /*now*/, const LinFrame& frame)
 {
     require_role(LinRole::Master, "send_frame()");
     require_frame(frame.id, frame.data_length, "send_frame()");
+    if (is_closed())
+    {
+        return;
+    }
     controller_.SendFrame(to_silkit(frame), silkit_lin::LinFrameResponseType::MasterResponse);
 }
 
 void SilKitLinPort::send_go_to_sleep(SimTime /*now*/)
 {
     require_role(LinRole::Master, "send_go_to_sleep()");
+    if (is_closed())
+    {
+        return;
+    }
     // Sends the go-to-sleep command and puts the controller to sleep.
     controller_.GoToSleep();
 }
@@ -232,11 +337,19 @@ void SilKitLinPort::send_go_to_sleep(SimTime /*now*/)
 void SilKitLinPort::respond(SimTime /*header_time*/, const LinFrame& frame)
 {
     require_role(LinRole::Slave, "respond()");
+    if (is_closed())
+    {
+        return;
+    }
     experimental_lin::SendDynamicResponse(&controller_, to_silkit(frame));
 }
 
 void SilKitLinPort::send_wakeup(SimTime /*now*/)
 {
+    if (is_closed())
+    {
+        return;
+    }
     if (role_ == LinRole::Slave)
     {
         // The slave's controller is always operational. Wakeup() sends the pulse and switches
@@ -250,6 +363,10 @@ void SilKitLinPort::send_wakeup(SimTime /*now*/)
 
 void SilKitLinPort::resume()
 {
+    if (is_closed())
+    {
+        return;
+    }
     if (role_ == LinRole::Master)
     {
         controller_.WakeupInternal();

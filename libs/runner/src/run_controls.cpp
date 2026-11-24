@@ -93,7 +93,7 @@ RunState RunControls::compose(const TimeFacts& facts) const
     // The watch may have looked when there was nothing to keep up with: on time until it sees
     // otherwise.
     out.pacing = !paced ? Pacing::NotPaced : pacing_.load() == Pacing::Late ? Pacing::Late : Pacing::OnTime;
-    out.stop_requests = std::clamp(stops_.count(), 0, 2);
+    out.stop_requests = std::clamp(stops_.count(), stop_level::kNone, stop_level::kForce);
     if (stops_.first() != 0)
     {
         out.stopped_by = stop_name_ ? stop_name_() : std::string("interrupt");

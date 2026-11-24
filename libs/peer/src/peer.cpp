@@ -1232,6 +1232,10 @@ void Peer::stop(std::string_view reason) noexcept
     {
         e->port->close();
     }
+    for (auto& node : lin_)
+    {
+        node->port->close();
+    }
     // No step runs any more: the writes still waiting are cancelled.
     agent_.finish();
 }

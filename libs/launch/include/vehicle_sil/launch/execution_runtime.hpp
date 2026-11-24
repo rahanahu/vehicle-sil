@@ -74,8 +74,9 @@ public:
     constexpr LauncherEnd() noexcept = default;
 
     /// A signal or a console event (`source`: its number, or its code + 1): the end, and the
-    /// current run's stop requests `count` times (1 as one Ctrl+C, 2 to skip the waits).
-    void request(int source, int count = 1) noexcept
+    /// current run's stop requests `count` times (stop_level::kGraceful as one Ctrl+C,
+    /// stop_level::kForce to skip the waits).
+    void request(int source, int count = runner::stop_level::kGraceful) noexcept
     {
         mark(source, count);
         inside_.fetch_add(1);
@@ -87,7 +88,7 @@ public:
     }
 
     /// The end only: the caller asks the run itself (the end of input, a closed output).
-    void mark(int source, int count = 1) noexcept
+    void mark(int source, int count = runner::stop_level::kGraceful) noexcept
     {
         int none = 0;
         first_.compare_exchange_strong(none, source);
@@ -212,9 +213,9 @@ struct RunSubmission
 
 enum class StopMode
 {
-    Graceful, ///< Idempotent raise_to(source, 1)
-    Force,    ///< Idempotent raise_to(source, 2)
-    Escalate, ///< Backward-compatible bare stop: 0->1, 1->2, >=2 stays 2
+    Graceful, ///< Idempotent raise_to(source, stop_level::kGraceful)
+    Force,    ///< Idempotent raise_to(source, stop_level::kForce)
+    Escalate, ///< Backward-compatible bare stop: kNone->kGraceful, kGraceful->kForce, >=kForce stays kForce
 };
 
 struct CommandReply

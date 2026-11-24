@@ -494,13 +494,14 @@ BOOL WINAPI on_console_event(DWORD event)
         return FALSE;
     }
     // Closing the console is not followed by a second request: it skips the waits at once.
+    const int level = event == CTRL_CLOSE_EVENT ? runner::stop_level::kForce : runner::stop_level::kGraceful;
     if (g_serving.load())
     {
-        g_end.request(static_cast<int>(event) + 1, event == CTRL_CLOSE_EVENT ? 2 : 1);
+        g_end.request(static_cast<int>(event) + 1, level);
     }
     else
     {
-        g_stops.request(static_cast<int>(event) + 1, event == CTRL_CLOSE_EVENT ? 2 : 1);
+        g_stops.request(static_cast<int>(event) + 1, level);
     }
     if (event == CTRL_CLOSE_EVENT)
     {
@@ -931,10 +932,7 @@ void start_reading_commands()
         static_cast<void>(g_stops.request_first(kEndOfInput, [events] {
             if (events != nullptr)
             {
-                runner::Command stop;
-                stop.name = "stop";
-                stop.accepted = true;
-                events->command(stop, "eof");
+                events->command(runner::Command::make("stop"), "eof");
             }
         }));
         if (controls != nullptr)
@@ -982,7 +980,9 @@ int finish_events(launch::EventStream& events, const launch::RunReport& report, 
     const int requests = serve_ends ? g_end.count() : g_stops.count();
     const bool written = events.result(
       serve_ends ? launch::format_result_event(report, true) : launch::format_result_event(report),
-      [requests, serve_ends] { return (serve_ends ? g_end.count() : g_stops.count()) > std::min(requests, 1); });
+      [requests, serve_ends] {
+          return (serve_ends ? g_end.count() : g_stops.count()) > std::min(requests, runner::stop_level::kGraceful);
+      });
     finish_threads();
     if (!written && report.result() != launch::RunResult::Interrupted)
     {

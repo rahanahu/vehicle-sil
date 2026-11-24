@@ -1107,3 +1107,144 @@ TEST_CASE(time_commands_from_several_threads_never_pass_the_time_lock_that_comes
         CHECK(!last_takes_a_pause.load());
     }
 }
+
+TEST_CASE(time_commands_apply_acceptance_contract)
+{
+    std::vector<std::string> events;
+    TimeCommands commands(false, [&events](const Command& c, std::string_view source) {
+        events.push_back(c.name.value_or("<none>") + ":" + std::string(source) + ":" +
+                         (c.accepted ? "accepted" : "refused:" + c.reason));
+    });
+
+    // Pre-refused command before set_time_lock() is never queued as pending or executed.
+    {
+        Command pre_refused;
+        pre_refused.name = "pause";
+        pre_refused.reason = reason::kInvalidArgument;
+        pre_refused.message = "bad id";
+        CHECK(pre_refused.is_refused());
+        int callback_runs = 0;
+        const Command out = commands.apply(pre_refused, "stdin", [&] { ++callback_runs; });
+        CHECK(!out.accepted);
+        CHECK(!out.pending);
+        check_text(out.reason, reason::kInvalidArgument, "reason");
+        check_text(out.message, "bad id", "message");
+        CHECK_EQ(callback_runs, 0);
+    }
+
+    commands.set_time_lock(kNotOutside);
+
+    // A plain Command with name set (default accepted == false) is decided by decide() and
+    // accepted without requiring manual `.accepted = true`.
+    {
+        Command pause;
+        pause.name = "pause";
+        CHECK(!pause.accepted);
+        CHECK(!pause.is_refused());
+        int callback_runs = 0;
+        const Command out = commands.apply(pause, "api", [&] { ++callback_runs; });
+        CHECK(out.accepted);
+        CHECK(!out.pending);
+        CHECK(out.reason.empty());
+        CHECK(out.message.empty());
+        CHECK_EQ(callback_runs, 1);
+        commands.look([](const TimeFacts& f) { CHECK(f.standing); });
+    }
+
+    // Command::make() constructs a valid command ready for apply() or event emission.
+    {
+        const Command resume = Command::make("resume", 7);
+        CHECK(resume.accepted);
+        CHECK(resume.is_time());
+        CHECK(!resume.is_refused());
+        int callback_runs = 0;
+        const Command out = commands.apply(resume, "api", [&] { ++callback_runs; });
+        CHECK(out.accepted);
+        CHECK(out.id == std::optional<std::int64_t>(7));
+        CHECK_EQ(callback_runs, 1);
+        commands.look([](const TimeFacts& f) { CHECK(!f.standing); });
+    }
+
+    // Plain stop command without manual `.accepted = true` is accepted and invokes its callback.
+    {
+        Command stop;
+        stop.name = "stop";
+        int callback_runs = 0;
+        const Command out = commands.apply(stop, "api", [&] { ++callback_runs; });
+        CHECK(out.accepted);
+        CHECK_EQ(callback_runs, 1);
+    }
+
+    // Pre-refused command after set_time_lock() is never accepted or executed even when its name
+    // is a valid command.
+    {
+        Command pre_refused;
+        pre_refused.name = "pause";
+        pre_refused.reason = reason::kInvalidArgument;
+        pre_refused.message = "bad argument";
+        int callback_runs = 0;
+        const Command out = commands.apply(pre_refused, "stdin", [&] { ++callback_runs; });
+        CHECK(!out.accepted);
+        check_text(out.reason, reason::kInvalidArgument, "reason");
+        check_text(out.message, "bad argument", "message");
+        CHECK_EQ(callback_runs, 0);
+        commands.look([](const TimeFacts& f) { CHECK(!f.standing); });
+    }
+
+    // Default-constructed / uninitialized Command{} (no name) is refused, never executed.
+    {
+        Command empty;
+        int callback_runs = 0;
+        const Command out = commands.apply(empty, "api", [&] { ++callback_runs; });
+        CHECK(!out.accepted);
+        check_text(out.reason, reason::kNotATimeCommand, "reason");
+        CHECK_EQ(callback_runs, 0);
+    }
+
+    // Unknown / no-op command name is refused whether built with default Command or Command::make().
+    {
+        Command plain_noop;
+        plain_noop.name = "noop";
+        for (const Command& c : {plain_noop, Command::make("noop")})
+        {
+            int callback_runs = 0;
+            const Command out = commands.apply(c, "api", [&] { ++callback_runs; });
+            CHECK(!out.accepted);
+            check_text(out.reason, reason::kNotATimeCommand, "reason");
+            CHECK_EQ(callback_runs, 0);
+        }
+    }
+
+    // Valid command name with missing/out-of-range arguments is refused, never executed.
+    {
+        Command run_until;
+        run_until.name = "run_until";
+        int callback_runs = 0;
+        const Command out = commands.apply(run_until, "api", [&] { ++callback_runs; });
+        CHECK(!out.accepted);
+        check_text(out.reason, reason::kMissingArgument, "reason");
+        CHECK_EQ(callback_runs, 0);
+    }
+    {
+        Command bad_step;
+        bad_step.name = "step";
+        bad_step.ms = 0;
+        int callback_runs = 0;
+        const Command out = commands.apply(bad_step, "api", [&] { ++callback_runs; });
+        CHECK(!out.accepted);
+        check_text(out.reason, reason::kOutOfRange, "reason");
+        CHECK_EQ(callback_runs, 0);
+    }
+
+    CHECK_EQ(events.size(), 10u);
+    check_text(events[0], "pause:stdin:refused:invalid-argument", "event[0]");
+    check_text(events[1], "pause:api:accepted", "event[1]");
+    check_text(events[2], "resume:api:accepted", "event[2]");
+    check_text(events[3], "stop:api:accepted", "event[3]");
+    check_text(events[4], "pause:stdin:refused:invalid-argument", "event[4]");
+    check_text(events[5], "<none>:api:refused:not-a-time-command", "event[5]");
+    check_text(events[6], "noop:api:refused:not-a-time-command", "event[6]");
+    check_text(events[7], "noop:api:refused:not-a-time-command", "event[7]");
+    check_text(events[8], "run_until:api:refused:missing-argument", "event[8]");
+    check_text(events[9], "step:api:refused:out-of-range", "event[9]");
+}

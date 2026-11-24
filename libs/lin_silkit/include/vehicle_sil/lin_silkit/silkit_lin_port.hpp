@@ -11,8 +11,10 @@
 
 #include <atomic>
 #include <bitset>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 
 namespace vehicle_sil::lin {
@@ -42,11 +44,15 @@ namespace vehicle_sil::lin {
 /// propagate.
 ///
 /// Ownership: the port does not own the controller. It adds its handlers to the controller in
-/// its constructor and removes them in its destructor; destroy it before the participant.
+/// its constructor (and the slave's header handler in open()) and removes them in close() (called
+/// by the destructor); close or destroy it before the participant.
 ///
 /// Threading: SIL Kit calls the listener on its I/O thread, which also runs the steps; the LIN
-/// controller is not thread safe, so call the port only from the steps (and respond() from
-/// on_header()). set_listener() only while no events arrive (before the run, after it).
+/// controller is not thread safe, so call the send/respond functions only from the steps (and
+/// respond() from on_header()). open() (from CommunicationReady) and close() may run at the same
+/// time. close() may be called from any thread except a SIL Kit handler of this controller; after
+/// close() returns, no SIL Kit callback runs into the port or its listener. set_listener() only
+/// while no events arrive (before the run, after it).
 class SilKitLinPort final : public LinPort
 {
 public:
@@ -58,7 +64,15 @@ public:
     [[nodiscard]] LinRole role() const noexcept { return role_; }
 
     void set_listener(LinPortListener* listener) override;
+    /// Initialises the controller (and, for a slave, adds the header handler). Does nothing after
+    /// close().
     void open() override;
+    /// Removes the handlers, detaches the listener and waits for any in-flight callback to finish.
+    /// Idempotent. Send functions after close() do nothing (role and frame checks still apply).
+    void close() noexcept;
+    /// False from the constructor until close().
+    [[nodiscard]] bool is_closed() const noexcept { return closed_.load(std::memory_order_acquire); }
+
     void send_header(SimTime now, LinId id, std::uint8_t data_length, LinChecksumModel checksum_model) override;
     void send_frame(SimTime now, const LinFrame& frame) override;
     void send_go_to_sleep(SimTime now) override;
@@ -67,10 +81,15 @@ public:
     void resume() override;
 
 private:
+    class CallbackScope;
+
     void require_role(LinRole role, const char* call) const;
     /// std::invalid_argument unless `id` and `data_length` make a LIN frame (for `call`).
     static void require_frame(LinId id, std::size_t data_length, const char* call);
+    void close_locked() noexcept;
     void remove_handlers() noexcept;
+    [[nodiscard]] bool enter_callback() noexcept;
+    void leave_callback() noexcept;
     void on_frame_status(const SilKit::Services::Lin::LinFrameStatusEvent& event);
 
     SilKit::Services::Lin::ILinController& controller_;
@@ -78,6 +97,14 @@ private:
     std::atomic<LinPortListener*> listener_{nullptr};
     /// Master: identifiers configured for reception in the controller.
     std::bitset<kMaxLinId + 1> configured_;
+    /// Serialises constructor handler setup, open() and close(). Never taken by SIL Kit callbacks
+    /// (to avoid lock-order inversion with SIL Kit's internal handler mutex).
+    std::mutex lifecycle_mutex_;
+    std::atomic<bool> closed_{false};
+    /// Leaf lock tracking in-flight SIL Kit callbacks so close() waits until none remain.
+    std::mutex callback_mutex_;
+    std::condition_variable callback_cv_;
+    std::size_t in_flight_callbacks_{0};
     std::optional<SilKit::Util::HandlerId> header_handler_;
     std::optional<SilKit::Util::HandlerId> status_handler_;
     std::optional<SilKit::Util::HandlerId> sleep_handler_;
