@@ -127,6 +127,12 @@ function(vehicle_sil_add_harness_tests target)
   if(VEHICLE_SIL_BATCH_UNIT_TESTS AND EXISTS "${CMAKE_CURRENT_LIST_FILE}")
     file(READ "${CMAKE_CURRENT_LIST_FILE}" _caller_cmake)
   endif()
+  set(_is_tsan FALSE)
+  if("thread" IN_LIST VEHICLE_SIL_SANITIZERS
+     OR CMAKE_CXX_FLAGS MATCHES "fsanitize=thread"
+     OR CMAKE_C_FLAGS MATCHES "fsanitize=thread")
+    set(_is_tsan TRUE)
+  endif()
 
   set(names "")
   foreach(source IN LISTS ARG_SOURCES)
@@ -140,6 +146,17 @@ function(vehicle_sil_add_harness_tests target)
       file(STRINGS "${path}" _isolation_lines REGEX "Skipped[ \t]*\\(|trace::start[ \t]*\\(")
       if(_isolation_lines)
         set(_needs_process_isolation TRUE)
+      elseif(_is_tsan)
+        # Under TSan, libstdc++'s trivial ~std::mutex() never calls pthread_mutex_destroy(), so
+        # TSan's deadlock detector retains destroyed stack mutex addresses across sequential
+        # TEST_CASE calls in one process and can report phantom lock-order inversions when two
+        # cases reuse the same stack slot. Keep concurrent/mutex-using files unbatched on TSan
+        # while still batching pure single-threaded unit suites.
+        file(STRINGS "${path}" _tsan_lines
+             REGEX "std::(mutex|shared_mutex|recursive_mutex|timed_mutex|thread|jthread|condition_variable|async)|silkit_test_util|SilKit|SocketCanPort|XlCanPort|Simulation|Peer")
+        if(_tsan_lines)
+          set(_needs_process_isolation TRUE)
+        endif()
       endif()
     endif()
     set(_individual "")
