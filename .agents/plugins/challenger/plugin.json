@@ -1,0 +1,5 @@
+{
+  "name": "challenger",
+  "displayName": "Challenger",
+  "description": "Independent Challenger subagent for adversarial verification of requirements, assumptions, designs, implementations, and quality gates."
+}

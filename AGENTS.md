@@ -93,7 +93,7 @@ An agent that the owner gave a task may hand parts of it to other agents. The ta
 Skills for AI agents live in `.agents/skills/<name>/SKILL.md`, a layout that several agents read (Codex, Copilot, Gemini CLI and others). An agent that does not read that directory can open the `SKILL.md` file directly. Claude Code reads `.claude/skills/`; link it to the same directory (`ln -s ../../.agents/skills/<name> .claude/skills/<name>`) instead of keeping a copy.
 
 - `agent-prompt-design`: a checklist for writing instructions, briefs and handoffs that another agent will act on.
-- `run-challenge`: Coordinator workflow for screening changes, delegating a bounded task to the independent `challenger` agent (`.github/agents/challenger.agent.md`), assessing its report, and closing the loop.
+- `run-challenge`: Coordinator workflow for screening changes, delegating a bounded task to the independent `challenger` agent (`.github/agents/challenger.agent.md`; Antigravity plugin: `.agents/plugins/challenger/agents/challenger.md`), assessing its report, and closing the loop.
 
 ### Independent challenge
 
