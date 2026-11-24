@@ -12,6 +12,7 @@
 #include "vehicle_sil/scenario/timeline.hpp"
 #include "usecases/sha256.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -175,6 +176,19 @@ public:
     {
         std::unique_lock lock(mu_);
         cv_.wait(lock, [&] { return statuses_.size() >= min_count; });
+    }
+
+    /// Waits until the status after the end of `run_id` has been delivered: the runtime takes that
+    /// snapshot under its lock after it stored the result and left Running (busy cleared), so
+    /// result(run_id), start_run() and prepare() see the run as over once this returns true. Only
+    /// the sink's own state is read under its lock (the runtime calls the sink under its lock).
+    [[nodiscard]] bool wait_last_run(const std::string& run_id) const
+    {
+        std::unique_lock lock(mu_);
+        return cv_.wait_for(lock, vehicle_sil::unit::scaled_timeout(std::chrono::seconds(10)), [&] {
+            return std::any_of(statuses_.begin(), statuses_.end(),
+                               [&](const ExecutionStatus& s) { return s.last_run_id == run_id; });
+        });
     }
 
     int idle_count() const
@@ -541,17 +555,9 @@ TEST_CASE(execution_runtime_start_run_contracts_and_in_memory_submission)
     // Wait for Run 1's post-run Idle status delivery (happens after busy_ clears) so it cannot
     // arrive after status_before_run2 below.
     sink.wait_status_count(2);
-    PrepareResult prep;
-    for (;;)
-    {
-        prep = rt.prepare(PrepareSpec{});
-        if (prep.accepted)
-        {
-            break;
-        }
-        CHECK(prep.reason == serve_reason::kBusy);
-        std::this_thread::yield();
-    }
+    CHECK(sink.wait_last_run(*r1.run_id));
+    const PrepareResult prep = rt.prepare(PrepareSpec{});
+    CHECK(prep.accepted);
     CHECK(prep.status.launcher_state == LauncherState::Ready);
     const ResultQuery q1 = rt.result(*r1.run_id);
     CHECK(q1.ok);
@@ -592,22 +598,13 @@ TEST_CASE(execution_runtime_start_run_contracts_and_in_memory_submission)
     }
     cv.notify_all();
 
-    // Wait for Run 2 to return to Ready via idle_count barrier? Check result via loop / start Run 3.
-    // Start Run 3 once Run 2 finishes to verify seq_ == 3 (not 4) and scenario+timeline forwarding.
-    CommandReply r3;
-    for (;;)
-    {
-        RunSubmission sub3;
-        sub3.intent.scenario = "drive.scenario.yaml";
-        sub3.timeline = "out/timeline.json";
-        r3 = rt.start_run(std::move(sub3));
-        if (r3.accepted)
-        {
-            break;
-        }
-        CHECK(r3.reason == serve_reason::kBusy);
-        std::this_thread::yield();
-    }
+    // Start Run 3 once Run 2 has finished to verify seq_ == 3 (not 4) and scenario+timeline forwarding.
+    CHECK(sink.wait_last_run(*r2.run_id));
+    RunSubmission sub3;
+    sub3.intent.scenario = "drive.scenario.yaml";
+    sub3.timeline = "out/timeline.json";
+    const CommandReply r3 = rt.start_run(std::move(sub3));
+    CHECK(r3.accepted);
     CHECK(r3.run_id == "abcdef0123456789-3");
     CHECK(seen_req2.intent.start_paused);
     CHECK(seen_req2.host.control.has_value());
@@ -615,14 +612,8 @@ TEST_CASE(execution_runtime_start_run_contracts_and_in_memory_submission)
     CHECK(seen_req2.host.control->run_id_required);
 
     // Wait for Run 3 to complete before reading seen_req3 and shutting down.
-    for (;;)
-    {
-        if (rt.result(*r3.run_id).ok)
-        {
-            break;
-        }
-        std::this_thread::yield();
-    }
+    CHECK(sink.wait_last_run(*r3.run_id));
+    CHECK(rt.result(*r3.run_id).ok);
     CHECK(seen_req3.intent.scenario == std::optional<std::string>("drive.scenario.yaml"));
     CHECK(seen_req3.host.timeline == "out/timeline.json");
 
@@ -725,16 +716,9 @@ TEST_CASE(execution_runtime_stop_modes_graceful_force_escalate_and_close_cut)
     cv.notify_all();
 
     // Run 2: Escalate (0->1->2->2).
-    CommandReply s2;
-    for (;;)
-    {
-        s2 = rt.start_run(RunSubmission{});
-        if (s2.accepted)
-        {
-            break;
-        }
-        std::this_thread::yield();
-    }
+    CHECK(sink.wait_last_run(*s1.run_id));
+    const CommandReply s2 = rt.start_run(RunSubmission{});
+    CHECK(s2.accepted);
     {
         std::unique_lock lock(mu);
         cv.wait(lock, [&] { return active_num == 2; });
@@ -749,16 +733,9 @@ TEST_CASE(execution_runtime_stop_modes_graceful_force_escalate_and_close_cut)
     cv.notify_all();
 
     // Run 3: Graceful (1) before close, then Force (2) during close -> close_cut(1) == true.
-    CommandReply s3;
-    for (;;)
-    {
-        s3 = rt.start_run(RunSubmission{});
-        if (s3.accepted)
-        {
-            break;
-        }
-        std::this_thread::yield();
-    }
+    CHECK(sink.wait_last_run(*s2.run_id));
+    const CommandReply s3 = rt.start_run(RunSubmission{});
+    CHECK(s3.accepted);
     {
         std::unique_lock lock(mu);
         cv.wait(lock, [&] { return active_num == 3; });
@@ -772,14 +749,8 @@ TEST_CASE(execution_runtime_stop_modes_graceful_force_escalate_and_close_cut)
     cv.notify_all();
 
     // Wait for Run 3 to finish before shutting down cleanly.
-    for (;;)
-    {
-        if (rt.result(*s3.run_id).ok)
-        {
-            break;
-        }
-        std::this_thread::yield();
-    }
+    CHECK(sink.wait_last_run(*s3.run_id));
+    CHECK(rt.result(*s3.run_id).ok);
     rt.request_shutdown(stop_source::kEndOfInput);
     const ExecutionEnd ended = loop_future.get();
     CHECK_EQ(ended.code, 0);
@@ -898,14 +869,8 @@ TEST_CASE(execution_runtime_send_time_command_via_entry_api)
     }
     cv.notify_all();
 
-    for (;;)
-    {
-        if (rt.result(run_id).ok)
-        {
-            break;
-        }
-        std::this_thread::yield();
-    }
+    CHECK(sink.wait_last_run(run_id));
+    CHECK(rt.result(run_id).ok);
     rt.request_shutdown(stop_source::kEndOfInput);
     CHECK_EQ(loop_future.get().code, 0);
 
@@ -1001,16 +966,9 @@ TEST_CASE(execution_runtime_results_bounded_memory_and_contamination)
     cv.notify_all();
 
     // Wait for Run 1 result.
-    ResultQuery q1;
-    for (;;)
-    {
-        q1 = rt.result(*s1.run_id);
-        if (q1.ok)
-        {
-            break;
-        }
-        std::this_thread::yield();
-    }
+    CHECK(sink.wait_last_run(*s1.run_id));
+    const ResultQuery q1 = rt.result(*s1.run_id);
+    CHECK(q1.ok);
     CHECK(!q1.launcher_ends);
     CHECK(q1.report != nullptr);
     CHECK(q1.report->ended_control_server == nullptr);
@@ -1021,16 +979,8 @@ TEST_CASE(execution_runtime_results_bounded_memory_and_contamination)
     // Run 2 replaces Run 1 in bounded last_result_.
     const CommandReply s2 = rt.start_run(RunSubmission{});
     CHECK(s2.accepted);
-    ResultQuery q2;
-    for (;;)
-    {
-        q2 = rt.result(*s2.run_id);
-        if (q2.ok)
-        {
-            break;
-        }
-        std::this_thread::yield();
-    }
+    CHECK(sink.wait_last_run(*s2.run_id));
+    CHECK(rt.result(*s2.run_id).ok);
     CHECK(rt.result(*s1.run_id).reason == serve_reason::kRunNotFound);
     CHECK(rt.result().run_id == *s2.run_id);
 
@@ -1198,10 +1148,10 @@ TEST_CASE(execution_runtime_run_loop_drains_in_flight_status_before_exit_and_des
         std::unique_lock lock(mu);
         cv.wait(lock, [&] { return entered_finish; });
     }
-    while (rt->status().launcher_state != LauncherState::Contaminated)
-    {
-        std::this_thread::yield();
-    }
+    // The status that says Contaminated cannot reach the sink here (its delivery is held in the
+    // Ready hook above), so nothing signals the change: look, with a deadline.
+    CHECK(vehicle_sil::unit::eventually([&] { return rt->status().launcher_state == LauncherState::Contaminated; },
+                                        std::chrono::seconds(10)));
     CHECK(!loop_exited.load());
     {
         const std::lock_guard lock(mu);
@@ -1437,10 +1387,10 @@ TEST_CASE(execution_runtime_throwing_on_status_drains_exit_barriers_without_hang
             std::unique_lock lock(mu);
             cv.wait(lock, [&] { return entered_finish; });
         }
-        while (rt.status().launcher_state != LauncherState::Ending)
-        {
-            std::this_thread::yield();
-        }
+        // The status that says Ending cannot reach the sink here (its delivery is held in the
+        // Running hook above), so nothing signals the change: look, with a deadline.
+        CHECK(vehicle_sil::unit::eventually([&] { return rt.status().launcher_state == LauncherState::Ending; },
+                                            std::chrono::seconds(10)));
         CHECK(!loop_exited.load());
         {
             const std::lock_guard lock(mu);

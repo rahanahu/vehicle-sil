@@ -15,8 +15,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -117,25 +119,44 @@ TEST_CASE(check_parallel_bounded_concurrency_and_slot_order)
     const auto check_cap = [&](std::size_t override_cap, std::size_t expected_max) {
         std::atomic<std::size_t> in_flight{0};
         std::atomic<std::size_t> peak{0};
+        // With two workers or more, each even task waits for the task after it to finish: the two
+        // overlap, and the later index finishes first. Workers claim tasks in order, so the task
+        // after an even one is always claimed by another worker, which never waits itself.
+        std::mutex order_mutex;
+        std::condition_variable order_cv;
+        std::vector<bool> finished(tasks.size(), false);
+        std::atomic<bool> order_timed_out{false};
         const DescribeSource source = [&](const ParticipantConfig& p, const fs::path&,
                                           const std::vector<std::string>&) -> std::optional<DescribeRun> {
+            const auto index = static_cast<std::size_t>((p.command_line - 10) / 2);
             const std::size_t current = in_flight.fetch_add(1, std::memory_order_acq_rel) + 1;
             std::size_t observed = peak.load(std::memory_order_relaxed);
             while (current > observed && !peak.compare_exchange_weak(observed, current, std::memory_order_relaxed))
             {
             }
-            // Staggered delays so later indices finish before earlier ones.
-            const auto delay = std::chrono::milliseconds(10 + (12 - (p.command_line - 10) / 2) * 3);
-            std::this_thread::sleep_for(delay);
+            if (expected_max >= 2 && index % 2 == 0 && index + 1 < tasks.size())
+            {
+                std::unique_lock lock(order_mutex);
+                if (!order_cv.wait_for(lock, vehicle_sil::test::scaled_timeout(10s), [&] { return finished[index + 1]; }))
+                {
+                    order_timed_out = true;
+                }
+            }
             DescribeRun run;
             run.exit_code = 0;
             run.standard_output = "out:" + p.name;
             in_flight.fetch_sub(1, std::memory_order_acq_rel);
+            {
+                const std::lock_guard lock(order_mutex);
+                finished[index] = true;
+            }
+            order_cv.notify_all();
             return run;
         };
 
         const std::vector<launch::detail::DescribeSlot> slots =
             launch::detail::run_describe_tasks(tasks, source, false, true, override_cap);
+        CHECK(!order_timed_out.load());
         CHECK_EQ(slots.size(), tasks.size());
         CHECK_EQ(in_flight.load(), std::size_t{0});
         CHECK(peak.load() <= expected_max);
@@ -202,9 +223,17 @@ TEST_CASE(check_parallel_exception_joins_all_workers_cleanly)
     const auto participants = make_participants(8);
     const auto tasks = make_tasks(participants);
     std::atomic<int> active{0};
+    // Ecu2 throws only while another task is inside the source, and the others stay inside until
+    // it has thrown: the exception always escapes while other workers still run.
+    std::mutex gate_mutex;
+    std::condition_variable gate_cv;
+    bool thrown = false;
+    std::atomic<bool> gate_timed_out{false};
     const DescribeSource throwing = [&](const ParticipantConfig& p, const fs::path&,
                                         const std::vector<std::string>&) -> std::optional<DescribeRun> {
+        std::unique_lock lock(gate_mutex); // the count changes under it: Ecu2's wait cannot miss it
         active.fetch_add(1, std::memory_order_acq_rel);
+        gate_cv.notify_all();
         struct Guard
         {
             std::atomic<int>& count;
@@ -212,10 +241,19 @@ TEST_CASE(check_parallel_exception_joins_all_workers_cleanly)
         } guard{active};
         if (p.name == "Ecu2")
         {
-            std::this_thread::sleep_for(5ms);
+            if (!gate_cv.wait_for(lock, vehicle_sil::test::scaled_timeout(10s), [&] { return active.load() >= 2; }))
+            {
+                gate_timed_out = true;
+            }
+            thrown = true;
+            lock.unlock();
+            gate_cv.notify_all();
             throw std::runtime_error("unexpected describe error");
         }
-        std::this_thread::sleep_for(25ms);
+        if (!gate_cv.wait_for(lock, vehicle_sil::test::scaled_timeout(10s), [&] { return thrown; }))
+        {
+            gate_timed_out = true;
+        }
         DescribeRun run;
         run.exit_code = 0;
         return run;
@@ -231,6 +269,7 @@ TEST_CASE(check_parallel_exception_joins_all_workers_cleanly)
         caught = std::string(e.what()) == "unexpected describe error";
     }
     CHECK(caught);
+    CHECK(!gate_timed_out.load());
     // Every worker thread must already have finished and joined before the exception escaped.
     CHECK_EQ(active.load(), 0);
 }

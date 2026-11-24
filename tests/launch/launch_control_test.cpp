@@ -683,7 +683,7 @@ void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, con
     vehicle_sil::runner::StopRequests stops;
     vehicle_sil::runner::RunControls controls(stops, true);
     const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [&] {
-        std::this_thread::sleep_for(200ms);
+        // Called once the run says it stands still (on_hold, before the hold's first look).
         stops.request(kAnySource);
     });
     require(run.held, "the run held" + shown(run));

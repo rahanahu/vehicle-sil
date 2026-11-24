@@ -114,8 +114,19 @@ struct GateSim
     /// stays so while the simulation stands still.
     void check_stands_still_at(SimDuration p)
     {
-        // The peers' steps at or before p may still be running when the controller reports it.
-        std::this_thread::sleep_for(200ms);
+        // The peers' steps at or before p may still be running when the controller reports it:
+        // wait until each has run its last step at or before p.
+        const auto reached = [&] {
+            for (auto& peer : peers)
+            {
+                if (peer->last() != (p / peer->step) * peer->step)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        static_cast<void>(vehicle_sil::unit::eventually(reached, 10s));
         std::vector<SimDuration> before;
         for (auto& peer : peers)
         {
@@ -123,6 +134,7 @@ struct GateSim
             CHECK_EQ(peer->last().count(), expected.count());
             before.push_back(peer->last());
         }
+        // And none goes on while it stands still.
         std::this_thread::sleep_for(200ms);
         for (std::size_t i = 0; i < peers.size(); ++i)
         {
