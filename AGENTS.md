@@ -90,9 +90,20 @@ An agent that the owner gave a task may hand parts of it to other agents. The ta
 
 ## Agent skills
 
-Skills for AI agents live in `.agents/skills/<name>/SKILL.md`, a layout that several agents read (Codex, Gemini CLI and others). An agent that does not read that directory can open the `SKILL.md` file directly. Claude Code reads `.claude/skills/`; link it to the same directory (`ln -s ../../.agents/skills/<name> .claude/skills/<name>`) instead of keeping a copy.
+Skills for AI agents live in `.agents/skills/<name>/SKILL.md`, a layout that several agents read (Codex, Copilot, Gemini CLI and others). An agent that does not read that directory can open the `SKILL.md` file directly. Claude Code reads `.claude/skills/`; link it to the same directory (`ln -s ../../.agents/skills/<name> .claude/skills/<name>`) instead of keeping a copy.
 
 - `agent-prompt-design`: a checklist for writing instructions, briefs and handoffs that another agent will act on.
+- `run-challenge`: Coordinator workflow for screening changes, delegating a bounded task to the independent `challenger` agent (`.github/agents/challenger.agent.md`), assessing its report, and closing the loop.
+
+### Independent challenge
+
+Apply this instruction when acting as Coordinator.
+
+At planning and before closing a review, assess whether the work calls for the `run-challenge` skill. Use it for material changes to concurrency, lifetime, contracts, test detection, CI gates, behavior-preserving performance, or costly architecture decisions, and whenever an independent challenge is explicitly requested. Skip routine low-risk work proportionately.
+
+When applicable, read the skill, delegate a bounded task to the independent `challenger` (`.github/agents/challenger.agent.md`, or the host's equivalent installed agent), and handle its evidence and unresolved gaps before declaring the affected work complete. Use existing review/CI policy to decide disposition. Revisit the assessment if the scope changes materially.
+
+Give workers their actual requirements and applicable instruction paths. Keep this workflow under Coordinator ownership; implementers, reviewers, and challengers must not recursively launch it. Use the current host's delegation, permissions, model policy, and handoff mechanisms.
 
 ## Before you change code
 

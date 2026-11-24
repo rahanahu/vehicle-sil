@@ -1,0 +1,118 @@
+---
+name: run-challenge
+description: >-
+  Coordinate a focused independent Challenger and handle its findings. Use when
+  planning or reviewing work that changes concurrency, object lifetime, shutdown,
+  public contracts, test detection, CI quality gates, or claimed behavior-preserving
+  performance, and before costly architecture commitments. Also use for an explicit
+  request to challenge assumptions or seek counterexamples. This is a Coordinator
+  workflow, not a worker's self-review or a recursive challenger launcher.
+---
+
+# Run Challenge
+
+Use the host's existing delegation and handoff mechanisms. Keep the Challenger's
+reasoning instructions in its agent profile; use this skill to select, dispatch,
+and close the work. Preserve the project's existing review and CI requirements.
+
+## 1. Screen the change
+
+Apply this workflow only while coordinating the work. An implementer, reviewer,
+or Challenger should return relevant concerns to its Coordinator instead of
+launching this workflow recursively.
+
+Inspect the actual requirements and change. Identify important claims whose
+failure would affect correctness, observability, reliability, or maintenance.
+Use an independent challenge when a material claim or uncertainty warrants it,
+or when explicitly requested. Skip cosmetic and otherwise low-risk changes
+without creating a new approval step; record a short reason in existing task
+notes when useful.
+
+For an expensive design decision, challenge the requirements and tradeoffs before
+implementation. For implementation verification, freeze an identifiable snapshot
+and normally run the challenge alongside the primary review. Do not automatically
+require both phases for every change.
+
+## 2. Prepare a bounded brief
+
+Read [the dispatch template](references/dispatch-template.md) only when dispatching.
+
+Provide the original requirements, exact subject and evidence locations,
+candidate claims, existing verification, and a concrete budget. Supply applicable
+repository-instruction paths because a worker may not inherit them. Share factual
+test results and reproduction information; do not frame the task as confirming
+someone else's approval or finding a predetermined number of defects.
+
+Start with one Challenger and one focused assignment covering one to three
+important claims. If no project budget exists, use a soft 15-minute initial
+budget, one active Challenger, and at most one heavy build/test process at a time.
+Apply any stricter project resource limits. A soft budget means report and return
+at the next safe stopping point, not abandon processes or delete evidence.
+
+Allow the Challenger to select a more important hypothesis from the original
+requirements. Keep unrelated architectural expansion outside the assignment.
+Do not prescribe every experiment; give the worker room to choose its method.
+
+Allocate an isolated workspace and evidence destination. Keep heavy probes out
+of shared source/build directories. Reuse existing verification where it answers
+the question, and identify the primary reviewer's work to avoid needless repeats.
+
+## 3. Delegate independently
+
+Resolve the installed `challenger` agent and launch a fresh independent worker
+with the brief, using the current host's documented delegation mechanism.
+
+If the host accepts role prompts rather than registered agent names, read the
+installed `challenger.agent.md` profile and pass its complete instructions to a
+fresh worker along with the brief. Record which mechanism was used. Do not invent
+Swarm commands, tool names, or supported configuration fields.
+
+Use the existing project/model policy; this skill does not require a different
+model or a more expensive one. Give the worker the context it needs without
+inheriting the whole implementation conversation when avoidable.
+
+If independent delegation or the agent profile is unavailable, report the
+integration gap and affected assurance to the Coordinator's task record. Do not
+label a Coordinator's self-review as an independent challenge or mark the check
+complete. Continue other authorized work while applying existing acceptance policy.
+
+## 4. Assess the report
+
+Confirm that the report identifies its snapshot, evidence, established findings,
+and unchallenged areas. Treat its result as input to the existing decision process:
+
+| Result | Coordinator action |
+| --- | --- |
+| `FINDINGS` | Check the requirement, evidence, consequence, and severity. Send established issues to the implementer with the reproducer or reasoning. Apply existing acceptance policy; a minor finding does not automatically block all work. |
+| `NO_FINDINGS_IN_CHECKED_SCOPE` | Record the covered scope and limits. Combine this evidence with the primary review and CI. Do not generalize it into a proof of safety. |
+| `INCOMPLETE` | Identify the missing evidence and its materiality. Choose a bounded follow-up, an explicit risk disposition allowed by existing policy, or the required escalation. Do not silently convert it to a pass. |
+
+For every result, handle material unresolved gaps using the `INCOMPLETE` procedure.
+Fixing an established issue does not resolve a separate unverified requirement.
+
+Separate a subject failure from a broken fixture, missing dependency, or resource
+interference. A concrete, complete code-path argument under stated assumptions can
+establish a finding without executing a reproducer; a vague possibility is an
+unresolved hypothesis, not an established defect.
+
+For disagreement, seek the smallest discriminating evidence within a stated
+budget. Do not settle by counting approvals, invoking endless reviewers, or
+automatically accepting either the implementer's or Challenger's verdict.
+
+## 5. Close the loop
+
+Assign product fixes and durable regression tests to the implementer. Preserve a
+useful reproducer before disposing of scratch resources.
+
+Recheck the reported failure condition and affected behavior after a fix. Compare
+the final snapshot with the reviewed one: changes to the relevant code, callers,
+contracts, or test/gate behavior invalidate the affected evidence; unrelated
+changes do not require restarting the entire review.
+
+Extend the budget or add another worker only for a concrete material question
+with a distinct scope. Stop once the evidence is sufficient under existing policy.
+
+Record the snapshot, hypotheses checked, result, findings/disposition, important
+gaps, and evidence locations in the existing handoff. State the actual challenge
+status when declaring the parent task complete. This workflow grants no new merge,
+publishing, or external messaging authority.
