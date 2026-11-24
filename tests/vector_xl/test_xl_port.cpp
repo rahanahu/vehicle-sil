@@ -95,6 +95,15 @@ public:
         return bus_states_;
     }
 
+    /// Waits until a bus state of `level` arrived.
+    bool wait_for_bus_level(ExternalBusState::Level level, std::chrono::milliseconds timeout = 2000ms)
+    {
+        std::unique_lock lock(mutex_);
+        return cv_.wait_for(lock, scaled_timeout(timeout), [&] {
+            return std::any_of(bus_states_.begin(), bus_states_.end(), [&](const ExternalBusState& s) { return s.level == level; });
+        });
+    }
+
 private:
     std::mutex mutex_;
     std::condition_variable cv_;
@@ -694,7 +703,8 @@ TEST_CASE(xl_port_lets_a_probe_through_while_stuck)
     }
     CHECK(probed);
     CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
-    std::this_thread::sleep_for(20ms); // the receipt
+    // The port counts the receipt before it reports the frame as its own transmission.
+    CHECK(!of_kind(f.sink.wait_for_kind(ExternalEventKind::OwnTransmission), ExternalEventKind::OwnTransmission).empty());
     for (int i = 0; i < 3; ++i)
     {
         CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
@@ -739,7 +749,8 @@ TEST_CASE(xl_port_probes_at_most_once_a_second_while_the_controller_reports_trou
     options.bus_state_interval = 20ms;
     BlockedBusFixture f(options);
     fake_xl::set_chip_state(kHardware1, {detail::backend::ChipLevel::ErrorPassive, 128, 0});
-    std::this_thread::sleep_for(100ms); // the state reaches the port
+    // The port notes the trouble before it reports the state.
+    CHECK(f.sink.wait_for_bus_level(ExternalBusState::Level::ErrorPassive));
     fake_xl::set_bus_blocked(kHardware1, true);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
     std::this_thread::sleep_for(60ms); // stuck from here

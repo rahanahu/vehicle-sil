@@ -1177,7 +1177,7 @@ void connect_device_shared_later(const Options& base)
         OutsideBridge outside(o, registry.uri());
         outside.wait_ready();
         live.wait_for({"\"event\":\"log\"", "outside: CAN -> virtual:1: also used by another vehicle-sil bridge"});
-        std::this_thread::sleep_for(300ms);
+        // The launcher has recorded the sharing (the line is written when it does): the bridge goes now.
     }
     const auto [status, lines] = live.finish();
     require(status && status->code == 1, "--strict fails on the warning: exit code " + code_text(status) + "\n" + out_of(lines));

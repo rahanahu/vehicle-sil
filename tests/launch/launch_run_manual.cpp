@@ -201,9 +201,13 @@ std::string late_participant(const Options& o) { return "  - name: Late\n    com
 void manual_late(const Options& o)
 {
     {
-        // Started long after start_timeout_ms (8 s for Auto to join is generous), and standing
-        // still in its step at 100 ms for 1.5 s, as in a debugger: the run passes.
-        const fs::path dir = hand_dir(o, "late", hand_config(o, "# run-option --stop-at-ms 300\n# run-option --participant-start-timeout-ms 8000\n", ""),
+        // Started long after start_timeout_ms (whose limit begins only once Hand is ready, so it
+        // only has to cover the start after that, generous at 2 s scaled), and standing still in
+        // its step at 100 ms for 1.5 s, as in a debugger: the run passes.
+        const std::chrono::milliseconds startTimeout = scaled_timeout(2000ms);
+        const fs::path dir = hand_dir(o, "late",
+                                      hand_config(o, "# run-option --stop-at-ms 300\n# run-option --participant-start-timeout-ms " +
+                                                         std::to_string(startTimeout.count()) + "\n", ""),
                                       {{"Auto", "pid"}, {"Hand", "slow-at-ms 100 1500"}});
         Live live(o, dir, {"run", "sim.yaml"});
         const std::string err = live.wait_for_error(
@@ -216,7 +220,7 @@ void manual_late(const Options& o)
                     contains(err, " --start-timeout-ms 1000000000000\n") &&
                     contains(hand.line, " --start-timeout-ms 1000000000000"),
                 "every ECU gets --start-timeout-ms 1000000000000:\n" + err);
-        std::this_thread::sleep_for(8500ms);
+        std::this_thread::sleep_for(startTimeout + 500ms);
         ByHand byHand(hand.line, hand.directory);
         const auto [status, out] = live.finish_unchecked();
         require(status && status->code == 0, "the run with Hand started late ends with 0:\n" + out_of(out));

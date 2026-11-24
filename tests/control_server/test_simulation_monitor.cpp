@@ -14,6 +14,7 @@
 #include <atomic>
 #include <map>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -420,8 +421,10 @@ TEST_CASE(simulation_monitor_thread_reads_on_its_own_and_unsubscribes_while_it_r
     // the call did. The call holds on until reset() returned, or for 2 s.
     std::atomic<int> calls{0};
     std::atomic<bool> inside{false};
-    std::atomic<bool> resetting{false};
-    std::atomic<bool> reset_returned{false};
+    std::mutex reset_mutex;
+    std::condition_variable reset_cv;
+    bool resetting = false;      // guarded by reset_mutex
+    bool reset_returned = false; // guarded by reset_mutex
     std::atomic<bool> returned_while_inside{false};
     auto sub = monitor.subscribe([&](const SimulationSnapshot&) {
         ++calls;
@@ -430,22 +433,26 @@ TEST_CASE(simulation_monitor_thread_reads_on_its_own_and_unsubscribes_while_it_r
             return;
         }
         const auto until = std::chrono::steady_clock::now() + 2s;
-        while (!resetting && std::chrono::steady_clock::now() < until)
-        {
-            std::this_thread::yield();
-        }
-        while (!reset_returned && std::chrono::steady_clock::now() < until)
-        {
-            std::this_thread::yield();
-        }
-        returned_while_inside = reset_returned.load();
+        std::unique_lock lock(reset_mutex);
+        reset_cv.wait_until(lock, until, [&] { return resetting; });
+        // reset() must not return while this call runs: the wait runs out (2 s) unless it does.
+        reset_cv.wait_until(lock, until, [&] { return reset_returned; });
+        returned_while_inside = reset_returned;
     });
     time.change([](ScriptedTime& t) { t.view.now = SimTime{} + 6ms; });
     CHECK(wait_for([&] { return inside.load(); }));
     std::thread resetter([&] {
-        resetting = true;
+        {
+            const std::lock_guard lock(reset_mutex);
+            resetting = true;
+        }
+        reset_cv.notify_all();
         sub.reset();
-        reset_returned = true;
+        {
+            const std::lock_guard lock(reset_mutex);
+            reset_returned = true;
+        }
+        reset_cv.notify_all();
     });
     resetter.join();
     CHECK(!returned_while_inside);

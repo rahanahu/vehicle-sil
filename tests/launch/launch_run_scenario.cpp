@@ -179,8 +179,9 @@ void scenario_same(const Options& o)
         live.write("{\"command\":\"pause\"}\n");
         live.wait_paused();
         live.write("{\"command\":\"step\",\"ms\":30}\n");
-        live.wait_for({"\"command\":\"step\"", "\"accepted\":true"});
-        std::this_thread::sleep_for(100ms);
+        const std::string stepped = live.wait_for({"\"command\":\"step\"", "\"accepted\":true"});
+        // The step's event says where it stands still: wait until it does, then go on.
+        live.wait_standing(std::stoll(value_of(stepped, "at_ms")));
         live.write("{\"command\":\"speed\",\"value\":\"max\"}\n{\"command\":\"resume\"}\n");
         const auto [status, lines] = live.finish();
         require(status && status->code == 0, "the paused run passes");
