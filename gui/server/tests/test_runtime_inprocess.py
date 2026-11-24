@@ -334,7 +334,8 @@ def test_shutdown_hurry_escalation_and_kill_all(tmp_path: Path) -> None:
             start_task = asyncio.create_task(app.client.post("api/run", {"file": "simple.yaml"}))
             await rt1.start_entered.wait()
             shutdown_task = asyncio.create_task(app.server.shutdown())
-            await asyncio.sleep(0.02)
+            while not app.server._closing:
+                await asyncio.sleep(0)
             rt1.start_gate.set()
             st, body = await start_task
             await shutdown_task

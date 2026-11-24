@@ -189,14 +189,30 @@ class Proc:
         self.reader.start()
 
     def _read(self) -> None:
-        for line in self.p.stdout:
+        try:
+            for line in self.p.stdout:
+                with self.lock:
+                    self.lines.append(line.rstrip("\n"))
+                    self.lock.notify_all()
+        finally:
             with self.lock:
-                self.lines.append(line.rstrip("\n"))
                 self.lock.notify_all()
 
     def text(self) -> str:
         with self.lock:
             return "\n".join(self.lines)
+
+    def wait_until(self, predicate, describe, timeout: float = WAIT) -> None:
+        """Waits until `predicate(lines)` holds, woken on every output line; fails after `timeout` s or on EOF."""
+        end = time.monotonic() + timeout
+        with self.lock:
+            while True:
+                if predicate(self.lines):
+                    return
+                remaining = end - time.monotonic()
+                if remaining <= 0 or (self.p.poll() is not None and not self.reader.is_alive()):
+                    fail(f"{describe(self.lines)}; the output:\n{chr(10).join(self.lines)}")
+                self.lock.wait(min(0.2, remaining))
 
     def wait_for(self, part: str, timeout: float = WAIT) -> str:
         """The first line with `part`; fails after `timeout` s or when the program has ended without it."""
@@ -206,27 +222,32 @@ class Proc:
                 for line in self.lines:
                     if part in line:
                         return line
-                if time.monotonic() > end or (self.p.poll() is not None and not self.reader.is_alive()):
+                remaining = end - time.monotonic()
+                if remaining <= 0 or (self.p.poll() is not None and not self.reader.is_alive()):
                     fail(f"no line with {part!r} within {timeout} s; the output:\n{chr(10).join(self.lines)}")
-                self.lock.wait(0.2)
+                self.lock.wait(min(0.2, remaining))
+
+    @staticmethod
+    def _link_values(lines: list[str]) -> list[str]:
+        values = [line.split("link link=", 1)[1].split()[0] for line in lines if line.startswith("[eth-bridge] link link=")]
+        values = [value for i, value in enumerate(values) if i == 0 or value != values[i - 1]]
+        return values[1:] if values[:1] == ["unknown"] else values
 
     def link_values(self) -> list[str]:
         """The values of the `link link=<value> ...` lines so far, in order (the keys after the value
         left out, and with them the lines that differ only there); a first `unknown` (printed before
         the link's first report arrived) is left out."""
         with self.lock:
-            values = [line.split("link link=", 1)[1].split()[0] for line in self.lines if line.startswith("[eth-bridge] link link=")]
-        values = [value for i, value in enumerate(values) if i == 0 or value != values[i - 1]]
-        return values[1:] if values[:1] == ["unknown"] else values
+            return self._link_values(self.lines)
 
     def wait_for_link_values(self, expected: list[str], timeout: float = WAIT) -> None:
         """Waits until the `link link=<value>` lines are exactly `expected` (a line is printed only when the value
         changes, so two equal values never follow each other)."""
-        end = time.monotonic() + timeout
-        while self.link_values() != expected:
-            if time.monotonic() > end:
-                fail(f"the link lines are {self.link_values()}, not {expected}; the output:\n{self.text()}")
-            time.sleep(0.1)
+        self.wait_until(
+            lambda lines: self._link_values(lines) == expected,
+            lambda lines: f"the link lines are {self._link_values(lines)}, not {expected}",
+            timeout=timeout,
+        )
 
     def wait(self, timeout: float = WAIT) -> int:
         try:
@@ -490,11 +511,10 @@ def tap(world: World) -> None:
     sh("ip", "link", "set", "vsil1", "up")
     made.wait_for("[eth-bridge] interface vsil1: link up")
     # The first line: unknown, or down where the link's first report came before it; then up.
-    end = time.monotonic() + WAIT
-    while made.link_values() not in (["up"], ["down", "up"]):
-        if time.monotonic() > end:
-            fail(f"the link lines are {made.link_values()}, not ['up'] or ['down', 'up']; the output:\n{made.text()}")
-        time.sleep(0.1)
+    made.wait_until(
+        lambda lines: Proc._link_values(lines) in (["up"], ["down", "up"]),
+        lambda lines: f"the link lines are {Proc._link_values(lines)}, not ['up'] or ['down', 'up']",
+    )
     wire1 = Wire("vsil1")
     round_trips(world, wire1, [frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 6)], "tap made by the bridge")
     check(made.stop() == 0, "the bridge that made its TAP device stops with exit code 0:\n" + made.text())
@@ -849,12 +869,14 @@ def pcap(world: World) -> None:
                                             rf"{min(first, second)}, {max(first, second)}\)$", listing.text(), re.M) is not None,
           "--list-interfaces says that two bridges use va:\n" + listing.text())
     check(sharing.stop() == 0, "the second bridge stops with exit code 0:\n" + sharing.text())
-    end = time.monotonic() + WAIT
-    while not [line for line in last_bridge.text().splitlines() if line.startswith("[eth-bridge] link ")][-1].endswith(
-            " marked=1 shared=0"):
-        if time.monotonic() > end:
-            fail("the first bridge's shared is not 0 again after the second stopped:\n" + last_bridge.text())
-        time.sleep(0.1)
+    def _shared_cleared(lines: list[str]) -> bool:
+        links = [line for line in lines if line.startswith("[eth-bridge] link ")]
+        return bool(links) and links[-1].endswith(" marked=1 shared=0")
+
+    last_bridge.wait_until(
+        _shared_cleared,
+        lambda _lines: "the first bridge's shared is not 0 again after the second stopped",
+    )
     say("pcap: a packet bridge on the same interface: the two found each other, the list said so, and shared went back to 0")
     sh("ip", "link", "del", "va")
     code = last_bridge.wait()

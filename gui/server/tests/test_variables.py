@@ -622,21 +622,28 @@ def test_fake_control_flushes_ended_time_when_stopped(control_env: dict) -> None
 
     async def main() -> None:
         sent: list[dict] = []
+        ready_event = asyncio.Event()
         ended_event = asyncio.Event()
 
         def emit(messages: list[dict]) -> None:
             sent.extend(messages)
             for msg in messages:
-                if msg["type"] == "variables" and msg["variables"]["state"] in ("ended", "failed"):
-                    ended_event.set()
+                if msg["type"] == "variables":
+                    state = msg["variables"]["state"]
+                    if state == "ready":
+                        ready_event.set()
+                    if state in ("ended", "failed"):
+                        ready_event.set()
+                        ended_event.set()
 
         v = Variables(1, emit, ending=lambda: False)
         v.expect()
         assert v.state == "connecting"
         src = control.GrpcSource(control.load(), addr, None)
         v.connect(src)
-        while v.state != "ready":
-            await asyncio.sleep(0.01)
+        async with asyncio.timeout(5.0):
+            await ready_event.wait()
+        assert v.state == "ready", (v.state, v.reason)
 
         with grpc_server.changed:
             grpc_server.set_time(100, False, running=False, ended=True)

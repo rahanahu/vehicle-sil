@@ -135,12 +135,13 @@ def test_a_variant_chosen_in_the_browser_reaches_the_real_check_and_run(tmp_path
 def test_real_launcher_gets_time_to_finish_participant_shutdown(tmp_path: Path, deadline: str | None) -> None:
     """The default waits for cleanup; an explicitly requested deadline still escalates."""
     engine, _ = executables(EXAMPLES)
-    ready, done = tmp_path / "ready", tmp_path / "cleanup-complete"
+    ready, got_sigterm, done = tmp_path / "ready", tmp_path / "got-sigterm", tmp_path / "cleanup-complete"
     helper = tmp_path / "slow_exit.py"
     helper.write_text(
         "import os, signal, time\n"
         "from pathlib import Path\n"
         "def stop(*_):\n"
+        f"    Path({str(got_sigterm)!r}).write_text('sigterm')\n"
         "    time.sleep(11)\n"
         f"    Path({str(done)!r}).write_text('finished')\n"
         "    raise SystemExit(0)\n"
@@ -171,8 +172,8 @@ def test_real_launcher_gets_time_to_finish_participant_shutdown(tmp_path: Path, 
         pid = int(ready.read_text(encoding="utf-8"))
         try:
             gui.proc.send_signal(signal.SIGTERM)
-            time.sleep(0.3)
             if deadline is None:
+                assert wait_until(lambda: got_sigterm.exists(), 10)
                 assert gui.proc.poll() is None, "the server ended before the participant could finish"
             assert gui.proc.wait(scaled(30)) == 0
             if deadline is None:

@@ -960,11 +960,12 @@ def test_serve_shutdown_during_spawn_leaks_nothing(tmp_path: Path) -> None:
         rt = ServeRuntime(launcher, cwd=root)
 
         import threading
+        loop = asyncio.get_running_loop()
         th_gate = threading.Event()
-        entered = threading.Event()
+        entered = asyncio.Event()
 
         def blocking_creds():
-            entered.set()
+            loop.call_soon_threadsafe(entered.set)
             th_gate.wait(timeout=2.0)
             return orig_creds()
 
@@ -972,11 +973,11 @@ def test_serve_shutdown_during_spawn_leaks_nothing(tmp_path: Path) -> None:
         control.credentials_file = blocking_creds  # type: ignore[assignment]
         try:
             prep_task = asyncio.create_task(rt.prepare("a.yaml", want_control=True))
-            while not entered.is_set():
-                await asyncio.sleep(0.005)
+            await asyncio.wait_for(entered.wait(), timeout=5.0)
             hurry = asyncio.Event()
             shut_task = asyncio.create_task(rt.shutdown(hurry, 1.0))
-            await asyncio.sleep(0.02)
+            while not rt._closing:
+                await asyncio.sleep(0)
             th_gate.set()
             await shut_task
             try:
@@ -1467,10 +1468,19 @@ def test_cancelling_prepare_mid_send_prepare_clears_pending_prepare(tmp_path: Pa
             assert st1["state"] == "ready"
             res = rt._resident
             assert res is not None
+            prepare_sent = asyncio.Event()
+            orig_write = res.proc.stdin.write
 
+            def track_write(data):
+                result = orig_write(data)
+                if res.pending_prepare is not None:
+                    prepare_sent.set()
+                return result
+
+            res.proc.stdin.write = track_write  # type: ignore[method-assign]
             task = asyncio.create_task(rt.prepare("a.yaml", variant="fast"))
-            while res.pending_prepare is None:
-                await asyncio.sleep(0.01)
+            await asyncio.wait_for(prepare_sent.wait(), timeout=5.0)
+            assert res.pending_prepare is not None
             assert rt.status()["state"] == "preparing"
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -1528,34 +1538,44 @@ def test_cancelling_prepare_mid_spawn_closes_resident_and_restores_idle(tmp_path
         rt = ServeRuntime(launcher, cwd=root, escalate_wait_s=0.1)
 
         import threading
+        loop = asyncio.get_running_loop()
         th_gate = threading.Event()
-        entered = threading.Event()
+        entered = asyncio.Event()
+        removed = asyncio.Event()
         orig_creds = control.credentials_file
+        orig_remove = control.remove
         created_creds: list[Path] = []
 
         def blocking_creds():
-            entered.set()
+            loop.call_soon_threadsafe(entered.set)
             th_gate.wait(timeout=2.0)
             path, tok = orig_creds()
             created_creds.append(path)
             return path, tok
 
+        def tracking_remove(path):
+            ok = orig_remove(path)
+            if path is not None and path in created_creds:
+                loop.call_soon_threadsafe(removed.set)
+            return ok
+
         control.credentials_file = blocking_creds  # type: ignore[assignment]
+        control.remove = tracking_remove  # type: ignore[assignment]
         try:
             prep_task = asyncio.create_task(rt.prepare("a.yaml", want_control=True))
-            while not entered.is_set():
-                await asyncio.sleep(0.005)
+            await asyncio.wait_for(entered.wait(), timeout=5.0)
             assert rt.status()["state"] == "preparing"
             prep_task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await prep_task
             th_gate.set()
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(removed.wait(), timeout=5.0)
             assert created_creds and not created_creds[0].exists()
             assert rt.status() == {"mode": "hot", "state": "idle", "config": None, "reason": None, "message": None}
             assert rt.active_pids() == []
             assert not rt._residents
         finally:
+            control.remove = orig_remove  # type: ignore[assignment]
             for p in created_creds:
                 control.remove(p)
             control.credentials_file = orig_creds  # type: ignore[assignment]
@@ -1592,10 +1612,19 @@ def test_cancelling_start_run_mid_wait_clears_pending_and_closes_resident(tmp_pa
             await rt.prepare("a.yaml", want_control=False)
             res = rt._resident
             assert res is not None
+            run_sent = asyncio.Event()
+            orig_write = res.proc.stdin.write
 
+            def track_write(data):
+                result = orig_write(data)
+                if res.pending_run is not None:
+                    run_sent.set()
+                return result
+
+            res.proc.stdin.write = track_write  # type: ignore[method-assign]
             task = asyncio.create_task(rt.start_run(RunSpec(config="a.yaml", request=req_file)))
-            while res.pending_run is None:
-                await asyncio.sleep(0.01)
+            await asyncio.wait_for(run_sent.wait(), timeout=5.0)
+            assert res.pending_run is not None
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -1926,9 +1955,11 @@ def test_hot_launcher_ends_post_result_async_drain_keeps_stoppable_false(tmp_pat
         class _SlowCloseSource(_FakeControlSource):
             def __init__(self, address: str, token: str):
                 super().__init__(address, token)
+                self.close_entered = asyncio.Event()
                 self.close_gate = asyncio.Event()
 
             async def close(self) -> None:
+                self.close_entered.set()
                 await self.close_gate.wait()
                 await super().close()
 
@@ -1949,10 +1980,7 @@ def test_hot_launcher_ends_post_result_async_drain_keeps_stoppable_false(tmp_pat
             # Wait for result to clear current_run and set resident.ending while _SlowCloseSource.close() holds drain.
             rt = server.runtime
             assert isinstance(rt, ServeRuntime)
-            for _ in range(100):
-                if rt.execution_status() is None and server.session is not None and server.session.state == "running":
-                    break
-                await asyncio.sleep(0.01)
+            await asyncio.wait_for(sources[0].close_entered.wait(), timeout=5.0)
             assert server.session is not None and server.session.state == "running"
             assert rt.execution_status() is None
 
@@ -2050,13 +2078,14 @@ def test_shutdown_waits_for_in_flight_post_prepare(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=True) as (server, c, _):
             import threading
+            loop = asyncio.get_running_loop()
             th_gate = threading.Event()
-            entered = threading.Event()
+            entered = asyncio.Event()
             orig_creds = control.credentials_file
             created_creds: list[Path] = []
 
             def blocking_creds():
-                entered.set()
+                loop.call_soon_threadsafe(entered.set)
                 th_gate.wait(timeout=2.0)
                 path, tok = orig_creds()
                 created_creds.append(path)
@@ -2065,10 +2094,11 @@ def test_shutdown_waits_for_in_flight_post_prepare(tmp_path: Path) -> None:
             control.credentials_file = blocking_creds  # type: ignore[assignment]
             try:
                 prep_task = asyncio.create_task(c.post("api/prepare", {"file": "a.yaml"}))
-                while not entered.is_set():
-                    await asyncio.sleep(0.005)
+                await asyncio.wait_for(entered.wait(), timeout=5.0)
                 shut_task = asyncio.create_task(server.shutdown())
-                await asyncio.sleep(0.05)
+                while not server._closing:
+                    await asyncio.sleep(0)
+                await asyncio.sleep(0)
                 assert not shut_task.done()
                 th_gate.set()
                 st, body = await prep_task

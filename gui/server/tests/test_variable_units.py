@@ -7,6 +7,7 @@ import json
 import math
 
 import pytest
+from vehicle_sil_gui import variables as variables_mod
 from vehicle_sil_gui.hub import Client, Hub, Outgoing
 from vehicle_sil_gui.source import ListSample, OperationInfo, PeerInfo, SnapshotInfo, SourceError, TargetInfo, TimeInfo
 from vehicle_sil_gui.variables import Limits, Rejected, Variables, Watch, check_watch
@@ -120,10 +121,41 @@ async def settle() -> None:
         await asyncio.sleep(0)
 
 
+def install_fake_clock(monkeypatch, start: float = 100.0):
+    """Advances the loop time seen by vehicle_sil_gui.variables without affecting asyncio's real scheduler."""
+    now = [start]
+
+    class _LoopProxy:
+        def __init__(self, real):
+            self._real = real
+
+        def time(self) -> float:
+            return now[0]
+
+        def __getattr__(self, name: str):
+            return getattr(self._real, name)
+
+    class _AsyncioProxy:
+        def get_running_loop(self):
+            return _LoopProxy(asyncio.get_running_loop())
+
+        def __getattr__(self, name: str):
+            return getattr(asyncio, name)
+
+    monkeypatch.setattr(variables_mod, "asyncio", _AsyncioProxy())
+
+    def advance(seconds: float) -> None:
+        now[0] += seconds
+
+    return advance
+
+
 # ---------------------------------------------------------------- paused, sim_ms and the values belong together
 
 
-def test_paused_is_what_one_read_says_of_the_time_and_the_values() -> None:
+def test_paused_is_what_one_read_says_of_the_time_and_the_values(monkeypatch) -> None:
+    advance = install_fake_clock(monkeypatch)
+
     async def main() -> None:
         v, source, _ = make()
         v.on_time(running(90))
@@ -151,7 +183,7 @@ def test_paused_is_what_one_read_says_of_the_time_and_the_values() -> None:
         source.values["Engine"] = sample(100, 10, rpm=100)
         await v.refresh({"Engine"})
         assert source.reads == [["Engine"]] and v.stamp(watch) == watch.sent
-        await asyncio.sleep(0.3)
+        advance(variables_mod.STANDING_READ_S + 0.05)
         await v.refresh({"Engine"})
         m = message(v)
         assert (m["paused"], m["sim_ms"], m["peers"]["Engine"]["sample_ms"]) == (True, 100, 100)
@@ -159,7 +191,7 @@ def test_paused_is_what_one_read_says_of_the_time_and_the_values() -> None:
         # Standing still on, read again: the same message, so nothing to send.
         v.values_message(watch)
         v.on_time(TimeInfo(100 * MS, True, True, False))  # told again: no news
-        await asyncio.sleep(0.3)
+        advance(variables_mod.STANDING_READ_S + 0.05)
         await v.refresh({"Engine"})
         assert v.stamp(watch) == watch.sent and len(source.reads) == 3
         # A sample that comes by itself is of no read: nothing is said of its moment until the peer is read.
@@ -194,7 +226,9 @@ def test_a_read_that_the_simulation_went_on_during_is_not_called_paused() -> Non
     asyncio.run(main())
 
 
-def test_peers_read_by_different_calls_are_paused_together_only_at_one_time() -> None:
+def test_peers_read_by_different_calls_are_paused_together_only_at_one_time(monkeypatch) -> None:
+    advance = install_fake_clock(monkeypatch)
+
     async def main() -> None:
         v, source, _ = make()
         v.on_peers([BODY], [])
@@ -222,7 +256,7 @@ def test_peers_read_by_different_calls_are_paused_together_only_at_one_time() ->
         assert source.reads == [["Body"]] and (message(v, both)["paused"], message(v, both)["sim_ms"]) == (True, 110)
         # A peer that is another process than the one known here: its sample is not taken, and nothing is said.
         source.values["Body"] = ListSample("c", 100 * MS, 1, [5.0])
-        await asyncio.sleep(0.3)
+        advance(variables_mod.STANDING_READ_S + 0.05)
         await v.refresh({"Body", "Engine"})
         assert message(v, engine)["paused"] is True and message(v, both)["paused"] is False
         assert message(v, both)["peers"]["Body"]["sample_ms"] == 100
@@ -339,14 +373,16 @@ def test_news_that_the_time_went_on_ends_paused_even_when_no_read_works() -> Non
     asyncio.run(main())
 
 
-def test_an_answer_from_before_a_command_does_not_say_paused_after_it() -> None:
+def test_an_answer_from_before_a_command_does_not_say_paused_after_it(monkeypatch) -> None:
+    advance = install_fake_clock(monkeypatch)
+
     async def main() -> None:
         v, source, _ = make()
         source.time = standing(100)
         v.on_synced()
         await v.refresh()
         assert message(v)["paused"] is True
-        await asyncio.sleep(0.3)
+        advance(variables_mod.STANDING_READ_S + 0.05)
         source.gate = asyncio.Event()
         reading = asyncio.create_task(v.refresh())
         await settle()
@@ -449,7 +485,8 @@ def test_after_a_reconnection_gone_peers_are_dropped_and_open_operations_read_ag
         # Changes were lost on the way: the peers are read again too.
         source.peers = [PeerInfo("Engine", "a", False, SCHEMA), PeerInfo("Cabin", "c", True, SCHEMA[:1])]
         v.on_dropped()
-        await asyncio.sleep(0.1)
+        assert v._reconciling is not None
+        await v._reconciling
         assert [(p["name"], p["connected"]) for p in v.summary()["peers"]] == [("Engine", False), ("Cabin", True)]
         await v.close()
     asyncio.run(main())
@@ -557,9 +594,23 @@ def test_the_schema_is_kept_up_to_its_limits_and_the_rest_is_counted() -> None:
     asyncio.run(main())
 
 
-def test_a_peer_that_is_another_process_now_loses_its_values() -> None:
+def test_a_peer_that_is_another_process_now_loses_its_values(monkeypatch) -> None:
+    monkeypatch.setattr(variables_mod, "TOLD_TOGETHER_S", 0.0)
+
     async def main() -> None:
-        v, source, sent = make()
+        sent: list[dict] = []
+        second_variables = asyncio.Event()
+
+        def emit(messages: list[dict]) -> None:
+            sent.extend(messages)
+            if sum(1 for m in sent if m["type"] == "variables") >= 2:
+                second_variables.set()
+
+        v = Variables(7, emit)
+        v.expect()
+        source = Scripted()
+        v.connect(source)
+        v.on_peers([PeerInfo("Engine", "a", True, SCHEMA)], [])
         v.on_synced()
         v.on_samples({"Engine": sample(10, 5)})
         v.on_peers([PeerInfo("Engine", "b", True, SCHEMA)], [])
@@ -569,7 +620,7 @@ def test_a_peer_that_is_another_process_now_loses_its_values() -> None:
         # the changed peer is told once, a little later (peers come one by one)
         v.on_peers([PeerInfo("Engine", "b", False, SCHEMA)], [])
         assert [m["type"] for m in sent] == ["variables"]
-        await asyncio.sleep(0.1)
+        await asyncio.wait_for(second_variables.wait(), timeout=2.0)
         assert [m["type"] for m in sent] == ["variables"] * 2 and sent[-1]["variables"]["peers"][0]["connected"] is False
         await v.close()
     asyncio.run(main())
@@ -617,15 +668,20 @@ def test_a_deferred_message_waits_once_and_is_made_when_it_is_sent() -> None:
     async def main() -> None:
         texts: list[str] = []
         state = {"n": 0}
+        rendered = asyncio.Event()
+        sent_two = asyncio.Event()
 
         class Item:
             size = 0
 
             def render(self):
+                rendered.set()
                 return None if state["n"] < 0 else json.dumps({"n": state["n"]})
 
         async def send(text: str) -> None:
             texts.append(text)
+            if len(texts) >= 2:
+                sent_two.set()
         hub = Hub(lambda session, from_seq: [{"type": "hello"}], limit=10)
         client = hub.client(send)
         item = Item()
@@ -634,13 +690,15 @@ def test_a_deferred_message_waits_once_and_is_made_when_it_is_sent() -> None:
             client.put_deferred(item)
         assert len(client.items) == 1
         task = asyncio.create_task(hub.serve(client, None, None))
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(sent_two.wait(), timeout=2.0)
         assert texts == ['{"type":"hello"}', '{"n": 999}'] and not client.deferred
         # nothing for an item that has nothing to say any more
         state["n"] = -1
+        rendered.clear()
         client.put_deferred(item)
-        await asyncio.sleep(0.01)
-        assert len(texts) == 2
+        await asyncio.wait_for(rendered.wait(), timeout=2.0)
+        await asyncio.sleep(0)
+        assert len(texts) == 2 and not client.deferred
         # a queue that overflows with what cannot be dropped is sent again from the start; the deferred item is
         # not what overflows it, and is forgotten with the rest
         state["n"] = 5
