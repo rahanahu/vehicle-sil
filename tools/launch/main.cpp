@@ -466,6 +466,16 @@ using runner::stop_source::kStopCommand;
 using runner::stop_source_name;
 
 #ifdef _WIN32
+std::atomic<HANDLE> g_exiting_event{nullptr};
+
+void signal_exiting() noexcept
+{
+    if (HANDLE exiting = g_exiting_event.load(std::memory_order_acquire); exiting != nullptr)
+    {
+        SetEvent(exiting);
+    }
+}
+
 BOOL WINAPI on_console_event(DWORD event)
 {
     if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT && event != CTRL_CLOSE_EVENT)
@@ -484,8 +494,15 @@ BOOL WINAPI on_console_event(DWORD event)
     if (event == CTRL_CLOSE_EVENT)
     {
         // Windows ends the process when this returns: give the run time to end the participants
-        // (the job objects end them anyway when the process is gone).
-        Sleep(4000);
+        // (the job objects end them anyway when the process is gone), waking as soon as main() exits.
+        if (HANDLE exiting = g_exiting_event.load(std::memory_order_acquire); exiting != nullptr)
+        {
+            WaitForSingleObject(exiting, 4000);
+        }
+        else
+        {
+            Sleep(4000);
+        }
     }
     return TRUE;
 }
@@ -506,11 +523,24 @@ std::string source_name(int first)
     }
 }
 
-void watch_interrupts() { SetConsoleCtrlHandler(on_console_event, TRUE); }
+void watch_interrupts()
+{
+    if (g_exiting_event.load(std::memory_order_acquire) == nullptr)
+    {
+        HANDLE exiting = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE expected = nullptr;
+        if (exiting != nullptr && !g_exiting_event.compare_exchange_strong(expected, exiting, std::memory_order_acq_rel))
+        {
+            CloseHandle(exiting);
+        }
+    }
+    SetConsoleCtrlHandler(on_console_event, TRUE);
+}
 
 /// A broken pipe is an error of the write, not a signal, on Windows.
 void ignore_broken_pipes() {}
 #else
+void signal_exiting() noexcept {}
 /// Only runner::StopRequests::request() or launch::LauncherEnd::request(): lock-free atomics,
 /// nothing else (async-signal-safe).
 extern "C" void on_signal(int signal)
@@ -2006,5 +2036,6 @@ int main(int argc, char** argv)
     }
     // The reader of stdin and the threads of the events may still wait: they write nothing from here on.
     finish_threads();
+    signal_exiting();
     return code;
 }

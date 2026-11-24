@@ -217,6 +217,7 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
                     change(before_bus, states_[index].bus_text(), "bus");
                 }
                 tell_outside(now);
+                link_lines_cv_.notify_all();
             }
             return;
         }
@@ -343,6 +344,31 @@ bool RunOutput::link_lines_read(const std::vector<std::size_t>& bridges)
 {
     const std::lock_guard lock(mutex_);
     return std::all_of(bridges.begin(), bridges.end(), [this](std::size_t i) { return states_[i].link_line_seen(); });
+}
+
+Waited RunOutput::wait_for_link_lines(const std::vector<std::size_t>& bridges, std::chrono::milliseconds timeout,
+                                      const std::function<bool()>& interrupted)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto all_read = [this, &bridges] {
+        return std::all_of(bridges.begin(), bridges.end(), [this](std::size_t i) { return states_[i].link_line_seen(); });
+    };
+    std::unique_lock lock(mutex_);
+    while (!all_read())
+    {
+        if (interrupted && interrupted())
+        {
+            return Waited::Interrupted;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            return Waited::TimedOut;
+        }
+        // Wakes immediately when a link line arrives; short slice notices async-signal interrupts.
+        link_lines_cv_.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)), all_read);
+    }
+    return Waited::Done;
 }
 
 OutsideLink RunOutput::take_link(std::size_t index, std::chrono::steady_clock::time_point now)

@@ -34,9 +34,28 @@ namespace vehicle_sil::runner {
 
 struct TimeCommands::State
 {
+    /// Leaf-lock signal for wait_paused(): notified by attach(), detach(), hold_before_start(),
+    /// and the attached controller's time gate observer without ever taking `mutex`.
+    struct WaitSignal
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::uint64_t generation = 0;
+
+        void notify() noexcept
+        {
+            {
+                const std::lock_guard lock(mutex);
+                ++generation;
+            }
+            cv.notify_all();
+        }
+    };
+
     std::mutex mutex;
-    /// hold_before_start() and wait_paused(): a command released the hold, or detach().
+    /// hold_before_start(): a command released the hold, wake_hold(), or detach().
     std::condition_variable cv;
+    std::shared_ptr<WaitSignal> wait_signal = std::make_shared<WaitSignal>();
     /// Called in apply() with each command as decided (the writer of the command events).
     OnCommand on_command{};
     /// A pause was asked for (or the run starts paused) and no resume since.
@@ -349,12 +368,19 @@ void TimeCommands::attach(SimulationController& controller, std::int64_t step_ms
     }
     s.controller = &controller;
     s.step_ms = std::max<std::int64_t>(step_ms, 1);
+    controller.set_gate_observer([weak = std::weak_ptr<State::WaitSignal>(s.wait_signal)] {
+        if (auto signal = weak.lock())
+        {
+            signal->notify();
+        }
+    });
     controller.set_speed(s.speed ? *s.speed : speed);
     if (s.paused)
     {
         controller.pause_at(SimTime{});
     }
     tell(s);
+    s.wait_signal->notify();
 }
 
 void TimeCommands::set_on_change(OnChange on_change)
@@ -390,6 +416,7 @@ void TimeCommands::detach()
             {
                 s.on_detach(*s.controller);
             }
+            s.controller->set_gate_observer({});
         }
         const bool was_detached = s.detached;
         s.controller = nullptr;
@@ -404,6 +431,7 @@ void TimeCommands::detach()
         answer_waiting(s);
     }
     s.cv.notify_all();
+    s.wait_signal->notify();
 }
 
 TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& give_up, std::chrono::milliseconds poll,
@@ -425,6 +453,7 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
         seen_wake = s.hold_wake_generation;
         tell(s);
     }
+    s.wait_signal->notify();
     // However this ends (also by an exception), the run no longer holds.
     struct EndHold
     {
@@ -533,29 +562,37 @@ TimeCommands::Stage TimeCommands::inspect(const std::function<void(SimulationCon
 std::optional<SimTime> TimeCommands::wait_paused(std::chrono::milliseconds timeout)
 {
     State& s = *state_;
+    State::WaitSignal& signal = *s.wait_signal;
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    std::unique_lock lock(s.mutex);
     while (true)
     {
-        if (s.detached)
+        std::uint64_t generation = 0;
         {
-            return std::nullopt;
+            const std::lock_guard wlock(signal.mutex);
+            generation = signal.generation;
         }
-        if (s.holding)
         {
-            return SimTime{};
-        }
-        if (SimulationController* c = s.controller)
-        {
-            // As SimulationController::wait_until_paused(), without waiting under the gate's lock.
-            if (c->runtime().started() && has_finished(PeerStatus{c->runtime().state()}))
+            const std::lock_guard lock(s.mutex);
+            if (s.detached)
             {
                 return std::nullopt;
             }
-            const TimeState t = c->time_state();
-            if (t.paused)
+            if (s.holding)
             {
-                return t.now;
+                return SimTime{};
+            }
+            if (SimulationController* c = s.controller)
+            {
+                // As SimulationController::wait_until_paused(), without waiting under the gate's lock.
+                if (c->runtime().started() && has_finished(PeerStatus{c->runtime().state()}))
+                {
+                    return std::nullopt;
+                }
+                const TimeState t = c->time_state();
+                if (t.paused)
+                {
+                    return t.now;
+                }
             }
         }
         const auto now = std::chrono::steady_clock::now();
@@ -563,8 +600,8 @@ std::optional<SimTime> TimeCommands::wait_paused(std::chrono::milliseconds timeo
         {
             return std::nullopt;
         }
-        // Short slices: the gate does not signal this condition variable.
-        s.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(10)));
+        std::unique_lock wlock(signal.mutex);
+        signal.cv.wait_until(wlock, deadline, [&signal, generation] { return signal.generation != generation; });
     }
 }
 

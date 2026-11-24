@@ -333,10 +333,30 @@ public:
     /// step at or after stop_at is never held (the simulation stops there). Thread safe; does not
     /// wait. May be called before start(): the step at 0 is then held from the beginning.
     void guard_from(std::optional<SimTime> t);
+    /// Outcome of wait_guarded_result().
+    struct GuardWaitResult
+    {
+        enum class Status
+        {
+            Guarded,  ///< a step is held for the guard (time is its start time)
+            TimedOut, ///< timeout expired before a step was held
+            Ended,    ///< a stop was requested or the lifecycle ended: no step will be held
+        };
+        Status status = Status::TimedOut;
+        std::optional<SimTime> time{};
+    };
+
     /// Waits until a step is held for the guard, or the lifecycle ended, or the timeout expires.
     /// @returns the start time of the held step, or nullopt (also once the lifecycle ended). Not
     /// from a step (see wait_until_paused()).
     std::optional<SimTime> wait_guarded(std::chrono::milliseconds timeout);
+    /// Like wait_guarded(), distinguishing a timeout from the end of the simulation.
+    GuardWaitResult wait_guarded_result(std::chrono::milliseconds timeout);
+
+    /// Sets an observer called (without holding the gate's lock) whenever the time gate's state
+    /// changes or ends. Must be short, must not call back into this controller, and must not throw.
+    /// Pass an empty function to clear. Thread safe.
+    void set_gate_observer(std::function<void()> observer);
 
 private:
     struct Gate;

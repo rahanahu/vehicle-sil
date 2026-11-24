@@ -258,24 +258,27 @@ void RunScenario::loop(SimulationController& controller)
     {
         while (!quit_.load())
         {
-            const std::optional<SimTime> p = controller.wait_guarded(std::chrono::milliseconds(50));
-            if (!p)
+            const SimulationController::GuardWaitResult waited = controller.wait_guarded_result(std::chrono::milliseconds(50));
+            if (waited.status == SimulationController::GuardWaitResult::Status::Ended)
             {
-                // No step is held (yet), or the simulation is ending: the main thread says when to end.
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                return;
+            }
+            if (waited.status != SimulationController::GuardWaitResult::Status::Guarded)
+            {
                 continue;
             }
-            trace::instant("scenario.woken", to_ns(*p));
-            const trace::Span traceTick("scenario.tick", to_ns(*p));
+            const SimTime p = *waited.time;
+            trace::instant("scenario.woken", to_ns(p));
+            const trace::Span traceTick("scenario.tick", to_ns(p));
             drain();
-            if (engine_->tick(*p))
+            if (engine_->tick(p))
             {
                 // Over: the guard stays, so that the simulation stands at this step until the
                 // main thread has stopped it.
                 mark_over();
                 return;
             }
-            controller.guard_from(*p + SimDuration(1));
+            controller.guard_from(p + SimDuration(1));
         }
     }
     catch (const std::exception& e)

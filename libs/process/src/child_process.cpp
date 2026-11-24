@@ -294,11 +294,22 @@ ChildProcess::ChildProcess(const std::filesystem::path& executable,
         throw StartError("cannot start " + program + ": " + std::strerror(rc), StartError::Cause::Executable);
     }
     pid_ = pid;
+    pidfd_ = detail::open_pidfd(pid_);
 }
 
 ChildProcess::~ChildProcess()
 {
     kill();
+    close_pidfd();
+}
+
+void ChildProcess::close_pidfd() noexcept
+{
+    if (pidfd_ >= 0)
+    {
+        ::close(pidfd_);
+        pidfd_ = -1;
+    }
 }
 
 namespace {
@@ -337,18 +348,35 @@ std::optional<int> ChildProcess::wait_for(std::chrono::milliseconds timeout)
             {
                 continue;
             }
+            close_pidfd();
             return exit_code_;
         }
         if (rc < 0 && errno != EINTR)
         {
             exit_code_ = -1;
+            close_pidfd();
             return exit_code_;
         }
-        if (std::chrono::steady_clock::now() >= deadline)
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
         {
             return std::nullopt;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (pidfd_ >= 0)
+        {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+            const int waitMs = static_cast<int>(
+                std::clamp<std::chrono::milliseconds::rep>(left.count(), 1, std::numeric_limits<int>::max()));
+            pollfd pfd{pidfd_, POLLIN, 0};
+            const int pollRc = ::poll(&pfd, 1, waitMs);
+            if (pollRc < 0 && errno != EINTR)
+            {
+                close_pidfd();
+            }
+            continue;
+        }
+        std::this_thread::sleep_for(
+            std::min<std::chrono::steady_clock::duration>(std::chrono::milliseconds(10), deadline - now));
     }
 }
 
@@ -450,9 +478,7 @@ Captured run_captured(const std::filesystem::path& executable, const std::vector
     request.end_with_caller = true;
     const pid_t pid = detail::spawn(executable, arguments, request);
     Fd childExit;
-#if defined(__linux__) && defined(SYS_pidfd_open)
-    childExit.fd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
-#endif
+    childExit.fd = detail::open_pidfd(pid);
     // Only the child holds the write ends now: the pipes close when it (and what it started)
     // has ended.
     outWrite.reset();

@@ -117,6 +117,9 @@ std::optional<ExitStatus> exit_status_of(int status);
 /// A pipe with both ends closed on exec, at descriptors 3 and above. Throws StartError.
 void make_pipe(int& read, int& write);
 
+/// Opens a Linux pidfd (close-on-exec) for `pid`, or returns -1 if unavailable.
+int open_pidfd(pid_t pid) noexcept;
+
 #endif
 
 } // namespace vehicle_sil::process::detail

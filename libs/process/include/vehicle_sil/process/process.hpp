@@ -91,7 +91,7 @@ public:
 
     /// How it ended, or empty while it runs. Does not wait.
     std::optional<ExitStatus> poll();
-    /// Waits up to `timeout` for its end (in steps of a few milliseconds).
+    /// Waits up to `timeout` for its end.
     std::optional<ExitStatus> wait_for(std::chrono::milliseconds timeout);
 
     /// Asks it and the processes it started to stop: POSIX SIGTERM to its process group,
@@ -138,7 +138,9 @@ private:
     bool stop_reading_ = false; ///< guarded by mutex_
     unsigned long pid_ = 0;
 #else
+    void close_pidfd() noexcept;
     int pid_ = -1;
+    int pidfd_ = -1; ///< Linux pidfd for event-driven wait_for(); -1 when unavailable or reaped
     bool group_gone_ = false; ///< the process group was seen empty: its ID is not ours any more
     int out_ = -1;
     int err_ = -1;

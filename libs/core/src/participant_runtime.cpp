@@ -272,6 +272,7 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
             // this handler does (start()). SIL Kit calls it only without a TimeSyncService.
             lifecycle_->SetStartingHandler([this] {
                 starting_entered_.store(true, std::memory_order_release);
+                wake_waiters();
                 start_probe(detail::StartProbePoint::StartingHandlerEntered);
             });
         }
@@ -452,6 +453,15 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
                                                    : std::chrono::steady_clock::now() + timeout;
     while (true)
     {
+        // Capture generations before reading flags and state so a concurrent transition on the
+        // SIL Kit thread cannot be missed between checking and waiting on peers_cv_.
+        std::uint64_t peerGen = 0;
+        std::uint64_t wakeGen = 0;
+        {
+            const std::lock_guard lock(peers_mutex_);
+            peerGen = peer_generation_;
+            wakeGen = wake_generation_;
+        }
         // A short simulation can pass through Running between two polls (to Stopping or on to
         // Shutdown); a step handler call (virtual time) or the starting handler (otherwise)
         // proves that it got there. The starting handler runs in ReadyToRun, and SIL Kit sets
@@ -522,13 +532,24 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
                                          "': the start was given up, state: " + orch::to_string(current) + ": " + why);
             }
         }
-        if (std::chrono::steady_clock::now() >= deadline)
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
         {
             throw StartTimeoutError("SIL Kit lifecycle of '" + options_.participant_name
                                      + "' did not reach Running within " + std::to_string(timeout.count())
                                      + " ms, state: " + orch::to_string(current));
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // Wake immediately on own lifecycle transitions; bound the slice only while give_up needs
+        // periodic rechecks or while SIL Kit's starting handler is running in ReadyToRun. Otherwise
+        // a coarse 1 s cap: kNoStartLimit makes `deadline` time_point::max(), which a libstdc++
+        // without pthread_cond_clockwait (MinGW) converts to system_clock and could overflow.
+        const auto waitUntil = (give_up || (startingEntered && current == orch::ParticipantState::ReadyToRun))
+                                   ? std::min(deadline, now + std::chrono::milliseconds(5))
+                                   : std::min(deadline, now + std::chrono::seconds(1));
+        std::unique_lock lock(peers_mutex_);
+        peers_cv_.wait_until(lock, waitUntil, [&] {
+            return peer_generation_ != peerGen || wake_generation_ != wakeGen;
+        });
     }
 }
 
@@ -713,9 +734,25 @@ void ParticipantRuntime::deliver_stop(bool now, std::chrono::steady_clock::time_
             {
                 return;
             }
-            while (is_running_or_paused(state) && std::chrono::steady_clock::now() < deadline)
+            while (is_running_or_paused(state))
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                std::uint64_t peerGen = 0;
+                std::uint64_t wakeGen = 0;
+                {
+                    const std::lock_guard lock(peers_mutex_);
+                    peerGen = peer_generation_;
+                    wakeGen = wake_generation_;
+                }
+                state = lifecycle_->State();
+                if (!is_running_or_paused(state) || std::chrono::steady_clock::now() >= deadline)
+                {
+                    break;
+                }
+                std::unique_lock lock(peers_mutex_);
+                peers_cv_.wait_until(lock, deadline, [&] {
+                    return peer_generation_ != peerGen || wake_generation_ != wakeGen;
+                });
+                lock.unlock();
                 state = lifecycle_->State();
             }
         }
@@ -961,7 +998,11 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
     trace::Span traceStep("step", now.count());
     trace::set_thread_name("silkit");
     now_ns_.store(now.count(), std::memory_order_release);
-    step_entered_.store(true, std::memory_order_release);
+    if (!step_entered_.load(std::memory_order_relaxed))
+    {
+        step_entered_.store(true, std::memory_order_release);
+        wake_waiters();
+    }
     if (!stop_delivered_.load(std::memory_order_acquire))
     {
         deliver_stop(false); // a stop requested before Running: this step is the first chance
@@ -1283,6 +1324,7 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
         {
             running_entered_.store(true, std::memory_order_release);
         }
+        wake_waiters();
         if (has_finished(PeerStatus{status.state}))
         {
             notify_stop_observer(); // also a stop that another participant asked for

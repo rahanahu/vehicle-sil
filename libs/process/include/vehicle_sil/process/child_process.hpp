@@ -76,7 +76,9 @@ private:
     void* process_ = nullptr; // HANDLE
     void* job_ = nullptr;     // HANDLE, kills the child if the launcher dies
 #else
+    void close_pidfd() noexcept;
     int pid_ = -1;
+    int pidfd_ = -1; ///< Linux pidfd for event-driven wait_for(); -1 when unavailable or reaped
 #endif
 };
 

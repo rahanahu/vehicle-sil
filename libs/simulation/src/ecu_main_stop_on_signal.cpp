@@ -11,7 +11,10 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -125,22 +128,30 @@ std::string StopOnSignal::signal_text(int signal)
 
 void StopOnSignal::flush_briefly()
 {
-    static std::atomic<bool> flushed{false};
+    struct FlushState
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+    };
+    auto state = std::make_shared<FlushState>();
     try
     {
-        std::thread([] {
+        std::thread([state] {
             static_cast<void>(std::fflush(nullptr));
-            flushed.store(true);
+            {
+                const std::lock_guard lock(state->mutex);
+                state->done = true;
+            }
+            state->cv.notify_all();
         }).detach();
     }
     catch (...)
     {
         return; // no thread: the process ends without the flush
     }
-    for (int i = 0; i < 100 && !flushed.load(); ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    std::unique_lock lock(state->mutex);
+    state->cv.wait_for(lock, std::chrono::milliseconds(500), [&state] { return state->done; });
 }
 
 void StopOnSignal::handle(int signal)
