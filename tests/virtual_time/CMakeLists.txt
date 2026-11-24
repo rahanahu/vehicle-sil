@@ -10,6 +10,16 @@ vehicle_sil_target_defaults(vehicle_sil_vt_launcher)
 add_dependencies(vehicle_sil_vt_launcher sil-kit-registry vehicle_sil_sim_controller vehicle_sil_vt_physics
                  vehicle_sil_vt_ecu vehicle_sil_vt_lin_sensor vehicle_sil_vt_body_controller)
 
+set(_vt_common_args
+  --registry $<TARGET_FILE:sil-kit-registry>
+  --controller $<TARGET_FILE:vehicle_sil_sim_controller>
+  --physics $<TARGET_FILE:vehicle_sil_vt_physics>
+  --ecu $<TARGET_FILE:vehicle_sil_vt_ecu>
+  --lin-sensor $<TARGET_FILE:vehicle_sil_vt_lin_sensor>
+  --body-controller $<TARGET_FILE:vehicle_sil_vt_body_controller>
+  --end-ms 1000
+  --timeout-ms 120000)
+
 vehicle_sil_add_scenario_tests(vehicle_sil_vt_launcher
   PREFIX virtual_time LABELS integration virtual_time TIMEOUT 300 RUN_SERIAL
   WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}
@@ -17,13 +27,13 @@ vehicle_sil_add_scenario_tests(vehicle_sil_vt_launcher
     fast
     paced-fast
     paced-slow
-    peer-failure
     slow-tick
-  ARGS --registry $<TARGET_FILE:sil-kit-registry>
-       --controller $<TARGET_FILE:vehicle_sil_sim_controller>
-       --physics $<TARGET_FILE:vehicle_sil_vt_physics>
-       --ecu $<TARGET_FILE:vehicle_sil_vt_ecu>
-       --lin-sensor $<TARGET_FILE:vehicle_sil_vt_lin_sensor>
-       --body-controller $<TARGET_FILE:vehicle_sil_vt_body_controller>
-       --end-ms 1000
-       --timeout-ms 120000)
+  ARGS ${_vt_common_args})
+
+# peer-failure only checks that the controller aborts within 30 s (no wall-clock pacing bound).
+vehicle_sil_add_scenario_tests(vehicle_sil_vt_launcher
+  PREFIX virtual_time LABELS integration virtual_time TIMEOUT 300
+  WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}
+  SCENARIOS
+    peer-failure
+  ARGS ${_vt_common_args})

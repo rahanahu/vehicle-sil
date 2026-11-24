@@ -281,10 +281,10 @@ void not_joined(const Options& o)
     {
         throw Skip("no console to send Ctrl+Break through (the participants are ended at once)");
     }
-    // 8 s for Engine to join is generous; Ghost never joins.
+    // 1.5 s for Engine to join is ample; Ghost never joins.
     const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 2\n"
                                          "# run-option --stop-at-ms 1000\n"
-                                         "# run-option --participant-start-timeout-ms 8000\n"
+                                         "# run-option --participant-start-timeout-ms 1500\n"
                                          "networks: []\n"
                                          "participants:\n"
                                          "  - name: Engine\n"
@@ -302,7 +302,7 @@ void not_joined(const Options& o)
                 "Engine       yes       stopped (" + kStop + "), exit code 130\n"
                 "Ghost        yes       stopped (" + kStop + "), exit code 9\n"
                 "\n"
-                "error: sim.yaml:8: participant 'Ghost': it did not join the simulation within 8000 ms "
+                "error: sim.yaml:8: participant 'Ghost': it did not join the simulation within 1500 ms "
                 "(start_timeout_ms), although its process was running: it must connect to the registry given with "
                 "{registry_uri} as the participant 'Ghost' with a coordinated lifecycle (or set required: false); if it "
                 "is only slow, raise start_timeout_ms [not-joined]\n"
@@ -311,7 +311,7 @@ void not_joined(const Options& o)
                 "run with a participant that never joins");
     // The ECU waits longer than the launcher (start_timeout_ms + stop_timeout_ms + 10 s), so that the
     // launcher, not the ECU's own limit, ends the start and names who did not join.
-    require(contains(lf(run.standard_error), " --start-timeout-ms 28000\n"), "the ECU's limit:\n" + run.standard_error);
+    require(contains(lf(run.standard_error), " --start-timeout-ms 21500\n"), "the ECU's limit:\n" + run.standard_error);
     // What the ECU wrote to stdout before it was stopped (without a flush) is not lost.
     require(contains(lf(run.standard_error), "\n[Engine] waiting-for-the-start\n"),
             "the ECU's unflushed line:\n" + run.standard_error);
@@ -743,17 +743,17 @@ void timeout(const Options& o)
                                       "  - name: Hang\n"
                                       "    command: [" + ecu(o) + "]\n",
                                       {{"Hang", "pid hang-at-ms 200"}});
-    const Captured run = launch(o, {"run", "--timeout-ms", "5000", "sim.yaml"}, dir);
+    const Captured run = launch(o, {"run", "--timeout-ms", "1500", "sim.yaml"}, dir);
     expect_code(run, 1, "run with an ECU that hangs in a step");
     expect_text(run_part(run.standard_output),
-                "run: the simulation was aborted: it did not end within --timeout-ms (5000 ms)\n"
+                "run: the simulation was aborted: it did not end within --timeout-ms (1500 ms)\n"
                 "\n"
                 "participant  required  ended\n"
                 "Hang         yes       killed\n"
                 "\n"
                 "traffic: no network in use\n"
                 "\n"
-                "error: sim.yaml: the simulation did not end within 5000 ms of wall-clock time (--timeout-ms), so the "
+                "error: sim.yaml: the simulation did not end within 1500 ms of wall-clock time (--timeout-ms), so the "
                 "launcher aborted it: a participant may hang in a step (the lines above show what the participants "
                 "wrote); if it is only slow, raise --timeout-ms [timeout]\n"
                 "error: sim.yaml:6: participant 'Hang': it was still running 300 ms (stop_timeout_ms) after the "

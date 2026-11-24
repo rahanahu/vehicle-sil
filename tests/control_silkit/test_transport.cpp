@@ -949,7 +949,7 @@ TEST_CASE(a_participant_that_leaves_in_the_start_window_ends_the_wait)
     const auto begin = Wall::now();
     // The start cannot succeed any more (a required participant is gone); it fails at its
     // timeout, and neither it nor the window hangs.
-    CHECK(throws<std::runtime_error>([&] { side.controller->start(5s); }));
+    CHECK(throws<std::runtime_error>([&] { side.controller->start(1500ms); }));
     leaver.join();
     CHECK(Wall::now() - begin < 30s);
     CHECK(hellos.ended == std::vector<std::string>{"Gone"});
