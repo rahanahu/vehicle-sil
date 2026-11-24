@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Challenge"
+  short_description: "Coordinate focused independent challenge reviews"
+  default_prompt: "Use $run-challenge to assess this change and delegate an independent challenge where warranted."
