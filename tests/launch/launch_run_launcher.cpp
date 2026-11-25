@@ -122,6 +122,7 @@ int main(int argc, char** argv)
             {"scenario_dither", scenario_dither},
             {"timeline", timeline},
             {"scenario_expect_beside", scenario_expect_beside},
+            {"sigkill_socket_cleanup", sigkill_socket_cleanup},
             {"speed_change", speed_change},
             {"stall", stall},
             {"stand_still", stand_still},

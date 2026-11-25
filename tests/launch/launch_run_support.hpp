@@ -219,7 +219,8 @@ std::string out_of(const std::vector<std::string>& lines);
 /// calls `act` with it.
 template <class Act>
 std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::string> run_until_running(
-    const Options& o, const fs::path& dir, Act act, const std::vector<std::string>& args = {"run", "sim.yaml"})
+    const Options& o, const fs::path& dir, Act act, const std::vector<std::string>& args = {"run", "sim.yaml"},
+    const std::vector<std::pair<std::string, std::string>>& environment = {})
 {
     std::mutex mutex;
     std::condition_variable changed;
@@ -228,6 +229,7 @@ std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::string> run_unti
     bool running = false;
     vehicle_sil::process::ProcessOptions options;
     options.working_directory = dir;
+    options.environment = environment;
     options.on_line = [&](vehicle_sil::process::Stream stream, std::string_view line) {
         const std::lock_guard lock(mutex);
         (stream == vehicle_sil::process::Stream::Output ? out : err) += std::string(line) + "\n";
@@ -648,6 +650,7 @@ void interrupt_ending(const Options& o);
 void timeout(const Options& o);
 void no_console(const Options& o);
 void killed(const Options& o);
+void sigkill_socket_cleanup(const Options& o);
 void usage(const Options& o);
 void control(const Options& o);
 void disabled(const Options& o);

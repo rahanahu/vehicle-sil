@@ -17,7 +17,44 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/types.h>
+#endif
+
 namespace vehicle_sil::runner::detail {
+
+/// Per-run 0700 directory for managed child participants' POSIX local-domain sockets
+/// (`vsil-<16hex>.silkit`), cleaned up with fd-anchored checks once all children are reaped.
+/// Empty no-op on Windows.
+class RunSocketDir
+{
+public:
+    RunSocketDir() = default;
+    ~RunSocketDir();
+    RunSocketDir(const RunSocketDir&) = delete;
+    RunSocketDir& operator=(const RunSocketDir&) = delete;
+    RunSocketDir(RunSocketDir&&) = delete;
+    RunSocketDir& operator=(RunSocketDir&&) = delete;
+
+    /// Lazily creates the per-run directory once (POSIX only). On failure, leaves path() empty so
+    /// participants fall back to the system temporary directory.
+    void ensure_created();
+
+    /// Removes leftover `vsil-<16hex>.silkit` local-domain sockets inside the directory and removes
+    /// the directory if empty. Safe to call more than once.
+    void cleanup() noexcept;
+
+    /// Absolute path of the created directory, or empty if none was created or after cleanup().
+    [[nodiscard]] const std::string& path() const noexcept { return dir_; }
+
+private:
+    std::string dir_;
+#ifndef _WIN32
+    bool attempted_ = false;
+    dev_t dev_ = 0;
+    ino_t ino_ = 0;
+#endif
+};
 
 /// The processes the launcher started, one per participant (none for a disabled one, for one
 /// started by hand and for one that could not be started).
@@ -107,6 +144,7 @@ private:
     RunOutput& out_;
     RunOutcome& outcome_; ///< the main thread's
     std::filesystem::path base_;
+    RunSocketDir socket_dir_; ///< before children_: destroyed after children_ are killed and reaped
     std::vector<std::unique_ptr<process::Process>> children_;
 };
 

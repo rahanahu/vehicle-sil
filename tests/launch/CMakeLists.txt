@@ -335,6 +335,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       scenario_time_commands_same
       scenario_wave
       run_until_stdin
+      sigkill_socket_cleanup
       state_on_arrival
       speed_change
       stall

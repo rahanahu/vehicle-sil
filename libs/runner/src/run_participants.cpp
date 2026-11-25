@@ -10,7 +10,17 @@
 #include <algorithm>
 #include <cctype>
 #include <string_view>
+#include <system_error>
 #include <utility>
+
+#ifndef _WIN32
+#include <cstdlib>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
 
 namespace vehicle_sil::runner {
 
@@ -133,7 +143,158 @@ std::string command_text(const std::filesystem::path& executable, const std::vec
     return out;
 }
 
+#ifndef _WIN32
+constexpr std::size_t kSocketNameLen = 28; // "vsil-<16 lower hex>.silkit"
+constexpr std::size_t kSocketDirSuffixLen = 11; // "vsil-XXXXXX"
+constexpr std::size_t kMaxSunPath = sizeof(sockaddr_un::sun_path) - 1;
+
+std::string trim_trailing_slashes(std::string path)
+{
+    while (path.size() > 1 && path.back() == '/')
+    {
+        path.pop_back();
+    }
+    return path;
+}
+
+bool base_fits_sun_path(const std::string& base)
+{
+    if (base.empty())
+    {
+        return false;
+    }
+    const std::size_t sep = base.back() == '/' ? 0 : 1;
+    // "<base>/vsil-XXXXXX/vsil-<16hex>.silkit"
+    return base.size() + sep + kSocketDirSuffixLen + 1 + kSocketNameLen <= kMaxSunPath;
+}
+
+bool is_vsil_socket_name(std::string_view name) noexcept
+{
+    if (name.size() != kSocketNameLen)
+    {
+        return false;
+    }
+    if (name.substr(0, 5) != "vsil-" || name.substr(21) != ".silkit")
+    {
+        return false;
+    }
+    for (std::size_t i = 5; i < 21; ++i)
+    {
+        const char c = name[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+#endif
+
 } // namespace
+
+RunSocketDir::~RunSocketDir()
+{
+    cleanup();
+}
+
+void RunSocketDir::ensure_created()
+{
+#ifndef _WIN32
+    if (attempted_)
+    {
+        return;
+    }
+    attempted_ = true;
+
+    std::string base;
+    std::error_code ec;
+    const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
+    if (!ec && !temp.empty() && temp.is_absolute() && std::filesystem::is_directory(temp, ec) && !ec)
+    {
+        std::string candidate = trim_trailing_slashes(temp.native());
+        if (::access(candidate.c_str(), W_OK | X_OK) == 0 && base_fits_sun_path(candidate))
+        {
+            base = std::move(candidate);
+        }
+    }
+    if (base.empty())
+    {
+        ec.clear();
+        const std::filesystem::path fallback("/tmp");
+        if (std::filesystem::is_directory(fallback, ec) && !ec && base_fits_sun_path("/tmp"))
+        {
+            base = "/tmp";
+        }
+    }
+    if (base.empty())
+    {
+        return;
+    }
+
+    std::string tmpl = (base.back() == '/' ? base : base + "/") + "vsil-XXXXXX";
+    if (::mkdtemp(tmpl.data()) == nullptr)
+    {
+        return;
+    }
+    struct stat st{};
+    if (::lstat(tmpl.c_str(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != ::getuid())
+    {
+        return;
+    }
+    dir_ = std::move(tmpl);
+    dev_ = st.st_dev;
+    ino_ = st.st_ino;
+#endif
+}
+
+void RunSocketDir::cleanup() noexcept
+{
+#ifndef _WIN32
+    if (dir_.empty())
+    {
+        return;
+    }
+    const std::string path = std::move(dir_);
+    dir_.clear();
+
+    const int dirfd = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dirfd < 0)
+    {
+        return;
+    }
+    struct stat st{};
+    if (::fstat(dirfd, &st) != 0 || !S_ISDIR(st.st_mode) || st.st_dev != dev_ || st.st_ino != ino_ || st.st_uid != ::getuid())
+    {
+        ::close(dirfd);
+        return;
+    }
+    DIR* const dir = ::fdopendir(dirfd);
+    if (dir == nullptr)
+    {
+        ::close(dirfd);
+        return;
+    }
+    const int fd = ::dirfd(dir);
+    if (fd >= 0)
+    {
+        while (const struct dirent* const entry = ::readdir(dir))
+        {
+            const std::string_view name(entry->d_name);
+            if (!is_vsil_socket_name(name))
+            {
+                continue;
+            }
+            struct stat entry_st{};
+            if (::fstatat(fd, entry->d_name, &entry_st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISSOCK(entry_st.st_mode))
+            {
+                static_cast<void>(::unlinkat(fd, entry->d_name, 0));
+            }
+        }
+    }
+    ::closedir(dir);
+    static_cast<void>(::rmdir(path.c_str()));
+#endif
+}
 
 std::vector<std::string> participant_arguments(const config::SimulationConfig& config, const config::ParticipantConfig& participant,
                                                const std::string& registry_uri, bool stands_still_before_start,
@@ -233,6 +394,12 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
             show_manual(p, executable, arguments, workDir);
             continue;
         }
+#ifndef _WIN32
+        if (!config::registry_on_network(ctx_.config))
+        {
+            socket_dir_.ensure_created();
+        }
+#endif
         out_.say("starting " + p.name + ": " + command_text(executable, arguments));
         process::ProcessOptions options;
         // A bridge in its own directory (bridge_working_directory()), a participant of the file in
@@ -243,6 +410,11 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         // computers may reach the registry, although these participants connect to it at a loopback
         // address (uri_for_participants()), so that they do not listen on loopback only; else "0".
         options.environment.emplace_back(kListenOnNetworkVariable, config::listen_variable_value(ctx_.config));
+#ifndef _WIN32
+        // Always, so that an inherited value does not leak into network runs or when no per-run
+        // directory was created (an empty value clears any inherited one).
+        options.environment.emplace_back(kSocketDirectoryVariable, socket_dir_.path());
+#endif
         try
         {
             // Its lines wait (RunOutput::on_line() takes the output's lock) until its "started" event is out.
@@ -464,6 +636,7 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
             static_cast<void>(child->finish_output(std::chrono::milliseconds(2000)));
         }
     }
+    socket_dir_.cleanup();
 }
 
 void RunParticipants::note_bridges_ended_with_run()

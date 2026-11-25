@@ -205,7 +205,7 @@ A participant without the `DynamicSimulationStep` key has its step shrunk by SIL
 
 `is_loopback_registry_uri()` decides whether the address is a loopback address. These count as loopback: `127.0.0.0/8` (in the numeric notations that `getaddrinfo()` reads), `::1`, `127.x.x.x` mapped to IPv6, and `localhost`. It does not resolve names. It is in `vehicle_sil/core/registry_uri.hpp` (header only, part of sim_base), so code that must not link SIL Kit can use it.
 
-On loopback, the participant listens on TCP port 0 of `127.0.0.1` or `::1`. On systems other than Windows, it also listens on a local-domain socket with a new name in the temporary directory.
+On loopback, the participant listens on TCP port 0 of `127.0.0.1` or `::1`. On systems other than Windows, it also listens on a local-domain socket with a new name in the temporary directory. When the internal environment variable `VEHICLE_SIL_SOCKET_DIR` (`kSocketDirectoryVariable`, POSIX only) names an existing writable absolute directory whose socket path fits `sockaddr_un::sun_path`, that directory is used instead; otherwise it falls back to the system temporary directory (or omits the local-domain socket if that path does not fit either). `RunParticipants` creates a `0700` per-run directory for loopback runs, passes it to managed child processes, and clears the variable for non-loopback runs.
 
 `ParticipantRuntimeOptions::listen_on_network` (`std::optional<bool>`; `SimulationControllerOptions` has the same option) controls whether `AcceptorUris` is added.
 

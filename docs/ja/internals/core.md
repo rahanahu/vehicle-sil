@@ -205,7 +205,7 @@ SIL Kit が CommunicationReady のハンドラーを呼ぶのは lifecycle が�
 
 ループバックのアドレスかどうかは、`is_loopback_registry_uri()` が判定します。ループバックと見るのは、`127.0.0.0/8`（`getaddrinfo()` が読む数の書き方）、`::1`、IPv6 に写した `127.x.x.x`、`localhost` です。名前は解決しません。この関数は `vehicle_sil/core/registry_uri.hpp`（ヘッダーのみ、sim_base の一部）にあり、SIL Kit をリンクしてはいけないコードからも使えます。
 
-ループバックのときに待ち受けるのは、TCP の `127.0.0.1` か `::1` のポート 0 です。Windows 以外では、ほかに、一時ディレクトリの新しい名前の local-domain ソケットでも待ち受けます。
+ループバックのときに待ち受けるのは、TCP の `127.0.0.1` か `::1` のポート 0 です。Windows 以外では、ほかに、一時ディレクトリの新しい名前の local-domain ソケットでも待ち受けます。内部環境変数 `VEHICLE_SIL_SOCKET_DIR`（`kSocketDirectoryVariable`、POSIX のみ）に、書き込み可能で存在する絶対パスのディレクトリが設定されており、ソケットのパスが `sockaddr_un::sun_path` に収まる場合は、そのディレクトリを使います。それ以外の場合はシステムの一時ディレクトリへフォールバックします（そちらも収まらない場合は local-domain ソケットを省略します）。`RunParticipants` はループバックの実行ごとに `0700` の一時ディレクトリを作って管理下の子プロセスへ渡し、ループバックでない実行では空文字列で上書きします。
 
 `ParticipantRuntimeOptions::listen_on_network`（`std::optional<bool>`。`SimulationControllerOptions` にも同じもの）で、`AcceptorUris` を追加するかを変えられます。
 

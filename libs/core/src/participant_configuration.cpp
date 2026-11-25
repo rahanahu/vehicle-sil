@@ -26,6 +26,11 @@
 #include <utility>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/un.h>
+#include <unistd.h>
+#endif
+
 namespace vehicle_sil {
 
 namespace {
@@ -77,16 +82,48 @@ std::string json_string(std::string_view text)
 }
 
 #ifndef _WIN32
-/// "local://<temporary directory>/vsil-<16 random hex digits>.silkit", or empty if there is no
-/// temporary directory. SIL Kit's own name for it is made from the participant's name and the
-/// registry URI, which this does not have; a random one is as unique.
+constexpr std::size_t kSocketNameLen = 28; // "vsil-" (5) + 16 hex digits + ".silkit" (7)
+constexpr std::size_t kMaxSunPath = sizeof(sockaddr_un::sun_path) - 1;
+
+bool fits_sun_path(const std::filesystem::path& directory)
+{
+    const std::string text = directory.native();
+    if (text.empty())
+    {
+        return false;
+    }
+    const std::size_t separator = text.back() == '/' ? 0 : 1;
+    return text.size() + separator + kSocketNameLen <= kMaxSunPath;
+}
+
+/// "local://<directory>/vsil-<16 random hex digits>.silkit", or empty if no usable directory fits
+/// sockaddr_un::sun_path. Prefers kSocketDirectoryVariable when it names an existing writable
+/// absolute directory that fits; otherwise falls back silently to the temporary directory. SIL Kit's
+/// own name for it is made from the participant's name and the registry URI, which this does not
+/// have; a random one is as unique.
 std::string new_local_acceptor_uri()
 {
+    std::filesystem::path directory;
     std::error_code error;
-    const std::filesystem::path directory = std::filesystem::temp_directory_path(error);
-    if (error || directory.empty())
+    const std::string variable(kSocketDirectoryVariable);
+    if (const char* value = std::getenv(variable.c_str()); value != nullptr && *value != '\0')
     {
-        return {};
+        const std::filesystem::path candidate(value);
+        if (candidate.is_absolute() && std::filesystem::is_directory(candidate, error) && !error &&
+            ::access(candidate.c_str(), W_OK | X_OK) == 0 && fits_sun_path(candidate))
+        {
+            directory = candidate;
+        }
+    }
+    if (directory.empty())
+    {
+        error.clear();
+        const std::filesystem::path temp = std::filesystem::temp_directory_path(error);
+        if (error || temp.empty() || !fits_sun_path(temp))
+        {
+            return {};
+        }
+        directory = temp;
     }
     std::random_device device;
     const std::uint64_t value = (static_cast<std::uint64_t>(device()) << 32) ^ device();
