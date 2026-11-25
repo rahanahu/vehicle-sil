@@ -626,14 +626,14 @@ Windows での DLL の探し方は、次のとおりです。
 | アダプターがなくなったとき | ライブラリの読み取りが失敗したときにだけ分かります。 |
 | 自分が送信したフレーム | ブリッジに戻りません（`ExternalLink::echoes_own_transmissions()` は false）。 |
 | 無効にしたアダプター | Npcap の一覧に出ないので、`--interface` に書くと「ない」のエラー（`no interface ...`）になります。 |
-| 「管理者だけ」の Npcap を、管理者でない利用者が使うとき | Npcap が昇格を求める画面を表示し、その画面を閉じるまでブリッジは止まったままです（`--list-interfaces` も同じ）。 |
+| 「管理者だけ」の Npcap を、管理者として動いていないプロセスが使うとき | Windows が昇格を求める画面（UAC）を表示し、答えるまでブリッジは止まったままです（`--list-interfaces` も同じ）。Npcap を開く前に、ブリッジはそのことを 1 行で言います: `Npcap was installed for administrators only: Windows asks to allow it (an elevation prompt, UAC), and the bridge waits for the answer`（`--list-interfaces` では標準エラー出力）。 |
 | VLAN タグつきのフレーム | 通るかは、アダプターのドライバーとその設定で決まります（ブリッジも Npcap も、タグを変えません）。 |
 
 自分が送信したフレーム: Npcap は、アダプターを開いたソフトに、そのソフト自身が送信したフレームも渡します。ブリッジは、それを渡さない指定（`pcap_open()` の `PCAP_OPENFLAG_NOCAPTURE_LOCAL`）でアダプターを開きます。同じアダプターを開いているほかのソフトが送信したフレームは受信します。`pcap_open` のない `wpcap.dll` は、読み込むときに拒否します（下のメッセージ）。
 
 無効にしたアダプター: エラーは「down」ではなく「ない」になります。このエラーメッセージは、無効のアダプターが一覧に出ないことを示します。
 
-「管理者だけ」の Npcap: 昇格を求める画面を閉じると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」のエラーになります。Npcap は権限がないとは返さないので、ブリッジは、一覧にネットワークのアダプターが 1 つもないときに、`--list-interfaces` の一覧の最後の行と「ない」のエラーメッセージでこの場合を挙げます（下のメッセージ）。管理者として起動したコンソールから動かすか、Npcap をその制限なしでインストールし直します。
+「管理者だけ」の Npcap: 昇格を求める画面を閉じるか拒否すると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」のエラーになります。Npcap は権限がないとは返さないので、ブリッジは、一覧にネットワークのアダプターが 1 つもないときに、`--list-interfaces` の一覧の最後の行と、「ない」のエラーメッセージの冒頭（`vehicle_sil_launch` が引用しても残る位置）でこの場合を挙げます（下のメッセージ）。昇格を求める画面で Npcap を許可するか、管理者として起動したコンソールから動かすか、Npcap をその制限なしでインストールし直します。
 
 VLAN タグ: ドライバーが、既定の設定では、VLAN タグつきのフレームを渡さないことがあります。ドライバーの優先度と VLAN の処理を無効にすると受信できますが、今度は、ブリッジが送信したフレームから外側のタグが 1 つ外れて出ることがあります。そのときも送信は成功を返し、統計にも警告にも出ません。VLAN タグを使う前に、そのアダプターで両方向を確認してください。
 
@@ -663,7 +663,7 @@ C:\Windows\System32\Npcap\wpcap.dll (WinPcap version 4.1.3) lacks the function p
 
 ```
 no interface 'Ethernet 9' for --backend npcap. Interfaces Npcap offers here: "Ethernet 2", Ethernet (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: enable it in Windows. It does not offer one it is not bound to either, such as the physical adapter of a Hyper-V external switch: give the switch's adapter, "vEthernet (<switch>)", as --interface instead.
-no interface 'Ethernet 2' for --backend npcap. Interfaces Npcap offers here: \Device\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: enable it in Windows. It does not offer one it is not bound to either, such as the physical adapter of a Hyper-V external switch: give the switch's adapter, "vEthernet (<switch>)", as --interface instead. It offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a console started as administrator, or install Npcap again without that limit.
+no interface 'Ethernet 2' for --backend npcap: Npcap offers no network adapter here (only \Device\NPF_Loopback). If Npcap was installed for administrators only, allow it in the elevation prompt (UAC) that Windows shows when the bridge starts, run the bridge from a console started as administrator, or install Npcap again without that limit. Npcap does not offer an adapter that is disabled either: enable it in Windows (run --list-interfaces --backend npcap).
 'Ethernet' is the name of 2 interfaces for --backend npcap: \Device\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}, \Device\NPF_{0A1B2C3D-0000-1111-2222-333344445555}. Give one of these names as --interface instead.
 interface 'any' is not Ethernet (pcap link type 113): --backend pcap carries Ethernet frames only. Choose an Ethernet interface (run --list-interfaces --backend pcap).
 cannot open 'enp3s0' with libpcap (pcap_activate: result -8, socket: Operation not permitted). A network interface needs CAP_NET_RAW: run 'sudo setcap cap_net_raw+ep /opt/vehicle-sil/bin/vehicle_sil_ethernet_bridge' once, or run as root.

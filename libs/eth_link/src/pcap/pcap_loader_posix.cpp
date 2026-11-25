@@ -219,3 +219,9 @@ std::shared_ptr<PcapLibrary> load_pcap_library_as(const std::string& library, Pc
 }
 
 } // namespace vehicle_sil::eth_link::detail
+
+namespace vehicle_sil::eth_link {
+
+bool npcap_asks_for_elevation() noexcept { return false; } // Npcap is Windows only
+
+} // namespace vehicle_sil::eth_link

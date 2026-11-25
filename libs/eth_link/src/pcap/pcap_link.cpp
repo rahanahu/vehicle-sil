@@ -926,14 +926,17 @@ PcapInterfaceList pcap_interface_list_of(std::vector<PcapDevice> devices, PcapFl
     }
     if (list.devices.empty())
     {
-        list.notes.emplace_back("If Npcap was installed for administrators only, run this from a console started as administrator.");
+        list.notes.emplace_back("If Npcap was installed for administrators only, allow it in the elevation prompt (UAC) that Windows "
+                                "shows, or run this from a console started as administrator.");
     }
     else if (std::ranges::all_of(list.devices, [](const PcapDevice& device) { return device.loopback(); }))
     {
-        // Seen with the real Npcap installed for administrators only: another user gets the loopback device alone.
-        list.notes.emplace_back("Npcap offers no network adapter here: if it was installed for administrators only, run this from a "
-                                "console started as administrator, or install Npcap again without that limit. A disabled adapter "
-                                "is not offered either: enable it in Windows.");
+        // Seen with the real Npcap installed for administrators only: another user, or an administrator who
+        // declined the elevation prompt, gets the loopback device alone.
+        list.notes.emplace_back("Npcap offers no network adapter here: if it was installed for administrators only, allow it in the "
+                                "elevation prompt (UAC) that Windows shows, run this from a console started as administrator, or "
+                                "install Npcap again without that limit. A disabled adapter is not offered either: enable it in "
+                                "Windows.");
     }
     return list;
 }

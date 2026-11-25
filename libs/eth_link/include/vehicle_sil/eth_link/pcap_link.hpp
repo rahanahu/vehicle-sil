@@ -92,6 +92,13 @@ struct PcapInterfaceList
 /// Throws LinkError.
 [[nodiscard]] PcapInterfaceList pcap_interfaces(const std::string& library = {});
 
+/// Whether Windows will ask to allow Npcap (an elevation prompt, UAC) when this process opens it:
+/// Npcap was installed for administrators only (its AdminOnly setting) and the process does not run
+/// as administrator. The prompt holds the process until it is answered, without a word from Npcap,
+/// so the bridge says so before it opens Npcap. false on other systems, and when the setting
+/// cannot be read.
+[[nodiscard]] bool npcap_asks_for_elevation() noexcept;
+
 /// The text of --list-interfaces: a heading with the library's version, then one line per
 /// interface as --interface takes it ("  --interface <name>  <pcap_device_detail()>"), then the notes.
 /// `device_notes`: by position in list.devices, a text that ends the device's line ("; <note>");

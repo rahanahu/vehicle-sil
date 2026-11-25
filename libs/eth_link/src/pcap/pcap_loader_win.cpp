@@ -267,3 +267,30 @@ std::shared_ptr<PcapLibrary> load_pcap_library_as(const std::string& library, Pc
 }
 
 } // namespace vehicle_sil::eth_link::detail
+
+namespace vehicle_sil::eth_link {
+
+bool npcap_asks_for_elevation() noexcept
+{
+    // Npcap's installer writes AdminOnly (1: administrators only) under its service's parameters.
+    DWORD adminOnly = 0;
+    DWORD size = sizeof(adminOnly);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\npcap\\Parameters", L"AdminOnly",
+                     RRF_RT_REG_DWORD, nullptr, &adminOnly, &size) != ERROR_SUCCESS ||
+        adminOnly != 1)
+    {
+        return false;
+    }
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    {
+        return false;
+    }
+    TOKEN_ELEVATION elevation{};
+    DWORD length = 0;
+    const bool known = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &length) != 0;
+    CloseHandle(token);
+    return known && elevation.TokenIsElevated == 0;
+}
+
+} // namespace vehicle_sil::eth_link
