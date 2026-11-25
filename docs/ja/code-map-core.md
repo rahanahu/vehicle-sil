@@ -114,6 +114,17 @@ LIN のテストは [バスのページの LIN 単体テスト](code-map-buses.m
 - テスト: `--describe` の JSON（`tests/ecu`）とランチャーの JSON（`tests/launch`）を通して
 - `ctest -R`: `^ecu\.`、`^launch`
 
+### `libs/text`
+
+UTF-8 の文字列がコンソールで何桁を占めるかを数えます。`vehicle_sil_launch` の表（`check`、`run`、`test`、`connections`）と Ethernet ブリッジの `--list-interfaces` が、列をそろえるのに使います（ターゲット `vehicle_sil::text`、ヘッダーだけ）。全角の文字（日本語、中国語、韓国語、全角の英数字など）は 2 桁と数えます。何もリンクしないので、vehicle-sil のほかのライブラリをリンクしない `libs/eth_link` も使います。
+
+| 名前 | 場所 |
+|---|---|
+| `display_width()` | `vehicle_sil/text/display_width.hpp` |
+
+- テスト: Ethernet ブリッジのインターフェース一覧（`tests/eth_link`）とランチャーの表（`tests/launch`）を通して
+- `ctest -R`: `^eth_link\.`、`^launch`
+
 ### `libs/trace`
 
 プロファイリングのトレースです（ターゲット `vehicle_sil::trace`、内部用）。記録は `core`、`control`、`control_silkit`、`runner` にあり、各プロセスは終了時にファイルを書き、ランチャーはスレッドが閉じなかった実行で使う `std::_Exit` の前にも書きます。[internals/trace.md](internals/trace.md) を参照してください。

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
-// How many columns of a console a UTF-8 text takes: what --list-interfaces pads its first column
-// with, so that a connection name in Japanese does not put the next column out of line.
+// How many columns of a console a UTF-8 text takes: what the tables of vehicle_sil_launch and the
+// Ethernet bridge's --list-interfaces pad a column with, so that a name in Japanese does not put
+// the next column out of line.
 #pragma once
 
 #include <array>
@@ -9,7 +10,7 @@
 #include <string_view>
 #include <utility>
 
-namespace vehicle_sil::eth_link::detail {
+namespace vehicle_sil::text {
 
 /// The columns that the UTF-8 text `text` takes in a console: one for each character, two for an
 /// East Asian wide one (Hangul, kana, CJK ideographs and symbols, full-width forms). Combining
@@ -60,4 +61,4 @@ namespace vehicle_sil::eth_link::detail {
     return width;
 }
 
-} // namespace vehicle_sil::eth_link::detail
+} // namespace vehicle_sil::text

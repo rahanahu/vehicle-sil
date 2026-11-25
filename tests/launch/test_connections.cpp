@@ -478,6 +478,33 @@ TEST_CASE(connections_text_has_lines_to_copy_and_why_the_others_cannot_be_used)
                "error: missing.yaml: the file does not exist: check the path [file]\n\ncannot read missing.yaml\n");
 }
 
+TEST_CASE(connections_text_pads_a_name_in_japanese_by_the_columns_it_takes)
+{
+    // Windows names connections in the language of the system: "イーサネット" (Ethernet in katakana,
+    // 6 wide characters, 18 bytes) takes 12 columns of a console, "イーサネット 5" 14. The text after
+    // each --connect argument starts in the same column (2 after the widest argument).
+    const std::string ethernet = "\xE3\x82\xA4\xE3\x83\xBC\xE3\x82\xB5\xE3\x83\x8D\xE3\x83\x83\xE3\x83\x88";
+    const auto target = [](const std::string& value, const std::string& detail) {
+        return R"({"value": ")" + value + R"(", "label": ")" + value + R"(", "detail": ")" + detail +
+               R"(", "usable": true, "reason": null})";
+    };
+    ConnectionsReport report;
+    report.file = "simulation.yaml";
+    report.readable = true;
+    report.per_network = {NetworkConnections{
+        "ETH", NetworkKind::Ethernet, "vehicle_sil_ethernet_bridge", fs::path("/bin/eth"),
+        read_target_list(R"({"vehicle_sil_targets": 1, "tool": "vehicle_sil_ethernet_bridge", "backend": "npcap",
+            "source": "Npcap version 1.90", "targets": [)" +
+                         target("Wi-Fi", "up, disconnected, wireless") + ", " + target(ethernet + " 5", "up, connected") +
+                         ", " + target(ethernet, "up, disconnected") + R"(], "notes": [], "error": null})")}};
+    check_text(format_connections_text(report),
+               "simulation.yaml: where each network can be connected on this computer\n"
+               "ETH (ethernet; vehicle_sil_ethernet_bridge, npcap: Npcap version 1.90):\n"
+               "  --connect ETH=Wi-Fi             up, disconnected, wireless\n"
+               "  --connect \"ETH=" + ethernet + " 5\"  up, connected\n"
+               "  --connect \"ETH=" + ethernet + "\"    up, disconnected\n");
+}
+
 TEST_CASE(connections_json_passes_each_list_on_with_every_key)
 {
     ConnectionsReport report;

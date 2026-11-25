@@ -506,6 +506,8 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 
 The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell and cmd all read it the same: as it is if it has only ASCII letters, digits and `_ - . : / = +`, otherwise in double quotes. A target with `"`, `$`, `` ` ``, `%`, `!`, the quotation marks `“` `”` `„` (U+201C, U+201D, U+201E, which PowerShell reads as `"`) or a control character, or with `\` at its end or before `"`, `$`, `` ` `` or `\`, cannot be written so for all of them: its line is quoted for sh (`'...'`), and a `note:` line says so.
 
+The text after the `--connect` arguments starts in one column. The arguments are padded to one width counted in console columns, as in the list of the Ethernet bridge: a wide character (Japanese, Chinese, Korean, full-width forms), such as one of a Windows connection name in Japanese, counts as 2.
+
 #### `connections --json`
 
 ```json

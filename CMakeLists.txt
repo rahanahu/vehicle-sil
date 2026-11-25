@@ -111,6 +111,7 @@ add_subdirectory(libs/simulation ${_vehicle_sil_exclude})
 add_subdirectory(libs/spy ${_vehicle_sil_exclude})
 add_subdirectory(libs/step ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
+add_subdirectory(libs/text ${_vehicle_sil_exclude})
 add_subdirectory(libs/trace ${_vehicle_sil_exclude})
 
 # What the bridge executables share: run_bridge() (stop handling, monitor loop, exit code).

@@ -47,6 +47,9 @@ target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::process)
 target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::ecu)
 # The JSON writer that the launcher shares with --describe (vehicle_sil/json/json_writer.hpp).
 target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::json)
+# The console width of a table cell, which the Ethernet bridge's interface list counts the same way
+# (vehicle_sil/text/display_width.hpp).
+target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::text)
 # The YAML/JSON parser that SIL Kit builds from its ThirdParty directory (rapidyaml, MIT); the
 # public headers do not include it.
 target_link_libraries(vehicle_sil_launch_lib PRIVATE rapidyaml)
