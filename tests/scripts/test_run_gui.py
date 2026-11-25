@@ -12,6 +12,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -106,7 +107,7 @@ def test_nothing_built(root: Path) -> None:
     check(isinstance(said, str) and said.startswith("run-gui: no "), f"from the repository's directory: no line about where ({said})")
     # From another directory: where to type the commands, first.
     said = planned(root, {}, cwd=root / "build", kind=run_gui.Missing)
-    check(isinstance(said, str) and said.startswith(f"run-gui: run the commands below in {root} (cd {root})\nrun-gui: no "),
+    check(isinstance(said, str) and said.startswith(f"run-gui: run the commands below in {root} (cd {shlex.quote(str(root))})\nrun-gui: no "),
           f"from another directory: the directory to run the commands in comes first ({said})")
     for windows, lines in ((False, ["  cmake --preset linux-gcc-control\n", "  cmake --build --preset linux-gcc-control\n"]),
                            (True, ["  cmake --preset windows-mingw-control\n",
