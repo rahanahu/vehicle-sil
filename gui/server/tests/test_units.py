@@ -952,11 +952,23 @@ def test_lines_are_split_and_long_lines_skipped() -> None:
     assert asyncio.run(main()) == ["one", None, "two", "\ufffd", "end"]
 
 
+_EXIT_PROTOCOL_MODES = [
+    pytest.param(False, id="default"),
+    pytest.param(True, id="exit-protocol"),
+]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
-def test_a_command_exits_even_when_an_escaped_child_keeps_its_output_open(tmp_path: Path) -> None:
+@pytest.mark.parametrize("force_exit_protocol", _EXIT_PROTOCOL_MODES)
+def test_a_command_exits_even_when_an_escaped_child_keeps_its_output_open(
+    tmp_path: Path, monkeypatch, force_exit_protocol: bool,
+) -> None:
     """Process exit, not pipe EOF, starts the output grace period (also on Python 3.11/3.12)."""
     from conftest import alive, scaled, wait_until
     import signal
+
+    if force_exit_protocol:
+        monkeypatch.setattr(process, "_USE_EXIT_PROTOCOL", True)
 
     pid_file = tmp_path / "escaped-pid"
     code = ("import os, subprocess, sys\n"
@@ -982,33 +994,244 @@ def test_a_command_exits_even_when_an_escaped_child_keeps_its_output_open(tmp_pa
             assert wait_until(lambda: not alive(child), 5)
 
 
-def test_shutdown_wait_observes_exit_between_poll_and_deadline(monkeypatch) -> None:
+@pytest.mark.parametrize("force_exit_protocol", _EXIT_PROTOCOL_MODES)
+def test_shutdown_wait_observes_exit_and_hurry(monkeypatch, force_exit_protocol: bool) -> None:
+    from conftest import scaled
     from types import SimpleNamespace
 
+    if force_exit_protocol:
+        monkeypatch.setattr(process, "_USE_EXIT_PROTOCOL", True)
+
     async def main() -> None:
-        monkeypatch.setattr(process, "EXIT_POLL_S", 1.0)
+        # Real child exiting on stdin EOF: wait_exit_or_hurry wakes on exit and returns True.
         hurry = asyncio.Event()
-        child = SimpleNamespace(returncode=None)
-        asyncio.get_running_loop().call_later(0.02, setattr, child, "returncode", 0)
-        assert await process.wait_exit_or_hurry(child, hurry, 0.08)
-        stuck = SimpleNamespace(returncode=None)
-        hurry.set()
-        assert not await process.wait_exit_or_hurry(stuck, hurry, 1.0)
+        proc = await process.start([sys.executable, "-c", "import sys; sys.stdin.read()"], cwd=None)
+        try:
+            proc.stdin.close()
+            assert await process.wait_exit_or_hurry(proc, hurry, scaled(5.0))
+            assert proc.returncode == 0
+        finally:
+            process.kill_tree(proc)
+            await process.wait_bounded(proc, process.KILL_WAIT_S)
+            process.close_pipes(proc)
+
+        # Running child with hurry set asynchronously: wakes immediately and returns False.
+        proc = await process.start([sys.executable, "-c", "import sys; sys.stdin.read()"], cwd=None)
+        try:
+            hurry = asyncio.Event()
+            asyncio.get_running_loop().call_later(0.02, hurry.set)
+            assert not await process.wait_exit_or_hurry(proc, hurry, scaled(5.0))
+            assert proc.returncode is None
+            # Already-set hurry returns False immediately without waiting for timeout.
+            assert not await process.wait_exit_or_hurry(proc, hurry, scaled(5.0))
+            # Timeout on a running child returns False.
+            assert not await process.wait_exit_or_hurry(proc, asyncio.Event(), 0.02)
+            proc.stdin.close()
+            async with asyncio.timeout(scaled(5.0)):
+                assert await process.wait_exit(proc) == 0
+        finally:
+            process.kill_tree(proc)
+            await process.wait_bounded(proc, process.KILL_WAIT_S)
+            process.close_pipes(proc)
+
+        # Same-tick race: if returncode is set as hurry fires, return True (unhashable/non-weakrefable stub also works).
+        never = asyncio.Event()
+
+        async def _never_wait() -> int:
+            await never.wait()
+            return 0
+
+        raced = SimpleNamespace(returncode=None, wait=_never_wait)
+        race_hurry = asyncio.Event()
+
+        def _exit_and_hurry() -> None:
+            raced.returncode = 0
+            race_hurry.set()
+
+        asyncio.get_running_loop().call_later(0.01, _exit_and_hurry)
+        assert await process.wait_exit_or_hurry(raced, race_hurry, scaled(1.0))
+
+        # Exceptions from wait_exit() must propagate instead of being misreported as exited=True.
+        async def _failing_wait() -> int:
+            raise RuntimeError("wait failed")
+
+        failing = SimpleNamespace(returncode=None, wait=_failing_wait)
+        with pytest.raises(RuntimeError, match="wait failed"):
+            await process.wait_exit_or_hurry(failing, asyncio.Event(), scaled(1.0))
+
+        no_wait = SimpleNamespace(returncode=None)
+        with pytest.raises(AttributeError):
+            await process.wait_exit_or_hurry(no_wait, asyncio.Event(), scaled(1.0))
 
     asyncio.run(main())
 
 
-def test_process_waits_observe_exit_between_poll_and_deadline(monkeypatch) -> None:
+@pytest.mark.parametrize("force_exit_protocol", _EXIT_PROTOCOL_MODES)
+def test_process_waits_observe_exit_without_polling(monkeypatch, force_exit_protocol: bool) -> None:
     from conftest import scaled
-    from types import SimpleNamespace
+
+    if force_exit_protocol:
+        monkeypatch.setattr(process, "_USE_EXIT_PROTOCOL", True)
 
     async def main() -> None:
-        monkeypatch.setattr(process, "EXIT_POLL_S", scaled(4))
-        child = SimpleNamespace(returncode=None)
-        asyncio.get_running_loop().call_later(0.02, setattr, child, "returncode", 0)
-        assert await process.wait_bounded(child, scaled(0.1))
-        code, out, _ = await process.run_to_end([sys.executable, "-c", "print('done')"], cwd=None, timeout_s=scaled(1))
+        code, out, _ = await process.run_to_end([sys.executable, "-c", "print('done')"], cwd=None, timeout_s=scaled(5))
         assert code == 0 and out == b"done\n"
+
+        # Fast-path on already-exited process: wait_exit, wait_bounded(0), and wait_exit_or_hurry(hurry_set, 0).
+        proc = await process.start([sys.executable, "-c", "import sys; sys.stdin.read()"], cwd=None)
+        try:
+            proc.stdin.close()
+            assert await process.wait_bounded(proc, scaled(5.0))
+            assert proc.returncode == 0
+            assert await process.wait_exit(proc) == 0
+            assert await process.wait_bounded(proc, 0.0)
+            hurry = asyncio.Event()
+            hurry.set()
+            assert await process.wait_exit_or_hurry(proc, hurry, 0.0)
+        finally:
+            process.kill_tree(proc)
+            await process.wait_bounded(proc, process.KILL_WAIT_S)
+            process.close_pipes(proc)
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize("force_exit_protocol", _EXIT_PROTOCOL_MODES)
+def test_process_concurrent_exit_and_hurry_waits(monkeypatch, force_exit_protocol: bool) -> None:
+    from conftest import scaled
+
+    if force_exit_protocol:
+        monkeypatch.setattr(process, "_USE_EXIT_PROTOCOL", True)
+
+    async def main() -> None:
+        # Both wait_exit and wait_exit_or_hurry observe exit together (mirrors _follow_resident + _close_resident).
+        proc = await process.start([sys.executable, "-c", "import sys; sys.stdin.read()"], cwd=None)
+        try:
+            follower = asyncio.create_task(process.wait_exit(proc))
+            hurry = asyncio.Event()
+            closer = asyncio.create_task(process.wait_exit_or_hurry(proc, hurry, scaled(5.0)))
+            await asyncio.sleep(0)
+            # An early hurry wakeup cancels only closer's waiter, not follower.
+            hurry.set()
+            assert not await closer
+            assert not follower.done()
+            # A second concurrent closer completes alongside follower when the child exits.
+            closer2 = asyncio.create_task(process.wait_exit_or_hurry(proc, asyncio.Event(), scaled(5.0)))
+            await asyncio.sleep(0)
+            proc.stdin.close()
+            async with asyncio.timeout(scaled(5.0)):
+                code, closed = await asyncio.gather(follower, closer2)
+            assert code == 0 and closed
+        finally:
+            process.kill_tree(proc)
+            await process.wait_bounded(proc, process.KILL_WAIT_S)
+            process.close_pipes(proc)
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize("force_exit_protocol", _EXIT_PROTOCOL_MODES)
+def test_process_wait_timeout_and_cancellation_cleanup(monkeypatch, force_exit_protocol: bool) -> None:
+    from conftest import scaled
+
+    if force_exit_protocol:
+        monkeypatch.setattr(process, "_USE_EXIT_PROTOCOL", True)
+
+    async def main() -> None:
+        proc = await process.start([sys.executable, "-c", "import sys; sys.stdin.read()"], cwd=None)
+        try:
+            # Cancelled wait_exit cleans up without breaking later waiters.
+            t1 = asyncio.create_task(process.wait_exit(proc))
+            await asyncio.sleep(0)
+            t1.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await t1
+
+            # Cancelled wait_exit_or_hurry cancels both internal tasks cleanly.
+            t2 = asyncio.create_task(process.wait_exit_or_hurry(proc, asyncio.Event(), scaled(5.0)))
+            await asyncio.sleep(0)
+            t2.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await t2
+
+            # wait_bounded timeout returns False while process stays alive.
+            assert not await process.wait_bounded(proc, 0.02)
+            assert proc.returncode is None
+
+            proc.stdin.close()
+            async with asyncio.timeout(scaled(5.0)):
+                assert await process.wait_exit(proc) == 0
+        finally:
+            process.kill_tree(proc)
+            await process.wait_bounded(proc, process.KILL_WAIT_S)
+            process.close_pipes(proc)
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize("force_exit_protocol", _EXIT_PROTOCOL_MODES)
+def test_process_wait_exit_abnormal_termination(monkeypatch, force_exit_protocol: bool) -> None:
+    from conftest import scaled
+    import signal
+
+    if force_exit_protocol:
+        monkeypatch.setattr(process, "_USE_EXIT_PROTOCOL", True)
+
+    async def main() -> None:
+        # Non-zero exit code.
+        proc = await process.start([sys.executable, "-c", "import sys; sys.exit(7)"], cwd=None, stdin=False)
+        try:
+            async with asyncio.timeout(scaled(5.0)):
+                assert await process.wait_exit(proc) == 7
+        finally:
+            process.kill_tree(proc)
+            await process.wait_bounded(proc, process.KILL_WAIT_S)
+            process.close_pipes(proc)
+
+        # SIGKILL termination (POSIX).
+        if sys.platform != "win32":
+            proc = await process.start([sys.executable, "-c", "import sys; sys.stdin.read()"], cwd=None)
+            try:
+                waiter = asyncio.create_task(process.wait_exit(proc))
+                await asyncio.sleep(0)
+                process.kill_tree(proc)
+                async with asyncio.timeout(scaled(5.0)):
+                    assert await waiter == -signal.SIGKILL
+            finally:
+                process.kill_tree(proc)
+                await process.wait_bounded(proc, process.KILL_WAIT_S)
+                process.close_pipes(proc)
+
+    asyncio.run(main())
+
+
+def test_process_exit_events_weakref_cleanup(monkeypatch) -> None:
+    from conftest import scaled
+    import gc
+    import weakref
+
+    monkeypatch.setattr(process, "_USE_EXIT_PROTOCOL", True)
+
+    async def main() -> None:
+        gc.collect()
+        baseline = len(process._EXIT_EVENTS)
+        proc = await process.start([sys.executable, "-c", "pass"], cwd=None, stdin=False)
+        try:
+            assert proc in process._EXIT_EVENTS
+            ref = weakref.ref(proc)
+            async with asyncio.timeout(scaled(5.0)):
+                assert await process.wait_exit(proc) == 0
+        finally:
+            process.kill_tree(proc)
+            await process.wait_bounded(proc, process.KILL_WAIT_S)
+            process.close_pipes(proc)
+        del proc
+        # Drain pending transport connection_lost callbacks before collecting.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        gc.collect()
+        assert ref() is None
+        assert len(process._EXIT_EVENTS) == baseline
 
     asyncio.run(main())
 
