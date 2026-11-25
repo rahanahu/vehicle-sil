@@ -88,7 +88,7 @@ vehicle-sil/
 ├── examples/lin/     LIN クラスタのピア（Master と、役割の違う Slave。フレームの送受信と Sleep/Wakeup）
 ├── examples/ethernet/ 生のイーサネットのフレームを送受信する 2 つの ECU（1 つのプロセスで動かす例と、ecu_main の実行ファイル、設定ファイル、シナリオ）
 ├── examples/ecu_main/ ECU ごとの実行ファイル（ecu_main）と、それらを 1 つのシミュレーションにする設定ファイル、シナリオ、ダッシュボード
-├── examples/launch_control/ ランチャーの Control Server に Python から接続する例（write_before_start.py、pause_and_step.py）
+├── examples/launch_control/ ランチャーの Control Server に Python から接続する例（write_and_read.py、write_before_start.py、pause_and_step.py、serve_runs.py）
 ├── examples/gui_client/ GUI サーバーの API を JavaScript から使う例
 ├── examples/gui_starter/ GUI サーバーに配信させる自分の画面のテンプレート
 ├── examples/fetchcontent_consumer/   外部プロジェクトからの利用例

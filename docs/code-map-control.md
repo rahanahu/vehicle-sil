@@ -41,7 +41,7 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 |---|---|---|
 | `control_server.python_client` | Runs the Python client and CLI against `vehicle_sil_launch serve --once --control` | |
 | `control_server.launcher` | Runs `vehicle_sil_launch serve --once --control` with the ECUs of `examples/ecu_main` | `integration` |
-| `control_server.example_write_before_start`, `control_server.example_pause_and_step` | Runs `examples/launch_control` | `examples` |
+| `control_server.example_write_before_start`, `control_server.example_pause_and_step`, `control_server.example_serve_runs` | Runs `examples/launch_control` | `examples` |
 | `control_server.guide_operate_signals` | Compares the marked blocks of the guide [Read and write signals from outside](howto/operate-signals.md) with the output of the same example, the CLI and the stdin commands | `examples` |
 
 `control_server.launcher` checks writes before the start, commands from both stdin and the Control Server, how the run ends, authentication, TLS and auditing, and the CLI with a token.
@@ -92,14 +92,14 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 | `test_python_client.py` | The Python client and CLI |
 | `test_serve_unit.py` | `Serve` and `RunHandle` unit tests with mocked child streams (also run by `scripts/verify-python.py`) |
 | `test_serve_client.py` | `Serve` and `RunHandle` against live `vehicle_sil_launch serve` and gRPC (`tests/serve/serve_support.py` wraps `vehicle_sil_control.Serve` with fault-injection `send_raw` and `/proc` RSS measurement) |
-| `control_server.example_write_before_start`, `control_server.example_pause_and_step` | `examples/launch_control` |
+| `control_server.example_write_before_start`, `control_server.example_pause_and_step`, `control_server.example_serve_runs` | `examples/launch_control` |
 | `test_guide_operate_signals.py` | Compares the guide `docs/howto/operate-signals.md` with the example, the CLI and the stdin commands (for the markers, see "[Documentation examples and tests](code-map-testing.md#documentation-examples-and-tests)") |
 
 ### `examples/launch_control` (example for the guide "Read and write signals from outside")
 
-- Tests: `control_server.example_write_before_start` and `control_server.example_pause_and_step` run the example.
+- Tests: `control_server.example_write_before_start`, `control_server.example_pause_and_step` and `control_server.example_serve_runs` run the examples.
 - Tests: `control_server.guide_operate_signals` (`test_guide_operate_signals.py` in `tests/control_server`) compares the marked blocks of the guide [howto/operate-signals.md](howto/operate-signals.md) with the output of the example, the CLI and the stdin commands.
-- `ctest -R`: `^control_server\.example_write_before_start`, `^control_server\.example_pause_and_step`, `^control_server\.guide_operate_signals`
+- `ctest -R`: `^control_server\.example_write_before_start`, `^control_server\.example_pause_and_step`, `^control_server\.example_serve_runs`, `^control_server\.guide_operate_signals`
 
 All of them are registered only in a build with the Control Server, and only when a Python with grpcio and grpcio-tools is available.
 
@@ -239,7 +239,7 @@ Rules:
 
 Tests:
 
-- `control_server.launcher`, `control_server.serve_unit`, `control_server.serve_client`, `control_server.example_write_before_start`, `control_server.example_pause_and_step`
+- `control_server.launcher`, `control_server.serve_unit`, `control_server.serve_client`, `control_server.example_write_before_start`, `control_server.example_pause_and_step`, `control_server.example_serve_runs`
 - `^launch\.` (`TimeCommands`)
 - `launch_run.time_usage` (argument errors)
 

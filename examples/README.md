@@ -25,6 +25,7 @@ The further down the list, the lower the layer an example uses.
 | Connect to the launcher's Control Server from Python | [launch_control](launch_control) | `write_before_start.py` |
 | Write a value from Python, advance time and read a value (the shortest example) | [launch_control](launch_control) | `write_and_read.py` |
 | Pause a running simulation and write at a specified time | [launch_control](launch_control) | `pause_and_step.py` |
+| Run sequential simulations in one resident launcher (`Serve`, `RunHandle`) | [launch_control](launch_control) | `serve_runs.py` |
 | Call the browser GUI server without the screens | [gui_client](gui_client) | `run.mjs`, `run-with-library.mjs`, `variables.mjs` (plain JavaScript) |
 | Build your own screen for the browser GUI | [gui_starter](gui_starter) | HTML of parts and a short script (no build) |
 | Assemble the layers yourself (bus, host, driver, network) | [low_level](low_level) | `vehicle_sil_low_level` |
@@ -117,13 +118,14 @@ The default EtherType (0x88B5) and the MAC addresses (locally administered addre
 
 ### launch_control
 
-Python scripts that control a simulation run with `vehicle_sil_launch run --control`.
+Python scripts that control simulations via `vehicle_sil_launch` (`serve --once` via `Launch`, or resident `serve` via `Serve` / `RunHandle`) and its Control Server (`--control`).
 
 | Script | Contents | CTest |
 |---|---|---|
 | `write_before_start.py` | Starts the 2 ECUs of `ecu_main` with `--start-paused`, writes the engine throttle before the first step, advances 500 ms, and reads back and checks the engine speed (exits with 1 if it differs). | `control_server.example_write_before_start` |
 | `write_and_read.py` | The first script of the guide [Read and write signals from outside](../docs/howto/operate-signals.md). Starts the 2 ECUs of `ecu_main` with `--start-paused`, writes 50 % to the throttle, advances 500 ms and prints the engine speed (the arguments are the path of `vehicle_sil_launch` and `simulation.yaml`). | `control_server.guide_operate_signals` (compares the full script and output shown in the guide) |
 | `pause_and_step.py` | Runs the 2 ECUs of `ecu_main` at a quarter of real-time speed, watches the engine speed with `watch()` and pauses when it exceeds 1000 rpm. Then it writes the throttle with `at` set to 1 ms after the paused time, advances 100 ms, checks the step in which the write was applied and the time and values read with `snapshot()`, and switches to as fast as possible to run to the end (exits with 1 if anything differs). | `control_server.example_pause_and_step` |
+| `serve_runs.py` | Starts one resident `vehicle_sil_launch serve --control` via `Serve`, calls `prepare()`, and runs two isolated simulations sequentially with `RunHandle` and `run.control()`, verifying per-run binding and fresh virtual time 0 state (exits with 1 if anything differs). | `control_server.example_serve_runs` |
 
 All of them need a build with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` and a Python with gRPC (see "Python" in [docs/control-api.md](../docs/control-api.md#python)).
 

@@ -88,7 +88,7 @@ vehicle-sil/
 ├── examples/lin/     LIN cluster peers (a master and slaves with different roles; frame transmission and reception, sleep/wakeup)
 ├── examples/ethernet/ Two ECUs that send and receive raw Ethernet frames (an example that runs both in one process, and ecu_main executables, a configuration file and a scenario)
 ├── examples/ecu_main/ One executable per ECU (ecu_main), with a configuration file, scenarios and a dashboard that combine them into one simulation
-├── examples/launch_control/ Connecting to the launcher's Control Server from Python (write_before_start.py, pause_and_step.py)
+├── examples/launch_control/ Connecting to the launcher's Control Server from Python (write_and_read.py, write_before_start.py, pause_and_step.py, serve_runs.py)
 ├── examples/gui_client/ Using the GUI server's API from JavaScript
 ├── examples/gui_starter/ Template for your own screen, served by the GUI server
 ├── examples/fetchcontent_consumer/   Use from an external project
