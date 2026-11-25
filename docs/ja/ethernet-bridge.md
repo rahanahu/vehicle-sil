@@ -361,7 +361,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-いま vehicle-sil のブリッジが使っているインターフェースは、行の終わりに `; in use by a vehicle-sil bridge (process 4321)` が付きます（bridge-contract.md の「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」）。`npcap`（Windows の既定）と `pcap` では、pcap のライブラリが返すインターフェースを表示します。
+いま vehicle-sil のブリッジが使っているインターフェースは、行の終わりに `; in use by a vehicle-sil bridge` が付きます。Linux ではプロセス ID も付きます（`; in use by a vehicle-sil bridge (process 4321)`。bridge-contract.md の「[別のブリッジが使っているデバイス](bridge-contract.md#別のブリッジが使っているデバイス)」）。`npcap`（Windows の既定）と `pcap` では、pcap のライブラリが返すインターフェースを表示します。
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -440,7 +440,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 | `tool` | `vehicle_sil_ethernet_bridge` です。 |
 | `backend` | 一覧のバックエンドです。`--backend`、なければ既定です。 |
 | `source` | `npcap`、`pcap` では、ライブラリが返す版です。`packet`、`tap` では `null` です。 |
-| `targets[].detail` | 使用中のデバイスでは、`detail` の終わりに `in use by a vehicle-sil bridge (process 4321)` も付きます。 |
+| `targets[].detail` | 使用中のデバイスでは、`detail` の終わりに `in use by a vehicle-sil bridge` も付きます。Linux ではプロセス ID も付きます（`(process 4321)`）。 |
 | `targets[].ethernet` | バックエンドが返す内容です。`npcap`、`pcap` では `pcap_name`、`connection` と `description`（ないときは `null`）、`up`、`connected`（ライブラリが言わないときは `null`）、`loopback`、`wireless` です。`packet`、`tap` では `name`、`ethernet`、`link_type`、`up` です。 |
 | `notes` | 文の一覧の最後の行の説明です。1 文ずつ入ります（ネットワークのアダプターを返さない Npcap）。ほかのときは空です。 |
 

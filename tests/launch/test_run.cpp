@@ -1335,6 +1335,26 @@ TEST_CASE(what_a_bridge_saw_of_the_real_bus_is_a_warning_for_each_kind)
     CHECK(drop.find("outside-frames-dropped: network 'ETH' -> eth0: the bridge dropped frames (ext_queue_full=1, ext_tx_failures=3):") !=
           std::string::npos);
     CHECK(drop.find("oversize") == std::string::npos && drop.find("--tx-timeout-ms") == std::string::npos);
+    CHECK(drop.find("Not one frame was sent") == std::string::npos);
+    // Every send failed (Npcap on an adapter without a cable): nothing went out, so the message
+    // says why there is no connect-nothing-received; not when a frame went out, or for a full queue.
+    OutsideLink unplugged;
+    unplugged.counts = {{"ext_tx_failures", 601}};
+    RunOutcome none = seen(unplugged);
+    none.outside[0].to_outside = 0;
+    none.outside[0].from_outside = 0;
+    const std::string refused = lines(assess_run(none));
+    CHECK(refused.find("(ext_tx_failures=601)") != std::string::npos);
+    CHECK(refused.find(". Not one frame was sent (silkit_to_ext=0), so whether a device answers is not known: an adapter "
+                       "whose link is down, such as one without a cable plugged in, refuses every frame; check the cable") !=
+          std::string::npos);
+    CHECK(refused.find("connect-nothing-received") == std::string::npos);
+    none.outside[0].to_outside = 1;
+    CHECK(lines(assess_run(none)).find("Not one frame was sent") == std::string::npos);
+    unplugged.counts = {{"ext_queue_full", 5}};
+    none = seen(unplugged);
+    none.outside[0].to_outside = 0;
+    CHECK(lines(assess_run(none)).find("Not one frame was sent") == std::string::npos);
     dropped.counts = {{"ext_tx_dropped", 2}};
     CHECK(lines(assess_run(seen(dropped, "vehicle_sil_vector_xl_bridge"))).find("--tx-timeout-ms") != std::string::npos);
     // Counts of 0 and the keys that are no losses: nothing.

@@ -400,7 +400,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 - ブリッジが動いている間に `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジが終わったら、`run` は最後に読んだ 1 行を、ブリッジの行として 1 回だけ出します。全部の数が載ったブリッジの報告です（例えば、絞り込みで ECU に渡さなかったフレーム `filtered_from_ext`、止めるときに捨てたフレーム `ext_tx_unsent`）。ブリッジが止まるときに書いた行か、それを書かずに終わらされたなら、動いている間の最後の行です。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
 - 数は最後に読めた行のものです。最後の行を書かずに終わらされたブリッジ（ランチャーが止まるよう頼めなかった Windows）は、動いている間の最後の行の数になります。1 行も読めなければ、どちらも `null` です。
 
-シミュレーションが動き、ブリッジがバスへフレームを送ったのに、実行が終わるまでにそこの機器から 1 つも来なかったら、実行は注意 `connect-nothing-received` で終わります。機器が答えないのは不具合とは限らないので、注意です（`--strict` でも失敗にしません）。実行を失敗させたブリッジ（`connect-failed`、`connect-lost`）と、数が `null` のときは出しません。Ethernet では、この PC がそのアダプターに出すフレーム（例えば、Hyper-V の `vEthernet` のアダプターに OS が出す IPv6 と ARP のフレーム）は数えないので、ケーブルが抜けていればこの注意が出ます。ブリッジも、動いている間に、最初に送ってから 10 秒たって機器から何も来なければ警告します（[ethernet-bridge.md](ethernet-bridge.md#機器から何も来ないときのヒント) の「機器から何も来ないときのヒント」）。
+シミュレーションが動き、ブリッジがバスへフレームを送ったのに、実行が終わるまでにそこの機器から 1 つも来なかったら、実行は注意 `connect-nothing-received` で終わります。機器が答えないのは不具合とは限らないので、注意です（`--strict` でも失敗にしません）。実行を失敗させたブリッジ（`connect-failed`、`connect-lost`）と、数が `null` のときは出しません。Ethernet では、この PC がそのアダプターに出すフレーム（例えば、Hyper-V の `vEthernet` のアダプターに OS が出す IPv6 と ARP のフレーム）は数えないので、アダプターがフレームを受け取る限り、ケーブルが抜けていればこの注意が出ます。Windows の Npcap は、ケーブルが抜けたアダプターではフレームをすべて断ります。そのときはフレームが 1 つも送られないので、この注意も下のブリッジのヒントも出ず、警告 `outside-frames-dropped` が、1 つも送れなかったこと（`ext_tx_failures`、`silkit_to_ext=0`）を言います。ブリッジも、動いている間に、最初に送ってから 10 秒たって機器から何も来なければ警告します（[ethernet-bridge.md](ethernet-bridge.md#機器から何も来ないときのヒント) の「機器から何も来ないときのヒント」）。
 
 ```text
 network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) before the run ended: bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on; a short run can end before a device answers
@@ -452,6 +452,8 @@ outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at
 ```
 
 ブリッジ自身の警告（`warning: ... is also used by another vehicle-sil bridge ...`）は、リンクの行と同じく、実行の出力には出しません。ブリッジのログファイル（`--log-dir`）には残ります。
+
+J1939 では、2 つの実行のノードが互いのアドレスの要求にも加わります。一方の実行のノードがもう一方のノードと同じアドレスにいると、NAME が小さくないほうがアドレスを失います。NAME も同じとき（1 つの構成を 2 回実行したとき）は、後から始まったノードの要求を受けた、先にいたほうが失います。失ったノードは、その実行が終わるまで何も送りません（Cannot Claim。internals/j1939.md の「[競合](internals/j1939.md#競合)」）。`run` はこれを知らせません。Control API と GUI には、イベント `j1939.N.node<i>: cannot_claim at address 254` が出ます。両方を走らせるには、ノードに別のアドレスを付けるか（simulation-config.md の「[J1939 のアドレスと NAME を合わせる](simulation-config.md#j1939-のアドレスと-name-を合わせるj1939_nodes)」）、実行ごとに別のデバイスにつなぎます。
 
 | いつ | `--strict` なし | `--strict` あり |
 |---|---|---|
