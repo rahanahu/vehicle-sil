@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -16,8 +17,8 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import Client, alive, gui_server, is_ended, is_synced, run_async, scaled, wait_until
-from fake_runtime import validate_events_v4_event
+from conftest import REPLAY, Client, alive, gui_server, is_ended, is_synced, run_async, scaled, wait_until
+from fake_runtime import validate_events_v4_event, validate_version_json
 from real_configs import NETWORKS, examples_dir, executables, usable, write
 from vehicle_sil_gui import __version__
 from vehicle_sil_gui.recording import scenario_yaml
@@ -31,7 +32,167 @@ REASON = ("no real launcher: set VEHICLE_SIL_GUI_LAUNCHER to build/<preset>/tool
           if not usable(EXAMPLES) else "Linux only" if sys.platform != "linux" else None)
 pytestmark = pytest.mark.skipif(REASON is not None, reason=REASON or "")
 
-RUN_TIMEOUT_S = 60
+RUN_TIMEOUT_S = scaled(60)
+
+
+class _LineReader:
+    """Timeout-bounded line reader over an unbuffered binary pipe (avoids TextIOWrapper buffering with select)."""
+
+    def __init__(self, stream) -> None:
+        self._fd = stream.fileno()
+        self._buf = bytearray()
+
+    def readline(self, timeout_s: float) -> str:
+        deadline = time.monotonic() + timeout_s
+        while True:
+            nl = self._buf.find(b"\n")
+            if nl != -1:
+                line = bytes(self._buf[:nl + 1])
+                del self._buf[:nl + 1]
+                return line.decode("utf-8")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"launcher stdout line timed out after {timeout_s:g} s")
+            ready, _, _ = select.select([self._fd], [], [], remaining)
+            if not ready:
+                raise TimeoutError(f"launcher stdout line timed out after {timeout_s:g} s")
+            chunk = os.read(self._fd, 4096)
+            if not chunk:
+                if self._buf:
+                    line = bytes(self._buf)
+                    self._buf.clear()
+                    return line.decode("utf-8")
+                return ""
+            self._buf.extend(chunk)
+
+
+def _read_event(reader: _LineReader, proc: subprocess.Popen, timeout_s: float = RUN_TIMEOUT_S) -> dict:
+    line = reader.readline(timeout_s)
+    assert line, proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
+    ev = json.loads(line)
+    validate_events_v4_event(ev)
+    return ev
+
+
+def _send_cmd(proc: subprocess.Popen, payload: dict) -> None:
+    assert proc.stdin is not None
+    proc.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
+    proc.stdin.flush()
+
+
+def _run_persistent_serve_sequence(cmd_prefix: list[str], config: Path, req_path: Path, *,
+                                   timeline_req_path: Path, timeline_path: Path,
+                                   env: dict[str, str] | None = None) -> list[dict]:
+    proc = subprocess.Popen(
+        [*cmd_prefix, "serve", "--", str(config)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        env=env,
+    )
+    events: list[dict] = []
+    try:
+        assert proc.stdout is not None and proc.stdin is not None
+        reader = _LineReader(proc.stdout)
+        for _ in range(2):
+            events.append(_read_event(reader, proc))
+        assert [e["event"] for e in events] == ["hello", "status"]
+        _send_cmd(proc, {"command": "prepare", "id": 1})
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "prepare":
+                assert ev["accepted"] is True, ev
+                break
+        _send_cmd(proc, {"command": "run", "request": str(req_path), "id": 2})
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "result":
+                first_result = ev
+                break
+        # Immediately query status: proves no unsolicited duplicate post-result status event was emitted.
+        _send_cmd(proc, {"command": "status", "id": 3})
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "heartbeat":
+                continue
+            assert ev["event"] == "status" and ev["id"] == 3, ev
+            assert ev["status_rev"] == first_result["status"]["status_rev"], ev
+            assert ev["launcher_state"] == first_result["status"]["launcher_state"], ev
+            break
+        # Second run with timeline: proves run_start does not emit an extraneous "timeline" key.
+        _send_cmd(proc, {"command": "run", "request": str(timeline_req_path),
+                         "timeline": str(timeline_path), "id": 4})
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "result":
+                break
+        proc.stdin.close()
+        assert proc.wait(timeout=RUN_TIMEOUT_S) == 0
+        return events
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def _run_once_stop_sequence(cmd_prefix: list[str], config: Path, req_path: Path, *,
+                            env: dict[str, str] | None = None) -> list[dict]:
+    proc = subprocess.Popen(
+        [*cmd_prefix, "serve", "--once", "--", str(config)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        env=env,
+    )
+    events: list[dict] = []
+    try:
+        assert proc.stdout is not None and proc.stdin is not None
+        reader = _LineReader(proc.stdout)
+        for _ in range(2):
+            events.append(_read_event(reader, proc))
+        assert [e["event"] for e in events] == ["hello", "status"]
+        _send_cmd(proc, {"command": "run", "request": str(req_path), "id": 10})
+        run_id: str | None = None
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "run_start":
+                run_id = ev["run"]
+            elif ev["event"] == "state" and ev.get("phase") == "running" and ev.get("paused") is True:
+                break
+        assert run_id is not None
+        _send_cmd(proc, {"command": "step", "run": run_id, "ms": 20, "id": 11})
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "command" and ev.get("id") == 11:
+                assert ev["accepted"] is True, ev
+                break
+        # Two stop commands without force: must stay graceful (idempotent, stop.requests <= 1).
+        # Deterministic double-stop on a hung participant is also verified in test_units.py.
+        proc.stdin.write(
+            (json.dumps({"command": "stop", "run": run_id, "id": 12}) + "\n"
+             + json.dumps({"command": "stop", "run": run_id, "id": 13}) + "\n").encode("utf-8")
+        )
+        proc.stdin.flush()
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "result":
+                break
+        proc.stdin.close()
+        assert proc.wait(timeout=RUN_TIMEOUT_S) == 0
+        return events
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
 
 def test_real_targeted_stop_does_not_stop_the_next_run(tmp_path: Path) -> None:
@@ -74,60 +235,144 @@ def test_real_targeted_stop_does_not_stop_the_next_run(tmp_path: Path) -> None:
 
 
 def test_real_launcher_events_v4_contract_and_stub_parity(tmp_path: Path) -> None:
-    """Real vehicle_sil_launch serve emits valid Events v4 lines across hello, status, prepare, run, and result."""
+    """Real vehicle_sil_launch and stub_launcher.py satisfy the Events v4 / version --json wire contract in parity."""
     configs = tmp_path / "configs"
     write(configs, EXAMPLES)
-    proc = subprocess.Popen(
-        [str(LAUNCHER), "serve", "--", str(configs / "simulation.yaml")],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    stub_env = {**os.environ, "REPLAY_HEARTBEAT_MS": "0", "REPLAY_NO_SLEEPERS": "1"}
+    real_prefix = [str(LAUNCHER)]
+    stub_prefix = [sys.executable, str(REPLAY)]
+
+    # 1. version --json parity
+    real_ver_proc = subprocess.run([*real_prefix, "version", "--json"], capture_output=True, text=True,
+                                   timeout=RUN_TIMEOUT_S, check=True)
+    stub_ver_proc = subprocess.run([*stub_prefix, "version", "--json"], capture_output=True, text=True,
+                                   timeout=RUN_TIMEOUT_S, check=True, env=stub_env)
+    real_ver = json.loads(real_ver_proc.stdout)
+    stub_ver = json.loads(stub_ver_proc.stdout)
+    validate_version_json(real_ver)
+    validate_version_json(stub_ver)
+    assert set(real_ver.keys()) == set(stub_ver.keys())
+    assert real_ver["formats"] == stub_ver["formats"]
+
+    # 2. Persistent serve parity (startup -> prepare -> run -> status -> timeline run -> result)
+    req_path = tmp_path / "req.json"
+    req_path.write_text(
+        json.dumps({"vehicle_sil_run_request": 1, "speed": "max", "stop_at_ms": 100}),
+        encoding="utf-8",
     )
-    events: list[dict] = []
-    try:
-        assert proc.stdout is not None and proc.stdin is not None
-        for _ in range(2):
-            line = proc.stdout.readline()
-            assert line, proc.stderr.read() if proc.stderr else ""
-            ev = json.loads(line)
-            validate_events_v4_event(ev)
-            events.append(ev)
-        assert [e["event"] for e in events] == ["hello", "status"]
-        proc.stdin.write(json.dumps({"command": "prepare", "id": 1}) + "\n")
-        proc.stdin.flush()
-        while True:
-            line = proc.stdout.readline()
-            assert line
-            ev = json.loads(line)
-            validate_events_v4_event(ev)
-            events.append(ev)
-            if ev["event"] == "prepare":
-                assert ev["accepted"] is True
-                break
-        req_path = tmp_path / "req.json"
-        req_path.write_text(
-            json.dumps({"vehicle_sil_run_request": 1, "speed": "max", "stop_at_ms": 100}),
-            encoding="utf-8",
-        )
-        proc.stdin.write(json.dumps({"command": "run", "request": str(req_path), "id": 2}) + "\n")
-        proc.stdin.flush()
-        while True:
-            line = proc.stdout.readline()
-            assert line
-            ev = json.loads(line)
-            validate_events_v4_event(ev)
-            events.append(ev)
-            if ev["event"] == "result":
-                assert ev["result"]["result"] == "passed"
-                assert ev["status"]["launcher_state"] == "ready"
-                break
-        proc.stdin.close()
-        assert proc.wait(timeout=RUN_TIMEOUT_S) == 0
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
+    timeline_req_path = tmp_path / "timeline_req.json"
+    timeline_req_path.write_text(
+        json.dumps({"vehicle_sil_run_request": 1, "speed": "max", "scenario": "scenarios/throttle_step.yaml"}),
+        encoding="utf-8",
+    )
+    real_events = _run_persistent_serve_sequence(
+        real_prefix, configs / "simulation.yaml", req_path,
+        timeline_req_path=timeline_req_path, timeline_path=tmp_path / "real.timeline.json",
+    )
+    stub_events = _run_persistent_serve_sequence(
+        stub_prefix, configs / "simulation.yaml", req_path,
+        timeline_req_path=timeline_req_path, timeline_path=tmp_path / "stub.timeline.json", env=stub_env,
+    )
+
+    def first_of(evts: list[dict], kind: str) -> dict:
+        return next(e for e in evts if e["event"] == kind)
+
+    # Initial hello + pre-prepare status parity
+    assert set(real_events[0].keys()) == set(stub_events[0].keys())
+    real_init_st, stub_init_st = real_events[1], stub_events[1]
+    assert set(real_init_st.keys()) == set(stub_init_st.keys())
+    for st in (real_init_st, stub_init_st):
+        assert st["launcher_state"] == "unprepared", st
+        assert st["status_rev"] == 0, st
+        assert st["eligibility"] == {"eligible": False, "reason": None, "message": None}, st
+        assert st["launcher_allowed"]["prepare"] == {"ok": True, "reason": None, "message": None, "caution": None}, st
+        assert st["launcher_allowed"]["run"] == {"ok": True, "reason": None, "message": None, "caution": None}, st
+
+    # prepare parity
+    real_prep, stub_prep = first_of(real_events, "prepare"), first_of(stub_events, "prepare")
+    assert set(real_prep.keys()) == set(stub_prep.keys())
+    assert set(real_prep["status"].keys()) == set(stub_prep["status"].keys())
+    assert set(real_prep["metadata"].keys()) == set(stub_prep["metadata"].keys())
+    for prep in (real_prep, stub_prep):
+        assert prep["accepted"] is True and prep["reason"] is None and prep["message"] is None, prep
+        assert prep["status"]["launcher_state"] == "ready", prep
+        assert prep["status"]["eligibility"] == {"eligible": True, "reason": None, "message": None}, prep
+        assert prep["metadata"]["participants"] == ["Engine", "Dashboard"], prep
+        assert prep["metadata"]["networks"] == ["J1939_CAN"], prep
+
+    # run_start parity (both plain run and timeline run have no extra timeline key)
+    real_rs_all = [e for e in real_events if e["event"] == "run_start"]
+    stub_rs_all = [e for e in stub_events if e["event"] == "run_start"]
+    assert len(real_rs_all) == 2 and len(stub_rs_all) == 2
+    for rs in (*real_rs_all, *stub_rs_all):
+        assert set(rs.keys()) == {"event", "seq", "t_ms", "run", "id"}, rs
+    real_rs, stub_rs = real_rs_all[0], stub_rs_all[0]
+
+    # running status + state + participant parity
+    real_run_st = next(e for e in real_events if e["event"] == "status" and e["launcher_state"] == "running")
+    stub_run_st = next(e for e in stub_events if e["event"] == "status" and e["launcher_state"] == "running")
+    assert set(real_run_st.keys()) == set(stub_run_st.keys())
+    assert set(real_run_st["run_state"].keys()) == set(stub_run_st["run_state"].keys())
+    assert set(real_run_st["run_state"]["allowed"].keys()) == set(stub_run_st["run_state"]["allowed"].keys())
+    assert real_run_st["launcher_allowed"]["prepare"]["ok"] is False
+    assert stub_run_st["launcher_allowed"]["prepare"]["ok"] is False
+    assert real_run_st["launcher_allowed"]["run"]["ok"] is False
+    assert stub_run_st["launcher_allowed"]["run"]["ok"] is False
+
+    real_state, stub_state = first_of(real_events, "state"), first_of(stub_events, "state")
+    assert set(real_state.keys()) == set(stub_state.keys())
+    for pstate in ("started", "joined", "ended"):
+        rp = next(e for e in real_events if e["event"] == "participant" and e["state"] == pstate)
+        sp = next(e for e in stub_events if e["event"] == "participant" and e["state"] == pstate)
+        assert set(rp.keys()) == set(sp.keys()), pstate
+
+    # result parity (post-transition settled status)
+    real_res, stub_res = first_of(real_events, "result"), first_of(stub_events, "result")
+    assert set(real_res.keys()) == set(stub_res.keys())
+    assert set(real_res["status"].keys()) == set(stub_res["status"].keys())
+    for res, rs in ((real_res, real_rs), (stub_res, stub_rs)):
+        assert res["launcher_ends"] is False, res
+        assert res["result"]["result"] == "passed", res
+        st = res["status"]
+        assert st["launcher_state"] == "ready", st
+        assert st["active_run_id"] is None and st["last_run_id"] == rs["run"], st
+        assert st["run_state"] is None, st
+        assert st["launcher_allowed"]["prepare"]["ok"] is True and st["launcher_allowed"]["run"]["ok"] is True, st
+
+    # 3. --once + command + graceful stop idempotency parity
+    paused_req = tmp_path / "paused_req.json"
+    paused_req.write_text(json.dumps({"vehicle_sil_run_request": 1, "start_paused": True}), encoding="utf-8")
+    real_once = _run_once_stop_sequence(real_prefix, configs / "forever.yaml", paused_req)
+    stub_once = _run_once_stop_sequence(stub_prefix, configs / "forever.yaml", paused_req, env=stub_env)
+
+    real_step_cmd = next(e for e in real_once if e["event"] == "command" and e.get("id") == 11)
+    stub_step_cmd = next(e for e in stub_once if e["event"] == "command" and e.get("id") == 11)
+    assert set(real_step_cmd.keys()) == set(stub_step_cmd.keys())
+    assert real_step_cmd["message"] is None and real_step_cmd["reason"] is None
+    assert stub_step_cmd["message"] is None and stub_step_cmd["reason"] is None
+
+    real_stop_cmd = next(e for e in real_once if e["event"] == "command" and e.get("id") == 12)
+    stub_stop_cmd = next(e for e in stub_once if e["event"] == "command" and e.get("id") == 12)
+    assert set(real_stop_cmd.keys()) == set(stub_stop_cmd.keys())
+    assert real_stop_cmd["accepted"] is True and real_stop_cmd["message"] is None and real_stop_cmd["reason"] is None
+    assert stub_stop_cmd["accepted"] is True and stub_stop_cmd["message"] is None and stub_stop_cmd["reason"] is None
+
+    for label, evts in (("real", real_once), ("stub", stub_once)):
+        stop_states = [e["stop"] for e in evts if e["event"] == "state" and e["stop"]["requests"] > 0]
+        assert stop_states and all(s == {"requests": 1, "by": "stop command"} for s in stop_states), (label, stop_states)
+        second_stops = [e for e in evts if e["event"] == "command" and e.get("id") == 13]
+        for ev2 in second_stops:
+            if ev2["accepted"]:
+                assert ev2["message"] is None and ev2["reason"] is None, (label, ev2)
+        res = first_of(evts, "result")
+        rs = first_of(evts, "run_start")
+        assert res["launcher_ends"] is True, (label, res)
+        st = res["status"]
+        assert st["launcher_state"] == "ending", (label, st)
+        assert st["active_run_id"] is None and st["last_run_id"] == rs["run"], (label, st)
+        assert st["run_state"] is None, (label, st)
+        assert st["launcher_allowed"]["prepare"]["ok"] is False and st["launcher_allowed"]["run"]["ok"] is False, (label, st)
+        assert st["launcher_allowed"]["run"]["reason"] == "launcher-ending", (label, st)
 
 
 def test_a_saved_scenario_with_names_beyond_ascii_passes_the_real_check(tmp_path: Path) -> None:

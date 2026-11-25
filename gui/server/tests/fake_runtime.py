@@ -75,27 +75,261 @@ def default_check_result(config: str = "simple.yaml",
     }
 
 
+_VERSION_FORMATS = {
+    "check": 1,
+    "run": 2,
+    "events": 4,
+    "describe": 1,
+    "test": 1,
+    "timeline": 1,
+    "connections": 1,
+}
+
+_LAUNCHER_STATES = frozenset({
+    "unprepared", "cold_only", "preparing", "ready", "running", "ending", "contaminated",
+})
+_RUN_PHASES = frozenset({"checking", "starting", "waiting", "running", "stopping", "ended"})
+_PACINGS = frozenset({"not-paced", "on-time", "late"})
+_PARTICIPANT_STATES = frozenset({
+    "disabled", "not_started", "started", "manual", "joined", "failed", "ended", "stop_requested", "killed",
+})
+_STATUS_KEYS = frozenset({
+    "instance", "status_rev", "launcher_state", "config", "eligibility",
+    "launcher_allowed", "active_run_id", "last_run_id", "run_state",
+})
+_RUN_STATE_KEYS = frozenset({
+    "rev", "phase", "paused", "paused_at_ms", "holding", "speed", "pacing",
+    "stop", "scenario", "allowed", "outside",
+})
+_RUN_ALLOWED_RANGE_KEYS: dict[str, tuple[tuple[str, str], bool]] = {
+    "step": (("min_ms", "max_ms"), True),
+    "speed": (("min", "max"), False),
+}
+_EVENTS_V4_OTHER_KINDS = frozenset({
+    "phase", "check", "registry", "control_server", "control_link",
+    "scenario_step", "log", "log_dropped", "outside", "finding", "time", "heartbeat",
+})
+
+
+def validate_version_json(doc: dict) -> None:
+    """Validates `vehicle_sil_launch version --json` against the C++ wire contract."""
+    assert isinstance(doc, dict), doc
+    assert set(doc.keys()) == {"vehicle_sil_launch", "vehicle_sil", "formats", "features"}, doc
+    assert doc["vehicle_sil_launch"] == 1, doc
+    assert isinstance(doc["vehicle_sil"], str) and doc["vehicle_sil"], doc
+    formats = doc["formats"]
+    assert isinstance(formats, dict), doc
+    assert set(formats.keys()) == set(_VERSION_FORMATS.keys()), formats
+    for key, expected in _VERSION_FORMATS.items():
+        assert type(formats[key]) is int and formats[key] == expected, (key, formats)
+    features = doc["features"]
+    assert isinstance(features, list) and all(isinstance(f, str) and f for f in features), features
+
+
+def _validate_allowed_entry(
+    entry: object,
+    *,
+    range_keys: tuple[str, str] | None = None,
+    whole: bool = False,
+) -> None:
+    assert isinstance(entry, dict), entry
+    base = {"ok", "reason", "message", "caution"}
+    keys = set(entry.keys())
+    if range_keys is not None and (range_keys[0] in keys or range_keys[1] in keys):
+        assert keys == base | set(range_keys), entry
+        for rk in range_keys:
+            val = entry[rk]
+            if whole:
+                assert type(val) is int, (rk, entry)
+            else:
+                assert type(val) in (int, float), (rk, entry)
+    else:
+        assert keys == base, entry
+    assert isinstance(entry["ok"], bool), entry
+    assert entry["reason"] is None or isinstance(entry["reason"], str), entry
+    assert entry["message"] is None or isinstance(entry["message"], str), entry
+    caution = entry["caution"]
+    if caution is not None:
+        assert isinstance(caution, dict) and set(caution.keys()) == {"code", "message"}, entry
+        assert isinstance(caution["code"], str) and isinstance(caution["message"], str), entry
+
+
+def _validate_run_state(rs: object, *, envelope: bool = False) -> None:
+    assert isinstance(rs, dict), rs
+    expected_keys = _RUN_STATE_KEYS | ({"event", "seq", "t_ms", "run"} if envelope else set())
+    if envelope and "t_ms" not in rs:
+        expected_keys = expected_keys - {"t_ms"}
+    assert set(rs.keys()) == expected_keys, rs
+    assert type(rs["rev"]) is int and rs["rev"] >= 0, rs
+    assert rs["phase"] in _RUN_PHASES, rs
+    assert isinstance(rs["paused"], bool), rs
+    assert rs["paused_at_ms"] is None or type(rs["paused_at_ms"]) is int, rs
+    assert isinstance(rs["holding"], bool), rs
+    speed = rs["speed"]
+    assert speed is None or speed == "max" or type(speed) in (int, float), rs
+    assert rs["pacing"] in _PACINGS, rs
+    stop = rs["stop"]
+    assert isinstance(stop, dict) and set(stop.keys()) == {"requests", "by"}, rs
+    assert type(stop["requests"]) is int and stop["requests"] >= 0, rs
+    assert stop["by"] is None or isinstance(stop["by"], str), rs
+    assert isinstance(rs["scenario"], bool), rs
+    allowed = rs["allowed"]
+    assert isinstance(allowed, dict), rs
+    assert set(allowed.keys()) == {"pause", "resume", "step", "speed", "run_until", "stop", "write"}, rs
+    for op, entry in allowed.items():
+        range_spec = _RUN_ALLOWED_RANGE_KEYS.get(op)
+        if range_spec is not None:
+            _validate_allowed_entry(entry, range_keys=range_spec[0], whole=range_spec[1])
+        else:
+            _validate_allowed_entry(entry)
+    outside = rs["outside"]
+    assert isinstance(outside, list), rs
+    for row in outside:
+        assert isinstance(row, dict), row
+        assert set(row.keys()) == {
+            "network", "target", "participant", "link", "bus", "nothing_received", "condition", "reasons",
+        }, row
+        assert isinstance(row["network"], str) and isinstance(row["target"], str), row
+        assert isinstance(row["participant"], str) and isinstance(row["condition"], str), row
+        assert row["link"] is None or isinstance(row["link"], str), row
+        assert row["bus"] is None or isinstance(row["bus"], str), row
+        assert isinstance(row["nothing_received"], bool), row
+        assert isinstance(row["reasons"], list) and all(isinstance(r, str) for r in row["reasons"]), row
+
+
+def _validate_status_members(st: object, *, exact_keys: bool = True) -> None:
+    assert isinstance(st, dict), st
+    if exact_keys:
+        assert set(st.keys()) == _STATUS_KEYS, st
+    else:
+        assert _STATUS_KEYS <= set(st.keys()), st
+    assert isinstance(st["instance"], str) and st["instance"], st
+    assert type(st["status_rev"]) is int and st["status_rev"] >= 0, st
+    assert st["launcher_state"] in _LAUNCHER_STATES, st
+    assert st["config"] is None or isinstance(st["config"], str), st
+    elig = st["eligibility"]
+    assert isinstance(elig, dict) and set(elig.keys()) == {"eligible", "reason", "message"}, st
+    assert isinstance(elig["eligible"], bool), st
+    assert elig["reason"] is None or isinstance(elig["reason"], str), st
+    assert elig["message"] is None or isinstance(elig["message"], str), st
+    la = st["launcher_allowed"]
+    assert isinstance(la, dict) and set(la.keys()) == {"prepare", "run"}, st
+    _validate_allowed_entry(la["prepare"])
+    _validate_allowed_entry(la["run"])
+    assert st["active_run_id"] is None or (isinstance(st["active_run_id"], str) and st["active_run_id"]), st
+    assert st["last_run_id"] is None or (isinstance(st["last_run_id"], str) and st["last_run_id"]), st
+    if st["run_state"] is not None:
+        _validate_run_state(st["run_state"], envelope=False)
+
+
 def validate_events_v4_event(ev: dict) -> None:
     """Validates that a launcher event dictionary conforms to the Events v4 wire contract."""
     assert isinstance(ev, dict) and isinstance(ev.get("event"), str), ev
     assert type(ev.get("seq")) is int and ev["seq"] >= 0, ev
+    envelope = {"event", "seq"}
     if "t_ms" in ev:
         assert type(ev["t_ms"]) is int and ev["t_ms"] >= 0, ev
+        envelope.add("t_ms")
     kind = ev["event"]
     if kind == "hello":
-        assert ev.get("vehicle_sil_events") == 4, ev
+        assert set(ev.keys()) == envelope | {
+            "vehicle_sil_events", "vehicle_sil", "pid", "file", "arguments", "launcher",
+        }, ev
+        assert ev["vehicle_sil_events"] == 4, ev
+        assert isinstance(ev["vehicle_sil"], str) and ev["vehicle_sil"], ev
+        assert type(ev["pid"]) is int, ev
+        assert ev["file"] is None or isinstance(ev["file"], str), ev
+        assert isinstance(ev["arguments"], list) and all(isinstance(a, str) for a in ev["arguments"]), ev
+        assert isinstance(ev["launcher"], str) and ev["launcher"], ev
     elif kind == "status":
-        assert isinstance(ev.get("instance"), str) and ev["instance"], ev
-        assert type(ev.get("status_rev")) is int, ev
-        assert ev.get("launcher_state") in (
-            "unprepared", "cold_only", "preparing", "ready", "running", "ending", "contaminated"
-        ), ev
+        assert set(ev.keys()) == envelope | {"id"} | _STATUS_KEYS, ev
+        assert ev["id"] is None or type(ev["id"]) is int, ev
+        _validate_status_members(ev, exact_keys=False)
     elif kind == "prepare":
-        assert isinstance(ev.get("accepted"), bool), ev
-        assert isinstance(ev.get("status"), dict), ev
+        assert set(ev.keys()) == envelope | {
+            "id", "accepted", "reason", "message", "status", "metadata", "findings",
+        }, ev
+        assert ev["id"] is None or type(ev["id"]) is int, ev
+        assert isinstance(ev["accepted"], bool), ev
+        assert ev["reason"] is None or isinstance(ev["reason"], str), ev
+        assert ev["message"] is None or isinstance(ev["message"], str), ev
+        if ev["accepted"]:
+            assert ev["reason"] is None and ev["message"] is None, ev
+            meta = ev["metadata"]
+            assert isinstance(meta, dict) and set(meta.keys()) == {
+                "participants", "networks", "variants", "file_sha256",
+            }, ev
+            assert isinstance(meta["participants"], list) and all(isinstance(p, str) for p in meta["participants"]), ev
+            assert isinstance(meta["networks"], list) and all(isinstance(n, str) for n in meta["networks"]), ev
+            assert isinstance(meta["variants"], list) and all(isinstance(v, str) for v in meta["variants"]), ev
+            assert meta["file_sha256"] is None or isinstance(meta["file_sha256"], str), ev
+        else:
+            assert ev["metadata"] is None, ev
+        _validate_status_members(ev["status"], exact_keys=True)
+        assert isinstance(ev["findings"], list), ev
+    elif kind == "run_start":
+        assert set(ev.keys()) == envelope | {"run", "id"}, ev
+        assert isinstance(ev["run"], str) and ev["run"], ev
+        assert ev["id"] is None or type(ev["id"]) is int, ev
+    elif kind == "command":
+        required = envelope | {"command", "source", "accepted", "message", "reason", "id"}
+        optional = {"run", "ms", "at_ms", "asked_run"}
+        assert required <= set(ev.keys()) <= required | optional, ev
+        assert ev["command"] is None or isinstance(ev["command"], str), ev
+        assert isinstance(ev["source"], str) and ev["source"], ev
+        assert isinstance(ev["accepted"], bool), ev
+        assert ev["message"] is None or isinstance(ev["message"], str), ev
+        assert ev["reason"] is None or isinstance(ev["reason"], str), ev
+        if ev["accepted"]:
+            assert ev["reason"] is None, ev
+        assert ev["id"] is None or type(ev["id"]) is int, ev
+        if "run" in ev:
+            assert isinstance(ev["run"], str) and ev["run"], ev
+        if "ms" in ev:
+            assert type(ev["ms"]) is int, ev
+        if "at_ms" in ev:
+            assert type(ev["at_ms"]) is int, ev
+        if "asked_run" in ev:
+            assert ev["asked_run"] is None or isinstance(ev["asked_run"], str), ev
+    elif kind == "state":
+        assert isinstance(ev.get("run"), str) and ev["run"], ev
+        _validate_run_state(ev, envelope=True)
+    elif kind == "participant":
+        base = envelope | {"run", "name", "state"}
+        assert base <= set(ev.keys()), ev
+        assert isinstance(ev["run"], str) and ev["run"], ev
+        assert isinstance(ev["name"], str) and ev["name"], ev
+        pstate = ev["state"]
+        assert pstate in _PARTICIPANT_STATES, ev
+        if pstate == "started":
+            assert set(ev.keys()) == base | {"pid", "command", "log"}, ev
+            assert type(ev["pid"]) is int, ev
+            assert isinstance(ev["command"], list) and all(isinstance(w, str) for w in ev["command"]), ev
+            assert ev["log"] is None or isinstance(ev["log"], str), ev
+        elif pstate == "ended":
+            assert set(ev.keys()) == base | {"exit_code", "signal"}, ev
+            assert (type(ev["exit_code"]) is int and ev["signal"] is None) or (
+                ev["exit_code"] is None and isinstance(ev["signal"], str)
+            ), ev
+        elif pstate == "manual":
+            req_m = base | {"command", "working_directory", "command_line"}
+            assert req_m <= set(ev.keys()) <= req_m | {"environment"}, ev
+        elif pstate == "failed":
+            assert base | {"reason"} <= set(ev.keys()) <= base | {"reason", "message"}, ev
+        elif pstate == "not_started":
+            assert base <= set(ev.keys()) <= base | {"message"}, ev
+        else:
+            assert set(ev.keys()) == base, ev
     elif kind == "result":
-        assert isinstance(ev.get("result"), dict), ev
-        assert isinstance(ev.get("launcher_ends"), bool), ev
+        req_r = envelope | {"result", "launcher_ends", "status"}
+        assert req_r <= set(ev.keys()) <= req_r | {"run"}, ev
+        assert isinstance(ev["result"], dict), ev
+        assert isinstance(ev["launcher_ends"], bool), ev
+        _validate_status_members(ev["status"], exact_keys=True)
+    elif kind in _EVENTS_V4_OTHER_KINDS:
+        pass
+    else:
+        raise AssertionError(f"unknown Events v4 kind {kind!r}: {ev!r}")
 
 
 class FakeRun:
