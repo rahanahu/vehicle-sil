@@ -733,7 +733,7 @@ participant を終了させた後、`run` は自分の SIL Kit の接続（ECU �
 
 ## 中断（Ctrl+C）
 
-Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソールを閉じる）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります（participant が自分で終わるのを待つ間、つまり[止め方](#止め方)の 1 の間に来た中断でも同じです）。それより後に来た中断は、結果も終了コードも変えません（[実行の終わり方](#実行の終わり方endokmessage)を参照）。`--stdin-commands` の標準入力の終わりと、`--events` の閉じた標準出力も同じ扱いです（ランチャーを起動したプログラムがいなくなった）。コマンド（`{"command":"stop"}`、Control API の `Stop`）で止めた実行は、中断ではありません。[実行の終わり方](#実行の終わり方endokmessage)を見てください。
+Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります（participant が自分で終わるのを待つ間、つまり[止め方](#止め方)の 1 の間に来た中断でも同じです）。それより後に来た中断は、結果も終了コードも変えません（[実行の終わり方](#実行の終わり方endokmessage)を参照）。`--stdin-commands` の標準入力の終わりと、`--events` の閉じた標準出力も同じ扱いです（ランチャーを起動したプログラムがいなくなった）。コマンド（`{"command":"stop"}`、Control API の `Stop`）で止めた実行は、中断ではありません。[実行の終わり方](#実行の終わり方endokmessage)を見てください。
 
 | 受けた時点 | すること |
 |---|---|
@@ -746,11 +746,9 @@ Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソ
 |---|---|
 | `vehicle_sil_launch` を起動した側が無視するように設定したシグナル（`nohup` の SIGHUP など） | 無視したままです。 |
 | 端末の Ctrl+Z（SIGTSTP） | `vehicle_sil_launch` だけを止めます。 |
-| Windows でコンソールを閉じる | Windows が数秒でプロセスを終了させます。 |
+| Windows でコンソールを閉じる | participant にも届き、Windows が数秒でプロセスを終了させます。 |
 
-Ctrl+Z では、participant は別のプロセスグループなので動き続け、registry と controller だけが止まります。
-
-Windows でコンソールを閉じると、participant にも同時に届きます。Ctrl+C と違い、プロセスグループに関係なく、そのコンソールにつながるすべてのプロセスに届きます（participant は `vehicle_sil_launch` のコンソールを共有し、`vehicle_sil_launch` はそれを通してブリッジに Ctrl+Break を送ります）。`ecu_main` で作った ECU は、`vehicle_sil_launch` が知る前にシミュレーションを止めることがあり、Windows は、イベントを処理し終えたプロセスを終了させます。`run` は、participant を終わらせ終える前にコンソールが閉じたことを知れば、シミュレーションが終わった後でも、その実行を中断として扱います（終了コード 130）。そのとき、participant の次の終わりは失敗にしません: 終了コード `0xC000013A`（Windows が終了させた）、130（`ecu_main` が止まった）、`--connect` のブリッジでは 0。`run` は、閉じたことで起きた終わりと、その少し前の同じ終わりを区別できないので、どちらも報告しません。それ以外の終了コードは、いつもどおりに判定します。Windows が `vehicle_sil_launch` に与える時間は数秒です。participant の終わりがそれより長くかかると、ジョブオブジェクトが終了させ、結果を書けないことがあります。
+Ctrl+Z では、participant は別のプロセスグループなので動き続け、registry と controller だけが止まります。Windows でコンソールを閉じたときは、Ctrl+C と違ってプロセスグループに関係なくコンソールにつながるすべてのプロセスに同時に届くため、`vehicle_sil_launch` が知る前に participant がシミュレーションを止めたり `0xC000013A` で終わったりして、実行が `failed` で終わるか結果を書けないことがあります（participant はジョブオブジェクトが終了させます）。順に中断するときは Ctrl+C を使います。
 
 プログラムから `vehicle_sil_launch` を動かすときは、`--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じると、Ctrl+C と同じように順に止まります（[プログラムから使う](simulation-events.md)）。シグナルも Ctrl+Break も送信できない、コンソールのない Windows の `vehicle_sil_launch` も、これで順に止められます。シミュレーションを止めると、ecu_main の実行ファイルは自分で終わります。自分で終わらない participant は、Ctrl+Break を送信できないので、止め方の 2 の代わりにすぐ強制終了します。
 
@@ -1121,7 +1119,7 @@ passed: 0 errors, 1 warning, 1 note
 | 3 | 結果を標準出力に書けない、`vehicle_sil_launch` 自身の想定外の失敗 | |
 | 4 | 引数のエラー | `"usage"` |
 | 5 | コマンドで、シナリオが終わる前（または始まる前）に止め、ほかに問題がなかった。シナリオの判定はない | `"incomplete"` |
-| 130 | 中断された。シグナル（Ctrl+C、SIGTERM、コンソールを閉じる）か、ランチャーを起動したプログラムがいなくなった（標準入力の終わり、閉じた標準出力） | `"interrupted"` |
+| 130 | 中断された。シグナル（Ctrl+C、Ctrl+Break、SIGTERM）か、ランチャーを起動したプログラムがいなくなった（標準入力の終わり、閉じた標準出力） | `"interrupted"` |
 
 いくつかに当てはまるときは、強いものが決めます。順は 4、3、130、1、5、0 です。シグナルで中断された実行は、エラーがあっても 130 です。コマンドで止めた実行は、エラー（失敗したシナリオのステップ、失敗した participant や終わらなかった participant、`--strict` での警告）があれば 1 です。シミュレーションが終わった後（participant の終わりを待つ間）に来た `{"command":"stop"}` が結果を決めるのは、必須の participant の終わりを打ち切ったときだけです。そうでなければ、実行はシミュレーションの終わり方のとおりに、0 か 1 で終わります。自分の `stop` コマンドの後に 130 を待っていたスクリプトは、0（シナリオつきなら 5 も）を受けるように直してください。
 

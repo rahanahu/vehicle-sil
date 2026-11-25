@@ -710,7 +710,6 @@ TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
     LauncherEnd end;
     int seen_stops = -1;
     bool close_cut_val = false;
-    bool seen_reached = false;
     ServeOptions options;
     options.instance = instance;
     options.base.host.config = "sim.yaml";
@@ -718,7 +717,6 @@ TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
     options.run = [&](const RunRequest&, const RunObservers& obs, const RunLent& lent) {
         seen_stops = lent.controls->stops().count();
         close_cut_val = obs.close_cut(0);
-        seen_reached = lent.controls->stops().reached_participants();
         lent.controls->set_phase(Phase::Ended);
         return passed_report();
     };
@@ -731,8 +729,7 @@ TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
     // before end_.publish(&run->stops): LauncherEnd::request() sees run_ == nullptr, marks end_,
     // then start_run() publishes and hands the run to run_loop(), which re-checks end_.requested()
     // and stops the run before calling options_.run().
-    // A closed console (it reached the participants too): the run gets that as well.
-    cap.set_on_next_emit([&] { end.request(2, 1, true); });
+    cap.set_on_next_emit([&] { end.request(2); });
     serve.command(cmd(R"({"command":"run","id":1})"));
 
     const ServeEnd ended = done.get();
@@ -740,7 +737,6 @@ TEST_CASE(serve_signal_during_run_install_never_starts_unstopped_run)
     CHECK(!ended.at_once);
     CHECK(seen_stops >= 1);
     CHECK(close_cut_val);
-    CHECK(seen_reached);
 
     // Result must have launcher_ends: true and nothing after it.
     const auto lines = cap.lines();
@@ -1354,22 +1350,4 @@ TEST_CASE(serve_concurrent_next_run_and_eof_during_result_flush_preserve_strict_
     CHECK(r2_start < r2_result);
     CHECK(lines.back().event == "status");
     CHECK(lines.back().launcher_state == "ending");
-}
-
-TEST_CASE(launcher_end_reached_participants_follows_first_request_only)
-{
-    LauncherEnd end;
-    vehicle_sil::runner::StopRequests stops;
-    stops.request(vehicle_sil::runner::stop_source::kStopCommand);
-    end.publish(&stops);
-
-    // An ordinary launcher end followed by one that reached the participants keeps false.
-    end.request(2, 1, false);
-    end.request(3, 2, true);
-    CHECK_EQ(end.source(), 2);
-    CHECK(!end.reached_participants());
-    // The published run already had an operator stop, so its reached_participants stays false too.
-    CHECK_EQ(stops.first(), vehicle_sil::runner::stop_source::kStopCommand);
-    CHECK(!stops.reached_participants());
-    end.withdraw();
 }

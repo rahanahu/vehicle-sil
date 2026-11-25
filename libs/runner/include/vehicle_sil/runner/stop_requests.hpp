@@ -100,15 +100,11 @@ class StopRequests
 public:
     /// A request from `source`, counted `count` times: stop_level::kGraceful (1) as one Ctrl+C
     /// (the first stops the run in order, the second skips the waits), stop_level::kForce (2) for
-    /// a request that must not wait for a second one. `source` and `reached_participants` are kept
-    /// only if nothing asked before.
-    void request(int source, int count = stop_level::kGraceful, bool reached_participants = false) noexcept
+    /// a request that must not wait for a second one. `source` is kept only if nothing asked before.
+    void request(int source, int count = stop_level::kGraceful) noexcept
     {
         int none = 0;
-        if (first_.compare_exchange_strong(none, source) && reached_participants)
-        {
-            reached_participants_.store(true);
-        }
+        first_.compare_exchange_strong(none, source);
         count_.fetch_add(count);
     }
 
@@ -135,16 +131,12 @@ public:
     /// the run reacts. A request that comes while `before` runs counts as the first request too,
     /// not as a second one. false, without a call of `before`, if a stop had been requested.
     template <class Before>
-    bool request_first(int source, Before before, bool reached_participants = false)
+    bool request_first(int source, Before before)
     {
         int none = 0;
         if (!first_.compare_exchange_strong(none, source))
         {
             return false;
-        }
-        if (reached_participants)
-        {
-            reached_participants_.store(true);
         }
         before();
         int zero = stop_level::kNone;
@@ -157,20 +149,11 @@ public:
     /// The source of the first request; 0 if nothing has asked.
     [[nodiscard]] int first() const noexcept { return first_.load(); }
 
-    /// Whether the first request reached the participants as well, at the same moment (on Windows,
-    /// the console was closed: every process attached to it gets that event, also those in a
-    /// process group of their own). The run then counts as interrupted if the request came before
-    /// its participants were ended, also after the simulation had ended, and the participants' own
-    /// ends that such a request causes are no failures (Runner::run(), assess_run()).
-    [[nodiscard]] bool reached_participants() const noexcept { return reached_participants_.load(); }
-
 private:
     static_assert(std::atomic<int>::is_always_lock_free, "a signal handler needs lock-free counters");
-    static_assert(std::atomic<bool>::is_always_lock_free, "a signal handler needs lock-free flags");
 
     std::atomic<int> count_{0};
     std::atomic<int> first_{0};
-    std::atomic<bool> reached_participants_{false};
 };
 
 } // namespace vehicle_sil::runner

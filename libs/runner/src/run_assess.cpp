@@ -11,7 +11,6 @@
 
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
-#include "vehicle_sil/ecu/executable.hpp"
 #include "vehicle_sil/config/connect.hpp"
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 
@@ -86,22 +85,6 @@ config::Finding shared_finding(const RunOutside& o, const ParticipantRun& bridge
                    bridge.line, bridge.name, o.network};
 }
 
-/// Whether `p` ended by itself with the stop request that reached it too (the console was
-/// closed: OutcomeEnd::stop_reached_participants), and so did not fail: Windows ended it when its
-/// handler returned (0xC000013A, STATUS_CONTROL_C_EXIT), ecu_main stopped on it (exit code 130), or
-/// a bridge of --connect stopped on it (exit code 0). Another exit code is judged as usual.
-bool ended_with_the_console(const RunOutcome& outcome, const ParticipantRun& p)
-{
-    if (!outcome.end.stop_reached_participants || p.missing_at_start || !p.exit || p.exit->signal ||
-        !detail::ended_by_itself(p))
-    {
-        return false;
-    }
-    const int code = p.exit->code;
-    return static_cast<std::uint32_t>(code) == 0xC000013Au || code == ecu_executable::kExitInterrupted ||
-           (detail::stops_run(p) && code == 0);
-}
-
 /// connect-failed or connect-lost for the bridge `p` of --connect, or nothing: it did not fail the run.
 std::optional<config::Finding> bridge_failure(const RunOutcome& outcome, const ParticipantRun& p)
 {
@@ -134,10 +117,6 @@ std::optional<config::Finding> bridge_failure(const RunOutcome& outcome, const P
                            "other end and the adapter or the bus it is on, then run again; a link that is down for a few "
                            "seconds only (a cable plugged in again) does not stop the run",
                        p.line, p.name, p.for_network};
-    }
-    if (ended_with_the_console(outcome, p))
-    {
-        return std::nullopt;
     }
     if (blamed && ran)
     {
@@ -478,14 +457,9 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
             continue;
         }
         const bool blamed = !outcome.end.failed_participant.empty() && p.name == outcome.end.failed_participant;
-        // Closing the console reached it too, and it ended with it: the run was interrupted, which
-        // the result says; the participants' table has its exit code.
-        if (ended_with_the_console(outcome, p) && (!blamed || outcome.end.failure_reason.empty()))
-        {
-        }
         // An optional participant may end before or after the start (it does not hold the start
         // up): only its exit code counts, so that the same run gives the same result.
-        else if (p.ending == Ending::ExitedBeforeStart && p.required)
+        if (p.ending == Ending::ExitedBeforeStart && p.required)
         {
             add(config::Severity::Error, "ended-before-start",
                 pre + "it ended before the simulation started: " + process_text(p) +
@@ -702,14 +676,11 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
     if (!outcome.end.interrupted_by.empty())
     {
         // An operator's stop is "stopped"; a signal, or a supervisor that went away, "interrupted".
-        // Closing the console reached the participants too: they stopped by themselves with it.
         add(config::Severity::Note, outcome.end.interrupted_kind == StopKind::Operator ? "stopped" : "interrupted",
-            outcome.end.stop_text() + ": " +
-                (outcome.end.stop_reached_participants
-                     ? std::string("it reached the participants too, and they stopped with it")
-                 : outcome.end.interrupted_while_ending ? std::string("the launcher stopped the participants instead of waiting for them to end")
-                 : ran                                  ? std::string("the launcher stopped the simulation and the participants")
-                                                        : std::string("the launcher stopped the participants before the simulation started")),
+            outcome.end.stop_text() + ": the launcher " +
+                (outcome.end.interrupted_while_ending ? std::string("stopped the participants instead of waiting for them to end")
+                 : ran                            ? std::string("stopped the simulation and the participants")
+                                                  : std::string("stopped the participants before the simulation started")),
             nullptr);
     }
     if (const std::vector<std::string> forced = ended_by_force(outcome); !forced.empty())
@@ -797,11 +768,9 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
             const auto passed = static_cast<std::size_t>(std::count_if(
                 scenario.steps.begin(), scenario.steps.end(), [](const scenario::ScenarioStepRun& step) { return step.status == scenario::StepStatus::Passed; }));
             const EndReason end = end_reason(outcome);
-            // The stop ended the simulation (one that came while the participants were ending did
-            // not, unless it reached the participants too so one of them stopped the simulation).
+            // The stop ended the simulation (one that came while the participants were ending did not).
             const bool cutShort = (end == EndReason::Stopped || end == EndReason::Interrupted) &&
-                                  (!outcome.end.interrupted_while_ending || outcome.end.stop_reached_participants) &&
-                                  outcome.scenario.error.empty();
+                                  !outcome.end.interrupted_while_ending && outcome.scenario.error.empty();
             const bool reachedLimit = outcome.end.simulation == SimulationEnd::ReachedStopAt &&
                                       outcome.scenario.error.empty() && outcome.scenario.not_observed.empty();
             add_scenario("scenario-incomplete",
@@ -842,10 +811,8 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                 "room on the disk, or name another file with --timeline, and run again",
             nullptr);
     }
-    // Not when closing the console stopped it: a participant that got it too stopped the simulation
-    // first, and the result says that the run was interrupted.
     if (outcome.end.simulation == SimulationEnd::Ended && outcome.end.stop_at_ms && outcome.end.controller_state.empty() &&
-        !outcome.end.stopped_by_scenario && !outcome.end.stop_reached_participants)
+        !outcome.end.stopped_by_scenario)
     {
         add(config::Severity::Note, "ended-before-stop-at",
             "the simulation ended before stop_at_ms (" + std::to_string(*outcome.end.stop_at_ms) +

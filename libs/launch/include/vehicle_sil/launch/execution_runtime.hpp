@@ -71,27 +71,22 @@ public:
     /// A signal or a console event (`source`: its number, or its code + 1): the end, and the
     /// current run's stop requests `count` times (stop_level::kGraceful as one Ctrl+C,
     /// stop_level::kForce to skip the waits).
-    /// `reached_participants`: the event reached the participants too (runner::StopRequests::
-    /// reached_participants(); the console was closed). Kept only if nothing asked before.
-    void request(int source, int count = runner::stop_level::kGraceful, bool reached_participants = false) noexcept
+    void request(int source, int count = runner::stop_level::kGraceful) noexcept
     {
-        mark(source, count, reached_participants);
+        mark(source, count);
         inside_.fetch_add(1);
         if (runner::StopRequests* const run = run_.load())
         {
-            run->request(source, count, reached_participants);
+            run->request(source, count);
         }
         inside_.fetch_sub(1);
     }
 
     /// The end only: the caller asks the run itself (the end of input, a closed output).
-    void mark(int source, int count = runner::stop_level::kGraceful, bool reached_participants = false) noexcept
+    void mark(int source, int count = runner::stop_level::kGraceful) noexcept
     {
         int none = 0;
-        if (first_.compare_exchange_strong(none, source) && reached_participants)
-        {
-            reached_participants_.store(true);
-        }
+        first_.compare_exchange_strong(none, source);
         count_.fetch_add(count);
     }
 
@@ -99,8 +94,6 @@ public:
     /// The source of the first request; 0 if none.
     [[nodiscard]] int source() const noexcept { return first_.load(); }
     [[nodiscard]] int count() const noexcept { return count_.load(); }
-    /// Whether the first request reached the participants too (request()'s `reached_participants`).
-    [[nodiscard]] bool reached_participants() const noexcept { return reached_participants_.load(); }
 
     /// The current run's stop requests, for request(); null: none.
     void publish(runner::StopRequests* run) noexcept { run_.store(run); }
@@ -110,11 +103,9 @@ public:
 private:
     static_assert(std::atomic<runner::StopRequests*>::is_always_lock_free, "a signal handler needs lock-free atomics");
     static_assert(std::atomic<int>::is_always_lock_free, "a signal handler needs lock-free atomics");
-    static_assert(std::atomic<bool>::is_always_lock_free, "a signal handler needs lock-free atomics");
 
     std::atomic<int> count_{0};
     std::atomic<int> first_{0};
-    std::atomic<bool> reached_participants_{false};
     std::atomic<runner::StopRequests*> run_{nullptr};
     std::atomic<int> inside_{0};
 };

@@ -733,7 +733,7 @@ Another Ctrl+C or `stop` command also cuts this wait short. `run` then writes on
 
 ## Interrupting (Ctrl+C)
 
-On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break, closing the console), `vehicle_sil_launch` stops the simulation in order (the controller's stop), ends the participants as described in [Stopping a run](#stopping-a-run), records the interruption in the result and exits with code 130 (also when the interrupt comes only while `run` waits for the participants to end on their own, item 1 of [Stopping a run](#stopping-a-run)). An interrupt that comes later than that changes neither the result nor the exit code (see [How a run ended](#how-a-run-ended-end-ok-message)). The end of stdin with `--stdin-commands` and a closed stdout with `--events` count the same way: the program that ran the launcher has gone. A run that a command stopped (`{"command":"stop"}`, `Stop` of the Control API) is not an interrupted run: see [How a run ended](#how-a-run-ended-end-ok-message).
+On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break), `vehicle_sil_launch` stops the simulation in order (the controller's stop), ends the participants as described in [Stopping a run](#stopping-a-run), records the interruption in the result and exits with code 130 (also when the interrupt comes only while `run` waits for the participants to end on their own, item 1 of [Stopping a run](#stopping-a-run)). An interrupt that comes later than that changes neither the result nor the exit code (see [How a run ended](#how-a-run-ended-end-ok-message)). The end of stdin with `--stdin-commands` and a closed stdout with `--events` count the same way: the program that ran the launcher has gone. A run that a command stopped (`{"command":"stop"}`, `Stop` of the Control API) is not an interrupted run: see [How a run ended](#how-a-run-ended-end-ok-message).
 
 | When it arrives | What `run` does |
 |---|---|
@@ -746,11 +746,9 @@ On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break, closing the 
 |---|---|
 | A signal that the program which started `vehicle_sil_launch` set to be ignored (SIGHUP with `nohup`, for example) | Stays ignored. |
 | Ctrl+Z (SIGTSTP) in the terminal | Stops only `vehicle_sil_launch`. |
-| Closing the console on Windows | Windows ends the process within a few seconds. |
+| Closing the console on Windows | Reaches the participants too, and Windows ends the processes within a few seconds. |
 
-On Ctrl+Z, the participants keep running because they are in other process groups; only the registry and the controller stop.
-
-Closing the console on Windows reaches the participants too, at the same moment: unlike Ctrl+C, it goes to every process attached to the console, whatever its process group (the participants share the console of `vehicle_sil_launch`, which sends its bridges Ctrl+Break through it). An ECU made with `ecu_main` may stop the simulation before `vehicle_sil_launch` hears of it, and Windows ends each process once it has handled the event. `run` takes the run as interrupted if it hears of the closed console before it has finished ending the participants, also after the simulation has ended (exit code 130). The participants' ends with exit code `0xC000013A` (Windows ended the process), 130 (`ecu_main` stopped on it) and, for a bridge of `--connect`, 0 are then not failures. `run` cannot tell such an end that the closed console caused from one a moment before it, so neither is reported. Another exit code is judged as usual. Windows gives `vehicle_sil_launch` a few seconds; if the participants take longer to end, the job objects end them, and the result may not be written.
+On Ctrl+Z, the participants keep running because they are in other process groups; only the registry and the controller stop. When the console is closed on Windows, the event goes to every process attached to the console at the same time (unlike Ctrl+C, it ignores process groups): a participant may stop the simulation or exit with `0xC000013A` before `vehicle_sil_launch` hears of the close, so the run may end as `failed` or before the result is written; the job objects end the participants. To interrupt a run in order, use Ctrl+C.
 
 When a program drives `vehicle_sil_launch`, pass `--stdin-commands`, then write `{"command":"stop"}` to stdin or close stdin. The run then stops in order, as on Ctrl+C (see [Programmatic use](simulation-events.md)). This also stops in order a `vehicle_sil_launch` on Windows that has no console and so can receive neither signals nor Ctrl+Break. When the simulation stops, ecu_main executables end on their own. A participant that does not end on its own is killed at once instead of item 2 of "Stopping a run", because Ctrl+Break cannot be sent.
 
@@ -1121,7 +1119,7 @@ These are the exit codes of `run`. For the full table that includes `check` and 
 | 3 | The result cannot be written to stdout, or an unexpected failure of `vehicle_sil_launch` itself | |
 | 4 | Usage error | `"usage"` |
 | 5 | A command stopped the run before its scenario's end (or before the scenario began), and nothing else was wrong: the scenario has no verdict | `"incomplete"` |
-| 130 | Interrupted: a signal (Ctrl+C, SIGTERM, closing the console), or the program that ran the launcher went away (end of stdin, closed stdout) | `"interrupted"` |
+| 130 | Interrupted: a signal (Ctrl+C, Ctrl+Break, SIGTERM), or the program that ran the launcher went away (end of stdin, closed stdout) | `"interrupted"` |
 
 When several apply, the strongest decides, in this order: 4, 3, 130, 1, 5, 0. A run that a signal interrupted exits with 130 even if it also found errors; a run that a command stopped exits with 1 if it found errors (a scenario step that failed, a participant that failed or did not end, a warning with `--strict`). A `{"command":"stop"}` that comes only after the simulation has ended (while `run` waits for the participants to end) decides the result only if it cuts short the end of a required participant; otherwise the run ends as the simulation did, with 0 or 1. A script that waited for 130 after its own `stop` command must now accept 0 (and 5 for a scenario).
 
