@@ -5,8 +5,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -352,14 +350,69 @@ std::wstring system_conhost_path()
     }
 }
 
-/// Full Win32 image path of `handle`, or empty if it cannot be queried.
-std::wstring process_image_path(HANDLE handle)
+struct ConhostPaths
+{
+    std::wstring win32;
+    std::wstring native;
+};
+
+/// Converts a Win32 drive-letter path (`C:\...`) to its NT native device path
+/// (`\Device\HarddiskVolumeX\...`), or empty if QueryDosDeviceW() cannot resolve it.
+std::wstring native_device_path(std::wstring_view win32Path)
+{
+    if (win32Path.size() < 3 || win32Path[1] != L':' || win32Path[2] != L'\\')
+    {
+        return {};
+    }
+    const wchar_t drive[3] = {win32Path[0], L':', L'\0'};
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;)
+    {
+        const DWORD length = QueryDosDeviceW(drive, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (length > 0)
+        {
+            const std::size_t firstEnd = buffer.find(L'\0');
+            if (firstEnd == std::wstring::npos || firstEnd == 0)
+            {
+                return {};
+            }
+            std::wstring device = buffer.substr(0, firstEnd);
+            if (device.back() == L'\\')
+            {
+                device.pop_back();
+            }
+            device.append(win32Path.substr(2));
+            return device;
+        }
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || buffer.size() >= 32768)
+        {
+            return {};
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+}
+
+/// `<system32>\conhost.exe` in both Win32 and NT native device forms.
+ConhostPaths system_conhost_paths()
+{
+    ConhostPaths paths;
+    paths.win32 = system_conhost_path();
+    if (!paths.win32.empty())
+    {
+        paths.native = native_device_path(paths.win32);
+    }
+    return paths;
+}
+
+/// Full image path of `handle` (Win32 when `flags == 0`, NT native when `flags == PROCESS_NAME_NATIVE`),
+/// or empty if it cannot be queried.
+std::wstring process_image_path(HANDLE handle, DWORD flags)
 {
     std::wstring path(MAX_PATH, L'\0');
     for (;;)
     {
         DWORD size = static_cast<DWORD>(path.size());
-        if (QueryFullProcessImageNameW(handle, 0, path.data(), &size) != 0)
+        if (QueryFullProcessImageNameW(handle, flags, path.data(), &size) != 0)
         {
             path.resize(size);
             return path;
@@ -372,68 +425,47 @@ std::wstring process_image_path(HANDLE handle)
     }
 }
 
-/// True if `handle` is Windows's own `<system32>\conhost.exe`.
-bool is_system_conhost(HANDLE handle, std::wstring_view conhostPath)
+bool equal_ignore_case(std::wstring_view a, std::wstring_view b)
 {
-    if (conhostPath.empty())
-    {
-        return false;
-    }
-    const std::wstring image = process_image_path(handle);
-    if (image.empty())
-    {
-        return false;
-    }
-    return CompareStringOrdinal(image.data(), static_cast<int>(image.size()), conhostPath.data(),
-                                static_cast<int>(conhostPath.size()), TRUE) == CSTR_EQUAL;
+    return !a.empty() && !b.empty() &&
+           CompareStringOrdinal(a.data(), static_cast<int>(a.size()), b.data(), static_cast<int>(b.size()), TRUE) ==
+               CSTR_EQUAL;
 }
 
-/// True if `handle` has already exited. When `hasSync` is true, WaitForSingleObject() avoids
-/// confusing a running process with one whose exit code happens to be STILL_ACTIVE (259).
+/// True if `handle` is Windows's own `<system32>\conhost.exe`. Falls back to the NT native path
+/// when Win32 path lookup fails (e.g. ERROR_ACCESS_DENIED while the process is tearing down).
+bool is_system_conhost(HANDLE handle, const ConhostPaths& expected)
+{
+    if (!expected.win32.empty())
+    {
+        const std::wstring win32 = process_image_path(handle, 0);
+        if (!win32.empty())
+        {
+            return equal_ignore_case(win32, expected.win32);
+        }
+    }
+    if (!expected.native.empty())
+    {
+        const std::wstring native = process_image_path(handle, PROCESS_NAME_NATIVE);
+        if (!native.empty())
+        {
+            return equal_ignore_case(native, expected.native);
+        }
+    }
+    return false;
+}
+
+/// True if `handle` has already exited. Combines WaitForSingleObject() (handles exit code 259 /
+/// STILL_ACTIVE) with GetExitCodeProcess() (Windows updates ExitStatus before signaling EPROCESS
+/// during teardown).
 bool process_has_exited(HANDLE handle, bool hasSync)
 {
-    if (hasSync)
+    if (hasSync && WaitForSingleObject(handle, 0) == WAIT_OBJECT_0)
     {
-        return WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+        return true;
     }
     DWORD exitCode = 0;
     return GetExitCodeProcess(handle, &exitCode) != 0 && exitCode != STILL_ACTIVE;
-}
-
-std::string diag_narrow(std::wstring_view text)
-{
-    if (text.empty())
-    {
-        return {};
-    }
-    const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (size <= 0)
-    {
-        return {};
-    }
-    std::string out(static_cast<std::size_t>(size), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
-    return out;
-}
-
-std::pair<std::wstring, DWORD> diag_query_image(HANDLE handle, DWORD flags)
-{
-    std::wstring path(MAX_PATH, L'\0');
-    for (;;)
-    {
-        DWORD size = static_cast<DWORD>(path.size());
-        if (QueryFullProcessImageNameW(handle, flags, path.data(), &size) != 0)
-        {
-            path.resize(size);
-            return {path, 0};
-        }
-        const DWORD err = GetLastError();
-        if (err != ERROR_INSUFFICIENT_BUFFER || path.size() >= 32768)
-        {
-            return {{}, err};
-        }
-        path.resize(path.size() * 2);
-    }
 }
 
 } // namespace
@@ -444,7 +476,6 @@ bool Process::others_running()
     {
         return false;
     }
-    const bool diag = std::getenv("VEHICLE_SIL_DIAG_OTHERS_RUNNING") != nullptr;
     // The IDs of the processes in the job, without the first one: the count of the job may still
     // hold the first process for a moment after its end, and QueryInformationJobObject() can
     // succeed (TRUE) with NumberOfAssignedProcesses > NumberOfProcessIdsInList while a terminated
@@ -479,13 +510,6 @@ bool Process::others_running()
         std::memcpy(&header, storage.data(), sizeof(header));
         if (attempt >= kMaxRetries || capacity >= kMaxCapacity)
         {
-            if (diag)
-            {
-                std::fprintf(stderr, "diag others_running overflow self=%lu assigned=%lu in_list=%lu cap=%lu\n",
-                             static_cast<unsigned long>(pid_), static_cast<unsigned long>(header.NumberOfAssignedProcesses),
-                             static_cast<unsigned long>(header.NumberOfProcessIdsInList), static_cast<unsigned long>(capacity));
-                std::fflush(stderr);
-            }
             // More processes than our cap can enumerate: others are running.
             return true;
         }
@@ -494,8 +518,8 @@ bool Process::others_running()
         capacity = std::min(std::max(capacity * 2, needed), kMaxCapacity);
     }
 
-    std::wstring conhostPath;
-    bool conhostPathChecked = false;
+    ConhostPaths conhostPaths;
+    bool conhostPathsChecked = false;
     const ULONG_PTR* ids = storage.data() + kHeaderSlots;
     const std::size_t count = std::min<std::size_t>(header.NumberOfProcessIdsInList, capacity);
     for (std::size_t i = 0; i < count; ++i)
@@ -505,25 +529,21 @@ bool Process::others_running()
             continue;
         }
         bool hasSync = true;
-        DWORD openErr1 = 0;
-        DWORD openErr2 = 0;
         Handle other(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, static_cast<DWORD>(ids[i])));
         if (other.h == nullptr)
         {
             DWORD openErr = GetLastError();
-            openErr1 = openErr;
             if (openErr == ERROR_ACCESS_DENIED)
             {
                 hasSync = false;
                 HANDLE fallback = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(ids[i]));
-                if (fallback != nullptr)
+                if (fallback != nullptr && fallback != INVALID_HANDLE_VALUE)
                 {
                     other.h = fallback;
                 }
                 else
                 {
                     openErr = GetLastError();
-                    openErr2 = openErr;
                 }
             }
             if (other.h == nullptr)
@@ -533,72 +553,38 @@ bool Process::others_running()
                     // Already exited before OpenProcess().
                     continue;
                 }
-                if (diag)
-                {
-                    Sleep(50);
-                    Handle retry(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(ids[i])));
-                    const DWORD retryErr = retry.h == nullptr ? GetLastError() : 0;
-                    std::fprintf(stderr,
-                                 "diag others_running open_failed self=%lu other=%lu assigned=%lu in_list=%lu err1=%lu err2=%lu after50_ok=%d after50_err=%lu\n",
-                                 static_cast<unsigned long>(pid_), static_cast<unsigned long>(ids[i]),
-                                 static_cast<unsigned long>(header.NumberOfAssignedProcesses),
-                                 static_cast<unsigned long>(header.NumberOfProcessIdsInList),
-                                 static_cast<unsigned long>(openErr1), static_cast<unsigned long>(openErr2),
-                                 retry.h != nullptr ? 1 : 0, static_cast<unsigned long>(retryErr));
-                    std::fflush(stderr);
-                }
                 // Cannot inspect (e.g. access denied): conservatively report it as still running.
                 return true;
             }
         }
+        // Guard against PID reuse between QueryInformationJobObject() and OpenProcess().
+        BOOL inJob = FALSE;
+        if (IsProcessInJob(other.h, job_, &inJob) != 0 && inJob == FALSE)
+        {
+            continue;
+        }
         if (process_has_exited(other.h, hasSync))
         {
             continue;
         }
-        if (!conhostPathChecked)
+        if (!conhostPathsChecked)
         {
-            conhostPath = system_conhost_path();
-            conhostPathChecked = true;
+            conhostPaths = system_conhost_paths();
+            conhostPathsChecked = true;
         }
         // Headless runs start console programs with CREATE_NO_WINDOW inside this job, causing
         // Windows to spawn <system32>\conhost.exe in the same job. It may outlive the participant
         // briefly during teardown; it is not a child started by the participant.
-        if (is_system_conhost(other.h, conhostPath))
+        if (is_system_conhost(other.h, conhostPaths))
         {
             continue;
         }
         // A process (including conhost.exe) that exits between the check above and
-        // QueryFullProcessImageNameW() can fail image-path lookup (e.g. ERROR_GEN_FAILURE);
-        // re-check whether it has exited before reporting it as still running.
+        // QueryFullProcessImageNameW() can fail image-path lookup; re-check whether it has exited
+        // before reporting it as still running.
         if (process_has_exited(other.h, hasSync))
         {
             continue;
-        }
-        if (diag)
-        {
-            BOOL inJob = FALSE;
-            const BOOL inJobOk = IsProcessInJob(other.h, job_, &inJob);
-            const auto [win32Path, win32Err] = diag_query_image(other.h, 0);
-            const auto [nativePath, nativeErr] = diag_query_image(other.h, PROCESS_NAME_NATIVE);
-            const DWORD waitNow = hasSync ? WaitForSingleObject(other.h, 0) : 999999UL;
-            DWORD exitCodeNow = 0;
-            const BOOL exitOk = GetExitCodeProcess(other.h, &exitCodeNow);
-            const DWORD wait50 = hasSync ? WaitForSingleObject(other.h, 50) : 999999UL;
-            DWORD exitCode50 = 0;
-            const BOOL exitOk50 = GetExitCodeProcess(other.h, &exitCode50);
-            std::fprintf(stderr,
-                         "diag others_running still_running self=%lu other=%lu assigned=%lu in_list=%lu inJob=%d/%d hasSync=%d wait0=%lu exit0=%d/%lu wait50=%lu exit50=%d/%lu win32_err=%lu win32=[%s] native_err=%lu native=[%s] expected=[%s]\n",
-                         static_cast<unsigned long>(pid_), static_cast<unsigned long>(ids[i]),
-                         static_cast<unsigned long>(header.NumberOfAssignedProcesses),
-                         static_cast<unsigned long>(header.NumberOfProcessIdsInList),
-                         inJobOk != 0 ? 1 : 0, inJob != 0 ? 1 : 0,
-                         hasSync ? 1 : 0, static_cast<unsigned long>(waitNow), exitOk != 0 ? 1 : 0,
-                         static_cast<unsigned long>(exitCodeNow), static_cast<unsigned long>(wait50),
-                         exitOk50 != 0 ? 1 : 0, static_cast<unsigned long>(exitCode50),
-                         static_cast<unsigned long>(win32Err), diag_narrow(win32Path).c_str(),
-                         static_cast<unsigned long>(nativeErr), diag_narrow(nativePath).c_str(),
-                         diag_narrow(conhostPath).c_str());
-            std::fflush(stderr);
         }
         return true;
     }

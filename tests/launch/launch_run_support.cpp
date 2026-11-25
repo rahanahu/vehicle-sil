@@ -5,6 +5,9 @@
 
 #include "vehicle_sil/process/paths.hpp"
 
+#include <cstddef>
+#include <string_view>
+
 void require(bool condition, const std::string& what)
 {
     if (!condition)

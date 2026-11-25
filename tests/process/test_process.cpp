@@ -327,7 +327,7 @@ TEST_CASE(process_others_running_without_console)
         CHECK(std::getenv("VEHICLE_SIL_PROCESS_DETACHED") == nullptr);
         Lines lines;
         ProcessOptions options = lines.options();
-        options.environment = {{"VEHICLE_SIL_PROCESS_DETACHED", "1"}, {"VEHICLE_SIL_DIAG_OTHERS_RUNNING", "1"}};
+        options.environment = {{"VEHICLE_SIL_PROCESS_DETACHED", "1"}};
         Process detached(
             kHelper,
             {"--run-detached", vehicle_sil::test::own_executable(), "process_others_running_without_console"},
