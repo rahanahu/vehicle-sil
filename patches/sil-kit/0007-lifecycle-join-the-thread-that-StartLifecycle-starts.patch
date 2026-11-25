@@ -1,0 +1,153 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rahanahu <rahanahu@gmail.com>
+Date: Thu, 26 Nov 2026 00:40:26 +0900
+Subject: [PATCH] lifecycle: join the thread that StartLifecycle starts in the
+ C++ API
+
+LifecycleService::StartLifecycle() of the C++ API starts a thread that
+waits for the end of the lifecycle (WaitForLifecycleToComplete) and
+detaches it. With MinGW-w64, a detached thread leaves an event handle of
+winpthreads behind when it ends, so a process that creates and destroys
+participants one after the other (a test runner, a resident tool) has
+one more handle for every participant. A detached thread can also still
+run after the participant, and the C API that it calls, are gone.
+
+Keep the thread and join it in the destructor. The participant destroys
+the C participant first (Participant::~Participant() destroys its
+services after that), which ends the wait, so the join does not block.
+---
+ .../Hourglass/Test_HourglassOrchestration.cpp | 42 +++++++++++++++++++
+ .../orchestration/LifecycleService.hpp        | 25 ++++++++++-
+ 2 files changed, 65 insertions(+), 2 deletions(-)
+
+diff --git a/SilKit/IntegrationTests/Hourglass/Test_HourglassOrchestration.cpp b/SilKit/IntegrationTests/Hourglass/Test_HourglassOrchestration.cpp
+index f575072a..0f6c955a 100644
+--- a/SilKit/IntegrationTests/Hourglass/Test_HourglassOrchestration.cpp
++++ b/SilKit/IntegrationTests/Hourglass/Test_HourglassOrchestration.cpp
+@@ -15,6 +15,11 @@
+ #include "MockCapiTest.hpp"
+ 
+ #include <algorithm>
++#include <atomic>
++#include <chrono>
++#include <future>
++#include <memory>
++#include <thread>
+ 
+ namespace {
+ 
+@@ -269,6 +274,43 @@ TEST_F(Test_HourglassOrchestration, SilKit_LifecycleService_StartLifecycle_WaitF
+     EXPECT_EQ(future.get(), participantState);
+ }
+ 
++TEST_F(Test_HourglassOrchestration, SilKit_LifecycleService_Destructor_JoinsTheWaiterOfStartLifecycle)
++{
++    using namespace std::chrono_literals;
++
++    struct Wait
++    {
++        std::promise<void> entered;
++        std::atomic<bool> returned{false};
++    };
++    // Shared with the waiter thread, which (without the join) would outlive this test.
++    const auto wait = std::make_shared<Wait>();
++
++    std::future<ParticipantState> future;
++    {
++        SilKit::DETAIL_SILKIT_DETAIL_NAMESPACE_NAME::Impl::Services::Orchestration::LifecycleService lifecycleService{
++            mockParticipant, LifecycleConfiguration{OperationMode::Coordinated}};
++
++        EXPECT_CALL(capi, SilKit_LifecycleService_StartLifecycle(mockLifecycleService));
++        EXPECT_CALL(capi, SilKit_LifecycleService_WaitForLifecycleToComplete(mockLifecycleService, testing::_))
++            .WillOnce([wait](SilKit_LifecycleService*, SilKit_ParticipantState* outParticipantState) {
++            wait->entered.set_value();
++            std::this_thread::sleep_for(100ms);
++            *outParticipantState = static_cast<SilKit_ParticipantState>(ParticipantState::Shutdown);
++            wait->returned = true;
++            return SilKit_ReturnCode_SUCCESS;
++        });
++
++        future = lifecycleService.StartLifecycle();
++        wait->entered.get_future().wait();
++    }
++
++    // The destructor joined the thread that waits for the lifecycle, so its result is there at once.
++    EXPECT_TRUE(wait->returned);
++    ASSERT_EQ(future.wait_for(0s), std::future_status::ready);
++    EXPECT_EQ(future.get(), ParticipantState::Shutdown);
++}
++
+ TEST_F(Test_HourglassOrchestration, SilKit_LifecycleService_ReportError)
+ {
+     const std::string reason{"Reason"};
+diff --git a/SilKit/include/silkit/detail/impl/services/orchestration/LifecycleService.hpp b/SilKit/include/silkit/detail/impl/services/orchestration/LifecycleService.hpp
+index b62e5162..316f9728 100644
+--- a/SilKit/include/silkit/detail/impl/services/orchestration/LifecycleService.hpp
++++ b/SilKit/include/silkit/detail/impl/services/orchestration/LifecycleService.hpp
+@@ -11,6 +11,8 @@
+ 
+ #include "silkit/detail/impl/services/orchestration/TimeSyncService.hpp"
+ 
++#include <thread>
++#include <vector>
+ 
+ namespace SilKit {
+ DETAIL_SILKIT_DETAIL_VN_NAMESPACE_BEGIN
+@@ -32,7 +34,7 @@ public:
+     inline explicit LifecycleService(SilKit_Participant* participant,
+                                      SilKit::Services::Orchestration::LifecycleConfiguration startConfiguration);
+ 
+-    inline ~LifecycleService() override = default;
++    inline ~LifecycleService() override;
+ 
+     inline void SetCommunicationReadyHandler(
+         SilKit::Services::Orchestration::CommunicationReadyHandler handler) override;
+@@ -79,6 +81,12 @@ private:
+     std::unique_ptr<TimeSyncService> _timeSyncService;
+ 
+     mutable SilKit::Services::Orchestration::ParticipantStatus _lastParticipantStatus;
++
++    // The threads that wait for the end of the lifecycle (StartLifecycle). They are joined, not
++    // detached: the owning participant destroys the C participant before this object, which ends
++    // the wait. A detached thread can leave resources behind when it ends (on MinGW-w64, an event
++    // handle of winpthreads for each thread).
++    std::vector<std::thread> _waiters;
+ };
+ 
+ } // namespace Orchestration
+@@ -111,6 +119,17 @@ LifecycleService::LifecycleService(SilKit_Participant* participant,
+     ThrowOnError(returnCode);
+ }
+ 
++LifecycleService::~LifecycleService()
++{
++    for (auto& waiter : _waiters)
++    {
++        if (waiter.joinable())
++        {
++            waiter.join();
++        }
++    }
++}
++
+ void LifecycleService::SetCommunicationReadyHandler(SilKit::Services::Orchestration::CommunicationReadyHandler handler)
+ {
+     auto ownedHandlerPtr = std::make_unique<CommunicationReadyHandler>(std::move(handler));
+@@ -230,6 +249,8 @@ auto LifecycleService::StartLifecycle() -> std::future<ParticipantState>
+     const auto returnCode = SilKit_LifecycleService_StartLifecycle(_lifecycleService);
+     ThrowOnError(returnCode);
+ 
++    _waiters.reserve(_waiters.size() + 1);
++
+     std::promise<ParticipantState> participantStatePromise;
+     auto participantStateFuture = participantStatePromise.get_future();
+ 
+@@ -250,7 +271,7 @@ auto LifecycleService::StartLifecycle() -> std::future<ParticipantState>
+ 
+         promise.set_value(static_cast<SilKit::Services::Orchestration::ParticipantState>(participantState));
+     }};
+-    waiter.detach();
++    _waiters.push_back(std::move(waiter));
+ 
+     return participantStateFuture;
+ }

@@ -227,6 +227,7 @@ SIL Kit のバージョン情報の Git ハッシュ（`SilKit::Version::GitHash
 | 0004 | ネットワークシミュレーターを作る participant（`vehicle_sil_can_bus_simulator`） | まれに、ネットワークが告知されず、コントローラーが全部 trivial simulation のままになる。ビットレートとモードがシミュレーターに届かず、エラーも警告も出ない |
 | 0005 | registry | participant が終わった直後に別の participant が参加すると、まれに、5 秒（`Middleware.ConnectTimeoutSeconds`）待ってから「Timeout during connection handshake with the SIL Kit Registry」で失敗する。作り直せば接続できる |
 | 0006 | coordinated の participant（実行の ECU） | 実行が required にしていない participant（`--name` の打ち間違いなど）が、開始の途中で Error から先へ進むことがある。`ParticipantRuntime::start()` は失敗にするが、SIL Kit がその participant の停止を受け付けないことがあり、最大で `shutdown_timeout` の間残って、その間は全 participant の仮想時間が 0 のままになる。まれに、`start()` が戻り、その participant は 1 ステップも実行せず、何も報告しない |
+| 0007 | SIL Kit のヘッダーでコンパイルし、lifecycle を始めるすべてのプログラム（変更はヘッダーだけの C++ API にある）。`vehicle_sil_launch serve` のように participant を次々に作っては破棄するプロセスで問題になる | MinGW では、lifecycle を始めた participant 1 つごとに Win32 の `Event` ハンドルが 1 つ増える（「[MinGW GCC（`winpthreads`）: `std::recursive_mutex` の破棄で Win32 の `Event` ハンドルがリークする](#mingw-gccwinpthreads-stdrecursive_mutex-の破棄で-win32-の-event-ハンドルがリークする)」） |
 
 `vehicle_sil_launch run` が立てる registry と、vehicle-sil のビルドで作った実行ファイルには、全部のパッチが適用されています。
 
@@ -509,13 +510,13 @@ required でない coordinated の participant が、この順になります。
 
 **影響**: SIL Kit は内部のサービスやハンドラー一覧で `std::recursive_mutex` を使います。Run ごとに SIL Kit のオブジェクトを作り直す常駐ランチャー（`vehicle_sil_launch serve`）では、回避策がないと 1 Run ごとに約 15〜17 個の Win32 `Event` ハンドルがリークします。
 
-**対応**: `cmake/VehicleSilDependencies.cmake` で、MinGW ビルドのとき SIL Kit の内部インターフェースターゲット（`I_SilKit`）に `_GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC=1` を与えます。このマクロを参照するのは `gthr-posix.h` だけなので `winpthreads` 以外のツールチェーンでは影響がなく、SIL Kit の公開 ABI は C API のためバイナリ境界もまたぎません。この回避策によりハンドル増加は約 +1 ハンドル/Run まで減ります（残るわずかな増加は既知の課題ですが、実用上の連続実行を妨げる規模ではありません）。
+**対応**: `cmake/VehicleSilDependencies.cmake` で、MinGW ビルドのとき SIL Kit の内部インターフェースターゲット（`I_SilKit`）に `_GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC=1` を与えます。このマクロを参照するのは `gthr-posix.h` だけなので `winpthreads` 以外のツールチェーンでは影響がなく、SIL Kit の公開 ABI は C API のためバイナリ境界もまたぎません。この回避策で、ハンドルの増加は 1 Run あたり +1 まで減りました。残りの 1 つはミューテックスではありませんでした。C++ API が lifecycle の終わりを待つスレッドを detach しており、`winpthreads` は、detach されたスレッドが終わるたびに `Event` ハンドルを 1 つ残します。パッチ [0007](#0007-c-api-の-startlifecycle-が始めるスレッドを-join-する) がそのスレッドを join するので、`serve` のハンドル数は Run を重ねても変わりません。試験 `serve.windows` は、1 Run あたり 0.5 以上増えると落ちます。
 
 **上流への報告**: 未報告です。
 
 ## SIL Kit へのパッチ
 
-`patches/sil-kit/` のパッチは、上流のタグ `v5.0.8`（固定コミット）に `git format-patch` で作ったもので、上流のスタイル（clang-format）に合わせています。0001 は上流の統合テストを、0006 は上流の単体テストを含みます。
+`patches/sil-kit/` のパッチは、上流のタグ `v5.0.8`（固定コミット）に `git format-patch` で作ったもので、上流のスタイル（clang-format）に合わせています。0001 は上流の統合テストを、0006 と 0007 は上流の単体テストを含みます。
 
 | パッチ | 直すもの |
 |---|---|
@@ -525,8 +526,9 @@ required でない coordinated の participant が、この順になります。
 | [0004](#0004-非同期の購読が済んだときのハンドラーを失わない) | 非同期の購読が済んだときのハンドラーを失わない |
 | [0005](#0005-registry-が接続の閉じた-participant-を通知しない) | registry が、接続の閉じた participant を通知しない |
 | [0006](#0006-開始の待ちが終わったときに-lifecycle-が-error-を離れない) | 開始の待ちが終わったときに、lifecycle が Error を離れない |
+| [0007](#0007-c-api-の-startlifecycle-が始めるスレッドを-join-する) | C++ API の `StartLifecycle()` が始めるスレッドを join する |
 
-**上流への報告**: いずれも未報告です。0001、0002、0004、0005 は上流の `main` でも同じコードです（0003 と 0006 は上流の `main` を確認していません）。
+**上流への報告**: いずれも未報告です。0001、0002、0004、0005 は上流の `main` でも同じコードです（0003、0006、0007 は上流の `main` を確認していません）。
 
 ### 0001: LIN の Master が dynamic response のノードを数えない
 
@@ -587,6 +589,16 @@ required でない coordinated の participant が、この順になります。
 **上流の再現テスト**: `Test_LifecycleService.error_while_waiting_for_replies_is_kept`、`Test_LifecycleService.error_while_waiting_for_subscriptions_is_kept`（パッチに含む）
 
 **検証**: 上流の lifecycle service の単体テストと、vehicle-sil の `core.participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error` で確認しています。どちらも、パッチがなければ落ちます。待ちの間の abort は同じ確認で直りますが、専用のテストはありません。
+
+### 0007: C++ API の StartLifecycle が始めるスレッドを join する
+
+**内容**: ヘッダーだけの C++ API の `LifecycleService::StartLifecycle()` は、lifecycle の終わりを待ち（`SilKit_LifecycleService_WaitForLifecycleToComplete()`）、返した future に結果を入れるスレッドを始める。これまではそのスレッドを detach していた。パッチの後は持っておき、デストラクターで join する。`Participant::~Participant()` は、サービスより先に C の participant を破棄し、それで待ちが終わる（lifecycle の future が broken になる）ので、join は止まらない。
+
+**vehicle-sil が必要とする理由**: MinGW-w64 では、`winpthreads` が、detach されたスレッドが終わるたびに Win32 の `Event` ハンドルを 1 つ残す。`vehicle_sil_launch serve` は Run ごとに lifecycle を持つコントローラーの participant を作って破棄するので、Run のたびにハンドルが 1 つ増えていた（「[MinGW GCC（`winpthreads`）: `std::recursive_mutex` の破棄で Win32 の `Event` ハンドルがリークする](#mingw-gccwinpthreads-stdrecursive_mutex-の破棄で-win32-の-event-ハンドルがリークする)」）。また、detach されたスレッドは participant がなくなった後も動いていることがあった。
+
+**上流の再現テスト**: `Test_HourglassOrchestration.SilKit_LifecycleService_Destructor_JoinsTheWaiterOfStartLifecycle`（パッチに含む）
+
+**検証**: 上流のテストと、vehicle-sil の `serve.windows`（Windows、MinGW）で確認しています。`serve` のハンドル数は 30 Run でも 100 Run でも変わりません。パッチがなければ 1 Run ごとに 1 つ増え、試験は落ちます。上流のテストは、パッチがなければどのプラットフォームでも落ちます。
 
 ## 上流を更新する手順
 
