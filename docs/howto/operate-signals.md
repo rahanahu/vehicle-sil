@@ -11,7 +11,7 @@ There are 4 ways to read and write variables from outside the simulation. This g
 | Goal | Use | How to start | See |
 |---|---|---|---|
 | Set values in a fixed sequence, check them and get the result as an exit code | Scenario (YAML) | `vehicle_sil_launch run simulation.yaml --scenario <scenario>` | [Write tests with scenarios](scenario-tests.md) |
-| Look at values and decide in a program what to write next | Python client (`vehicle_sil_control`) | `Launch(...)` in the script starts `vehicle_sil_launch run --control` | This guide, from "[Run the first script](#run-the-first-script)" on |
+| Look at values and decide in a program what to write next | Python client (`vehicle_sil_control`) | `Launch(...)` (or `Serve(...)` for sequential runs) in the script starts `vehicle_sil_launch serve` with `--control` | This guide, from "[Run the first script](#run-the-first-script)" on |
 | Read, write and advance one command at a time, without writing Python | CLI (`python -m vehicle_sil_control`) | You start `vehicle_sil_launch run --control 8510 simulation.yaml` yourself | "[Run commands one at a time](#run-commands-one-at-a-time)" in this guide |
 | Watch values in a browser and write them with sliders and switches | GUI (`vehicle-sil-gui`) | `scripts/run-gui.py` (with the prebuilt tools, `vehicle-sil-gui simulation.live.yaml`) | "ECU variables" in [gui.md](../gui.md#ecu-variables) |
 
@@ -107,7 +107,7 @@ from vehicle_sil_control import Control, Launch, ms
 
 launcher, config = sys.argv[1], sys.argv[2]                   # vehicle_sil_launch and simulation.yaml
 
-# Starts "vehicle_sil_launch run" with its control server, paused before the first step.
+# Starts "vehicle_sil_launch serve --once" with its control server, paused before the first step.
 with Launch(launcher, config, start_paused=True) as launch:
     with Control(launch.address) as c:
         c.sim.wait_paused()                                   # every ECU stands still at 0 ms
@@ -140,7 +140,7 @@ What each line of the script does:
 
 | Line | What it does |
 |---|---|
-| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch run --events --stdin-commands --control 0 --start-paused` as a child process (`--control 0` picks a free port). |
+| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch serve --once --control 0` as a child process and sends `{"command":"run","intent":{"start_paused":true}}` (`--control 0` picks a free port). |
 | `launch.address` | The address of the Control Server, as `vehicle_sil_launch` reported it. |
 | `Control(launch.address)` | Connects to the Control Server over gRPC, and closes the connection when the `with` block ends. |
 | `c.sim.wait_paused()` | Waits until the simulation is paused, and returns the time state. |
@@ -592,10 +592,11 @@ Adding variables is the ECU author's work. If you need a signal, ask the author 
 - The GUI also uses the Control Server of `vehicle_sil_launch` internally, so the rules for when a write is applied and for the result of a write are the same as in Python.
 - `--timeout-ms` also counts the time during which the simulation is paused.
 - If you receive the time state with `c.watch(time=True)`, the updates are thinned out, so a short pause may not appear. To wait for a pause, use `c.sim.wait_paused()`.
-- To read from a program the address of a `vehicle_sil_launch` that you started yourself, use the `address` of the `control_server` event of `run --events`.
+- To read from a program the address of a `vehicle_sil_launch` that you started yourself, use the `address` of the `control_server` event of `serve --once` or `serve` (Events v4).
 
 ## What to read next
 
 - Look up the arguments of the calls, when writes are applied and the rules of `snapshot()`: [control-api.md](../control-api.md)
+- Run multiple simulations sequentially in one resident launcher with `Serve` and `RunHandle`: "Run sequentially in one launcher (`Serve`, `RunHandle`)" in [control-api.md](../control-api.md#run-sequentially-in-one-launcher-serve-runhandle) and [serve_runs.py](../../examples/launch_control/serve_runs.py)
 - Turn the same steps into a test whose exit code gives the result: [Write tests with scenarios](scenario-tests.md)
-- Read the events of `run --events` and the result of `run --json` from a program: [simulation-events.md](../simulation-events.md)
+- Read the Events v4 stream of `serve` / `serve --once` and the result of `run --json` from a program: [simulation-events.md](../simulation-events.md)

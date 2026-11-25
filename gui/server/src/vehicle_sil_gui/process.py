@@ -13,25 +13,52 @@ import os
 import signal
 import subprocess
 import sys
+import weakref
 from collections.abc import AsyncIterator, Sequence
 
 WINDOWS = sys.platform == "win32"
 READ_CHUNK = 64 * 1024
 OUTPUT_GRACE_S = 2.0  # after a child has exited, how long the rest of its output is read
 KILL_WAIT_S = 2.0  # after SIGKILL / taskkill, how long the exit is waited for
-EXIT_POLL_S = 0.01
+_USE_EXIT_PROTOCOL = sys.version_info < (3, 13)
+_EXIT_EVENTS: weakref.WeakKeyDictionary[asyncio.subprocess.Process, asyncio.Event] = weakref.WeakKeyDictionary()
+
+
+class _ExitAwareProtocol(asyncio.subprocess.SubprocessStreamProtocol):
+    """Signals an Event on process exit, independent of EOF on inherited pipes (CPython < 3.13, gh-119710)."""
+
+    def __init__(self, limit: int, loop: asyncio.AbstractEventLoop) -> None:
+        super().__init__(limit=limit, loop=loop)
+        self.exited = asyncio.Event()
+
+    def process_exited(self) -> None:
+        super().process_exited()
+        self.exited.set()
 
 
 async def start(argv: Sequence[str], cwd: str | os.PathLike | None, stdin: bool = True) -> asyncio.subprocess.Process:
-    kwargs: dict = {}
+    kwargs: dict = {
+        "cwd": cwd,
+        "stdin": asyncio.subprocess.PIPE if stdin else asyncio.subprocess.DEVNULL,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+    }
     if WINDOWS:
         # No CREATE_NO_WINDOW: CTRL_BREAK_EVENT reaches only a child that shares this server's console.
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
-    return await asyncio.create_subprocess_exec(
-        *argv, cwd=cwd, stdin=asyncio.subprocess.PIPE if stdin else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs)
+    if not _USE_EXIT_PROTOCOL:
+        return await asyncio.create_subprocess_exec(*argv, limit=READ_CHUNK, **kwargs)
+    loop = asyncio.get_running_loop()
+    transport, protocol = await loop.subprocess_exec(
+        lambda: _ExitAwareProtocol(limit=READ_CHUNK, loop=loop),
+        *argv,
+        **kwargs,
+    )
+    proc = asyncio.subprocess.Process(transport, protocol, loop)
+    _EXIT_EVENTS[proc] = protocol.exited
+    return proc
 
 
 async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout_s: float,
@@ -80,7 +107,7 @@ async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout
             async with asyncio.timeout(timeout_s):
                 code = await wait_exit(proc)
         except TimeoutError:
-            # The process may have exited after the last poll but before the deadline.
+            # The process may have exited in the same event-loop turn as the deadline.
             if proc.returncode is None:
                 kill_tree(proc)
                 await wait_bounded(proc, KILL_WAIT_S)
@@ -110,12 +137,22 @@ async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout
 async def wait_exit(proc: asyncio.subprocess.Process) -> int:
     """Wait for process exit independently of EOF on its inherited output pipes.
 
-    On Python 3.11 and 3.12, Process.wait() begun before exit can remain pending until
-    descendants close those pipes. The event loop still updates returncode at process exit.
+    On Python 3.13+, Process.wait() resolves as soon as the process exits. On Python 3.11 and 3.12
+    (CPython gh-119710), Process.wait() can remain pending until descendants close those pipes, so
+    start() attaches an event signalled from SubprocessStreamProtocol.process_exited().
     """
-    while proc.returncode is None:
-        await asyncio.sleep(EXIT_POLL_S)
-    return proc.returncode
+    if proc.returncode is not None:
+        return proc.returncode
+    if _EXIT_EVENTS:
+        try:
+            exited = _EXIT_EVENTS.get(proc)
+        except TypeError:
+            exited = None
+        if exited is not None:
+            await exited.wait()
+            if proc.returncode is not None:
+                return proc.returncode
+    return await proc.wait()
 
 
 async def wait_bounded(proc: asyncio.subprocess.Process, seconds: float) -> bool:
@@ -132,11 +169,15 @@ async def wait_exit_or_hurry(proc: asyncio.subprocess.Process, hurry: asyncio.Ev
                              seconds: float | None) -> bool:
     """Waits for the process to exit, at most `seconds`, returning early if `hurry` is set;
     whether it has exited."""
+    if proc.returncode is not None:
+        return True
     hurry_task = asyncio.create_task(hurry.wait())
     done = asyncio.create_task(wait_exit(proc))
     try:
         await asyncio.wait({hurry_task, done}, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
-        exited = done.done() or proc.returncode is not None
+        if done.done() and not done.cancelled():
+            done.result()
+        exited = (done.done() and not done.cancelled()) or proc.returncode is not None
     finally:
         for task in (hurry_task, done):
             if not task.done():

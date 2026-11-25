@@ -5,7 +5,7 @@ from vehicle_sil_control import Control, Launch, ms
 
 launcher, config = sys.argv[1], sys.argv[2]                   # vehicle_sil_launch and simulation.yaml
 
-# Starts "vehicle_sil_launch run" with its control server, paused before the first step.
+# Starts "vehicle_sil_launch serve --once" with its control server, paused before the first step.
 with Launch(launcher, config, start_paused=True) as launch:
     with Control(launch.address) as c:
         c.sim.wait_paused()                                   # every ECU stands still at 0 ms

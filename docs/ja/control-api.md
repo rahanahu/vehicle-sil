@@ -82,8 +82,10 @@ vehicle_sil_launch run --stdin-commands --start-paused --control 0 simulation.ya
 
 | 例 | 内容 |
 |---|---|
+| `write_and_read.py` | 最短の `Launch` の例です。時刻 0 の前で一時停止してスロットルを書き込み、500 ms 進めて回転数を表示します。 |
 | `write_before_start.py` | Python から起動して接続し、始まる前に書いて、読み返して確認します。 |
 | `pause_and_step.py` | 動いている途中で止め、時刻を指定して書き、`snapshot()` で時刻と値をまとめて読んで確認し、速度を変えて最後まで動かします。 |
+| `serve_runs.py` | 常駐ランチャー（`Serve`）を 1 つ起動して `prepare()` し、独立した 2 回の実行を `RunHandle` と `run.control()` で順に動かします。 |
 
 ### 実行が終わるとき
 
@@ -438,18 +440,25 @@ gRPC の呼び出しと、Python のクライアント（`Control` のメソッ�
 ## Python
 
 ```sh
-uv sync                                         # .venv に grpcio、grpcio-tools、protobuf などを入れる
+uv sync                                         # .venv に vehicle-sil-control（編集可能）、grpcio、grpcio-tools、protobuf を入れる
 source .venv/bin/activate                       # または、各コマンドの前に uv run を付ける
 python -m vehicle_sil_control.generate          # スタブを python/vehicle_sil_control/_generated に作る
-export PYTHONPATH=$PWD/python
 ```
 
 | 項目 | 内容 |
 |---|---|
 | Python のバージョン | 3.11 以上です。 |
-| バージョンと依存の指定 | `python/pyproject.toml`（`dependencies = []`、`python -S` でも動作し、`gui/server` と純粋な Events v4 プロトコル検査 `protocol.py` と遅延 gRPC ヘルパー `grpc_helpers.py` を共有します）、リポジトリのルートの `pyproject.toml`（`control` グループ）と `uv.lock` です（[build.md](build.md) の「Python（uv）」）。 |
-| uv を使わない場合 | `pip install grpcio grpcio-tools protobuf` でインストールします。 |
-| uv を使わない場合（MSYS2 UCRT64） | `pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools` でインストールします。 |
+| バージョンと依存の指定 | `python/pyproject.toml`（`dependencies = []`、`python -S` でも動作し、`gui/server` と純粋な Events v4 プロトコル検査 `protocol.py` と遅延 gRPC ヘルパー `grpc_helpers.py` を共有します）、リポジトリのルートの `pyproject.toml`（`uv sync`、または Control API のみなら `uv sync --only-group control`）と `uv.lock` です（[build.md](build.md) の「Python（uv）」）。 |
+| 標準ライブラリのみと gRPC | `Launch`、`Serve`、`RunHandle`、`LaunchError`、`ServeError`、`control_address` は標準ライブラリだけを使い（`python -S` 対応）、gRPC のモジュールを読み込みません。`Control`、`Control.for_current_run()`、`run.control()`、CLI には `grpcio`、`protobuf`、生成されたスタブが必要です（別の場所に出すときは `generate --out DIR` と `VEHICLE_SIL_CONTROL_STUBS=DIR` を使います）。 |
+| `.venv` の外・`uv sync` なしの場合 | `python -m vehicle_sil_control.generate` やスクリプトを実行する前に `export PYTHONPATH=$PWD/python` を設定し、`pip install grpcio grpcio-tools protobuf` でインストールします。 |
+| uv を使わない場合（MSYS2 UCRT64） | `export PYTHONPATH=$PWD/python` を設定し、`pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools` でインストールします。 |
+
+`Launch` と `Serve` の使い分け:
+
+| ヘルパー | ランチャーのモード | 選ぶとき |
+|---|---|---|
+| `Launch` | `vehicle_sil_launch serve --once` | 1 回だけ実行するとき、または `VEHICLE_SIL_TRACE`、固定の `registry_uri`、`manual` の participant を使うとき（`--once` でのみ許可されます）。 |
+| `Serve` / `RunHandle` | `vehicle_sil_launch serve`（または `once=True`） | 1 つの設定ファイルでランチャーを起動し直さずに複数のシミュレーションを順に実行するとき、実行前に `prepare()` / `status()` を使いたいとき、実行ごとの `RunHandle`（`run.id`、`run.control()`、確定済み `status`、`launcher_ends`）が必要なとき。 |
 
 ### ランチャーを起動する（`Launch`）
 
@@ -465,17 +474,18 @@ with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulati
     print(launch.wait()["result"])       # run --json と同じ結果
 ```
 
-`Launch(launcher, config, address="0", start_paused=False, arguments=(), cwd=None, stderr=None, keep_logs=True)` の `arguments` は、`run` のほかの引数（`--speed`、`--disable`、`--control-credentials` など）です。
+`Launch(launcher, config, *, address="0", start_paused=False, arguments=(), cwd=None, stderr=None, keep_logs=True)` の `config` より後の引数はすべてキーワード専用です。`arguments` には `run` の引数を渡せます。実行ごとの引数（`--speed`、`--stop-at-ms`、`--scenario`、`--variant`、`--disable`、`--enable`、`--manual`、`--param`、`--connect`、`--time-policy`、`--strict`、`--late-tolerance-ms`、`--request`、`--timeline`、`--start-paused`）は最初の標準入力 `run` コマンドに変換され、ホスト側の引数（`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`--log-dir`、`--timeout-ms`、`--describe-timeout-ms`、`--participant-start-timeout-ms`、`--participant-stop-timeout-ms`、`--events-stall-ms`）は `serve --once` に渡されます。
 
 | メンバー | 内容 |
 |---|---|
 | `address` | Control Server のアドレスです（イベント `control_server` を待って返します）。 |
-| `events` | 読んだイベントの dict の一覧です。 |
+| `events` | 読んだイベントの dict の一覧です（`bad_lines` は不正な標準出力行、`stderr_text` は `stderr=subprocess.PIPE` 時の標準エラー出力）。 |
 | `result` | 結果です。 |
-| `wait_for_event(event, timeout, after=None, **keys)` | キーの値が合う最初のイベントを待ちます。 |
+| `wait_for_event(event, timeout=60.0, after=None, **keys)` | キーの値が合う最初のイベントを待ちます。 |
 | `send(command)` | 標準入力にコマンドを 1 行送信します。 |
 | `stop()` | `{"command":"stop"}` を送信します（`with` を出るときも、動いていれば止めます）。 |
-| `wait(timeout)` | ランチャーが終わるのを待って、結果を返します。 |
+| `wait(timeout=120.0)` | ランチャーが終わるのを待って、結果を返します。 |
+| `close()` | 動いていればランチャーを停止し、パイプを閉じます（`__exit__` が呼びます）。 |
 | `returncode` | ランチャーの終了コードです。 |
 
 ランチャーが結果を出力せずに終わったときと、待つイベントが来ないまま実行が終わったときは、`LaunchError` です（メッセージに、結果とエラーの指摘があります）。
@@ -484,7 +494,7 @@ with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulati
 
 ### 1 つのランチャーで順に実行する（`Serve`、`RunHandle`）
 
-`Serve` は、`vehicle_sil_launch serve <file>`（`once=True` のときは `serve --once <file>`）を Events v4（`vehicle_sil_events: 4`）の子プロセスとして起動し、1 つの設定ファイルで実行を順に行います（[simulation-run.md](simulation-run.md#1-つのランチャーで順に実行するvehicle_sil_launch-serve) の「1 つのランチャーで順に実行する（`vehicle_sil_launch serve`）」と [simulation-events.md](simulation-events.md#常駐ランチャーserve) の「常駐ランチャー（`serve`）」）。`Launch` と同じく、`Serve` と `RunHandle` は標準ライブラリだけを使い、gRPC は `run.control()` を呼んだときにだけ読み込みます。
+`Serve` は、`vehicle_sil_launch serve <file>`（`once=True` のときは `serve --once <file>`）を Events v4（`vehicle_sil_events: 4`）の子プロセスとして起動し、1 つの設定ファイルで実行を順に行います（[simulation-run.md](simulation-run.md#1-つのランチャーで順に実行するvehicle_sil_launch-serve) の「1 つのランチャーで順に実行する（`vehicle_sil_launch serve`）」と [simulation-events.md](simulation-events.md#常駐ランチャーserve) の「常駐ランチャー（`serve`）」）。`Launch` と同じく、`Serve` と `RunHandle` は標準ライブラリだけを使い、gRPC は `run.control()` を呼んだときにだけ読み込みます。実行できる全体の例は [examples/launch_control/serve_runs.py](../../examples/launch_control/serve_runs.py) にあります。
 
 `Launch` と違い、`runner.start(...)` は実行ごとの実行 ID（`run.id`）を持つ `RunHandle` を返し、前の実行の状態を持ち越さず仮想時刻 0 から新しい実行を始めます。`run.control()` は、あらかじめ `run.id` に結びつけた `Control` を返します。複数回実行の `serve` の制限がそのまま当てはまります（`once=True` でない限り、`VEHICLE_SIL_TRACE`、固定の `registry_uri`、`manual` の participant は拒否されます。[simulation-run.md](simulation-run.md#serve-の制限) の「`serve` の制限」）。
 
@@ -502,27 +512,28 @@ with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulatio
         print(run2.wait()["result"])
 ```
 
-`Serve(launcher, config, *, once=False, control=False, address="0", credentials=None, tls_cert=None, tls_key=None, audit_log=None, log_dir=None, timeout_ms=None, describe_timeout_ms=None, participant_start_timeout_ms=None, participant_stop_timeout_ms=None, events_stall_ms=None, arguments=(), cwd=None, stderr=None, keep_logs=True, on_event=None, startup_timeout=30.0)` では、`address`、`credentials`、`tls_cert`、`tls_key`、`audit_log` を指定するには `control=True` が必要です。
+`Serve(launcher, config, *, once=False, control=False, address="0", credentials=None, tls_cert=None, tls_key=None, audit_log=None, log_dir=None, timeout_ms=None, describe_timeout_ms=None, participant_start_timeout_ms=None, participant_stop_timeout_ms=None, events_stall_ms=None, arguments=(), cwd=None, env=None, stdout=subprocess.PIPE, stderr=None, keep_logs=True, on_event=None, start_new_session=False, wait_ready=True, startup_timeout=30.0)` では、`address`、`credentials`、`tls_cert`、`tls_key`、`audit_log` を指定するには `control=True` が必要です。
 
 | `Serve` のメンバー | 内容 |
 |---|---|
-| `hello`、`instance` | 初めの `hello` イベントと、その `launcher` インスタンス ID です。 |
-| `pid`、`returncode`、`latest_status` | 子プロセスの PID、終了コード（実行中は `None`）、最新の `ExecutionStatus` の dict（`status`、`prepare`、`result` イベントから更新、なければ `None`）です。 |
-| `prepare(*, variant=None, disable=(), enable=(), manual=(), timeout=30.0)` | `prepare` を送り、`prepare` の応答（`accepted`、`status`、`metadata`、`findings`）を返します。 |
-| `status(timeout=30.0)` | `status` を送り、現在の `status` イベントを返します。 |
-| `start(*, request=None, intent=None, ..., timeline=None, timeout=60.0)` | 実行を 1 つ始めて `RunHandle` を返します。`request`、`intent`、実行ごとのキーワード引数（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`connect`、`time_policy`、`speed`、`start_paused`、`strict`、`stop_at_ms`、`late_tolerance_ms`）は最大 1 つだけ渡せます。大きすぎるインラインのインテントは自動で一時要求ファイルに切り替え、後で削除します。 |
-| `close(timeout=60.0)` | 標準入力を閉じて順序どおりの終了を求め、子プロセスと読み取りスレッドの終了を待ち、残った一時要求ファイルを削除します。 |
+| `hello`、`instance`、`latest_status` | 初めの `hello` イベント、その `launcher` インスタンス ID、最新の `ExecutionStatus` の dict（`status`、`prepare`、`result` イベントから更新、最初のステータス前は `None`）です。 |
+| `pid`、`returncode`、`stderr_text` | 子プロセスの PID、終了コード（実行中は `None`）、`stderr=subprocess.PIPE` 時の標準エラー出力末尾（上限 64 KiB）です。 |
+| `prepare(*, variant=None, disable=(), enable=(), manual=(), id=None, timeout=30.0)` | `prepare` を送り、`prepare` の応答（`accepted`、`status`、`metadata`、`findings`）を返します。 |
+| `status(timeout=30.0, *, id=None)` | `status` を送り、現在の `status` イベントを返します。 |
+| `start(*, request=None, intent=None, ..., timeline=None, id=None, timeout=60.0)` | 実行を 1 つ始めて `RunHandle` を返します。`request`、`intent`、実行ごとのキーワード引数（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`connect`、`time_policy`、`speed`、`start_paused`、`strict`、`stop_at_ms`、`late_tolerance_ms`）は最大 1 つだけ渡せます。大きすぎるインラインのインテントは自動で一時要求ファイルに切り替え、後で削除します。 |
+| `wait(timeout=60.0)` | ランチャーの子プロセスが終了するのを待ち、終了コードを返します（`RunHandle.wait()` とは異なります）。 |
+| `close_input()`、`close(timeout=60.0)` | `close_input()` は待たずに標準入力を閉じて（EOF 終了）終了を求めます。`close()` は標準入力を閉じ、子プロセスと読み取りスレッドの終了を待ち、残った一時要求ファイルを削除します。 |
 
 | `RunHandle` のメンバー | 内容 |
 |---|---|
 | `id`、`run_id` | ランチャーが付けた不透明な実行 ID です。 |
 | `address` | この実行の Control Server のアドレスです（この実行の `control_server` イベントを待って返します）。 |
-| `events`、`result`、`status`、`launcher_ends` | この実行のイベント一覧、終了後の `result` の dict と内包された確定済み `status`（`ExecutionStatus`）、この実行でランチャーが終わるかどうかです。 |
+| `start_event`、`result_event`、`events`、`result`、`status`、`launcher_ends` | `run_start` イベント、終了後の `result` イベント、この実行のイベント一覧、`result` の dict と内包された確定済み `status`（`ExecutionStatus`）、この実行でランチャーが終わるかどうかです。 |
 | `wait_for_event(event, timeout=60.0, after=None, **keys)` | この実行のイベントから、キーの値が合う最初のイベントを待ちます。 |
 | `control(**options)` | `Control(run.address, run=run.id, **options)` を返します。`run=...` を渡すと `TypeError` になります。 |
 | `send(command)` | この実行宛ての標準入力コマンド（`"run": run.id`）を送ります。 |
-| `stop(force=None)` | この実行の `stop` を送ります（`False` で順序どおり、`True` で強制、`None` で既定の順序どおり）。 |
-| `wait(timeout=120.0)` | この実行の Events v4 `result` イベント（確定済みの `status` を内包し、別個の `idle` イベントはありません）を待ちます。 |
+| `stop(force=None, *, id=None)` | この実行の `stop` を送ります（`False` で順序どおり、`True` で強制、`None` で既定の順序どおり）。 |
+| `wait(timeout=120.0)` | この実行の Events v4 `result` イベントを待ち、内側の `result` dict を返します（`result_event` がイベント全体を保持し、確定済みの `status` を内包して別個の `idle` イベントはありません）。 |
 
 `Serve` は終わった実行の履歴を持たず、ストリーム全体の `events` リストも溜めません。実行の `result` イベントが届くと、`Serve` はその `RunHandle` への参照を外すため、呼び出し側がハンドルを手放した時点でその実行のイベントと結果が解放されます（`keep_logs=False` にすると `RunHandle.events` に `"log"` イベントを含めません）。ストリーム全体のイベントを監視したいとき（`keep_logs=False` でも `"log"` イベントを受け取れます）は `on_event=callback` を渡します。`on_event` は読み取りスレッド上で `Serve` のロックの外から順に呼ばれ、`Serve` が状態を更新して待機中の呼び出しを起こす前に完了します（そのため `Serve()`、`prepare()`、`start()`、`run.wait()`、`close()` が返った時点で対応するイベントは配信済みです）。各呼び出しにはイベントの浅いコピー（`dict`）を渡します。入れ子の値は読み取り専用として扱い、コールバック内では `close()`、`wait()`、およびイベントを待つブロッキング呼び出し・プロパティ（`prepare()`、`status()`、`start()`、`run.wait()`、`run.wait_for_event()`、および該当イベントの処理前に `hello`、`instance`、`run.address`、`run.control()` を読む操作）を行わないでください（呼び出すと `ServeError` になります）。`on_event` が例外を上げても読み取りスレッドは止めず、`sys.excepthook` へ渡します。
 
@@ -530,7 +541,7 @@ with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulatio
 
 ### 接続して読み書きする（`Control`）
 
-別の PC から、TLS とトークンを付けたランチャー（上の「認証」）にも、同じように接続します（証明書の作り方と、接続できないときのメッセージは [howto/multi-pc.md](howto/multi-pc.md)）。
+別の PC から、TLS とトークンを付けたランチャー（上の「認証」）に接続するときは、`token` と `root_certificates` を渡します（`root_certificates` なしでシステムのルート証明書を使うときは `tls=True`。証明書の作り方と、接続できないときのメッセージは [howto/multi-pc.md](howto/multi-pc.md)）。
 
 ```python
 from vehicle_sil_control import Control, ms
@@ -548,7 +559,7 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
         break
 ```
 
-時刻は、仮想時間のナノ秒です（`ms()`、`s()` で作ります）。
+時刻は、仮想時間のナノ秒です（`ms()`、`s()` で作ります）。指定時刻がすでに過ぎていた場合に次のステップで反映するには `c.write(..., at=..., late="apply_next")` を渡します（既定は `"reject"`）。
 
 | 起きたこと | Python での現れ方 |
 |---|---|
@@ -697,7 +708,7 @@ if snap.consistent:                       # 値は、止まっている時刻 sn
 
 ## CLI
 
-`--server`（既定は `VEHICLE_SIL_CONTROL_SERVER`）に、ランチャーのイベント `control_server` の `address`（人向けの出力では `control server at` の行）を渡します。`--run <ID>`（既定は `VEHICLE_SIL_CONTROL_RUN`）は、コマンドの宛先の実行を名乗ります（[宛先の実行](#宛先の実行)）。`serve` のランチャーでは必須です。コマンドと gRPC の呼び出しの対応は、[呼び出しの一覧](#呼び出しの一覧)にあります。
+`--server`（既定は `VEHICLE_SIL_CONTROL_SERVER`、未設定時は `127.0.0.1:8510`）に、ランチャーのイベント `control_server` の `address`（人向けの出力では `control server at` の行）を渡します。`--token`（既定は `VEHICLE_SIL_CONTROL_TOKEN`）、`--root-cert`（既定は `VEHICLE_SIL_CONTROL_ROOT_CERT`）、`--run <ID>`（既定は `VEHICLE_SIL_CONTROL_RUN`）で、認証、TLS、コマンドの宛先の実行を指定します（[宛先の実行](#宛先の実行)）。`serve` のランチャーでは `--run` が必須です。コマンドと gRPC の呼び出しの対応は、[呼び出しの一覧](#呼び出しの一覧)にあります（`set` は `--apply-late` と `--wait none|queued|done`、`pause` は `--at-ms` と `--wait`、`watch` は `--no-values`、`stop` は `--reason` も取ります）。
 
 ```sh
 export VEHICLE_SIL_CONTROL_SERVER=ctrl-pc:8510 VEHICLE_SIL_CONTROL_TOKEN=... VEHICLE_SIL_CONTROL_ROOT_CERT=server.crt
@@ -724,17 +735,19 @@ python -m vehicle_sil_control stop
 |---|---|
 | `INVALID_ARGUMENT` | 引数のエラーです（範囲の外の速度、0 以下のステップ、`snapshot()` の名前が 1024 個を超える）。 |
 | `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）か、サーバーと別の実行宛ての呼び出し（`run-changed`）や、実行が必須のサーバーへの実行を名乗らない呼び出し（`run-required`）です。Python のクライアントは、別の vehicle-sil のリリースのサーバーにも出します。 |
+| `UNAUTHENTICATED` / `PERMISSION_DENIED` | `--control-credentials` が有効なときに、Bearer トークンが欠落・不正（`UNAUTHENTICATED`）またはロールが不足（`PERMISSION_DENIED`）しています。 |
 | `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
 | `RESOURCE_EXHAUSTED` | `snapshot()` のレスポンスが、1 つのメッセージの上限（4 MiB）を超えました。 |
 | `UNIMPLEMENTED` | そのアドレスは gRPC に答えますが、vehicle-sil の Control Server ではありません（その呼び出しがない）。 |
+| `UNAVAILABLE` / `NOT_FOUND` | サーバーへ接続できないか、`values()` / `snapshot()` 中に Peer が再起動し続けているとき（`UNAVAILABLE`）、または `peer(name)` で指定した名前の Peer がないとき（`NOT_FOUND`）。 |
 
 シナリオの実行中の書き込みは、`reason` が `scenario-running` です。
 
 | Python の例外と警告 | 出るとき |
 |---|---|
-| `ControlError` | 呼び出しが失敗しました。 |
+| `ControlError` | 呼び出しが失敗しました（`code` と `reason` に失敗の内容が入ります）。 |
 | `LaunchError` | ランチャーが結果を出力せずに終わったか、待つイベントが来ないまま実行が終わりました。 |
-| `ServeError` | 常駐 `serve` のコマンド（`prepare`、`start`、`status`）が拒否・時間切れになったか、常駐ランチャーが起動失敗または予期せず終了しました。 |
+| `ServeError` | `LaunchError` のサブクラスです。常駐 `serve` のコマンド（`prepare`、`start`、`status`）が拒否・時間切れになったか、常駐ランチャーが起動失敗または予期せず終了しました（`reason` に `"trace-enabled"` や `"busy"` などの拒否・失敗コードが入ることがあります）。 |
 | `ControlWarning` | `peers()` を呼んだとき、Server がシミュレーションの状態を読めていません。 |
 
 ## 制限
