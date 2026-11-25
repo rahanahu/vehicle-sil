@@ -955,7 +955,7 @@ The `ended` column of the participant table:
 
 | Shown | Meaning |
 |---|---|
-| `exit code <n>` | Ended on its own (a Windows NTSTATUS value is in hex, for example `0xC0000005`) |
+| `exit code <n>` | Ended on its own (a Windows NTSTATUS value is in hex, for example `0xC0000005`; `0xC000013A` is followed by what it means: Windows ended the process on a Ctrl+C, a Ctrl+Break or a closed console that the process did not handle itself) |
 | `signal <name>` | Ended by a signal (Linux; for example `signal SIGSEGV`) |
 | `stopped (SIGTERM), exit code <n>` | Ended after being asked to stop (`Ctrl+Break` on Windows) |
 | `killed` | Killed |

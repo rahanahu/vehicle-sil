@@ -28,6 +28,21 @@ inline std::string hex_code(int code)
 }
 
 
+/// An exit code as the outputs show it. A Windows NTSTATUS (0xC0000005 an access violation) reads
+/// better in hex; 0xC000013A (STATUS_CONTROL_C_EXIT) says nothing to a user, so it says what ended
+/// the process: Windows, on a Ctrl+C, a Ctrl+Break or a closed console, which the process did not
+/// handle itself (it had not set up its handler yet, or the handler returned).
+inline std::string exit_code_text(int code)
+{
+    if (code >= 0)
+    {
+        return std::to_string(code);
+    }
+    return hex_code(code) + (static_cast<unsigned>(code) == 0xC000013Au
+                                 ? " (Windows ended it on a Ctrl+C, a Ctrl+Break or a closed console)"
+                                 : "");
+}
+
 /// "exited with code 7", "was ended by signal SIGSEGV".
 inline std::string exit_text(const process::ExitStatus& exit)
 {
@@ -35,8 +50,7 @@ inline std::string exit_text(const process::ExitStatus& exit)
     {
         return "was ended by signal " + process::signal_name(*exit.signal);
     }
-    // A Windows NTSTATUS (0xC0000005 an access violation, 0xC000013A Ctrl+C) reads better in hex.
-    return "exited with code " + (exit.code < 0 ? hex_code(exit.code) : std::to_string(exit.code));
+    return "exited with code " + exit_code_text(exit.code);
 }
 
 inline bool ended_by_itself(const ParticipantRun& p)

@@ -955,7 +955,7 @@ participant の表の `ended` の列:
 
 | 表示 | 意味 |
 |---|---|
-| `exit code <n>` | 自分で終わった（Windows の NTSTATUS の値は 16 進で、例: `0xC0000005`） |
+| `exit code <n>` | 自分で終わった（Windows の NTSTATUS の値は 16 進で、例: `0xC0000005`。`0xC000013A` には意味が続く: プロセスが自分で処理しなかった Ctrl+C、Ctrl+Break、コンソールを閉じる操作で、Windows がプロセスを終わらせた） |
 | `signal <名前>` | シグナルで終わった（Linux。例: `signal SIGSEGV`） |
 | `stopped (SIGTERM), exit code <n>` | 止まるよう求めた後に終わった（Windows では `Ctrl+Break`） |
 | `killed` | 強制終了した |
