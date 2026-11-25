@@ -304,15 +304,81 @@ TEST_CASE(process_tells_that_processes_it_started_outlive_it)
 
 TEST_CASE(process_reports_no_others_running_after_clean_exit)
 {
-    // Repeat immediately after exit so headless Windows runs (CREATE_NO_WINDOW -> conhost.exe in
-    // the job) exercise the post-exit check while Windows's console host may still be tearing down.
-    for (int i = 0; i < 8; ++i)
+    // Repeat immediately after exit so Windows exercises the post-exit job query while the exited
+    // process (and in headless runs, conhost.exe) may still be tearing down.
+    for (int i = 0; i < 32; ++i)
     {
         Lines lines;
         Process p(kHelper, {"--exit", "0"}, lines.options());
         CHECK(p.wait_for(scaled_timeout(60s)) == (ExitStatus{0, std::nullopt}));
         CHECK(!p.others_running());
     }
+}
+
+TEST_CASE(process_others_running_without_console)
+{
+#ifdef _WIN32
+    if (GetConsoleCP() != 0)
+    {
+        CHECK(std::getenv("VEHICLE_SIL_PROCESS_DETACHED") == nullptr);
+        Lines lines;
+        ProcessOptions options = lines.options();
+        options.environment = {{"VEHICLE_SIL_PROCESS_DETACHED", "1"}};
+        Process detached(
+            kHelper,
+            {"--run-detached", vehicle_sil::test::own_executable(), "process_others_running_without_console"},
+            std::move(options));
+        const auto status = detached.wait_for(scaled_timeout(90s));
+        if (!status)
+        {
+            detached.kill_tree();
+        }
+        static_cast<void>(detached.finish_output(10s));
+        if (!status || *status != (ExitStatus{0, std::nullopt}))
+        {
+            std::string message = "detached process_others_running_without_console failed";
+            if (status)
+            {
+                message += " (exit " + std::to_string(status->code) + ")";
+            }
+            else
+            {
+                message += " (timed out)";
+            }
+            for (const auto& line : lines.take())
+            {
+                message += "\n  " + line;
+            }
+            throw vehicle_sil::unit::Failure(message);
+        }
+        return;
+    }
+    // Without a console (GetConsoleCP() == 0), Process uses CREATE_NO_WINDOW and Windows spawns
+    // <system32>\conhost.exe inside each child job. Verify both clean exits and live grandchildren.
+    for (int i = 0; i < 32; ++i)
+    {
+        Lines lines;
+        Process p(kHelper, {"--exit", "0"}, lines.options());
+        CHECK(p.wait_for(scaled_timeout(60s)) == (ExitStatus{0, std::nullopt}));
+        CHECK(!p.others_running());
+    }
+    const fs::path dir = scratch("process others detached");
+    const std::string pidFile = (dir / "grandchild.pid").string();
+    Lines lines;
+    Process p(kHelper, {"--spawn-sleeper", pidFile, "--exit", "0"}, lines.options());
+    const long grandchild = vehicle_sil::test::read_pid(pidFile, 60s);
+    CHECK(grandchild > 0);
+    CHECK(p.wait_for(scaled_timeout(60s)) == (ExitStatus{0, std::nullopt}));
+    CHECK(p.others_running());
+    p.kill_tree();
+    const bool gone = vehicle_sil::test::wait_gone(grandchild, 60s);
+    if (!gone)
+    {
+        vehicle_sil::test::kill_one(grandchild);
+    }
+    CHECK(gone);
+    CHECK(vehicle_sil::unit::eventually([&] { return !p.others_running(); }, 60s));
+#endif
 }
 
 TEST_CASE(process_ends_with_what_it_started_when_destroyed)

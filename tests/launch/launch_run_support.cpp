@@ -128,11 +128,88 @@ std::string block_after(const fs::path& path, const std::string& marker)
     return text.substr(open, close - open + 1);
 }
 
+namespace {
+
+struct TextLine
+{
+    std::string_view text{};
+    bool present = false;
+    bool has_newline = false;
+};
+
+TextLine next_line(std::string_view text, std::size_t& pos)
+{
+    if (pos >= text.size())
+    {
+        return {};
+    }
+    const std::size_t nl = text.find('\n', pos);
+    if (nl == std::string_view::npos)
+    {
+        const TextLine out{text.substr(pos), true, false};
+        pos = text.size();
+        return out;
+    }
+    const TextLine out{text.substr(pos, nl - pos), true, true};
+    pos = nl + 1;
+    return out;
+}
+
+std::string format_summary_line(const TextLine& line, bool show_newline_status)
+{
+    if (!line.present)
+    {
+        return "<end of text>";
+    }
+    std::string out;
+    out.reserve(line.text.size());
+    for (const char c : line.text)
+    {
+        if (c == '\r')
+        {
+            out += "\\r";
+        }
+        else
+        {
+            out += c;
+        }
+    }
+    if (show_newline_status)
+    {
+        out += line.has_newline ? " (with trailing newline)" : " (no trailing newline)";
+    }
+    return out;
+}
+
+std::string first_difference_summary(std::string_view actual, std::string_view expected)
+{
+    std::size_t a_pos = 0;
+    std::size_t e_pos = 0;
+    std::size_t line_no = 1;
+    while (a_pos < actual.size() || e_pos < expected.size())
+    {
+        const TextLine a = next_line(actual, a_pos);
+        const TextLine e = next_line(expected, e_pos);
+        if (a.present != e.present || a.text != e.text || a.has_newline != e.has_newline)
+        {
+            const bool only_newline = a.present && e.present && a.text == e.text && a.has_newline != e.has_newline;
+            return "first difference at line " + std::to_string(line_no) + ":\n  got:      " +
+                   format_summary_line(a, only_newline) + "\n  expected: " + format_summary_line(e, only_newline) +
+                   "\n";
+        }
+        ++line_no;
+    }
+    return {};
+}
+
+} // namespace
+
 void expect_text(const std::string& actual, const std::string& expected, const std::string& what)
 {
     if (actual != expected)
     {
-        throw std::runtime_error(what + " differs\n--- got ---\n" + actual + "--- expected ---\n" + expected + "---");
+        throw std::runtime_error(what + " differs\n" + first_difference_summary(actual, expected) + "--- got ---\n" +
+                                 actual + "--- expected ---\n" + expected + "---");
     }
     log("CHECK " + what + " -> ok");
 }

@@ -4,10 +4,12 @@
 #include "spawn.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -384,6 +386,18 @@ bool is_system_conhost(HANDLE handle, std::wstring_view conhostPath)
                                 static_cast<int>(conhostPath.size()), TRUE) == CSTR_EQUAL;
 }
 
+/// True if `handle` has already exited. When `hasSync` is true, WaitForSingleObject() avoids
+/// confusing a running process with one whose exit code happens to be STILL_ACTIVE (259).
+bool process_has_exited(HANDLE handle, bool hasSync)
+{
+    if (hasSync)
+    {
+        return WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+    }
+    DWORD exitCode = 0;
+    return GetExitCodeProcess(handle, &exitCode) != 0 && exitCode != STILL_ACTIVE;
+}
+
 } // namespace
 
 bool Process::others_running()
@@ -393,39 +407,87 @@ bool Process::others_running()
         return false;
     }
     // The IDs of the processes in the job, without the first one: the count of the job may still
-    // hold the first process for a moment after its end.
-    struct
+    // hold the first process for a moment after its end, and QueryInformationJobObject() can
+    // succeed (TRUE) with NumberOfAssignedProcesses > NumberOfProcessIdsInList while a terminated
+    // process is still draining from the job. Only ERROR_MORE_DATA means the buffer was too small.
+    static_assert(alignof(ULONG_PTR) >= alignof(JOBOBJECT_BASIC_PROCESS_ID_LIST));
+    static_assert(offsetof(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList) % sizeof(ULONG_PTR) == 0);
+    static_assert(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) ==
+                  offsetof(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList) + sizeof(ULONG_PTR));
+    constexpr std::size_t kHeaderSlots = offsetof(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList) / sizeof(ULONG_PTR);
+    constexpr std::size_t kInitialCapacity = 64;
+    constexpr std::size_t kMaxCapacity = 4096;
+    constexpr int kMaxRetries = 3;
+
+    std::size_t capacity = kInitialCapacity;
+    std::vector<ULONG_PTR> storage;
+    JOBOBJECT_BASIC_PROCESS_ID_LIST header{};
+    for (int attempt = 0;; ++attempt)
     {
-        JOBOBJECT_BASIC_PROCESS_ID_LIST list;
-        ULONG_PTR more[63];
-    } ids{};
-    if (!QueryInformationJobObject(job_, JobObjectBasicProcessIdList, &ids, sizeof(ids), nullptr) &&
-        GetLastError() != ERROR_MORE_DATA)
-    {
-        return false;
+        storage.assign(kHeaderSlots + capacity, 0);
+        const DWORD bufferBytes = static_cast<DWORD>(storage.size() * sizeof(ULONG_PTR));
+        const BOOL ok = QueryInformationJobObject(job_, JobObjectBasicProcessIdList, storage.data(), bufferBytes, nullptr);
+        if (ok != 0)
+        {
+            std::memcpy(&header, storage.data(), sizeof(header));
+            break;
+        }
+        const DWORD err = GetLastError();
+        if (err != ERROR_MORE_DATA)
+        {
+            return false;
+        }
+        std::memcpy(&header, storage.data(), sizeof(header));
+        if (attempt >= kMaxRetries || capacity >= kMaxCapacity)
+        {
+            // More processes than our cap can enumerate: others are running.
+            return true;
+        }
+        const std::size_t assigned = static_cast<std::size_t>(header.NumberOfAssignedProcesses);
+        const std::size_t needed = assigned < kMaxCapacity ? assigned + 8 : kMaxCapacity;
+        capacity = std::min(std::max(capacity * 2, needed), kMaxCapacity);
     }
+
     std::wstring conhostPath;
     bool conhostPathChecked = false;
-    const ULONG_PTR* id = ids.list.ProcessIdList;
-    for (DWORD i = 0; i < ids.list.NumberOfProcessIdsInList; ++i)
+    const ULONG_PTR* ids = storage.data() + kHeaderSlots;
+    const std::size_t count = std::min<std::size_t>(header.NumberOfProcessIdsInList, capacity);
+    for (std::size_t i = 0; i < count; ++i)
     {
-        if (id[i] == static_cast<ULONG_PTR>(pid_))
+        if (ids[i] == static_cast<ULONG_PTR>(pid_))
         {
             continue;
         }
-        Handle other(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(id[i])));
+        bool hasSync = true;
+        Handle other(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, static_cast<DWORD>(ids[i])));
         if (other.h == nullptr)
         {
-            if (GetLastError() == ERROR_INVALID_PARAMETER)
+            DWORD openErr = GetLastError();
+            if (openErr == ERROR_ACCESS_DENIED)
             {
-                // Already exited before OpenProcess().
-                continue;
+                hasSync = false;
+                HANDLE fallback = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(ids[i]));
+                if (fallback != nullptr)
+                {
+                    other.h = fallback;
+                }
+                else
+                {
+                    openErr = GetLastError();
+                }
             }
-            // Cannot inspect (e.g. access denied): conservatively report it as still running.
-            return true;
+            if (other.h == nullptr)
+            {
+                if (openErr == ERROR_INVALID_PARAMETER)
+                {
+                    // Already exited before OpenProcess().
+                    continue;
+                }
+                // Cannot inspect (e.g. access denied): conservatively report it as still running.
+                return true;
+            }
         }
-        DWORD exitCode = 0;
-        if (GetExitCodeProcess(other.h, &exitCode) != 0 && exitCode != STILL_ACTIVE)
+        if (process_has_exited(other.h, hasSync))
         {
             continue;
         }
@@ -441,10 +503,16 @@ bool Process::others_running()
         {
             continue;
         }
+        // A process (including conhost.exe) that exits between the check above and
+        // QueryFullProcessImageNameW() can fail image-path lookup (e.g. ERROR_GEN_FAILURE);
+        // re-check whether it has exited before reporting it as still running.
+        if (process_has_exited(other.h, hasSync))
+        {
+            continue;
+        }
         return true;
     }
-    // More than fit here: some are others.
-    return ids.list.NumberOfAssignedProcesses > ids.list.NumberOfProcessIdsInList;
+    return false;
 }
 
 #else // POSIX
