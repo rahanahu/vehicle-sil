@@ -164,3 +164,33 @@ def test_variables_example_with_the_real_launcher(tmp_path: Path, bundle: Path) 
     assert "ok   engine.speed is 1800 at 500 ms, standing still (expected 1800)" in lines, out.stdout
     assert gui.token not in out.stdout + out.stderr
     assert gui.stderr_text() == ""
+
+
+@pytest.mark.parametrize("example, expected_last", [
+    ("run.mjs", "result: passed"),
+    ("run-with-library.mjs", "result: passed"),
+    ("front.mjs", "result: completed, ok true"),
+])
+def test_examples_work_with_no_auth_printed_url(tmp_path: Path, bundle: Path, example: str,
+                                                expected_last: str) -> None:
+    with gui_server(tmp_path, args=("--no-auth",)) as gui:
+        assert "#token=" not in gui.url
+        out = run_example(example, gui.url, "simulation.yaml", "--timeout", "60", "--stop-at-ms", "1000")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert any(line.startswith(expected_last) for line in out.stdout.strip().splitlines()), out.stdout + out.stderr
+
+
+def test_variables_example_works_with_no_auth(tmp_path: Path, bundle: Path, control_env: dict) -> None:
+    with gui_server(tmp_path, args=("--no-auth",), env=control_env) as gui:
+        assert "#token=" not in gui.url
+        out = run_example("variables.mjs", gui.url, "simulation.yaml", "--write", "Engine", "engine.demand=40",
+                          "--expect", "Engine", "engine.speed=600", "--step", "200")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert out.stdout.strip().splitlines()[-1] == "all as expected", out.stdout
+
+
+@pytest.mark.parametrize("example", ["run.mjs", "run-with-library.mjs", "front.mjs"])
+def test_tokenless_url_is_rejected_by_default_auth_server(shared_gui: Gui, example: str) -> None:
+    tokenless = shared_gui.url.split("#", 1)[0]
+    out = run_example(example, tokenless, "simulation.yaml")
+    assert out.returncode == 1 and "unauthorized" in out.stdout, out.stdout + out.stderr

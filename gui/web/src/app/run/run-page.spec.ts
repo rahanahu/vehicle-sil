@@ -126,13 +126,45 @@ describe('RunPage', () => {
     http.expectNone('api/run');
   });
 
-  it('asks to be opened from the server URL when there is no token', async () => {
+  it('asks to be opened from the server URL when there is no token and the server rejects it', async () => {
     sessionStorage.clear();
     const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    const appReq = http.expectOne('api/app');
+    expect(appReq.request.headers.has('Authorization')).toBe(false);
+    appReq.flush(
+      { error: { code: 'unauthorized', message: 'missing token', detail: null } },
+      { status: 401, statusText: 'Unauthorized' },
+    );
+    const configsReq = http.expectOne('api/configs');
+    configsReq.flush(
+      { error: { code: 'unauthorized', message: 'missing token', detail: null } },
+      { status: 401, statusText: 'Unauthorized' },
+    );
     await settle();
     expect(text(fixture, 'no-token')).toContain('#token=');
-    http.expectNone('api/app');
-    expect(fake.sockets).toHaveLength(0);
+  });
+
+  it('works without a token when the server allows --no-auth', async () => {
+    sessionStorage.clear();
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    const appReq = http.expectOne('api/app');
+    expect(appReq.request.headers.has('Authorization')).toBe(false);
+    appReq.flush(response('app'));
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const check = await checkRequest();
+    expect(check.request.headers.has('Authorization')).toBe(false);
+    check.flush(response('check-passed'));
+    await settle();
+    expect(fixture.nativeElement.querySelector('[data-testid="no-token"]')).toBeNull();
+    expect(text(fixture, 'check-outcome')).toContain('通った');
+    expect(disabled(button(fixture, 'start'))).toBe(false);
   });
 
   it('checks the chosen file, and checks again without a participant that is switched off', async () => {

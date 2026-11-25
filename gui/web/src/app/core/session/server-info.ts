@@ -6,7 +6,6 @@ import {
   Recording,
   ScenarioList,
 } from '@vehicle-sil/gui-client';
-import { AuthToken } from '../auth/auth-token';
 import { GUI_CLIENT, readableSignal } from './gui-client';
 
 /**
@@ -15,13 +14,12 @@ import { GUI_CLIENT, readableSignal } from './gui-client';
  */
 @Injectable({ providedIn: 'root' })
 export class ServerInfo {
-  private readonly auth = inject(AuthToken);
   private readonly client = inject(GUI_CLIENT);
   private readonly info = readableSignal(this.client.app);
 
-  /** GET api/app（トークンがあるときだけ）。読めたら、ライブラリの app にも入る。 */
-  readonly app = resource<AppInfo, string | undefined>({
-    params: () => this.auth.token() ?? undefined,
+  /** GET api/app。読めたら、ライブラリの app にも入る。 */
+  readonly app = resource<AppInfo, true>({
+    params: () => true,
     loader: () => this.client.loadApp(),
   });
 

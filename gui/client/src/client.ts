@@ -69,11 +69,11 @@ export interface ClientOptions {
    */
   baseUrl: string;
   /**
-   * The token (what follows `#token=` in the URL the server printed). A function is called each time the token is
-   * used. While it is null, the client does not connect. Switching to another token after a refusal does not
-   * reconnect (create a new client instead).
+   * The token (what follows `#token=` in the URL the server printed), if required. A function is called each time the
+   * token is used. Omit or return null when connecting to a server started with `--no-auth`. Switching to another
+   * token after a refusal does not reconnect (create a new client instead).
    */
-  token: string | (() => string | null);
+  token?: string | null | (() => string | null);
   /**
    * Origin to send with POST and the WebSocket handshake. Not needed in browsers, which add it themselves. In Node,
    * the origin of baseUrl is sent if omitted (the server accepts only its own origin). Do not pass it in a Web Worker
@@ -122,7 +122,7 @@ export interface GuiClient {
   readonly app: Readable<AppInfo | null>;
   /** Speed range and the limits of stepping and checks (the limits of app; DEFAULT_LIMITS until then). */
   readonly limits: Readable<AppInfo['limits']>;
-  /** Connects through WebSocket (does nothing without a token, after a refusal, or after a version mismatch). */
+  /** Connects through WebSocket (does nothing after a refusal or after a version mismatch). */
   connect(): void;
   /** Disconnects and stops pending timers. */
   close(): void;
@@ -218,7 +218,9 @@ export function clientErrorSink(client: GuiClient): ErrorSink | undefined {
 
 /** createClient, and the parts the front door is built from. */
 export function buildClient(options: ClientOptions): ClientParts {
-  const token = typeof options.token === 'function' ? options.token : () => options.token as string;
+  const rawToken = options.token;
+  const token: () => string | null =
+    typeof rawToken === 'function' ? rawToken : () => rawToken ?? null;
   const onError = options.onError ?? reportToConsole;
   const origin = options.origin ?? defaultOrigin(options.baseUrl);
   const http = options.http ?? fetchTransport({ baseUrl: options.baseUrl, token, origin });
@@ -344,7 +346,7 @@ export function buildClient(options: ClientOptions): ClientParts {
     app: app.readonly(),
     limits: limits.readonly(),
     connect: () => {
-      if (token() && !session.stopped) connection.connect();
+      if (!session.stopped) connection.connect();
     },
     close: () => {
       connection.close();

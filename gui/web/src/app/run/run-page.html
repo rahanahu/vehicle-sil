@@ -1,6 +1,6 @@
 <h1 i18n>実行</h1>
 
-@if (!auth.token()) {
+@if (auth.rejected() && !auth.token()) {
   <mat-card appearance="outlined" data-testid="no-token">
     <mat-card-content>
       <p i18n>

@@ -51,7 +51,10 @@ The screen can save the text of a configuration file (POST api/config) when the 
 keeps the commands that run (the networks, the mapping, external: the work of a network editor). Whoever has the
 token can then change those parts of the configuration files, and no copy of the old content is kept. --no-save saves
 nothing. --allow-command-changes also saves an edit that changes the commands, and new files: then whoever has the
-token in the URL can run any command as this user (also the code of a --web screen and of its panels).
+token in the URL can run any command as this user (also the code of a --web screen and of its panels). --no-auth
+disables token authentication for the HTTP API and WebSocket (while keeping 127.0.0.1, Host, Origin, CSP and --root
+checks): any local process on this computer can then use the API (and with --allow-command-changes, run any command
+as this user).
 
 examples:
   vehicle-sil-gui examples/simulation.yaml          # root: the file's directory
@@ -97,6 +100,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--allow-command-changes", action="store_true",
                    help="the screen also saves an edit that changes the commands that run, and new files: whoever "
                         "has the token can then run any command as this user (not with --no-save)")
+    p.add_argument("--no-auth", action="store_true",
+                   help="disable token authentication for HTTP API and WebSocket connections: any local process on "
+                        "this computer can control simulations and edit configurations under --root (127.0.0.1, Host, "
+                        "Origin, CSP and --root checks still apply)")
     p.add_argument("--version", action="version", version=f"vehicle-sil-gui {__version__}")
     return p.parse_args(argv)
 
@@ -179,14 +186,14 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
         return usage_error(f"cannot listen on 127.0.0.1:{args.port} ({e.strerror}): choose another --port, "
                            "or 0 for a free one")
     port = sock.getsockname()[1]
-    token = secrets.token_urlsafe(32)
+    token = "" if args.no_auth else secrets.token_urlsafe(32)
     server = GuiServer(Options(root=root, launcher=launcher, port=port, token=token, initial_file=initial,
                                dev_origin=args.dev_origin, web_dir=web_dir, stop_timeout_s=stop_timeout_s,
                                participant_start_timeout_ms=args.participant_start_timeout_ms,
                                participant_stop_timeout_ms=args.participant_stop_timeout_ms,
                                check_timeout_s=args.check_timeout, silent_after_s=args.silent_after,
                                variables=not args.no_variables, save=not args.no_save,
-                               command_changes_allowed=args.allow_command_changes))
+                               command_changes_allowed=args.allow_command_changes, auth=not args.no_auth))
     runner = web.AppRunner(server.app(), access_log=None, handle_signals=False, shutdown_timeout=RUNNER_SHUTDOWN_S)
     await runner.setup()
     stop = asyncio.Event()
@@ -194,25 +201,53 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
     page: Path | None = None
     try:
         await web.SockSite(runner, sock).start()
-        url = f"http://127.0.0.1:{port}/#token={token}"
-        dev_url = f"{args.dev_origin}/#token={token}" if args.dev_origin else None
+        if args.no_auth:
+            url = f"http://127.0.0.1:{port}/"
+            dev_url = f"{args.dev_origin}/" if args.dev_origin else None
+        else:
+            url = f"http://127.0.0.1:{port}/#token={token}"
+            dev_url = f"{args.dev_origin}/#token={token}" if args.dev_origin else None
+        def emit_warnings() -> None:
+            if args.no_auth:
+                print("vehicle-sil-gui: WARNING: --no-auth: token authentication is disabled; any local process on "
+                      "this computer can use the GUI API and control simulations (127.0.0.1, Host, Origin, CSP and "
+                      "--root checks still apply)", file=sys.stderr, flush=True)
+            if args.allow_command_changes:
+                if args.no_auth:
+                    print("vehicle-sil-gui: WARNING: --allow-command-changes with --no-auth: token authentication is "
+                          "disabled and the screen can save edits that change the commands that run, and new files, so "
+                          "any local process on this computer can run any command as this user",
+                          file=sys.stderr, flush=True)
+                else:
+                    print("vehicle-sil-gui: --allow-command-changes: the screen can save edits that change the "
+                          "commands that run, and new files, so whoever has the token in the URL can run any command "
+                          "as this user", file=sys.stderr, flush=True)
+
         if args.json:
+            # Flush startup warnings to stderr before the stdout JSON readiness line unblocks callers.
+            emit_warnings()
             line = {"vehicle_sil_gui": PROTOCOL, "url": url, "port": port}
             if dev_url:
                 line["dev_url"] = dev_url
+            if args.no_auth:
+                line["auth"] = False
             print(json.dumps(line), flush=True)
         else:
             print(url, flush=True)
             if dev_url:
-                print(f"vehicle-sil-gui: through the development server: {dev_url}", file=sys.stderr)
-            print("vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server", file=sys.stderr)
-        if args.allow_command_changes:
-            print("vehicle-sil-gui: --allow-command-changes: the screen can save edits that change the commands that "
-                  "run, and new files, so whoever has the token in the URL can run any command as this user",
-                  file=sys.stderr)
+                print(f"vehicle-sil-gui: through the development server: {dev_url}", file=sys.stderr, flush=True)
+            if args.no_auth:
+                print("vehicle-sil-gui: open the URL above; Ctrl+C stops the server", file=sys.stderr, flush=True)
+            else:
+                print("vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server",
+                      file=sys.stderr, flush=True)
+            emit_warnings()
         if not args.no_browser:
-            page = open_browser(dev_url or url)
-            asyncio.get_running_loop().call_later(BROWSER_PAGE_S, remove, page)
+            if args.no_auth:
+                open_url(dev_url or url)
+            else:
+                page = open_browser(dev_url or url)
+                asyncio.get_running_loop().call_later(BROWSER_PAGE_S, remove, page)
         await stop.wait()
         return EXIT_OK
     finally:
@@ -225,6 +260,11 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
         signals()
         if page is not None:
             remove(page)
+
+
+def open_url(url: str) -> None:
+    """Opens a token-less URL directly in the browser (no secret to keep off the command line)."""
+    threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
 
 
 def open_browser(url: str) -> Path:

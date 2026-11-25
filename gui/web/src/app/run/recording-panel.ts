@@ -101,7 +101,7 @@ export class RecordingPanel {
 
   protected readonly recording = resource({
     params: () =>
-      this.auth.token()
+      !this.auth.rejected()
         ? { session: this.session(), running: this.running(), settled: this.settled() }
         : undefined,
     loader: () => this.info.recording(),

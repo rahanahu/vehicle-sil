@@ -745,7 +745,7 @@ export class Workbench {
     // A random instance ID has no ordering. Serialize claims across tabs and check the actual
     // server under that lock: a late response from an old instance cannot reclaim the head.
     // Without Web Locks, keep the old head rather than risk overwriting a newer one.
-    if (!navigator.locks || !pageToken) return;
+    if (!navigator.locks) return;
     this.waveHeadWanted = instance;
     if (this.waveHeadWorking || this.waveHeadTimer !== null || this.waveHeadDestroyed) return;
     this.waveHeadWorking = true;
@@ -765,7 +765,7 @@ export class Workbench {
             if (this.front()?.low.session.currentInstance() !== wanted) return true;
             if (localStorage.getItem(waveStorageHead) === wanted) return true;
             const response = await fetch(new URL('/api/app', location.href), {
-              headers: { Authorization: `Bearer ${pageToken}` },
+              headers: pageToken ? { Authorization: `Bearer ${pageToken}` } : {},
               cache: 'no-store',
               signal,
             });

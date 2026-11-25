@@ -180,7 +180,7 @@ export class RunPage {
   /** サーバーとランチャーの情報（アプリ全体で 1 つ。ほかの部品も ServerInfo から同じものを読む）。 */
   protected readonly app = this.info.app;
   protected readonly configs = resource({
-    params: () => this.auth.token() ?? undefined,
+    params: () => (this.auth.rejected() ? undefined : true),
     loader: () => this.info.configs(),
   });
 
@@ -191,7 +191,7 @@ export class RunPage {
   protected readonly handshake = resource({
     params: () => {
       const failures = this.run.handshakeFailures();
-      return failures > 0 && this.auth.token() ? failures : undefined;
+      return failures > 0 && !this.auth.rejected() ? failures : undefined;
     },
     loader: () => this.info.fetchApp(),
   });
@@ -426,7 +426,7 @@ export class RunPage {
       if (
         !this.app.hasValue() ||
         this.run.incompatible() ||
-        !this.auth.token() ||
+        this.auth.rejected() ||
         file === null ||
         this.running()
       )
@@ -526,7 +526,7 @@ export class RunPage {
       if (
         !this.app.hasValue() ||
         this.run.incompatible() ||
-        !this.auth.token() ||
+        this.auth.rejected() ||
         file === null ||
         this.running()
       )

@@ -91,7 +91,7 @@ curl -s "$BASE/" | grep '<title>'
 |---|---|---|
 | `there is no index.html in it` と表示して、終了コード 2 で終わる | 渡したディレクトリに `index.html` がありません。 | `index.html` のあるディレクトリを渡します。 |
 | `it has package.json, so it is the project and not its build` と表示して、終了コード 2 で終わる | ビルドの出力でなく、プロジェクトのディレクトリを渡しています。 | ビルドの出力のディレクトリ（`dist/` など）を渡します。 |
-| `connect() without options works in a page that the GUI server served and that was opened from the URL it printed (it ends with #token=...). In Node, pass { base_url, token }` という文が 1 つ表示される | `#token=` のない URL を開いています（文はページで 1 回だけ、`<vsil-status>` に出ます。ページに `<vsil-status>` がなければ最初の部品に出ます。どの部品にも `data-error` が付きます）。 | 端末に表示された URL を、`#token=` の後ろまで含めて開きます。 |
+| `missing or wrong token: send Authorization: Bearer <token>, the token in the URL the server printed (#token=...)` という文が 1 つ表示される | トークン認証が有効なサーバーに対して `#token=` のない URL を開いています（文はページで 1 回だけ、`<vsil-status>` に出ます。ページに `<vsil-status>` がなければ最初の部品に出ます。どの部品にも `data-error` が付きます）。 | 端末に表示された URL を、`#token=` の後ろまで含めて開きます（信頼できるローカル環境でトークン認証が不要な場合は `--no-auth` で起動します）。 |
 
 ## 手順 2: 表示する変数の名前を調べる
 

@@ -83,6 +83,7 @@ class Gui:
     token: str
     url: str
     stderr: Path
+    info: dict | None = None
 
     @property
     def base(self) -> str:
@@ -94,8 +95,9 @@ class Gui:
 
     def headers(self, *, token: str | None = "", origin: str | None = "", host: str | None = None) -> dict:
         h = {}
-        if token is not None:
-            h["Authorization"] = f"Bearer {token or self.token}"
+        auth_token = token or self.token
+        if token is not None and auth_token:
+            h["Authorization"] = f"Bearer {auth_token}"
         if origin is not None:
             h["Origin"] = origin or self.origin
         if host is not None:
@@ -138,7 +140,8 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
         return
     assert line, f"the server did not print its URL: {stderr.read_text()}"
     info = json.loads(line)
-    gui = Gui(proc, info["port"], info["url"].split("#token=", 1)[1], info["url"], stderr)
+    token = info["url"].split("#token=", 1)[1] if "#token=" in info["url"] else ""
+    gui = Gui(proc, info["port"], token, info["url"], stderr, info=info)
     try:
         yield gui
     finally:

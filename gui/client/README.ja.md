@@ -106,7 +106,7 @@ editor.setVisible(true);
 | 型   | `TokenPlace`        |
 | 定数 | `TOKEN_STORAGE_KEY` |
 
-ブラウザでは `takeToken(window)` と呼びます。URL の `#token=` を読んで URL から消し、sessionStorage に置きます。URL になければ sessionStorage に置いたものを返し、どちらにもなければ `null` を返します。
+ブラウザでは `takeToken(window)` と呼びます。URL の `#token=` を読んで URL から消し、sessionStorage に置きます。URL になければ sessionStorage に置いたものを返し、どちらにもなければ `null` を返します。`--no-auth` で起動したサーバーにつなぐときは、`token` を省略するか `null` にできます（トークン認証が有効なサーバーでは、HTTP は 401 で失敗し WebSocket は `rejected` になります）。
 
 ### 接続（読むだけ）
 
