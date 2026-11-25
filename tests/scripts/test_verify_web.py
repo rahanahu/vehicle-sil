@@ -413,8 +413,7 @@ class VerifyWebFilteringTest(unittest.TestCase):
                 return None
             return f"/fake/{cmd}"
 
-        def fake_run_step(step, step_env, _log, _junit=None) -> None:
-            self.last_env = dict(step_env)
+        def fake_run_step(step, _env, _log, _junit=None) -> None:
             ran.append((step.name, list(step.command)))
             step.ok = True
             step.code = 0

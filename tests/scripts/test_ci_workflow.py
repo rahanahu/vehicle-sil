@@ -179,25 +179,32 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
         expected_jobs = {
             "linux": (
                 "ccache-${{ matrix.preset }}-",
-                "ccache-${{ matrix.preset }}-${{ needs.changes.outputs.cpp_hash }}",
+                "ccache-${{ matrix.preset }}-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}",
             ),
             "linux-tsan": (
                 "ccache-linux-clang-tsan-",
-                "ccache-linux-clang-tsan-${{ needs.changes.outputs.cpp_hash }}",
+                "ccache-linux-clang-tsan-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}",
             ),
             "linux-oldest-cmake": (
                 "ccache-linux-oldest-cmake-",
-                "ccache-linux-oldest-cmake-${{ needs.changes.outputs.cpp_hash }}",
+                "ccache-linux-oldest-cmake-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}",
             ),
             "windows": (
                 "ccache-windows-mingw-release-",
                 "ccache-windows-mingw-release-"
-                "${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}",
+                "${{ steps.msys2-key.outputs.hash }}-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}",
             ),
         }
         for job_name, (prefix, expected_key) in expected_jobs.items():
             steps = JOBS[job_name]["steps"]
-            restore = next(s for s in steps if s.get("id") == "ccache-restore")
+            compiler_idx = next(i for i, s in enumerate(steps) if s.get("id") == "compiler-ver")
+            restore_idx = next(i for i, s in enumerate(steps) if s.get("id") == "ccache-restore")
+            self.assertLess(compiler_idx, restore_idx, f"{job_name}: compiler-ver must run before ccache-restore")
+            compiler_run = steps[compiler_idx]["run"]
+            self.assertIn("--version", compiler_run, job_name)
+            self.assertIn("sha256sum", compiler_run, job_name)
+
+            restore = steps[restore_idx]
             self.assertTrue(str(restore.get("uses", "")).startswith("actions/cache/restore@"), job_name)
             self.assertEqual(restore["with"]["key"], expected_key, job_name)
             self.assertNotIn("runner-img", expected_key, job_name)
@@ -213,6 +220,27 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
             self.assertIn("github.ref == 'refs/heads/main'", save_if, job_name)
             self.assertIn("steps.ccache-restore.outputs.cache-hit != 'true'", save_if, job_name)
             self.assertEqual(saves[0]["with"]["key"], expected_key, job_name)
+
+    def test_apt_and_msys2_caches_keep_runner_image_version_key(self):
+        checked_keys: list[str] = []
+        for wf_name, wf in (("ci.yml", WORKFLOW), ("release.yml", RELEASE_WORKFLOW)):
+            for job_name, job in wf["jobs"].items():
+                for step in job.get("steps", []):
+                    uses = str(step.get("uses", ""))
+                    if not uses.startswith("actions/cache"):
+                        continue
+                    key = str((step.get("with") or {}).get("key", ""))
+                    if key.startswith(("apt-", "msys64-")):
+                        checked_keys.append(f"{wf_name}:{job_name}:{key}")
+                        self.assertIn(
+                            "steps.runner-img.outputs.version",
+                            key,
+                            f"{wf_name}:{job_name} cache key {key!r} must retain runner-img version",
+                        )
+        # Ensure we actually verified both apt-* and msys64-* keys across workflows.
+        self.assertTrue(any(":apt-" in k for k in checked_keys), checked_keys)
+        self.assertTrue(any(":msys64-" in k for k in checked_keys), checked_keys)
+        self.assertGreaterEqual(len(checked_keys), 10, checked_keys)
 
     def test_linux_registration_checks_cover_serve_grpc_and_schema_on_control(self):
         steps = JOBS["linux"]["steps"]
@@ -294,6 +322,37 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
                     {"event": "workflow_dispatch", "status": "completed", "conclusion": "success"},
                 ],
                 "in_progress/, completed/success",
+            ),
+            (
+                "non-completed run with success conclusion still fails",
+                [
+                    {"event": "push", "status": "in_progress", "conclusion": "success"},
+                ],
+                "in_progress/success",
+            ),
+            (
+                "cancelled push with failed workflow_dispatch reports failure without cancelled marker",
+                [
+                    {"event": "workflow_dispatch", "status": "completed", "conclusion": "failure"},
+                    {"event": "push", "status": "completed", "conclusion": "cancelled"},
+                ],
+                "completed/failure",
+            ),
+            (
+                "cancelled push with timed_out workflow_dispatch reports timed_out without cancelled marker",
+                [
+                    {"event": "workflow_dispatch", "status": "completed", "conclusion": "timed_out"},
+                    {"event": "push", "status": "completed", "conclusion": "cancelled"},
+                ],
+                "completed/timed_out",
+            ),
+            (
+                "cancelled push with queued workflow_dispatch reports queued without cancelled marker",
+                [
+                    {"event": "workflow_dispatch", "status": "queued", "conclusion": None},
+                    {"event": "push", "status": "completed", "conclusion": "cancelled"},
+                ],
+                "queued/",
             ),
         ]
         for desc, payload, expected in cases:

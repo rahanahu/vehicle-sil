@@ -388,13 +388,23 @@ jobs:
           path: ~/.cache/grpc-src
           key: grpc-src-${{ steps.grpc-ver.outputs.version }}
       # The compiler cache: SIL Kit and everything else compiles once per cache, then comes from here.
-      # Omit runner ImageVersion from ccache keys because ccache hashes compiler identity internally;
-      # runner patch rollouts otherwise split keys and duplicate uploads on non-C++ merges.
+      # Hash the compiler version instead of runner ImageVersion so runner patch rollouts with the same
+      # compiler do not duplicate uploads, while actual compiler upgrades still rotate the cache key.
+      - name: Compiler version hash
+        id: compiler-ver
+        run: |
+          case "${{ matrix.preset }}" in
+            linux-clang-*) cc=clang++ ;;
+            *) cc=g++ ;;
+          esac
+          hash=$("$cc" --version | sed -n '1p' | sha256sum | cut -c1-12)
+          test -n "$hash"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-${{ matrix.preset }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-${{ matrix.preset }}-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-${{ matrix.preset }}-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -508,7 +518,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-${{ matrix.preset }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-${{ matrix.preset }}-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -581,11 +591,17 @@ jobs:
       # The sanitizers cannot map their shadow memory when the kernel randomizes addresses with more bits.
       - name: Address space layout for the sanitizer
         run: sudo sysctl -w vm.mmap_rnd_bits=28 && clang++ --version | head -n 1
+      - name: Compiler version hash
+        id: compiler-ver
+        run: |
+          hash=$(clang++ --version | sed -n '1p' | sha256sum | cut -c1-12)
+          test -n "$hash"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-linux-clang-tsan-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-clang-tsan-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-linux-clang-tsan-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -609,7 +625,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-clang-tsan-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-clang-tsan-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
       - name: Warn on PR TSan failure
         if: failure() && github.event_name == 'pull_request'
         run: |
@@ -699,11 +715,17 @@ jobs:
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
       # Dedicated compiler cache for CMake 3.21.7 (CMake 3.21 vs 3.28+ flag/CMP0128 diffs miss the 3.28+ Release cache).
+      - name: Compiler version hash
+        id: compiler-ver
+        run: |
+          hash=$(g++ --version | sed -n '1p' | sha256sum | cut -c1-12)
+          test -n "$hash"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-linux-oldest-cmake-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-oldest-cmake-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-linux-oldest-cmake-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -726,7 +748,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-oldest-cmake-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-oldest-cmake-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -833,11 +855,17 @@ jobs:
           'MSYSTEM=UCRT64' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Where ccache keeps its files
         run: echo "CCACHE_DIR=$(cygpath -m "$GITHUB_WORKSPACE/.ccache")" >> "$GITHUB_ENV"
+      - name: Compiler version hash
+        id: compiler-ver
+        run: |
+          hash=$(g++ --version | sed -n '1p' | sha256sum | cut -c1-12)
+          test -n "$hash"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-windows-mingw-release-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-windows-mingw-release-${{ steps.msys2-key.outputs.hash }}-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-windows-mingw-release-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -876,7 +904,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-windows-mingw-release-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-windows-mingw-release-${{ steps.msys2-key.outputs.hash }}-${{ steps.compiler-ver.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

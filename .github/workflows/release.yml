@@ -429,9 +429,11 @@ jobs:
           state=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
             --json event,status,conclusion --jq 'map(select(.event == "push" or .event == "workflow_dispatch"))
             | if length == 0 then "no run"
-              else (map(select(.conclusion != "cancelled"))
-                    | if length > 0 and all(.[]; .conclusion == "success") then "success" else null end)
-                   // (map(.status + "/" + (.conclusion // "")) | join(", "))
+              else (map(select(.status != "completed" or .conclusion != "cancelled")) as $active
+                    | if ($active | length) == 0 then (map(.status + "/" + (.conclusion // "")) | join(", "))
+                      elif all($active[]; .status == "completed" and .conclusion == "success") then "success"
+                      else ($active | map(.status + "/" + (.conclusion // "")) | join(", "))
+                      end)
               end')
           if [ "$state" != success ]; then
             case "$state" in

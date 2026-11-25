@@ -137,7 +137,7 @@ export default async function startFakeGuiServer(config: FullConfig): Promise<()
 }
 
 /** verify-gui.py が事前に uv sync 済み（または --no-sync 指定）のときだけ uv run の再同期を省く。 */
-function uvNoSyncArgs(): string[] {
+export function uvNoSyncArgs(): string[] {
   return process.env['VEHICLE_SIL_GUI_UV_NO_SYNC'] === '1' ? ['--no-sync'] : [];
 }
 
