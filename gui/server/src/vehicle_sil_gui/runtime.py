@@ -286,6 +286,7 @@ class ServeRunHandle:
         proc = self._resident.proc
         return (
             not self._ended
+            and self._resident.current_run is self
             and self._run_id is not None
             and proc.returncode is None
             and proc.stdin is not None

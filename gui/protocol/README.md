@@ -464,16 +464,17 @@ If the launcher exits without writing `result`, the summary has `launcher.runnin
 | | `starting` | A run is starting (`api/run` has not answered) and no run is running |
 | | `launcher-unusable` | The launcher that was found cannot be used (`launcher.problems` of `api/app`). It is as the last probe found it |
 | `stop` | `shutting-down` | The server is ending, and stops the run itself |
+| | `starting` | A run is starting (`api/run` has not answered); `api/stop-session` rejects requests with `409 session-changed` until the new run is identified |
 | | `not-running` | There is no run that has a launcher running |
 | | `already-stopping` | A stop was already asked for (`stop` is `requested` or `forced`) |
-| `force` | `shutting-down`, `not-running` | As for `stop` |
+| `force` | `shutting-down`, `starting`, `not-running` | As for `stop` |
 | | `already-forced` | The stop was already forced |
 | `save` | `shutting-down` | The server is ending |
 | | `save-disabled` | The server was started with `--no-save` |
 
 - `caution` of `save` is `null`, or `{code, message}` when the server saves but there is something to know first (the same shape as `caution` of the launcher's `allowed`). Its one code is `command-changes-allowed`: the server was started with `--allow-command-changes`, so it saves an edit that changes the commands that run, and new files. A screen shows the message near its save button. Whether one edit is saved is decided per request (`POST api/config`), not in `allowed`.
 
-- Only the first reason that holds is given, in the order of the table. While a run is starting, `stop` and `force` are `ok`: the request waits and applies when the launcher has started ("Stop (`api/stop-session`)").
+- Only the first reason that holds is given, in the order of the table. While a run is starting, `stop` and `force` have `ok: false` with `reason: "starting"`: wait until `api/run` returns `{instance, run_id}` before calling `api/stop-session` ("Stop (`api/stop-session`)").
 - What the launcher accepts (pause, step, speed, writes) is not here: it is `allowed` of `launcher_state`, as the launcher wrote it. `ok` there means the launcher would accept the command, not that it would change anything (a `pause` is `ok` while paused).
 - **When it is sent**: `allowed` goes out with each `session` message, as it is at that moment. When it changes and no `session` message follows to carry that change, the server sends the `allowed` message instead: a start begins (`starting`), a start fails and `start` is `ok` again, and the server begins to end (`shutting-down`). It does not send the `allowed` message when a `session` message carries the change (a run is registered, a stop is requested, the run ends). The `allowed` message is small, carries `stream_seq`, and is never dropped for a slow connection. A reader that does not know the message type ignores it (see "Versioning and compatibility"), and then still has `allowed` from `hello`, `api/session` and each summary.
 - With no run there is no summary, and `allowed` of `hello`, `api/session` and the `allowed` message is all there is.
