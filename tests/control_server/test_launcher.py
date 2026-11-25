@@ -41,6 +41,7 @@ from vehicle_sil_control._stubs import pb, rpc
 _COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
 if _COMMON_DIR not in sys.path:
     sys.path.insert(0, _COMMON_DIR)
+from free_port import free_port  # noqa: E402
 from timeout_scale import scaled, timeout_scale  # noqa: E402
 
 EXE = ".exe" if os.name == "nt" else ""
@@ -988,9 +989,7 @@ class LauncherTest(unittest.TestCase):
         # one, with IDs the same way). gRPC connects the Controls made for the first run again by
         # itself to the second server there: the one bound to the first run is refused for every
         # call but Ping; the one bound to no run reaches the second run (run does not require it).
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as free:
-            free.bind(("127.0.0.1", 0))
-            port = free.getsockname()[1]
+        port = free_port()
         address = f"127.0.0.1:{port}"
         with self.launch("fixed_first", stop_at_ms=600_000, start_paused=True, address=str(port)) as first:
             self.assertEqual(first.address, address)

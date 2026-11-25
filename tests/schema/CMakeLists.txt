@@ -14,14 +14,16 @@ if(_schema_python STREQUAL "")
 endif()
 
 if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicle_sil_dashboard_ecu)
+  _vehicle_sil_scaled_ctest_timeout(_schema_launcher_timeout 300)
   add_test(NAME schema.files_and_launcher
            COMMAND "${_schema_python}" -B ${CMAKE_CURRENT_SOURCE_DIR}/test_schemas.py)
   set_tests_properties(schema.files_and_launcher PROPERTIES
-    LABELS launch TIMEOUT 300 COST 15
+    LABELS launch TIMEOUT ${_schema_launcher_timeout} COST 15
     ENVIRONMENT "VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..")
 else()
   # Without the launcher or the examples: the files only.
+  _vehicle_sil_scaled_ctest_timeout(_schema_files_timeout 120)
   add_test(NAME schema.files
            COMMAND "${_schema_python}" -B ${CMAKE_CURRENT_SOURCE_DIR}/test_schemas.py)
-  set_tests_properties(schema.files PROPERTIES LABELS launch TIMEOUT 120)
+  set_tests_properties(schema.files PROPERTIES LABELS launch TIMEOUT ${_schema_files_timeout})
 endif()

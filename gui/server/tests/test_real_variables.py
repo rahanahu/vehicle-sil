@@ -413,7 +413,7 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
     import asyncio
     import aiohttp
     from aiohttp.test_utils import TestServer
-    from conftest import Gui
+    from conftest import Gui, free_port
     from vehicle_sil_gui.launcher import Launcher
     from vehicle_sil_gui.runtime import ServeRuntime
     from vehicle_sil_gui.server import GuiServer, Options
@@ -446,10 +446,7 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
             await rt_direct.shutdown(asyncio.Event(), 2.0)
 
         # 2. GuiServer run without prepare() -> post-run Unprepared -> execution_status() projects Hot ready.
-        import socket
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
+        port = free_port()
 
         server = GuiServer(Options(
             root=configs,
@@ -511,7 +508,7 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
     import sys
     import aiohttp
     from aiohttp.test_utils import TestServer
-    from conftest import Gui, alive, until_async
+    from conftest import Gui, alive, free_port, until_async
     from vehicle_sil_gui.launcher import Launcher, stop_command_line
     from vehicle_sil_gui.runtime import ServeRuntime
     from vehicle_sil_gui.server import GuiServer, Options
@@ -547,10 +544,7 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
         launcher = Launcher(Path(LAUNCHER))
         await launcher.probe()
 
-        import socket
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
+        port = free_port()
 
         server = GuiServer(Options(
             root=configs,
@@ -645,7 +639,7 @@ def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_pa
     import asyncio
     import aiohttp
     from aiohttp.test_utils import TestServer
-    from conftest import Gui
+    from conftest import Gui, free_port, scaled
     from vehicle_sil_gui.launcher import Launcher
     from vehicle_sil_gui.server import GuiServer, Options
 
@@ -656,10 +650,7 @@ def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_pa
         launcher = Launcher(Path(LAUNCHER))
         await launcher.probe()
 
-        import socket
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
+        port = free_port()
 
         server = GuiServer(Options(
             root=configs,
@@ -693,7 +684,7 @@ def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_pa
             assert st == 200, started
             sid = started["run_id"]
 
-            await asyncio.wait_for(entered.wait(), timeout=15.0)
+            await asyncio.wait_for(entered.wait(), timeout=scaled(15.0))
             assert server.session is not None and server.session.state == "running"
             assert server.session.launcher_running is True
 

@@ -596,7 +596,8 @@ class VerifyGuiFilteringTest(unittest.TestCase):
                 return None
             return f"/fake/{cmd}"
 
-        def fake_run_step(step, _env, _log, _junit=None) -> None:
+        def fake_run_step(step, step_env, _log, _junit=None) -> None:
+            self.last_env = dict(step_env)
             ran.append((step.name, list(step.command)))
             step.ok = True
             step.code = 0
@@ -728,6 +729,7 @@ class VerifyGuiFilteringTest(unittest.TestCase):
         self.assertEqual([name for name, _ in ran], ["sync", "server", "web", "example", "real"])
         # Waits before server (index 1), example (index 3), real (index 4); NOT before sync (0) or web (2)
         self.assertEqual(waited, ["before:1", "before:3", "before:4"])
+        self.assertEqual(self.last_env.get("VEHICLE_SIL_GUI_UV_NO_SYNC"), "1")
 
     def test_stale_launcher_prints_non_fatal_warning(self) -> None:
         fake_root = self.dir / "repo"

@@ -16,6 +16,7 @@ for d in (COMMON, SERVE):
     if d not in sys.path:
         sys.path.insert(0, d)
 
+import free_port  # noqa: E402
 import serve_support  # noqa: E402
 import timeout_scale  # noqa: E402
 
@@ -106,6 +107,19 @@ class TimeoutScaleTest(unittest.TestCase):
     def test_serve_support_scaled_uses_factor(self) -> None:
         with mock.patch.object(serve_support, "SCALE", 3.0):
             self.assertEqual(serve_support.scaled(5.0), 15.0)
+
+    def test_free_port_returns_bindable_port_below_ephemeral_range(self) -> None:
+        self.assertIs(serve_support.free_port, free_port.free_port)
+        port = free_port.free_port()
+        self.assertGreater(port, 0)
+        self.assertLessEqual(port, 65535)
+        try:
+            low = int(pathlib.Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split()[0])
+        except (OSError, ValueError, IndexError):
+            low = None
+        if low is not None and low - 20000 >= 1000:
+            self.assertGreaterEqual(port, 20000)
+            self.assertLess(port, low)
 
 
 if __name__ == "__main__":

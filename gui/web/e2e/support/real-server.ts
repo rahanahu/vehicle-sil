@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { REPOSITORY, startGuiServer } from './gui-server';
+import { REPOSITORY, startGuiServer, uvNoSyncArgs } from './gui-server';
 import { scaled } from './timeouts';
 
 export default async function startRealGuiServer(): Promise<() => Promise<void>> {
@@ -23,6 +23,7 @@ export default async function startRealGuiServer(): Promise<() => Promise<void>>
       'uv',
       [
         'run',
+        ...uvNoSyncArgs(),
         '--project',
         REPOSITORY,
         'python',

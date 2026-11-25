@@ -73,7 +73,7 @@ add_test(NAME serve.basic_equivalence
            test_serve_basic.ServeBasicAcceptanceTest.test_02_cold_equivalence_aba_protocols_faults_and_binary_swap
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.basic_equivalence PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} COST 15
+  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} ${_vehicle_sil_tsan_processors} COST 15
   ENVIRONMENT "VEHICLE_SIL_SERVE_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/scratch_basic_equivalence;${_serve_common_env}")
 
 add_test(NAME serve.basic_extensions
@@ -82,7 +82,7 @@ add_test(NAME serve.basic_extensions
            test_serve_basic.ServeBasicAcceptanceTest.test_11_prepare_status_stop_force_and_inline_intent_equivalence
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.basic_extensions PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} COST 15
+  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} ${_vehicle_sil_tsan_processors} COST 15
   ENVIRONMENT "VEHICLE_SIL_SERVE_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/scratch_basic_extensions;${_serve_common_env}")
 
 # #3 (stale stdin), #4 (event window isolation & log-dir), #6 (idle signals & run/SIGINT race),
@@ -98,7 +98,7 @@ add_test(NAME serve.isolation
            test_serve_isolation.ServeIsolationAcceptanceTest.test_09_trace_refused_and_bounded_resources
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.isolation PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} COST 25
+  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} ${_vehicle_sil_tsan_processors} COST 25
   ENVIRONMENT "VEHICLE_SIL_SERVE_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/scratch_isolation_runs;${_serve_common_env}")
 
 add_test(NAME serve.isolation_signals
@@ -106,7 +106,7 @@ add_test(NAME serve.isolation_signals
            test_serve_isolation.ServeIsolationAcceptanceTest.test_06_idle_signals_eof_stdout_closed_and_run_sigint_race
          WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 set_tests_properties(serve.isolation_signals PROPERTIES
-  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} COST 30
+  LABELS "serve;launch;integration;python" TIMEOUT ${_serve_long_timeout} ${_vehicle_sil_tsan_processors} COST 30
   ENVIRONMENT "VEHICLE_SIL_SERVE_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/scratch_isolation_signals;${_serve_common_env}")
 
 # #11: Windows-specific handle/thread/Job Object/CTRL_BREAK/fixed-port gRPC acceptance test.
@@ -139,7 +139,7 @@ if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
              COMMAND "${_serve_grpc_python}" -m unittest -v test_serve_grpc
              WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(serve.grpc PROPERTIES
-      LABELS "serve;control;control_server;launch;integration;python" TIMEOUT ${_serve_grpc_timeout}
+      LABELS "serve;control;control_server;launch;integration;python" TIMEOUT ${_serve_grpc_timeout} ${_vehicle_sil_tsan_processors}
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_serve_stubs};VEHICLE_SIL_SERVE_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/scratch_grpc;${_serve_common_env}")
   endif()
 endif()
