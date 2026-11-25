@@ -137,7 +137,7 @@ flowchart LR
 | `targets[].detail` | 文の行で名前の後にある内容で、部分は `; ` で区切ります。 |
 | `targets[].usable` | ブリッジがデバイスを使えないときは `false` で、`reason` が理由を言います。 |
 | `targets[].reason` | デバイスを使えない理由で、使えるときは `null` です。 |
-| `targets[].in_use`、`in_use_by`、`in_use_count` | いま vehicle-sil のブリッジがデバイスを使っているかで、そのブリッジが置いた印から分かります。`in_use_by` はプロセス ID を昇順に並べたもの（Windows では空）、`in_use_count` はブリッジの数です（Windows でも入ります）。そのとき `detail` の最後に `in use by a vehicle-sil bridge (process 4321)` が付きます。`usable` は変わりません。一覧は印を置きません。「[別のブリッジが使っているデバイス](#別のブリッジが使っているデバイス)」。 |
+| `targets[].in_use`、`in_use_by`、`in_use_count` | いま vehicle-sil のブリッジがデバイスを使っているかで、そのブリッジが置いた印から分かります。`in_use_by` はプロセス ID を昇順に並べたもの（Windows では空）、`in_use_count` はブリッジの数です（Windows でも入ります）。そのとき `detail` の最後に `in use by a vehicle-sil bridge` が付き、Linux ではプロセス ID も付きます（`in use by a vehicle-sil bridge (process 4321)`）。`usable` は変わりません。一覧は印を置きません。「[別のブリッジが使っているデバイス](#別のブリッジが使っているデバイス)」。 |
 | `targets[].ethernet`、`targets[].can` | バックエンドが報告するデバイスの内容です。キーは各ブリッジのページにあります。 |
 | `notes` | 文の最後の行の説明で、1 つにつき 1 文です。ほとんどは空です。 |
 | `error` | `null`、または一覧を作れなかったときのエラーです。 |

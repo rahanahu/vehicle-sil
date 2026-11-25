@@ -137,7 +137,7 @@ A bridge started by `--connect` must say its version: the launcher compares `veh
 | `targets[].detail` | What the line of the text says after the name, its parts separated by `; `. |
 | `targets[].usable` | `false` where the bridge cannot use the device; `reason` then says why. |
 | `targets[].reason` | Why the device cannot be used, or `null`. |
-| `targets[].in_use`, `in_use_by`, `in_use_count` | Whether vehicle-sil bridges use the device now, from their device marks: `in_use_by` the process IDs in ascending order (empty on Windows), `in_use_count` how many bridges (also on Windows). `detail` then ends with `in use by a vehicle-sil bridge (process 4321)`. `usable` does not change. A list places no mark. See "[Device in use by another bridge](#device-in-use-by-another-bridge)". |
+| `targets[].in_use`, `in_use_by`, `in_use_count` | Whether vehicle-sil bridges use the device now, from their device marks: `in_use_by` the process IDs in ascending order (empty on Windows), `in_use_count` how many bridges (also on Windows). `detail` then ends with `in use by a vehicle-sil bridge`, on Linux with the process IDs (`in use by a vehicle-sil bridge (process 4321)`). `usable` does not change. A list places no mark. See "[Device in use by another bridge](#device-in-use-by-another-bridge)". |
 | `targets[].ethernet`, `targets[].can` | What the backend reports of the device. The keys are in the page of the bridge. |
 | `notes` | Explanations of the text's last line, one sentence each. Mostly empty. |
 | `error` | `null`, or the error when the list could not be made. |

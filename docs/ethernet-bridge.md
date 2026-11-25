@@ -361,7 +361,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-An interface that vehicle-sil bridges use now ends its line with `; in use by a vehicle-sil bridge (process 4321)` (see "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)" in bridge-contract.md). For `npcap` (the default on Windows) and `pcap`, it prints the interfaces that the pcap library returns.
+An interface that vehicle-sil bridges use now ends its line with `; in use by a vehicle-sil bridge`, on Linux with the process IDs (`; in use by a vehicle-sil bridge (process 4321)`; see "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)" in bridge-contract.md). For `npcap` (the default on Windows) and `pcap`, it prints the interfaces that the pcap library returns.
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -440,7 +440,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 | `tool` | `vehicle_sil_ethernet_bridge`. |
 | `backend` | The backend the list is for: `--backend`, or the default. |
 | `source` | `npcap`, `pcap`: the version the library reports. `packet`, `tap`: `null`. |
-| `targets[].detail` | `detail` also ends with `in use by a vehicle-sil bridge (process 4321)` for a device in use. |
+| `targets[].detail` | `detail` also ends with `in use by a vehicle-sil bridge` for a device in use, on Linux with the process IDs (`(process 4321)`). |
 | `targets[].ethernet` | What the backend reports. `npcap`, `pcap`: `pcap_name`, `connection` and `description` (`null` where there is none), `up`, `connected` (`null` where the library does not say), `loopback`, `wireless`. `packet`, `tap`: `name`, `ethernet`, `link_type`, `up`. |
 | `notes` | The explanations of the text's last line, one sentence each (Npcap that offers no network adapter); otherwise empty. |
 

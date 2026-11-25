@@ -453,6 +453,8 @@ outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at
 
 ブリッジ自身の警告（`warning: ... is also used by another vehicle-sil bridge ...`）は、リンクの行と同じく、実行の出力には出しません。ブリッジのログファイル（`--log-dir`）には残ります。
 
+J1939 では、2 つの実行のノードが互いのアドレスの要求にも加わります。一方の実行のノードがもう一方のノードと同じアドレスにいると、NAME が小さくないほうがアドレスを失います。NAME も同じとき（1 つの構成を 2 回実行したとき）は、後から始まったノードの要求を受けた、先にいたほうが失います。失ったノードは、その実行が終わるまで何も送りません（Cannot Claim。internals/j1939.md の「[競合](internals/j1939.md#競合)」）。`run` はこれを知らせません。Control API と GUI には、イベント `j1939.N.node<i>: cannot_claim at address 254` が出ます。両方を走らせるには、ノードに別のアドレスを付けるか（simulation-config.md の「[J1939 のアドレスと NAME を合わせる](simulation-config.md#j1939-のアドレスと-name-を合わせるj1939_nodes)」）、実行ごとに別のデバイスにつなぎます。
+
 | いつ | `--strict` なし | `--strict` あり |
 |---|---|---|
 | ブリッジが起きた時点で、デバイスが共有されている | 実行は続きます。ECU を起こす前に、ブリッジの最初のリンクの行から `run` が言います（ログの行と `outside` の状態。待ち方は `--strict` と同じ） | `run` は ECU を起こさずに実行を終わらせます。誤り `outside-device-shared`、結果は `failed`。各ブリッジの最初のリンクの行（ブリッジのライフサイクルの前に出ます）を 2 秒まで待ちます。その間に書かなかったブリッジは、何も共有していないものとして扱います |

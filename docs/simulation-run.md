@@ -453,6 +453,8 @@ outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at
 
 The bridge's own warning about it (`warning: ... is also used by another vehicle-sil bridge ...`) is not shown in the run's output, as the link line is not; the bridge's log file (`--log-dir`) has it.
 
+With J1939, the nodes of the two runs also take part in each other's address claims. When a node of one run has the address of a node of the other, the one whose NAME is not lower loses its address; with the same NAME (one configuration run twice), the node that was there first loses it, because it receives the claim of the node that starts later. It then sends nothing more until its run ends (Cannot Claim; see "[Contention](internals/j1939.md#contention)" in internals/j1939.md). `run` does not report it; the Control API and the GUI show the event `j1939.N.node<i>: cannot_claim at address 254`. To run both, give their nodes other addresses (see "[Matching J1939 addresses and NAMEs](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)" in simulation-config.md), or connect each run to a device of its own.
+
 | When | Without `--strict` | With `--strict` |
 |---|---|---|
 | The device is shared when the bridges have started | The run goes on. `run` says it (the log line and the state `outside`) before it starts the ECUs, from the first link line of the bridge, with the same wait as `--strict` | `run` starts no ECU and ends the run: the error `outside-device-shared`, result `failed`. It waits up to 2 s for the first link line of each bridge, which comes before the bridge's lifecycle; a bridge that has not written it by then is taken as one that shares nothing |
