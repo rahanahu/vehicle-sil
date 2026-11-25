@@ -49,8 +49,8 @@ def test_a_scenario_run_records_its_timeline_and_the_server_serves_it(tmp_path: 
 
         async def talk(c: Client) -> None:
             session, run_start = await run_to_end(c, {"file": "simulation.yaml", "scenario": FAIL})
-            assert "timeline" in run_start
-            path = Path(run_start["timeline"])
+            assert "timeline" not in run_start
+            path = Path(session["result"]["scenario"]["timeline"])
             assert path.is_absolute() and path.parent.name.startswith("vehicle-sil-gui-timelines-")
             where.append(path.parent)
             url = session["scenario"]["timeline_url"]
@@ -70,7 +70,7 @@ def test_a_scenario_run_records_its_timeline_and_the_server_serves_it(tmp_path: 
 
             # Another run: a run without a scenario has none; an id the server never gave has none
             other, run_start_other = await run_to_end(c, {"file": "simulation.yaml", "stop_at_ms": 1000})
-            assert "timeline" not in run_start_other and other["scenario"] is None
+            assert "timeline" not in run_start_other and other["scenario"] is None and "scenario" not in other["result"]
             for wrong in (other["id"], "999", "x", "-1", "1e3", "１"):
                 status, body = await c.get(f"api/timeline/{wrong}")
                 assert (status, body["error"]["code"]) == (404, "no-timeline"), (wrong, body)
@@ -88,6 +88,7 @@ def test_a_launcher_without_the_feature_is_given_no_timeline(tmp_path: Path) -> 
         async def talk(c: Client) -> None:
             session, run_start = await run_to_end(c, {"file": "simulation.yaml", "scenario": PASS})
             assert "timeline" not in run_start
+            assert "timeline" not in session["result"]["scenario"]
             assert session["scenario"]["status"] == "passed" and session["scenario"]["timeline_url"] is None
             status, body = await c.get(api_path(session["id"]))
             assert (status, body["error"]["code"]) == (404, "no-timeline")

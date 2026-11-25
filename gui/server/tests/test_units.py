@@ -1532,3 +1532,122 @@ def test_serve_runtime_projected_status_covers_all_cpp_launcher_states(tmp_path:
     rt._resident = None
     rt._once_status = ("a.yaml", "resident-failed", "boom")
     assert rt.status() == {"mode": "cold", "state": "cold", "config": "a.yaml", "reason": "resident-failed", "message": "boom"}
+
+
+def test_events_v4_validators_reject_contract_drift() -> None:
+    from fake_runtime import validate_events_v4_event, validate_version_json
+
+    valid_version = {
+        "vehicle_sil_launch": 1,
+        "vehicle_sil": "0.4.0-rc.1",
+        "formats": {"check": 1, "run": 2, "events": 4, "describe": 1, "test": 1, "timeline": 1, "connections": 1},
+        "features": ["events", "serve"],
+    }
+    validate_version_json(valid_version)
+    bad_formats = {**valid_version, "formats": {**valid_version["formats"], "run_request": 1}}
+    del bad_formats["formats"]["describe"]
+    with pytest.raises(AssertionError):
+        validate_version_json(bad_formats)
+
+    valid_allowed = {"ok": True, "reason": None, "message": None, "caution": None}
+    valid_status = {
+        "event": "status", "seq": 1, "t_ms": 10, "id": None,
+        "instance": "feed000000000001", "status_rev": 0, "launcher_state": "unprepared",
+        "config": "sim.yaml", "eligibility": {"eligible": False, "reason": None, "message": None},
+        "launcher_allowed": {"prepare": dict(valid_allowed), "run": dict(valid_allowed)},
+        "active_run_id": None, "last_run_id": None, "run_state": None,
+    }
+    validate_events_v4_event(valid_status)
+    no_caution = {
+        **valid_status,
+        "launcher_allowed": {
+            "prepare": {"ok": True, "reason": None, "message": None},
+            "run": dict(valid_allowed),
+        },
+    }
+    with pytest.raises(AssertionError):
+        validate_events_v4_event(no_caution)
+
+    validate_events_v4_event({"event": "run_start", "seq": 2, "t_ms": 20, "run": "inst-1", "id": 1})
+    with pytest.raises(AssertionError):
+        validate_events_v4_event(
+            {"event": "run_start", "seq": 2, "t_ms": 20, "run": "inst-1", "id": 1, "timeline": "/tmp/t.json"}
+        )
+
+    validate_events_v4_event({
+        "event": "command", "seq": 3, "t_ms": 30, "run": "inst-1",
+        "command": "stop", "source": "stdin", "accepted": True, "message": None, "reason": None, "id": 2,
+    })
+    with pytest.raises(AssertionError):
+        validate_events_v4_event({
+            "event": "command", "seq": 3, "t_ms": 30, "run": "inst-1",
+            "command": "stop", "source": "stdin", "accepted": True, "id": 2,
+        })
+
+
+def test_stub_launcher_events_v4_contract_and_graceful_stop_idempotency(tmp_path: Path) -> None:
+    import subprocess
+    from conftest import CONFIGS, REPLAY
+    from fake_runtime import validate_events_v4_event, validate_version_json
+
+    env = {**os.environ, "REPLAY_HEARTBEAT_MS": "0", "REPLAY_NO_SLEEPERS": "1"}
+    ver_proc = subprocess.run([sys.executable, str(REPLAY), "version", "--json"],
+                              capture_output=True, text=True, timeout=15, check=True, env=env)
+    validate_version_json(json.loads(ver_proc.stdout))
+
+    # Two stop commands without force on ignore-stop.yaml stay graceful (requests=1) until explicit force=True.
+    req = tmp_path / "req.json"
+    req.write_text(json.dumps({"vehicle_sil_run_request": 1}), encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, str(REPLAY), "serve", "--", str(CONFIGS / "ignore-stop.yaml")],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+    )
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        hello = json.loads(proc.stdout.readline())
+        init_status = json.loads(proc.stdout.readline())
+        validate_events_v4_event(hello)
+        validate_events_v4_event(init_status)
+        assert init_status["launcher_state"] == "unprepared"
+        assert init_status["eligibility"] == {"eligible": False, "reason": None, "message": None}
+        assert init_status["launcher_allowed"]["run"]["ok"] is True
+
+        proc.stdin.write(json.dumps({"command": "run", "request": str(req), "id": 1}) + "\n")
+        proc.stdin.flush()
+        run_id = None
+        while True:
+            ev = json.loads(proc.stdout.readline())
+            validate_events_v4_event(ev)
+            if ev["event"] == "run_start":
+                run_id = ev["run"]
+            elif ev["event"] == "state" and ev.get("phase") == "running":
+                break
+        assert run_id is not None
+
+        for cid in (2, 3):
+            proc.stdin.write(json.dumps({"command": "stop", "run": run_id, "id": cid}) + "\n")
+            proc.stdin.flush()
+            while True:
+                ev = json.loads(proc.stdout.readline())
+                validate_events_v4_event(ev)
+                if ev["event"] == "state" and ev.get("phase") == "stopping":
+                    assert ev["stop"]["requests"] == 1, ev
+                    break
+
+        proc.stdin.write(json.dumps({"command": "stop", "run": run_id, "force": True, "id": 4}) + "\n")
+        proc.stdin.flush()
+        while True:
+            ev = json.loads(proc.stdout.readline())
+            validate_events_v4_event(ev)
+            if ev["event"] == "result":
+                assert ev["launcher_ends"] is False
+                assert ev["status"]["launcher_state"] == "unprepared"
+                assert ev["status"]["active_run_id"] is None
+                assert ev["status"]["last_run_id"] == run_id
+                break
+        proc.stdin.close()
+        assert proc.wait(timeout=15) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

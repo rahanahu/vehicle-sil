@@ -530,7 +530,7 @@ def _serve_main(argv: list[str]) -> int:
         cred_path = Path(argv[argv.index("--control-credentials") + 1])
     want_control = "--control" in argv and cred_path is not None
 
-    _, init_doc, init_fault = inspect_config(cfg, file_only=True)
+    _, _, init_fault = inspect_config(cfg, file_only=True)
     if init_fault == "deaf" and sys.platform == "linux":
         import fcntl
         try:
@@ -545,8 +545,8 @@ def _serve_main(argv: list[str]) -> int:
     run_counter = 0
     current_run: str | None = None
     last_run: str | None = None
-    elig_state = init_doc["hot_eligibility"]
-    launcher_state = "unprepared" if (elig_state["eligible"] or once) else "cold_only"
+    elig_state: dict = {"eligible": False, "reason": None, "message": None}
+    launcher_state = "unprepared"
     stop_requests = 0
 
     def next_ev(kind: str, **fields) -> dict:
@@ -556,10 +556,35 @@ def _serve_main(argv: list[str]) -> int:
         t_ms += 10
         return ev
 
+    def _allowed_entry(ok: bool, reason: str | None = None, message: str | None = None) -> dict:
+        return {"ok": ok, "reason": reason, "message": message, "caution": None}
+
     def status_payload(run_state: dict | None = None) -> dict:
-        busy = launcher_state in ("preparing", "running")
-        prep_ok = not busy and launcher_state not in ("ending", "contaminated")
-        run_ok = not busy and (elig_state.get("eligible", True) or once) and launcher_state not in ("cold_only", "ending", "contaminated")
+        if launcher_state == "contaminated":
+            msg = "the launcher is contaminated after an earlier run and cannot continue: start a new launcher"
+            prep_allowed = _allowed_entry(False, "contaminated", msg)
+            run_allowed = _allowed_entry(False, "contaminated", msg)
+        elif launcher_state == "ending":
+            msg = "the launcher has been asked to end and takes no run any more: start a new launcher for the next run"
+            prep_allowed = _allowed_entry(False, "launcher-ending", msg)
+            run_allowed = _allowed_entry(False, "launcher-ending", msg)
+        elif launcher_state in ("preparing", "running"):
+            suffix = f" ({current_run})" if current_run else ""
+            msg = f"a run or prepare is under way{suffix}: wait for it to finish (nothing is queued)"
+            prep_allowed = _allowed_entry(False, "busy", msg)
+            run_allowed = _allowed_entry(False, "busy", msg)
+        else:
+            prep_allowed = _allowed_entry(True)
+            if os.environ.get("VEHICLE_SIL_TRACE") and not once:
+                run_allowed = _allowed_entry(False, "trace-enabled", "serve does not run with VEHICLE_SIL_TRACE set")
+            elif launcher_state == "cold_only":
+                run_allowed = _allowed_entry(
+                    False,
+                    elig_state.get("reason") or "not-prepared",
+                    elig_state.get("message") or "configuration is not eligible for serve",
+                )
+            else:
+                run_allowed = _allowed_entry(True)
         return {
             "instance": instance,
             "status_rev": status_rev,
@@ -567,8 +592,8 @@ def _serve_main(argv: list[str]) -> int:
             "config": cfg,
             "eligibility": elig_state,
             "launcher_allowed": {
-                "prepare": {"ok": prep_ok, "reason": None if prep_ok else "busy", "message": None if prep_ok else "busy"},
-                "run": {"ok": run_ok, "reason": None if run_ok else (elig_state.get("reason") or "busy"), "message": None if run_ok else (elig_state.get("message") or "busy")},
+                "prepare": prep_allowed,
+                "run": run_allowed,
             },
             "active_run_id": current_run,
             "last_run_id": last_run,
@@ -578,7 +603,6 @@ def _serve_main(argv: list[str]) -> int:
     events_ver = 99 if init_fault == "future-events" else 4
     _emit(next_ev("hello", vehicle_sil_events=events_ver, vehicle_sil=_version(), pid=os.getpid(),
                   file=cfg, arguments=["serve", *argv[1:]], launcher=instance))
-    status_rev += 1
     _emit(next_ev("status", id=None, **status_payload()))
 
     cmd_queue: queue.Queue[dict | None] = queue.Queue()
@@ -606,6 +630,13 @@ def _serve_main(argv: list[str]) -> int:
     while True:
         cmd = cmd_queue.get()
         if cmd is None:
+            if launcher_state in ("unprepared", "cold_only", "ready"):
+                launcher_state = "ending"
+                status_rev += 1
+                try:
+                    _emit(next_ev("status", id=None, **status_payload()))
+                except BrokenPipeError:
+                    pass
             return 0
         cname = cmd.get("command")
         if cname == "status":
@@ -638,6 +669,14 @@ def _serve_main(argv: list[str]) -> int:
                           reason="not-running", asked_run=cmd.get("run"), id=cmd.get("id"),
                           message="no simulation is running"))
         elif cname == "run":
+            if launcher_state == "cold_only":
+                _emit(next_ev(
+                    "command", command="run", source="stdin", accepted=False,
+                    reason=elig_state.get("reason") or "not-prepared",
+                    message=elig_state.get("message") or "configuration is not eligible for serve",
+                    asked_run=None, id=cmd.get("id"),
+                ))
+                continue
             run_counter += 1
             run_id = f"{instance}-{run_counter}"
             current_run = run_id
@@ -654,8 +693,7 @@ def _serve_main(argv: list[str]) -> int:
                 except Exception:
                     req_dict = {}
 
-            rs_extra = {"timeline": timeline_file} if timeline_file else {}
-            _emit(next_ev("run_start", run=run_id, id=cmd.get("id"), **rs_extra))
+            _emit(next_ev("run_start", run=run_id, id=cmd.get("id")))
             state_rev = 1
             start_paused = bool(req_dict.get("start_paused", False))
             speed: float | str = req_dict.get("speed") if req_dict.get("speed") is not None else 1
@@ -672,6 +710,18 @@ def _serve_main(argv: list[str]) -> int:
             if delay_ms := int(os.environ.get("REPLAY_CHECK_DELAY_MS", "0")):
                 time.sleep(delay_ms / 1000.0)
 
+            def settle_run_status(*, ends: bool | None = None) -> dict:
+                nonlocal last_run, current_run, status_rev, launcher_state
+                will_end = once if ends is None else ends
+                last_run = run_id
+                current_run = None
+                status_rev += 1
+                if will_end:
+                    launcher_state = "ending"
+                else:
+                    launcher_state = "ready" if elig_state.get("eligible") else "unprepared"
+                return status_payload()
+
             chk_code, chk_doc, fault = inspect_config(cfg, req_dict, req_path=req_file, file_only=False)
             if fault == "overlong-check":
                 huge = dict(chk_doc, test_padding="x" * (17 * 1024 * 1024))
@@ -683,12 +733,8 @@ def _serve_main(argv: list[str]) -> int:
                 for f in chk_doc["findings"]:
                     _emit(next_ev("finding", run=run_id, **f))
                 _emit(next_ev("phase", run=run_id, phase="ended"))
-                last_run = run_id
-                current_run = None
-                status_rev += 1
-                launcher_state = "ending" if once else ("ready" if elig_state["eligible"] else "cold_only")
                 res_kind = "usage" if chk_doc["result"] == "usage" else "check_failed"
-                _emit(next_ev("result", run=run_id, launcher_ends=once, status=status_payload(), result={
+                _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(ends=once), result={
                     "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                     "result": res_kind, "end": res_kind, "ok": False, "simulation": "not_started",
                     "interrupted_by": None, "message": "check failed",
@@ -712,20 +758,12 @@ def _serve_main(argv: list[str]) -> int:
                     fault=fault,
                     cmd_queue=cmd_queue,
                     next_ev=next_ev,
-                    status_payload=status_payload,
+                    settle_run_status=settle_run_status,
                 )
             except BrokenPipeError:
                 return 0
             if rc is not None:
                 return rc
-            last_run = run_id
-            current_run = None
-            status_rev += 1
-            launcher_state = "ready" if elig_state["eligible"] else "cold_only"
-            try:
-                _emit(next_ev("status", id=None, **status_payload()))
-            except BrokenPipeError:
-                return 0
 
 
 def _result_participants(started_parts: list[dict]) -> list[dict]:
@@ -769,8 +807,13 @@ def _execute_run(
     fault: str | None,
     cmd_queue: queue.Queue[dict | None],
     next_ev,
-    status_payload,
+    settle_run_status,
 ) -> int | None:
+    def emit_accepted_command(command: str, cmd_id: object, **extra) -> None:
+        _emit(next_ev(
+            "command", run=run_id, command=command, source="stdin",
+            accepted=True, message=None, reason=None, id=cmd_id, **extra,
+        ))
     name = Path(cfg).name
     start_paused = bool(req_dict.get("start_paused", False))
     speed: float | str = req_dict.get("speed") if req_dict.get("speed") is not None else 1
@@ -1032,8 +1075,8 @@ def _execute_run(
                               reason="run-changed", asked_run=asked_run, id=cmd.get("id"), message="not current run"))
                 continue
             if cname == "stop":
-                stop_reqs = 2 if cmd.get("force") is True else (1 if stop_reqs < 1 else 2)
-                _emit(next_ev("command", run=run_id, command="stop", source="stdin", accepted=True, id=cmd.get("id")))
+                stop_reqs = max(stop_reqs, 2 if cmd.get("force") is True else 1)
+                emit_accepted_command("stop", cmd.get("id"))
                 _emit(next_ev("phase", run=run_id, phase="stopping"))
                 emit_state("stopping")
                 for sp in started_parts:
@@ -1047,7 +1090,7 @@ def _execute_run(
                 if ctrl_server is not None:
                     ctrl_server.set_time(sim_ms, False, running=False, ended=True)
                     ctrl_server.stop()
-                _emit(next_ev("result", run=run_id, launcher_ends=once, status=status_payload(), result={
+                _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
                     "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                     "result": "stopped", "end": "stopped", "ok": True,
                     "simulation": "not_started" if has_manual_wait else "ended",
@@ -1059,11 +1102,10 @@ def _execute_run(
                 }))
                 return 0 if once else None
             if holding and cname == "pause":
-                _emit(next_ev("command", run=run_id, command="pause", source="stdin", accepted=True,
-                              id=cmd.get("id"), at_ms=0))
+                emit_accepted_command("pause", cmd.get("id"), at_ms=0)
             elif holding and cname == "speed":
                 speed = cmd.get("value", speed)
-                _emit(next_ev("command", run=run_id, command="speed", source="stdin", accepted=True, id=cmd.get("id")))
+                emit_accepted_command("speed", cmd.get("id"))
                 emit_state("waiting")
             elif holding and cname == "step":
                 raw_ms = int(cmd.get("ms", time_step_ms))
@@ -1072,8 +1114,7 @@ def _execute_run(
                 holding = False
                 paused = True
                 paused_ms_total += 50
-                _emit(next_ev("command", run=run_id, command="step", source="stdin", accepted=True,
-                              id=cmd.get("id"), ms=step_ms, at_ms=step_ms))
+                emit_accepted_command("step", cmd.get("id"), ms=step_ms, at_ms=step_ms)
                 _emit(next_ev("phase", run=run_id, phase="running"))
                 sim_ms = step_ms
                 ctrl_step_to(sim_ms, is_paused=True)
@@ -1084,7 +1125,7 @@ def _execute_run(
                 holding = False
                 paused = False
                 paused_ms_total += 50
-                _emit(next_ev("command", run=run_id, command="resume", source="stdin", accepted=True, id=cmd.get("id")))
+                emit_accepted_command("resume", cmd.get("id"))
                 _emit(next_ev("phase", run=run_id, phase="running"))
                 ctrl_step_to(0, is_paused=False)
                 _emit(next_ev("time", run=run_id, sim_ms=0, actual_speed=1.0,
@@ -1121,9 +1162,9 @@ def _execute_run(
         os._exit(70)
     elif fault == "participant-crash":
         _emit(next_ev("log", run=run_id, source="Dashboard", line="error: something went wrong, exiting with code 3"))
+        _emit(next_ev("participant", run=run_id, name="Dashboard", state="ended", exit_code=3, signal=None))
         _emit(next_ev("participant", run=run_id, name="Dashboard", state="failed",
                       reason="process_ended", message="Dashboard exited with code 3"))
-        _emit(next_ev("participant", run=run_id, name="Dashboard", state="ended", exit_code=3, signal=None))
         for sp in started_parts:
             if sp["name"] == "Dashboard":
                 sp["state"] = "ended"
@@ -1142,10 +1183,10 @@ def _execute_run(
         cleanup_sleepers()
         if ctrl_server is not None:
             ctrl_server.stop()
-        _emit(next_ev("result", run=run_id, launcher_ends=once, status=status_payload(), result={
+        _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
             "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
             "result": "failed", "end": "failed", "ok": False, "simulation": "ended",
-            "interrupted_by": "Dashboard", "message": "The run failed: Dashboard exited with code 3",
+            "interrupted_by": None, "message": "The run failed: Dashboard exited with code 3",
             "errors": 1, "warnings": 0, "notes": 0, "check": chk_doc,
             "participants": _result_participants(started_parts), "findings": [f_err],
         }))
@@ -1212,7 +1253,7 @@ def _execute_run(
         _emit(next_ev("phase", run=run_id, phase="ended"))
         emit_state("ended")
         cleanup_sleepers()
-        _emit(next_ev("result", run=run_id, launcher_ends=True, status=status_payload(), result={
+        _emit(next_ev("result", run=run_id, launcher_ends=True, status=settle_run_status(ends=True), result={
             "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
             "result": "passed", "end": "completed", "ok": True, "simulation": "ended",
             "interrupted_by": None, "message": "The run reached its end without errors",
@@ -1228,7 +1269,7 @@ def _execute_run(
                 sp["exit_code"] = 0
         _emit(next_ev("phase", run=run_id, phase="ended"))
         emit_state("ended")
-        _emit(next_ev("result", run=run_id, launcher_ends=True, status=status_payload(), result={
+        _emit(next_ev("result", run=run_id, launcher_ends=True, status=settle_run_status(ends=True), result={
             "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
             "result": "passed", "end": "completed", "ok": True, "simulation": "ended",
             "interrupted_by": None, "message": "The run reached its end without errors",
@@ -1342,7 +1383,8 @@ def _execute_run(
                     return 0
                 cname = cmd.get("command")
                 if cname == "stop":
-                    _emit(next_ev("command", run=run_id, command="stop", source="stdin", accepted=True, id=cmd.get("id")))
+                    stop_reqs = max(stop_reqs, 2 if cmd.get("force") is True else 1)
+                    emit_accepted_command("stop", cmd.get("id"))
                     for sp in started_parts:
                         if sp["state"] == "started":
                             _emit(next_ev("participant", run=run_id, name=sp["name"], state="ended", exit_code=0, signal=None))
@@ -1361,7 +1403,7 @@ def _execute_run(
                     }
                     if timeline_file:
                         sc_res["timeline"] = timeline_file
-                    _emit(next_ev("result", run=run_id, launcher_ends=once, status=status_payload(), result={
+                    _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
                         "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                         "result": "stopped", "end": "stopped", "ok": True, "simulation": "ended",
                         "interrupted_by": "stop command", "message": "stopped by command",
@@ -1377,7 +1419,7 @@ def _execute_run(
                         paused = False
                     elif cname == "speed":
                         speed = cmd.get("value", speed)
-                    _emit(next_ev("command", run=run_id, command=cname, source="stdin", accepted=True, id=cmd.get("id")))
+                    emit_accepted_command(cname, cmd.get("id"))
                     emit_state("running")
         if is_fail_sc:
             msg = f"{scenario}, line 7: expected Engine.engine.speed == 9999"
@@ -1406,7 +1448,7 @@ def _execute_run(
             }
             if timeline_file:
                 sc_res["timeline"] = timeline_file
-            _emit(next_ev("result", run=run_id, launcher_ends=once, status=status_payload(), result={
+            _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
                 "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                 "result": "failed", "end": "failed", "ok": False, "simulation": "ended",
                 "interrupted_by": None, "message": f"The run failed: {msg}",
@@ -1489,14 +1531,8 @@ def _execute_run(
             continue
 
         if cname == "stop":
-            is_force = cmd.get("force") is True
-            if is_force:
-                stop_reqs = max(stop_reqs, 2)
-            elif cmd.get("force") is False:
-                stop_reqs = max(stop_reqs, 1)
-            else:
-                stop_reqs = 1 if stop_reqs < 1 else 2
-            _emit(next_ev("command", run=run_id, command="stop", source="stdin", accepted=True, id=cmd.get("id")))
+            stop_reqs = max(stop_reqs, 2 if cmd.get("force") is True else 1)
+            emit_accepted_command("stop", cmd.get("id"))
             if fault == "ignore-stop" and stop_reqs < 2:
                 ignoring_first_stop = True
                 _emit(next_ev("phase", run=run_id, phase="stopping"))
@@ -1509,7 +1545,7 @@ def _execute_run(
             for sp in started_parts:
                 if sp["state"] == "started":
                     if fault == "ignore-stop" and sp["name"] == "Logger":
-                        _emit(next_ev("participant", run=run_id, name="Logger", state="killed", exit_code=None, signal="SIGKILL"))
+                        _emit(next_ev("participant", run=run_id, name="Logger", state="killed"))
                         sp["state"] = "killed"
                         sp["signal"] = "SIGKILL"
                     else:
@@ -1534,7 +1570,7 @@ def _execute_run(
             if ctrl_server is not None:
                 ctrl_server.set_time(sim_ms, False, running=False, ended=True)
                 ctrl_server.stop()
-            _emit(next_ev("result", run=run_id, launcher_ends=once, status=status_payload(), result={
+            _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
                 "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                 "result": "stopped", "end": "stopped", "ok": True, "simulation": "ended",
                 "interrupted_by": "stop command", "message": "stopped by command",
@@ -1557,8 +1593,7 @@ def _execute_run(
             else:
                 paused = True
                 paused_ms_total += 50
-                _emit(next_ev("command", run=run_id, command="pause", source="stdin", accepted=True,
-                              id=cmd.get("id"), at_ms=sim_ms))
+                emit_accepted_command("pause", cmd.get("id"), at_ms=sim_ms)
                 if ctrl_server is not None:
                     ctrl_server.set_time(sim_ms, True)
                 _emit(next_ev("time", run=run_id, sim_ms=sim_ms, actual_speed=None,
@@ -1571,7 +1606,7 @@ def _execute_run(
             else:
                 paused = False
                 paused_ms_total += 50
-                _emit(next_ev("command", run=run_id, command="resume", source="stdin", accepted=True, id=cmd.get("id")))
+                emit_accepted_command("resume", cmd.get("id"))
                 if ctrl_server is not None:
                     ctrl_server.set_time(sim_ms, False)
                 emit_state("running")
@@ -1586,23 +1621,21 @@ def _execute_run(
                 step_ms = raw_ms if rem == 0 else raw_ms + (time_step_ms - rem)
                 sim_ms += step_ms
                 paused_ms_total += 50
-                _emit(next_ev("command", run=run_id, command="step", source="stdin", accepted=True,
-                              id=cmd.get("id"), ms=step_ms, at_ms=sim_ms))
+                emit_accepted_command("step", cmd.get("id"), ms=step_ms, at_ms=sim_ms)
                 ctrl_step_to(sim_ms, is_paused=True)
                 _emit(next_ev("time", run=run_id, sim_ms=sim_ms, actual_speed=None,
                               late_steps=0, max_late_ms=0, slipped_ms=0, late_ms=0))
                 emit_state("running")
         elif cname == "speed":
             speed = cmd.get("value", speed)
-            _emit(next_ev("command", run=run_id, command="speed", source="stdin", accepted=True, id=cmd.get("id")))
+            emit_accepted_command("speed", cmd.get("id"))
             emit_state("running")
         elif cname == "run_until":
             target_ms = int(cmd.get("at_ms", sim_ms))
             if target_ms > sim_ms:
                 sim_ms = target_ms
             paused = True
-            _emit(next_ev("command", run=run_id, command="run_until", source="stdin", accepted=True,
-                          id=cmd.get("id"), at_ms=sim_ms))
+            emit_accepted_command("run_until", cmd.get("id"), at_ms=sim_ms)
             ctrl_step_to(sim_ms, is_paused=True)
             _emit(next_ev("time", run=run_id, sim_ms=sim_ms, actual_speed=None,
                           late_steps=0, max_late_ms=0, slipped_ms=0, late_ms=0))
@@ -1665,7 +1698,7 @@ def _execute_run(
         res_obj["scenario"] = sc_pass
     if fault == "large-result":
         res_obj["blob"] = "z" * (5 * 1024 * 1024)
-    _emit(next_ev("result", run=run_id, launcher_ends=once, status=status_payload(), result=res_obj))
+    _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result=res_obj))
     return 0 if once else None
 
 
@@ -1681,8 +1714,8 @@ def main(argv: list[str] | None = None) -> int:
             "vehicle_sil": _version(),
             "features": _features(),
             "formats": {
-                "check": 1, "run": 2, "events": 4, "run_request": 1,
-                "timeline": 1, "connections": 1, "descriptions": 1,
+                "check": 1, "run": 2, "events": 4, "describe": 1,
+                "test": 1, "timeline": 1, "connections": 1,
             },
         })
         return 0
