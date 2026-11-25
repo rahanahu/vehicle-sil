@@ -221,7 +221,8 @@ class _Log:
     """The lines kept of one source, with the launcher's log_dropped events among them (markers: where the
     launcher could not write lines of this source; one event can stand in the logs of several sources)."""
 
-    __slots__ = ("lines", "bytes", "dropped", "ring", "markers", "launcher_dropped")
+    __slots__ = ("lines", "bytes", "dropped", "ring", "markers", "launcher_dropped",
+                 "prestart_dropped", "prestart_seq")
 
     def __init__(self, ring_size: int):
         self.lines: deque[tuple[int, int, dict]] = deque()  # (seq, size, event)
@@ -230,6 +231,8 @@ class _Log:
         self.ring = _DroppedSeqs(ring_size)
         self.markers = 0  # log_dropped events in lines
         self.launcher_dropped = 0  # lines the launcher did not write (log_dropped)
+        self.prestart_dropped = 0  # lines dropped while pre-start buffering before session registration
+        self.prestart_seq = 0  # stream_seq boundary at which prestart_dropped was accounted
 
     @property
     def kept(self) -> int:
@@ -250,12 +253,13 @@ class _Log:
 
     def dropped_from(self, seq: int | None) -> tuple[int, bool]:
         """(dropped lines with a seq >= seq, whether the count is exact)."""
-        if seq is None or self.dropped == 0:
-            return self.dropped, True
+        if seq is None:
+            return self.dropped + self.prestart_dropped, True
         n = self.ring.count_from(seq)
-        if self.dropped > len(self.ring) and (not len(self.ring) or self.ring.oldest() > seq):
-            return n, False  # the dropped lines not recorded are older than the oldest recorded: some may be >= seq
-        return n, True
+        exact = not (self.dropped > len(self.ring) and (not len(self.ring) or self.ring.oldest() > seq))
+        if self.prestart_dropped and self.prestart_seq >= seq:
+            n += self.prestart_dropped
+        return n, exact
 
 
 @dataclass
@@ -308,6 +312,7 @@ class Session:
         self.run_id: str | None = None
         self.run_t0_ms: int = 0
         self._stream_run = False
+        self._skip_seq_gap = False
         self._logs: dict[str, _Log] = {}
         self._log_bytes = 0
         self._limit_reported: set[str] = set()
@@ -371,7 +376,7 @@ class Session:
         kind = event["event"]
         if not self.hello_seen and kind == "run_start":
             self._stream_run = True
-        if not self._stream_run:
+        if not self._stream_run and not self._skip_seq_gap:
             expected = 0 if self.last_seq is None else self.last_seq + 1
             if seq != expected:
                 missing = f"seq {expected}" if seq == expected + 1 else f"seq {expected} to {seq - 1}"
@@ -624,6 +629,30 @@ class Session:
         """The name under which the log lines of a source are counted in the summary."""
         return source if source in self._logs else SHARED_LOG
 
+    def note_prestart_dropped_logs(self, counts: dict[str, int], *, sources: tuple[str, ...] = ()) -> list[dict]:
+        """Records log lines dropped during pre-start buffering and returns a `dropped` notice for live screens."""
+        for src in sources:
+            if src != SHARED_LOG:
+                self._log_of(src)
+        positive = [(source, count) for source, count in counts.items() if count > 0]
+        if not positive:
+            return []
+        reported: dict[str, int] = {}
+        sseq = self.next_stream_seq()
+        for source, count in positive:
+            key = source if source in self._logs or len(self._logs) < self.limits.log_sources else SHARED_LOG
+            log = self._log_of(key)
+            log.prestart_dropped += count
+            log.prestart_seq = sseq
+            reported[key] = reported.get(key, 0) + count
+        return [{"type": "dropped", "stream_seq": sseq, "run_id": self.id, "reason": "not-kept", "log": reported,
+                 "at_least": [], "events": 0}]
+
+    def note_skipped_stderr(self, count: int) -> None:
+        """Accounts for stderr lines dropped between stderr_first and stderr_last during pre-start buffering."""
+        if count > 0:
+            self._stderr_lines += count
+
     def _limit(self, what: str, message: str) -> list[dict]:
         """A kept-limit problem, once per kind of thing."""
         if what in self._limit_reported:
@@ -763,7 +792,7 @@ class Session:
             "findings": list(self.findings), "findings_omitted": self.findings_omitted,
             "last_command": self.last_command, "launcher_state": self.launcher_state,
             "allowed": self.allowed(), "result": self.result,
-            "log": {source: {"kept": log.kept, "dropped": log.dropped + log.launcher_dropped}
+            "log": {source: {"kept": log.kept, "dropped": log.dropped + log.prestart_dropped + log.launcher_dropped}
                     for source, log in self._logs.items()},
             "problems": list(self.problems), "problems_omitted": self.problems_omitted,
             "scenario": self.scenario_summary(),
