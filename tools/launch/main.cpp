@@ -494,7 +494,9 @@ BOOL WINAPI on_console_event(DWORD event)
     }
     // Closing the console is not followed by a second request: it skips the waits at once.
     const int level = event == CTRL_CLOSE_EVENT ? runner::stop_level::kForce : runner::stop_level::kGraceful;
-    g_end.request(static_cast<int>(event) + 1, level);
+    // Ctrl+C and Ctrl+Break reach this process alone (the participants have process groups of
+    // their own); closing the console reaches every process attached to it at the same moment.
+    g_end.request(static_cast<int>(event) + 1, level, event == CTRL_CLOSE_EVENT);
     if (event == CTRL_CLOSE_EVENT)
     {
         // Windows ends the process when this returns: give the run time to end the participants

@@ -71,12 +71,22 @@ public:
     /// A signal or a console event (`source`: its number, or its code + 1): the end, and the
     /// current run's stop requests `count` times (stop_level::kGraceful as one Ctrl+C,
     /// stop_level::kForce to skip the waits).
-    void request(int source, int count = runner::stop_level::kGraceful) noexcept
+    /// `reached_participants`: the event reached the participants too (runner::StopRequests::
+    /// note_reached_participants(); the console was closed).
+    void request(int source, int count = runner::stop_level::kGraceful, bool reached_participants = false) noexcept
     {
+        if (reached_participants)
+        {
+            reached_participants_.store(true);
+        }
         mark(source, count);
         inside_.fetch_add(1);
         if (runner::StopRequests* const run = run_.load())
         {
+            if (reached_participants)
+            {
+                run->note_reached_participants();
+            }
             run->request(source, count);
         }
         inside_.fetch_sub(1);
@@ -94,6 +104,8 @@ public:
     /// The source of the first request; 0 if none.
     [[nodiscard]] int source() const noexcept { return first_.load(); }
     [[nodiscard]] int count() const noexcept { return count_.load(); }
+    /// Whether a request reached the participants too (request()'s `reached_participants`).
+    [[nodiscard]] bool reached_participants() const noexcept { return reached_participants_.load(); }
 
     /// The current run's stop requests, for request(); null: none.
     void publish(runner::StopRequests* run) noexcept { run_.store(run); }
@@ -106,6 +118,7 @@ private:
 
     std::atomic<int> count_{0};
     std::atomic<int> first_{0};
+    std::atomic<bool> reached_participants_{false};
     std::atomic<runner::StopRequests*> run_{nullptr};
     std::atomic<int> inside_{0};
 };

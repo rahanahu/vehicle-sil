@@ -30,6 +30,20 @@ TEST_CASE(stop_requests_begin_with_none)
     const StopRequests stops;
     CHECK_EQ(stops.count(), 0);
     CHECK_EQ(stops.first(), 0);
+    CHECK(!stops.reached_participants());
+}
+
+TEST_CASE(a_stop_request_that_reached_the_participants_says_so_and_counts_as_any)
+{
+    // Closing the console on Windows: every process attached to it gets the event.
+    StopRequests stops;
+    stops.request(kSignal);
+    CHECK(!stops.reached_participants());
+    stops.note_reached_participants();
+    stops.request(kOther, 2);
+    CHECK(stops.reached_participants());
+    CHECK_EQ(stops.count(), 3);
+    CHECK_EQ(stops.first(), kSignal);
 }
 
 TEST_CASE(a_second_stop_request_counts_two_and_the_first_source_stays)

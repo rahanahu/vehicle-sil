@@ -149,11 +149,22 @@ public:
     /// The source of the first request; 0 if nothing has asked.
     [[nodiscard]] int first() const noexcept { return first_.load(); }
 
+    /// A request that reached the participants as well, at the same moment (on Windows, the
+    /// console was closed: every process attached to it gets that event, also those in a process
+    /// group of their own). The run then counts as interrupted if the request came before its
+    /// participants were ended, also after the simulation had ended, and the participants' own ends
+    /// that such a request causes are no failures (Runner::run(), assess_run()). Call it before
+    /// request(); lock-free, as request().
+    void note_reached_participants() noexcept { reached_participants_.store(true); }
+    [[nodiscard]] bool reached_participants() const noexcept { return reached_participants_.load(); }
+
 private:
     static_assert(std::atomic<int>::is_always_lock_free, "a signal handler needs lock-free counters");
+    static_assert(std::atomic<bool>::is_always_lock_free, "a signal handler needs lock-free flags");
 
     std::atomic<int> count_{0};
     std::atomic<int> first_{0};
+    std::atomic<bool> reached_participants_{false};
 };
 
 } // namespace vehicle_sil::runner

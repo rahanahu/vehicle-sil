@@ -259,6 +259,10 @@ struct OutcomeEnd
     /// operator's stop then decides end_reason() only if it cut short the end of a required
     /// participant (ParticipantRun::end_cut_short).
     bool interrupted_while_ending = false;
+    /// A stop request reached the participants as well (StopRequests::reached_participants(): on
+    /// Windows the console was closed). The participants then stop by themselves at the same
+    /// moment, and Windows ends them: assess_run() does not take such an end for a failure.
+    bool stop_reached_participants = false;
     /// The simulation did not end within --timeout-ms of wall-clock time: the launcher aborted it.
     bool timed_out = false;
     /// --timeout-ms, if given.

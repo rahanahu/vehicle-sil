@@ -714,6 +714,10 @@ ExecutionEnd ExecutionRuntime::run_loop()
         // before it starts (once: a handler that saw the run has asked it already).
         if (end_.requested())
         {
+            if (end_.reached_participants())
+            {
+                run->stops.note_reached_participants();
+            }
             static_cast<void>(run->stops.request_first(end_.source(), [] {}));
         }
         runner::RunObservers observers;

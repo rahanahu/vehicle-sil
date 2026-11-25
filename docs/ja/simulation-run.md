@@ -744,7 +744,9 @@ Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソ
 | 端末の Ctrl+Z（SIGTSTP） | `vehicle_sil_launch` だけを止めます。 |
 | Windows でコンソールを閉じる | Windows が数秒でプロセスを終了させます。 |
 
-Ctrl+Z では、participant は別のプロセスグループなので動き続け、registry と controller だけが止まります。Windows でコンソールを閉じたとき、participant はジョブオブジェクトが終了させますが、結果を書けないことがあります。
+Ctrl+Z では、participant は別のプロセスグループなので動き続け、registry と controller だけが止まります。
+
+Windows でコンソールを閉じると、participant にも同時に届きます。Ctrl+C と違い、プロセスグループに関係なく、そのコンソールにつながるすべてのプロセスに届きます（participant は `vehicle_sil_launch` のコンソールを共有し、`vehicle_sil_launch` はそれを通してブリッジに Ctrl+Break を送ります）。`ecu_main` で作った ECU は、`vehicle_sil_launch` が知る前にシミュレーションを止めることがあり、Windows は、イベントを処理し終えたプロセスを終了させます。`run` は、participant を終わらせ終える前にコンソールが閉じたことを知れば、シミュレーションが終わった後でも、その実行を中断として扱います（終了コード 130）。そのとき、participant の次の終わりは失敗にしません: 終了コード `0xC000013A`（Windows が終了させた）、130（`ecu_main` が止まった）、`--connect` のブリッジでは 0。`run` は、閉じたことで起きた終わりと、その少し前の同じ終わりを区別できないので、どちらも報告しません。それ以外の終了コードは、いつもどおりに判定します。Windows が `vehicle_sil_launch` に与える時間は数秒です。participant の終わりがそれより長くかかると、ジョブオブジェクトが終了させ、結果を書けないことがあります。
 
 プログラムから `vehicle_sil_launch` を動かすときは、`--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じると、Ctrl+C と同じように順に止まります（[プログラムから使う](simulation-events.md)）。シグナルも Ctrl+Break も送信できない、コンソールのない Windows の `vehicle_sil_launch` も、これで順に止められます。シミュレーションを止めると、ecu_main の実行ファイルは自分で終わります。自分で終わらない participant は、Ctrl+Break を送信できないので、止め方の 2 の代わりにすぐ強制終了します。
 

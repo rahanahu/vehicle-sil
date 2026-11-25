@@ -432,6 +432,20 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
     ctx_.controls.set_phase(Phase::Stopping);
     participants_.end_children(ran || start_.before_start_failed(), interrupts_at_end_);
     participants_.end_manual(*connection->controller, ran || start_.before_start_failed(), interrupts_at_end_);
+    // Closing the console reaches the participants too, at the same moment, and they may stop the
+    // simulation before this process hears of it: it interrupts the run if it came before the
+    // participants were ended, also after the simulation had ended (the stop_at_ms or a stop of a
+    // participant that got it first). One that comes later changes nothing, as any interrupt.
+    if (ctx_.controls.stops().reached_participants())
+    {
+        outcome_.end.stop_reached_participants = true;
+        if (outcome_.end.interrupted_by.empty())
+        {
+            ctx_.note_interrupt(outcome_.end);
+            outcome_.end.interrupted_while_ending = true;
+            out_.say(outcome_.end.stop_text() + ": it reached the participants too, and they stopped with it");
+        }
+    }
     // Their output is read to the end: the line connect-failed and connect-lost quote.
     participants_.note_last_lines();
     // The agents have said their last word and waited for this side's answer (their processes

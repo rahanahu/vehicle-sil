@@ -11,6 +11,7 @@
 
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
+#include "vehicle_sil/ecu/executable.hpp"
 #include "vehicle_sil/config/connect.hpp"
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 
@@ -83,6 +84,21 @@ config::Finding shared_finding(const RunOutside& o, const ParticipantRun& bridge
                    where + "the device was also used by " + who + " from " + at + " s on: " + mixed + fix +
                        "; --strict does not start a run on a device that is shared, and stops one that shares it for " + limit,
                    bridge.line, bridge.name, o.network};
+}
+
+/// Whether `p` ended by itself with the stop request that reached it too (the console was
+/// closed: OutcomeEnd::stop_reached_participants), and so did not fail: Windows ended it when its
+/// handler returned (0xC000013A, STATUS_CONTROL_C_EXIT), ecu_main stopped on it (exit code 130), or
+/// a bridge of --connect stopped on it (exit code 0). Another exit code is judged as usual.
+bool ended_with_the_console(const RunOutcome& outcome, const ParticipantRun& p)
+{
+    if (!outcome.end.stop_reached_participants || !p.exit || p.exit->signal || !detail::ended_by_itself(p))
+    {
+        return false;
+    }
+    const int code = p.exit->code;
+    return static_cast<std::uint32_t>(code) == 0xC000013Au || code == ecu_executable::kExitInterrupted ||
+           (detail::stops_run(p) && code == 0);
 }
 
 /// connect-failed or connect-lost for the bridge `p` of --connect, or nothing: it did not fail the run.
@@ -424,6 +440,12 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
     {
         const std::string pre = prefix_of(p);
         const config::Severity weight = p.required ? config::Severity::Error : config::Severity::Warning;
+        // Closing the console reached it too, and it ended with it: the run was interrupted, which
+        // the result says; the participants' table has its exit code.
+        if (ended_with_the_console(outcome, p))
+        {
+            continue;
+        }
         // A bridge of --connect that ended before its time says so in one finding, instead of
         // start, ended-before-start, participant-failed, not-joined or exit-code.
         if (detail::stops_run(p))
@@ -666,11 +688,14 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
     if (!outcome.end.interrupted_by.empty())
     {
         // An operator's stop is "stopped"; a signal, or a supervisor that went away, "interrupted".
+        // Closing the console reached the participants too: they stopped by themselves with it.
         add(config::Severity::Note, outcome.end.interrupted_kind == StopKind::Operator ? "stopped" : "interrupted",
-            outcome.end.stop_text() + ": the launcher " +
-                (outcome.end.interrupted_while_ending ? std::string("stopped the participants instead of waiting for them to end")
-                 : ran                            ? std::string("stopped the simulation and the participants")
-                                                  : std::string("stopped the participants before the simulation started")),
+            outcome.end.stop_text() + ": " +
+                (outcome.end.stop_reached_participants
+                     ? std::string("it reached the participants too, and they stopped with it")
+                 : outcome.end.interrupted_while_ending ? std::string("the launcher stopped the participants instead of waiting for them to end")
+                 : ran                                  ? std::string("the launcher stopped the simulation and the participants")
+                                                        : std::string("the launcher stopped the participants before the simulation started")),
             nullptr);
     }
     if (const std::vector<std::string> forced = ended_by_force(outcome); !forced.empty())
@@ -801,8 +826,10 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                 "room on the disk, or name another file with --timeline, and run again",
             nullptr);
     }
+    // Not when closing the console stopped it: a participant that got it too stopped the simulation
+    // first, and the result says that the run was interrupted.
     if (outcome.end.simulation == SimulationEnd::Ended && outcome.end.stop_at_ms && outcome.end.controller_state.empty() &&
-        !outcome.end.stopped_by_scenario)
+        !outcome.end.stopped_by_scenario && !outcome.end.stop_reached_participants)
     {
         add(config::Severity::Note, "ended-before-stop-at",
             "the simulation ended before stop_at_ms (" + std::to_string(*outcome.end.stop_at_ms) +
