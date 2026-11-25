@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <csignal>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -177,7 +178,7 @@ public:
         {
             finish_hook();
         }
-        return !fail_finish_;
+        return !fail_finish_.load();
     }
 
     [[nodiscard]] bool closed() const override { return closed_.load(); }
@@ -189,6 +190,8 @@ public:
         closed_.store(v);
         cv_.notify_all();
     }
+
+    void set_fail_finish(bool v) { fail_finish_.store(v); }
 
     std::vector<ExecutionStatus> statuses() const
     {
@@ -254,7 +257,7 @@ private:
     std::vector<FinishedRun> finished_runs_;
     std::vector<RecordedCommandEvent> command_events_;
     std::atomic<bool> closed_{false};
-    bool fail_finish_ = false;
+    std::atomic<bool> fail_finish_{false};
 };
 
 RunReport passed_report(const std::string& file = "sim.yaml")
@@ -1195,5 +1198,122 @@ TEST_CASE(execution_runtime_single_run_preserves_operator_stop_exit_codes_for_co
         const ExecutionEnd ended = loop_future.get();
         CHECK_EQ(ended.code, with_incomplete_scenario ? kExitIncomplete : 0);
         CHECK(!ended.at_once);
+    }
+}
+
+TEST_CASE(execution_runtime_single_run_contaminated_exit_code_precedence)
+{
+    // 1. Operator stop + close cut (not_closed_ms) + result could not be written (output_failed) -> {3, true}.
+    {
+        MockExecutionSink sink;
+        sink.set_fail_finish(true);
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = "aabbccddeeff0021";
+        opts.base.host.config = "sim.yaml";
+        opts.single_run = true;
+        bool close_was_cut = false;
+        opts.run = [&close_was_cut](const RunRequest&, const RunObservers& obs, const RunLent& lent) {
+            lent.controls->set_phase(Phase::Running);
+            static_cast<void>(lent.controls->stops().raise_to(stop_source::kStopCommand, stop_level::kGraceful));
+            static_cast<void>(lent.controls->stops().raise_to(stop_source::kStopCommand, stop_level::kForce));
+            close_was_cut = obs.close_cut(1);
+            lent.controls->set_phase(Phase::Ended);
+            RunReport report = passed_report();
+            report.run->end.simulation = SimulationEnd::Interrupted;
+            report.run->end.interrupted_by = std::string(stop_source_name(stop_source::kStopCommand));
+            report.run->end.interrupted_kind = StopKind::Operator;
+            report.run->close.not_closed_ms = 50;
+            return report;
+        };
+
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+        const CommandReply started = rt.start_run(RunSubmission{});
+        CHECK(started.accepted);
+
+        const ExecutionEnd ended = loop_future.get();
+        CHECK(close_was_cut);
+        CHECK_EQ(ended.code, ecu_executable::kExitSetupFailed);
+        CHECK(ended.at_once);
+        const auto finished = sink.finished_run(*started.run_id);
+        CHECK(finished.has_value());
+        CHECK(finished->launcher_ends);
+        CHECK(finished->status.launcher_state == LauncherState::Contaminated);
+    }
+
+    // 2. SIGINT interrupt + close cut (not_closed_ms) -> {130, true} regardless of output_failed.
+    for (const bool output_failed : {false, true})
+    {
+        MockExecutionSink sink;
+        sink.set_fail_finish(output_failed);
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = output_failed ? "aabbccddeeff0023" : "aabbccddeeff0022";
+        opts.base.host.config = "sim.yaml";
+        opts.single_run = true;
+        opts.run = [](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            lent.controls->set_phase(Phase::Running);
+            lent.controls->stops().request(SIGINT);
+            lent.controls->stops().request(SIGINT);
+            lent.controls->set_phase(Phase::Ended);
+            RunReport report = passed_report();
+            report.run->end.simulation = SimulationEnd::Interrupted;
+            report.run->end.interrupted_by = "SIGINT";
+            report.run->end.interrupted_kind = StopKind::Signal;
+            report.run->close.not_closed_ms = 50;
+            return report;
+        };
+
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+        const CommandReply started = rt.start_run(RunSubmission{});
+        CHECK(started.accepted);
+
+        const ExecutionEnd ended = loop_future.get();
+        CHECK_EQ(ended.code, kExitInterrupted);
+        CHECK(ended.at_once);
+        const auto finished = sink.finished_run(*started.run_id);
+        CHECK(finished.has_value());
+        CHECK(finished->launcher_ends);
+        CHECK(finished->status.launcher_state == LauncherState::Contaminated);
+    }
+
+    // 3. Result written (!output_failed) + non-interrupted + not_closed_ms -> {6, true}.
+    for (const bool with_operator_stop : {false, true})
+    {
+        MockExecutionSink sink;
+        LauncherEnd end;
+        ExecutionRuntimeOptions opts;
+        opts.instance = with_operator_stop ? "aabbccddeeff0025" : "aabbccddeeff0024";
+        opts.base.host.config = "sim.yaml";
+        opts.single_run = true;
+        opts.run = [with_operator_stop](const RunRequest&, const RunObservers&, const RunLent& lent) {
+            lent.controls->set_phase(Phase::Running);
+            RunReport report = passed_report();
+            if (with_operator_stop)
+            {
+                static_cast<void>(lent.controls->stops().raise_to(stop_source::kStopCommand, stop_level::kForce));
+                report.run->end.simulation = SimulationEnd::Interrupted;
+                report.run->end.interrupted_by = std::string(stop_source_name(stop_source::kStopCommand));
+                report.run->end.interrupted_kind = StopKind::Operator;
+            }
+            lent.controls->set_phase(Phase::Ended);
+            report.run->close.not_closed_ms = 50;
+            return report;
+        };
+
+        ExecutionRuntime rt(sink, end, std::move(opts));
+        auto loop_future = std::async(std::launch::async, [&] { return rt.run_loop(); });
+        const CommandReply started = rt.start_run(RunSubmission{});
+        CHECK(started.accepted);
+
+        const ExecutionEnd ended = loop_future.get();
+        CHECK_EQ(ended.code, kExitContaminated);
+        CHECK(ended.at_once);
+        const auto finished = sink.finished_run(*started.run_id);
+        CHECK(finished.has_value());
+        CHECK(finished->launcher_ends);
+        CHECK(finished->status.launcher_state == LauncherState::Contaminated);
     }
 }
