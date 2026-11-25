@@ -4,10 +4,12 @@
 #include "spawn.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -348,14 +350,69 @@ std::wstring system_conhost_path()
     }
 }
 
-/// Full Win32 image path of `handle`, or empty if it cannot be queried.
-std::wstring process_image_path(HANDLE handle)
+struct ConhostPaths
+{
+    std::wstring win32;
+    std::wstring native;
+};
+
+/// Converts a Win32 drive-letter path (`C:\...`) to its NT native device path
+/// (`\Device\HarddiskVolumeX\...`), or empty if QueryDosDeviceW() cannot resolve it.
+std::wstring native_device_path(std::wstring_view win32Path)
+{
+    if (win32Path.size() < 3 || win32Path[1] != L':' || win32Path[2] != L'\\')
+    {
+        return {};
+    }
+    const wchar_t drive[3] = {win32Path[0], L':', L'\0'};
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;)
+    {
+        const DWORD length = QueryDosDeviceW(drive, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (length > 0)
+        {
+            const std::size_t firstEnd = buffer.find(L'\0');
+            if (firstEnd == std::wstring::npos || firstEnd == 0)
+            {
+                return {};
+            }
+            std::wstring device = buffer.substr(0, firstEnd);
+            if (device.back() == L'\\')
+            {
+                device.pop_back();
+            }
+            device.append(win32Path.substr(2));
+            return device;
+        }
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || buffer.size() >= 32768)
+        {
+            return {};
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+}
+
+/// `<system32>\conhost.exe` in both Win32 and NT native device forms.
+ConhostPaths system_conhost_paths()
+{
+    ConhostPaths paths;
+    paths.win32 = system_conhost_path();
+    if (!paths.win32.empty())
+    {
+        paths.native = native_device_path(paths.win32);
+    }
+    return paths;
+}
+
+/// Full image path of `handle` (Win32 when `flags == 0`, NT native when `flags == PROCESS_NAME_NATIVE`),
+/// or empty if it cannot be queried.
+std::wstring process_image_path(HANDLE handle, DWORD flags)
 {
     std::wstring path(MAX_PATH, L'\0');
     for (;;)
     {
         DWORD size = static_cast<DWORD>(path.size());
-        if (QueryFullProcessImageNameW(handle, 0, path.data(), &size) != 0)
+        if (QueryFullProcessImageNameW(handle, flags, path.data(), &size) != 0)
         {
             path.resize(size);
             return path;
@@ -368,20 +425,47 @@ std::wstring process_image_path(HANDLE handle)
     }
 }
 
-/// True if `handle` is Windows's own `<system32>\conhost.exe`.
-bool is_system_conhost(HANDLE handle, std::wstring_view conhostPath)
+bool equal_ignore_case(std::wstring_view a, std::wstring_view b)
 {
-    if (conhostPath.empty())
+    return !a.empty() && !b.empty() &&
+           CompareStringOrdinal(a.data(), static_cast<int>(a.size()), b.data(), static_cast<int>(b.size()), TRUE) ==
+               CSTR_EQUAL;
+}
+
+/// True if `handle` is Windows's own `<system32>\conhost.exe`. Falls back to the NT native path
+/// when Win32 path lookup fails (e.g. ERROR_ACCESS_DENIED while the process is tearing down).
+bool is_system_conhost(HANDLE handle, const ConhostPaths& expected)
+{
+    if (!expected.win32.empty())
     {
-        return false;
+        const std::wstring win32 = process_image_path(handle, 0);
+        if (!win32.empty())
+        {
+            return equal_ignore_case(win32, expected.win32);
+        }
     }
-    const std::wstring image = process_image_path(handle);
-    if (image.empty())
+    if (!expected.native.empty())
     {
-        return false;
+        const std::wstring native = process_image_path(handle, PROCESS_NAME_NATIVE);
+        if (!native.empty())
+        {
+            return equal_ignore_case(native, expected.native);
+        }
     }
-    return CompareStringOrdinal(image.data(), static_cast<int>(image.size()), conhostPath.data(),
-                                static_cast<int>(conhostPath.size()), TRUE) == CSTR_EQUAL;
+    return false;
+}
+
+/// True if `handle` has already exited. Combines WaitForSingleObject() (handles exit code 259 /
+/// STILL_ACTIVE) with GetExitCodeProcess() (Windows updates ExitStatus before signaling EPROCESS
+/// during teardown).
+bool process_has_exited(HANDLE handle, bool hasSync)
+{
+    if (hasSync && WaitForSingleObject(handle, 0) == WAIT_OBJECT_0)
+    {
+        return true;
+    }
+    DWORD exitCode = 0;
+    return GetExitCodeProcess(handle, &exitCode) != 0 && exitCode != STILL_ACTIVE;
 }
 
 } // namespace
@@ -393,58 +477,118 @@ bool Process::others_running()
         return false;
     }
     // The IDs of the processes in the job, without the first one: the count of the job may still
-    // hold the first process for a moment after its end.
-    struct
+    // hold the first process for a moment after its end, and QueryInformationJobObject() can
+    // succeed (TRUE) with NumberOfAssignedProcesses > NumberOfProcessIdsInList while a terminated
+    // process is still draining from the job. Only ERROR_MORE_DATA means the buffer was too small.
+    static_assert(alignof(ULONG_PTR) >= alignof(JOBOBJECT_BASIC_PROCESS_ID_LIST));
+    static_assert(offsetof(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList) % sizeof(ULONG_PTR) == 0);
+    static_assert(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) ==
+                  offsetof(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList) + sizeof(ULONG_PTR));
+    constexpr std::size_t kHeaderSlots = offsetof(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList) / sizeof(ULONG_PTR);
+    constexpr std::size_t kInitialCapacity = 64;
+    constexpr std::size_t kMaxCapacity = 4096;
+    constexpr int kMaxRetries = 3;
+
+    std::size_t capacity = kInitialCapacity;
+    std::vector<ULONG_PTR> storage;
+    JOBOBJECT_BASIC_PROCESS_ID_LIST header{};
+    for (int attempt = 0;; ++attempt)
     {
-        JOBOBJECT_BASIC_PROCESS_ID_LIST list;
-        ULONG_PTR more[63];
-    } ids{};
-    if (!QueryInformationJobObject(job_, JobObjectBasicProcessIdList, &ids, sizeof(ids), nullptr) &&
-        GetLastError() != ERROR_MORE_DATA)
-    {
-        return false;
-    }
-    std::wstring conhostPath;
-    bool conhostPathChecked = false;
-    const ULONG_PTR* id = ids.list.ProcessIdList;
-    for (DWORD i = 0; i < ids.list.NumberOfProcessIdsInList; ++i)
-    {
-        if (id[i] == static_cast<ULONG_PTR>(pid_))
+        storage.assign(kHeaderSlots + capacity, 0);
+        const DWORD bufferBytes = static_cast<DWORD>(storage.size() * sizeof(ULONG_PTR));
+        const BOOL ok = QueryInformationJobObject(job_, JobObjectBasicProcessIdList, storage.data(), bufferBytes, nullptr);
+        if (ok != 0)
         {
-            continue;
+            std::memcpy(&header, storage.data(), sizeof(header));
+            break;
         }
-        Handle other(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(id[i])));
-        if (other.h == nullptr)
+        const DWORD err = GetLastError();
+        if (err != ERROR_MORE_DATA)
         {
-            if (GetLastError() == ERROR_INVALID_PARAMETER)
-            {
-                // Already exited before OpenProcess().
-                continue;
-            }
-            // Cannot inspect (e.g. access denied): conservatively report it as still running.
+            return false;
+        }
+        std::memcpy(&header, storage.data(), sizeof(header));
+        if (attempt >= kMaxRetries || capacity >= kMaxCapacity)
+        {
+            // More processes than our cap can enumerate: others are running.
             return true;
         }
-        DWORD exitCode = 0;
-        if (GetExitCodeProcess(other.h, &exitCode) != 0 && exitCode != STILL_ACTIVE)
+        const std::size_t assigned = static_cast<std::size_t>(header.NumberOfAssignedProcesses);
+        const std::size_t needed = assigned < kMaxCapacity ? assigned + 8 : kMaxCapacity;
+        capacity = std::min(std::max(capacity * 2, needed), kMaxCapacity);
+    }
+
+    ConhostPaths conhostPaths;
+    bool conhostPathsChecked = false;
+    const ULONG_PTR* ids = storage.data() + kHeaderSlots;
+    const std::size_t count = std::min<std::size_t>(header.NumberOfProcessIdsInList, capacity);
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (ids[i] == static_cast<ULONG_PTR>(pid_))
         {
             continue;
         }
-        if (!conhostPathChecked)
+        bool hasSync = true;
+        Handle other(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, static_cast<DWORD>(ids[i])));
+        if (other.h == nullptr)
         {
-            conhostPath = system_conhost_path();
-            conhostPathChecked = true;
+            DWORD openErr = GetLastError();
+            if (openErr == ERROR_ACCESS_DENIED)
+            {
+                hasSync = false;
+                HANDLE fallback = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(ids[i]));
+                if (fallback != nullptr && fallback != INVALID_HANDLE_VALUE)
+                {
+                    other.h = fallback;
+                }
+                else
+                {
+                    openErr = GetLastError();
+                }
+            }
+            if (other.h == nullptr)
+            {
+                if (openErr == ERROR_INVALID_PARAMETER)
+                {
+                    // Already exited before OpenProcess().
+                    continue;
+                }
+                // Cannot inspect (e.g. access denied): conservatively report it as still running.
+                return true;
+            }
+        }
+        // Guard against PID reuse between QueryInformationJobObject() and OpenProcess().
+        BOOL inJob = FALSE;
+        if (IsProcessInJob(other.h, job_, &inJob) != 0 && inJob == FALSE)
+        {
+            continue;
+        }
+        if (process_has_exited(other.h, hasSync))
+        {
+            continue;
+        }
+        if (!conhostPathsChecked)
+        {
+            conhostPaths = system_conhost_paths();
+            conhostPathsChecked = true;
         }
         // Headless runs start console programs with CREATE_NO_WINDOW inside this job, causing
         // Windows to spawn <system32>\conhost.exe in the same job. It may outlive the participant
         // briefly during teardown; it is not a child started by the participant.
-        if (is_system_conhost(other.h, conhostPath))
+        if (is_system_conhost(other.h, conhostPaths))
+        {
+            continue;
+        }
+        // A process (including conhost.exe) that exits between the check above and
+        // QueryFullProcessImageNameW() can fail image-path lookup; re-check whether it has exited
+        // before reporting it as still running.
+        if (process_has_exited(other.h, hasSync))
         {
             continue;
         }
         return true;
     }
-    // More than fit here: some are others.
-    return ids.list.NumberOfAssignedProcesses > ids.list.NumberOfProcessIdsInList;
+    return false;
 }
 
 #else // POSIX
