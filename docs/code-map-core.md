@@ -69,6 +69,7 @@ Unit tests of `vehicle_sil::trace`. The `unit` label is also set.
 | `TickScheduler` | `core/tick_scheduler.hpp` |
 | `bind_host()` | `core/bind_host.hpp` |
 | `SimTime` (`sim_base`) | `core/sim_time.hpp` |
+| `TimeView`, `LeftParticipant`, `ControllerSnapshot`, `kDefaultLeaveGrace` (`sim_base`) | `core/controller_snapshot.hpp` |
 | `StepInbox` (`sim_base`) | `core/step_inbox.hpp` |
 | `periodic()` (`sim_base`) | `core/periodic.hpp` |
 | `is_loopback_registry_uri()` (`sim_base`) | `core/registry_uri.hpp` |
@@ -180,7 +181,6 @@ flowchart TD
     launch --> app
     launch --> process
     launch --> protocols
-    launch --> bindings
     grpc --> control
     grpc --> bindings
     tools --> protocols

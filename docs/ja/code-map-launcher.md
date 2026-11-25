@@ -453,7 +453,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 変える場所:
 
 - `serve` と `serve --once` の Events v4 ストリーム、`--stdin-commands` と `serve` のコマンド、`version --json`（`libs/launch/src/format/events.cpp`、`libs/launch/src/endpoints/command_input.cpp`、`tools/launch/main.cpp`）
-- `result` イベントの中身: `libs/launch/src/format/run_format.cpp` の `format_result_event()`（`EventStream::result()` は、書かれたものを受け取ります）。時刻のコマンドか stop の `command` イベント: `TimeCommands::apply()` が、渡された関数（`TimeCommands::OnCommand`。`main.cpp` は `EventStream::command()` を渡します）を呼びます。`phase` イベント: `RunControls::set_phase()` が、操作盤に渡された関数（`RunControls::Observers`。`main.cpp` は `EventStream::phase()` を渡し、自分で操作盤を作る run は `RunLent::events`（`RunEventSink`）に書きます）を呼びます
+- `result` イベントの中身: `libs/launch/src/format/run_format.cpp` の `format_result_event()`（`RunEventSink::enqueue_result()` と `wait_result()`、または `EventStream::result()` を通して出力）。`command`・`phase`・`state` イベント: `TimeCommands::apply()`（`TimeCommands::OnCommand`）、`RunControls::set_phase()`、`RunControls::publish()`、`TimeCommands` の状態変化（`TimeCommands::OnChange`）が `RunControls::Observers` を呼び出し、`ExecutionRuntime`（`libs/launch/src/usecases/execution_runtime.cpp`）がそれを `ExecutionSink::open_run()` の実行単位 `RunEventSink`（`Serve` では `EventStream` が実装）へ接続し、自分で操作盤を作る `run_file()` の実行は `RunLent::events`（`RunEventSink`）に書きます
 
 合わせて直すドキュメント:
 
@@ -503,7 +503,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 合わせて直すドキュメント:
 
 - [simulation-run.md](simulation-run.md) の「速度を指定して動かす」（遅れの定義、遅れたときに起きること、タイムステップと ECU のステップ）
-- [simulation-run.md](simulation-run.md): 設定ファイルのキーの表、`time` と `command` のイベント、コマンドの表、`timing` の表、`features` の表
+- [simulation-config.md](simulation-config.md): 設定ファイルのキーの表、[simulation-run.md](simulation-run.md): `timing` の表、[simulation-events.md](simulation-events.md): `time` と `command` のイベント、コマンドの表、`features` の表
 - [simulation-run.md](simulation-run.md): 指摘の表（`behind-real-time`、`coarse-time-step`）
 - [internals/virtual-time.md](internals/virtual-time.md) の「一時停止、ステップ実行、速度（時間ゲート）」（遅れの定義を変えたとき）
 - simulation-config.md: 遅れの定義を変えたとき

@@ -453,7 +453,7 @@ When changing events or commands consumed by the GUI, also check [GUI implementa
 Where to change:
 
 - The Events v4 stream of `serve` and `serve --once`, the commands of `--stdin-commands` and `serve`, `version --json` (`libs/launch/src/format/events.cpp`, `libs/launch/src/endpoints/command_input.cpp`, `tools/launch/main.cpp`)
-- The members of the event `result`: `format_result_event()` in `libs/launch/src/format/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command or a stop: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`). The event `phase`: `RunControls::set_phase()` calls the function the controls were given (`RunControls::Observers`; `main.cpp` passes `EventStream::phase()`, and a run that makes its own controls writes to `RunLent::events` via `RunEventSink`)
+- The members of the event `result`: `format_result_event()` in `libs/launch/src/format/run_format.cpp` (emitted through `RunEventSink::enqueue_result()` and `wait_result()`, or `EventStream::result()`). The `command`, `phase` and `state` events: `TimeCommands::apply()` (`TimeCommands::OnCommand`), `RunControls::set_phase()`, `RunControls::publish()` and `TimeCommands` state changes (`TimeCommands::OnChange`) invoke `RunControls::Observers`, which `ExecutionRuntime` (`libs/launch/src/usecases/execution_runtime.cpp`) wires to the per-run `RunEventSink` from `ExecutionSink::open_run()` (backed by `EventStream` in `Serve`), and a run that makes its own controls in `run_file()` writes to `RunLent::events` via `RunEventSink`
 
 Documentation to update:
 
@@ -503,7 +503,7 @@ Where to change:
 Documentation to update:
 
 - "[Running at a set speed (`speed`)](simulation-run.md#running-at-a-set-speed-speed)" in [simulation-run.md](simulation-run.md) (the definition of lateness, what happens when the run is late, time steps and ECU steps)
-- [simulation-run.md](simulation-run.md): the table of configuration file keys, the `time` and `command` events, the table of commands, the `timing` table, the `features` table
+- [simulation-config.md](simulation-config.md): the table of configuration file keys; [simulation-run.md](simulation-run.md): the `timing` table; [simulation-events.md](simulation-events.md): the `time` and `command` events, the table of commands and the `features` table
 - [simulation-run.md](simulation-run.md): the table of findings (`behind-real-time`, `coarse-time-step`)
 - "[Pause, step and speed (time gate)](internals/virtual-time.md#pause-step-and-speed-time-gate)" in [internals/virtual-time.md](internals/virtual-time.md), when you change the definition of lateness
 - simulation-config.md, when you change the definition of lateness
