@@ -1236,20 +1236,45 @@ class GuiServer:
         speed, start_paused = intent.get("speed"), intent.get("start_paused", False)
         why_not = await self._no_variables()
         self._not_closing()
-        credentials = token = None
-        if why_not is None:
-            making = asyncio.ensure_future(asyncio.to_thread(control.credentials_file))
-            try:
-                credentials, token = await asyncio.shield(making)
-            except asyncio.CancelledError:  # the request was ended meanwhile: the file is still removed
-                making.add_done_callback(lambda f: f.exception() is None and control.remove(f.result()[0]))
-                raise
-            except OSError as e:
-                why_not = f"the file with the control server's credentials could not be made ({e})"
-        # A scenario run records its timeline when the launcher can (the file is named here, the launcher makes it)
-        timeline = await asyncio.to_thread(self.timelines.new_file) \
-            if scenario is not None and FEATURE_TIMELINE in self.launcher.features else None
+        credentials: Path | None = None
+        token: str | None = None
+        timeline: Path | None = None
+        request: Path | None = None
+        handle: RunHandle | None = None
+        run: Run | None = None
         try:
+            if why_not is None:
+                making = asyncio.ensure_future(asyncio.to_thread(control.credentials_file))
+                try:
+                    credentials, token = await asyncio.shield(making)
+                except asyncio.CancelledError:  # the request was ended meanwhile: the file is still removed
+                    if making.done():
+                        if not making.cancelled() and making.exception() is None:
+                            control.remove(making.result()[0])
+                    else:
+                        making.add_done_callback(
+                            lambda f: not f.cancelled() and f.exception() is None and control.remove(f.result()[0])
+                        )
+                    raise
+                except OSError as e:
+                    why_not = f"the file with the control server's credentials could not be made ({e})"
+            # A scenario run records its timeline when the launcher can (the file is named here, the launcher makes it)
+            if scenario is not None and FEATURE_TIMELINE in self.launcher.features:
+                making_timeline = asyncio.ensure_future(asyncio.to_thread(self.timelines.new_file))
+                try:
+                    timeline = await asyncio.shield(making_timeline)
+                except asyncio.CancelledError:
+                    if making_timeline.done():
+                        if not making_timeline.cancelled() and making_timeline.exception() is None:
+                            control.remove(making_timeline.result())
+                    else:
+                        # Retrieve f.exception() too so a late RuntimeError (closed during shutdown) or OSError
+                        # never logs "Future exception was never retrieved".
+                        making_timeline.add_done_callback(
+                            lambda f: not f.cancelled() and f.exception() is None and control.remove(f.result())
+                        )
+                    raise
+            self._not_closing()
             # The last await is above: from here to the launcher's start no other request runs, so the targets are
             # compared with the lists and the file as they are when the launcher is started.
             self._check_targets(
@@ -1260,11 +1285,6 @@ class GuiServer:
                 checked_sha256,
             )
             request = self._make_request(intent)
-        except BaseException:
-            control.remove(credentials)
-            control.remove(timeline)
-            raise
-        try:
             handle = await self.runtime.start_run(RunSpec(
                 config=config.relative,
                 request=request,
@@ -1276,48 +1296,56 @@ class GuiServer:
                 manual=tuple(manual),
                 hot_decision=inspection.hot,
             ))
+            run_credentials = credentials
+            run_token = token
+            if handle.control_token is not None:
+                control.remove(run_credentials)
+                credentials = None
+                run_credentials = None
+                run_token = handle.control_token
+            run_id = f"{self.instance}-{self._next_session_id}"
+            session = Session(run_id, config.relative, disable, speed, start_paused,
+                              limits=self.o.limits, launcher_pid=handle.pid, launcher_mode=handle.mode,
+                              scenario=scenario, manual=manual)
+            session.facts = self.facts
+            session.execution_status = self.runtime.execution_status
+            session.next_stream_seq = self.next_stream_seq
+            preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
+            gate = _PreStartGate(config.relative, request) if getattr(handle, "waits_for_check", True) else None
+
+            def emit_variables(messages: list[dict]) -> None:
+                if gate is not None and gate.discard:
+                    return
+                self._tell_variables(messages)
+
+            variables = Variables(session.id, emit_variables, limits=self.o.variable_limits, secret=run_token,
+                                  ending=lambda: _variables_ending(session))
+            if why_not is None:
+                variables.expect()
+            else:
+                variables.set_off(why_not)
+            session.variables = variables.summary
+            recording = Recording() if why_not is None and scenario is None else Recording(
+                available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
+                is not None else f"this run has no variables to write: {why_not}")
+            run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=run_credentials,
+                      token=run_token, recording=recording, timeline=timeline, request=request,
+                      preflight_timing=preflight_timing)
+            self._runs.add(run)
+            sink = _RunSink(self, run, gate=gate)
+            handle.start(sink)
         except BaseException:
+            if run is not None:
+                self._runs.discard(run)
+            if handle is not None:
+                handle.send_stop(2, force=True)
+                abort = getattr(handle, "abort", None)
+                if abort is not None:
+                    abort()
             control.remove(credentials)
             control.remove(request)
             control.remove(timeline)
             raise
-        run_credentials = credentials
-        run_token = token
-        if handle.control_token is not None:
-            control.remove(run_credentials)
-            run_credentials = None
-            run_token = handle.control_token
-        run_id = f"{self.instance}-{self._next_session_id}"
-        session = Session(run_id, config.relative, disable, speed, start_paused,
-                          limits=self.o.limits, launcher_pid=handle.pid, launcher_mode=handle.mode,
-                          scenario=scenario, manual=manual)
-        session.facts = self.facts
-        session.execution_status = self.runtime.execution_status
-        session.next_stream_seq = self.next_stream_seq
-        preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
-        gate = _PreStartGate(config.relative, request) if getattr(handle, "waits_for_check", True) else None
-
-        def emit_variables(messages: list[dict]) -> None:
-            if gate is not None and gate.discard:
-                return
-            self._tell_variables(messages)
-
-        variables = Variables(session.id, emit_variables, limits=self.o.variable_limits, secret=run_token,
-                              ending=lambda: _variables_ending(session))
-        if why_not is None:
-            variables.expect()
-        else:
-            variables.set_off(why_not)
-        session.variables = variables.summary
-        recording = Recording() if why_not is None and scenario is None else Recording(
-            available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
-            is not None else f"this run has no variables to write: {why_not}")
-        run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=run_credentials,
-                  token=run_token, recording=recording, timeline=timeline, request=request,
-                  preflight_timing=preflight_timing)
-        self._runs.add(run)
-        sink = _RunSink(self, run, gate=gate)
-        handle.start(sink)
         if gate is not None:
             wait_cap = 5.0 if self.o.stop_timeout_s is None else self.o.stop_timeout_s
             try:
