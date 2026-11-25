@@ -296,7 +296,7 @@ class PackageVersionSyncTest(unittest.TestCase):
 
     def test_sync_dry_run_does_not_modify_files_and_warns_on_changelog(self) -> None:
         tree = self._copy_version_tree(with_uv_lock=True)
-        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        self._set_cmake_version(tree, "9.8.7", "rc.1")
         before = {rel: (tree / rel).read_text(encoding="utf-8") for rel in (*self.VERSION_FILES, "uv.lock")}
 
         out, err = io.StringIO(), io.StringIO()
@@ -308,7 +308,7 @@ class PackageVersionSyncTest(unittest.TestCase):
             rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=True))
 
         self.assertEqual(rc, 0, err.getvalue())
-        self.assertIn("0.4.0-rc.1", out.getvalue())
+        self.assertIn("9.8.7-rc.1", out.getvalue())
         self.assertIn("would update pyproject.toml", out.getvalue())
         self.assertIn("would update template/README.ja.md", out.getvalue())
         self.assertIn("would update uv.lock (via uv lock --offline)", out.getvalue())
@@ -334,7 +334,7 @@ class PackageVersionSyncTest(unittest.TestCase):
             (tree / "uv.lock").write_text(lock_text, encoding="utf-8", newline="\n")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        for base, pre, expected_ver in (("0.4.0", "rc.1", "0.4.0-rc.1"), ("0.4.0", "", "0.4.0")):
+        for base, pre, expected_ver in (("9.8.7", "rc.1", "9.8.7-rc.1"), ("9.8.7", "", "9.8.7")):
             changelog_before = (tree / "CHANGELOG.md").read_text(encoding="utf-8")
             self._set_cmake_version(tree, base, pre)
             out, err = io.StringIO(), io.StringIO()
@@ -377,7 +377,7 @@ class PackageVersionSyncTest(unittest.TestCase):
 
     def test_sync_missing_uv_fails_before_modifying_any_files_and_dry_run_still_succeeds(self) -> None:
         tree = self._copy_version_tree(with_uv_lock=True)
-        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        self._set_cmake_version(tree, "9.8.7", "rc.1")
         tracked = (*self.VERSION_FILES, "uv.lock")
         before = {rel: (tree / rel).read_bytes() for rel in tracked}
 
@@ -403,7 +403,7 @@ class PackageVersionSyncTest(unittest.TestCase):
 
     def test_sync_rolls_back_all_files_when_uv_lock_fails(self) -> None:
         tree = self._copy_version_tree(with_uv_lock=True)
-        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        self._set_cmake_version(tree, "9.8.7", "rc.1")
         tracked = (*self.VERSION_FILES, "uv.lock")
         before = {rel: (tree / rel).read_bytes() for rel in tracked}
 
@@ -429,7 +429,7 @@ class PackageVersionSyncTest(unittest.TestCase):
 
     def test_sync_rolls_back_all_files_when_post_sync_check_fails(self) -> None:
         tree = self._copy_version_tree(with_uv_lock=True)
-        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        self._set_cmake_version(tree, "9.8.7", "rc.1")
         tracked = (*self.VERSION_FILES, "uv.lock")
         before = {rel: (tree / rel).read_bytes() for rel in tracked}
 
@@ -453,7 +453,7 @@ class PackageVersionSyncTest(unittest.TestCase):
 
     def test_sync_rollback_continues_when_one_restore_raises_oserror(self) -> None:
         tree = self._copy_version_tree(with_uv_lock=True)
-        self._set_cmake_version(tree, "0.4.0", "rc.1")
+        self._set_cmake_version(tree, "9.8.7", "rc.1")
         tracked = (*self.VERSION_FILES, "uv.lock")
         before = {rel: (tree / rel).read_bytes() for rel in tracked}
         fail_rel = "pyproject.toml"

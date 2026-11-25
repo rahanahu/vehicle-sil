@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
   vehicle_sil
-  VERSION 0.3.0
+  VERSION 0.4.0
   DESCRIPTION "Vehicle network SIL simulation peers on Vector SIL Kit"
   LANGUAGES C CXX)
 
@@ -10,7 +10,7 @@ project(
 # 0.2.0-rc.1: rc.<n>, beta.<n> or alpha.<n>, or "" for a release. VEHICLE_SIL_VERSION_FULL is what the
 # executables report (vehicle_sil_launch version, --describe, the control server's Ping);
 # scripts/package.py version checks that every other place names it.
-set(VEHICLE_SIL_VERSION_PRERELEASE "")
+set(VEHICLE_SIL_VERSION_PRERELEASE "rc.1")
 set(VEHICLE_SIL_VERSION_FULL "${PROJECT_VERSION}")
 if(NOT VEHICLE_SIL_VERSION_PRERELEASE STREQUAL "")
   string(APPEND VEHICLE_SIL_VERSION_FULL "-${VEHICLE_SIL_VERSION_PRERELEASE}")

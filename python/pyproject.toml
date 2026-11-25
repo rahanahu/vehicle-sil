@@ -4,7 +4,7 @@
 
 [project]
 name = "vehicle-sil-control"
-version = "0.3.0"
+version = "0.4.0-rc.1"
 description = "Python client of the vehicle-sil Control API and resident launcher"
 requires-python = ">=3.11"
 license = "MIT"

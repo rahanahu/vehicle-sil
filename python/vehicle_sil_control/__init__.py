@@ -7,7 +7,7 @@ gRPC stubs exist, and Launch, LaunchError, control_address, Serve, RunHandle and
 """
 # The vehicle-sil release of this client. A literal, not the package metadata (the tools archive puts the
 # client in place without installing it); scripts/package.py version keeps it equal to CMakeLists.txt.
-__version__ = "0.3.0"
+__version__ = "0.4.0-rc.1"
 
 _LAUNCHER = ["Launch", "LaunchError", "control_address"]
 _SERVE = ["RunHandle", "Serve", "ServeError"]
