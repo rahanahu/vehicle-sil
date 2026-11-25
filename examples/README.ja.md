@@ -26,7 +26,7 @@
 | Python から値を書き込み、時間を進めて、読む（最短） | [launch_control](launch_control) | `write_and_read.py` |
 | 動いているシミュレーションを止めて、時刻を指定して書き込む | [launch_control](launch_control) | `pause_and_step.py` |
 | 1 つの常駐ランチャーで順に複数のシミュレーションを実行する（`Serve`、`RunHandle`） | [launch_control](launch_control) | `serve_runs.py` |
-| ブラウザの GUI のサーバーを、画面を使わずに呼び出す | [gui_client](gui_client) | `run.mjs`、`run-with-library.mjs`、`variables.mjs`（素の JavaScript） |
+| ブラウザの GUI のサーバーを、画面を使わずに呼び出す | [gui_client](gui_client) | `run.mjs`、`time-and-stop.mjs`、`run-with-library.mjs`、`variables.mjs`（素の JavaScript） |
 | ブラウザの GUI に、自分の画面を作る | [gui_starter](gui_starter) | 部品を並べた HTML と短いスクリプト（ビルドなし） |
 | 層を自分で組み立てる（バス、ホスト、ドライバー、ネットワーク） | [low_level](low_level) | `vehicle_sil_low_level` |
 
@@ -138,6 +138,7 @@ GUI と同じ API（[gui/protocol](../gui/protocol/README.ja.md)）で、自分�
 | ファイル | 内容 |
 |---|---|
 | `run.mjs` | Node 22 以上の標準の `fetch` と `WebSocket` だけを使います。 |
+| `time-and-stop.mjs` | Node 22 以上の標準の `fetch` と `WebSocket` だけを使い、`POST api/time` と `POST api/stop-session` に `{instance, run_id}` を送り、数値の `id` で HTTP 200 と WebSocket の `command` イベント（`accepted: true`/`false`）を対応づけ、`after_stream_seq` で再接続します。 |
 | `run-with-library.mjs` | クライアントのライブラリ（[gui/client](../gui/client/README.ja.md)）を 1 つにまとめたファイルを使います。 |
 | `variables.mjs` | 同じライブラリで ECU の変数を読み書きします（止めて始め、最初のステップの前に 1 つ書き込み、進めて止めて、値を確認する。Control Server を持つランチャーが必要です）。 |
 
