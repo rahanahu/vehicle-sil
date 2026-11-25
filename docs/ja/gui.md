@@ -12,6 +12,7 @@
 | 何を守り、何を守らないかを確認する | 「[セキュリティ](#セキュリティ)」 |
 | 「変数」の画面の並べ方をファイルに書く | 「[ダッシュボードのファイル](#ダッシュボードのファイル)」 |
 | 自分の画面に適用されるルールを調べる | 「[自分の画面のリファレンス](#自分の画面のリファレンス)」 |
+| 外部 API の仕様・OpenAPI / JSON Schema・サンプルをまとめて探す | [外部 API とスキーマ](external-api.md) |
 | GUI 自体を開発する | 「[開発](#開発)」 |
 
 ## 構成
@@ -1427,6 +1428,7 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 
 | ドキュメント | 内容 |
 |---|---|
+| [external-api.md](external-api.md) | 外部 API の仕様、OpenAPI・JSON Schema、マニュアル、実行可能なサンプルへのタグ固定の入口 |
 | [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) | 画面のテンプレートから、変数を 1 つ表示する画面を作る手順 |
 | [gui/client/README.md](../../gui/client/README.ja.md) | クライアントのライブラリの API |
 | [gui/protocol/README.md](../../gui/protocol/README.ja.md) | サーバーの HTTP と WebSocket の API |

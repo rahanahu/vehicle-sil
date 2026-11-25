@@ -670,13 +670,13 @@ In CI, these options are also useful:
 | `--timeout-ms <ms>` | Sets a limit in wall-clock time. If an ECU hangs inside an ECU step, virtual time stops advancing and the run never ends. In `test`, the limit applies to each run. |
 | `--strict` | Treats warnings as failures. |
 | `--log-dir <dir>` | With `run`, keeps the output of each ECU in files. |
-| `--events` | With `run`, writes the progress as one JSON object per line. The `scenario_step` event is emitted when a step starts and when its result is decided. |
+| `serve [--once]` | Writes the progress as one NDJSON event per line (`vehicle_sil_events: 4`). The `scenario_step` event is emitted when a step starts and when its result is decided. |
 
 | To find | See |
 |---|---|
 | The keys of `scenario` in `run --json` | "Output" in [scenario.md](../scenario.md#output) |
 | All arguments and exit codes | "Arguments and exit codes" in [simulation-config.md](../simulation-config.md#arguments-and-exit-codes) |
-| The events of `--events` | [simulation-events.md](../simulation-events.md) |
+| The events of `serve [--once]` | [simulation-events.md](../simulation-events.md) |
 
 ## Disconnect an ECU from the bus
 

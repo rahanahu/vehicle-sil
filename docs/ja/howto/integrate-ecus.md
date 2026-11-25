@@ -56,7 +56,7 @@ cd build/linux-gcc-control/examples/integrate_ecus
 |---|---|---|
 | まだ受け取っていない ECU を除いて動かす | `--disable` | [ECU を無効にして動かす](#ecu-を無効にして動かすenabled--disable) |
 | 途中で止める、止まらない実行に上限を付ける | Ctrl+C、`--timeout-ms` | [止める](#止める) |
-| スクリプトや CI から結果を読む | `--json`、`--events` | [スクリプトから使う](#スクリプトから使う--json--events) |
+| スクリプトや CI から結果を読む | `--json`、`serve` | [スクリプトから使う](#スクリプトから使う--jsonserve) |
 | 実時間に合わせて動かす | `--speed` | [等速で動かす](#等速で動かす--speedと遅れの見方) |
 | 同じ ECU を 2 つ並べる | `j1939_nodes` | [同じ ECU を 2 つ載せる](#同じ-ecu-を-2-つ載せる) |
 | `ecu_main()` で作っていないツールを一緒に起動する | `describe: false` | [`ecu_main()` で作っていないツールを並べる](#ecu_main-で作っていないツールを並べる) |
@@ -588,7 +588,7 @@ passed: 0 errors, 1 warning, 1 note
 
 どの止め方でも、`vehicle_sil_launch` は、起動した ECU と、ECU が起動したプロセスを終了させてから終わります。シミュレーションが終わっても終了しない ECU は、強制終了して、`did-not-end` の `error` にします。順番と待つ時間は、[simulation-run.md](../simulation-run.md) の「止め方」「中断（Ctrl+C）」「participant を残さないこと」にあります。
 
-## スクリプトから使う（`--json`、`--events`）
+## スクリプトから使う（`--json`、`serve`）
 
 CI のスクリプトや自作のツールから使うときは、終了コードと、機械が読める出力を使います。
 
@@ -596,7 +596,7 @@ CI のスクリプトや自作のツールから使うときは、終了コー�
 |---|---|---|
 | 成功か失敗かだけを知る | `check` か `run` の終了コード | 0 が成功（コマンドで止めたときも 0）、1 が失敗、130 が中断です。 |
 | 指摘をプログラムで読む | `vehicle_sil_launch check --json simulation.yaml` | 結果を 1 つの JSON で標準出力に書きます。 |
-| 実行の経過を読む | `vehicle_sil_launch run --events --stdin-commands simulation.yaml` | 1 行に 1 つの JSON で、起きたことを順に書きます。 |
+| 実行の経過を読む | `vehicle_sil_launch serve --once simulation.yaml` | 1 行に 1 つの NDJSON イベント（`vehicle_sil_events: 4`）で起きたことを順に書き、標準入力からコマンドを読みます（標準入力に `{"command":"run"}` を送って開始）。 |
 | 使える機能を調べる | `vehicle_sil_launch version --json` | `features` に、機能の名前が並びます。 |
 
 `check --json` では、指摘が `findings` に入ります。次は、手順 3 の `simulation.yaml` の出力の一部です。
@@ -629,8 +629,8 @@ CI のスクリプトや自作のツールから使うときは、終了コー�
 | 知っておくこと | 内容 |
 |---|---|
 | `participants[].variables` | `check --json` の出力にあり、どの ECU にどの変数があるかを、実行の前に調べられます。 |
-| `--events` の最初と最後 | 最初の行が `hello`、最後の行が `result` で、`result` の内容は `run --json` と同じです。 |
-| `--json` と `--events` | 一緒には指定できません。 |
+| `serve --once` の最初と最後 | 最初の行が `hello`（`vehicle_sil_events: 4`）、最後の行が `result` で、`result.result` の内容は `run --json` と同じです。 |
+| `serve` と `run --json` | 単発の JSON 結果だけが必要なら `run --json`、経過の NDJSON イベントを読むなら `serve [--once]` を使います（`run --events` は使えません）。 |
 | `--stdin-commands` | 呼び出したプログラムが終わると標準入力が閉じ、`vehicle_sil_launch` も止まります。 |
 
 リファレンスは次のとおりです。

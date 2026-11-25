@@ -1,4 +1,4 @@
-# プログラムから使う（`--events`、`--stdin-commands`、`version`）
+# プログラムから使う（`serve`、`--stdin-commands`、`version`）
 
 [English](../simulation-events.md)
 
@@ -6,19 +6,19 @@ GUI やスクリプトなどのプログラムから `vehicle_sil_launch` を起
 
 | 使うもの | できること | 節 |
 |---|---|---|
-| `run --events` | 実行の経過をイベントとして標準出力に書き、最後に結果を書きます。 | [イベント](#イベントrun---events) |
-| `run --stdin-commands` | 標準入力からコマンドを読みます。 | [標準入力のコマンド](#標準入力のコマンドrun---stdin-commands) |
+| `serve [--once]` | 実行の経過を NDJSON イベント（`vehicle_sil_events: 4`）として標準出力に書き、標準入力からコマンドを読みます。 | [イベント](#イベントserve---once)、[常駐ランチャー（`serve`）](#常駐ランチャーserve) |
+| `run --stdin-commands` | 単発の `run` で標準入力からコマンドを読みます。 | [標準入力のコマンド](#標準入力のコマンドrun---stdin-commands) |
 | `version --json` | この `vehicle_sil_launch` が書く形式のバージョンと、機能の一覧を書きます。 | [バージョンと機能の一覧](#バージョンと機能の一覧vehicle_sil_launch-version) |
 
 ```sh
 vehicle_sil_launch version --json
 vehicle_sil_launch check --json simulation.yaml
-vehicle_sil_launch run --events --stdin-commands simulation.yaml
+vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"run"} を送って開始
 ```
 
-## イベント（`run --events`）
+## イベント（`serve [--once]`）
 
-標準出力に、1 行に 1 つの JSON のオブジェクトを、起きた順に書きます（NDJSON）。文字コードは UTF-8、改行は `\n` で、行の中に改行はありません。1 行ごとに書き出します。イベントを書くのは `run` のときだけです。どの行も、次の 3 つのキーで始まります。
+`serve` と `serve --once` は標準出力に、1 行に 1 つの JSON のオブジェクトを、起きた順に書きます（NDJSON）。文字コードは UTF-8、改行は `\n` で、行の中に改行はありません。1 行ごとに書き出します（`run --events` は廃止され終了コード 4 になります。1 回だけの実行は `serve --once`、複数回の実行は `serve` を使います。[常駐ランチャー（`serve`）](#常駐ランチャーserve) を参照）。どの行も、次の 3 つのキーで始まります。
 
 | キー | 値 |
 |---|---|
@@ -56,7 +56,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 | キー | 値 |
 |---|---|
-| `vehicle_sil_events` | イベントの形式のバージョン（今は 2） |
+| `vehicle_sil_events` | イベントの形式のバージョン（今は 4。`launcher`、`status`、`run_start`、`prepare` および実行ごとの `run` キーは [常駐ランチャー（`serve`）](#常駐ランチャーserve) を参照） |
 | `vehicle_sil` | vehicle-sil のバージョン |
 | `pid` | `vehicle_sil_launch` のプロセス ID |
 | `file` | 設定ファイル（引数に書いたとおり。わからなければ `null`） |
@@ -391,11 +391,11 @@ participant の `log` の終わりの側には、保証がありません。part
 
 ### 実行に進まないときのイベント
 
-`--events` を付けた `run` は、引数がエラーでも `hello` を最初に、`result` を最後に書きます。表では `state` と `heartbeat` の行を省きます。照合を始めた実行は、[実行の終わり方](#実行の終わり方)のとおりに終わります。
+`serve [--once]` は、起動時の引数エラーでも `hello` を最初に、`result` を最後に書きます。表では `state`、`status`、`run_start`、`heartbeat` の行を省きます。照合を始めた実行は、[実行の終わり方](#実行の終わり方)のとおりに終わります。
 
 | 場合 | イベント | `result` の `result` | 終了コード |
 |---|---|---|---|
-| 引数のエラー（知らないオプション、設定ファイルの指定がない、`--json` と一緒に付けた、`--control` の値が誤り、など） | `hello`、`result` | `"usage"` | 4 |
+| 引数のエラー（知らないオプション、設定ファイルの指定がない、`--control` の値が誤り、など） | `hello`、`result` | `"usage"` | 4 |
 | 設定ファイルを読んでわかる引数のエラー | `hello`、`phase`（`checking`）、`check`、`phase`（`ended`）、`result` | `"usage"` | 4 |
 | 設定ファイルを読めない | 同じ 5 つ | `"unreadable"` | 3 |
 | 照合でエラーが見つかった | 同じ 5 つ | `"check_failed"` | 1 |
@@ -409,11 +409,11 @@ participant の `log` の終わりの側には、保証がありません。part
 - 機種を書いた設定ファイルに `--variant` がない。
 - `--variant` の名前が設定ファイルにない。
 
-`run` でないコマンド（`check`、`version`、コマンドなし）に `--events` を付けたときは、イベントを書きません。引数のエラーとして標準エラーに書き、終了コードは 4 です。
+`run` やほかのコマンド（`check`、`version`、`serve`、コマンドなし）に `--events` を付けたときは、イベントを書きません。引数のエラーとして標準エラーに書き、終了コードは 4 です。
 
 ### `log` の行
 
-`line` は、participant が標準出力か標準エラーに書いた 1 行（行末の改行なし）、または `vehicle_sil_launch` の経過の 1 行です。`--events` なしで標準エラーに書く行から、前の `[<名前>] ` を除いたものと同じです。
+`line` は、participant が標準出力か標準エラーに書いた 1 行（行末の改行なし）、または `vehicle_sil_launch` の経過の 1 行です。`run` が標準エラーに書く行から、前の `[<名前>] ` を除いたものと同じです。
 
 | 行の内容 | 扱い |
 |---|---|
@@ -509,7 +509,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 `event`、キー、理由のコード、`phase` の値と参加者の `state` の値は、バージョンを上げずに増えることがあります。キーの意味が変わるとき、なくなるときは `vehicle_sil_events` を上げます。形式 2 で、`time` から `paused` と `speed` がなくなりました（`state` にあります）。
 
-`--events` のとき、標準エラーに書くのは `vehicle_sil_launch` 自身の通知（引数のエラー、イベントを書けなくなった、結果を書けない、想定外の失敗）だけで、participant の行も経過も書きません。`vehicle_sil_launch` の中のライブラリが標準出力に書いたものは、標準エラーに行きます（イベントの行に混ざりません）。
+`serve [--once]` のとき、標準エラーに書くのは `vehicle_sil_launch` 自身の通知（引数のエラー、イベントを書けなくなった、結果を書けない、想定外の失敗）だけで、participant の行も経過も書きません。`vehicle_sil_launch` の中のライブラリが標準出力に書いたものは、標準エラーに行きます（イベントの行に混ざりません）。
 
 `--stdin-commands` を付けておくと、起動したプログラムが止まるか終わったときに標準入力が閉じるので、`vehicle_sil_launch` は標準出力の状態によらず、すぐに順に止まります。
 
@@ -517,8 +517,8 @@ participant の `log` の終わりの側には、保証がありません。part
 
 - 文字列のエスケープは `--json` と同じです（`"`、`\`、制御文字。UTF-8 でないバイトは U+FFFD）。`log` の `line` は、上のとおり先に `?` に置き換えています。
 - 行の長さに上限はありません（`check` と `result` は大きくなります）。
-- `--json` と `--events` を一緒に付けるのは引数のエラーです（イベントの最後が結果なので）。
-- 終了コードは `--events` なしと同じです。
+- `serve` は `--json`、`--events`、`--stdin-commands` を取りません（指定すると引数のエラーになります。`serve` は常に NDJSON イベントを書き、標準入力のコマンドを読みます）。
+- `serve --once` の終了コードは `run` と同じです（複数回実行する `serve` は [常駐ランチャー（`serve`）](#常駐ランチャーserve) を参照）。
 
 ### 例
 
@@ -558,7 +558,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 ## 標準入力のコマンド（`run --stdin-commands`）
 
-`--stdin-commands` を付けたときだけ、標準入力を読みます。付けないときは読みません（標準入力が閉じていても空でも、止まりません）。1 行に 1 つの JSON のオブジェクトです。`--events` と一緒に使います（[読む側が守ること](#読む側が守ること)）。単独でも使えます。
+`run` では `--stdin-commands` を付けたときだけ標準入力を読みます（付けないときは標準入力が閉じていても空でも止まりません）。`serve [--once]` は `--stdin-commands` なしで常に標準入力のコマンドを読みます。1 行に 1 つの JSON のオブジェクトです。機械可読のイベントとあわせて使う場合は `serve [--once]` を使います（[読む側が守ること](#読む側が守ること)、[常駐ランチャー（`serve`）](#常駐ランチャーserve)）。
 
 | 行 | 意味 |
 |---|---|
@@ -588,7 +588,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `speed` | 一時停止はそのままです。 |
 | EOF | すでに止める要求（`stop`、シグナル、閉じた標準出力）を受けていれば、何もしません（2 回目に数えません。`command` のイベントも書きません）。 |
 | それ以外 | JSON のオブジェクトでない、`command` がない、知らないコマンド、`id` が 0 以上 2^53 以下の整数でない、64 KiB を超える行がこれに当たります。 |
-| それ以外 | `--events` なら `command` のイベント（`accepted: false`、`message`、`reason`）を、なければ標準エラーに 1 行を書きます。 |
+| それ以外 | `serve [--once]` なら `command` のイベント（`accepted: false`、`message`、`reason`）を、`run --stdin-commands` なら標準エラーに 1 行を書きます。 |
 
 オブジェクトのほかのキーは無視します。`at_ms` を付けた `pause` は、時刻なしの `pause` として扱います（時刻で止めるには `run_until` を使います）。`--stdin-commands` のない実行でも、`state` のイベントは `run_until` を標準入力の答えとして示します。イベントを読む側が読んでいなくても、コマンドは受け付けて実行します。
 
@@ -731,7 +731,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 | `features` の名前 | 機能 |
 |---|---|
-| `events` | `run --events` |
+| `events` | NDJSON イベントストリーム（`serve [--once]`、`vehicle_sil_events: 4`） |
 | `stdin-commands` | `run --stdin-commands` と `{"command":"stop"}` |
 | `check-variables` | 照合の JSON の `participants[].variables` |
 | `speed` | 速度の指定（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)） |

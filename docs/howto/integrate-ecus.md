@@ -56,7 +56,7 @@ Do steps 1–5 in order. Read the remaining sections when you need them.
 |---|---|---|
 | Run without an ECU you have not received yet | `--disable` | [Run with an ECU disabled](#run-with-an-ecu-disabled-enabled---disable) |
 | Stop a run partway, or limit a run that does not end | Ctrl+C, `--timeout-ms` | [Stop the simulation](#stop-the-simulation) |
-| Read the result from a script or CI | `--json`, `--events` | [Use from scripts](#use-from-scripts---json---events) |
+| Read the result from a script or CI | `--json`, `serve` | [Use from scripts](#use-from-scripts---json-serve) |
 | Run in sync with real time | `--speed` | [Run at real-time speed](#run-at-real-time-speed---speed-and-read-the-lateness) |
 | Run 2 instances of the same ECU | `j1939_nodes` | [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu) |
 | Start tools not built with `ecu_main()` together with the ECUs | `describe: false` | [Add tools not built with `ecu_main()`](#add-tools-not-built-with-ecu_main) |
@@ -588,7 +588,7 @@ To stop the run from a program, start `run` with `--stdin-commands` and write `{
 
 Whichever way the run stops, `vehicle_sil_launch` ends the ECUs it started, and the processes that the ECUs started, before it exits. If an ECU does not exit after the simulation ends, `vehicle_sil_launch` kills it and reports `did-not-end` as an `error`. For the order and the wait times, see "[Stopping a run](../simulation-run.md#stopping-a-run)", "[Interrupting (Ctrl+C)](../simulation-run.md#interrupting-ctrlc)" and "[Leaving no participant behind](../simulation-run.md#leaving-no-participant-behind)" in simulation-run.md.
 
-## Use from scripts (`--json`, `--events`)
+## Use from scripts (`--json`, `serve`)
 
 From CI scripts or your own tools, use the exit code and the machine-readable output.
 
@@ -596,7 +596,7 @@ From CI scripts or your own tools, use the exit code and the machine-readable ou
 |---|---|---|
 | Know only whether it passed or failed | The exit code of `check` or `run` | 0 is pass (or stopped by a command), 1 is fail and 130 is interrupted. |
 | Read the findings in a program | `vehicle_sil_launch check --json simulation.yaml` | Writes the result to stdout as one JSON document. |
-| Follow the progress of a run | `vehicle_sil_launch run --events --stdin-commands simulation.yaml` | Writes what happens, in order, as one JSON object per line. |
+| Follow the progress of a run | `vehicle_sil_launch serve --once simulation.yaml` | Writes what happens, in order, as one NDJSON event per line (`vehicle_sil_events: 4`) and reads commands from stdin (send `{"command":"run"}` on stdin to start). |
 | Find out which features are available | `vehicle_sil_launch version --json` | `features` lists the feature names. |
 
 With `check --json`, the findings are in `findings`. Here is part of the output for the `simulation.yaml` of step 3:
@@ -629,8 +629,8 @@ With `check --json`, the findings are in `findings`. Here is part of the output 
 | Topic | Details |
 |---|---|
 | `participants[].variables` | Part of the `check --json` output. It shows which ECU has which variables before you run. |
-| First and last lines of `--events` | The first line is `hello` and the last is `result`. The content of `result` is the same as the output of `run --json`. |
-| `--json` and `--events` | You cannot use them together. |
+| First and last lines of `serve --once` | The first line is `hello` (`vehicle_sil_events: 4`) and the last is `result`. The content of `result.result` is the same as the output of `run --json`. |
+| `serve` and `run --json` | Use `run --json` for a single JSON result, or `serve [--once]` for streaming NDJSON events (`run --events` is not supported). |
 | `--stdin-commands` | When the calling program exits, stdin closes and `vehicle_sil_launch` stops too. |
 
 The references:

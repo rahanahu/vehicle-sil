@@ -134,7 +134,7 @@ manual は、利用者が自分で起動する participant です（[participant
 
 行には、考えられる原因（ほかの PC の participant のネットワークが切れた、デバッガーで止めている、ステップの中で固まった）と、`--timeout-ms` を挙げます。同じ状態が続けば、60 秒と 10 分にも 1 回ずつ書きます。また進んだら `virtual time advances again: it stood still for <s> s at t=<ms> ms` を書きます。
 
-`run` は中断せず、待ち続けます。この行は指摘にはしません（`--events` では `log` のイベントです）。速度を指定したときは、タイムステップの期限を過ぎた時間で数えます。遅い速度で期限を待つ間は数えません。
+`run` は中断せず、待ち続けます。この行は指摘にはしません（`serve [--once]` では `log` のイベントです）。速度を指定したときは、タイムステップの期限を過ぎた時間で数えます。遅い速度で期限を待つ間は数えません。
 
 ネットワークが切れても、SIL Kit は接続が切れたことに長い間気づきません（Linux では十数分）。
 
@@ -284,7 +284,7 @@ participant が多いと、ほかの ECU を待つ間に CPU が省電力の状�
 
 ### 遅れたときの警告と対処
 
-遅れたタイムステップが 1 つでもあれば、警告 `behind-real-time` を出します（`--strict` では失敗）。数は、結果の `timing`、人向けの出力の `time:` の行、`--events` の `time` にあります。
+遅れたタイムステップが 1 つでもあれば、警告 `behind-real-time` を出します（`--strict` では失敗）。数は、結果の `timing`、人向けの出力の `time:` の行、`serve [--once]` の `time` イベントにあります。
 
 遅れたときは、速度を下げるか、遅い原因を探します。
 
@@ -378,7 +378,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 | `resume`、`speed` 1 | 受け付けます（何も変わりません）。 | 受け付けます。 |
 | `stop` | 受け付けます。 | 受け付けます。 |
 
-- 答えは、シナリオがあってもなくても、どの入口からでも同じです。`command` イベントは `accepted: false` と `reason: "outside-real-time"` になり、Control Server のクライアントには、その理由の付いた `FAILED_PRECONDITION` が返ります（[control-api.md](control-api.md) の「外につながる実行」）。`--events` がなければ、断った標準入力の行は標準エラーの 1 行になります。メッセージに、どうすればよいかがあります（`--time-policy free` で始め直すか、外につながずに実行する）。
+- 答えは、シナリオがあってもなくても、どの入口からでも同じです。`serve [--once]` の `command` イベントは `accepted: false` と `reason: "outside-real-time"` になり、Control Server のクライアントには、その理由の付いた `FAILED_PRECONDITION` が返ります（[control-api.md](control-api.md) の「外につながる実行」）。`run --stdin-commands` では、断った標準入力の行は標準エラーの 1 行になります。メッセージに、どうすればよいかがあります（`--time-policy free` で始め直すか、外につながずに実行する）。
 - 送る前に、`state` イベントで分かります。`realtime` では、`allowed.pause`、`allowed.step`、`allowed.run_until` が、この理由の `ok: false` になり、`allowed.speed` の `min` と `max` が 1 になります。`free` では `ok: true` で、コード `outside-not-real-time` の `caution` が付きます（[simulation-events.md](simulation-events.md) の「`state` のイベント」）。
 - シナリオつきの実行（`--scenario`）も、標準入力のコマンドと Control Server のクライアントのどちらについても、この表に従います。シナリオを理由に拒否するのは、クライアントの書き込みだけです（理由 `scenario-running`。[control-api.md](control-api.md) の「シナリオの実行中」）。
 - ランチャーが構成ファイルを読む前に届いたコマンドは待たされ、ファイルを読んだ後に答えが出ます。早く送っても、この規則をすり抜けません（[simulation-events.md](simulation-events.md) の「時間のコマンドを受け付ける条件」）。
@@ -395,7 +395,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 | Ethernet | `silkit_to_ext` | `ext_from_devices`: 送り元がこの PC でないフレーム。ブリッジの絞り込みの前に数える |
 | CAN | `silkit_to_ext` | `ext_from_devices`: バスのほかのノードから来たフレーム |
 
-- 数は結果（`outside[]`。人向けの結果の `outside:` の行、例えば `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`）と、`--events` なら実行中の `outside` イベントに出ます（[simulation-events.md](simulation-events.md#つないだネットワークの数outside) の「つないだネットワークの数（`outside`）」）。`--events` があってもなくても同じ数です。
+- 数は結果（`outside[]`。人向けの結果の `outside:` の行、例えば `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`）と、`serve [--once]` では実行中の `outside` イベントに出ます（[simulation-events.md](simulation-events.md#つないだネットワークの数outside) の「つないだネットワークの数（`outside`）」）。`run` と `serve [--once]` のどちらでも同じ数です。
 - 普段の LAN のように、ほかの機器が同じ線にいると、`from_outside` にはその機器のフレーム（ARP など、ブリッジの絞り込みがシミュレーションに入れないもの）も数えられます。シミュレーションに入った数は、ブリッジの最後の統計の行の `ext_to_silkit` です。その場合、相手の機器が答えなくても `connect-nothing-received` は出ません。
 - ブリッジが動いている間に `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジが終わったら、`run` は最後に読んだ 1 行を、ブリッジの行として 1 回だけ出します。全部の数が載ったブリッジの報告です（例えば、絞り込みで ECU に渡さなかったフレーム `filtered_from_ext`、止めるときに捨てたフレーム `ext_tx_unsent`）。ブリッジが止まるときに書いた行か、それを書かずに終わらされたなら、動いている間の最後の行です。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
 - 数は最後に読めた行のものです。最後の行を書かずに終わらされたブリッジ（ランチャーが止まるよう頼めなかった Windows）は、動いている間の最後の行の数になります。1 行も読めなければ、どちらも `null` です。
@@ -414,7 +414,7 @@ vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <netwo
 
 ### リンクとバスの状態
 
-走っている間、`run` はブリッジのほかの行も読みます。リンクの行（Ethernet のブリッジの `link link=up|down|unknown`、CAN のブリッジの `link bus=active|passive|bus-off|unknown`。[bridge-contract.md](bridge-contract.md#リンクの行) の「リンクの行」）と、統計の行の `key=N` のすべて（上で数える 2 つだけではありません）です。知らないキーと値は読み飛ばします。リンクの行も、ブリッジの行としては出しません。変わったときは、実行の始まりからの時間を付けたランチャーの 1 行にし、`--events` では `log` イベントにします。
+走っている間、`run` はブリッジのほかの行も読みます。リンクの行（Ethernet のブリッジの `link link=up|down|unknown`、CAN のブリッジの `link bus=active|passive|bus-off|unknown`。[bridge-contract.md](bridge-contract.md#リンクの行) の「リンクの行」）と、統計の行の `key=N` のすべて（上で数える 2 つだけではありません）です。知らないキーと値は読み飛ばします。リンクの行も、ブリッジの行としては出しません。変わったときは、実行の始まりからの時間を付けたランチャーの 1 行にし、`serve [--once]` では `log` イベントにします。
 
 ```text
 outside: ETH_EXT -> enp3s0: link down at 12.40 s
@@ -441,7 +441,7 @@ Npcap はリンクの状態を取らないので、リンクが切れても `out
 
 ほかの数（`own_tx_dropped`、`filtered_to_ext`、`filtered_from_ext`、`mac_unguarded`、`oversize`、`malformed`、`ext_checksum_incomplete`）はブリッジの失った分ではないので、所見にしません。結果には、ブリッジの書いたとおりに入ります。文は、何が起きたか、結果を信じてよいか、何を確かめるかを書きます。例: `network 'ETH_EXT' -> enp3s0: the link was down once, for 2.70 s in all. The run went on, but frames sent meanwhile did not reach the devices, ...`。この所見は、それまでに読んだものから、終わりに作ります。
 
-`--events` では、実行の間、各 `state` イベントの `outside[]` が、ブリッジごとに同じことを伝えます（`condition` は `ok`、`interrupted`、`degraded`、`reasons` を伴います。[`state` イベント](simulation-events.md#state-のイベント)）。リンクやバスが落ちている、またはバスが bus-off の間は `interrupted`、error passive、落としたフレームや止めたループ（数が増えてから 5 秒）、実行の外のブリッジが同じデバイスを使っている間は `degraded` です。
+`serve [--once]` では、実行の間、各 `state` イベントの `outside[]` が、ブリッジごとに同じことを伝えます（`condition` は `ok`、`interrupted`、`degraded`、`reasons` を伴います。[`state` イベント](simulation-events.md#state-のイベント)）。リンクやバスが落ちている、またはバスが bus-off の間は `interrupted`、error passive、落としたフレームや止めたループ（数が増えてから 5 秒）、実行の外のブリッジが同じデバイスを使っている間は `degraded` です。
 
 ### 別の実行も使っているデバイス
 
@@ -655,7 +655,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 - ファイルは JSON で書きます。ランチャーはそれより緩い書き方を読めることがありますが、約束しません。スキーマと、このファイルを読むほかのツールは、JSON だけを受けます。
 - ファイルの間違い（知らないキー、2 回書いたキー、型の違う値、`null`、別の版）は、ファイル名と行を示す使い方の誤り（終了コード 4）で、照合も起動もしません。指定しないキーは書きません。
 - JSON Schema は [schema/run-request.schema.json](../../schema/run-request.schema.json) です。`"$schema"` にそのパスを書いたファイルは、エディターが補完と検査をします。
-- ランチャーを呼ぶ側が決めるものは、ファイルに書けません。設定ファイル、`--log-dir`、`--timeline`、`--timeout-ms`、`--control`、`--events`、`--stdin-commands`、`--json` は引数だけです。
+- ランチャーを呼ぶ側が決めるものは、ファイルに書けません。設定ファイル、`--log-dir`、`--timeline`、`--timeout-ms`、`--control`、`--stdin-commands`、`--json` は引数だけです。
 - `examples/ecu_main/requests/throttle_step.json` は、例の要求ファイルです（`vehicle_sil_launch run --request requests/throttle_step.json simulation.yaml`）。
 
 ### 要求ファイルのキー
@@ -733,7 +733,7 @@ participant を終了させた後、`run` は自分の SIL Kit の接続（ECU �
 
 ## 中断（Ctrl+C）
 
-Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります（participant が自分で終わるのを待つ間、つまり[止め方](#止め方)の 1 の間に来た中断でも同じです）。それより後に来た中断は、結果も終了コードも変えません（[実行の終わり方](#実行の終わり方endokmessage)を参照）。`--stdin-commands` の標準入力の終わりと、`--events` の閉じた標準出力も同じ扱いです（ランチャーを起動したプログラムがいなくなった）。コマンド（`{"command":"stop"}`、Control API の `Stop`）で止めた実行は、中断ではありません。[実行の終わり方](#実行の終わり方endokmessage)を見てください。
+Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります（participant が自分で終わるのを待つ間、つまり[止め方](#止め方)の 1 の間に来た中断でも同じです）。それより後に来た中断は、結果も終了コードも変えません（[実行の終わり方](#実行の終わり方endokmessage)を参照）。`--stdin-commands`（または `serve`）の標準入力の終わりと、`serve [--once]` の閉じた標準出力も同じ扱いです（ランチャーを起動したプログラムがいなくなった）。コマンド（`{"command":"stop"}`、Control API の `Stop`）で止めた実行は、中断ではありません。[実行の終わり方](#実行の終わり方endokmessage)を見てください。
 
 | 受けた時点 | すること |
 |---|---|
@@ -860,9 +860,9 @@ SIL Kit の設定は、ecu_main の `--silkit-config`、`vehicle_sil_can_bus_sim
 |---|---|
 | 標準エラー | participant の出力と、`vehicle_sil_launch` 自身の経過 |
 | `--log-dir` のファイル | participant ごとの出力 |
-| 標準出力 | 結果だけ（人向けか `--json`。`--events` ではイベント） |
+| 標準出力 | 結果だけ（人向けか `--json`。`serve [--once]` では NDJSON イベント） |
 
-`--events` のときは、標準エラーに書く行（participant の行と `vehicle_sil_launch` の経過）を標準エラーに書かず、イベントとして標準出力に書きます（[プログラムから使う](simulation-events.md)）。
+`serve [--once]` のときは、標準エラーに書く行（participant の行と `vehicle_sil_launch` の経過）を標準エラーに書かず、イベントとして標準出力に書きます（[プログラムから使う](simulation-events.md)）。
 
 ### 標準エラー
 
@@ -1606,7 +1606,7 @@ passed: 0 errors, 1 warning, 1 note
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
 ```
 
-- ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`--events` では `log` のイベント）。`run --json` と `--events` の結果では、`scenario.timeline` にファイルの名前（引数のとおり）が入り、`--timeline` がなければ `null` です。**`--timeline` を付けない実行の出力は、ほかに何も変わりません。**
+- ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`serve [--once]` では `log` のイベント）。`run --json` と `serve [--once]` の結果では、`scenario.timeline` にファイルの名前（引数のとおり）が入り、`--timeline` がなければ `null` です。**`--timeline` を付けない実行の出力は、ほかに何も変わりません。**
 - ファイルは、何かを起動する前に開きます（ディレクトリがなければ作ります）。開けなければエラー `setup`（終了コード 3）で、何も起動しません。実行の後に書けなかったとき（ディスクがいっぱい、など）は、エラー `timeline-write` です。シナリオの結果（`scenario.status`）は変わりませんが、エラーの指摘なので、シナリオが通っていても実行は失敗です（終了コード 1）。
 - 上限で点を捨てたときは、`timeline:` の行に捨てた点の数を足し、注記 `timeline-limit` を出します（下の「上限」。終了コードは変わりません）。
 - シナリオが通っても、失敗しても、途中で終わっても書きます。照合のエラーで何も起動しなかったときは書きません。
@@ -1935,7 +1935,7 @@ vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.ya
 | `--json`、`--strict`、`--describe-timeout-ms`、`--disable`、`--enable` | 使えます（どの組にも同じように適用します）。 |
 | `--timeout-ms` | 使えます（1 組ごとの上限）。 |
 | `--param <名前>=<値>` | そのパラメーターを宣言しているか使っているシナリオにだけ適用します。 |
-| `--speed`、`--log-dir`、`--events`、`--stdin-commands`、`--control`、`--manual` などの `run` だけの引数 | 引数のエラーです。 |
+| `--speed`、`--log-dir`、`--stdin-commands`、`--control`、`--manual` などの `run` だけの引数 | 引数のエラーです。 |
 | `--scenario` | 引数のエラーです。 |
 
 `--param` の名前がどのシナリオにもなければ、引数のエラーです（何も実行しません）。打ち間違いを黙って無視しないためです。
@@ -2109,7 +2109,7 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
 
 - 設定ファイルの書き方と引数の一覧 → [simulation-config.md](simulation-config.md)
 - 照合と、照合の指摘 → [simulation-check.md](simulation-check.md)
-- `run --events` のイベントと、標準入力のコマンド → [simulation-events.md](simulation-events.md)
+- `serve [--once]` のイベントと、標準入力のコマンド → [simulation-events.md](simulation-events.md)
 - シナリオの書き方 → [scenario.md](scenario.md)
 - 実行中の変数をプログラムから読み書きする → [control-api.md](control-api.md)
 - 複数の PC で動かす手順 → [howto/multi-pc.md](howto/multi-pc.md)

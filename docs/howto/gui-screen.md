@@ -223,14 +223,15 @@ Next, call the API. The API needs the token, and a `POST` also needs the `Origin
 ```sh
 (umask 077; printf 'Authorization: Bearer %s\n' "${URL##*#token=}" > token.header)
 
-# Start a run
-curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
-  -d '{"file": "simulation.live.yaml", "disable": [], "speed": null, "start_paused": false}' \
-  "$BASE/api/run" | head -c 60; echo
+# Start a run (save {instance, run_id} to target stop-session later)
+RUN_JSON=$(curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
+  -d '{"file": "simulation.live.yaml", "disable": [], "start_paused": false}' \
+  "$BASE/api/run")
+echo "$RUN_JSON"
 ```
 
 ```text
-{"session": {"id": 1, "file": "simulation.live.yaml", "disab
+{"instance": "0123456789abcdef", "run_id": "0123456789abcdef-1"}
 ```
 
 Values arrive over WebSocket, so `curl` cannot read them. Read the value with Node.js (22 or later) and the same library as the screen.
@@ -266,15 +267,16 @@ VEHICLE_SIL_GUI_URL="$URL" node read-value.mjs
 Engine.engine.speed = 1200 rpm
 ```
 
-When you are done, stop the run and delete the token file. `{"force": false}` stops the run in order; `{"force": true}` stops it without waiting.
+When you are done, stop the run by sending its `instance` and `run_id` to `POST /api/stop-session`, and delete the token file. `"force": false` stops the run in order; `"force": true` stops it without waiting.
 
 ```sh
+STOP_BODY=$(node -e 'const r = JSON.parse(process.argv[1]); console.log(JSON.stringify({instance: r.instance, run_id: r.run_id, force: false}));' "$RUN_JSON")
 curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
-  -d '{"force": false}' "$BASE/api/stop" > /dev/null
+  -d "$STOP_BODY" "$BASE/api/stop-session" > /dev/null
 rm token.header
 ```
 
-The answer to this request only says that the server took it: the `session` in it still shows `"state": "running"` and `"stop": "requested"`. The run ends a few seconds later (`phase` in the `session` of `GET $BASE/api/session` is `ended`). Then stop the GUI server with Ctrl+C.
+The answer (`{"instance": "...", "run_id": "..."}`) only says that the server received the stop request for that run. The run ends a few seconds later (`state` in the `session` of `GET $BASE/api/session` becomes `"ended"`). Then stop the GUI server with Ctrl+C.
 
 ### Troubleshoot your screen
 

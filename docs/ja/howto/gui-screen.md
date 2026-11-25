@@ -223,14 +223,15 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' "$BASE/vsil/vehicle-sil
 ```sh
 (umask 077; printf 'Authorization: Bearer %s\n' "${URL##*#token=}" > token.header)
 
-# 実行を開始する
-curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
-  -d '{"file": "simulation.live.yaml", "disable": [], "speed": null, "start_paused": false}' \
-  "$BASE/api/run" | head -c 60; echo
+# 実行を開始する（あとで stop-session に渡す {instance, run_id} を保存）
+RUN_JSON=$(curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
+  -d '{"file": "simulation.live.yaml", "disable": [], "start_paused": false}' \
+  "$BASE/api/run")
+echo "$RUN_JSON"
 ```
 
 ```text
-{"session": {"id": 1, "file": "simulation.live.yaml", "disab
+{"instance": "0123456789abcdef", "run_id": "0123456789abcdef-1"}
 ```
 
 値は WebSocket で届くので、`curl` では読めません。値は、Node.js（22 以上）と、画面と同じライブラリで読みます。
@@ -266,15 +267,16 @@ VEHICLE_SIL_GUI_URL="$URL" node read-value.mjs
 Engine.engine.speed = 1200 rpm
 ```
 
-終わったら、実行を停止し、トークンのファイルを消します。`{"force": false}` は、実行を順に止めます。`{"force": true}` は、待たずに止めます。
+終わったら、`instance` と `run_id` を `POST /api/stop-session` に送って実行を停止し、トークンのファイルを消します。`"force": false` は実行を順に止め、`"force": true` は待たずに止めます。
 
 ```sh
+STOP_BODY=$(node -e 'const r = JSON.parse(process.argv[1]); console.log(JSON.stringify({instance: r.instance, run_id: r.run_id, force: false}));' "$RUN_JSON")
 curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
-  -d '{"force": false}' "$BASE/api/stop" > /dev/null
+  -d "$STOP_BODY" "$BASE/api/stop-session" > /dev/null
 rm token.header
 ```
 
-この要求への答えは、サーバーが要求を受け付けたことを言うだけです。答えの中の `session` は、まだ `"state": "running"` と `"stop": "requested"` を示します。実行が終わるのは数秒後です（`GET $BASE/api/session` の `session` の `phase` が `ended` になります）。そのあと、Ctrl+C で GUI サーバーを止めます。
+この要求への答え（`{"instance": "...", "run_id": "..."}`）は、サーバーがその実行への停止要求を受け付けたことを言うだけです。実行が終わるのは数秒後です（`GET $BASE/api/session` の `session` の `state` が `"ended"` になります）。そのあと、Ctrl+C で GUI サーバーを止めます。
 
 ### うまくいかないとき
 

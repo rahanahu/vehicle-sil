@@ -941,7 +941,7 @@ JSON や timeline ファイルを読む側は、次の値で合否を決めま�
 |---|---|
 | `run --json` の `result` と `end` | 実行の全体です。`ok` が真なら成功です（`ok` が真になるのは終了コードが 0 のときだけです。[実行の終わり方（`end`、`ok`、`message`）](simulation-run.md#実行の終わり方endokmessage)）。`result` と `end` には、成功でもエラーでもない値（`stopped`、`incomplete`、`interrupted`）がすでにあります |
 | `run --json` の `scenario.status` | `passed`、`failed`、`incomplete`、`not_run` |
-| 手順の `status`（`run --json`、`run --events` の `scenario_step`、timeline ファイル） | `passed`、`failed`、`unfinished`、`not_run`、`skipped` |
+| 手順の `status`（`run --json`、`serve [--once]` の `scenario_step`、timeline ファイル） | `passed`、`failed`、`unfinished`、`not_run`、`skipped` |
 | `test --json` の `result` と `runs[].result` | `test` の全体と、それぞれの実行 |
 | `check --json` の `result`、`participants[].status`、指摘の `severity` | [simulation-check.md](simulation-check.md#json--json) |
 
@@ -1107,7 +1107,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
   }
 ```
 
-### `run --events`
+### `serve [--once]`
 
 手順が始まったとき（`status` は `running`）と、結果が決まったときに、イベント `scenario_step`（`steps[]` と同じキー）が出力されます。結果のイベントにも `scenario` があります。
 
@@ -1185,5 +1185,5 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | 設定ファイル、機種、引数と終了コード | [simulation-config.md](simulation-config.md) |
 | 照合（`check`） | [simulation-check.md](simulation-check.md) |
 | 実行（`run`）、シナリオをまとめて実行する `test` | [simulation-run.md](simulation-run.md) |
-| イベント（`run --events`）と標準入力のコマンド | [simulation-events.md](simulation-events.md) |
+| イベント（`serve [--once]`）と標準入力のコマンド | [simulation-events.md](simulation-events.md) |
 | 実行中に外から値を読む | [control-api.md](control-api.md) |

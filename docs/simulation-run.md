@@ -134,7 +134,7 @@ If virtual time does not advance for 10 seconds during a run that is not paused,
 
 The line lists the possible causes (a participant on another computer lost its network, a debugger holds a process, a process hangs inside a step) and mentions `--timeout-ms`. If virtual time still does not advance, the line is written again at 60 seconds and at 10 minutes. When virtual time advances again, `run` writes `virtual time advances again: it stood still for <s> s at t=<ms> ms`.
 
-`run` does not abort; it keeps waiting. The line is not a finding (with `--events`, it is a `log` event). With a set speed, the time counts from the deadline of the time step; time spent waiting for the deadline at a slow speed does not count.
+`run` does not abort; it keeps waiting. The line is not a finding (in `serve [--once]`, it is a `log` event). With a set speed, the time counts from the deadline of the time step; time spent waiting for the deadline at a slow speed does not count.
 
 When a network goes down, SIL Kit takes a long time to notice that the connection has dropped (more than 10 minutes on Linux).
 
@@ -284,7 +284,7 @@ The scenario's writes for one time are sent together, and the run waits once for
 
 ### Lateness warnings and what to do
 
-If there is even 1 late time step, the warning `behind-real-time` is reported (a failure with `--strict`). The counts are in `timing` of the result, in the `time:` line of the human-readable output and in the `time` events of `--events`.
+If there is even 1 late time step, the warning `behind-real-time` is reported (a failure with `--strict`). The counts are in `timing` of the result, in the `time:` line of the human-readable output and in the `time` events of `serve [--once]`.
 
 When the run falls behind, lower the speed or look for the cause.
 
@@ -378,7 +378,7 @@ The commands during the run (stdin, a Control Server client, the GUI) follow the
 | `resume`, `speed` 1 | Accepted (they change nothing). | Accepted. |
 | `stop` | Accepted. | Accepted. |
 
-- The answer is the same from every entry, with a scenario or without: the `command` event has `accepted: false` and `reason: "outside-real-time"`, a Control Server client gets `FAILED_PRECONDITION` with that reason (see "In a run that is connected outside" in [control-api.md](control-api.md#in-a-run-that-is-connected-outside)), and without `--events` a refused stdin line is a line on stderr. The message says what to do: start the run again with `--time-policy free`, or without the connection.
+- The answer is the same from every entry, with a scenario or without: in `serve [--once]` the `command` event has `accepted: false` and `reason: "outside-real-time"`, a Control Server client gets `FAILED_PRECONDITION` with that reason (see "In a run that is connected outside" in [control-api.md](control-api.md#in-a-run-that-is-connected-outside)), and under `run --stdin-commands` a refused stdin line is a line on stderr. The message says what to do: start the run again with `--time-policy free`, or without the connection.
 - The `state` event says it before you send anything: with `realtime`, `allowed.pause`, `allowed.step` and `allowed.run_until` have `ok: false` with that reason, and `allowed.speed` has `min` and `max` 1. With `free` they have `ok: true` and a `caution` with the code `outside-not-real-time` (see "The `state` event" in [simulation-events.md](simulation-events.md#the-state-event)).
 - A run with a scenario (`--scenario`) follows this table too, for stdin commands and for Control Server clients alike. Only a client's write is rejected for the scenario (reason `scenario-running`; see "While a scenario runs" in [control-api.md](control-api.md#while-a-scenario-runs)).
 - A command that arrives before the launcher has read the configuration file waits, and is answered once the file is read: nothing gets past the rule by being early (see "When time commands are accepted" in [simulation-events.md](simulation-events.md#when-time-commands-are-accepted)).
@@ -395,7 +395,7 @@ A real-time participant of your own does not stop either while the simulation is
 | Ethernet | `silkit_to_ext` | `ext_from_devices`: frames whose source is not this computer, counted before the bridge's filter |
 | CAN | `silkit_to_ext` | `ext_from_devices`: frames that came from other nodes on the bus |
 
-- The counts are in the result (`outside[]`; `outside:` lines of the human-readable result, such as `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`) and, with `--events`, in the event `outside` while the run goes (see "Counts of a connected network (`outside`)" in [simulation-events.md](simulation-events.md#counts-of-a-connected-network-outside)). They are the same with and without `--events`.
+- The counts are in the result (`outside[]`; `outside:` lines of the human-readable result, such as `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`) and, under `serve [--once]`, in the event `outside` while the run goes (see "Counts of a connected network (`outside`)" in [simulation-events.md](simulation-events.md#counts-of-a-connected-network-outside)). They are the same in `run` and `serve [--once]`.
 - On a wire that other devices share, as on an ordinary LAN, `from_outside` also counts the frames of those devices that the bridge's filter does not let into the simulation (ARP, for example). The number that entered the simulation is `ext_to_silkit` in the bridge's last statistics line. Then `connect-nothing-received` does not appear even if the device you meant does not answer.
 - The statistics lines that `run` reads while the bridge runs are not shown as lines of the bridge (`[bridge.<network>] ...`) or as `log` events. When the bridge has ended, `run` shows the last one it read, once, as a line of the bridge: the bridge's report with every count, such as the frames that the filter kept from the ECUs (`filtered_from_ext`) or that were dropped at the stop (`ext_tx_unsent`). It is the line the bridge wrote when it stopped, or its last line while it ran if it was ended without one. The `--log-dir` file of the bridge has every line. A line that `run` cannot read (for example, of a bridge of another version without these keys) is shown as usual.
 - The counts are those of the last line read. A bridge that was ended without its last line (on Windows, where the launcher could not ask it to stop) has the counts of its last line while it ran. Without any line read, both are `null`.
@@ -414,7 +414,7 @@ vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <netwo
 
 ### The state of the link and the bus
 
-While the run goes, `run` also reads the other lines of the bridge: the link line (`link link=up|down|unknown` of the Ethernet bridge, `link bus=active|passive|bus-off|unknown` of the CAN bridge; see "[Link line](bridge-contract.md#link-line)" in bridge-contract.md) and every `key=N` of the statistics line, not only the two it counts above. Keys and values it does not know are skipped. The link line is not shown as a line of the bridge either; a change of it is one line of the launcher, with the time from the start of the run, and it is a `log` event with `--events`:
+While the run goes, `run` also reads the other lines of the bridge: the link line (`link link=up|down|unknown` of the Ethernet bridge, `link bus=active|passive|bus-off|unknown` of the CAN bridge; see "[Link line](bridge-contract.md#link-line)" in bridge-contract.md) and every `key=N` of the statistics line, not only the two it counts above. Keys and values it does not know are skipped. The link line is not shown as a line of the bridge either; a change of it is one line of the launcher, with the time from the start of the run, and it is a `log` event under `serve [--once]`:
 
 ```text
 outside: ETH_EXT -> enp3s0: link down at 12.40 s
@@ -441,7 +441,7 @@ The kinds of loss are told from the counts of the statistics line and the link l
 
 The other counts (`own_tx_dropped`, `filtered_to_ext`, `filtered_from_ext`, `mac_unguarded`, `oversize`, `malformed`, `ext_checksum_incomplete`) are no losses of the bridge and give no finding; they are in the result, as the bridge wrote them. The messages say what happened, whether to trust the result and what to check, for example `network 'ETH_EXT' -> enp3s0: the link was down once, for 2.70 s in all. The run went on, but frames sent meanwhile did not reach the devices, ...`. These findings are made at the end, from what was read until then.
 
-With `--events`, each `state` event tells the same while the run goes, for each bridge, in `outside[]` (`condition` `ok`, `interrupted` or `degraded`, with `reasons`; see [the `state` event](simulation-events.md#the-state-event)). A link or bus that is down, or a bus that is off, is `interrupted`; error passive, lost frames or stopped loops (for 5 s after the count grew), and a device that a bridge outside the run shares, are `degraded`.
+Under `serve [--once]`, each `state` event tells the same while the run goes, for each bridge, in `outside[]` (`condition` `ok`, `interrupted` or `degraded`, with `reasons`; see [the `state` event](simulation-events.md#the-state-event)). A link or bus that is down, or a bus that is off, is `interrupted`; error passive, lost frames or stopped loops (for 5 s after the count grew), and a device that a bridge outside the run shares, are `degraded`.
 
 ### A device that another run uses too
 
@@ -655,7 +655,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 - Write the file as JSON. The launcher may read a looser form, but that is no promise: the schema and the other tools that read the file take JSON only.
 - A mistake in the file (an unknown key, a key written twice, a value of the wrong type, `null`, another version) is a usage error (exit code 4) that names the file and the line; nothing is checked or started. Leave a key out to not set it.
 - The JSON Schema is [schema/run-request.schema.json](../schema/run-request.schema.json). An editor completes and checks a file that names it in `"$schema"`.
-- What the caller of the launcher decides is not in the file: the configuration file, `--log-dir`, `--timeline`, `--timeout-ms`, `--control`, `--events`, `--stdin-commands` and `--json` are arguments only.
+- What the caller of the launcher decides is not in the file: the configuration file, `--log-dir`, `--timeline`, `--timeout-ms`, `--control`, `--stdin-commands` and `--json` are arguments only.
 - `examples/ecu_main/requests/throttle_step.json` is a request file of the example: `vehicle_sil_launch run --request requests/throttle_step.json simulation.yaml`.
 
 ### Keys of a request file
@@ -733,7 +733,7 @@ Another Ctrl+C or `stop` command also cuts this wait short. `run` then writes on
 
 ## Interrupting (Ctrl+C)
 
-On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break), `vehicle_sil_launch` stops the simulation in order (the controller's stop), ends the participants as described in [Stopping a run](#stopping-a-run), records the interruption in the result and exits with code 130 (also when the interrupt comes only while `run` waits for the participants to end on their own, item 1 of [Stopping a run](#stopping-a-run)). An interrupt that comes later than that changes neither the result nor the exit code (see [How a run ended](#how-a-run-ended-end-ok-message)). The end of stdin with `--stdin-commands` and a closed stdout with `--events` count the same way: the program that ran the launcher has gone. A run that a command stopped (`{"command":"stop"}`, `Stop` of the Control API) is not an interrupted run: see [How a run ended](#how-a-run-ended-end-ok-message).
+On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break), `vehicle_sil_launch` stops the simulation in order (the controller's stop), ends the participants as described in [Stopping a run](#stopping-a-run), records the interruption in the result and exits with code 130 (also when the interrupt comes only while `run` waits for the participants to end on their own, item 1 of [Stopping a run](#stopping-a-run)). An interrupt that comes later than that changes neither the result nor the exit code (see [How a run ended](#how-a-run-ended-end-ok-message)). The end of stdin with `--stdin-commands` (or `serve`) and a closed stdout under `serve [--once]` count the same way: the program that ran the launcher has gone. A run that a command stopped (`{"command":"stop"}`, `Stop` of the Control API) is not an interrupted run: see [How a run ended](#how-a-run-ended-end-ok-message).
 
 | When it arrives | What `run` does |
 |---|---|
@@ -860,9 +860,9 @@ Pass a SIL Kit participant configuration with `--silkit-config` of ecu_main, `ve
 |---|---|
 | Stderr | Participant output and the progress of `vehicle_sil_launch` itself |
 | `--log-dir` files | Output per participant |
-| Stdout | Only the result (human-readable or `--json`; events with `--events`) |
+| Stdout | Only the result (human-readable or `--json`; NDJSON events under `serve [--once]`) |
 
-With `--events`, the lines that would go to stderr (participant lines and the progress of `vehicle_sil_launch`) go to stdout as events instead (see [Programmatic use](simulation-events.md)).
+Under `serve [--once]`, the lines that would go to stderr (participant lines and the progress of `vehicle_sil_launch`) go to stdout as events instead (see [Programmatic use](simulation-events.md)).
 
 ### Stderr
 
@@ -1606,7 +1606,7 @@ With `--timeline <file>`, `run --scenario` writes the values that the scenario w
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
 ```
 
-- The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event with `--events`). In the result of `run --json` and `--events`, `scenario.timeline` holds the file name (as given in the arguments), and `null` without `--timeline`. **Without `--timeline`, nothing else in the output of a run changes.**
+- The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event under `serve [--once]`). In the result of `run --json` and `serve [--once]`, `scenario.timeline` holds the file name (as given in the arguments), and `null` without `--timeline`. **Without `--timeline`, nothing else in the output of a run changes.**
 - The file is opened before anything is started (missing directories are created). If it cannot be opened, the run ends with the error `setup` (exit code 3) and starts nothing. If the file cannot be written after the run (a full disk, for example), the error is `timeline-write`. The scenario result (`scenario.status`) does not change, but the finding is an error, so the run fails even when the scenario passed (exit code 1).
 - If points were dropped at the limits, the `timeline:` line adds the number of dropped points, and the run reports the note `timeline-limit` (see "Limits" below). The exit code does not change.
 - The file is written whether the scenario passes, fails or ends partway. It is not written when a check error kept the run from starting anything.
@@ -1935,7 +1935,7 @@ Every run is `skipped`, for example, when the variants selected with `--variant`
 | `--json`, `--strict`, `--describe-timeout-ms`, `--disable`, `--enable` | Accepted (applied the same way to every run). |
 | `--timeout-ms` | Accepted (the limit for each run). |
 | `--param <name>=<value>` | Applied only to scenarios that declare or use that parameter. |
-| `--speed`, `--log-dir`, `--events`, `--stdin-commands`, `--control`, `--manual` and other options only for `run` | Usage error. |
+| `--speed`, `--log-dir`, `--stdin-commands`, `--control`, `--manual` and other options only for `run` | Usage error. |
 | `--scenario` | Usage error. |
 
 If no scenario has the name given to `--param`, it is a usage error (nothing runs). This keeps a typo from being silently ignored.
@@ -2109,7 +2109,7 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
 
 - How to write the configuration file, and the list of arguments → [simulation-config.md](simulation-config.md)
 - The check and its findings → [simulation-check.md](simulation-check.md)
-- The events of `run --events`, and stdin commands → [simulation-events.md](simulation-events.md)
+- The events of `serve [--once]`, and stdin commands → [simulation-events.md](simulation-events.md)
 - How to write scenarios → [scenario.md](scenario.md)
 - Reading and writing the variables of a running simulation from a program → [control-api.md](control-api.md)
 - How to run on several computers → [howto/multi-pc.md](howto/multi-pc.md)
