@@ -21,7 +21,7 @@ _PYTHON_DIR = _REPO_ROOT / "python"
 if str(_PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(_PYTHON_DIR))
 
-from vehicle_sil_control import Launch, LaunchError, RunHandle, Serve, ServeError, control_address  # noqa: E402
+from vehicle_sil_control import Launch, LaunchError, RunHandle, Serve, ServeError, __version__, control_address  # noqa: E402
 from vehicle_sil_control.serve import MAX_COMMAND_ID, MAX_COMMAND_LINE  # noqa: E402
 
 
@@ -114,7 +114,7 @@ class _FakeProcess:
                 "seq": 0,
                 "t_ms": 0,
                 "vehicle_sil_events": 4,
-                "vehicle_sil": "0.3.0",
+                "vehicle_sil": __version__,
                 "pid": self.pid,
                 "file": command[-1],
                 "arguments": [],

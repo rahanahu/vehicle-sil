@@ -2,7 +2,56 @@
 
 Changes of vehicle-sil by version, in the format of [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): each version has a heading `## [<version>] - <release date>` and its changes under `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed` and `### Security`. Version numbers are `MAJOR.MINOR.PATCH`, with a pre-release part for a release candidate or a test release (`0.2.0-rc.1`; `rc.<n>`, `beta.<n>` or `alpha.<n>`). While the version is 0.x, a version that raises MINOR may break compatibility. A change that breaks compatibility says what users have to do.
 
-The version comes from `project(vehicle_sil VERSION ...)` and `VEHICLE_SIL_VERSION_PRERELEASE` (`""` for a release) in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md` and `template/README.ja.md`, and the heading in this file, `## [<version>] - Unreleased` until the release. The commit that is tagged `v<version>` replaces `Unreleased` with the release date (`YYYY-MM-DD`). `scripts/package.py version` finds mismatches; with `--expect v<version>`, which the release workflow runs for the tag, it also refuses a heading without the date. The release notes are this version's section.
+The version comes from `project(vehicle_sil VERSION ...)` and `VEHICLE_SIL_VERSION_PRERELEASE` (`""` for a release) in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `python/pyproject.toml`, `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md` and `template/README.ja.md`, and the heading in this file, `## [<version>] - Unreleased` until the release (`scripts/package.py version --sync` updates the derived files and `uv.lock` from `CMakeLists.txt`). The commit that is tagged `v<version>` replaces `Unreleased` with the release date (`YYYY-MM-DD`). `scripts/package.py version` finds mismatches; with `--expect v<version>`, which the release workflow runs for the tag, it also refuses a heading without the date. The release notes are this version's section.
+
+## [0.4.0-rc.1] - 2026-11-25
+
+The first release candidate of 0.4.0. It unifies machine-readable execution across the launcher, the browser GUI server, the GUI client library and the Python Control API client on Events format 4 (`vehicle_sil_events: 4`) and GUI protocol 4 (`vehicle_sil_gui: 4`), adds the resident `Serve` and `RunHandle` Python client API, packages `vehicle_sil_control` as a zero-dependency workspace package, adds symmetric LIN port teardown, and trims stop, check, build and test waits across the stack. Because the event and GUI protocols advance to version 4, upgrade the tools, the GUI server, the GUI client and the Python client together, and build ECUs with the same release.
+
+### Breaking changes
+
+#### Launcher and events
+
+- **Events format 4 (`vehicle_sil_events: 4`) and removal of `vehicle_sil_launch run --events`**: machine-readable event streaming is unified on `vehicle_sil_launch serve` and `vehicle_sil_launch serve --once` (`vehicle_sil_events: 4`). `run --events` (format 2) and format 3's separate `idle` event are removed, and `--events-stall-ms` moves from `run` to `serve` (`run --events-stall-ms` is now a usage error). `serve` and `serve --once` emit spontaneous `status` events on launcher state transitions with explicit `launcher_state` (`unprepared`, `cold_only`, `preparing`, `ready`, `running`, `ending`, `contaminated`), and `prepare` and `result` events embed the post-transition `status`. `serve --once` runs a single simulation and exits after writing its `result` (`"launcher_ends": true`), while allowing `VEHICLE_SIL_TRACE`, a fixed `registry_uri` and `manual` participants. Use `vehicle_sil_launch serve --once` or `vehicle_sil_launch serve` instead of `run --events` (#413).
+
+#### Browser GUI server and client library
+
+- **GUI protocol 4 (`vehicle_sil_gui: 4`)**: the WebSocket stream uses a single monotonic sequence `(instance, run_id, stream_seq)` with opaque string `run_id` (`"<instance>-<n>"`) instead of integer `session` IDs and separate `snapshot_rev`/`problem_seq`/`event_seq` counters. `POST api/time`, `POST api/write` and `GET api/timeline/<run_id>` also switch from integer `session` to string `run_id`. `POST api/run` now answers `{instance, run_id}` instead of `{instance, session}` (the summary arrives over WebSocket; a failed check still answers 422 `check-failed` without clearing the prior run). `POST api/stop-session` (requiring `instance` and `run_id`), `POST api/prepare`, `POST api/time` and `POST api/write` return lightweight acknowledgements while state updates arrive over the WebSocket stream; untargeted `POST api/stop` is removed. Reconnecting clients pass `{instance, run_id, after_stream_seq}` in `auth` to receive delta log replay (#413).
+- **`@vehicle-sil/gui-client` API changes**: `GuiClient.fetchSession()` and `StopRequestBody` are removed; `RunTarget` uses `{run_id, instance}`; `FrontRun.start()`'s `onStarted` callback receives `RunAck` (`{instance, run_id}`) instead of `SessionSummary`; `FrontRun.forceStop()` takes `RunTarget`; and `Front.prepare()` returns `Promise<RuntimeStatus | null>`. Upgrade `@vehicle-sil/gui-client` and screens together with the GUI server (#413).
+
+#### Python Control API
+
+- **Python Control API (`vehicle_sil_control`)**: `Launch` now drives `vehicle_sil_launch serve --once` (Events format 4), `Serve` and `RunHandle` consume Events format 4 (`result` with embedded `status` and the `"trace-enabled"` refusal code), and `Control._check_release()` removes the legacy pre-0.2.0 stub-field and empty-`vehicle_sil` diagnostic branches (regenerate stubs with `python -m vehicle_sil_control.generate` and match releases) (#413).
+
+### Added
+
+- **Resident Python client (`Serve` and `RunHandle`)**: `vehicle_sil_control` provides `Serve`, `RunHandle` and `ServeError` for running sequential simulations in one `vehicle_sil_launch serve` process, handling inline intents and request files, and binding `Control` clients to each run ID while keeping `grpcio` optional until `run.control()` is called (#389, #413).
+- **File-only check and extended `serve` commands**: `vehicle_sil_launch check --file-only --json` validates a configuration without running executables, and `serve` accepts `prepare`, `status`, `stop` with `force`, and inline `run.intent` commands (features `check-file-only`, `serve-prepare`) (#387).
+- **Packaged `vehicle_sil_control` workspace module**: `python/vehicle_sil_control` is packaged as a zero-dependency workspace package (`python/pyproject.toml`, usable with `python -S`) and shares Events v4 request validation and lazy gRPC helpers with the GUI server (#413).
+- **Symmetric LIN port teardown**: `SilKitLinPort::close()` serializes lifecycle transitions, guards `open()`, and waits for in-flight callbacks to finish; `Peer::stop()` now closes LIN ports symmetrically with CAN and Ethernet ports (#412).
+- **Version synchronization and targeted verification scripts**: `scripts/package.py version --sync` updates derived version files and `uv.lock` from `CMakeLists.txt` (#384), and `scripts/verify-web.py`, `scripts/verify-gui.py` and `scripts/verify-python.py` accept targeted filters for faster local iteration (#382, #383, #396).
+
+### Changed
+
+- **`check --json` metadata and refusal codes**: `vehicle_sil_launch check --json` always reports `file_sha256` and `hot_eligibility` (also with `--text-from-stdin` and without `--file-only`), and reports the `"trace-enabled"` refusal code consistently (#413).
+- **Launcher and Control Server library boundaries**: `SimulationController` snapshot extraction moved into `vehicle_sil::sim_base` and `vehicle_sil::core`, removing `vehicle_sil::core` from `vehicle_sil_launch` link dependencies and unifying reserved variable prefixes (`can.`, `lin.`, `eth.`) in the Control Server (#411).
+- **Launcher execution runtime and GUI state projection**: launcher execution is organized around a transport-agnostic `ExecutionRuntime` and `RunEventSink` (#385, #386), and the GUI server delegates configuration metadata to the launcher and projects runtime status directly from the launcher's `ExecutionStatus` (#390, #391).
+- **Faster stop, check, build and verification**: production C++ wait loops and SIL Kit pre-Running timeout teardown use event-driven waits instead of fixed polling sleeps (#398, #405), and CTest, CMake/gRPC build targets, ccache configuration and GUI/Playwright test suites run with tighter synchronization and parallelism (#379, #380, #382, #383, #395, #399, #400, #401, #403, #406).
+
+### Removed
+
+- `vehicle_sil_launch run --events` (Events format 2), `run --events-stall-ms` (moved to `serve`), and Events format 3's separate `idle` event (see Breaking changes) (#413).
+- Untargeted `POST api/stop`, integer `session` / `snapshot_rev` / `problem_seq` / `event_seq` fields in GUI protocol 4, and `GuiClient.fetchSession()` / `StopRequestBody` in `@vehicle-sil/gui-client` (see Breaking changes) (#413).
+- Legacy pre-0.2.0 stub-field and empty-`vehicle_sil` diagnostic branches in `Control._check_release()` (see Breaking changes) (#413).
+
+### Fixed
+
+- **Windows process detection**: `Process::others_running()` ignores Windows `conhost.exe` helper processes (#410).
+- **Broken stdout reporting in launcher**: `vehicle_sil_launch` waits for the `on_closed` stderr note before exiting when stdout breaks (#407).
+- **Operator stop exit code in `serve --once`**: `serve --once` preserves the operator stop exit code when stopped via the Control Server (#413).
+- **LIN callback teardown and stop/command contracts**: `SilKitLinPort::leave_callback()` notifies under the callback mutex to prevent a condition-variable use-after-free on immediate destruction after `close()`, and `StopRequests` / `TimeCommands` harden stop-level and command-acceptance contracts (#412).
+- **GUI server and Control API synchronization**: eliminated `GrpcSource` synchronization races, variables-connecting races on run end, resident idle wait races during inspect, and `TimeView` projection mismatches (#392, #393, #394, #397, #402, #409).
+- **Packaging**: `scripts/package.py` creates missing license parent directories when staging archives (#381).
 
 ## [0.3.0] - 2026-11-23
 

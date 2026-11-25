@@ -1073,12 +1073,12 @@ wheels = [
 
 [[package]]
 name = "vehicle-sil-control"
-version = "0.3.0"
+version = "0.4.0rc1"
 source = { editable = "python" }
 
 [[package]]
 name = "vehicle-sil-dev"
-version = "0.3.0"
+version = "0.4.0rc1"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -1145,7 +1145,7 @@ schema = [
 
 [[package]]
 name = "vehicle-sil-gui"
-version = "0.3.0"
+version = "0.4.0rc1"
 source = { editable = "gui/server" }
 dependencies = [
     { name = "aiohttp" },
