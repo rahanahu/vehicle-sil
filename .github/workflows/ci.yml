@@ -388,11 +388,13 @@ jobs:
           path: ~/.cache/grpc-src
           key: grpc-src-${{ steps.grpc-ver.outputs.version }}
       # The compiler cache: SIL Kit and everything else compiles once per cache, then comes from here.
+      # Omit runner ImageVersion from ccache keys because ccache hashes compiler identity internally;
+      # runner patch rollouts otherwise split keys and duplicate uploads on non-C++ merges.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-${{ matrix.preset }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-${{ matrix.preset }}-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -464,7 +466,7 @@ jobs:
       - name: The control server's Python tests were run
         if: matrix.preset == 'linux-gcc-control'
         run: |
-          expected="control_server.python_client control_server.launcher control_server.example_write_before_start control_server.example_pause_and_step"
+          expected="control_server.python_client control_server.launcher control_server.example_write_before_start control_server.example_pause_and_step serve.grpc"
           listed=$(ctest --test-dir build/linux-gcc-control -N -L python)
           for name in $expected; do
             if ! grep -qE "Test +#[0-9]+: $name\$" <<<"$listed"; then
@@ -476,11 +478,11 @@ jobs:
       # launcher's readers. It is added only where CMake finds a Python with PyYAML and jsonschema (here the uv
       # environment); without one it would be left out silently, and the schemas could drift from the launcher.
       - name: The test of the JSON Schemas against the launcher was run
-        if: matrix.preset == 'linux-gcc-debug'
+        if: matrix.preset == 'linux-gcc-debug' || matrix.preset == 'linux-gcc-control'
         run: |
-          listed=$(ctest --test-dir build/linux-gcc-debug -N -R '^schema\.')
+          listed=$(ctest --test-dir build/${{ matrix.preset }} -N -R '^schema\.')
           if ! grep -qE 'Test +#[0-9]+: schema\.files_and_launcher$' <<<"$listed"; then
-            echo "::error::schema.files_and_launcher is not registered: CMake found no Python 3.11+ with PyYAML and jsonschema (see 'the tests of the JSON Schemas are skipped' in build/logs/ci-linux-gcc-debug-configure.log), or the launcher and the examples of examples/ecu_main were not built; run uv sync --locked (its dev group has both) before the configure"
+            echo "::error::schema.files_and_launcher is not registered: CMake found no Python 3.11+ with PyYAML and jsonschema (see 'the tests of the JSON Schemas are skipped' in build/logs/ci-${{ matrix.preset }}-configure.log), or the launcher and the examples of examples/ecu_main were not built; run uv sync --locked (its dev group has both) before the configure"
             exit 1
           fi
       # The GUI server's real-launcher tests against this launcher and its control server (gui/server/tests/test_real_launcher.py
@@ -506,7 +508,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-${{ matrix.preset }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -583,7 +585,7 @@ jobs:
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-clang-tsan-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-linux-clang-tsan-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -607,7 +609,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-clang-tsan-${{ needs.changes.outputs.cpp_hash }}
       - name: Warn on PR TSan failure
         if: failure() && github.event_name == 'pull_request'
         run: |
@@ -701,7 +703,7 @@ jobs:
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-oldest-cmake-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-linux-oldest-cmake-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -724,7 +726,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-linux-oldest-cmake-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -835,7 +837,7 @@ jobs:
         id: ccache-restore
         with:
           path: .ccache
-          key: ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-windows-mingw-release-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
           restore-keys: ccache-windows-mingw-release-
       - name: Zero compiler cache statistics
         run: ccache -z
@@ -874,7 +876,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
-          key: ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
+          key: ccache-windows-mingw-release-${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -972,6 +974,8 @@ jobs:
         run: npm --prefix gui/web/workbench ci --no-fund --no-audit
       - name: Workbench (build and browser tests)
         if: needs.changes.outputs.docs_only != 'true'
+        env:
+          VEHICLE_SIL_GUI_UV_NO_SYNC: "1"
         run: python3 scripts/verify-web.py --skip-install --workbench --no-wait --tag ci-workbench
       # Only documents changed, and one of them is read by the timeline element's test (the `gui_doc_reads` list of
       # the job `changes`; the GUI server's tests run in gui-server): needs no browser and no C++ build.

@@ -136,6 +136,11 @@ export default async function startFakeGuiServer(config: FullConfig): Promise<()
   });
 }
 
+/** verify-gui.py が事前に uv sync 済み（または --no-sync 指定）のときだけ uv run の再同期を省く。 */
+function uvNoSyncArgs(): string[] {
+  return process.env['VEHICLE_SIL_GUI_UV_NO_SYNC'] === '1' ? ['--no-sync'] : [];
+}
+
 /** Control API の gRPC スタブを 1 度だけ生成し、各 GUI サーバーと fake_control の再生成を省く。 */
 function makeControlStubs(): string | undefined {
   if (process.env['VEHICLE_SIL_CONTROL_STUBS']) return undefined;
@@ -145,6 +150,7 @@ function makeControlStubs(): string | undefined {
       'uv',
       [
         'run',
+        ...uvNoSyncArgs(),
         '--project',
         REPOSITORY,
         'python',
@@ -203,6 +209,7 @@ export async function launchGuiServer(options: GuiServerOptions): Promise<GuiSer
     'uv',
     [
       'run',
+      ...uvNoSyncArgs(),
       '--project',
       REPOSITORY,
       'vehicle-sil-gui',

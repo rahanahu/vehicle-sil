@@ -9,6 +9,7 @@ kind of change without leaving `linux` with an unguarded empty matrix.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -178,19 +179,19 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
         expected_jobs = {
             "linux": (
                 "ccache-${{ matrix.preset }}-",
-                "ccache-${{ matrix.preset }}-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+                "ccache-${{ matrix.preset }}-${{ needs.changes.outputs.cpp_hash }}",
             ),
             "linux-tsan": (
                 "ccache-linux-clang-tsan-",
-                "ccache-linux-clang-tsan-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+                "ccache-linux-clang-tsan-${{ needs.changes.outputs.cpp_hash }}",
             ),
             "linux-oldest-cmake": (
                 "ccache-linux-oldest-cmake-",
-                "ccache-linux-oldest-cmake-${{ steps.runner-img.outputs.version }}-${{ needs.changes.outputs.cpp_hash }}",
+                "ccache-linux-oldest-cmake-${{ needs.changes.outputs.cpp_hash }}",
             ),
             "windows": (
                 "ccache-windows-mingw-release-",
-                "ccache-windows-mingw-release-${{ steps.runner-img.outputs.version }}-"
+                "ccache-windows-mingw-release-"
                 "${{ steps.msys2-key.outputs.hash }}-${{ needs.changes.outputs.cpp_hash }}",
             ),
         }
@@ -199,6 +200,7 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
             restore = next(s for s in steps if s.get("id") == "ccache-restore")
             self.assertTrue(str(restore.get("uses", "")).startswith("actions/cache/restore@"), job_name)
             self.assertEqual(restore["with"]["key"], expected_key, job_name)
+            self.assertNotIn("runner-img", expected_key, job_name)
             self.assertEqual(restore["with"]["restore-keys"], prefix, job_name)
 
             saves = [
@@ -211,6 +213,99 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
             self.assertIn("github.ref == 'refs/heads/main'", save_if, job_name)
             self.assertIn("steps.ccache-restore.outputs.cache-hit != 'true'", save_if, job_name)
             self.assertEqual(saves[0]["with"]["key"], expected_key, job_name)
+
+    def test_linux_registration_checks_cover_serve_grpc_and_schema_on_control(self):
+        steps = JOBS["linux"]["steps"]
+        ctrl_step = next(s for s in steps if s.get("name") == "The control server's Python tests were run")
+        self.assertEqual(ctrl_step["if"], "matrix.preset == 'linux-gcc-control'")
+        for required in (
+            "control_server.python_client",
+            "control_server.launcher",
+            "control_server.example_write_before_start",
+            "control_server.example_pause_and_step",
+            "serve.grpc",
+        ):
+            self.assertIn(required, ctrl_step["run"])
+
+        schema_step = next(s for s in steps if s.get("name") == "The test of the JSON Schemas against the launcher was run")
+        self.assertIn("matrix.preset == 'linux-gcc-debug'", schema_step["if"])
+        self.assertIn("matrix.preset == 'linux-gcc-control'", schema_step["if"])
+        self.assertIn("build/${{ matrix.preset }}", schema_step["run"])
+        self.assertIn(r"schema\.files_and_launcher", schema_step["run"])
+
+    def test_release_ci_gate_allows_prior_cancelled_run_but_blocks_failures_and_pr_only(self):
+        steps = RELEASE_WORKFLOW["jobs"]["draft"]["steps"]
+        gate = next(s for s in steps if s.get("name") == "ci.yml passed on this commit")
+        script = gate["run"]
+        self.assertIn("--json event,status,conclusion", script)
+        m = re.search(r"--jq '([^']+)'", script)
+        self.assertIsNotNone(m, "release.yml ci.yml gate must have a single-quoted --jq filter")
+        jq_filter = m.group(1)
+
+        jq_bin = shutil.which("jq")
+        if jq_bin is None:
+            self.skipTest("jq is needed to execute the release.yml ci.yml gate filter")
+
+        cases = [
+            ("no runs", [], "no run"),
+            (
+                "pull_request success alone does not pass",
+                [{"event": "pull_request", "status": "completed", "conclusion": "success"}],
+                "no run",
+            ),
+            (
+                "single push success passes",
+                [{"event": "push", "status": "completed", "conclusion": "success"}],
+                "success",
+            ),
+            (
+                "single cancelled push fails with cancelled marker",
+                [{"event": "push", "status": "completed", "conclusion": "cancelled"}],
+                "completed/cancelled",
+            ),
+            (
+                "cancelled push followed by workflow_dispatch success passes",
+                [
+                    {"event": "workflow_dispatch", "status": "completed", "conclusion": "success"},
+                    {"event": "push", "status": "completed", "conclusion": "cancelled"},
+                ],
+                "success",
+            ),
+            (
+                "cancelled push with pull_request success still fails",
+                [
+                    {"event": "push", "status": "completed", "conclusion": "cancelled"},
+                    {"event": "pull_request", "status": "completed", "conclusion": "success"},
+                ],
+                "completed/cancelled",
+            ),
+            (
+                "failed push with workflow_dispatch success still fails",
+                [
+                    {"event": "workflow_dispatch", "status": "completed", "conclusion": "success"},
+                    {"event": "push", "status": "completed", "conclusion": "failure"},
+                ],
+                "completed/success, completed/failure",
+            ),
+            (
+                "in-progress push with workflow_dispatch success still fails",
+                [
+                    {"event": "push", "status": "in_progress", "conclusion": None},
+                    {"event": "workflow_dispatch", "status": "completed", "conclusion": "success"},
+                ],
+                "in_progress/, completed/success",
+            ),
+        ]
+        for desc, payload, expected in cases:
+            with self.subTest(desc=desc):
+                proc = subprocess.run(
+                    [jq_bin, "-r", jq_filter],
+                    input=json.dumps(payload),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(proc.returncode, 0, f"{desc}: stderr={proc.stderr}")
+                self.assertEqual(proc.stdout.strip(), expected, desc)
 
     @unittest.skipIf(
         BASH is None or any(shutil.which(cmd) is None for cmd in ("git", "sha256sum", "tee")),

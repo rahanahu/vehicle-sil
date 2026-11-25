@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from pathlib import Path
 
 import aiohttp
 import pytest
 from aiohttp.test_utils import TestServer
-from conftest import CONFIGS, REPLAY, REPOSITORY
+from conftest import CONFIGS, REPLAY, REPOSITORY, free_port
 
 from vehicle_sil_gui import client_files
 from vehicle_sil_gui.launcher import Launcher
@@ -35,12 +34,6 @@ async def fetch(server: TestServer, path: str, **headers) -> tuple[int, bytes, d
         url = server.make_url("/").with_path(path, encoded=True)
         async with http.get(url, headers=headers, allow_redirects=False) as r:
             return r.status, await r.read(), dict(r.headers)
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def serving(client_dir: Path | None, web_dir: Path | None = None, monkeypatch=None) -> tuple[GuiServer, TestServer]:

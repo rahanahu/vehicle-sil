@@ -11,6 +11,7 @@ The bundle is built again here (that needs gui/web/node_modules), so the test ne
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -20,7 +21,7 @@ from pathlib import Path
 import pytest
 
 import real_configs
-from conftest import Gui, gui_server
+from conftest import Gui, gui_server, scaled
 
 ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES = ROOT / "examples" / "gui_client"
@@ -52,7 +53,7 @@ def run_example(name: str, url: str | None, *args: str) -> subprocess.CompletedP
     if url is not None:
         env["VEHICLE_SIL_GUI_URL"] = url  # not on the command line, where other users could read the token
     return subprocess.run([NODE, str(EXAMPLES / name), *args], capture_output=True, text=True, encoding="utf-8",
-                          stdin=subprocess.DEVNULL, env=env, timeout=90)
+                          stdin=subprocess.DEVNULL, env=env, timeout=scaled(90))
 
 
 @pytest.mark.parametrize("example", ["run.mjs", "run-with-library.mjs"])
@@ -64,7 +65,7 @@ def run_example(name: str, url: str | None, *args: str) -> subprocess.CompletedP
 ])
 def test_runs_a_configuration_to_its_end(shared_gui: Gui, example: str, file: str, code: int,
                                          last: str) -> None:
-    out = run_example(example, shared_gui.url, file, "--timeout", "60",
+    out = run_example(example, shared_gui.url, file, "--timeout", str(math.ceil(scaled(60))),
                       *(["--stop-at-ms", "1000"] if file in {"simulation.yaml", "launcher-crash.yaml"} else []))
     assert out.returncode == code, out.stdout + out.stderr
     assert out.stdout.strip().splitlines()[-1].startswith(last), out.stdout + out.stderr
@@ -95,7 +96,7 @@ def test_stop_time_rejects_out_of_range_values(example: str, value: str) -> None
 def test_front_door_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, file: str, code: int,
                                                     last: str) -> None:
     with gui_server(tmp_path) as gui:
-        out = run_example("front.mjs", gui.url, file, "--timeout", "60",
+        out = run_example("front.mjs", gui.url, file, "--timeout", str(math.ceil(scaled(60))),
                           *(["--stop-at-ms", "1000"] if file in {"simulation.yaml", "launcher-crash.yaml"} else []))
     assert out.returncode == code, out.stdout + out.stderr
     lines = out.stdout.strip().splitlines()

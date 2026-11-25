@@ -222,6 +222,7 @@ endif()
 # bus differently, and the same two after one was built again): the files, --describe and the
 # launcher's outputs must be what the guide shows.
 if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_dashboard_v1_ecu)
+  _vehicle_sil_scaled_ctest_timeout(_launch_docs_timeout 300)
   add_test(NAME launch_docs.integrate_ecus
            COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
                    -DDASHBOARD_V1=$<TARGET_FILE:vehicle_sil_dashboard_v1_ecu>
@@ -229,7 +230,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_dashboard_v1_ecu)
                    -DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/integrate_ecus
                    -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/integrate-ecus.md
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/integrate_ecus.cmake)
-  set_tests_properties(launch_docs.integrate_ecus PROPERTIES LABELS "integration;launch" TIMEOUT 300)
+  set_tests_properties(launch_docs.integrate_ecus PROPERTIES LABELS "integration;launch" TIMEOUT ${_launch_docs_timeout})
 endif()
 
 # vehicle_sil_launch run as a process: the example of examples/ecu_main and docs/simulation-*.md,
@@ -398,6 +399,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   # (the scenarios that come with them, the ones of examples/scenario_tests the guide has the reader
   # write, check, run and test), in the guide's order; the files, the outputs and the exit codes must
   # be what the guide shows.
+  _vehicle_sil_scaled_ctest_timeout(_launch_script_timeout 300)
   add_test(NAME launch_run.scenario_guide
            COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
                    -DECU_MAIN=$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
@@ -406,7 +408,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
                    -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/scenario-tests.md
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/scenario_guide
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/scenario_guide.cmake)
-  set_tests_properties(launch_run.scenario_guide PROPERTIES LABELS "integration;launch" TIMEOUT 300 ${_vehicle_sil_tsan_processors} COST 6)
+  set_tests_properties(launch_run.scenario_guide PROPERTIES LABELS "integration;launch" TIMEOUT ${_launch_script_timeout} ${_vehicle_sil_tsan_processors} COST 6)
   # The profiling trace of a whole run (docs/internals/trace.md): the files of the launcher and the two
   # ECUs, written at exit, with their records; scripts/trace-report.py summarises them when there is a
   # Python.
@@ -417,7 +419,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
                    -DSCRIPT=${PROJECT_SOURCE_DIR}/scripts/trace-report.py
                    -DPYTHON=${VEHICLE_SIL_J1939_CODEGEN_PYTHON}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/trace_files.cmake)
-  set_tests_properties(launch_run.trace_files PROPERTIES LABELS "integration;launch" TIMEOUT 300)
+  set_tests_properties(launch_run.trace_files PROPERTIES LABELS "integration;launch" TIMEOUT ${_launch_script_timeout})
   # The example of the docs with a participant started by hand: its registry is at 8500, the port
   # of such a run, which the docs show. Builds in other working trees on this machine take turns.
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher

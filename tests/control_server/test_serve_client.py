@@ -10,7 +10,6 @@ import glob
 import hashlib
 import os
 import pathlib
-import socket
 import subprocess
 import sys
 import tempfile
@@ -25,6 +24,7 @@ from vehicle_sil_control import Control, ControlError, Serve, ServeError, ms
 _COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
 if _COMMON_DIR not in sys.path:
     sys.path.insert(0, _COMMON_DIR)
+from free_port import free_port as _free_port  # noqa: E402
 from timeout_scale import scaled, timeout_scale  # noqa: E402
 
 EXE = ".exe" if os.name == "nt" else ""
@@ -63,12 +63,6 @@ def _config(name: str) -> pathlib.Path:
         encoding="utf-8",
     )
     return path
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
 class ServeClientTest(unittest.TestCase):

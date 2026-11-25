@@ -15,7 +15,7 @@ import aiohttp
 from aiohttp.test_utils import TestServer
 import pytest
 
-from conftest import Client, Gui, is_ended
+from conftest import Client, Gui, free_port, is_ended
 from fake_runtime import DEFAULT_FEATURES, FakeLauncher, default_check_result
 from vehicle_sil_gui import __version__, control
 from vehicle_sil_gui.runtime import ServeRuntime
@@ -504,10 +504,7 @@ async def _serve_gui(
         prev[k] = os.environ.get(k)
         os.environ[k] = v
 
-    import socket
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    port = free_port()
 
     launcher = FakeLauncher(features=features, path=script)
     _FakeControlSource.created.clear()

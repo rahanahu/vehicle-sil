@@ -11,7 +11,6 @@ import os
 import pathlib
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -27,6 +26,7 @@ _COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
 if _COMMON_DIR not in sys.path:
     sys.path.insert(0, _COMMON_DIR)
 
+from free_port import free_port  # noqa: E402
 from timeout_scale import timeout_scale as _timeout_scale  # noqa: E402
 from vehicle_sil_control.protocol import (  # noqa: E402
     EVENTS_FORMAT as SERVE_EVENTS_FORMAT,
@@ -84,13 +84,6 @@ def fault_delay_built() -> bool:
 
 def asan_built() -> bool:
     return os.environ.get("VEHICLE_SIL_SERVE_ASAN", "").upper() in ("1", "ON", "TRUE", "YES")
-
-
-def free_port() -> int:
-    """A TCP port that nothing listens on now (for a fixed address that the test chooses)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 class Scratch:

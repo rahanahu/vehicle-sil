@@ -418,14 +418,21 @@ jobs:
       - name: Client library package
         run: cp build/gui-client/vehicle-sil-gui-client-*.tgz build/dist/
       # The release workflow builds and checks the archives only; the full tests are ci.yml's, on the same commit.
+      # Consider only full-matrix ci.yml runs (push / workflow_dispatch, never pull_request subsets). Prior cancelled
+      # runs (for example, queued main runs cancelled by concurrency) do not block once a replacement run succeeds,
+      # while any failed or in-progress run still blocks.
       - name: ci.yml passed on this commit
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           state=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
-            --json status,conclusion --jq 'if length == 0 then "no run" elif all(.[]; .conclusion == "success")
-            then "success" else (map(.status + "/" + (.conclusion // "")) | join(", ")) end')
+            --json event,status,conclusion --jq 'map(select(.event == "push" or .event == "workflow_dispatch"))
+            | if length == 0 then "no run"
+              else (map(select(.conclusion != "cancelled"))
+                    | if length > 0 and all(.[]; .conclusion == "success") then "success" else null end)
+                   // (map(.status + "/" + (.conclusion // "")) | join(", "))
+              end')
           if [ "$state" != success ]; then
             case "$state" in
               # Merges that followed each other: only the newest one's run of main is kept (ci.yml, concurrency).

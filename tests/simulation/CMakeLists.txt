@@ -27,31 +27,33 @@ endif()
 set_tests_properties(simulation.ecu_main_gives_the_silkit_configuration_to_its_participant PROPERTIES COST 5)
 set_tests_properties(simulation.simulation_stops_everything_when_the_start_times_out PROPERTIES COST 6)
 
+_vehicle_sil_scaled_ctest_timeout(_simulation_demo_timeout 120)
+
 # The first example, on the virtual buses and on SIL Kit (registry of the process).
 if(TARGET vehicle_sil_getting_started)
   add_test(NAME getting_started.demo COMMAND vehicle_sil_getting_started)
   add_test(NAME getting_started.silkit_demo COMMAND vehicle_sil_getting_started --silkit)
   set_tests_properties(getting_started.demo getting_started.silkit_demo
-                       PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+                       PROPERTIES LABELS "examples;simulation" TIMEOUT ${_simulation_demo_timeout})
 endif()
 
 # Examples that run on the virtual buses and check their own result.
 if(TARGET vehicle_sil_typed_messages)
   add_test(NAME typed_messages.demo COMMAND vehicle_sil_typed_messages)
-  set_tests_properties(typed_messages.demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+  set_tests_properties(typed_messages.demo PROPERTIES LABELS "examples;simulation" TIMEOUT ${_simulation_demo_timeout})
 endif()
 if(TARGET vehicle_sil_pid_stream)
   add_test(NAME pid_stream.demo COMMAND vehicle_sil_pid_stream)
-  set_tests_properties(pid_stream.demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+  set_tests_properties(pid_stream.demo PROPERTIES LABELS "examples;simulation" TIMEOUT ${_simulation_demo_timeout})
 endif()
 if(TARGET vehicle_sil_fault_injection)
   add_test(NAME fault_injection.demo COMMAND vehicle_sil_fault_injection)
-  set_tests_properties(fault_injection.demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+  set_tests_properties(fault_injection.demo PROPERTIES LABELS "examples;simulation" TIMEOUT ${_simulation_demo_timeout})
 endif()
 if(TARGET vehicle_sil_vehicle)
   add_test(NAME vehicle.silkit_demo COMMAND vehicle_sil_vehicle)
   add_test(NAME vehicle.local_demo COMMAND vehicle_sil_vehicle --local)
-  set_tests_properties(vehicle.silkit_demo vehicle.local_demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+  set_tests_properties(vehicle.silkit_demo vehicle.local_demo PROPERTIES LABELS "examples;simulation" TIMEOUT ${_simulation_demo_timeout})
 endif()
 # Raw Ethernet frames between two ECUs, on the virtual network and on SIL Kit: the same result.
 if(TARGET vehicle_sil_ethernet_example)
@@ -60,14 +62,14 @@ if(TARGET vehicle_sil_ethernet_example)
   add_test(NAME ethernet_example.other_ethertype COMMAND vehicle_sil_ethernet_example --ethertype 0x88B6)
   add_test(NAME ethernet_example.usage COMMAND vehicle_sil_ethernet_example --ethertype 70000)
   set_tests_properties(ethernet_example.demo ethernet_example.silkit_demo ethernet_example.other_ethertype
-                       ethernet_example.usage PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+                       ethernet_example.usage PROPERTIES LABELS "examples;simulation" TIMEOUT ${_simulation_demo_timeout})
   set_tests_properties(ethernet_example.usage PROPERTIES
                        PASS_REGULAR_EXPRESSION "--ethertype 70000 is not a number from 0 to 65535")
 endif()
 # The layers under Simulation, assembled by hand.
 if(TARGET vehicle_sil_low_level)
   add_test(NAME low_level.demo COMMAND vehicle_sil_low_level)
-  set_tests_properties(low_level.demo PROPERTIES LABELS "examples" TIMEOUT 120)
+  set_tests_properties(low_level.demo PROPERTIES LABELS "examples" TIMEOUT ${_simulation_demo_timeout})
 endif()
 
 # ECU executables made with ecu_main() (examples/ecu_main), as processes: --describe against

@@ -27,12 +27,13 @@ foreach(file simulation.yaml simulation.dashboard.yaml simulation.live.yaml simu
   configure_file(${PROJECT_SOURCE_DIR}/template/${file} ${project_dir}/${file} COPYONLY)
 endforeach()
 
+_vehicle_sil_scaled_ctest_timeout(_template_timeout 300)
 add_test(NAME template.check_and_run
          COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch> -DDIR=${project_dir}
                  -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/first-ecu.md
                  -DSCENARIO_DOC=${VEHICLE_SIL_TESTED_DOCS}/scenario.md
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/check_and_run.cmake)
-set_tests_properties(template.check_and_run PROPERTIES LABELS integration TIMEOUT 300)
+set_tests_properties(template.check_and_run PROPERTIES LABELS integration TIMEOUT ${_template_timeout})
 
 # The example of the guide docs/howto/first-ecu.md (examples/first_ecu): the ECU the guide adds to the
 # template, built into the same bin/ by the lines the guide appends to the template's CMakeLists.txt.
@@ -46,4 +47,4 @@ add_test(NAME template.first_ecu
                  -DTEMPLATE=${PROJECT_SOURCE_DIR}/template -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/first-ecu.md
                  -DWORK=${CMAKE_CURRENT_BINARY_DIR}/first_ecu
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/first_ecu.cmake)
-set_tests_properties(template.first_ecu PROPERTIES LABELS integration TIMEOUT 300)
+set_tests_properties(template.first_ecu PROPERTIES LABELS integration TIMEOUT ${_template_timeout})

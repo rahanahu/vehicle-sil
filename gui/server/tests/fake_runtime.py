@@ -336,10 +336,8 @@ async def in_process_gui(
     token: str = "test-token",
 ) -> AsyncIterator[InProcessGui]:
     """Starts GuiServer over aiohttp TestServer with an in-memory LauncherRuntime."""
-    import socket
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    from conftest import free_port
+    port = free_port()
 
     fake_runtime = runtime or FakeRuntime()
     use_variables = (source is not None) if variables is None else variables

@@ -339,7 +339,14 @@ def main() -> int:
         steps.append(Step("real", [npm, "--prefix", "gui/web", "run", "e2e:real", *real_extra]))
 
     # The tests of the ECUs' variables need grpcio-tools (uv sync installs it): here they fail without it, not skip.
-    env = {**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1", "VEHICLE_SIL_GUI_REQUIRE_CONTROL": "1"}
+    # Sync runs first (or --no-sync checked .venv), so Playwright's uv run calls can skip redundant syncs.
+    env = {
+        **os.environ,
+        "NO_COLOR": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "VEHICLE_SIL_GUI_REQUIRE_CONTROL": "1",
+        "VEHICLE_SIL_GUI_UV_NO_SYNC": "1",
+    }
     env.pop("VEHICLE_SIL_GUI_LAUNCHER", None)
     env.pop("VEHICLE_SIL_PLAYWRIGHT_JUNIT", None)
     if launcher is not None:
