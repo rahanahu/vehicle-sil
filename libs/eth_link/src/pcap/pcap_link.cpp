@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "pcap_link.hpp"
 
-#include "../text_width.hpp"
+#include "vehicle_sil/text/display_width.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -926,14 +926,17 @@ PcapInterfaceList pcap_interface_list_of(std::vector<PcapDevice> devices, PcapFl
     }
     if (list.devices.empty())
     {
-        list.notes.emplace_back("If Npcap was installed for administrators only, run this from a console started as administrator.");
+        list.notes.emplace_back("If Npcap was installed for administrators only, allow it in the elevation prompt (UAC) that Windows "
+                                "shows, or run this from a console started as administrator.");
     }
     else if (std::ranges::all_of(list.devices, [](const PcapDevice& device) { return device.loopback(); }))
     {
-        // Seen with the real Npcap installed for administrators only: another user gets the loopback device alone.
-        list.notes.emplace_back("Npcap offers no network adapter here: if it was installed for administrators only, run this from a "
-                                "console started as administrator, or install Npcap again without that limit. A disabled adapter "
-                                "is not offered either: enable it in Windows.");
+        // Seen with the real Npcap installed for administrators only: another user, or an administrator who
+        // declined the elevation prompt, gets the loopback device alone.
+        list.notes.emplace_back("Npcap offers no network adapter here: if it was installed for administrators only, allow it in the "
+                                "elevation prompt (UAC) that Windows shows, run this from a console started as administrator, or "
+                                "install Npcap again without that limit. A disabled adapter is not offered either: enable it in "
+                                "Windows.");
     }
     return list;
 }
@@ -1001,13 +1004,13 @@ std::string format_pcap_interface_list(const PcapInterfaceList& list, std::span<
     std::size_t width = 0;
     for (const auto& device : list.devices)
     {
-        width = std::max(width, detail::display_width(detail::as_typed(detail::display_name(device))));
+        width = std::max(width, vehicle_sil::text::display_width(detail::as_typed(detail::display_name(device))));
     }
     for (std::size_t i = 0; i < list.devices.size(); ++i)
     {
         const auto& device = list.devices[i];
         const std::string name = detail::as_typed(detail::display_name(device));
-        text += "  --interface " + name + std::string(width - detail::display_width(name) + 2, ' ') + detail::state_text(device.flags);
+        text += "  --interface " + name + std::string(width - vehicle_sil::text::display_width(name) + 2, ' ') + detail::state_text(device.flags);
         const std::string more = detail::more_text(device);
         if (!more.empty())
         {

@@ -401,15 +401,25 @@ std::vector<config::Finding> outside_findings(const RunOutcome& outcome)
         if (const auto dropped = detail::dropped_counts(link.counts); !dropped.empty())
         {
             std::string what;
+            bool sendFailed = false;
             for (const auto& [key, count] : dropped)
             {
                 what += (what.empty() ? "" : ", ") + key + "=" + std::to_string(count);
+                sendFailed = sendFailed || key == "ext_tx_failures";
             }
+            // Every send failed (Npcap refuses each frame on an adapter without a cable): the bridge
+            // sent nothing, so neither its hint nor connect-nothing-received can say whether a device
+            // would answer.
+            const bool noneOut = sendFailed && o.to_outside && *o.to_outside == 0;
             add("outside-frames-dropped",
                 "the bridge dropped frames (" + what + "): the devices or the simulation did not get them, so what this "
                     "run says of them may be wrong. A full queue means the bus or the simulation sent faster than the "
                     "bridge could pass; a failed send means the adapter or the bus refused it" +
-                    (can ? "; --tx-timeout-ms of the bridge decides how long a congested bus is waited for" : std::string{}));
+                    (can ? "; --tx-timeout-ms of the bridge decides how long a congested bus is waited for" : std::string{}) +
+                    (noneOut ? std::string(". Not one frame was sent (silkit_to_ext=0), so whether a device answers is not "
+                                           "known: an adapter whose link is down, such as one without a cable plugged in, "
+                                           "refuses every frame; check the cable and the device on the other end")
+                             : std::string{}));
         }
         if (const auto loop = link.counts.find(std::string(detail::kOutsideLoopKey)); loop != link.counts.end() && loop->second > 0)
         {

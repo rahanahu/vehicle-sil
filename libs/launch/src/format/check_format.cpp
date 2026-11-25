@@ -10,6 +10,7 @@
 #include "vehicle_sil/config/detail/seen_ecu.hpp"
 #include "vehicle_sil/ecu/describe_json.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
+#include "vehicle_sil/text/display_width.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
 #include <system_error>
@@ -26,13 +27,9 @@ namespace {
 using config::detail::hex2;
 using config::detail::step_text;
 
-/// The number of code points of UTF-8 text (its width in a table).
-std::size_t width(std::string_view text)
-{
-    return static_cast<std::size_t>(std::count_if(text.begin(), text.end(), [](char c) {
-        return (static_cast<unsigned char>(c) & 0xC0) != 0x80;
-    }));
-}
+/// The console columns that UTF-8 text takes (its width in a table): a wide character, such as one
+/// of a Windows connection name in Japanese, takes two.
+std::size_t width(std::string_view cell) { return vehicle_sil::text::display_width(cell); }
 
 /// Rows of columns, each column as wide as its widest cell, two spaces between; no trailing
 /// spaces.

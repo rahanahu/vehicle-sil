@@ -350,7 +350,8 @@ void quitter(const Options& o)
     // this scenario is about Quitter.
     std::string shown = run_part(run.standard_output);
     for (const std::string& by_signal : {"stopped (" + kStop + "), signal " + kStop + "\n",
-                                         "stopped (" + kStop + "), exit code 0xC000013A\n"})
+                                         "stopped (" + kStop + "), exit code 0xC000013A (Windows ended it on a Ctrl+C, a "
+                                         "Ctrl+Break or a closed console)\n"})
     {
         if (const auto at = shown.find(by_signal); at != std::string::npos)
         {

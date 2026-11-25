@@ -400,7 +400,7 @@ A real-time participant of your own does not stop either while the simulation is
 - The statistics lines that `run` reads while the bridge runs are not shown as lines of the bridge (`[bridge.<network>] ...`) or as `log` events. When the bridge has ended, `run` shows the last one it read, once, as a line of the bridge: the bridge's report with every count, such as the frames that the filter kept from the ECUs (`filtered_from_ext`) or that were dropped at the stop (`ext_tx_unsent`). It is the line the bridge wrote when it stopped, or its last line while it ran if it was ended without one. The `--log-dir` file of the bridge has every line. A line that `run` cannot read (for example, of a bridge of another version without these keys) is shown as usual.
 - The counts are those of the last line read. A bridge that was ended without its last line (on Windows, where the launcher could not ask it to stop) has the counts of its last line while it ran. Without any line read, both are `null`.
 
-When the simulation ran and a bridge sent frames to the bus but none came from a device there before the run ended, the run ends with the note `connect-nothing-received`. A device that does not answer is not always a fault, so it is a note: `--strict` does not fail on it. A bridge that failed the run (`connect-failed`, `connect-lost`) and counts of `null` give no such note. On Ethernet, frames that this computer sends on the adapter (for example the IPv6 and ARP frames of the operating system on a Hyper-V `vEthernet` adapter) do not count, so a cable that is not plugged in gives the note. The bridges also warn while they run, 10 s after the first frame they sent with nothing from a device ("Hint when nothing comes from a device" in [ethernet-bridge.md](ethernet-bridge.md#hint-when-nothing-comes-from-a-device)).
+When the simulation ran and a bridge sent frames to the bus but none came from a device there before the run ended, the run ends with the note `connect-nothing-received`. A device that does not answer is not always a fault, so it is a note: `--strict` does not fail on it. A bridge that failed the run (`connect-failed`, `connect-lost`) and counts of `null` give no such note. On Ethernet, frames that this computer sends on the adapter (for example the IPv6 and ARP frames of the operating system on a Hyper-V `vEthernet` adapter) do not count, so a cable that is not plugged in gives the note when the adapter still takes the frames. Npcap on Windows refuses every frame on an adapter without a cable: then no frame is sent, neither the note nor the bridge's hint below comes, and the warning `outside-frames-dropped` says that not one frame was sent (`ext_tx_failures`, `silkit_to_ext=0`). The bridges also warn while they run, 10 s after the first frame they sent with nothing from a device ("Hint when nothing comes from a device" in [ethernet-bridge.md](ethernet-bridge.md#hint-when-nothing-comes-from-a-device)).
 
 ```text
 network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) before the run ended: bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on; a short run can end before a device answers
@@ -452,6 +452,8 @@ outside: CAN1 -> can0: also used by another vehicle-sil bridge (process 4321) at
 ```
 
 The bridge's own warning about it (`warning: ... is also used by another vehicle-sil bridge ...`) is not shown in the run's output, as the link line is not; the bridge's log file (`--log-dir`) has it.
+
+With J1939, the nodes of the two runs also take part in each other's address claims. When a node of one run has the address of a node of the other, the one whose NAME is not lower loses its address; with the same NAME (one configuration run twice), the node that was there first loses it, because it receives the claim of the node that starts later. It then sends nothing more until its run ends (Cannot Claim; see "[Contention](internals/j1939.md#contention)" in internals/j1939.md). `run` does not report it; the Control API and the GUI show the event `j1939.N.node<i>: cannot_claim at address 254`. To run both, give their nodes other addresses (see "[Matching J1939 addresses and NAMEs](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)" in simulation-config.md), or connect each run to a device of its own.
 
 | When | Without `--strict` | With `--strict` |
 |---|---|---|
@@ -505,6 +507,8 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | `<network>: its kind in the file has an error` | `check` says what is wrong. |
 
 The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell and cmd all read it the same: as it is if it has only ASCII letters, digits and `_ - . : / = +`, otherwise in double quotes. A target with `"`, `$`, `` ` ``, `%`, `!`, the quotation marks `“` `”` `„` (U+201C, U+201D, U+201E, which PowerShell reads as `"`) or a control character, or with `\` at its end or before `"`, `$`, `` ` `` or `\`, cannot be written so for all of them: its line is quoted for sh (`'...'`), and a `note:` line says so.
+
+The text after the `--connect` arguments starts in one column. The arguments are padded to one width counted in console columns, as in the list of the Ethernet bridge: a wide character (Japanese, Chinese, Korean, full-width forms), such as one of a Windows connection name in Japanese, counts as 2.
 
 #### `connections --json`
 
@@ -957,7 +961,7 @@ The `ended` column of the participant table:
 
 | Shown | Meaning |
 |---|---|
-| `exit code <n>` | Ended on its own (a Windows NTSTATUS value is in hex, for example `0xC0000005`) |
+| `exit code <n>` | Ended on its own (a Windows NTSTATUS value is in hex, for example `0xC0000005`; `0xC000013A` is followed by what it means: Windows ended the process on a Ctrl+C, a Ctrl+Break or a closed console that the process did not handle itself) |
 | `signal <name>` | Ended by a signal (Linux; for example `signal SIGSEGV`) |
 | `stopped (SIGTERM), exit code <n>` | Ended after being asked to stop (`Ctrl+Break` on Windows) |
 | `killed` | Killed |

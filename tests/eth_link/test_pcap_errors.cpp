@@ -109,18 +109,28 @@ TEST_CASE(pcap_error_no_interface_and_more_than_one)
     CHECK(std::string(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", twoSwitches).what())
               .ends_with(": give the switch's adapter, here probably \"vEthernet (Default Switch)\" or \"vEthernet (vsil-ext)\", "
                          "as --interface instead."));
-    // Only the loopback device, or nothing: what Npcap installed for administrators only gives another user.
+    // Only the loopback device, or nothing: what Npcap installed for administrators only gives another user, or an
+    // administrator who declined the elevation prompt. The likely cause and what to do come first: the launcher
+    // quotes only the start of the line (300 bytes).
     const std::vector<std::string> loopbackOnly = {"\\Device\\NPF_Loopback"};
+    const std::string adminOnly =
+        "). If Npcap was installed for administrators only, allow it in the elevation prompt (UAC) that Windows shows when the "
+        "bridge starts, run the bridge from a console started as administrator, or install Npcap again without that limit. "
+        "Npcap does not offer an adapter that is disabled either: enable it in Windows (run --list-interfaces --backend npcap).";
     CHECK_TEXT(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", loopbackOnly).what(),
-               "no interface 'Ethernet 2' for --backend npcap. Interfaces Npcap offers here: \\Device\\NPF_Loopback (run "
-               "--list-interfaces --backend npcap)." +
-                   kNpcapNotOffered +
-                   " It offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a "
-                   "console started as administrator, or install Npcap again without that limit.");
-    CHECK(std::string(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", {}).what())
-              .ends_with("offers here: none (run --list-interfaces --backend npcap)." + kNpcapNotOffered +
-                         " It offers no network adapter here: if Npcap was installed for administrators only, run the bridge "
-                         "from a console started as administrator, or install Npcap again without that limit."));
+               "no interface 'Ethernet 2' for --backend npcap: Npcap offers no network adapter here (only "
+               "\\Device\\NPF_Loopback" + adminOnly);
+    CHECK_TEXT(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", {}).what(),
+               "no interface 'Ethernet 2' for --backend npcap: Npcap offers no network adapter here (no interface at all" +
+                   adminOnly);
+    // With a Japanese connection name (3 bytes a character), the elevation prompt is still within those 300 bytes.
+    const std::string failLine =
+        "[eth-bridge] FAIL setup: " +
+        std::string(pcap_no_interface(PcapFlavor::Npcap, "\xE3\x82\xA4\xE3\x83\xBC\xE3\x82\xB5\xE3\x83\x8D\xE3\x83\x83\xE3\x83\x88",
+                                      loopbackOnly)
+                        .what());
+    const std::string prompt = "allow it in the elevation prompt (UAC)";
+    CHECK(failLine.find(prompt) != std::string::npos && failLine.find(prompt) + prompt.size() <= 300);
     CHECK_TEXT(pcap_no_interface(PcapFlavor::Libpcap, "eth9", {}).what(),
                "no interface 'eth9' for --backend pcap. Interfaces libpcap offers here: none (run --list-interfaces --backend "
                "pcap).");
@@ -133,7 +143,8 @@ TEST_CASE(pcap_error_no_interface_and_more_than_one)
     const auto list = pcap_list_failed(PcapFlavor::Npcap, "PacketGetAdapterNames: Access is denied");
     CHECK(list.kind() == LinkErrorKind::Other);
     CHECK_TEXT(list.what(), "Npcap cannot list the interfaces: PacketGetAdapterNames: Access is denied. If Npcap was installed "
-                            "for administrators only, run the bridge from a console started as administrator.");
+                            "for administrators only, allow it in the elevation prompt (UAC) that Windows shows when the bridge "
+                            "starts, or run the bridge from a console started as administrator.");
     CHECK_TEXT(pcap_list_failed(PcapFlavor::Libpcap, "no memory").what(), "libpcap cannot list the interfaces: no memory.");
 }
 
@@ -299,7 +310,8 @@ TEST_CASE(pcap_interface_list_shows_the_name_to_give_and_what_the_library_says)
                "interfaces libpcap offers; --backend pcap takes the Ethernet ones:\n  none\n");
     CHECK_TEXT(format_pcap_devices({}, PcapFlavor::Npcap, ""),
                "interfaces Npcap offers; --backend npcap takes the Ethernet ones:\n  none. If Npcap was installed for "
-               "administrators only, run this from a console started as administrator.\n");
+               "administrators only, allow it in the elevation prompt (UAC) that Windows shows, or run this from a console "
+               "started as administrator.\n");
     // A name in Japanese ("Ethernet test" in katakana and kanji: 8 wide characters and a space, 25
     // bytes) takes 17 columns of a console, and the next column stays in line.
     auto japanese = windows_devices();
@@ -317,9 +329,9 @@ TEST_CASE(pcap_interface_list_shows_the_name_to_give_and_what_the_library_says)
     CHECK_TEXT(format_pcap_devices(loopbackOnly, PcapFlavor::Npcap, ""),
                "interfaces Npcap offers; --backend npcap takes the Ethernet ones:\n"
                "  --interface \\Device\\NPF_Loopback  up, loopback  (Adapter for loopback traffic capture)\n"
-               "  Npcap offers no network adapter here: if it was installed for administrators only, run this from a console "
-               "started as administrator, or install Npcap again without that limit. A disabled adapter is not offered "
-               "either: enable it in Windows.\n");
+               "  Npcap offers no network adapter here: if it was installed for administrators only, allow it in the elevation "
+               "prompt (UAC) that Windows shows, run this from a console started as administrator, or install Npcap again "
+               "without that limit. A disabled adapter is not offered either: enable it in Windows.\n");
     // libpcap has no such setting.
     const std::vector<PcapDevice> lo = {{"lo", "", "", kPcapIfUp | kPcapIfLoopback}};
     CHECK_TEXT(format_pcap_devices(lo, PcapFlavor::Libpcap, ""),

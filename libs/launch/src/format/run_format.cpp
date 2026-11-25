@@ -18,7 +18,6 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-using runner::detail::hex_code;
 using config::detail::kNanosPerMilli;
 using config::detail::millis_text;
 
@@ -31,7 +30,7 @@ std::string ending_cell(const runner::ParticipantRun& p)
             return std::string{};
         }
         return p.exit->signal ? "signal " + process::signal_name(*p.exit->signal)
-                              : "exit code " + (p.exit->code < 0 ? runner::detail::hex_code(p.exit->code) : std::to_string(p.exit->code));
+                              : "exit code " + runner::detail::exit_code_text(p.exit->code);
     };
     switch (p.ending)
     {

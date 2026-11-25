@@ -115,6 +115,17 @@ The JSON writer that the output of `--describe` and the JSON of `vehicle_sil_lau
 - Tests: through the JSON of `--describe` (`tests/ecu`) and of the launcher (`tests/launch`)
 - `ctest -R`: `^ecu\.`, `^launch`
 
+### `libs/text`
+
+How many console columns UTF-8 text takes, which the tables of `vehicle_sil_launch` (`check`, `run`, `test`, `connections`) and the Ethernet bridge's `--list-interfaces` pad their columns with (target `vehicle_sil::text`, header only). A wide character (Japanese, Chinese, Korean, full-width forms) counts as 2. It links nothing, so `libs/eth_link`, which links no other library of vehicle-sil, uses it too.
+
+| Name | Location |
+|---|---|
+| `display_width()` | `vehicle_sil/text/display_width.hpp` |
+
+- Tests: through the interface lists of the Ethernet bridge (`tests/eth_link`) and the tables of the launcher (`tests/launch`)
+- `ctest -R`: `^eth_link\.`, `^launch`
+
 ### `libs/trace`
 
 The profiling trace (target `vehicle_sil::trace`, internal). Its records are in `core`, `control`, `control_silkit` and `runner`; every process writes its file at exit, and the launcher also before `std::_Exit` (a run whose thread did not close). See [internals/trace.md](internals/trace.md).

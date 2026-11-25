@@ -12,6 +12,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -68,7 +69,7 @@ def arguments(*argv: str) -> argparse.Namespace:
 
 def planned(root: Path, features: dict[str, list[str] | None], *argv: str, uv=lambda: "/bin/uv", cwd: Path | None = None,
             windows: bool = False, kind: type | None = None):
-    """(command, notes) or the text of what is missing. `kind`: the exception that text must come as."""
+    """(command, notes, path) or the text of what is missing. `kind`: the exception that text must come as."""
     try:
         return run_gui.plan(arguments(*argv), root, probe(features), uv, cwd or root, windows)
     except (run_gui.Missing, run_gui.Usage) as e:
@@ -86,14 +87,15 @@ def test_takes_the_newest_launcher_with_the_control_server(root: Path) -> None:
     features = {"linux-gcc-debug": ["events"], "old-control": ALL, "linux-gcc-control": ALL, "broken": None}
     result = planned(root, features)
     check(isinstance(result, tuple), f"everything is there: a command, not {result}")
-    command, notes = result
+    command, notes, path = result
     config = root / "build" / "linux-gcc-control" / "examples" / "ecu_main" / "simulation.live.yaml"
     check(command == ["/bin/uv", "run", "--project", str(root), "vehicle-sil-gui", "--launcher", str(wanted), str(config)],
           f"the command: uv run vehicle-sil-gui with the newest launcher that has the Control Server and its example ({command})")
     check(notes == ["launcher build/linux-gcc-control/tools/launch/" + NAME +
                     ", configuration build/linux-gcc-control/examples/ecu_main/simulation.live.yaml"],
           f"one line that says which launcher and configuration ({notes})")
-    command, _ = planned(root, features, "--port", "8765", "--no-browser", "--json")
+    check(path == [], f"a build without bridges: nothing for PATH ({path})")
+    command, _, _ = planned(root, features, "--port", "8765", "--no-browser", "--json")
     check(command[-5:] == ["--port", "8765", "--no-browser", "--json", str(config)],
           f"--port, --no-browser and --json go to the GUI server, the configuration last ({command})")
 
@@ -105,7 +107,7 @@ def test_nothing_built(root: Path) -> None:
     check(isinstance(said, str) and said.startswith("run-gui: no "), f"from the repository's directory: no line about where ({said})")
     # From another directory: where to type the commands, first.
     said = planned(root, {}, cwd=root / "build", kind=run_gui.Missing)
-    check(isinstance(said, str) and said.startswith(f"run-gui: run the commands below in {root} (cd {root})\nrun-gui: no "),
+    check(isinstance(said, str) and said.startswith(f"run-gui: run the commands below in {root} (cd {shlex.quote(str(root))})\nrun-gui: no "),
           f"from another directory: the directory to run the commands in comes first ({said})")
     for windows, lines in ((False, ["  cmake --preset linux-gcc-control\n", "  cmake --build --preset linux-gcc-control\n"]),
                            (True, ["  cmake --preset windows-mingw-control\n",
@@ -229,6 +231,57 @@ def test_command_line(root: Path) -> None:
           "run-gui: launcher build/linux-gcc-control/tools/launch/" in err.getvalue(), f"--dry-run ({code}: {err.getvalue()})")
 
 
+def test_bridges_of_the_build_go_on_path(root: Path) -> None:
+    """The launcher finds a bridge next to itself or on PATH; a build keeps each in bridges/<name>/, so the
+    directories of the bridges the build has go first on the GUI server's PATH (those it lacks do not)."""
+    web(root)
+    launcher = build(root, "windows-mingw-control")
+    exe = launcher.suffix
+    bridges = root / "build" / "windows-mingw-control" / "bridges"
+    touch(bridges / "vector-xl" / f"vehicle_sil_vector_xl_bridge{exe}")
+    touch(bridges / "ethernet" / f"vehicle_sil_ethernet_bridge{exe}")
+    (bridges / "socketcan").mkdir()  # configured, but the bridge is not built here
+    result = planned(root, {"windows-mingw-control": ALL})
+    check(isinstance(result, tuple) and result[2] == [bridges / "vector-xl", bridges / "ethernet"],
+          f"the directories of the built bridges, in a fixed order ({result})")
+    check(isinstance(result, tuple) and result[1][1] == "bridges of the build on PATH (for --connect): "
+          "build/windows-mingw-control/bridges/vector-xl, build/windows-mingw-control/bridges/ethernet",
+          f"a line says which ({result})")
+    # A launcher outside a build (the tools archive has the bridges next to it): nothing to add.
+    tools = touch(root / "tools" / "bin" / NAME)
+    config = touch(root / "my" / "simulation.yaml")
+    result = planned(root, {root.name: ALL}, "--launcher", str(tools), str(config))
+    check(isinstance(result, tuple) and result[2] == [], f"a launcher outside a build: nothing for PATH ({result})")
+    # main() hands the PATH to the server it starts.
+    seen: dict[str, str] = {}
+
+    class Server:
+        def __init__(self, command, env):
+            seen["path"] = env["PATH"]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def wait(self):
+            return 0
+
+    def execve(path, argv, env):
+        seen["path"] = env["PATH"]
+
+    popen, run_gui.subprocess.Popen = run_gui.subprocess.Popen, Server
+    real_execve, run_gui.os.execve = run_gui.os.execve, execve
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            run_gui.main([], root, probe=lambda launcher: ALL, uv=lambda: "/bin/uv")
+    finally:
+        run_gui.subprocess.Popen, run_gui.os.execve = popen, real_execve
+    check(seen.get("path", "").split(os.pathsep)[:2] == [str(bridges / "vector-xl"), str(bridges / "ethernet")],
+          f"the server's PATH starts with them ({seen})")
+
+
 def test_features_of(root: Path) -> None:
     check(run_gui.features_of(root / "no-such-launcher") is None, "a launcher that cannot be run has no features")
     if os.name == "nt":
@@ -247,7 +300,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         for test in (test_takes_the_newest_launcher_with_the_control_server, test_nothing_built, test_no_control_server,
                      test_example_not_built, test_everything_missing_is_said_at_once, test_windows_launcher_without_exe,
-                     test_command_line, test_features_of):
+                     test_command_line, test_bridges_of_the_build_go_on_path, test_features_of):
             d = Path(tmp).resolve() / test.__name__
             d.mkdir()
             test(d)
