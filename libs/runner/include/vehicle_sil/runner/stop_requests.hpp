@@ -100,11 +100,15 @@ class StopRequests
 public:
     /// A request from `source`, counted `count` times: stop_level::kGraceful (1) as one Ctrl+C
     /// (the first stops the run in order, the second skips the waits), stop_level::kForce (2) for
-    /// a request that must not wait for a second one. `source` is kept only if nothing asked before.
-    void request(int source, int count = stop_level::kGraceful) noexcept
+    /// a request that must not wait for a second one. `source` and `reached_participants` are kept
+    /// only if nothing asked before.
+    void request(int source, int count = stop_level::kGraceful, bool reached_participants = false) noexcept
     {
         int none = 0;
-        first_.compare_exchange_strong(none, source);
+        if (first_.compare_exchange_strong(none, source) && reached_participants)
+        {
+            reached_participants_.store(true);
+        }
         count_.fetch_add(count);
     }
 
@@ -131,12 +135,16 @@ public:
     /// the run reacts. A request that comes while `before` runs counts as the first request too,
     /// not as a second one. false, without a call of `before`, if a stop had been requested.
     template <class Before>
-    bool request_first(int source, Before before)
+    bool request_first(int source, Before before, bool reached_participants = false)
     {
         int none = 0;
         if (!first_.compare_exchange_strong(none, source))
         {
             return false;
+        }
+        if (reached_participants)
+        {
+            reached_participants_.store(true);
         }
         before();
         int zero = stop_level::kNone;
@@ -149,13 +157,11 @@ public:
     /// The source of the first request; 0 if nothing has asked.
     [[nodiscard]] int first() const noexcept { return first_.load(); }
 
-    /// A request that reached the participants as well, at the same moment (on Windows, the
-    /// console was closed: every process attached to it gets that event, also those in a process
-    /// group of their own). The run then counts as interrupted if the request came before its
-    /// participants were ended, also after the simulation had ended, and the participants' own ends
-    /// that such a request causes are no failures (Runner::run(), assess_run()). Call it before
-    /// request(); lock-free, as request().
-    void note_reached_participants() noexcept { reached_participants_.store(true); }
+    /// Whether the first request reached the participants as well, at the same moment (on Windows,
+    /// the console was closed: every process attached to it gets that event, also those in a
+    /// process group of their own). The run then counts as interrupted if the request came before
+    /// its participants were ended, also after the simulation had ended, and the participants' own
+    /// ends that such a request causes are no failures (Runner::run(), assess_run()).
     [[nodiscard]] bool reached_participants() const noexcept { return reached_participants_.load(); }
 
 private:

@@ -72,31 +72,26 @@ public:
     /// current run's stop requests `count` times (stop_level::kGraceful as one Ctrl+C,
     /// stop_level::kForce to skip the waits).
     /// `reached_participants`: the event reached the participants too (runner::StopRequests::
-    /// note_reached_participants(); the console was closed).
+    /// reached_participants(); the console was closed). Kept only if nothing asked before.
     void request(int source, int count = runner::stop_level::kGraceful, bool reached_participants = false) noexcept
     {
-        if (reached_participants)
-        {
-            reached_participants_.store(true);
-        }
-        mark(source, count);
+        mark(source, count, reached_participants);
         inside_.fetch_add(1);
         if (runner::StopRequests* const run = run_.load())
         {
-            if (reached_participants)
-            {
-                run->note_reached_participants();
-            }
-            run->request(source, count);
+            run->request(source, count, reached_participants);
         }
         inside_.fetch_sub(1);
     }
 
     /// The end only: the caller asks the run itself (the end of input, a closed output).
-    void mark(int source, int count = runner::stop_level::kGraceful) noexcept
+    void mark(int source, int count = runner::stop_level::kGraceful, bool reached_participants = false) noexcept
     {
         int none = 0;
-        first_.compare_exchange_strong(none, source);
+        if (first_.compare_exchange_strong(none, source) && reached_participants)
+        {
+            reached_participants_.store(true);
+        }
         count_.fetch_add(count);
     }
 
@@ -104,7 +99,7 @@ public:
     /// The source of the first request; 0 if none.
     [[nodiscard]] int source() const noexcept { return first_.load(); }
     [[nodiscard]] int count() const noexcept { return count_.load(); }
-    /// Whether a request reached the participants too (request()'s `reached_participants`).
+    /// Whether the first request reached the participants too (request()'s `reached_participants`).
     [[nodiscard]] bool reached_participants() const noexcept { return reached_participants_.load(); }
 
     /// The current run's stop requests, for request(); null: none.
@@ -115,6 +110,7 @@ public:
 private:
     static_assert(std::atomic<runner::StopRequests*>::is_always_lock_free, "a signal handler needs lock-free atomics");
     static_assert(std::atomic<int>::is_always_lock_free, "a signal handler needs lock-free atomics");
+    static_assert(std::atomic<bool>::is_always_lock_free, "a signal handler needs lock-free atomics");
 
     std::atomic<int> count_{0};
     std::atomic<int> first_{0};

@@ -35,15 +35,32 @@ TEST_CASE(stop_requests_begin_with_none)
 
 TEST_CASE(a_stop_request_that_reached_the_participants_says_so_and_counts_as_any)
 {
-    // Closing the console on Windows: every process attached to it gets the event.
-    StopRequests stops;
-    stops.request(kSignal);
-    CHECK(!stops.reached_participants());
-    stops.note_reached_participants();
-    stops.request(kOther, 2);
-    CHECK(stops.reached_participants());
-    CHECK_EQ(stops.count(), 3);
-    CHECK_EQ(stops.first(), kSignal);
+    // Closing the console on Windows: every process attached to it gets the event. Only the first
+    // request decides whether it reached the participants too (matching first()).
+    StopRequests firstReached;
+    firstReached.request(kOther, 2, true);
+    CHECK(firstReached.reached_participants());
+    CHECK_EQ(firstReached.count(), 2);
+    CHECK_EQ(firstReached.first(), kOther);
+    firstReached.request(kSignal);
+    CHECK(firstReached.reached_participants());
+    CHECK_EQ(firstReached.count(), 3);
+    CHECK_EQ(firstReached.first(), kOther);
+
+    StopRequests viaFirst;
+    CHECK(viaFirst.request_first(kOther, [] {}, true));
+    CHECK(viaFirst.reached_participants());
+    CHECK_EQ(viaFirst.count(), 1);
+    CHECK_EQ(viaFirst.first(), kOther);
+
+    // A later request that reached them does not change what asked first.
+    StopRequests laterReached;
+    laterReached.request(kSignal);
+    CHECK(!laterReached.reached_participants());
+    laterReached.request(kOther, 2, true);
+    CHECK(!laterReached.reached_participants());
+    CHECK_EQ(laterReached.count(), 3);
+    CHECK_EQ(laterReached.first(), kSignal);
 }
 
 TEST_CASE(a_second_stop_request_counts_two_and_the_first_source_stays)

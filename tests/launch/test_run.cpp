@@ -1734,6 +1734,16 @@ TEST_CASE(closing_the_console_interrupts_the_run_and_the_participants_that_ended
     CHECK(found.find("N 0 interrupted: interrupted (console closed): it reached the participants too, and they stopped with "
                      "it\n") != std::string::npos);
     check_meaning(report_of(o), {RunResult::Interrupted, 130, false, "\"interrupted\""}, "console closed");
+    // An incomplete scenario is a Note, not an Error, even when the launcher heard of the closed
+    // console while the participants were ending (an ECU that got it too stopped the simulation).
+    const std::string withScenario = lines(assess_run(with_scenario(o, ScenarioStatus::Incomplete)));
+    CHECK(withScenario.find("N 4 scenario-incomplete:") != std::string::npos);
+    CHECK(withScenario.find("; the run was interrupted (console closed) before the scenario's end") != std::string::npos);
+    CHECK(withScenario.find("E 4 scenario-incomplete:") == std::string::npos);
+    // Unrelated participant findings are not hidden when the participant ended with the console.
+    RunOutcome withMap = o;
+    withMap.participants[0].variable_map_problems = {"x: no such variable"};
+    CHECK(lines(assess_run(withMap)).find("E 5 variable-map-not-applied: participant 'Engine':") != std::string::npos);
     // Another exit code is a failure, as without the console.
     o.participants[0] = exited(participant("Engine", 5), 3);
     CHECK(lines(assess_run(o)).find("E 5 exit-code: participant 'Engine': its process exited with code 3;") != std::string::npos);

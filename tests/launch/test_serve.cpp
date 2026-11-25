@@ -1355,3 +1355,21 @@ TEST_CASE(serve_concurrent_next_run_and_eof_during_result_flush_preserve_strict_
     CHECK(lines.back().event == "status");
     CHECK(lines.back().launcher_state == "ending");
 }
+
+TEST_CASE(launcher_end_reached_participants_follows_first_request_only)
+{
+    LauncherEnd end;
+    vehicle_sil::runner::StopRequests stops;
+    stops.request(vehicle_sil::runner::stop_source::kStopCommand);
+    end.publish(&stops);
+
+    // An ordinary launcher end followed by one that reached the participants keeps false.
+    end.request(2, 1, false);
+    end.request(3, 2, true);
+    CHECK_EQ(end.source(), 2);
+    CHECK(!end.reached_participants());
+    // The published run already had an operator stop, so its reached_participants stays false too.
+    CHECK_EQ(stops.first(), vehicle_sil::runner::stop_source::kStopCommand);
+    CHECK(!stops.reached_participants());
+    end.withdraw();
+}

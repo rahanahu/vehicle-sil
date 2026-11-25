@@ -92,7 +92,8 @@ config::Finding shared_finding(const RunOutside& o, const ParticipantRun& bridge
 /// a bridge of --connect stopped on it (exit code 0). Another exit code is judged as usual.
 bool ended_with_the_console(const RunOutcome& outcome, const ParticipantRun& p)
 {
-    if (!outcome.end.stop_reached_participants || !p.exit || p.exit->signal || !detail::ended_by_itself(p))
+    if (!outcome.end.stop_reached_participants || p.missing_at_start || !p.exit || p.exit->signal ||
+        !detail::ended_by_itself(p))
     {
         return false;
     }
@@ -133,6 +134,10 @@ std::optional<config::Finding> bridge_failure(const RunOutcome& outcome, const P
                            "other end and the adapter or the bus it is on, then run again; a link that is down for a few "
                            "seconds only (a cable plugged in again) does not stop the run",
                        p.line, p.name, p.for_network};
+    }
+    if (ended_with_the_console(outcome, p))
+    {
+        return std::nullopt;
     }
     if (blamed && ran)
     {
@@ -440,12 +445,6 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
     {
         const std::string pre = prefix_of(p);
         const config::Severity weight = p.required ? config::Severity::Error : config::Severity::Warning;
-        // Closing the console reached it too, and it ended with it: the run was interrupted, which
-        // the result says; the participants' table has its exit code.
-        if (ended_with_the_console(outcome, p))
-        {
-            continue;
-        }
         // A bridge of --connect that ended before its time says so in one finding, instead of
         // start, ended-before-start, participant-failed, not-joined or exit-code.
         if (detail::stops_run(p))
@@ -469,9 +468,14 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
             continue;
         }
         const bool blamed = !outcome.end.failed_participant.empty() && p.name == outcome.end.failed_participant;
+        // Closing the console reached it too, and it ended with it: the run was interrupted, which
+        // the result says; the participants' table has its exit code.
+        if (ended_with_the_console(outcome, p) && (!blamed || outcome.end.failure_reason.empty()))
+        {
+        }
         // An optional participant may end before or after the start (it does not hold the start
         // up): only its exit code counts, so that the same run gives the same result.
-        if (p.ending == Ending::ExitedBeforeStart && p.required)
+        else if (p.ending == Ending::ExitedBeforeStart && p.required)
         {
             add(config::Severity::Error, "ended-before-start",
                 pre + "it ended before the simulation started: " + process_text(p) +
@@ -783,9 +787,11 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
             const auto passed = static_cast<std::size_t>(std::count_if(
                 scenario.steps.begin(), scenario.steps.end(), [](const scenario::ScenarioStepRun& step) { return step.status == scenario::StepStatus::Passed; }));
             const EndReason end = end_reason(outcome);
-            // The stop ended the simulation (one that came while the participants were ending did not).
+            // The stop ended the simulation (one that came while the participants were ending did
+            // not, unless it reached the participants too so one of them stopped the simulation).
             const bool cutShort = (end == EndReason::Stopped || end == EndReason::Interrupted) &&
-                                  !outcome.end.interrupted_while_ending && outcome.scenario.error.empty();
+                                  (!outcome.end.interrupted_while_ending || outcome.end.stop_reached_participants) &&
+                                  outcome.scenario.error.empty();
             const bool reachedLimit = outcome.end.simulation == SimulationEnd::ReachedStopAt &&
                                       outcome.scenario.error.empty() && outcome.scenario.not_observed.empty();
             add_scenario("scenario-incomplete",

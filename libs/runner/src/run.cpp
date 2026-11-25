@@ -395,6 +395,23 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
         return outcome_;
     }
 
+    // Closing the console reaches the participants too, at the same moment, and they may stop the
+    // simulation before this process hears of it: it interrupts the run if it came before the
+    // participants were ended, also after the simulation had ended (the stop_at_ms or a stop of a
+    // participant that got it first). One that comes later changes nothing, as any interrupt.
+    const auto note_stop_that_reached_participants = [this](bool while_ending) {
+        if (!ctx_.controls.stops().reached_participants())
+        {
+            return;
+        }
+        outcome_.end.stop_reached_participants = true;
+        if (outcome_.end.interrupted_by.empty())
+        {
+            ctx_.note_interrupt(outcome_.end);
+            outcome_.end.interrupted_while_ending = while_ending;
+            out_.say(outcome_.end.stop_text() + ": it reached the participants too, and they stopped with it");
+        }
+    };
     bool ran = false;
     // The bridges of --connect first, each Running in SIL Kit before an ECU starts: a frame an
     // ECU sends before its bridge has joined would not reach the bus outside. A bridge does not
@@ -409,6 +426,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
             scenario_.start(*connection->controller, outcome_);
             const RunWatch::Watched watched = watch_.watch(*connection->controller);
             interrupts_at_end_ = watch_.settle(*connection->controller, watched);
+            note_stop_that_reached_participants(false);
             if (outcome_.end.simulation != SimulationEnd::Aborted && outcome_.end.interrupted_by.empty())
             {
                 participants_.note_bridges_ended_with_run();
@@ -425,6 +443,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
         // As RunWatch::settle() does: an interrupt from here on comes while the participants end (a stop
         // accepted before the detach counts as one of the run).
         interrupts_at_end_ = ctx_.interrupts();
+        note_stop_that_reached_participants(false);
     }
     // What is known for good when the simulation is over (why it ended), before the
     // participants end.
@@ -432,20 +451,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
     ctx_.controls.set_phase(Phase::Stopping);
     participants_.end_children(ran || start_.before_start_failed(), interrupts_at_end_);
     participants_.end_manual(*connection->controller, ran || start_.before_start_failed(), interrupts_at_end_);
-    // Closing the console reaches the participants too, at the same moment, and they may stop the
-    // simulation before this process hears of it: it interrupts the run if it came before the
-    // participants were ended, also after the simulation had ended (the stop_at_ms or a stop of a
-    // participant that got it first). One that comes later changes nothing, as any interrupt.
-    if (ctx_.controls.stops().reached_participants())
-    {
-        outcome_.end.stop_reached_participants = true;
-        if (outcome_.end.interrupted_by.empty())
-        {
-            ctx_.note_interrupt(outcome_.end);
-            outcome_.end.interrupted_while_ending = true;
-            out_.say(outcome_.end.stop_text() + ": it reached the participants too, and they stopped with it");
-        }
-    }
+    note_stop_that_reached_participants(true);
     // Their output is read to the end: the line connect-failed and connect-lost quote.
     participants_.note_last_lines();
     // The agents have said their last word and waited for this side's answer (their processes
