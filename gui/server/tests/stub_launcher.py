@@ -669,6 +669,14 @@ def _serve_main(argv: list[str]) -> int:
                           reason="not-running", asked_run=cmd.get("run"), id=cmd.get("id"),
                           message="no simulation is running"))
         elif cname == "run":
+            if os.environ.get("VEHICLE_SIL_TRACE") and not once:
+                _emit(next_ev(
+                    "command", command="run", source="stdin", accepted=False,
+                    reason="trace-enabled",
+                    message="serve does not run with VEHICLE_SIL_TRACE set",
+                    asked_run=None, id=cmd.get("id"),
+                ))
+                continue
             if launcher_state == "cold_only":
                 _emit(next_ev(
                     "command", command="run", source="stdin", accepted=False,
@@ -1030,7 +1038,7 @@ def _execute_run(
             holding=holding if phase_name == "waiting" else False,
             speed=speed,
             pacing="not-paced" if speed == "max" else "on-time",
-            stop={"requests": stop_reqs, "by": "stdin" if stop_reqs else None},
+            stop={"requests": stop_reqs, "by": "stop command" if stop_reqs else None},
             scenario=has_scenario,
             allowed=_allowed_map(
                 paused,
@@ -1397,12 +1405,11 @@ def _execute_run(
                         ctrl_server.stop()
                     sc_res: dict = {
                         "file": scenario, "name": sc_title, "status": "incomplete",
+                        "timeline": timeline_file,
                         "steps": [
                             {"index": 1, "status": "passed"}, {"index": 2, "status": "incomplete"}, {"index": 3, "status": "not_run"},
                         ],
                     }
-                    if timeline_file:
-                        sc_res["timeline"] = timeline_file
                     _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
                         "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                         "result": "stopped", "end": "stopped", "ok": True, "simulation": "ended",
@@ -1440,14 +1447,13 @@ def _execute_run(
                 ctrl_server.stop()
             sc_res = {
                 "file": scenario, "name": sc_title, "status": "failed",
+                "timeline": timeline_file,
                 "steps": [
                     {"index": 1, "status": "passed"},
                     {"index": 2, "status": "failed", "code": "scenario-failed", "line": 7, "message": msg},
                     {"index": 3, "status": "not_run"},
                 ],
             }
-            if timeline_file:
-                sc_res["timeline"] = timeline_file
             _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
                 "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                 "result": "failed", "end": "failed", "ok": False, "simulation": "ended",
@@ -1691,10 +1697,9 @@ def _execute_run(
     if has_scenario:
         sc_pass: dict = {
             "file": scenario, "name": "throttle up", "status": "passed",
+            "timeline": timeline_file,
             "steps": [{"index": 1, "status": "passed"}, {"index": 2, "status": "passed"}, {"index": 3, "status": "passed"}],
         }
-        if timeline_file:
-            sc_pass["timeline"] = timeline_file
         res_obj["scenario"] = sc_pass
     if fault == "large-result":
         res_obj["blob"] = "z" * (5 * 1024 * 1024)

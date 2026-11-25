@@ -88,7 +88,7 @@ def test_a_launcher_without_the_feature_is_given_no_timeline(tmp_path: Path) -> 
         async def talk(c: Client) -> None:
             session, run_start = await run_to_end(c, {"file": "simulation.yaml", "scenario": PASS})
             assert "timeline" not in run_start
-            assert "timeline" not in session["result"]["scenario"]
+            assert session["result"]["scenario"]["timeline"] is None
             assert session["scenario"]["status"] == "passed" and session["scenario"]["timeline_url"] is None
             status, body = await c.get(api_path(session["id"]))
             assert (status, body["error"]["code"]) == (404, "no-timeline")

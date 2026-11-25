@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 from conftest import (CONFIGS, CONTROL_FEATURES, REPLAY, REPOSITORY, Client, gui_server, is_ended, is_state, is_synced, manual_pages,
                       run_async, until_async)
+from fake_runtime import _validate_run_state, _validate_status_members, validate_events_v4_event
 from vehicle_sil_gui import __version__
 from vehicle_sil_gui.launcher import REQUIRED_FEATURES
 
@@ -356,9 +357,8 @@ def _validate_session(name: str, session: object, *, allow_variables: bool = Fal
         assert isinstance(session["registry"], dict) and set(session["registry"].keys()) == {"uri"}, (name, session["registry"])
     if session["launcher_state"] is not None:
         ls = session["launcher_state"]
-        assert isinstance(ls, dict) and type(ls.get("rev")) is int and isinstance(ls.get("phase"), str), (name, ls)
-        assert isinstance(ls.get("paused"), bool) and isinstance(ls.get("allowed"), dict), (name, ls)
-        assert isinstance(ls.get("stop"), dict) and set(ls["stop"].keys()) == {"requests", "by"}, (name, ls)
+        assert isinstance(ls, dict) and type(ls.get("seq")) is int and ls["seq"] >= 0, (name, ls)
+        _validate_run_state({k: v for k, v in ls.items() if k != "seq"}, envelope=False)
     if session["result"] is not None:
         res = session["result"]
         assert isinstance(res, dict) and isinstance(res.get("result"), str) and isinstance(res.get("ok"), bool), (name, res)
@@ -368,12 +368,14 @@ def _validate_session(name: str, session: object, *, allow_variables: bool = Fal
         assert "steps" in sc and "timeline_url" in sc, (name, sc)
 
 
-def _validate_ws_event_payload(name: str, ev: object) -> None:
+def _validate_ws_event_payload(name: str, ev: object, *, is_live: bool = False) -> None:
     assert isinstance(ev, dict) and isinstance(ev.get("event"), str), (name, ev)
     assert type(ev.get("seq")) is int and ev["seq"] >= 0, (name, ev)
     if name == "ws-loose-fields":
         return
     kind = ev["event"]
+    if is_live and kind != "mystery":
+        validate_events_v4_event(ev)
     if kind == "run_start":
         assert isinstance(ev.get("run"), str) and ev["run"], (name, ev)
         assert "timeline" not in ev, (name, ev)
@@ -384,8 +386,7 @@ def _validate_ws_event_payload(name: str, ev: object) -> None:
     elif kind == "time":
         assert type(ev.get("sim_ms")) is int, (name, ev)
     elif kind == "state":
-        assert type(ev.get("rev")) is int and isinstance(ev.get("phase"), str), (name, ev)
-        assert isinstance(ev.get("allowed"), dict) and isinstance(ev.get("stop"), dict), (name, ev)
+        _validate_run_state({k: v for k, v in ev.items() if k not in ("event", "seq", "t_ms", "run")}, envelope=False)
     elif kind == "command":
         assert isinstance(ev.get("accepted"), bool) and isinstance(ev.get("source"), str), (name, ev)
         assert "message" in ev and "reason" in ev, (name, ev)
@@ -403,9 +404,12 @@ def _validate_ws_event_payload(name: str, ev: object) -> None:
         assert type(ev.get("index")) is int and isinstance(ev.get("status"), str), (name, ev)
     elif kind == "result":
         assert isinstance(ev.get("result"), dict), (name, ev)
+        if "status" in ev:
+            assert isinstance(ev.get("launcher_ends"), bool), (name, ev)
+            _validate_status_members(ev["status"], exact_keys=True)
 
 
-def _validate_protocol_v4_example(name: str, example: dict) -> None:
+def _validate_protocol_v4_example(name: str, example: dict, *, is_live: bool = False) -> None:
     if "server" not in example:
         return
     messages = example["server"]
@@ -469,18 +473,32 @@ def _validate_protocol_v4_example(name: str, example: dict) -> None:
             _validate_session(name, msg["session"])
         elif mtype == "event":
             assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
-            _validate_ws_event_payload(name, msg["event"])
+            _validate_ws_event_payload(name, msg["event"], is_live=is_live)
         elif mtype == "variables":
             assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
             _validate_variables_summary(name, msg["variables"])
         elif mtype == "values":
             assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
+            assert msg["id"] is None or type(msg["id"]) is int, (name, msg)
             assert type(msg["sim_ms"]) is int and isinstance(msg["paused"], bool), (name, msg)
             assert type(msg["watch_id"]) is int and isinstance(msg["peers"], dict), (name, msg)
+            for peer_name, pdata in msg["peers"].items():
+                assert isinstance(peer_name, str) and isinstance(pdata, dict), (name, msg)
+                assert set(pdata.keys()) == {"sample_ms", "values"}, (name, peer_name, pdata)
+                assert type(pdata["sample_ms"]) is int and isinstance(pdata["values"], dict), (name, peer_name, pdata)
         elif mtype == "operation":
             assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
             assert type(msg["seq"]) is int and isinstance(msg["state"], str), (name, msg)
             assert isinstance(msg["done"], bool) and isinstance(msg["peers"], dict), (name, msg)
+            for peer_name, pdata in msg["peers"].items():
+                assert isinstance(peer_name, str) and isinstance(pdata, dict), (name, msg)
+                assert set(pdata.keys()) == {
+                    "state", "applied_at_ms", "late", "reason", "applied_writes", "failed_write",
+                }, (name, peer_name, pdata)
+                assert isinstance(pdata["state"], str) and isinstance(pdata["late"], bool), (name, peer_name, pdata)
+                assert pdata["applied_at_ms"] is None or type(pdata["applied_at_ms"]) is int, (name, peer_name, pdata)
+                assert pdata["reason"] is None or isinstance(pdata["reason"], str), (name, peer_name, pdata)
+                assert pdata["applied_writes"] is None or type(pdata["applied_writes"]) is int, (name, peer_name, pdata)
         elif mtype == "availability":
             assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
             assert isinstance(msg["peers"], dict) and msg["peers"], (name, msg)
@@ -501,7 +519,10 @@ def _validate_protocol_v4_example(name: str, example: dict) -> None:
             if "stream_seq" in msg:
                 sseq = msg["stream_seq"]
                 assert type(sseq) is int and sseq >= 0, (name, msg)
-                if not in_replay:
+                if in_replay:
+                    assert last_replay_seq is None or sseq > last_replay_seq, (name, last_replay_seq, msg)
+                    last_replay_seq = sseq
+                else:
                     assert last_live_seq is None or sseq > last_live_seq, (name, last_live_seq, msg)
                     last_live_seq = sseq
 
@@ -612,6 +633,9 @@ def _compare_http_response(name: str, live: dict, saved: dict) -> None:
         _compare_check_payload(name, live["check"], saved["check"])
         return
     if "connections" in saved:
+        for key in saved:
+            if key != "connections":
+                assert live[key] == saved[key], (name, key, live[key], saved[key])
         lc, sc = live["connections"], saved["connections"]
         assert set(lc.keys()) == set(sc.keys()), (name, lc, sc)
         for field in ("vehicle_sil_connections", "vehicle_sil", "file", "result"):
@@ -620,12 +644,13 @@ def _compare_http_response(name: str, live: dict, saved: dict) -> None:
             (n["name"], n["kind"], n["backend"]) for n in sc["networks"]
         ], (name, lc["networks"], sc["networks"])
         target_keys = {"value", "label", "detail", "usable", "reason", "in_use", "in_use_by", "in_use_count"}
-        for net in lc["networks"]:
-            assert isinstance(net.get("list"), dict) and isinstance(net["list"].get("targets"), list), (name, net)
-            for tgt in net["list"]["targets"]:
-                assert set(tgt.keys()) == target_keys, (name, tgt)
-                assert isinstance(tgt["usable"], bool) and isinstance(tgt["in_use"], bool), (name, tgt)
-                assert isinstance(tgt["in_use_by"], list) and type(tgt["in_use_count"]) is int, (name, tgt)
+        for conn in (lc, sc):
+            for net in conn["networks"]:
+                assert isinstance(net.get("list"), dict) and isinstance(net["list"].get("targets"), list), (name, net)
+                for tgt in net["list"]["targets"]:
+                    assert target_keys <= set(tgt.keys()), (name, tgt)
+                    assert isinstance(tgt["usable"], bool) and isinstance(tgt["in_use"], bool), (name, tgt)
+                    assert isinstance(tgt["in_use_by"], list) and type(tgt["in_use_count"]) is int, (name, tgt)
         return
     if "session" in saved:
         assert live["instance"] == saved["instance"], (name, live["instance"], saved["instance"])
@@ -662,6 +687,13 @@ def _compare_ws_example(name: str, live: dict, saved: dict) -> None:
 
     if name in ("ws-dropped", "ws-kept-limit"):
         assert [m["type"] for m in live_srv] == [m["type"] for m in saved_srv], (name, live_srv, saved_srv)
+    if name == "ws-replay":
+        assert live_srv[0]["type"] == "hello" and live_srv[-1]["type"] == "synced", (name, live_srv)
+        assert all(m["type"] == "event" for m in live_srv[1:-1]), (name, live_srv)
+    if name == "ws-allowed":
+        assert [m["allowed"] for m in live_srv if m["type"] == "allowed"] == [
+            m["allowed"] for m in saved_srv if m["type"] == "allowed"
+        ], (name, live_srv, saved_srv)
 
     if "session" in saved_types:
         live_last = [m["session"] for m in live_srv if m["type"] == "session"][-1]
@@ -685,16 +717,36 @@ def _compare_ws_example(name: str, live: dict, saved: dict) -> None:
         live_vars = [m["variables"] for m in live_srv if m["type"] == "variables"]
         saved_vars = [m["variables"] for m in saved_srv if m["type"] == "variables"]
         assert [v["state"] for v in live_vars] == [v["state"] for v in saved_vars], (name, live_vars, saved_vars)
+    if "values" in saved_types:
+        def _val_sig(m: dict) -> tuple:
+            return (
+                m["id"], m["watch_id"], m["sim_ms"], m["paused"],
+                {p: sorted(d["values"].keys()) for p, d in m["peers"].items()},
+            )
+
+        assert [_val_sig(m) for m in live_srv if m["type"] == "values"] == [
+            _val_sig(m) for m in saved_srv if m["type"] == "values"
+        ], (name, live_srv, saved_srv)
     if "operation" in saved_types:
-        live_ops = [(m["seq"], m["state"], m["done"]) for m in live_srv if m["type"] == "operation"]
-        saved_ops = [(m["seq"], m["state"], m["done"]) for m in saved_srv if m["type"] == "operation"]
+        live_ops = [
+            (m["seq"], m["state"], m["done"], {p: d["state"] for p, d in m["peers"].items()})
+            for m in live_srv if m["type"] == "operation"
+        ]
+        saved_ops = [
+            (m["seq"], m["state"], m["done"], {p: d["state"] for p, d in m["peers"].items()})
+            for m in saved_srv if m["type"] == "operation"
+        ]
         assert live_ops == saved_ops, (name, live_ops, saved_ops)
+    if "error" in saved_types:
+        assert [m["code"] for m in live_srv if m["type"] == "error"] == [
+            m["code"] for m in saved_srv if m["type"] == "error"
+        ], (name, live_srv, saved_srv)
 
 
 def check_example(name: str, example: dict, gui, paths: dict[str, str] | None = None) -> None:
     assert name in EXAMPLES, f"{name}: add it to EXAMPLES"
     example = Normalizer(gui, paths)(example)
-    _validate_protocol_v4_example(name, example)
+    _validate_protocol_v4_example(name, example, is_live=True)
     if name in SHOWN:
         shown(name, example)
         return
@@ -1536,3 +1588,35 @@ def test_protocol_v4_validators_catch_drift() -> None:
     bad_app["launcher"]["version"]["formats"]["run_request"] = 1
     with pytest.raises(AssertionError):
         _compare_http_response("app", bad_app, app_ex["response"])
+
+    # HTTP connections.json self-validation passes (tolerates backend-specific keys) and catches sibling key drift
+    conn_ex = json.loads((DIRECTORY / "connections.json").read_text(encoding="utf-8"))
+    _compare_http_response("connections", conn_ex["response"], conn_ex["response"])
+    bad_conn = copy.deepcopy(conn_ex["response"])
+    bad_conn["network"] = "OTHER"
+    with pytest.raises(AssertionError):
+        _compare_http_response("connections", bad_conn, conn_ex["response"])
+
+    # ws-allowed detects altered allowed payload values
+    bad_allowed = copy.deepcopy(allowed_ex)
+    bad_allowed["server"][2]["allowed"]["start"]["ok"] = True
+    with pytest.raises(AssertionError):
+        _compare_ws_example("ws-allowed", bad_allowed, allowed_ex)
+
+    # in-replay error stream_seq monotonicity
+    replay_ex = json.loads((DIRECTORY / "ws-replay.json").read_text(encoding="utf-8"))
+    bad_replay = copy.deepcopy(replay_ex)
+    bad_replay["server"].insert(2, {
+        "type": "error", "stream_seq": bad_replay["server"][1]["stream_seq"],
+        "run_id": "1", "code": "bad-line", "message": "x", "detail": None,
+    })
+    with pytest.raises(AssertionError):
+        _validate_protocol_v4_example("ws-replay", bad_replay)
+
+    # session.launcher_state missing nested caution is rejected
+    pass_ex = json.loads((DIRECTORY / "ws-pass.json").read_text(encoding="utf-8"))
+    bad_pass = copy.deepcopy(pass_ex)
+    sess_with_ls = next(m["session"] for m in bad_pass["server"] if m["type"] == "session" and m["session"]["launcher_state"])
+    del sess_with_ls["launcher_state"]["allowed"]["pause"]["caution"]
+    with pytest.raises(AssertionError):
+        _validate_protocol_v4_example("ws-pass", bad_pass)

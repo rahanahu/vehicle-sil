@@ -81,6 +81,7 @@ def _send_cmd(proc: subprocess.Popen, payload: dict) -> None:
 
 
 def _run_persistent_serve_sequence(cmd_prefix: list[str], config: Path, req_path: Path, *,
+                                   timeline_req_path: Path, timeline_path: Path,
                                    env: dict[str, str] | None = None) -> list[dict]:
     proc = subprocess.Popen(
         [*cmd_prefix, "serve", "--", str(config)],
@@ -105,6 +106,26 @@ def _run_persistent_serve_sequence(cmd_prefix: list[str], config: Path, req_path
                 assert ev["accepted"] is True, ev
                 break
         _send_cmd(proc, {"command": "run", "request": str(req_path), "id": 2})
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "result":
+                first_result = ev
+                break
+        # Immediately query status: proves no unsolicited duplicate post-result status event was emitted.
+        _send_cmd(proc, {"command": "status", "id": 3})
+        while True:
+            ev = _read_event(reader, proc)
+            events.append(ev)
+            if ev["event"] == "heartbeat":
+                continue
+            assert ev["event"] == "status" and ev["id"] == 3, ev
+            assert ev["status_rev"] == first_result["status"]["status_rev"], ev
+            assert ev["launcher_state"] == first_result["status"]["launcher_state"], ev
+            break
+        # Second run with timeline: proves run_start does not emit an extraneous "timeline" key.
+        _send_cmd(proc, {"command": "run", "request": str(timeline_req_path),
+                         "timeline": str(timeline_path), "id": 4})
         while True:
             ev = _read_event(reader, proc)
             events.append(ev)
@@ -154,6 +175,7 @@ def _run_once_stop_sequence(cmd_prefix: list[str], config: Path, req_path: Path,
                 assert ev["accepted"] is True, ev
                 break
         # Two stop commands without force: must stay graceful (idempotent, stop.requests <= 1).
+        # Deterministic double-stop on a hung participant is also verified in test_units.py.
         proc.stdin.write(
             (json.dumps({"command": "stop", "run": run_id, "id": 12}) + "\n"
              + json.dumps({"command": "stop", "run": run_id, "id": 13}) + "\n").encode("utf-8")
@@ -165,7 +187,7 @@ def _run_once_stop_sequence(cmd_prefix: list[str], config: Path, req_path: Path,
             if ev["event"] == "result":
                 break
         proc.stdin.close()
-        proc.wait(timeout=RUN_TIMEOUT_S)
+        assert proc.wait(timeout=RUN_TIMEOUT_S) == 0
         return events
     finally:
         if proc.poll() is None:
@@ -232,14 +254,25 @@ def test_real_launcher_events_v4_contract_and_stub_parity(tmp_path: Path) -> Non
     assert set(real_ver.keys()) == set(stub_ver.keys())
     assert real_ver["formats"] == stub_ver["formats"]
 
-    # 2. Persistent serve parity (startup -> prepare -> run -> result)
+    # 2. Persistent serve parity (startup -> prepare -> run -> status -> timeline run -> result)
     req_path = tmp_path / "req.json"
     req_path.write_text(
         json.dumps({"vehicle_sil_run_request": 1, "speed": "max", "stop_at_ms": 100}),
         encoding="utf-8",
     )
-    real_events = _run_persistent_serve_sequence(real_prefix, configs / "simulation.yaml", req_path)
-    stub_events = _run_persistent_serve_sequence(stub_prefix, configs / "simulation.yaml", req_path, env=stub_env)
+    timeline_req_path = tmp_path / "timeline_req.json"
+    timeline_req_path.write_text(
+        json.dumps({"vehicle_sil_run_request": 1, "speed": "max", "scenario": "scenarios/throttle_step.yaml"}),
+        encoding="utf-8",
+    )
+    real_events = _run_persistent_serve_sequence(
+        real_prefix, configs / "simulation.yaml", req_path,
+        timeline_req_path=timeline_req_path, timeline_path=tmp_path / "real.timeline.json",
+    )
+    stub_events = _run_persistent_serve_sequence(
+        stub_prefix, configs / "simulation.yaml", req_path,
+        timeline_req_path=timeline_req_path, timeline_path=tmp_path / "stub.timeline.json", env=stub_env,
+    )
 
     def first_of(evts: list[dict], kind: str) -> dict:
         return next(e for e in evts if e["event"] == kind)
@@ -267,9 +300,13 @@ def test_real_launcher_events_v4_contract_and_stub_parity(tmp_path: Path) -> Non
         assert prep["metadata"]["participants"] == ["Engine", "Dashboard"], prep
         assert prep["metadata"]["networks"] == ["J1939_CAN"], prep
 
-    # run_start parity (no extra timeline key)
-    real_rs, stub_rs = first_of(real_events, "run_start"), first_of(stub_events, "run_start")
-    assert set(real_rs.keys()) == set(stub_rs.keys()) == {"event", "seq", "t_ms", "run", "id"}
+    # run_start parity (both plain run and timeline run have no extra timeline key)
+    real_rs_all = [e for e in real_events if e["event"] == "run_start"]
+    stub_rs_all = [e for e in stub_events if e["event"] == "run_start"]
+    assert len(real_rs_all) == 2 and len(stub_rs_all) == 2
+    for rs in (*real_rs_all, *stub_rs_all):
+        assert set(rs.keys()) == {"event", "seq", "t_ms", "run", "id"}, rs
+    real_rs, stub_rs = real_rs_all[0], stub_rs_all[0]
 
     # running status + state + participant parity
     real_run_st = next(e for e in real_events if e["event"] == "status" and e["launcher_state"] == "running")
@@ -321,8 +358,12 @@ def test_real_launcher_events_v4_contract_and_stub_parity(tmp_path: Path) -> Non
     assert stub_stop_cmd["accepted"] is True and stub_stop_cmd["message"] is None and stub_stop_cmd["reason"] is None
 
     for label, evts in (("real", real_once), ("stub", stub_once)):
-        stop_counts = [e["stop"]["requests"] for e in evts if e["event"] == "state"]
-        assert stop_counts and max(stop_counts) == 1, (label, stop_counts)
+        stop_states = [e["stop"] for e in evts if e["event"] == "state" and e["stop"]["requests"] > 0]
+        assert stop_states and all(s == {"requests": 1, "by": "stop command"} for s in stop_states), (label, stop_states)
+        second_stops = [e for e in evts if e["event"] == "command" and e.get("id") == 13]
+        for ev2 in second_stops:
+            if ev2["accepted"]:
+                assert ev2["message"] is None and ev2["reason"] is None, (label, ev2)
         res = first_of(evts, "result")
         rs = first_of(evts, "run_start")
         assert res["launcher_ends"] is True, (label, res)

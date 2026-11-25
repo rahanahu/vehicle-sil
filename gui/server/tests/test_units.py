@@ -1584,15 +1584,21 @@ def test_events_v4_validators_reject_contract_drift() -> None:
             "command": "stop", "source": "stdin", "accepted": True, "id": 2,
         })
 
+    with pytest.raises(AssertionError):
+        validate_events_v4_event({"event": "unknown_event_kind", "seq": 4, "t_ms": 40})
+
 
 def test_stub_launcher_events_v4_contract_and_graceful_stop_idempotency(tmp_path: Path) -> None:
+    import queue
     import subprocess
-    from conftest import CONFIGS, REPLAY
+    import threading
+    from conftest import CONFIGS, REPLAY, scaled
     from fake_runtime import validate_events_v4_event, validate_version_json
 
+    timeout_s = scaled(15)
     env = {**os.environ, "REPLAY_HEARTBEAT_MS": "0", "REPLAY_NO_SLEEPERS": "1"}
     ver_proc = subprocess.run([sys.executable, str(REPLAY), "version", "--json"],
-                              capture_output=True, text=True, timeout=15, check=True, env=env)
+                              capture_output=True, text=True, timeout=timeout_s, check=True, env=env)
     validate_version_json(json.loads(ver_proc.stdout))
 
     # Two stop commands without force on ignore-stop.yaml stay graceful (requests=1) until explicit force=True.
@@ -1602,12 +1608,33 @@ def test_stub_launcher_events_v4_contract_and_graceful_stop_idempotency(tmp_path
         [sys.executable, str(REPLAY), "serve", "--", str(CONFIGS / "ignore-stop.yaml")],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
     )
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def _pump_stdout() -> None:
+        assert proc.stdout is not None
+        try:
+            for ln in proc.stdout:
+                lines.put(ln)
+        finally:
+            lines.put(None)
+
+    def read_event() -> dict:
+        try:
+            ln = lines.get(timeout=timeout_s)
+        except queue.Empty as exc:
+            err = proc.stderr.read() if proc.stderr and proc.poll() is not None else ""
+            raise TimeoutError(f"stub_launcher stdout timed out after {timeout_s:g} s: {err}") from exc
+        assert ln, proc.stderr.read() if proc.stderr else ""
+        ev = json.loads(ln)
+        validate_events_v4_event(ev)
+        return ev
+
+    threading.Thread(target=_pump_stdout, daemon=True).start()
     try:
         assert proc.stdin is not None and proc.stdout is not None
-        hello = json.loads(proc.stdout.readline())
-        init_status = json.loads(proc.stdout.readline())
-        validate_events_v4_event(hello)
-        validate_events_v4_event(init_status)
+        hello = read_event()
+        init_status = read_event()
+        assert hello["event"] == "hello" and init_status["event"] == "status"
         assert init_status["launcher_state"] == "unprepared"
         assert init_status["eligibility"] == {"eligible": False, "reason": None, "message": None}
         assert init_status["launcher_allowed"]["run"]["ok"] is True
@@ -1616,8 +1643,7 @@ def test_stub_launcher_events_v4_contract_and_graceful_stop_idempotency(tmp_path
         proc.stdin.flush()
         run_id = None
         while True:
-            ev = json.loads(proc.stdout.readline())
-            validate_events_v4_event(ev)
+            ev = read_event()
             if ev["event"] == "run_start":
                 run_id = ev["run"]
             elif ev["event"] == "state" and ev.get("phase") == "running":
@@ -1628,25 +1654,32 @@ def test_stub_launcher_events_v4_contract_and_graceful_stop_idempotency(tmp_path
             proc.stdin.write(json.dumps({"command": "stop", "run": run_id, "id": cid}) + "\n")
             proc.stdin.flush()
             while True:
-                ev = json.loads(proc.stdout.readline())
-                validate_events_v4_event(ev)
+                ev = read_event()
                 if ev["event"] == "state" and ev.get("phase") == "stopping":
-                    assert ev["stop"]["requests"] == 1, ev
+                    assert ev["stop"] == {"requests": 1, "by": "stop command"}, ev
                     break
 
         proc.stdin.write(json.dumps({"command": "stop", "run": run_id, "force": True, "id": 4}) + "\n")
         proc.stdin.flush()
         while True:
-            ev = json.loads(proc.stdout.readline())
-            validate_events_v4_event(ev)
+            ev = read_event()
             if ev["event"] == "result":
+                res_ev = ev
                 assert ev["launcher_ends"] is False
                 assert ev["status"]["launcher_state"] == "unprepared"
                 assert ev["status"]["active_run_id"] is None
                 assert ev["status"]["last_run_id"] == run_id
                 break
+
+        # Immediately query status: verifies no unsolicited duplicate post-result status event was emitted.
+        proc.stdin.write(json.dumps({"command": "status", "id": 5}) + "\n")
+        proc.stdin.flush()
+        next_ev = read_event()
+        assert next_ev["event"] == "status" and next_ev["id"] == 5, next_ev
+        assert next_ev["status_rev"] == res_ev["status"]["status_rev"], next_ev
+
         proc.stdin.close()
-        assert proc.wait(timeout=15) == 0
+        assert proc.wait(timeout=timeout_s) == 0
     finally:
         if proc.poll() is None:
             proc.kill()

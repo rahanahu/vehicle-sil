@@ -105,6 +105,10 @@ _RUN_ALLOWED_RANGE_KEYS: dict[str, tuple[tuple[str, str], bool]] = {
     "step": (("min_ms", "max_ms"), True),
     "speed": (("min", "max"), False),
 }
+_EVENTS_V4_OTHER_KINDS = frozenset({
+    "phase", "check", "registry", "control_server", "control_link",
+    "scenario_step", "log", "log_dropped", "outside", "finding", "time", "heartbeat",
+})
 
 
 def validate_version_json(doc: dict) -> None:
@@ -322,6 +326,10 @@ def validate_events_v4_event(ev: dict) -> None:
         assert isinstance(ev["result"], dict), ev
         assert isinstance(ev["launcher_ends"], bool), ev
         _validate_status_members(ev["status"], exact_keys=True)
+    elif kind in _EVENTS_V4_OTHER_KINDS:
+        pass
+    else:
+        raise AssertionError(f"unknown Events v4 kind {kind!r}: {ev!r}")
 
 
 class FakeRun:
