@@ -319,6 +319,7 @@ scripts/run-gui.py
 | With `--dry-run` | Prints only what it found and the command it would run. |
 
 - The printed commands are meant to be run at the root of the repository. When you call the script from another directory, the first line says where to run them.
+- A build keeps each bridge in a directory of its own (`build/<preset>/bridges/<name>/`), and the launcher looks for a bridge next to itself or on `PATH`. The script puts the directories of the bridges that the launcher's build has first on the GUI server's `PATH`, so that a run connected outside (`--connect`) and the list of connections find them. A launcher outside `build/` has its bridges next to it.
 - On Windows, Ctrl+C stops everything. If only this script's process ends (a tool ends it, or you use End task), the GUI server and the running simulation keep running. To stop it from a tool, stop the whole process tree (`taskkill /T /PID <pid>`).
 
 ### Workbench

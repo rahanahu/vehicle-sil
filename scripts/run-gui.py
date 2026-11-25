@@ -8,6 +8,7 @@
 It builds nothing. It looks for a vehicle_sil_launch with the Control Server under build/ (or takes --launcher),
 the configuration next to it (examples/ecu_main/simulation.live.yaml of that build: no stop_at_ms, speed 1), the
 built screen (gui/web/dist) and uv, and then runs `uv run vehicle-sil-gui --launcher <launcher> <configuration>`.
+With the directories of the build's bridges first on PATH, so that --connect and the list of connections find them.
 For each thing that is missing it prints the commands that make it. Ctrl+C stops the server.
 
 Exit codes: 1 something is not built or not installed (the commands to run are on stderr), 2 usage error (an
@@ -38,6 +39,9 @@ EXAMPLE = Path("examples") / "ecu_main"
 CONFIG = "simulation.live.yaml"
 CONTROL = "control-server"
 NAME = "run-gui"
+# The bridges of a build, each in its own directory: bridges/<directory>/<executable>.
+BRIDGES = (("vector-xl", "vehicle_sil_vector_xl_bridge"), ("ethernet", "vehicle_sil_ethernet_bridge"),
+           ("socketcan", "vehicle_sil_socketcan_bridge"))
 
 Probe = Callable[[Path], "list[str] | None"]
 
@@ -122,6 +126,17 @@ def find_config(launcher: Path, root: Path) -> Path:
     return config
 
 
+def bridge_dirs(launcher: Path) -> list[Path]:
+    """The directories of the bridges that the launcher's build has, for PATH. The launcher looks for a bridge
+    next to itself or on PATH (--connect, connections), and a build keeps each bridge in a directory of its own;
+    the tools archive puts them next to the launcher, so a launcher outside a build needs none."""
+    if launcher.parent.name != "launch" or launcher.parent.parent.name != "tools":
+        return []
+    build = launcher.parent.parent.parent
+    suffix = ".exe" if launcher.suffix.lower() == ".exe" else ""
+    return [build / "bridges" / d for d, exe in BRIDGES if (build / "bridges" / d / f"{exe}{suffix}").is_file()]
+
+
 def find_web(root: Path) -> Path:
     index = root / "gui" / "web" / "dist" / "browser" / "index.html"
     if not index.is_file():
@@ -140,9 +155,10 @@ def find_uv() -> str:
 
 
 def plan(args: argparse.Namespace, root: Path = ROOT, probe: Probe = features_of, uv: Callable[[], str] = find_uv,
-         cwd: Path | None = None, windows: bool = WINDOWS) -> tuple[list[str], list[str]]:
-    """The command to run and the lines to say first. Raises Missing with everything that is not there, or
-    Usage (with the same text) when one of those is a file that an argument names."""
+         cwd: Path | None = None, windows: bool = WINDOWS) -> tuple[list[str], list[str], list[Path]]:
+    """The command to run, the lines to say first and the directories to put first on its PATH (the bridges of
+    the launcher's build). Raises Missing with everything that is not there, or Usage (with the same text) when
+    one of those is a file that an argument names."""
     problems: list[str] = []
     usage = False
     cwd = Path.cwd() if cwd is None else cwd
@@ -215,7 +231,10 @@ def plan(args: argparse.Namespace, root: Path = ROOT, probe: Probe = features_of
     command += [flag for flag, on in (("--no-browser", args.no_browser), ("--json", args.json)) if on]
     command.append(str(config))
     notes.insert(0, f"launcher {shown(launcher, root)}, configuration {shown(config, root)}")
-    return command, notes
+    path = bridge_dirs(launcher)
+    if path:
+        notes.insert(1, "bridges of the build on PATH (for --connect): " + ", ".join(shown(p, root) for p in path))
+    return command, notes, path
 
 
 def parse(argv: list[str]) -> argparse.Namespace:
@@ -243,7 +262,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str], root: Path = ROOT, probe: Probe = features_of, uv: Callable[[], str] = find_uv) -> int:
     args = parse(argv)
     try:
-        command, notes = plan(args, root, probe, uv)
+        command, notes, path = plan(args, root, probe, uv)
     except Usage as e:
         print(e, file=sys.stderr)
         return 2
@@ -257,12 +276,15 @@ def main(argv: list[str], root: Path = ROOT, probe: Probe = features_of, uv: Cal
         return 0
     print(f"{NAME}: starting the GUI server; it prints the URL to open (the first start installs its Python "
           "packages). Ctrl+C stops it", file=sys.stderr, flush=True)
+    env = dict(os.environ)
+    if path:
+        env["PATH"] = os.pathsep.join([*(str(p) for p in path), env.get("PATH", "")])
     if os.name != "nt":
         # The GUI server takes this process's place: Ctrl+C and SIGTERM reach it, and nothing is left behind.
-        os.execv(command[0], command)
+        os.execve(command[0], command, env)
     # Windows has no exec that keeps the console: wait for the server, which gets the Ctrl+C itself and ends.
     # Known limit: when only this process is ended (not with Ctrl+C), the server and what it started stay.
-    with subprocess.Popen(command) as server:
+    with subprocess.Popen(command, env=env) as server:
         while True:
             try:
                 return server.wait()
