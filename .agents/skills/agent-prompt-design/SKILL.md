@@ -63,6 +63,8 @@ Do not require approval merely because an investigation was not in the original 
 Distinguish ownership of a responsibility from who actually implements it.
 Do not route routine cross-team coordination through the owner; the owner becomes a bottleneck and work stalls while waiting.
 When prerequisites for approved work are satisfied, instruct the agent to start without asking again.
+Do not impose uniform caps on session lifetime or planner steps for coordinators, implementers, or reviewers; split or hand off work along natural scope boundaries instead.
+Do not pin or select a higher-tier model solely because of a role title; choose models based on available models and task difficulty.
 Do not authorize the agent to lift explicit holds or prohibitions on its own.
 
 ## 4. Define stopping and escalation conditions
@@ -76,12 +78,13 @@ Never bypass explicit approval requirements or tool permission checks.
 An escalation states the decision needed, why it is outside delegated authority, the evidence, the recommendation, and the impact. Continue unaffected work meanwhile.
 
 If a genuine prerequisite is missing, record the blocker, the resume condition, and how notification or handoff happens. Resume without renewed approval once the prerequisite is met, if the environment permits.
+For waiting on builds, CI, or timeouts, use reactive wakeup notifications or a one-shot timer (such as `schedule`, when supported by the host) rather than a resident polling monitor agent.
 Do not assume a terminated session restarts automatically. If the environment lacks notification or resumption mechanisms, leave enough information for a future session to resume.
 End when the work is complete or no useful actionable work remains. Do not manufacture tasks.
 
 ## 5. Assemble the prompt
 
-Use only the sections that are needed. Refer to existing rules (CLAUDE.md, AGENTS.md, ADRs, runbooks) instead of reproducing them when the recipient can read them.
+Use only the sections that are needed. Refer to existing rules (CLAUDE.md, AGENTS.md, ADRs, runbooks) instead of reproducing them when the recipient can read them. When a worker runs in an isolated git worktree (such as `workspace:"share"` or `"branch"`), untracked local directories excluded from Git are absent from the worktree; pass absolute paths in the main worktree whenever the worker must read them.
 
 1. Role: assigned domain and responsibility.
 2. Goal: a concise statement of the desired outcome.

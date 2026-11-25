@@ -30,8 +30,12 @@ notes when useful.
 
 For an expensive design decision, challenge the requirements and tradeoffs before
 implementation. For implementation verification, freeze an identifiable snapshot
-and normally run the challenge alongside the primary review. Do not automatically
-require both phases for every change.
+and launch the Challenger in parallel with the primary reviewer as soon as core
+implementation is ready, without waiting for unrelated follow-up test or doc
+commits. For an integration branch whose individual steps were already challenged,
+narrow the scope to glue code, integration wiring, and test harnesses added or
+changed during integration. Do not automatically require both phases for every
+change.
 
 ## 2. Prepare a bounded brief
 
@@ -43,11 +47,13 @@ repository-instruction paths because a worker may not inherit them. Share factua
 test results and reproduction information; do not frame the task as confirming
 someone else's approval or finding a predetermined number of defects.
 
-Start with one Challenger and one focused assignment covering one to three
-important claims. If no project budget exists, use a soft 15-minute initial
-budget, one active Challenger, and at most one heavy build/test process at a time.
-Apply any stricter project resource limits. A soft budget means report and return
-at the next safe stopping point, not abandon processes or delete evidence.
+By default, start one Challenger per substantive change unit with a focused
+assignment covering one to three important claims; multiple Challengers are
+allowed when distinct independent perspectives are useful. If no project budget
+exists, use a soft 15-minute initial budget and at most one heavy build/test
+process at a time. Apply any stricter project resource limits. A soft budget means
+report and return at the next safe stopping point, not abandon processes or delete
+evidence.
 
 Allow the Challenger to select a more important hypothesis from the original
 requirements. Keep unrelated architectural expansion outside the assignment.
@@ -56,20 +62,26 @@ Do not prescribe every experiment; give the worker room to choose its method.
 Allocate an isolated workspace and evidence destination. Keep heavy probes out
 of shared source/build directories. Reuse existing verification where it answers
 the question, and identify the primary reviewer's work to avoid needless repeats.
+Leave mechanical removal checklists (such as repository-wide `rg` sweeps) to the
+primary reviewer so the Challenger stays focused on adversarial counterexamples
+for concurrency, lifetime, boundaries, and contracts.
 
 ## 3. Delegate independently
 
 Resolve the installed `challenger` agent and launch a fresh independent worker
-with the brief, using the current host's documented delegation mechanism.
+without inherited implementation history for each substantive change unit, using
+the current host's documented delegation mechanism (in a Swarm, spawn a new worker
+via `add` rather than forking implementation context).
 
 If the host accepts role prompts rather than registered agent names, read the
 installed `challenger.agent.md` profile and pass its complete instructions to a
 fresh worker along with the brief. Record which mechanism was used. Do not invent
 Swarm commands, tool names, or supported configuration fields.
 
-Use the existing project/model policy; this skill does not require a different
-model or a more expensive one. Give the worker the context it needs without
-inheriting the whole implementation conversation when avoidable.
+Select the model according to the difficulty of the change and the project's
+model policy; do not choose a higher-tier model solely because the role is
+Challenger or Reviewer. Give the worker the context it needs without inheriting
+the implementation conversation.
 
 If independent delegation or the agent profile is unavailable, report the
 integration gap and affected assurance to the Coordinator's task record. Do not
@@ -107,10 +119,16 @@ useful reproducer before disposing of scratch resources.
 Recheck the reported failure condition and affected behavior after a fix. Compare
 the final snapshot with the reviewed one: changes to the relevant code, callers,
 contracts, or test/gate behavior invalidate the affected evidence; unrelated
-changes do not require restarting the entire review.
+changes do not require restarting the entire review. You may reuse the same
+Challenger for a prompt fix-and-recheck cycle on the same change unit; prefer
+starting a fresh Challenger after a long idle wait or when moving to a different
+change unit (strict cache-TTL tracking or fixed-interval rotation is unnecessary).
 
-Extend the budget or add another worker only for a concrete material question
-with a distinct scope. Stop once the evidence is sufficient under existing policy.
+Extend the budget or launch an additional Challenger when a distinct independent
+perspective or separate material question warrants it. Stop once the evidence is
+sufficient under existing policy, and terminate the Challenger worker (e.g.,
+`kill` in a Swarm) once verification and any needed recheck for its change unit
+are complete.
 
 Record the snapshot, hypotheses checked, result, findings/disposition, important
 gaps, and evidence locations in the existing handoff. State the actual challenge

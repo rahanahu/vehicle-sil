@@ -60,9 +60,10 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 | 並行性、スレッド、状態遷移、時間 | 触ったテストを `linux-gcc-release`（`-O3`）と `linux-clang-tsan` でも `--repeat` 付きで実行し、マージ前に `gh run view --json jobs` で `linux (linux-clang-tsan)` の `conclusion == "success"` を確かめる（`all checks` は待たない） |
 | 多くのターゲットが含む公開ヘッダーや、クラス・関数テンプレート | 触ったターゲットを `linux-clang-tsan` でビルドする: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
 | ランチャーが出力・計数するもの（所見、イベント、`run` の出力）と、それを写したドキュメント | `^launch`、`^multi_host\.`、`^schema\.`、`^template\.`（ECU のプロジェクトテンプレート）。ドキュメントと照合します（[ドキュメントの例とテスト](#ドキュメントの例とテスト)） |
+| CLI オプション、API、プロトコル項目の廃止・変更 | リポジトリ全体（`tests/control_server`、`tests/ethernet_bridge`、`tests/socketcan_bridge` を含む `tests/` の全サブディレクトリ、`examples/`、`scripts/`、`docs/`）を、スペース連結文字列（`'run --events'` 等）だけでなくオプション・キー単体（例: `rg -- '--events\b'`。Python テストは配列引数で渡す）で横断検索し、該当するテスト群を実行する |
 | GUI が消費するランチャーの Events v4 / `check --json` の出力、または Control API | `scripts/verify.py linux-gcc-control --tests '^control'`、続けて `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
 | ブラウザ GUI だけ | 反復中は `scripts/verify-web.py --only format,lint` や `--only e2e --e2e-spec e2e/<file>.spec.ts`、あるいは単一ファイルの `vitest` / `ng test --watch=false --include` / `playwright test` を直接実行する（ブラウザを使う直接実行は `scripts/busy_machine.py` が `(none)` のとき）。PR 前は `scripts/verify-web.py --skip-install`（`--e2e-grep <パターン>` は名前が一致する e2e テストだけを実行、`--summarize-junit build/logs/web-e2e.junit.xml` はファイルごとの所要時間と遅いテストを表示） |
-| GUI サーバーだけ | 反復中は `scripts/verify-gui.py --no-sync gui/server/tests/<file>.py`（または `-k <式>`。どちらもサーバーテストだけを実行）やインプロセスの `uv run --no-sync pytest gui/server/tests/<file>.py`、PR 前は `scripts/verify-gui.py --skip-web` |
+| GUI サーバーだけ | 反復中は `scripts/verify-gui.py --no-sync gui/server/tests/<file>.py`（または `-k <式>`。どちらもサーバーテストを直列実行）やインプロセスの `uv run --no-sync pytest gui/server/tests/<file>.py`、PR 前は `scripts/verify-gui.py --skip-web`（CI と同じく `-n 4` で並列実行）。`gui/server/tests/test_real_*.py` や一時ディレクトリ・ソケット周りを変えたときは、手元でも `-n 4` で並列実行して確認する（例: `scripts/verify-gui.py --skip-web --skip-e2e --no-sync -k test_real_ --workers 4 --launcher <path>`、または `VEHICLE_SIL_GUI_LAUNCHER=<path> uv run --no-sync pytest -n 4 gui/server/tests/test_real_*.py`） |
 | ドキュメントだけ | `scripts/check-docs.py` |
 | スクリプトや Python のみのコード | `python3 tests/scripts/test_<name>.py` と `scripts/verify-python.py --only <step>`（`--only scripts` や `--only control` など）。`scripts/` で OS による分岐（`os.name == "nt"` やプラットフォーム判定）を触ったときは、Linux で動く `os.name == "nt"` モック単体テストを追加する |
 
@@ -108,6 +109,7 @@ Not run: <CI に任せたもの、実行しなかったものと、その理由>
 - ロックは `/tmp` のファイルへの `flock` です（`cmake/vehicle_sil_machine_lock.sh`。Windows ではロックしません）。
 - 待つ間は 1 行表示し、待った時間はそのテストの CTest の `TIMEOUT` に数えます。
 - ロックのファイルを開けないとき（別の利用者のファイルなど）は、1 行表示してロックなしで実行します。
+- gRPC / SIL Kit の `AF_UNIX` ソケットを使う実ランチャーテスト（`gui/server/tests/test_real_*.py`）で `TMPDIR` を差し替えるときは、`pytest -n 4` 下で深い `tmp_path` が 108 バイト上限を超えないよう、`/tmp` 直下の短い一時ディレクトリ（`tempfile.TemporaryDirectory(prefix="vsil-...")` 等）を使います。
 
 ### 待ち時間と倍率
 

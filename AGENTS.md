@@ -100,11 +100,11 @@ Skills for AI agents live in `.agents/skills/<name>/SKILL.md`, a layout that sev
 
 Apply this instruction when acting as Coordinator.
 
-At planning and before closing a review, assess whether the work calls for the `run-challenge` skill. Use it for material changes to concurrency, lifetime, contracts, test detection, CI gates, behavior-preserving performance, or costly architecture decisions, and whenever an independent challenge is explicitly requested. Skip routine low-risk work proportionately.
+For each substantive change unit, launch one fresh independent `challenger` (`.github/agents/challenger.agent.md`, or the host's equivalent installed agent) in parallel with the reviewer as soon as core implementation is ready. Skip routine or low-risk changes; launch more than one Challenger when distinct independent perspectives are useful.
 
-When applicable, read the skill, delegate a bounded task to the independent `challenger` (`.github/agents/challenger.agent.md`, or the host's equivalent installed agent), and handle its evidence and unresolved gaps before declaring the affected work complete. Use existing review/CI policy to decide disposition. Revisit the assessment if the scope changes materially.
+When applicable, follow the `run-challenge` skill for scoping, delegation, worker lifecycle, and closing findings, and handle its evidence and unresolved gaps under existing review and CI policy before declaring the work complete. Revisit the assessment if the scope changes materially.
 
-Give workers their actual requirements and applicable instruction paths. Keep this workflow under Coordinator ownership; implementers, reviewers, and challengers must not recursively launch it. Use the current host's delegation, permissions, model policy, and handoff mechanisms.
+Keep this workflow under Coordinator ownership; implementers, reviewers, and challengers must not recursively launch it.
 
 ## Before you change code
 
@@ -115,7 +115,7 @@ These steps are a trial. They are advice: no CI check enforces them, and their e
   - Reuse what exists before you add something.
   - Stop when the request and the constraints are met. Put further improvements in a separate task.
   - When you review, check for unnecessary complexity as well as for what is missing.
-- **Placement note.** For a `feat` or `refactor`, write this line in the plan and in the pull request description. If the type changes while you work (a `fix` turns into a `feat`), write it then. When the change reads or interprets data that another place already reads, you can add a second line that names those readers and the way you looked (search terms, code-map page).
+- **Placement note.** For a `feat` or `refactor`, record this line in the local plan or working notes; do not copy placement notes into the pull request description. If the type changes while you work (a `fix` turns into a `feat`), write it then. When the change reads or interprets data that another place already reads, you can add a second line that names those readers and the way you looked (search terms, code-map page).
 
   ```text
   Placement: <new responsibility or state> -> <file or class>. Why: <relation to what is already there>
@@ -123,8 +123,9 @@ These steps are a trial. They are advice: no CI check enforces them, and their e
 
   The optional second line has the form `Same data elsewhere: <existing readers of the same input or data, and how you looked>`.
 
+- **Pull request description.** Keep it concise for human reviewers reading Git alone: why the change is needed, the main changes, user-facing impact, and a concise `Verified:` / `Not run:` summary. Do not include information GitHub already shows (such as a full commit list) or internal planning terms and local document names from local working notes.
 - **hotspots (optional).** `scripts/hotspots.py <paths you plan to touch>` shows which of those files are large, busy or touched by other work; see its `--help`. "attention" is a hint, not a request for another step or for a split.
-- **Verification.** Choose it by risk with "[Choose the verification by risk](docs/code-map-testing.md#choose-the-verification-by-risk)", and end the report and the pull request description with `Verified:` and `Not run:` lines.
+- **Verification.** Choose it by risk with "[Choose the verification by risk](docs/code-map-testing.md#choose-the-verification-by-risk)", and end the task report and pull request description with concise `Verified:` and `Not run:` lines.
 
 ## Verification and scripts
 
@@ -149,6 +150,8 @@ These steps are a trial. They are advice: no CI check enforces them, and their e
   - For non-timing-sensitive checks (`npm --prefix gui/web run format:check`, `lint`, `test:timeline`; `npx vitest run --config ../client/vitest.config.mjs --project node` or a single client spec; pure in-process `uv run --no-sync pytest gui/server/tests/<file>.py`), you may call the tool directly or use `scripts/verify-web.py --only ...` / `scripts/verify-gui.py --no-sync <file>`.
   - For browser or subprocess tests (`ng test`, Playwright, full `gui/server/tests`, `e2e:real`), prefer `scripts/verify-web.py` (`--only`, `--e2e-spec`, `--e2e-grep`) and `scripts/verify-gui.py` (which wait via `scripts/busy_machine.py` while a C++ build, test run or Windows VM runs, enforce `VEHICLE_SIL_GUI_REQUIRE_CONTROL=1`, and clean up process groups; `--wait-limit`). Direct single-spec runs (`npx ng test --watch=false --include ...`, `npx playwright test e2e/<file>.spec.ts`) are allowed during local iteration when `scripts/busy_machine.py` reports `(none)`.
   - Before finishing a pull request, run the risk-appropriate `scripts/verify*.py` command and record the exact scope in `Verified:` / `Not run:`.
+- **Cross-repository impact on removals or changes:** When removing or changing a CLI option, API, or protocol field, search across all `tests/` subdirectories, `examples/`, `scripts/`, and `docs/`—not only product code (for example, search standalone option or key tokens rather than only space-joined command strings).
+- **Local parallel verification:** When a change affects tests that CI runs in parallel (such as `pytest -n 4` for GUI server tests), also verify locally under matching parallel conditions (see [docs/code-map-testing.md](docs/code-map-testing.md#choose-the-verification-by-risk)).
 - On a slow or loaded computer, extend how long the tests wait with the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for example, `3`). The CTest `TIMEOUT` takes the value at configure time, so reconfigure after you change the value. The rules are in "Timeouts and the scale factor" under "Test names and how to run tests" in [docs/code-map-testing.md](docs/code-map-testing.md#timeouts-and-the-scale-factor).
 
 ```sh
@@ -158,7 +161,7 @@ scripts/verify.py linux-gcc-debug --targets vehicle_sil_config_tests -L config  
 scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
 scripts/check-commits.py                             # the staged changes (--range origin/main..HEAD: each commit in the range)
 scripts/check-docs.py                                # after you change docs
-scripts/mutate.py mutations.toml --check             # only checks that the places to mutate are found
+scripts/mutate.py <mutations.toml> --check           # only checks that the places to mutate are found
 scripts/hotspots.py libs/launch tests/launch         # optional: large, busy or shared files among the paths you plan to touch
 scripts/verify-python.py                             # Python code (--only scripts,control to narrow)
 scripts/verify-web.py --only format,lint             # narrow web steps (--only e2e --e2e-spec e2e/app.spec.ts)
