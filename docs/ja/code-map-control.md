@@ -41,7 +41,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|---|
 | `control_server.python_client` | Python のクライアントと CLI を、`vehicle_sil_launch serve --once --control` に対して動かす | |
 | `control_server.launcher` | `vehicle_sil_launch serve --once --control` と `examples/ecu_main` の ECU を動かす | `integration` |
-| `control_server.example_write_before_start`、`control_server.example_pause_and_step` | `examples/launch_control` を動かす | `examples` |
+| `control_server.example_write_before_start`、`control_server.example_pause_and_step`、`control_server.example_serve_runs` | `examples/launch_control` を動かす | `examples` |
 | `control_server.guide_operate_signals` | ガイド [信号を外から操作する](howto/operate-signals.md) の印つきのブロックを、同じ例、CLI、標準入力のコマンドの出力と照合する | `examples` |
 
 `control_server.launcher` は、始まる前の書き込み、標準入力と Control Server の両方からのコマンド、終わり方、認証と TLS と監査、トークンつきの CLI を確認します。
@@ -92,14 +92,14 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `test_python_client.py` | Python のクライアントと CLI |
 | `test_serve_unit.py` | モックした子プロセス入出力による `Serve` と `RunHandle` の単体テスト（`scripts/verify-python.py` でも実行） |
 | `test_serve_client.py` | 実プロセスの `vehicle_sil_launch serve` と gRPC に対する `Serve` と `RunHandle` のテスト（`tests/serve/serve_support.py` は `vehicle_sil_control.Serve` を故障注入 `send_raw` と `/proc` RSS 計測で包みます） |
-| `control_server.example_write_before_start`、`control_server.example_pause_and_step` | `examples/launch_control` |
+| `control_server.example_write_before_start`、`control_server.example_pause_and_step`、`control_server.example_serve_runs` | `examples/launch_control` |
 | `test_guide_operate_signals.py` | ガイド `docs/howto/operate-signals.md` と、例、CLI、標準入力のコマンドの照合（印は「[ドキュメントの例とテスト](code-map-testing.md#ドキュメントの例とテスト)」） |
 
 ### `examples/launch_control`（ガイド「信号を外から操作する」の例）
 
-- テスト: `control_server.example_write_before_start`、`control_server.example_pause_and_step` が例を動かします。
+- テスト: `control_server.example_write_before_start`、`control_server.example_pause_and_step`、`control_server.example_serve_runs` が例を動かします。
 - テスト: `control_server.guide_operate_signals`（`tests/control_server` の `test_guide_operate_signals.py`）が、ガイド [howto/operate-signals.md](howto/operate-signals.md) の印つきのブロックを、例、CLI、標準入力のコマンドの出力と照合します。
-- `ctest -R`: `^control_server\.example_write_before_start`、`^control_server\.example_pause_and_step`、`^control_server\.guide_operate_signals`
+- `ctest -R`: `^control_server\.example_write_before_start`、`^control_server\.example_pause_and_step`、`^control_server\.example_serve_runs`、`^control_server\.guide_operate_signals`
 
 どれも、Control Server のあるビルドで、grpcio と grpcio-tools のある Python があるときだけ登録されます。
 
@@ -239,7 +239,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 テスト:
 
-- `control_server.launcher`、`control_server.serve_unit`、`control_server.serve_client`、`control_server.example_write_before_start`、`control_server.example_pause_and_step`
+- `control_server.launcher`、`control_server.serve_unit`、`control_server.serve_client`、`control_server.example_write_before_start`、`control_server.example_pause_and_step`、`control_server.example_serve_runs`
 - `^launch\.`（`TimeCommands`）
 - `launch_run.time_usage`（引数のエラー）
 

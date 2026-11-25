@@ -11,7 +11,7 @@
 | したいこと | 使うもの | 起動の仕方 | 読むもの |
 |---|---|---|---|
 | 決まった手順で値を設定して確認し、終了コードで合否を出す | シナリオ（YAML） | `vehicle_sil_launch run simulation.yaml --scenario <シナリオ>` | [シナリオでテストを書く](scenario-tests.md) |
-| 値を見て、次に書き込む値をプログラムで決める | Python のクライアント（`vehicle_sil_control`） | スクリプトの中の `Launch(...)` が `vehicle_sil_launch run --control` を起動する | このガイドの「最初のスクリプトを実行する」から |
+| 値を見て、次に書き込む値をプログラムで決める | Python のクライアント（`vehicle_sil_control`） | スクリプトの中の `Launch(...)`（連続実行なら `Serve(...)`）が `vehicle_sil_launch serve` を `--control` 付きで起動する | このガイドの「最初のスクリプトを実行する」から |
 | Python を書かずに、1 つずつ読む、書き込む、進める | CLI（`python -m vehicle_sil_control`） | 自分で `vehicle_sil_launch run --control 8510 simulation.yaml` を起動する | このガイドの「コマンドで 1 つずつ操作する」 |
 | ブラウザで値を見ながら、スライダーやスイッチで書き込む | GUI（`vehicle-sil-gui`） | `scripts/run-gui.py`（ビルド済みのツールでは `vehicle-sil-gui simulation.live.yaml`） | [gui.md](../gui.md) の「ECU の変数」 |
 
@@ -107,7 +107,7 @@ from vehicle_sil_control import Control, Launch, ms
 
 launcher, config = sys.argv[1], sys.argv[2]                   # vehicle_sil_launch and simulation.yaml
 
-# Starts "vehicle_sil_launch run" with its control server, paused before the first step.
+# Starts "vehicle_sil_launch serve --once" with its control server, paused before the first step.
 with Launch(launcher, config, start_paused=True) as launch:
     with Control(launch.address) as c:
         c.sim.wait_paused()                                   # every ECU stands still at 0 ms
@@ -140,7 +140,7 @@ at 500 ms: engine.throttle = 50.0, engine.speed = 1800
 
 | 行 | すること |
 |---|---|
-| `Launch(..., start_paused=True)` | `vehicle_sil_launch run --events --stdin-commands --control 0 --start-paused` を子プロセスとして起動します（`--control 0` は空いているポートを選びます）。 |
+| `Launch(..., start_paused=True)` | `vehicle_sil_launch serve --once --control 0` を子プロセスとして起動し、`{"command":"run","intent":{"start_paused":true}}` を送ります（`--control 0` は空いているポートを選びます）。 |
 | `launch.address` | `vehicle_sil_launch` が通知した Control Server のアドレスです。 |
 | `Control(launch.address)` | Control Server に gRPC で接続し、`with` を抜けると接続を閉じます。 |
 | `c.sim.wait_paused()` | シミュレーションが一時停止するまで待ち、時間の状態を返します。 |
@@ -592,10 +592,11 @@ ecu.output("dashboard.engine_speed", &rpm_, {.unit = "rpm", .description = "the 
 - GUI も、内部で `vehicle_sil_launch` の Control Server を使うので、反映される時刻と書き込みの結果のルールは Python と同じです。
 - `--timeout-ms` は、一時停止している時間も数えます。
 - 時間の状態を `c.watch(time=True)` で受信すると、間引かれるので、短い一時停止は現れないことがあります。一時停止を待つには、`c.sim.wait_paused()` を使います。
-- 自分で起動した `vehicle_sil_launch` のアドレスをプログラムで読むときは、`run --events` のイベント `control_server` の `address` を使います。
+- 自分で起動した `vehicle_sil_launch` のアドレスをプログラムで読むときは、`serve --once` または `serve`（Events v4）のイベント `control_server` の `address` を使います。
 
 ## 次に読むもの
 
 - 呼び出しの引数、反映される時刻、`snapshot()` のルールを確認する → [control-api.md](../control-api.md)
+- 1 つの常駐ランチャーで複数のシミュレーションを順に動かす（`Serve` と `RunHandle`） → [control-api.md](../control-api.md#1-つのランチャーで順に実行するserverunhandle) の「1 つのランチャーで順に実行する（`Serve`、`RunHandle`）」と [serve_runs.py](../../../examples/launch_control/serve_runs.py)
 - 同じ手順を、終了コードで合否の出るテストにする → [シナリオでテストを書く](scenario-tests.md)
-- `run --events` のイベントと `run --json` の結果を、プログラムから読む → [simulation-events.md](../simulation-events.md)
+- `serve` / `serve --once` の Events v4 ストリームと `run --json` の結果を、プログラムから読む → [simulation-events.md](../simulation-events.md)

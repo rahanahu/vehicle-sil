@@ -252,6 +252,7 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             s.run([python, "-m", "py_compile", "examples/launch_control/write_and_read.py"]),
             s.run([python, "examples/launch_control/write_before_start.py", "--help"]),
             s.run([python, "examples/launch_control/pause_and_step.py", "--help"]),
+            s.run([python, "examples/launch_control/serve_runs.py", "--help"]),
         ])
 
     step_map = {

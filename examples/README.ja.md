@@ -25,6 +25,7 @@
 | ランチャーの Control Server に Python から接続する | [launch_control](launch_control) | `write_before_start.py` |
 | Python から値を書き込み、時間を進めて、読む（最短） | [launch_control](launch_control) | `write_and_read.py` |
 | 動いているシミュレーションを止めて、時刻を指定して書き込む | [launch_control](launch_control) | `pause_and_step.py` |
+| 1 つの常駐ランチャーで順に複数のシミュレーションを実行する（`Serve`、`RunHandle`） | [launch_control](launch_control) | `serve_runs.py` |
 | ブラウザの GUI のサーバーを、画面を使わずに呼び出す | [gui_client](gui_client) | `run.mjs`、`run-with-library.mjs`、`variables.mjs`（素の JavaScript） |
 | ブラウザの GUI に、自分の画面を作る | [gui_starter](gui_starter) | 部品を並べた HTML と短いスクリプト（ビルドなし） |
 | 層を自分で組み立てる（バス、ホスト、ドライバー、ネットワーク） | [low_level](low_level) | `vehicle_sil_low_level` |
@@ -117,13 +118,14 @@ EtherType の既定（0x88B5）と MAC アドレス（ローカル管理のア�
 
 ### launch_control
 
-`vehicle_sil_launch run --control` で動かすシミュレーションを、Python から操作する例です。
+`vehicle_sil_launch`（`Launch` による `serve --once`、または `Serve` / `RunHandle` による常駐 `serve`）と Control Server（`--control`）を使い、シミュレーションを Python から操作する例です。
 
 | スクリプト | 内容 | CTest |
 |---|---|---|
 | `write_before_start.py` | `ecu_main` の 2 つの ECU を `--start-paused` で起動し、最初のステップの前にエンジンのスロットルを書き込み、500 ms 進めて回転数を読み返して確認します（違えば 1 で終了）。 | `control_server.example_write_before_start` |
 | `write_and_read.py` | ガイド [信号を外から操作する](../docs/ja/howto/operate-signals.md) の最初のスクリプトで、`ecu_main` の 2 つの ECU を `--start-paused` で起動し、スロットルに 50 % を書き込み、500 ms 進めて、回転数を表示します（引数は `vehicle_sil_launch` のパスと `simulation.yaml`）。 | `control_server.guide_operate_signals`（ガイドに載せた全文と出力を照合） |
 | `pause_and_step.py` | `ecu_main` の 2 つの ECU を実時間の 4 分の 1 の速度で動かし、`watch()` で回転数を見て 1000 rpm を超えたら一時停止し、止まっている時刻の 1 ms 後を `at` にしてスロットルを書き込み、100 ms 進め、書き込みが反映されたステップと、`snapshot()` で読んだ時刻と値を確認し、最速に変えて最後まで動かします（違えば 1 で終了）。 | `control_server.example_pause_and_step` |
+| `serve_runs.py` | `Serve` で常駐 `vehicle_sil_launch serve --control` を 1 つ起動して `prepare()` を呼び、独立した 2 回のシミュレーションを `RunHandle` と `run.control()` で順に動かして、実行ごとの結びつけと時刻 0 からの初期化を確認します（違えば 1 で終了）。 | `control_server.example_serve_runs` |
 
 どれも、`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のビルドと、gRPC のある Python が必要です（[docs/control-api.md](../docs/ja/control-api.md) の「Python」）。
 

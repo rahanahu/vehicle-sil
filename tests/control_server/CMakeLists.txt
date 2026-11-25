@@ -110,6 +110,12 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicl
     set_tests_properties(control_server.example_pause_and_step PROPERTIES
       LABELS "control;control_server;python;examples" TIMEOUT 120 RUN_SERIAL TRUE
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs}")
+    add_test(NAME control_server.example_serve_runs
+             COMMAND "${_control_python}" "${PROJECT_SOURCE_DIR}/examples/launch_control/serve_runs.py"
+                     --launch $<TARGET_FILE:vehicle_sil_launch> $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/../simulation.yaml)
+    set_tests_properties(control_server.example_serve_runs PROPERTIES
+      LABELS "control;control_server;python;examples" TIMEOUT 120
+      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs}")
     # The guide docs/howto/operate-signals.md against what it shows: the examples of examples/launch_control
     # (write_and_read.py whole, the outputs, the excerpts), the CLI and the commands of standard input.
     add_test(NAME control_server.guide_operate_signals
