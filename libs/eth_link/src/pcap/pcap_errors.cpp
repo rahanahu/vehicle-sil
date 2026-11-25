@@ -85,13 +85,28 @@ LinkError pcap_list_failed(PcapFlavor flavor, std::string_view why)
     std::string what = std::string(library_name(flavor)) + " cannot list the interfaces: " + std::string(why) + ".";
     if (flavor == PcapFlavor::Npcap)
     {
-        what += " If Npcap was installed for administrators only, run the bridge from a console started as administrator.";
+        what += " If Npcap was installed for administrators only, allow it in the elevation prompt (UAC) that Windows shows when the "
+                "bridge starts, or run the bridge from a console started as administrator.";
     }
     return {LinkErrorKind::Other, what};
 }
 
 LinkError pcap_no_interface(PcapFlavor flavor, std::string_view wanted, std::span<const std::string> names)
 {
+    if (flavor == PcapFlavor::Npcap &&
+        std::ranges::all_of(names, [](const std::string& name) { return name == kNpcapLoopbackName; }))
+    {
+        // No network adapter at all: what Npcap installed for administrators only gives another user, or an
+        // administrator who declined the elevation prompt. The likely cause and what to do come first, so
+        // that they are still there when the launcher quotes the start of the line.
+        return {LinkErrorKind::NoSuchInterface,
+                "no interface " + quoted(wanted) + " for --backend npcap: Npcap offers no network adapter here (" +
+                    (names.empty() ? std::string("no interface at all") : "only " + joined(names)) +
+                    "). If Npcap was installed for administrators only, allow it in the elevation prompt (UAC) that Windows "
+                    "shows when the bridge starts, run the bridge from a console started as administrator, or install Npcap "
+                    "again without that limit. Npcap does not offer an adapter that is disabled either: enable it in Windows "
+                    "(run " + list_command(flavor) + ")."};
+    }
     std::string what = "no interface " + quoted(wanted) + " for --backend " + std::string(backend_name(flavor)) + ". Interfaces " +
                        std::string(library_name(flavor)) + " offers here: " + joined(names) + " (run " + list_command(flavor) + ").";
     if (flavor == PcapFlavor::Npcap)
@@ -112,11 +127,6 @@ LinkError pcap_no_interface(PcapFlavor flavor, std::string_view wanted, std::spa
                 "bound to either, such as the physical adapter of a Hyper-V external switch: give the switch's adapter, " +
                 (switches.empty() ? std::string("\"vEthernet (<switch>)\"") : "here probably " + switches) +
                 ", as --interface instead.";
-        if (std::ranges::all_of(names, [](const std::string& name) { return name == kNpcapLoopbackName; }))
-        {
-            what += " It offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a "
-                    "console started as administrator, or install Npcap again without that limit.";
-        }
     }
     return {LinkErrorKind::NoSuchInterface, what};
 }

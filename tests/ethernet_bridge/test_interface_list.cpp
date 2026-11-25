@@ -157,15 +157,16 @@ TEST_CASE(list_json_of_npcap_with_the_loopback_alone_has_the_note)
     const auto list = npcap_list({{"\\Device\\NPF_Loopback", "Adapter for loopback traffic capture", "", kPcapIfUp | kPcapIfLoopback}});
     CHECK(contains(pcap_interfaces_json(Backend::Npcap, list),
                    "  \"notes\": [\n"
-                   "    \"Npcap offers no network adapter here: if it was installed for administrators only, run this from a "
-                   "console started as administrator, or install Npcap again without that limit. A disabled adapter is not "
-                   "offered either: enable it in Windows.\"\n"
+                   "    \"Npcap offers no network adapter here: if it was installed for administrators only, allow it in the "
+                   "elevation prompt (UAC) that Windows shows, run this from a console started as administrator, or install "
+                   "Npcap again without that limit. A disabled adapter is not offered either: enable it in Windows.\"\n"
                    "  ],\n"
                    "  \"error\": null\n"));
     CHECK(contains(pcap_interfaces_json(Backend::Npcap, npcap_list({})),
                    "  \"targets\": [],\n"
                    "  \"notes\": [\n"
-                   "    \"If Npcap was installed for administrators only, run this from a console started as administrator.\"\n"
+                   "    \"If Npcap was installed for administrators only, allow it in the elevation prompt (UAC) that Windows "
+                   "shows, or run this from a console started as administrator.\"\n"
                    "  ],\n"));
 }
 
