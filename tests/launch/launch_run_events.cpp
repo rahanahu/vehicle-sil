@@ -798,6 +798,7 @@ void events_stalled(const Options& o)
         // The result of the stopped run could not be written: not a success for whoever waits for it.
         checks.expect(status.has_value() && status->code == 3,
                       "a second stop command ends the wait: 3 (the result was not written), " + code_text(status) + " after " + std::to_string(ms_since(asked)) + " ms");
+        checks.expect(contains(run.live->err(), "error: cannot write the result"), "the launcher says so on stderr:\n" + run.live->err());
         check_cut_events(lines);
     }
     // --timeout-ms aborts the simulation while the reader does not read. The run has to be under
@@ -824,11 +825,12 @@ void events_stalled(const Options& o)
             }
         }
 #endif
-        // Two: the launcher may still be ending the participants (their output), where the first
-        // only ends that; a stop while it waits for the reader, or a second one, ends the wait.
+        // Two: the launcher may still be ending the participants (their output) or closing its own
+        // connection, where a graceful stop only raises stops to 1; a force stop raises to 2 if the
+        // run is still active or marks launcher end if it is already waiting for the reader.
         run.live->write("{\"command\":\"stop\"}\n");
         std::this_thread::sleep_for(200ms);
-        static_cast<void>(run.live->process().write_input("{\"command\":\"stop\"}\n")); // it may have ended
+        static_cast<void>(run.live->process().write_input("{\"command\":\"stop\",\"force\":true}\n")); // it may have ended
         const auto [status, lines] = run.end(30s);
         // The run failed (the time-out) before the stop came; its result could not be written.
         checks.expect(status.has_value() && status->code == 3, "the result of the timed-out run cannot be written: 3, " + code_text(status));

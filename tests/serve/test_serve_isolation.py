@@ -412,12 +412,22 @@ class ServeIsolationAcceptanceTest(unittest.TestCase):
             rss_series = []
             with Serve(self.launch, cfg, keep_logs=False) as srv:
                 srv.ready()
+                # Round-trip a status command so the stdin reader thread has started before taking
+                # the idle snapshot (initial status is emitted before start_reading_serve_commands).
+                srv.status(timeout=scaled(30.0))
+                idle = resources(srv.process.pid)
+                self.assertIsNotNone(idle)
+                self.assertEqual(idle["descendants"], 0, f"descendants at idle: {idle}")
+                self.assertEqual(idle["listen"], 0, f"listening sockets at idle: {idle}")
                 # Warm up 5 runs before taking baseline (glibc/allocator/SIL Kit one-time caches).
                 for _ in range(5):
                     rec = srv.run_once(req)
                     self.assertEqual(rec.result["result"], "passed")
-                baseline = resources(srv.process.pid)
-                self.assertIsNotNone(baseline)
+                baseline = settled_resources(srv.process.pid, idle)
+                self.assertEqual(baseline["fds"], idle["fds"], f"fd leak during warmup: {baseline} vs {idle}")
+                self.assertEqual(baseline["threads"], idle["threads"], f"thread leak during warmup: {baseline} vs {idle}")
+                self.assertEqual(baseline["descendants"], 0, f"descendants left during warmup: {baseline}")
+                self.assertEqual(baseline["listen"], 0, f"listening sockets left during warmup: {baseline}")
                 for i in range(n_res):
                     rec = srv.run_once(req)
                     self.assertEqual(rec.result["result"], "passed")
