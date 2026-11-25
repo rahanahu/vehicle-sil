@@ -10,6 +10,7 @@ files instead. Every file in the directory must be one that these tests write (E
 from __future__ import annotations
 
 import asyncio
+from functools import lru_cache
 import json
 import os
 import re
@@ -18,14 +19,21 @@ import signal
 import sys
 from pathlib import Path
 
+import jsonschema
 import pytest
+import yaml
+from referencing import Registry
+from referencing.jsonschema import DRAFT202012
 from conftest import (CONFIGS, CONTROL_FEATURES, REPLAY, REPOSITORY, Client, gui_server, is_ended, is_state, is_synced, manual_pages,
                       run_async, until_async)
 from fake_runtime import _validate_run_state, _validate_status_members, validate_events_v4_event
 from vehicle_sil_gui import __version__
 from vehicle_sil_gui.launcher import REQUIRED_FEATURES
 
-DIRECTORY = Path(__file__).resolve().parents[2] / "protocol" / "examples"
+PROTOCOL_DIR = Path(__file__).resolve().parents[2] / "protocol"
+DIRECTORY = PROTOCOL_DIR / "examples"
+OPENAPI_PATH = PROTOCOL_DIR / "openapi.yaml"
+WS_COMMAND_SCHEMA_PATH = PROTOCOL_DIR / "schemas" / "ws-command-event.schema.json"
 UPDATE = os.environ.get("UPDATE_PROTOCOL_EXAMPLES") == "1"
 POSIX = sys.platform != "win32"
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:-(?:rc|beta|alpha)\.\d+)?$")
@@ -409,7 +417,49 @@ def _validate_ws_event_payload(name: str, ev: object, *, is_live: bool = False) 
             _validate_status_members(ev["status"], exact_keys=True)
 
 
+@lru_cache(maxsize=1)
+def _contract_validators() -> dict[str, jsonschema.Draft202012Validator]:
+    openapi_doc = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+    uri = "urn:vehicle-sil:gui:openapi"
+    registry = Registry().with_resource(uri, DRAFT202012.create_resource(openapi_doc))
+    ws_cmd_schema = json.loads(WS_COMMAND_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return {
+        "TimeCommandRequest": jsonschema.Draft202012Validator(
+            {"$ref": f"{uri}#/components/schemas/TimeCommandRequest"}, registry=registry
+        ),
+        "TimeCommandAck": jsonschema.Draft202012Validator(
+            {"$ref": f"{uri}#/components/schemas/TimeCommandAck"}, registry=registry
+        ),
+        "ErrorResponse": jsonschema.Draft202012Validator(
+            {"$ref": f"{uri}#/components/schemas/ErrorResponse"}, registry=registry
+        ),
+        "RunTarget": jsonschema.Draft202012Validator(
+            {"$ref": f"{uri}#/components/schemas/RunTarget"}, registry=registry
+        ),
+        "WsCommandEvent": jsonschema.Draft202012Validator(ws_cmd_schema),
+    }
+
+
+def _validate_http_contracts(name: str, example: dict) -> None:
+    if "request" not in example:
+        return
+    validators = _contract_validators()
+    req = example["request"]
+    status = example["status"]
+    resp = example["response"]
+    if status >= 400 and isinstance(resp, dict) and "error" in resp:
+        validators["ErrorResponse"].validate(resp)
+    if req.get("path") == "api/time" and req.get("method") == "POST":
+        if status != 400 and isinstance(req.get("body"), dict):
+            validators["TimeCommandRequest"].validate(req["body"])
+        if status == 200:
+            validators["TimeCommandAck"].validate(resp)
+    elif req.get("path") in ("api/run", "api/stop-session") and req.get("method") == "POST" and status == 200:
+        validators["RunTarget"].validate(resp)
+
+
 def _validate_protocol_v4_example(name: str, example: dict, *, is_live: bool = False) -> None:
+    _validate_http_contracts(name, example)
     if "server" not in example:
         return
     messages = example["server"]
@@ -474,6 +524,8 @@ def _validate_protocol_v4_example(name: str, example: dict, *, is_live: bool = F
         elif mtype == "event":
             assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
             _validate_ws_event_payload(name, msg["event"], is_live=is_live)
+            if name != "ws-loose-fields" and msg["event"].get("event") == "command":
+                _contract_validators()["WsCommandEvent"].validate(msg)
         elif mtype == "variables":
             assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
             _validate_variables_summary(name, msg["variables"])
@@ -1620,3 +1672,151 @@ def test_protocol_v4_validators_catch_drift() -> None:
     del sess_with_ls["launcher_state"]["allowed"]["pause"]["caution"]
     with pytest.raises(AssertionError):
         _validate_protocol_v4_example("ws-pass", bad_pass)
+
+
+def test_protocol_contract_schemas_are_valid() -> None:
+    """openapi.yaml and ws-command-event.schema.json themselves pass Draft 2020-12 schema checks."""
+    openapi_doc = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+    assert openapi_doc["openapi"] == "3.1.0"
+    post_time = openapi_doc["paths"]["/api/time"]["post"]
+    assert {"200", "400", "401", "403", "409", "413", "415", "503"} <= set(post_time["responses"].keys())
+    assert "bearerAuth" in openapi_doc["components"]["securitySchemes"]
+    for schema_name, schema in openapi_doc["components"]["schemas"].items():
+        jsonschema.Draft202012Validator.check_schema(schema)
+    ws_cmd_schema = json.loads(WS_COMMAND_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator.check_schema(ws_cmd_schema)
+
+
+def test_protocol_contract_schemas_catch_drift() -> None:
+    """Negative and positive checks proving OpenAPI and WS command schemas enforce exact wire contracts."""
+    validators = _contract_validators()
+    req_v = validators["TimeCommandRequest"]
+    ack_v = validators["TimeCommandAck"]
+    ws_v = validators["WsCommandEvent"]
+
+    # Valid TimeCommandRequest shapes: targeted (both) and untargeted (neither)
+    for good in (
+        {"command": "pause"},
+        {"command": "resume", "id": 0},
+        {"command": "step", "ms": 1, "id": 1 << 53, "run_id": "abc-1", "instance": "abc"},
+        {"command": "run_until", "at_ms": 0},
+        {"command": "run_until", "at_ms": 10**12, "run_id": "abc-1", "instance": "abc"},
+        {"command": "speed", "value": "max"},
+        {"command": "speed", "value": 0.000001},
+        {"command": "speed", "value": 1000000, "id": 7, "run_id": "abc-1", "instance": "abc"},
+    ):
+        req_v.validate(good)
+
+    # Invalid TimeCommandRequest shapes: single target, bad ranges, bad types, extra fields
+    for bad in (
+        {"command": "pause", "run_id": "1"},
+        {"command": "pause", "instance": "0123456789abcdef"},
+        {"command": "pause", "run_id": "", "instance": "0123456789abcdef"},
+        {"command": "pause", "run_id": "1", "instance": ""},
+        {"command": "pause", "run_id": None, "instance": "0123456789abcdef"},
+        {"command": "stop"},
+        {"command": "pause", "ms": 10},
+        {"command": "pause", "extra": 1},
+        {"command": "step", "ms": 0},
+        {"command": "step", "ms": -5},
+        {"command": "step", "ms": 10**12 + 1},
+        {"command": "step", "ms": True},
+        {"command": "step", "ms": 1.5},
+        {"command": "run_until", "at_ms": -1},
+        {"command": "run_until", "at_ms": 10**12 + 1},
+        {"command": "speed", "value": 0},
+        {"command": "speed", "value": 1e-7},
+        {"command": "speed", "value": 1_000_000.1},
+        {"command": "speed", "value": "fast"},
+        {"command": "speed", "value": True},
+        {"command": "pause", "id": -1},
+        {"command": "pause", "id": (1 << 53) + 1},
+        {"command": "pause", "id": True},
+        {"command": "pause", "id": "7"},
+    ):
+        with pytest.raises(jsonschema.ValidationError, match="."):
+            req_v.validate(bad)
+
+    # TimeCommandAck must not echo run_id/instance inside command
+    ack_v.validate({"run_id": "abc-1", "command": {"command": "step", "ms": 25, "id": 3}})
+    with pytest.raises(jsonschema.ValidationError):
+        ack_v.validate({"run_id": "abc-1", "command": {"command": "step", "ms": 25, "run_id": "abc-1", "instance": "abc"}})
+
+    # RunTarget enforces both non-empty strings with no extra keys
+    target_v = validators["RunTarget"]
+    target_v.validate({"run_id": "abc-1", "instance": "abc"})
+    for bad_target in (
+        {"run_id": "abc-1"},
+        {"instance": "abc"},
+        {"run_id": "", "instance": "abc"},
+        {"run_id": "abc-1", "instance": "abc", "extra": 1},
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            target_v.validate(bad_target)
+
+    # Valid WS command events (accepted, refused, launcher-level refused with asked_run)
+    for good_ws in (
+        {
+            "type": "event",
+            "stream_seq": 10,
+            "run_id": "abc-1",
+            "event": {
+                "event": "command", "seq": 5, "t_ms": 100, "run": "abc-1",
+                "command": "step", "source": "stdin", "accepted": True,
+                "message": None, "reason": None, "ms": 30, "at_ms": 30, "id": 7,
+            },
+        },
+        {
+            "type": "event",
+            "stream_seq": 11,
+            "run_id": "abc-1",
+            "event": {
+                "event": "command", "seq": 6, "t_ms": 110, "run": "abc-1",
+                "command": "step", "source": "stdin", "accepted": False,
+                "message": "step works while paused", "reason": "not-paused", "id": 8,
+            },
+        },
+        {
+            "type": "event",
+            "stream_seq": 12,
+            "run_id": "abc-1",
+            "event": {
+                "event": "command", "seq": 7, "t_ms": 120,
+                "command": None, "source": "stdin", "accepted": False,
+                "message": "wrong run", "reason": "run-changed", "asked_run": "abc-0", "id": None,
+            },
+        },
+    ):
+        ws_v.validate(good_ws)
+
+    # Invalid WS command events
+    base_ev = {
+        "event": "command", "seq": 5, "t_ms": 100, "run": "abc-1",
+        "command": "step", "source": "stdin", "accepted": True,
+        "message": None, "reason": None, "id": 7,
+    }
+    for bad_ws in (
+        # accepted: true with non-null reason
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "reason": "not-paused"}},
+        # accepted: true with asked_run (only emitted on launcher-level refusals)
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "asked_run": "abc-1"}},
+        # accepted: true with null command
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "command": None}},
+        # ms present on a non-step command
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "command": "pause", "ms": 10}},
+        # accepted: false with ms or at_ms
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "accepted": False, "reason": "not-paused", "ms": 10}},
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "accepted": False, "reason": "not-paused", "at_ms": 10}},
+        # missing required id
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {k: v for k, v in base_ev.items() if k != "id"}},
+        # unknown source
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "source": "http"}},
+        # invalid id type/range
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "id": -1}},
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "id": True}},
+        # extra key on envelope or event
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "extra": 1, "event": base_ev},
+        {"type": "event", "stream_seq": 10, "run_id": "abc-1", "event": {**base_ev, "extra": 1}},
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            ws_v.validate(bad_ws)

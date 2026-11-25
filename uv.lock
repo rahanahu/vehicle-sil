@@ -1103,6 +1103,7 @@ dev = [
     { name = "vehicle-sil-gui", extra = ["variables"] },
 ]
 gui = [
+    { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "vehicle-sil-gui", extra = ["variables"] },
@@ -1134,6 +1135,7 @@ dev = [
     { name = "vehicle-sil-gui", extras = ["variables"], editable = "gui/server" },
 ]
 gui = [
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "vehicle-sil-gui", extras = ["variables"], editable = "gui/server" },
