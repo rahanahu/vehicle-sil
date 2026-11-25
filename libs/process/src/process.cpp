@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -398,6 +400,42 @@ bool process_has_exited(HANDLE handle, bool hasSync)
     return GetExitCodeProcess(handle, &exitCode) != 0 && exitCode != STILL_ACTIVE;
 }
 
+std::string diag_narrow(std::wstring_view text)
+{
+    if (text.empty())
+    {
+        return {};
+    }
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (size <= 0)
+    {
+        return {};
+    }
+    std::string out(static_cast<std::size_t>(size), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
+    return out;
+}
+
+std::pair<std::wstring, DWORD> diag_query_image(HANDLE handle, DWORD flags)
+{
+    std::wstring path(MAX_PATH, L'\0');
+    for (;;)
+    {
+        DWORD size = static_cast<DWORD>(path.size());
+        if (QueryFullProcessImageNameW(handle, flags, path.data(), &size) != 0)
+        {
+            path.resize(size);
+            return {path, 0};
+        }
+        const DWORD err = GetLastError();
+        if (err != ERROR_INSUFFICIENT_BUFFER || path.size() >= 32768)
+        {
+            return {{}, err};
+        }
+        path.resize(path.size() * 2);
+    }
+}
+
 } // namespace
 
 bool Process::others_running()
@@ -406,6 +444,7 @@ bool Process::others_running()
     {
         return false;
     }
+    const bool diag = std::getenv("VEHICLE_SIL_DIAG_OTHERS_RUNNING") != nullptr;
     // The IDs of the processes in the job, without the first one: the count of the job may still
     // hold the first process for a moment after its end, and QueryInformationJobObject() can
     // succeed (TRUE) with NumberOfAssignedProcesses > NumberOfProcessIdsInList while a terminated
@@ -440,6 +479,13 @@ bool Process::others_running()
         std::memcpy(&header, storage.data(), sizeof(header));
         if (attempt >= kMaxRetries || capacity >= kMaxCapacity)
         {
+            if (diag)
+            {
+                std::fprintf(stderr, "diag others_running overflow self=%lu assigned=%lu in_list=%lu cap=%lu\n",
+                             static_cast<unsigned long>(pid_), static_cast<unsigned long>(header.NumberOfAssignedProcesses),
+                             static_cast<unsigned long>(header.NumberOfProcessIdsInList), static_cast<unsigned long>(capacity));
+                std::fflush(stderr);
+            }
             // More processes than our cap can enumerate: others are running.
             return true;
         }
@@ -459,10 +505,13 @@ bool Process::others_running()
             continue;
         }
         bool hasSync = true;
+        DWORD openErr1 = 0;
+        DWORD openErr2 = 0;
         Handle other(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, static_cast<DWORD>(ids[i])));
         if (other.h == nullptr)
         {
             DWORD openErr = GetLastError();
+            openErr1 = openErr;
             if (openErr == ERROR_ACCESS_DENIED)
             {
                 hasSync = false;
@@ -474,6 +523,7 @@ bool Process::others_running()
                 else
                 {
                     openErr = GetLastError();
+                    openErr2 = openErr;
                 }
             }
             if (other.h == nullptr)
@@ -482,6 +532,20 @@ bool Process::others_running()
                 {
                     // Already exited before OpenProcess().
                     continue;
+                }
+                if (diag)
+                {
+                    Sleep(50);
+                    Handle retry(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(ids[i])));
+                    const DWORD retryErr = retry.h == nullptr ? GetLastError() : 0;
+                    std::fprintf(stderr,
+                                 "diag others_running open_failed self=%lu other=%lu assigned=%lu in_list=%lu err1=%lu err2=%lu after50_ok=%d after50_err=%lu\n",
+                                 static_cast<unsigned long>(pid_), static_cast<unsigned long>(ids[i]),
+                                 static_cast<unsigned long>(header.NumberOfAssignedProcesses),
+                                 static_cast<unsigned long>(header.NumberOfProcessIdsInList),
+                                 static_cast<unsigned long>(openErr1), static_cast<unsigned long>(openErr2),
+                                 retry.h != nullptr ? 1 : 0, static_cast<unsigned long>(retryErr));
+                    std::fflush(stderr);
                 }
                 // Cannot inspect (e.g. access denied): conservatively report it as still running.
                 return true;
@@ -509,6 +573,32 @@ bool Process::others_running()
         if (process_has_exited(other.h, hasSync))
         {
             continue;
+        }
+        if (diag)
+        {
+            BOOL inJob = FALSE;
+            const BOOL inJobOk = IsProcessInJob(other.h, job_, &inJob);
+            const auto [win32Path, win32Err] = diag_query_image(other.h, 0);
+            const auto [nativePath, nativeErr] = diag_query_image(other.h, PROCESS_NAME_NATIVE);
+            const DWORD waitNow = hasSync ? WaitForSingleObject(other.h, 0) : 999999UL;
+            DWORD exitCodeNow = 0;
+            const BOOL exitOk = GetExitCodeProcess(other.h, &exitCodeNow);
+            const DWORD wait50 = hasSync ? WaitForSingleObject(other.h, 50) : 999999UL;
+            DWORD exitCode50 = 0;
+            const BOOL exitOk50 = GetExitCodeProcess(other.h, &exitCode50);
+            std::fprintf(stderr,
+                         "diag others_running still_running self=%lu other=%lu assigned=%lu in_list=%lu inJob=%d/%d hasSync=%d wait0=%lu exit0=%d/%lu wait50=%lu exit50=%d/%lu win32_err=%lu win32=[%s] native_err=%lu native=[%s] expected=[%s]\n",
+                         static_cast<unsigned long>(pid_), static_cast<unsigned long>(ids[i]),
+                         static_cast<unsigned long>(header.NumberOfAssignedProcesses),
+                         static_cast<unsigned long>(header.NumberOfProcessIdsInList),
+                         inJobOk != 0 ? 1 : 0, inJob != 0 ? 1 : 0,
+                         hasSync ? 1 : 0, static_cast<unsigned long>(waitNow), exitOk != 0 ? 1 : 0,
+                         static_cast<unsigned long>(exitCodeNow), static_cast<unsigned long>(wait50),
+                         exitOk50 != 0 ? 1 : 0, static_cast<unsigned long>(exitCode50),
+                         static_cast<unsigned long>(win32Err), diag_narrow(win32Path).c_str(),
+                         static_cast<unsigned long>(nativeErr), diag_narrow(nativePath).c_str(),
+                         diag_narrow(conhostPath).c_str());
+            std::fflush(stderr);
         }
         return true;
     }

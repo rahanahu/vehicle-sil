@@ -311,7 +311,11 @@ TEST_CASE(process_reports_no_others_running_after_clean_exit)
         Lines lines;
         Process p(kHelper, {"--exit", "0"}, lines.options());
         CHECK(p.wait_for(scaled_timeout(60s)) == (ExitStatus{0, std::nullopt}));
-        CHECK(!p.others_running());
+        if (p.others_running())
+        {
+            throw vehicle_sil::unit::Failure("others_running() returned true after clean exit at iteration " +
+                                             std::to_string(i));
+        }
     }
 }
 
@@ -323,7 +327,7 @@ TEST_CASE(process_others_running_without_console)
         CHECK(std::getenv("VEHICLE_SIL_PROCESS_DETACHED") == nullptr);
         Lines lines;
         ProcessOptions options = lines.options();
-        options.environment = {{"VEHICLE_SIL_PROCESS_DETACHED", "1"}};
+        options.environment = {{"VEHICLE_SIL_PROCESS_DETACHED", "1"}, {"VEHICLE_SIL_DIAG_OTHERS_RUNNING", "1"}};
         Process detached(
             kHelper,
             {"--run-detached", vehicle_sil::test::own_executable(), "process_others_running_without_console"},
@@ -360,7 +364,11 @@ TEST_CASE(process_others_running_without_console)
         Lines lines;
         Process p(kHelper, {"--exit", "0"}, lines.options());
         CHECK(p.wait_for(scaled_timeout(60s)) == (ExitStatus{0, std::nullopt}));
-        CHECK(!p.others_running());
+        if (p.others_running())
+        {
+            throw vehicle_sil::unit::Failure("others_running() returned true after clean exit at iteration " +
+                                             std::to_string(i));
+        }
     }
     const fs::path dir = scratch("process others detached");
     const std::string pidFile = (dir / "grandchild.pid").string();
