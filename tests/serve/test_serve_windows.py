@@ -165,7 +165,9 @@ class ServeWindowsAcceptanceTest(unittest.TestCase):
         say(f"[win-10ecu] runs={n} median={statistics.median(hot_times):.1f}ms p90={p90:.1f}ms "
             f"handles={handle_series[0]}->{handle_series[-1]} (tail slope={h_slope:.2f}/Run) "
             f"threads={thread_series[0]}->{thread_series[-1]} (tail slope={t_slope:.2f}/Run)")
-        self.assertLess(abs(h_slope), 2.0, f"handle leak: {handle_series}")
+        # One handle per run is a leak too: with MinGW, a thread that the C++ API of SIL Kit
+        # detached left an event handle behind on every run (patch 0007, docs/dependencies.md).
+        self.assertLess(abs(h_slope), 0.5, f"handle leak: {handle_series}")
         self.assertLess(abs(t_slope), 1.0, f"thread leak: {thread_series}")
 
     def test_11_windows_ctrl_break_and_job_object_termination(self) -> None:

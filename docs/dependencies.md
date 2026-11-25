@@ -227,6 +227,7 @@ The consumer's SIL Kit does not have the patches of "Patches to SIL Kit" applied
 | 0004 | The participant that creates the network simulator (`vehicle_sil_can_bus_simulator`) | Rarely, the network is not announced and all controllers stay in trivial simulation. The bit rate and the mode do not reach the simulator, with no error and no warning. |
 | 0005 | Registry | When a participant joins right after another one ended, it rarely fails after waiting 5 seconds (`Middleware.ConnectTimeoutSeconds`) with "Timeout during connection handshake with the SIL Kit Registry". Creating the participant again connects. |
 | 0006 | Coordinated participants (the ECUs of a run) | A participant that the run does not require (a mistyped `--name`, for example) can leave Error again during the start. `ParticipantRuntime::start()` still fails for it, but SIL Kit may not take its stop, so it can stay for up to `shutdown_timeout` and hold the virtual time of all participants at 0 meanwhile. Rarely, `start()` returns and the participant then runs no step and reports nothing. |
+| 0007 | Every program compiled with the SIL Kit headers that starts a lifecycle (the change is in the header-only C++ API). It matters for a process that creates and destroys participants one after the other, such as `vehicle_sil_launch serve` | With MinGW, one Win32 `Event` handle more for each participant that started its lifecycle (see "[MinGW GCC (`winpthreads`): `std::recursive_mutex` leaks a Win32 `Event` handle on destruction](#mingw-gcc-winpthreads-stdrecursive_mutex-leaks-a-win32-event-handle-on-destruction)"). |
 
 The registry that `vehicle_sil_launch run` starts, and the executables built with vehicle-sil, have all patches applied.
 
@@ -509,13 +510,13 @@ Nothing tells the joining participant that the other one is gone.
 
 **Impact**: SIL Kit uses `std::recursive_mutex` in several internal services and handler lists. In a resident launcher (`vehicle_sil_launch serve`) that creates and destroys SIL Kit objects on every run, the launcher leaks roughly 15–17 Win32 `Event` handles per run without a workaround.
 
-**Handling**: In `cmake/VehicleSilDependencies.cmake`, MinGW builds add `_GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC=1` to SIL Kit's internal interface target (`I_SilKit`). Only `gthr-posix.h` inspects this macro, so it is a no-op on non-`winpthreads` toolchains, and SIL Kit's public ABI is a C API so the macro does not cross a binary boundary. With this workaround, handle growth drops to roughly +1 handle per run (remaining small growth is a known limitation, not blocking repeated runs in practice).
+**Handling**: In `cmake/VehicleSilDependencies.cmake`, MinGW builds add `_GTHREAD_USE_RECURSIVE_MUTEX_INIT_FUNC=1` to SIL Kit's internal interface target (`I_SilKit`). Only `gthr-posix.h` inspects this macro, so it is a no-op on non-`winpthreads` toolchains, and SIL Kit's public ABI is a C API so the macro does not cross a binary boundary. With this workaround, handle growth dropped to +1 handle per run. That handle was not a mutex: the C++ API detached the thread that waits for the end of a lifecycle, and `winpthreads` leaves an `Event` handle behind for each detached thread that ends. Patch [0007](#0007-join-the-thread-that-startlifecycle-starts-in-the-c-api) joins that thread, and the handle count of `serve` stays the same from run to run. The test `serve.windows` fails if it grows by 0.5 handles per run or more.
 
 **Reported upstream**: Not reported.
 
 ## Patches to SIL Kit
 
-The patches in `patches/sil-kit/` were created with `git format-patch` on the upstream tag `v5.0.8` (the pinned commit) and follow the upstream style (clang-format). 0001 includes an upstream integration test, and 0006 includes upstream unit tests.
+The patches in `patches/sil-kit/` were created with `git format-patch` on the upstream tag `v5.0.8` (the pinned commit) and follow the upstream style (clang-format). 0001 includes an upstream integration test, and 0006 and 0007 include upstream unit tests.
 
 | Patch | What it fixes |
 |---|---|
@@ -525,8 +526,9 @@ The patches in `patches/sil-kit/` were created with `git format-patch` on the up
 | [0004](#0004-do-not-lose-a-handler-when-an-asynchronous-subscription-completes) | Does not lose a handler when an asynchronous subscription completes |
 | [0005](#0005-the-registry-does-not-advertise-a-participant-whose-connection-has-closed) | The registry does not advertise a participant whose connection has closed |
 | [0006](#0006-the-lifecycle-does-not-leave-error-when-a-wait-of-the-start-ends) | The lifecycle does not leave Error when a wait of the start ends |
+| [0007](#0007-join-the-thread-that-startlifecycle-starts-in-the-c-api) | Joins the thread that `StartLifecycle()` starts in the C++ API |
 
-**Reported upstream**: None of them yet. The code that 0001, 0002, 0004 and 0005 change is the same on upstream `main` (for 0003 and 0006, upstream `main` has not been checked).
+**Reported upstream**: None of them yet. The code that 0001, 0002, 0004 and 0005 change is the same on upstream `main` (for 0003, 0006 and 0007, upstream `main` has not been checked).
 
 ### 0001: The LIN master does not count dynamic-response nodes
 
@@ -587,6 +589,16 @@ The patches in `patches/sil-kit/` were created with `git format-patch` on the up
 **Upstream reproduction test**: `Test_LifecycleService.error_while_waiting_for_replies_is_kept` and `Test_LifecycleService.error_while_waiting_for_subscriptions_is_kept` (in the patch)
 
 **Verification**: Verified with the upstream unit tests of the lifecycle service and with `core.participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error` of vehicle-sil. Both fail without the patch. The abort during a wait is fixed by the same check and has no test of its own.
+
+### 0007: Join the thread that StartLifecycle starts in the C++ API
+
+**Description**: `LifecycleService::StartLifecycle()` of the header-only C++ API starts a thread that waits for the end of the lifecycle (`SilKit_LifecycleService_WaitForLifecycleToComplete()`) and sets the result of the returned future. It detached that thread. It now keeps it and joins it in its destructor. `Participant::~Participant()` destroys the C participant before its services, and that ends the wait (the future of the lifecycle is broken), so the join does not block.
+
+**Why vehicle-sil needs it**: With MinGW-w64, `winpthreads` leaves a Win32 `Event` handle behind for each detached thread that ends. `vehicle_sil_launch serve` creates and destroys a controller participant with a lifecycle on every run, so it had one handle more after each run (see "[MinGW GCC (`winpthreads`): `std::recursive_mutex` leaks a Win32 `Event` handle on destruction](#mingw-gcc-winpthreads-stdrecursive_mutex-leaks-a-win32-event-handle-on-destruction)"). A detached thread could also still run after the participant was gone.
+
+**Upstream reproduction test**: `Test_HourglassOrchestration.SilKit_LifecycleService_Destructor_JoinsTheWaiterOfStartLifecycle` (in the patch)
+
+**Verification**: Verified with the upstream tests and with `serve.windows` of vehicle-sil (Windows, MinGW): the handle count of `serve` stays the same over 30 and 100 runs; without the patch it grows by 1 per run and the test fails. The upstream test fails without the patch on every platform.
 
 ## Updating the upstream version
 
