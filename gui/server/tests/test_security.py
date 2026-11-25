@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -12,7 +13,7 @@ from urllib.parse import unquote
 
 import aiohttp
 import pytest
-from conftest import CONFIGS, Client, Gui, gui_server, run_async, wait_until
+from conftest import CONFIGS, REPLAY, Client, Gui, gui_server, is_synced, read_line, run_async, stop_server, wait_until
 
 
 @pytest.fixture(scope="module")
@@ -318,3 +319,228 @@ def test_the_browser_is_not_given_the_token(tmp_path: Path) -> None:
         assert gui.url in info["content"]
         page = Path(unquote(info["argv"][0][len("file://"):]))
     assert not page.exists()  # removed, at the latest when the server ends
+
+
+# ---------------------------------------------------------------- --no-auth
+
+
+def test_no_auth_startup_output_json_and_stderr(tmp_path: Path) -> None:
+    # Default --json: has #token= and no "auth" key.
+    with gui_server(tmp_path) as default_gui:
+        assert default_gui.info is not None
+        assert "#token=" in default_gui.info["url"]
+        assert "auth" not in default_gui.info
+        assert "WARNING: --no-auth" not in default_gui.stderr_text()
+
+    # --no-auth --json --dev-origin: clean URLs without #token=, explicit "auth": False, stderr warning.
+    dev = "http://127.0.0.1:4200"
+    with gui_server(tmp_path, args=("--no-auth", "--dev-origin", dev)) as gui:
+        assert gui.info == {
+            "vehicle_sil_gui": 4,
+            "url": f"http://127.0.0.1:{gui.port}/",
+            "port": gui.port,
+            "dev_url": f"{dev}/",
+            "auth": False,
+        }
+        assert "#token=" not in gui.url
+        assert gui.token == ""
+        err = gui.stderr_text()
+        assert "WARNING: --no-auth" in err and "token authentication is disabled" in err
+
+    # Non---json startup: prints clean URL without #token=, stderr warning, no "(it has the token)".
+    stderr = tmp_path / "plain.err"
+    with open(stderr, "wb") as err_file:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "vehicle_sil_gui", "--no-browser", "--no-auth",
+             "--launcher", str(REPLAY), "--root", str(CONFIGS)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err_file)
+    try:
+        line = read_line(proc, 20).strip()
+        assert line.startswith("http://127.0.0.1:") and line.endswith("/") and "#token=" not in line
+    finally:
+        stop_server(proc)
+    err = stderr.read_text(encoding="utf-8", errors="replace")
+    assert "WARNING: --no-auth" in err
+    assert "(it has the token)" not in err
+    assert "open the URL above; Ctrl+C stops the server" in err
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="BROWSER as a script")
+def test_no_auth_browser_opens_url_directly_without_token(tmp_path: Path) -> None:
+    record = tmp_path / "browser.json"
+    script = tmp_path / "browser.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"open({str(record)!r}, 'w').write(json.dumps({{'argv': sys.argv[1:]}}))\n")
+    script.chmod(0o755)
+    with gui_server(tmp_path, browser=True, args=("--no-auth",), env={"BROWSER": str(script)}) as gui:
+        assert wait_until(record.exists, 10)
+        info = json.loads(record.read_text())
+        assert info["argv"] == [f"http://127.0.0.1:{gui.port}/"]
+        assert "#token=" not in info["argv"][0]
+
+
+def test_no_auth_allows_http_and_websocket_without_token(tmp_path: Path) -> None:
+    with gui_server(tmp_path, args=("--no-auth",)) as gui:
+        async def main(c: Client) -> None:
+            # HTTP API works without Authorization header (and ignores stale Authorization header).
+            for auth_header in (None, "stale-token"):
+                status, app = await c.get("api/app", token=auth_header)
+                assert status == 200 and app["vehicle_sil_gui"] == 4
+            status, configs = await c.get("api/configs", token=None)
+            assert status == 200 and any(f["path"] == "simulation.yaml" for f in configs["files"])
+            status, check = await c.post("api/check", {"file": "simulation.yaml"}, token=None)
+            assert status == 200 and check["check"]["result"] == "passed"
+
+            # Raw WebSocket without sending any auth message immediately receives hello + synced.
+            raw_ws = await c.ws(auth=False)
+            got = await raw_ws.until(is_synced)
+            assert got[0]["type"] == "hello" and got[0]["vehicle_sil_gui"] == 4
+            assert got[-1]["type"] == "synced"
+            await raw_ws.close()
+
+            # Existing client sending {"type": "auth", "token": ""} or stale token also works without error.
+            for payload in ({"token": ""}, {"token": "stale-token"}):
+                sock = await c.ws(auth=payload)
+                got = await sock.until(is_synced)
+                assert got[0]["type"] == "hello" and not any(m["type"] == "error" for m in got)
+                await sock.close()
+        run_async(main, gui)
+
+
+def test_no_auth_preserves_all_other_security_boundaries(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    shutil.copytree(CONFIGS, root)
+    (tmp_path / "secret.yaml").write_text("vehicle_sil_simulation: 2\nparticipants:\n  - name: Secret\n")
+    web = tmp_path / "screen"
+    web.mkdir()
+    (web / "index.html").write_text("<!doctype html><title>screen</title>")
+    (web / "sw.js").write_text("self.addEventListener('fetch', () => {});")
+    dev = "http://127.0.0.1:4200"
+
+    with gui_server(tmp_path, root=root, args=("--no-auth", "--no-save", "--dev-origin", dev,
+                                               "--web", str(web))) as gui:
+        async def main(c: Client) -> None:
+            # 1. Host header check still enforced (including localhost and wrong port).
+            for host in ("evil.example", f"127.0.0.1:{gui.port + 1}", f"localhost:{gui.port}", f"[::1]:{gui.port}"):
+                r = await request(c, "GET", "api/app", {"Host": host})
+                assert r.status == 403, host
+
+            # 2. Origin header check still enforced on POST, GET with foreign Origin, and WebSocket.
+            for origin in (None, "null", "http://evil.example", "http://127.0.0.1:4201",
+                           f"http://localhost:{gui.port}"):
+                status, body = await c.post("api/check", {"file": "simulation.yaml"}, token=None, origin=origin)
+                assert status == 403 and body["error"]["code"] == "forbidden-origin", origin
+                if origin is not None:
+                    status, _ = await c.get("api/app", token=None, origin=origin)
+                    assert status == 403, origin
+                with pytest.raises(aiohttp.WSServerHandshakeError) as e:
+                    await c.ws(auth=False, origin=origin)
+                assert e.value.status == 403, origin
+
+            # --dev-origin is accepted for both HTTP and WS (without token).
+            status, _ = await c.post("api/check", {"file": "simulation.yaml"}, token=None,
+                                     origin=dev, host="127.0.0.1:4200")
+            assert status == 200
+            ws = await c.ws(auth=False, origin=dev)
+            got = await ws.until(is_synced)
+            assert got[0]["type"] == "hello"
+            await ws.close()
+
+            # 3. CORS / preflight still forbidden and no Access-Control-* headers emitted.
+            r = await request(c, "OPTIONS", "api/run", {"Origin": gui.origin, "Access-Control-Request-Method": "POST"})
+            assert r.status == 403
+            r = await request(c, "GET", "api/app", {})
+            assert r.status == 200 and not any(h.lower().startswith("access-control-") for h in r.headers)
+
+            # 4. CSP and security headers still enforced.
+            for path in ("api/app", "", "index.html"):
+                r = await request(c, "GET", path, {})
+                csp = r.headers.get("Content-Security-Policy", "")
+                assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp and "unsafe-eval" not in csp
+                assert r.headers["X-Content-Type-Options"] == "nosniff"
+                assert r.headers["Referrer-Policy"] == "no-referrer"
+                assert r.headers["X-Frame-Options"] == "DENY"
+                if path.startswith("api/"):
+                    assert r.headers["Cache-Control"] == "no-store"
+
+            # 5. POST non-JSON Content-Type still refused (415).
+            status, _ = await c.post("api/check", raw=b"file=simulation.yaml",
+                                     content_type="application/x-www-form-urlencoded", token=None)
+            assert status == 415
+
+            # 6. Path traversal / --root restriction still enforced.
+            status, body = await c.post("api/check", {"file": "../secret.yaml"}, token=None)
+            assert status == 400 and body["error"]["code"] == "outside-root"
+
+            # 7. --no-save still enforced.
+            status, cfg = await c.get("api/config?file=simulation.yaml", token=None)
+            assert status == 200
+            status, body = await c.post("api/config", {"file": "simulation.yaml", "text": cfg["text"],
+                                                       "stamp": cfg["stamp"]}, token=None)
+            assert status == 403 and body["error"]["code"] == "save-disabled"
+
+            # 8. External connect target restriction still enforced.
+            status, body = await c.post("api/run", {"file": "connect.yaml", "connect": {"ETH_EXT": "fake0"}},
+                                        token=None)
+            assert status == 400 and body["error"]["code"] == "target-not-listed"
+
+            # 9. Panel key and Service-Worker refusal still enforced.
+            r = await request(c, "GET", "panels/wrong-key/panel.js", {})
+            assert r.status == 404
+            r = await request(c, "GET", "sw.js", {"Service-Worker": "script"})
+            assert r.status == 404
+        run_async(main, gui)
+
+    # 10. --no-auth + --allow-command-changes: extra stderr warning and updated allowed.save.caution.
+    with gui_server(tmp_path, root=root, args=("--no-auth", "--allow-command-changes")) as gui:
+        err = gui.stderr_text()
+        assert "WARNING: --no-auth" in err
+        assert "WARNING: --allow-command-changes with --no-auth" in err
+        assert "any local process on this computer can run any command as this user" in err
+
+        async def check_caution(c: Client) -> None:
+            status, body = await c.get("api/session", token=None)
+            assert status == 200
+            caution = body["allowed"]["save"]["caution"]
+            assert caution["code"] == "command-changes-allowed"
+            assert "any local process on this computer" in caution["message"]
+        run_async(check_caution, gui)
+
+    # 11. --no-auth without --allow-command-changes still refuses new files (stamp: null).
+    with gui_server(tmp_path, root=root, args=("--no-auth",)) as gui:
+        async def check_new_file_refused(c: Client) -> None:
+            status, body = await c.post("api/config", {"file": "new.yaml", "text": "vehicle_sil_simulation: 2\n",
+                                                       "stamp": None}, token=None)
+            assert status == 403 and body["error"]["code"] == "commands-changed"
+        run_async(check_new_file_refused, gui)
+
+
+def test_no_auth_keeps_grpc_control_api_authentication_intact(tmp_path: Path, control_env: dict) -> None:
+    # Disabling GUI HTTP/WS auth must NOT disable the launcher's gRPC Control Server token authentication.
+    with gui_server(tmp_path, args=("--no-auth",), env=control_env) as gui:
+        async def main(c: Client) -> None:
+            ws = await c.ws(auth=False)
+            await ws.until(is_synced)
+            status, run = await c.post("api/run", {"file": "simulation.yaml", "start_paused": True}, token=None)
+            assert status == 200 and run["run_id"]
+            got = await ws.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
+            assert any(p["name"] == "Engine" for p in got[-1]["variables"]["peers"])
+            # Stop the run cleanly.
+            status, _ = await c.post("api/stop-session", {"run_id": run["run_id"], "instance": run["instance"],
+                                                          "force": True}, token=None)
+            assert status == 200
+            await ws.close()
+        run_async(main, gui)
+
+
+def test_options_requires_non_empty_token_when_auth_is_enabled() -> None:
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+
+    with pytest.raises(ValueError, match="token"):
+        GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="", auth=True))
+    # Allowed only when auth=False.
+    srv = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="", auth=False))
+    assert srv.o.auth is False

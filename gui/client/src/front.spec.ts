@@ -2209,6 +2209,23 @@ describe('the front door', () => {
       await expect(attempt).rejects.toBeDefined();
       expect(fake.sockets.at(-1)?.closedByClient).toBe(true);
     });
+
+    it('connects with options without a token (for --no-auth servers)', async () => {
+      const http = new FakeHttp();
+      const fake = new FakeWebSockets();
+      const app = (await httpExamples()).find((e) => e.name === 'app')?.response;
+      const attempt = connect({
+        base_url: 'http://127.0.0.1:1/',
+        http: http.transport,
+        socket: fake.factory,
+      });
+      http.expectOne('api/app').flush(app);
+      const front = await attempt;
+      expect(fake.sockets).toHaveLength(1);
+      fake.last().open();
+      expect(fake.last().greeting).toEqual([{ type: 'auth', token: '' }]);
+      front.close();
+    });
   });
 
   describe('runtime & prepare', () => {

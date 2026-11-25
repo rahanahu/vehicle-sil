@@ -49,8 +49,7 @@ if (typeof WebSocket === "undefined" || typeof fetch === "undefined") {
 
 const [file] = args;
 const url = new URL(process.env.VEHICLE_SIL_GUI_URL);
-const token = new URLSearchParams(url.hash.slice(1)).get("token");
-if (!token) usage("the URL has no #token=...: use the URL the server printed");
+const token = new URLSearchParams(url.hash.slice(1)).get("token") ?? "";
 url.hash = "";
 const base = url.href; // http://127.0.0.1:<port>/
 // The server accepts POST and WebSocket only from its own origin (a browser sends it by itself)
@@ -58,7 +57,7 @@ const origin = url.origin;
 
 /** Sends an HTTP request. On failure, throws with the server's error message (which says how to fix it). */
 async function call(method, path, body) {
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
   if (method === "POST")
     Object.assign(headers, {
       "Content-Type": "application/json",
@@ -85,7 +84,9 @@ function connect(onMessage) {
   wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
   // Node's WebSocket takes handshake headers in the second argument (a browser adds Origin by itself)
   const socket = new WebSocket(wsUrl, { headers: { Origin: origin } });
-  socket.onopen = () => socket.send(JSON.stringify({ type: "auth", token }));
+  socket.onopen = () => {
+    if (token) socket.send(JSON.stringify({ type: "auth", token }));
+  };
   socket.onmessage = (event) => onMessage(JSON.parse(event.data));
   return socket;
 }

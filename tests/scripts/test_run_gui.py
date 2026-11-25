@@ -229,6 +229,13 @@ def test_command_line(root: Path) -> None:
         code = run_gui.main(["--dry-run"], root, probe=lambda launcher: ALL, uv=lambda: "/bin/uv")
     check(code == 0 and "run-gui: would run: /bin/uv run --project " in err.getvalue() and
           "run-gui: launcher build/linux-gcc-control/tools/launch/" in err.getvalue(), f"--dry-run ({code}: {err.getvalue()})")
+    # --no-auth is forwarded to vehicle-sil-gui only when given.
+    default_plan = planned(root, {"linux-gcc-control": ALL})
+    no_auth_plan = planned(root, {"linux-gcc-control": ALL}, "--no-auth")
+    check(isinstance(default_plan, tuple) and "--no-auth" not in default_plan[0],
+          f"default omits --no-auth ({default_plan})")
+    check(isinstance(no_auth_plan, tuple) and "--no-auth" in no_auth_plan[0],
+          f"--no-auth is forwarded ({no_auth_plan})")
 
 
 def test_bridges_of_the_build_go_on_path(root: Path) -> None:

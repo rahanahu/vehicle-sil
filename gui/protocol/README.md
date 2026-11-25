@@ -37,12 +37,13 @@ The API version is `vehicle_sil_gui` (currently 4). The server writes it in the 
 |---|---|
 | Listen address | `127.0.0.1` only |
 | `Host` | `127.0.0.1:<port>` only (during development, also the host of `--dev-origin`) |
-| Token (HTTP) | `Authorization: Bearer <token>` |
-| Token (WebSocket) | The first message (`auth`) |
+| Token (HTTP) | `Authorization: Bearer <token>` (skipped only when the server is started with `--no-auth`) |
+| Token (WebSocket) | The first message (`auth`) (skipped only when the server is started with `--no-auth`) |
 | `Origin` (`POST` and the WebSocket handshake) | Only the server's own (`http://127.0.0.1:<port>`; during development, `--dev-origin`) |
 | CORS | Not allowed. Pages from another origin cannot use the API |
 
-- The server creates a new token on every start. The token appears only after `#token=` in the URL that the server prints.
+- By default, the server creates a new token on every start. The token appears only after `#token=` in the URL that the server prints.
+- With `--no-auth`, HTTP and WebSocket token authentication is disabled, printed/opened URLs omit `#token=...`, `--json` includes `"auth": false`, and a warning is written to stderr; `127.0.0.1`, `Host`, `Origin`, no-CORS, CSP and `--root` checks remain enforced.
 - The screens the server serves (the sample screens and your own screen served with `--web`) read `#token=` from the URL they were opened with and remove it from the URL at once (`takeToken` in the client library).
 - Never put the token in a URL query or a log (a token in the query is not accepted).
 - The browser sets `Origin` itself. From outside a browser (Node, Python and others), set `Origin` to the server's own origin. For an example, see [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs) in the repository (not included in the prebuilt tools archive).
@@ -68,7 +69,7 @@ How the summary and events relate:
 
 Every `api/` request has these conditions:
 
-- It needs `Authorization: Bearer <token>` (the token is the part after `#token=` in the URL the server printed).
+- It needs `Authorization: Bearer <token>` unless the server was started with `--no-auth` (the token is the part after `#token=` in the URL the server printed).
 - `Host` must be `127.0.0.1:<port>` (during development, also the host of `--dev-origin`).
 - A `POST` is accepted only with the server's own `Origin` (during development, `--dev-origin`). A body needs `Content-Type: application/json`.
 - Responses are JSON. A failure is `{"error": {"code", "message", "detail"}}`. `code` is the name programs read; see the table in "Error codes (`code`)" below. `message` is a human-readable sentence, not localized, that includes how to fix the problem.
@@ -286,7 +287,7 @@ The example files. The GUI server's tests check the other codes.
 
 ### Authentication message
 
-After connecting, first send `{"type": "auth", "token": "...", "instance": "...", "run_id": "<id>", "after_stream_seq": <n>}`.
+After connecting, first send `{"type": "auth", "token": "...", "instance": "...", "run_id": "<id>", "after_stream_seq": <n>}`. When the server was started with `--no-auth`, it does not wait for `auth` and sends `hello` and `synced` immediately: any `auth` message (including reconnect delta-resume fields `instance`, `run_id`, and `after_stream_seq`) is ignored, and `hello.replay.after_stream_seq` is always `null` (full buffered replay).
 
 | Field | Contents |
 |---|---|

@@ -88,10 +88,18 @@ describe('ServerConnection', () => {
     expect(run.session()).toBeNull();
   });
 
-  it('does not connect without a token', () => {
+  it('connects without a token (for --no-auth servers) and marks rejected if the server refuses it', () => {
     sessionStorage.clear();
-    TestBed.inject(ServerConnection);
-    expect(fake.sockets).toHaveLength(0);
+    const run = TestBed.inject(ServerConnection);
+    expect(fake.sockets).toHaveLength(1);
+    fake.last().open();
+    expect(fake.last().greeting).toEqual([{ type: 'auth', token: '' }]);
+    play('ws-unauthorized');
+    expect(TestBed.inject(AuthToken).rejected()).toBe(true);
+    fake.last().close(4401, 'unauthorized');
+    vi.advanceTimersByTime(backoffMs(5) * 2);
+    expect(fake.sockets).toHaveLength(1);
+    expect(run.session()).toBeNull();
   });
 
   it('closes the socket when the app goes away', () => {

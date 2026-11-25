@@ -228,7 +228,8 @@ def plan(args: argparse.Namespace, root: Path = ROOT, probe: Probe = features_of
         command += ["--web", str(workbench)]
     if args.port is not None:
         command += ["--port", str(args.port)]
-    command += [flag for flag, on in (("--no-browser", args.no_browser), ("--json", args.json)) if on]
+    command += [flag for flag, on in (("--no-browser", args.no_browser), ("--json", args.json),
+                                      ("--no-auth", args.no_auth)) if on]
     command.append(str(config))
     notes.insert(0, f"launcher {shown(launcher, root)}, configuration {shown(config, root)}")
     path = bridge_dirs(launcher)
@@ -253,7 +254,9 @@ def parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--port", type=int, help="the GUI server's port on 127.0.0.1 (default: a free one)")
     parser.add_argument("--no-browser", action="store_true", help="do not open the browser (the URL is still printed)")
     parser.add_argument("--json", action="store_true", help="the GUI server prints the URL as one JSON line "
-                        '({"vehicle_sil_gui": 3, "url": ..., "port": ...}) instead of the bare URL')
+                        '({"vehicle_sil_gui": 4, "url": ..., "port": ...}) instead of the bare URL')
+    parser.add_argument("--no-auth", action="store_true", help="disable GUI server token authentication "
+                        "(any local process on this computer can use the GUI API)")
     parser.add_argument("--dry-run", action="store_true", help="start nothing: say what was found and the command, "
                         "or what is missing (exit code 0, 1 or 2)")
     return parser.parse_args(argv)

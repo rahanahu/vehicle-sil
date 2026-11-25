@@ -37,12 +37,13 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 |---|---|
 | 待ち受けるアドレス | `127.0.0.1` だけ |
 | `Host` | `127.0.0.1:<port>` だけ（開発のときは `--dev-origin` のホストも） |
-| トークン（HTTP） | `Authorization: Bearer <token>` |
-| トークン（WebSocket） | 最初のメッセージ（`auth`） |
+| トークン（HTTP） | `Authorization: Bearer <token>`（`--no-auth` で起動したときのみ省略） |
+| トークン（WebSocket） | 最初のメッセージ（`auth`）（`--no-auth` で起動したときのみ省略） |
 | `Origin`（`POST` と WebSocket のハンドシェイク） | サーバー自身（`http://127.0.0.1:<port>`。開発のときは `--dev-origin`）のものだけ |
 | CORS | 許可しない。別の origin のページからは使えない |
 
-- トークンは起動のたびに作られ、サーバーが表示した URL の `#token=` の後ろにだけあります。
+- 既定では、トークンは起動のたびに作られ、サーバーが表示した URL の `#token=` の後ろにだけあります。
+- `--no-auth` を付けたときは HTTP と WebSocket のトークン認証が無効になり、表示・オープンする URL から `#token=...` が省かれ、`--json` には `"auth": false` が入り、標準エラーに警告が出ます。`127.0.0.1`、`Host`、`Origin`、CORS 不許可、CSP、`--root` の検査はそのまま残ります。
 - サーバーが配信する画面（サンプルの画面と、`--web` で配信する自分の画面）は、開いた URL の `#token=` を読んで、すぐに URL から消します（クライアントのライブラリの `takeToken`）。
 - トークンを URL の query やログに載せません（query のトークンは受け付けません）。
 - `Origin` は、ブラウザが自分で付けます。ブラウザの外（Node、Python など）から使うときは、サーバー自身の origin を `Origin` に書きます。例は、リポジトリの [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs) です（ビルド済みのツールのアーカイブには入っていません）。
@@ -68,7 +69,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 
 どの `api/` にも、次の条件があります。
 
-- `Authorization: Bearer <token>` が必要です（token は、サーバーが表示した URL の `#token=` の後ろ）。
+- `--no-auth` で起動したときを除き、`Authorization: Bearer <token>` が必要です（token は、サーバーが表示した URL の `#token=` の後ろ）。
 - `Host` は `127.0.0.1:<port>`（開発のときは `--dev-origin` のホストも）だけを受け付けます。
 - `POST` は `Origin` がサーバー自身（開発のときは `--dev-origin`）のものだけを受け付けます。本文があれば `Content-Type: application/json` が必要です。
 - レスポンスは JSON で、失敗は `{"error": {"code", "message", "detail"}}` です。`code` はプログラムが読む名前で、下の「エラーの `code`」の表にあります。`message` は人向けの英語の 1 文で、直し方を含みます。
@@ -284,7 +285,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 ### 認証のメッセージ
 
-接続したら最初に `{"type": "auth", "token": "...", "instance": "...", "run_id": "<id>", "after_stream_seq": <n>}` を送ります。
+接続したら最初に `{"type": "auth", "token": "...", "instance": "...", "run_id": "<id>", "after_stream_seq": <n>}` を送ります。`--no-auth` で起動したサーバーは `auth` を待たずにすぐ `hello` と `synced` を送ります。クライアントが送った `auth` メッセージ（再接続の差分リプレイ用の `instance`、`run_id`、`after_stream_seq` を含む）は無視され、`hello.replay.after_stream_seq` は常に `null`（保持中の全バッファ再送）になります。
 
 | フィールド | 内容 |
 |---|---|

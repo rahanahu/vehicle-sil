@@ -37,8 +37,8 @@ import { linkOf } from './front-compose';
 export interface ConnectOptions {
   /** URL of the GUI server (what the server printed, without `#token=...`). */
   base_url: string;
-  /** The token (what follows `#token=`). A function is called each time the token is used. */
-  token: string | (() => string | null);
+  /** The token (what follows `#token=`), if required. A function is called each time the token is used. */
+  token?: string | null | (() => string | null);
   /** Origin to send (Node sends the origin of `base_url` if omitted). */
   origin?: string;
   /** HTTP transport (default: fetch). For tests. */
@@ -346,18 +346,17 @@ export function createFront(options: ClientOptions): Front {
   return makeFront(options, () => undefined);
 }
 
-/** Where this page was opened from, in the browser (the server's root and the token of the URL it printed). */
+/** Where this page was opened from, in the browser (the server's root and, if present, the token of the URL it printed). */
 function pageOptions(): ConnectOptions {
   const page = (globalThis as { window?: Window }).window;
-  const token = page ? takeToken(page) : null;
-  if (!page || token === null) {
+  if (!page) {
     throw new ActionError(
       'no-token',
-      'connect() without options works in a page that the GUI server served and that was opened from the URL it printed (it ends with #token=...). In Node, pass { base_url, token }',
+      'connect() without options works in a page that the GUI server served. In Node, pass { base_url } (and token unless the server runs with --no-auth)',
       'refused',
     );
   }
-  return { base_url: new URL('/', page.location.href).href, token };
+  return { base_url: new URL('/', page.location.href).href, token: takeToken(page) };
 }
 
 /**

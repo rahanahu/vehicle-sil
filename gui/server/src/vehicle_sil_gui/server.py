@@ -237,6 +237,7 @@ class Options:
     # It also saves a text that changes the commands that run, and makes new files (--allow-command-changes)
     command_changes_allowed: bool = False
     runtime: LauncherRuntime | None = None
+    auth: bool = True  # require token authentication on HTTP API and WebSocket (not --no-auth)
 
 
 @dataclass(eq=False)
@@ -445,6 +446,8 @@ class Connection:
 
 class GuiServer:
     def __init__(self, options: Options):
+        if options.auth and not options.token:
+            raise ValueError("Options.token must be non-empty when auth is enabled")
         self.o = options
         self.root = ConfigRoot(options.root)
         self.launcher = options.launcher
@@ -522,7 +525,7 @@ class GuiServer:
         usable = self.launcher.usable
         return Facts(closing=self._closing, starting=self._starting, launcher_usable=usable,
                      launcher_message="" if usable else "; ".join(p["message"] for p in self.launcher.problems),
-                     save=self.o.save, command_changes_allowed=self.o.command_changes_allowed)
+                     save=self.o.save, command_changes_allowed=self.o.command_changes_allowed, auth=self.o.auth)
 
     def _run_facts(self) -> RunFacts:
         s = self.session
@@ -624,7 +627,7 @@ class GuiServer:
         if request.method == "OPTIONS":
             return error(403, "cors-not-allowed", "this server does not answer cross-origin requests")
         if request.path.startswith("/api/"):
-            if not self._token_ok(request.headers.get("Authorization", "")):
+            if self.o.auth and not self._token_ok(request.headers.get("Authorization", "")):
                 response = error(401, "unauthorized",
                                  "missing or wrong token: send Authorization: Bearer <token>, the token in the URL "
                                  "the server printed (#token=...)")
@@ -1946,7 +1949,7 @@ class GuiServer:
             return error(503, "shutting-down", "the GUI server is stopping")
         if len(self._authenticated) >= MAX_SOCKETS:
             return error(503, "too-many-connections", "too many screens are connected: close some tabs")
-        if len(self._unauthenticated) >= MAX_UNAUTHENTICATED:
+        if self.o.auth and len(self._unauthenticated) >= MAX_UNAUTHENTICATED:
             # The oldest connection that has not sent its auth makes room: a process without the token that
             # opens connections cannot keep the screen out, only make it try again.
             oldest = next(iter(self._unauthenticated))
@@ -1956,7 +1959,10 @@ class GuiServer:
             task.add_done_callback(self._evicting.discard)
         ws = web.WebSocketResponse(max_msg_size=MAX_WS_MESSAGE, heartbeat=30, timeout=WS_CLOSE_TIMEOUT_S)
         self._sockets[ws] = request  # counted from here, before the handshake's first await
-        self._unauthenticated[ws] = None
+        if self.o.auth:
+            self._unauthenticated[ws] = None
+        else:
+            self._authenticated.add(ws)
         try:
             await ws.prepare(request)
             await self._talk(ws)
@@ -1974,43 +1980,48 @@ class GuiServer:
             pass
 
     async def _talk(self, ws: web.WebSocketResponse) -> None:
-        if ws not in self._unauthenticated:  # it made room for a newer one during its handshake
-            await ws.close(code=WSCloseCode.TRY_AGAIN_LATER, message=b"too-many-unauthenticated")
-            return
-        try:
-            async with asyncio.timeout(AUTH_TIMEOUT_S):
-                msg = await ws.receive()
-        except TimeoutError:
-            await ws.close(code=4401, message=b"auth-timeout")
-            return
-        if self._closing or ws.closed or ws not in self._unauthenticated or \
-                msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERROR):
-            return
-        auth = None
-        if msg.type == WSMsgType.TEXT:
+        req_run_id: str | None = None
+        req_after_seq: int | None = None
+        if self.o.auth:
+            if ws not in self._unauthenticated:  # it made room for a newer one during its handshake
+                await ws.close(code=WSCloseCode.TRY_AGAIN_LATER, message=b"too-many-unauthenticated")
+                return
             try:
-                auth = json.loads(msg.data)
-            except (ValueError, RecursionError):
-                pass
-        if not (isinstance(auth, dict) and auth.get("type") == "auth" and isinstance(auth.get("token"), str)
-                and same_secret(auth["token"], self.o.token)):
-            await ws.send_json({"type": "error", "run_id": None, "code": "unauthorized",
-                                "message": "the first message must be {\"type\":\"auth\",\"token\":...} with the "
-                                           "token of the URL the server printed", "detail": None})
-            await ws.close(code=4401, message=b"unauthorized")
+                async with asyncio.timeout(AUTH_TIMEOUT_S):
+                    msg = await ws.receive()
+            except TimeoutError:
+                await ws.close(code=4401, message=b"auth-timeout")
+                return
+            if self._closing or ws.closed or ws not in self._unauthenticated or \
+                    msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERROR):
+                return
+            auth = None
+            if msg.type == WSMsgType.TEXT:
+                try:
+                    auth = json.loads(msg.data)
+                except (ValueError, RecursionError):
+                    pass
+            if not (isinstance(auth, dict) and auth.get("type") == "auth" and isinstance(auth.get("token"), str)
+                    and same_secret(auth["token"], self.o.token)):
+                await ws.send_json({"type": "error", "run_id": None, "code": "unauthorized",
+                                    "message": "the first message must be {\"type\":\"auth\",\"token\":...} with the "
+                                               "token of the URL the server printed", "detail": None})
+                await ws.close(code=4401, message=b"unauthorized")
+                return
+            del self._unauthenticated[ws]
+            if len(self._authenticated) >= MAX_SOCKETS:  # others authenticated since this one's handshake
+                await ws.close(code=WSCloseCode.TRY_AGAIN_LATER, message=b"too-many-connections")
+                return
+            self._authenticated.add(ws)
+            req_run_id = auth.get("run_id") if isinstance(auth.get("run_id"), str) and auth.get("run_id") else None
+            req_after_seq = count_or_none(auth.get("after_stream_seq"))
+            if "instance" in auth and auth.get("instance") is not None and auth.get("instance") != self.instance:
+                req_run_id = None
+                req_after_seq = None
+        elif self._closing or ws.closed:
             return
-        del self._unauthenticated[ws]
-        if len(self._authenticated) >= MAX_SOCKETS:  # others authenticated since this one's handshake
-            await ws.close(code=WSCloseCode.TRY_AGAIN_LATER, message=b"too-many-connections")
-            return
-        self._authenticated.add(ws)
         client = self.hub.client(ws.send_str)
         connection = Connection(client)
-        req_run_id = auth.get("run_id") if isinstance(auth.get("run_id"), str) and auth.get("run_id") else None
-        req_after_seq = count_or_none(auth.get("after_stream_seq"))
-        if "instance" in auth and auth.get("instance") is not None and auth.get("instance") != self.instance:
-            req_run_id = None
-            req_after_seq = None
         sender = asyncio.create_task(self.hub.serve(client, req_run_id, req_after_seq))
         reader = asyncio.create_task(self._listen(ws, connection))
         try:

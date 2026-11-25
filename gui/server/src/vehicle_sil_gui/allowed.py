@@ -27,6 +27,7 @@ class Facts:
     launcher_message: str = ""  # why not, when it cannot
     save: bool = True  # POST api/config saves (not --no-save)
     command_changes_allowed: bool = False  # it also saves what changes the commands that run (--allow-command-changes)
+    auth: bool = True  # token authentication is enabled (not --no-auth)
 
 
 @dataclass(frozen=True)
@@ -143,9 +144,10 @@ def allowed_save(facts: Facts) -> dict:
         answer = _answer()
     caution = None
     if answer["ok"] and facts.command_changes_allowed:
+        actor = "whoever has its token" if facts.auth else "any local process on this computer"
         caution = {"code": "command-changes-allowed",
                    "message": "the GUI server was started with --allow-command-changes: it saves an edit that changes "
-                              "the commands that run, and new files, so whoever has its token can run any command as "
+                              f"the commands that run, and new files, so {actor} can run any command as "
                               "this user"}
     return {**answer, "caution": caution}
 

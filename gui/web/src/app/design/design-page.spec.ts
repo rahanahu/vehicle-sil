@@ -337,10 +337,37 @@ describe('DesignPage', () => {
     expect(text(fixture, 'save-reason')).toContain('--no-save');
   });
 
-  it('asks to be opened from the server URL when there is no token', async () => {
+  it('asks to be opened from the server URL when there is no token and the server rejects it', async () => {
     sessionStorage.clear();
     const fixture = TestBed.createComponent(DesignPage);
+    TestBed.tick();
+    http
+      .expectOne('api/app')
+      .flush(
+        { error: { code: 'unauthorized', message: 'missing token', detail: null } },
+        { status: 401, statusText: 'Unauthorized' },
+      );
+    http
+      .expectOne('api/configs')
+      .flush(
+        { error: { code: 'unauthorized', message: 'missing token', detail: null } },
+        { status: 401, statusText: 'Unauthorized' },
+      );
     await settle();
     expect(text(fixture, 'no-token')).toContain('#token=');
+  });
+
+  it('works without a token when the server allows --no-auth', async () => {
+    sessionStorage.clear();
+    const fixture = TestBed.createComponent(DesignPage);
+    TestBed.tick();
+    const appReq = http.expectOne('api/app');
+    expect(appReq.request.headers.has('Authorization')).toBe(false);
+    appReq.flush(response('app'));
+    http.expectOne('api/configs').flush(response('configs'));
+    await settle();
+    expect(element(fixture).querySelector('[data-testid="no-token"]')).toBeNull();
+    http.expectOne((r) => r.url.startsWith('api/config?')).flush(response('config'));
+    await settle();
   });
 });

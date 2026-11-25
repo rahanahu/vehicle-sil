@@ -66,8 +66,7 @@ const { ActionError, connect, until, watch } = await import(
 
 const [file] = args;
 const printed = new URL(process.env.VEHICLE_SIL_GUI_URL);
-const token = new URLSearchParams(printed.hash.slice(1)).get("token");
-if (!token) usage("the URL has no #token=...: use the URL the server printed");
+const token = new URLSearchParams(printed.hash.slice(1)).get("token") ?? "";
 printed.hash = "";
 
 let front = null;

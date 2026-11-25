@@ -102,7 +102,7 @@ export class DesignPage {
   );
 
   protected readonly configs = resource({
-    params: () => this.auth.token() ?? undefined,
+    params: () => (this.auth.rejected() ? undefined : true),
     loader: () => this.info.configs(),
   });
 
@@ -118,7 +118,7 @@ export class DesignPage {
   protected readonly loaded = resource({
     params: () => {
       const file = this.file();
-      return this.compatible() && this.auth.token() && file !== null
+      return this.compatible() && !this.auth.rejected() && file !== null
         ? { file, reloads: this.reloads() }
         : undefined;
     },
@@ -161,7 +161,7 @@ export class DesignPage {
     params: () => {
       const file = this.file();
       const draft = this.draft();
-      if (!this.compatible() || file === null || draft === null || !this.auth.token())
+      if (!this.compatible() || file === null || draft === null || this.auth.rejected())
         return undefined;
       return { file, text: draft, variant: this.variant(), again: this.again() };
     },

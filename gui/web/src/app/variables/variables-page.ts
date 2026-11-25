@@ -55,7 +55,7 @@ interface Notice {
   template: `
     <h1 i18n>変数</h1>
 
-    @if (!auth.token()) {
+    @if (auth.rejected() && !auth.token()) {
       <mat-card appearance="outlined" data-testid="no-token">
         <mat-card-content>
           <p i18n>
@@ -327,7 +327,7 @@ export class VariablesPage {
   protected readonly dashboardFile = resource({
     params: () => {
       const file = this.configFile();
-      if (!this.auth.token() || !file) return undefined;
+      if (this.auth.rejected() || !file) return undefined;
       return { file, session: this.sessionId(), reloads: this.reloads() };
     },
     loader: ({ params }) => this.info.dashboard(params.file),

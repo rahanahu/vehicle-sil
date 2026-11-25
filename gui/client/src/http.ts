@@ -80,8 +80,8 @@ export function errorMessage(error: unknown): string {
 export interface FetchTransportOptions {
   /** URL of the server (`http://127.0.0.1:<port>/`). Request paths are relative to it. */
   baseUrl: string;
-  /** The token (what follows `#token=` in the URL the server printed). A function is called for each request. */
-  token: string | (() => string | null);
+  /** The token (what follows `#token=` in the URL the server printed), if required. A function is called for each request. */
+  token?: string | null | (() => string | null);
   /**
    * Origin to send with POST. Browsers add it themselves (a value given here is not used). Outside the browser (Node
    * and so on), pass the server's own origin (the origin of baseUrl).
@@ -99,7 +99,9 @@ export interface FetchTransportOptions {
  */
 export function fetchTransport(options: FetchTransportOptions): HttpTransport {
   const send = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
-  const token = typeof options.token === 'function' ? options.token : () => options.token as string;
+  const rawToken = options.token;
+  const token: () => string | null =
+    typeof rawToken === 'function' ? rawToken : () => rawToken ?? null;
   return (request, done) => {
     const headers: Record<string, string> = {};
     const current = token();

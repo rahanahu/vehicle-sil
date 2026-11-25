@@ -106,7 +106,7 @@ The names that `src/index.ts` exports, by group. Parentheses list the members of
 | Type     | `TokenPlace`        |
 | Constant | `TOKEN_STORAGE_KEY` |
 
-In the browser, call `takeToken(window)`. It reads `#token=` from the URL, removes it from the URL and stores it in sessionStorage. If the URL has no token, it returns the one in sessionStorage; if neither has one, it returns `null`.
+In the browser, call `takeToken(window)`. It reads `#token=` from the URL, removes it from the URL and stores it in sessionStorage. If the URL has no token, it returns the one in sessionStorage; if neither has one, it returns `null`. When connecting to a server started with `--no-auth`, `token` may be omitted or `null` (against a server with token authentication enabled, HTTP requests reject with 401 and WebSocket sets `rejected`).
 
 ### Connection (read-only)
 

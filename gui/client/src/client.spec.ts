@@ -268,7 +268,16 @@ describe('createClient', () => {
     client.close();
   });
 
-  it('does not connect without a token, and authenticates on connect', () => {
+  it('connects without a token (for --no-auth servers) and omits Authorization header', async () => {
+    const { calls, fetch } = fakeFetch(() => json({ session: null }));
+    const send = fetchTransport({
+      baseUrl: 'http://127.0.0.1:8765/',
+      fetch,
+    });
+    const outcome = await new Promise((done) => send({ method: 'GET', path: 'api/app' }, done));
+    expect(outcome).toEqual({ ok: true, body: { session: null } });
+    expect(calls[0].init.headers).not.toHaveProperty('Authorization');
+
     const fake = new FakeWebSockets();
     let token: string | null = null;
     const client = createClient({
@@ -278,11 +287,17 @@ describe('createClient', () => {
       http: new FakeHttp().transport,
     });
     client.connect();
-    expect(fake.sockets).toHaveLength(0);
-    token = 'secret';
-    client.connect();
+    expect(fake.sockets).toHaveLength(1);
     fake.last().open();
     expect(fake.last().url).toBe('wss://example.test/gui/ws');
+    expect(fake.last().greeting).toEqual([{ type: 'auth', token: '' }]);
+    client.close();
+    expect(fake.last().closedByClient).toBe(true);
+
+    token = 'secret';
+    client.connect();
+    expect(fake.sockets).toHaveLength(2);
+    fake.last().open();
     expect(fake.last().greeting).toEqual([{ type: 'auth', token: 'secret' }]);
     client.close();
     expect(fake.last().closedByClient).toBe(true);
