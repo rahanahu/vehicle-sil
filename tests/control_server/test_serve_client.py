@@ -6,6 +6,7 @@ VEHICLE_SIL_LAUNCH_SCRATCH (writable scratch directory), PYTHONPATH with python/
 """
 from __future__ import annotations
 
+import gc
 import glob
 import hashlib
 import os
@@ -16,6 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
+import weakref
 from unittest import mock
 
 import grpc
@@ -207,6 +209,40 @@ class ServeClientTest(unittest.TestCase):
                 self.assertTrue(run2.id.startswith(f"{runner.instance}-"))
                 res2 = run2.wait(timeout=scaled(120.0))
                 self.assertEqual(res2["result"], "passed")
+
+    def test_sequential_runs_release_handles_and_on_event_streams(self) -> None:
+        cfg = _config("serve_bounded_history")
+        seen: list[dict] = []
+
+        with Serve(
+            LAUNCH,
+            cfg,
+            control=True,
+            keep_logs=False,
+            on_event=seen.append,
+            startup_timeout=scaled(30.0),
+        ) as runner:
+            self.assertFalse(hasattr(runner, "events"))
+            refs = []
+            for idx in range(3):
+                run = runner.start(stop_at_ms=50, timeout=scaled(60.0))
+                refs.append(weakref.ref(run))
+                res = run.wait(timeout=scaled(120.0))
+                self.assertEqual(res["result"], "passed", res)
+                self.assertFalse(any(e.get("event") == "log" for e in run.events))
+                self.assertTrue(
+                    any(e.get("event") == "result" and e.get("run") == run.id for e in seen),
+                    f"run {idx} result should have reached on_event before wait() returned",
+                )
+                del run
+                gc.collect()
+                self.assertIsNone(refs[-1](), f"completed RunHandle {idx} should be collected")
+
+        seqs = [e["seq"] for e in seen if "seq" in e]
+        self.assertEqual(seqs, sorted(seqs))
+        self.assertGreaterEqual(sum(1 for e in seen if e.get("event") == "run_start"), 3)
+        self.assertGreaterEqual(sum(1 for e in seen if e.get("event") == "result"), 3)
+        self.assertEqual(seen[0].get("event"), "hello")
 
 
 if __name__ == "__main__":

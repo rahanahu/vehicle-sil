@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
-"""Test support for `tests/serve`: thin wrapper around `vehicle_sil_control.Serve` adding only
+"""Test support for `tests/serve`: thin wrapper around `vehicle_sil_control.Serve` adding full-stream
+recording and test wait helpers (`events`, `snapshot`, `window`, `wait_for`, `wait_event`, `ready`),
 fault-injection helpers (`send_raw`, `signal`, `kill`), `Cold` baseline runner, and Linux `/proc`
 resource inspection (standard library only).
 """
@@ -191,8 +192,8 @@ class RunRecord:
 
 
 class Serve(_SdkServe):
-    """Thin test wrapper around `vehicle_sil_control.Serve` adding fault-injection (`send_raw`, `signal`)
-    and `scaled()` timeouts."""
+    """Thin test wrapper around `vehicle_sil_control.Serve` adding full-stream recording,
+    fault-injection (`send_raw`, `signal`), and `scaled()` timeouts."""
 
     def __init__(
         self,
@@ -210,6 +211,8 @@ class Serve(_SdkServe):
             for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
                 if signal.getsignal(sig) == signal.SIG_IGN:
                     signal.signal(sig, signal.SIG_DFL)
+        self.events: List[dict] = []
+        self._record_keep_logs = keep_logs
         super().__init__(
             launch,
             config,
@@ -220,14 +223,24 @@ class Serve(_SdkServe):
             stdout=stdout,
             stderr=subprocess.PIPE,
             keep_logs=keep_logs,
-            keep_log_skeleton=not keep_logs,
+            on_event=self._record_event,
             start_new_session=True,
             wait_ready=False,
         )
         self._next_id = 1000
 
+    def _record_event(self, event: dict) -> None:
+        with self._changed:
+            if self._record_keep_logs or event.get("event") != "log":
+                self.events.append(event)
+            else:
+                self.events.append({k: event.get(k) for k in ("event", "seq", "t_ms", "run") if k in event})
+            self._changed.notify_all()
+
     def _tail(self, count: int = 8) -> str:
-        lines = [json.dumps(e)[:300] for e in self.events[-count:]]
+        with self._changed:
+            tail = list(self.events[-count:])
+        lines = [json.dumps(e)[:300] for e in tail]
         err = self.stderr_text.strip()[-1500:]
         return (
             "\n--- last events ---\n"
@@ -236,6 +249,14 @@ class Serve(_SdkServe):
             + f"\n--- exit code: {self.process.poll()}"
         )
 
+    def snapshot(self) -> List[dict]:
+        with self._changed:
+            return list(self.events)
+
+    def window(self, run_id: str) -> List[dict]:
+        with self._changed:
+            return [e for e in self.events if e.get("run") == run_id]
+
     def wait_for(
         self,
         condition: Callable[[dict], bool],
@@ -243,16 +264,73 @@ class Serve(_SdkServe):
         timeout: float = 60.0,
         after: Optional[Mapping] = None,
     ) -> dict:
-        try:
-            return super().wait_for(condition, what, timeout=scaled(timeout), after=after)
-        except ServeError as exc:
-            raise ServeError(f"{exc}{self._tail()}") from None
+        """Wait for the first event after `after` (by `seq`) satisfying `condition`.
+
+        Note: `_record_event` runs pre-dispatch via `on_event`, so callers needing settled
+        post-dispatch `Serve`/`RunHandle` state should synchronize via `ready()` or `run.wait()`.
+        """
+        limit = scaled(timeout)
+        deadline = time.monotonic() + limit
+        after_seq = -1 if after is None else after["seq"]
+        timed_out = False
+        with self._changed:
+            start = 0
+            while True:
+                for index in range(start, len(self.events)):
+                    e = self.events[index]
+                    if e.get("seq", -1) > after_seq and condition(e):
+                        return e
+                start = len(self.events)
+                if self._ended:
+                    break
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    timed_out = True
+                    break
+                self._changed.wait(min(left, 1.0))
+        if timed_out:
+            raise ServeError(f"no {what} within {limit} s{self._tail()}")
+        raise ServeError(f"vehicle_sil_launch serve events ended without {what}{self._tail()}")
+
+    def wait_event(
+        self,
+        event: str,
+        timeout: float = 60.0,
+        after: Optional[Mapping] = None,
+        **keys,
+    ) -> dict:
+        return self.wait_for(
+            lambda e: e.get("event") == event and all(e.get(k) == v for k, v in keys.items()),
+            f"{event} {keys or ''}",
+            timeout,
+            after,
+        )
 
     def ready(self, timeout: float = 60.0) -> dict:
-        try:
-            return super().ready(timeout=scaled(timeout))
-        except ServeError as exc:
-            raise ServeError(f"{exc}{self._tail()}") from None
+        """Wait until the launcher has emitted its initial status and has no active run in flight."""
+        limit = scaled(timeout)
+        deadline = time.monotonic() + limit
+        timed_out = False
+        with self._changed:
+            while True:
+                if (
+                    self._hello is not None
+                    and self._ready
+                    and self._active_run is None
+                    and self.events
+                    and self.events[-1].get("event") != "run_start"
+                ):
+                    return self.events[-1]
+                if self._startup_result is not None or self._ended:
+                    break
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    timed_out = True
+                    break
+                self._changed.wait(min(left, 1.0))
+        if timed_out:
+            raise ServeError(f"vehicle_sil_launch serve did not become ready within {limit} s{self._tail()}")
+        raise ServeError(f"vehicle_sil_launch serve ended before becoming ready{self._tail()}")
 
     def send(self, command: Mapping) -> None:
         """Fault-injection raw JSON line write to stdin."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import collections
+import gc
 import json
 import os
 import pathlib
@@ -14,6 +15,7 @@ import threading
 import time
 import types
 import unittest
+import weakref
 from unittest import mock
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -22,7 +24,7 @@ if str(_PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(_PYTHON_DIR))
 
 from vehicle_sil_control import Launch, LaunchError, RunHandle, Serve, ServeError, __version__, control_address  # noqa: E402
-from vehicle_sil_control.serve import MAX_COMMAND_ID, MAX_COMMAND_LINE  # noqa: E402
+from vehicle_sil_control.serve import MAX_COMMAND_ID, MAX_COMMAND_LINE, _MAX_BAD_LINES, _MAX_STDERR_CHARS  # noqa: E402
 
 
 class _FakeStdout:
@@ -705,6 +707,563 @@ class ServeUnitTest(unittest.TestCase):
                         run.send({"command": "pause", "pad": "x" * MAX_COMMAND_LINE})
                     self.assertEqual(too_big.exception.reason, "invalid-command")
                 self.assertEqual(procs[0].stdin.commands[3], {"command": "pause", "run": run.id})
+
+    def test_removed_stream_history_api_and_run_handle_gc(self) -> None:
+        with self.assertRaises(TypeError):
+            Serve("/fake/launch", "sim.yaml", keep_log_skeleton=True)  # type: ignore[call-arg]
+        with self.assertRaises(TypeError):
+            Serve("/fake/launch", "sim.yaml", on_event="not-callable")  # type: ignore[arg-type]
+
+        seq = [2]
+        procs: list[_FakeProcess] = []
+
+        def next_seq() -> int:
+            val = seq[0]
+            seq[0] += 1
+            return val
+
+        def handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "run":
+                run_id = f"0123456789abcdef-{cmd['id']}"
+                proc.stdout.push_event({"event": "run_start", "seq": next_seq(), "t_ms": 2, "run": run_id, "id": cmd["id"]})
+                proc.stdout.push_event({"event": "phase", "seq": next_seq(), "t_ms": 3, "run": run_id, "phase": "running"})
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": next_seq(),
+                    "t_ms": 4,
+                    "run": run_id,
+                    "launcher_ends": False,
+                    "status": {"launcher_state": "ready", "last_run_id": run_id},
+                    "result": {"result": "passed", "payload": "x" * 4096},
+                })
+
+        def make_proc(cmd, **kw):
+            p = _FakeProcess(cmd, handler)
+            procs.append(p)
+            return p
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=make_proc):
+            with Serve("/fake/launch", "sim.yaml") as runner:
+                for removed in ("events", "snapshot", "window", "wait_for", "wait_event", "ready"):
+                    self.assertFalse(hasattr(runner, removed), f"Serve should not expose {removed}")
+
+                refs: list[weakref.ref[RunHandle]] = []
+                for _ in range(5):
+                    run = runner.start()
+                    refs.append(weakref.ref(run))
+                    res = run.wait()
+                    self.assertEqual(res["result"], "passed")
+                    self.assertIsNone(runner._active_run)
+                    del run
+                    gc.collect()
+                    self.assertIsNone(refs[-1]())
+
+                # No further events arrive while Serve is idle; all completed handles stay collected.
+                self.assertTrue(all(ref() is None for ref in refs))
+
+        # EOF without a result event also releases _active_run so the handle can be GC'd.
+        def crash_mid_run_handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "run":
+                proc.stdout.push_event({"event": "run_start", "seq": 10, "t_ms": 2, "run": "0123456789abcdef-1", "id": cmd["id"]})
+                proc.finish(1)
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=lambda cmd, **kw: _FakeProcess(cmd, crash_mid_run_handler)):
+            with Serve("/fake/launch", "sim.yaml") as runner:
+                run = runner.start()
+                ref = weakref.ref(run)
+                with self.assertRaises(ServeError):
+                    run.wait()
+                self.assertIsNone(runner._active_run)
+                del run
+                gc.collect()
+                self.assertIsNone(ref())
+
+    def test_rapid_run_start_result_and_immediate_eof_race_free(self) -> None:
+        # Simulate once=True or ultra-fast run where run_start, result, and EOF arrive before start() waits.
+        def handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "run":
+                run_id = "0123456789abcdef-1"
+                proc.stdout.push_event({"event": "run_start", "seq": 2, "t_ms": 2, "run": run_id, "id": cmd["id"]})
+                proc.stdout.push_event({"event": "phase", "seq": 3, "t_ms": 3, "run": run_id, "phase": "running"})
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": 4,
+                    "t_ms": 4,
+                    "run": run_id,
+                    "launcher_ends": True,
+                    "status": {"launcher_state": "ended", "last_run_id": run_id},
+                    "result": {"result": "passed"},
+                })
+                proc.finish(0)
+                # Give the reader thread a chance to consume all events and EOF before start() enters wait().
+                time.sleep(0.02)
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=lambda cmd, **kw: _FakeProcess(cmd, handler)):
+            with Serve("/fake/launch", "sim.yaml", once=True) as runner:
+                run = runner.start()
+                ref = weakref.ref(run)
+                self.assertEqual(run.id, "0123456789abcdef-1")
+                self.assertEqual(run.wait()["result"], "passed")
+                self.assertTrue(run.launcher_ends)
+                self.assertEqual([e["event"] for e in run.events], ["run_start", "phase", "result"])
+                self.assertIsNone(runner._active_run)
+                self.assertEqual(runner._pending, {})
+                del run
+                gc.collect()
+                self.assertIsNone(ref())
+
+    def test_on_event_order_happens_before_logs_isolation_lockfree_and_exceptions(self) -> None:
+        seq = [2]
+
+        def next_seq() -> int:
+            val = seq[0]
+            seq[0] += 1
+            return val
+
+        def handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "prepare":
+                proc.stdout.push_event({
+                    "event": "prepare",
+                    "seq": next_seq(),
+                    "t_ms": 2,
+                    "id": cmd["id"],
+                    "accepted": True,
+                    "status": {"launcher_state": "ready"},
+                    "findings": [],
+                })
+            elif cmd["command"] == "run":
+                run_id = "0123456789abcdef-1"
+                proc.stdout.push_event({"event": "run_start", "seq": next_seq(), "t_ms": 3, "run": run_id, "id": cmd["id"]})
+                proc.stdout.push_event({"event": "log", "seq": next_seq(), "t_ms": 4, "run": run_id, "text": "hello log"})
+                proc.stdout.push_event({"event": "heartbeat", "seq": next_seq(), "t_ms": 5})
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": next_seq(),
+                    "t_ms": 6,
+                    "run": run_id,
+                    "launcher_ends": False,
+                    "status": {"launcher_state": "ready", "last_run_id": run_id},
+                    "result": {"result": "passed"},
+                })
+
+        seen: list[tuple[str, int]] = []
+        hook_calls: list[tuple[type, BaseException]] = []
+        in_callback = threading.Event()
+        release_callback = threading.Event()
+
+        def on_event(ev: dict) -> None:
+            etype = ev.get("event")
+            seen.append((etype, ev.get("seq")))
+            # Mutate the delivered shallow copy aggressively; Serve and RunHandle must not be affected.
+            ev["event"] = "corrupted"
+            ev["run"] = "wrong-run"
+            ev.clear()
+            if etype == "log":
+                in_callback.set()
+                release_callback.wait(timeout=5.0)
+                raise RuntimeError("callback failure on log")
+
+        def fake_excepthook(exc_type, exc_val, exc_tb) -> None:
+            hook_calls.append((exc_type, exc_val))
+
+        with mock.patch.object(sys, "excepthook", side_effect=fake_excepthook), \
+             mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=lambda cmd, **kw: _FakeProcess(cmd, handler)):
+            with Serve("/fake/launch", "sim.yaml", keep_logs=False, on_event=on_event) as runner:
+                # Happens-before: hello and initial status are already delivered before __init__ returns.
+                self.assertEqual([e for e, _ in seen[:2]], ["hello", "status"])
+                self.assertEqual(runner.instance, "0123456789abcdef")
+
+                prep = runner.prepare()
+                self.assertTrue(prep["accepted"])
+                self.assertIn("prepare", [e for e, _ in seen])
+
+                run = runner.start()
+                # Verify on_event runs outside self._changed: while on_event is paused inside "log",
+                # reading runner.latest_status / runner.bad_lines from the main thread must not deadlock.
+                self.assertTrue(in_callback.wait(timeout=5.0))
+                self.assertIsNotNone(runner.latest_status)
+                self.assertEqual(runner.bad_lines, [])
+                release_callback.set()
+
+                res = run.wait()
+                self.assertEqual(res["result"], "passed")
+                # Happens-before: result was already delivered to on_event before run.wait() returned.
+                self.assertEqual(
+                    [e for e, _ in seen],
+                    ["hello", "status", "prepare", "run_start", "log", "heartbeat", "result"],
+                )
+                self.assertEqual([s for _, s in seen], [0, 1, 2, 3, 4, 5, 6])
+                # keep_logs=False suppresses "log" from RunHandle.events, not from on_event.
+                self.assertEqual([e["event"] for e in run.events], ["run_start", "result"])
+                self.assertEqual(run.start_event["event"], "run_start")
+
+        self.assertEqual(len(hook_calls), 1)
+        self.assertIs(hook_calls[0][0], RuntimeError)
+        self.assertEqual(str(hook_calls[0][1]), "callback failure on log")
+
+    def test_pending_non_leak_unmatched_replies_duplicate_id_and_wait_hello(self) -> None:
+        procs: list[_FakeProcess] = []
+        block_status = threading.Event()
+
+        def handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "status" and cmd["id"] == 500:
+                return  # timeout; delayed reply pushed later
+            if cmd["command"] == "status" and cmd["id"] == 77:
+                return  # held open to test duplicate in-flight id
+
+        def make_proc(cmd, **kw):
+            p = _FakeProcess(cmd, handler)
+            procs.append(p)
+            return p
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=make_proc):
+            with Serve("/fake/launch", "sim.yaml") as runner:
+                # 1. Timeout cleans up _pending, and a late reply does not repopulate it.
+                with self.assertRaises(ServeError):
+                    runner.status(timeout=0.05, id=500)
+                self.assertEqual(runner._pending, {})
+                procs[0].stdout.push_event({"event": "status", "seq": 10, "t_ms": 2, "id": 500, "launcher_state": "idle"})
+
+                # 2. Unmatched replies from raw stdin commands do not leak into _pending.
+                procs[0].stdout.push_event({"event": "prepare", "seq": 11, "t_ms": 3, "id": 901, "accepted": True})
+                procs[0].stdout.push_event({
+                    "event": "command",
+                    "seq": 12,
+                    "t_ms": 4,
+                    "command": "run",
+                    "accepted": False,
+                    "reason": "busy",
+                    "id": 902,
+                })
+                procs[0].stdout.push_event({"event": "status", "seq": 13, "t_ms": 5, "id": 903, "launcher_state": "ready"})
+
+                # 3. Duplicate in-flight explicit id raises without disturbing the original waiter.
+                first_result: list[dict] = []
+
+                def first_call() -> None:
+                    block_status.set()
+                    first_result.append(runner.status(timeout=5.0, id=77))
+
+                t = threading.Thread(target=first_call)
+                t.start()
+                self.assertTrue(block_status.wait(timeout=2.0))
+                deadline = time.monotonic() + 2.0
+                while 77 not in runner._pending and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                self.assertIn(77, runner._pending)
+                with self.assertRaises(ServeError) as dup:
+                    runner.status(timeout=1.0, id=77)
+                self.assertEqual(dup.exception.reason, "invalid-command")
+                procs[0].stdout.push_event({"event": "status", "seq": 14, "t_ms": 6, "id": 77, "launcher_state": "ready"})
+                t.join(timeout=5.0)
+                self.assertFalse(t.is_alive())
+                self.assertEqual(first_result[0]["id"], 77)
+                self.assertEqual(runner._pending, {})
+
+        # 4. _wait_hello() works with wait_ready=False and fails cleanly on EOF without hello.
+        def delayed_hello(cmd, **kw):
+            p = _FakeProcess(cmd, auto_hello=False)
+            def push() -> None:
+                time.sleep(0.02)
+                p.stdout.push_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4, "launcher": "fedcba9876543210"})
+            threading.Thread(target=push, daemon=True).start()
+            return p
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=delayed_hello):
+            with Serve("/fake/launch", "sim.yaml", wait_ready=False) as runner:
+                self.assertEqual(runner.instance, "fedcba9876543210")
+                self.assertEqual(runner.hello["launcher"], "fedcba9876543210")
+
+        def no_hello_eof(cmd, **kw):
+            p = _FakeProcess(cmd, auto_hello=False)
+            p.finish(0)
+            return p
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=no_hello_eof):
+            with Serve("/fake/launch", "sim.yaml", wait_ready=False) as runner:
+                with self.assertRaises(ServeError):
+                    _ = runner.hello
+
+    def test_bad_lines_and_stderr_text_are_bounded(self) -> None:
+        procs: list[_FakeProcess] = []
+
+        def handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "status":
+                proc.stdout.push_event({"event": "status", "seq": 999, "t_ms": 10, "id": cmd["id"], "launcher_state": "ready"})
+
+        def make_proc(cmd, **kw):
+            p = _FakeProcess(cmd, handler, stderr_pipe=True)
+            procs.append(p)
+            return p
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=make_proc):
+            with Serve("/fake/launch", "sim.yaml", stderr=subprocess.PIPE) as runner:
+                assert procs[0].stderr is not None
+                for i in range(_MAX_BAD_LINES + 20):
+                    procs[0].stdout.push_raw(f"{{bad-{i}\n".encode("ascii"))
+                procs[0].stdout.push_raw(b"123\n")
+                procs[0].stdout.push_raw(b"[1, 2]\n")
+                # Sync reader thread via status().
+                runner.status()
+
+                bad = runner.bad_lines
+                self.assertEqual(len(bad), _MAX_BAD_LINES)
+                self.assertEqual(bad[-2:], [b"123\n", b"[1, 2]\n"])
+                # Mutating the returned copy must not affect internal storage.
+                bad.clear()
+                self.assertEqual(len(runner.bad_lines), _MAX_BAD_LINES)
+
+                # Push > 64 KiB of stderr across many chunks (verifies multi-chunk tail trimming).
+                multi_chunks: list[str] = []
+                for i in range(100):
+                    chunk = f"line-{i:04d}-" + ("a" * 1000) + "\n"
+                    multi_chunks.append(chunk)
+                    procs[0].stderr.push_raw(chunk.encode("ascii"))
+                multi_full = "".join(multi_chunks)
+                deadline = time.monotonic() + 2.0
+                while not runner.stderr_text.endswith("line-0099-" + ("a" * 1000) + "\n") and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                self.assertEqual(len(runner.stderr_text), _MAX_STDERR_CHARS)
+                self.assertEqual(runner.stderr_text, multi_full[-_MAX_STDERR_CHARS:])
+
+                # Then push a single line exceeding 64 KiB (verifies single-chunk cap).
+                oversized = "Z" * (_MAX_STDERR_CHARS + 500) + "\n"
+                procs[0].stderr.push_raw(oversized.encode("ascii"))
+
+            self.assertEqual(len(runner.stderr_text), _MAX_STDERR_CHARS)
+            self.assertEqual(runner.stderr_text, oversized[-_MAX_STDERR_CHARS:])
+
+    def test_on_event_reentrancy_fails_fast_and_preserves_cleanup(self) -> None:
+        procs: list[_FakeProcess] = []
+        seq = [2]
+
+        def next_seq() -> int:
+            val = seq[0]
+            seq[0] += 1
+            return val
+
+        def handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "run":
+                if "request" in cmd:
+                    # Leave oversized start pending so it times out and leaves a temp file to clean on close().
+                    return
+                run_id = "0123456789abcdef-1"
+                proc.stdout.push_event({"event": "run_start", "seq": next_seq(), "t_ms": 2, "run": run_id, "id": cmd["id"]})
+            elif cmd["command"] == "stop":
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": next_seq(),
+                    "t_ms": 9,
+                    "run": cmd["run"],
+                    "launcher_ends": False,
+                    "status": {"launcher_state": "ready", "last_run_id": cmd["run"]},
+                    "result": {"result": "stopped"},
+                })
+
+        def make_proc(cmd, **kw):
+            p = _FakeProcess(cmd, handler)
+            procs.append(p)
+            return p
+
+        results: dict[str, object] = {}
+        active_run_holder: list[RunHandle] = []
+        run_ready = threading.Event()
+        checked_phase = threading.Event()
+        checked_after_cs = threading.Event()
+        checked_close_event = threading.Event()
+
+        class _ReentryServe(Serve):
+            def __init__(self) -> None:
+                super().__init__("/fake/launch", "sim.yaml", on_event=self._cb)
+
+            def _cb(self, ev: dict) -> None:
+                etype = ev.get("event")
+                if etype == "hello":
+                    for name, fn in (("hello", lambda: self.hello), ("instance", lambda: self.instance)):
+                        try:
+                            fn()
+                            results[f"on_hello_{name}"] = "unexpected-ok"
+                        except ServeError as exc:
+                            results[f"on_hello_{name}"] = str(exc)
+                elif etype == "status":
+                    # After "hello" has been processed, reading hello/instance inside on_event succeeds.
+                    results["on_status_instance"] = self.instance
+                    results["on_status_hello"] = self.hello["launcher"]
+                    for name, fn in (
+                        ("prepare", lambda: self.prepare(timeout=5.0)),
+                        ("status", lambda: self.status(timeout=5.0)),
+                        ("start", lambda: self.start(timeout=5.0)),
+                        ("wait", lambda: self.wait(timeout=5.0)),
+                    ):
+                        try:
+                            fn()
+                            results[f"on_status_{name}"] = "unexpected-ok"
+                        except ServeError as exc:
+                            results[f"on_status_{name}"] = str(exc)
+                elif etype == "phase":
+                    run_ready.wait(timeout=5.0)
+                    run = active_run_holder[0]
+                    for name, fn in (
+                        ("address", lambda: run.address),
+                        ("wait", lambda: run.wait(timeout=5.0)),
+                        ("wait_for_event", lambda: run.wait_for_event("control_server", timeout=5.0)),
+                    ):
+                        try:
+                            fn()
+                            results[f"on_phase_{name}"] = "unexpected-ok"
+                        except ServeError as exc:
+                            results[f"on_phase_{name}"] = str(exc)
+                    checked_phase.set()
+                elif etype == "log":
+                    # control_server has already been processed; run.address must succeed without blocking.
+                    results["on_log_address"] = active_run_holder[0].address
+                    checked_after_cs.set()
+                elif etype == "heartbeat":
+                    try:
+                        self.close(timeout=5.0)
+                        results["on_heartbeat_close"] = "unexpected-ok"
+                    except ServeError as exc:
+                        results["on_heartbeat_close"] = str(exc)
+                    checked_close_event.set()
+
+        t0 = time.monotonic()
+        temp_paths: list[str] = []
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=make_proc):
+            with _ReentryServe() as runner:
+                # Create a timed-out oversized intent so a temp file is tracked in runner._temp_files.
+                big = "x" * (MAX_COMMAND_LINE + 4096)
+                with self.assertRaises(ServeError):
+                    runner.start(params={"pad": big}, timeout=0.05)
+                temp_paths = list(runner._temp_files)
+                self.assertEqual(len(temp_paths), 1)
+                self.assertTrue(pathlib.Path(temp_paths[0]).exists())
+
+                # Trigger close() from inside on_event; must fail fast and NOT poison _closed.
+                procs[0].stdout.push_event({"event": "heartbeat", "seq": next_seq(), "t_ms": 3})
+                self.assertTrue(checked_close_event.wait(timeout=5.0))
+                self.assertFalse(runner._closed)
+
+                # Start a real run and verify RunHandle fail-fast before control_server/result,
+                # and immediate success for run.address once control_server has been processed.
+                run = runner.start()
+                active_run_holder.append(run)
+                run_ready.set()
+                procs[0].stdout.push_event({"event": "phase", "seq": next_seq(), "t_ms": 4, "run": run.id, "phase": "running"})
+                self.assertTrue(checked_phase.wait(timeout=5.0))
+                procs[0].stdout.push_event({
+                    "event": "control_server",
+                    "seq": next_seq(),
+                    "t_ms": 5,
+                    "run": run.id,
+                    "address": "127.0.0.1:41234",
+                })
+                procs[0].stdout.push_event({"event": "log", "seq": next_seq(), "t_ms": 6, "run": run.id, "text": "after cs"})
+                self.assertTrue(checked_after_cs.wait(timeout=5.0))
+                run.stop()
+                self.assertEqual(run.wait()["result"], "stopped")
+
+            # Outer close() must still run and delete the temp file.
+            self.assertTrue(runner._closed)
+            self.assertFalse(pathlib.Path(temp_paths[0]).exists())
+
+        self.assertLess(time.monotonic() - t0, 2.0)
+        for key in (
+            "on_hello_hello",
+            "on_hello_instance",
+            "on_status_prepare",
+            "on_status_status",
+            "on_status_start",
+            "on_status_wait",
+            "on_phase_address",
+            "on_phase_wait",
+            "on_phase_wait_for_event",
+            "on_heartbeat_close",
+        ):
+            self.assertIn("on_event", str(results.get(key)), f"{key}: {results.get(key)!r}")
+        self.assertEqual(results["on_status_instance"], "0123456789abcdef")
+        self.assertEqual(results["on_status_hello"], "0123456789abcdef")
+        self.assertEqual(results["on_log_address"], "127.0.0.1:41234")
+
+    def test_latest_status_schema_consistent_across_status_prepare_and_result(self) -> None:
+        seq = [2]
+
+        def next_seq() -> int:
+            val = seq[0]
+            seq[0] += 1
+            return val
+
+        def handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "prepare":
+                proc.stdout.push_event({
+                    "event": "prepare",
+                    "seq": next_seq(),
+                    "t_ms": 2,
+                    "id": cmd["id"],
+                    "accepted": True,
+                    "status": {"instance": "0123456789abcdef", "status_rev": 1, "launcher_state": "ready"},
+                    "findings": [],
+                })
+            elif cmd["command"] == "status":
+                proc.stdout.push_event({
+                    "event": "status",
+                    "seq": next_seq(),
+                    "t_ms": 3,
+                    "id": cmd["id"],
+                    "instance": "0123456789abcdef",
+                    "status_rev": 2,
+                    "launcher_state": "ready",
+                    "active_run_id": None,
+                })
+            elif cmd["command"] == "run":
+                run_id = "0123456789abcdef-1"
+                proc.stdout.push_event({"event": "run_start", "seq": next_seq(), "t_ms": 4, "run": run_id, "id": cmd["id"]})
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": next_seq(),
+                    "t_ms": 5,
+                    "run": run_id,
+                    "launcher_ends": False,
+                    "status": {
+                        "instance": "0123456789abcdef",
+                        "status_rev": 3,
+                        "launcher_state": "ready",
+                        "last_run_id": run_id,
+                    },
+                    "result": {"result": "passed"},
+                })
+
+        envelope_keys = {"event", "seq", "t_ms", "id"}
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=lambda cmd, **kw: _FakeProcess(cmd, handler)):
+            with Serve("/fake/launch", "sim.yaml") as runner:
+                st_init = runner.latest_status
+                self.assertIsNotNone(st_init)
+                assert st_init is not None
+                self.assertEqual(st_init["launcher_state"], "unprepared")
+                self.assertEqual(st_init["status_rev"], 0)
+                self.assertTrue(envelope_keys.isdisjoint(st_init.keys()))
+
+                runner.prepare()
+                st_prep = runner.latest_status
+                assert st_prep is not None
+                self.assertEqual(st_prep["launcher_state"], "ready")
+                self.assertEqual(st_prep["status_rev"], 1)
+                self.assertTrue(envelope_keys.isdisjoint(st_prep.keys()))
+
+                ev_status = runner.status()
+                self.assertEqual(ev_status["event"], "status")
+                self.assertIn("seq", ev_status)
+                st_query = runner.latest_status
+                assert st_query is not None
+                self.assertEqual(st_query["status_rev"], 2)
+                self.assertTrue(envelope_keys.isdisjoint(st_query.keys()))
+
+                run = runner.start()
+                run.wait()
+                st_done = runner.latest_status
+                assert st_done is not None
+                self.assertEqual(st_done["status_rev"], 3)
+                self.assertEqual(st_done["last_run_id"], "0123456789abcdef-1")
+                self.assertTrue(envelope_keys.isdisjoint(st_done.keys()))
 
 
 if __name__ == "__main__":

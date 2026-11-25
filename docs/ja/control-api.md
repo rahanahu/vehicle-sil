@@ -502,12 +502,12 @@ with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulatio
         print(run2.wait()["result"])
 ```
 
-`Serve(launcher, config, *, once=False, control=False, address="0", credentials=None, tls_cert=None, tls_key=None, audit_log=None, log_dir=None, timeout_ms=None, describe_timeout_ms=None, participant_start_timeout_ms=None, participant_stop_timeout_ms=None, events_stall_ms=None, arguments=(), cwd=None, stderr=None, keep_logs=True, startup_timeout=30.0)` では、`address`、`credentials`、`tls_cert`、`tls_key`、`audit_log` を指定するには `control=True` が必要です。
+`Serve(launcher, config, *, once=False, control=False, address="0", credentials=None, tls_cert=None, tls_key=None, audit_log=None, log_dir=None, timeout_ms=None, describe_timeout_ms=None, participant_start_timeout_ms=None, participant_stop_timeout_ms=None, events_stall_ms=None, arguments=(), cwd=None, stderr=None, keep_logs=True, on_event=None, startup_timeout=30.0)` では、`address`、`credentials`、`tls_cert`、`tls_key`、`audit_log` を指定するには `control=True` が必要です。
 
 | `Serve` のメンバー | 内容 |
 |---|---|
 | `hello`、`instance` | 初めの `hello` イベントと、その `launcher` インスタンス ID です。 |
-| `pid`、`returncode`、`events` | 子プロセスの PID、終了コード（実行中は `None`）、ストリーム全体のイベントです。 |
+| `pid`、`returncode`、`latest_status` | 子プロセスの PID、終了コード（実行中は `None`）、最新の `ExecutionStatus` の dict（`status`、`prepare`、`result` イベントから更新、なければ `None`）です。 |
 | `prepare(*, variant=None, disable=(), enable=(), manual=(), timeout=30.0)` | `prepare` を送り、`prepare` の応答（`accepted`、`status`、`metadata`、`findings`）を返します。 |
 | `status(timeout=30.0)` | `status` を送り、現在の `status` イベントを返します。 |
 | `start(*, request=None, intent=None, ..., timeline=None, timeout=60.0)` | 実行を 1 つ始めて `RunHandle` を返します。`request`、`intent`、実行ごとのキーワード引数（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`connect`、`time_policy`、`speed`、`start_paused`、`strict`、`stop_at_ms`、`late_tolerance_ms`）は最大 1 つだけ渡せます。大きすぎるインラインのインテントは自動で一時要求ファイルに切り替え、後で削除します。 |
@@ -523,6 +523,8 @@ with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulatio
 | `send(command)` | この実行宛ての標準入力コマンド（`"run": run.id`）を送ります。 |
 | `stop(force=None)` | この実行の `stop` を送ります（`False` で順序どおり、`True` で強制、`None` で既定の順序どおり）。 |
 | `wait(timeout=120.0)` | この実行の Events v4 `result` イベント（確定済みの `status` を内包し、別個の `idle` イベントはありません）を待ちます。 |
+
+`Serve` は終わった実行の履歴を持たず、ストリーム全体の `events` リストも溜めません。実行の `result` イベントが届くと、`Serve` はその `RunHandle` への参照を外すため、呼び出し側がハンドルを手放した時点でその実行のイベントと結果が解放されます（`keep_logs=False` にすると `RunHandle.events` に `"log"` イベントを含めません）。ストリーム全体のイベントを監視したいとき（`keep_logs=False` でも `"log"` イベントを受け取れます）は `on_event=callback` を渡します。`on_event` は読み取りスレッド上で `Serve` のロックの外から順に呼ばれ、`Serve` が状態を更新して待機中の呼び出しを起こす前に完了します（そのため `Serve()`、`prepare()`、`start()`、`run.wait()`、`close()` が返った時点で対応するイベントは配信済みです）。各呼び出しにはイベントの浅いコピー（`dict`）を渡します。入れ子の値は読み取り専用として扱い、コールバック内では `close()`、`wait()`、およびイベントを待つブロッキング呼び出し・プロパティ（`prepare()`、`status()`、`start()`、`run.wait()`、`run.wait_for_event()`、および該当イベントの処理前に `hello`、`instance`、`run.address`、`run.control()` を読む操作）を行わないでください（呼び出すと `ServeError` になります）。`on_event` が例外を上げても読み取りスレッドは止めず、`sys.excepthook` へ渡します。
 
 `with runner.start(...)` を抜けると、その実行だけを止めて（`force=False`）確定済みの `status` を持つ `result` を待ち、`once=True` や `launcher_ends` が真でない限り `Serve` は次の実行のために生かしたままにします。`launcher_ends: true`（たとえば汚染時の終了コード 6 や、`once=True` の 1 回実行）で終わった後は、次の実行を始められません。`with Serve(...)` を抜けると常駐ランチャーを閉じます。コマンドが拒否されたとき、時間切れのとき、または起動に失敗したとき（`once=True` なしの `VEHICLE_SIL_TRACE` を含み、`reason="trace-enabled"` で報告されます）は、`ServeError`（`LaunchError` のサブクラス）を上げ、理由があれば `reason` に設定します。
 
