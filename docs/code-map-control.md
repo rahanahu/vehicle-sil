@@ -91,7 +91,7 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 | `test_launcher.py` | The launcher's Control Server (also authentication, TLS, roles and auditing) |
 | `test_python_client.py` | The Python client and CLI |
 | `test_serve_unit.py` | `Serve` and `RunHandle` unit tests with mocked child streams (also run by `scripts/verify-python.py`) |
-| `test_serve_client.py` | `Serve` and `RunHandle` against live `vehicle_sil_launch serve` and gRPC (`tests/serve/serve_support.py` wraps `vehicle_sil_control.Serve` with fault-injection `send_raw` and `/proc` RSS measurement) |
+| `test_serve_client.py` | `Serve` and `RunHandle` against live `vehicle_sil_launch serve` and gRPC (`tests/serve/serve_support.py` wraps `vehicle_sil_control.Serve` with full-stream recording via `on_event`, fault-injection `send_raw`, and `/proc` RSS measurement) |
 | `control_server.example_write_before_start`, `control_server.example_pause_and_step`, `control_server.example_serve_runs` | `examples/launch_control` |
 | `test_guide_operate_signals.py` | Compares the guide `docs/howto/operate-signals.md` with the example, the CLI and the stdin commands (for the markers, see "[Documentation examples and tests](code-map-testing.md#documentation-examples-and-tests)") |
 
@@ -221,7 +221,7 @@ Where to change:
 - `ServerOptions::external_hub`
 - `python/pyproject.toml`, `python/vehicle_sil_control/protocol.py` and `python/vehicle_sil_control/grpc_helpers.py` (shared with `gui/server`)
 - `python/vehicle_sil_control/launcher.py` (`Launch` over `serve --once`)
-- `python/vehicle_sil_control/serve.py` (`Serve` / `RunHandle` over Events v4; `tests/serve/serve_support.py` wraps `Serve` for fault injection)
+- `python/vehicle_sil_control/serve.py` (`Serve` / `RunHandle` over Events v4; `tests/serve/serve_support.py` wraps `Serve` for full-stream recording via `on_event` and fault injection)
 
 Documentation to update:
 

@@ -16,9 +16,11 @@
 """
 from __future__ import annotations
 
+import collections
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -37,6 +39,19 @@ from .protocol import (
 
 if TYPE_CHECKING:
     from .client import Control
+
+_MAX_BAD_LINES = 64
+_MAX_STDERR_CHARS = 64 * 1024
+_STATUS_ENVELOPE_KEYS = frozenset(("event", "seq", "t_ms", "id"))
+
+
+class _PendingCommand:
+    __slots__ = ("kind", "reply", "refusal")
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+        self.reply: Any = None
+        self.refusal: Optional[dict] = None
 
 
 class ServeError(LaunchError):
@@ -115,6 +130,7 @@ class RunHandle:
                 if self._result_event is not None or self._serve._ended:
                     why = _why(self._result_event) if self._result_event is not None else "its events ended"
                     raise ServeError(f"run {self._id} wrote no {event} event {keys or ''}: {why}")
+                self._serve._check_not_reader_thread(f"RunHandle.wait_for_event({event!r})")
                 left = deadline - time.monotonic()
                 if left <= 0:
                     raise ServeError(f"run {self._id}: no {event} event {keys or ''} within {timeout} s")
@@ -169,6 +185,7 @@ class RunHandle:
         deadline = time.monotonic() + timeout
         with self._serve._changed:
             while self._result_event is None and not self._serve._ended:
+                self._serve._check_not_reader_thread("RunHandle.wait() before result is processed")
                 left = deadline - time.monotonic()
                 if left <= 0:
                     raise ServeError(f"run {self._id} did not finish within {timeout} s")
@@ -221,7 +238,7 @@ class Serve:
         stdout: Optional[Any] = subprocess.PIPE,
         stderr: Optional[Any] = None,
         keep_logs: bool = True,
-        keep_log_skeleton: bool = False,
+        on_event: Optional[Callable[[dict], None]] = None,
         start_new_session: bool = False,
         wait_ready: bool = True,
         startup_timeout: float = 30.0,
@@ -233,6 +250,8 @@ class Serve:
                 raise ValueError("address requires control=True")
         if isinstance(arguments, (str, bytes)):
             raise TypeError("arguments must be a sequence of strings, not str/bytes")
+        if on_event is not None and not callable(on_event):
+            raise TypeError("on_event must be callable or None")
         for opt_name, opt_val in (
             ("timeout_ms", timeout_ms),
             ("describe_timeout_ms", describe_timeout_ms),
@@ -271,27 +290,23 @@ class Serve:
         command += list(arguments) + ["--", os.fspath(config)]
 
         self.command: List[str] = command
-        self.events: List[dict] = []
-        self.bad_lines: List[bytes] = []
+        self._bad_lines: collections.deque[bytes] = collections.deque(maxlen=_MAX_BAD_LINES)
         self._keep_logs = keep_logs
-        self._keep_log_skeleton = keep_log_skeleton
+        self._on_event = on_event
         self._changed = threading.Condition()
         self._write_lock = threading.Lock()
         self._next_id = 1
         self._hello: Optional[dict] = None
         self._ready = False
         self._latest_status: Optional[dict] = None
-        self._active_run_id: Optional[str] = None
+        self._active_run: Optional[RunHandle] = None
         self._ended = False
         self._closed = False
         self._startup_result: Optional[dict] = None
-        self._prepare_replies: Dict[int, dict] = {}
-        self._status_replies: Dict[int, dict] = {}
-        self._run_starts: Dict[int, dict] = {}
-        self._command_refusals: Dict[int, dict] = {}
-        self._runs: Dict[str, RunHandle] = {}
+        self._pending: Dict[int, _PendingCommand] = {}
         self._temp_files: set[str] = set()
-        self._stderr_chunks: List[str] = []
+        self._stderr_chunks: collections.deque[str] = collections.deque()
+        self._stderr_len = 0
 
         popen_kwargs: Dict[str, Any] = {}
         if start_new_session:
@@ -359,75 +374,108 @@ class Serve:
             raise ServeError(f"vehicle_sil_launch serve ended during startup (exit code {code}){detail}")
         raise ServeError(f"vehicle_sil_launch serve failed to start (exit code {code}){detail}")
 
+    def _dispatch_event(self, event: dict) -> None:
+        if self._on_event is not None:
+            try:
+                self._on_event(dict(event))
+            except Exception:
+                sys.excepthook(*sys.exc_info())
+        with self._changed:
+            etype = event.get("event")
+            run_id = event.get("run")
+            if etype == "hello":
+                self._hello = event
+            elif etype == "status":
+                self._ready = True
+                self._latest_status = {k: v for k, v in event.items() if k not in _STATUS_ENVELOPE_KEYS}
+                cmd_id = event.get("id")
+                if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
+                    slot = self._pending.get(cmd_id)
+                    if slot is not None and slot.kind == "status":
+                        slot.reply = event
+                    slot = None
+            elif etype == "prepare":
+                self._ready = True
+                if isinstance(event.get("status"), dict):
+                    self._latest_status = event["status"]
+                cmd_id = event.get("id")
+                if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
+                    slot = self._pending.get(cmd_id)
+                    if slot is not None and slot.kind == "prepare":
+                        slot.reply = event
+                    slot = None
+            elif etype == "run_start" and run_id:
+                handle = RunHandle(self, run_id, event)
+                self._active_run = handle
+                cmd_id = event.get("id")
+                if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
+                    slot = self._pending.get(cmd_id)
+                    if slot is not None and slot.kind == "run":
+                        slot.reply = handle
+                    slot = None
+                handle = None
+            elif etype == "command" and run_id is None and event.get("accepted") is False:
+                cmd_id = event.get("id")
+                if (
+                    isinstance(cmd_id, int)
+                    and not isinstance(cmd_id, bool)
+                    and event.get("command") in ("run", "prepare", "status", None)
+                ):
+                    slot = self._pending.get(cmd_id)
+                    if slot is not None and (
+                        event.get("command") is None or event.get("command") == slot.kind
+                    ):
+                        slot.refusal = event
+                    slot = None
+            elif etype == "result" and run_id is None:
+                self._startup_result = event
+            if (
+                run_id is not None
+                and self._active_run is not None
+                and self._active_run._id == run_id
+            ):
+                handle = self._active_run
+                if etype != "run_start":
+                    handle._append_event(event, self._keep_logs)
+                if etype == "result":
+                    handle._result_event = event
+                    handle.result = event.get("result")
+                    handle.status = event.get("status")
+                    handle.launcher_ends = event.get("launcher_ends")
+                    if isinstance(handle.status, dict):
+                        self._latest_status = handle.status
+                    self._active_run = None
+                handle = None
+            self._changed.notify_all()
+
     def _read(self) -> None:
         try:
             assert self._process.stdout is not None
             for line in self._process.stdout:
                 if not line.endswith(b"\n"):
+                    line = b""
                     break
                 try:
                     event = json.loads(line)
                 except ValueError:
                     with self._changed:
-                        self.bad_lines.append(line)
+                        self._bad_lines.append(line)
+                    line = b""
                     continue
-                with self._changed:
-                    etype = event.get("event")
-                    if self._keep_logs or etype != "log":
-                        self.events.append(event)
-                    elif self._keep_log_skeleton:
-                        self.events.append({k: event.get(k) for k in ("event", "seq", "t_ms", "run") if k in event})
-                    run_id = event.get("run")
-                    if etype == "hello":
-                        self._hello = event
-                    elif etype == "status":
-                        self._ready = True
-                        self._latest_status = event
-                        cmd_id = event.get("id")
-                        if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
-                            self._status_replies[cmd_id] = event
-                    elif etype == "prepare":
-                        self._ready = True
-                        if isinstance(event.get("status"), dict):
-                            self._latest_status = event["status"]
-                        cmd_id = event.get("id")
-                        if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
-                            self._prepare_replies[cmd_id] = event
-                    elif etype == "run_start" and run_id:
-                        self._active_run_id = run_id
-                        handle = RunHandle(self, run_id, event)
-                        self._runs[run_id] = handle
-                        cmd_id = event.get("id")
-                        if isinstance(cmd_id, int) and not isinstance(cmd_id, bool):
-                            self._run_starts[cmd_id] = event
-                    elif etype == "command" and run_id is None and event.get("accepted") is False:
-                        cmd_id = event.get("id")
-                        if (
-                            isinstance(cmd_id, int)
-                            and not isinstance(cmd_id, bool)
-                            and event.get("command") in ("run", "prepare", "status", None)
-                        ):
-                            self._command_refusals[cmd_id] = event
-                    elif etype == "result" and run_id is None:
-                        self._startup_result = event
-                    if run_id is not None and run_id in self._runs:
-                        handle = self._runs[run_id]
-                        if etype != "run_start":
-                            handle._append_event(event, self._keep_logs)
-                        if etype == "result":
-                            handle._result_event = event
-                            handle.result = event.get("result")
-                            handle.status = event.get("status")
-                            handle.launcher_ends = event.get("launcher_ends")
-                            if isinstance(handle.status, dict):
-                                self._latest_status = handle.status
-                            if self._active_run_id == run_id:
-                                self._active_run_id = None
-                    self._changed.notify_all()
+                if not isinstance(event, dict):
+                    with self._changed:
+                        self._bad_lines.append(line)
+                    event = None
+                    line = b""
+                    continue
+                line = b""
+                self._dispatch_event(event)
+                event = None
         except (OSError, ValueError):
             pass
         finally:
             with self._changed:
+                self._active_run = None
                 self._ended = True
                 self._changed.notify_all()
 
@@ -436,28 +484,61 @@ class Serve:
             assert self._process.stderr is not None
             for line in self._process.stderr:
                 text = line.decode("utf-8", "replace")
+                line = b""
                 with self._changed:
-                    self._stderr_chunks.append(text)
+                    if len(text) >= _MAX_STDERR_CHARS:
+                        self._stderr_chunks.clear()
+                        self._stderr_chunks.append(text[-_MAX_STDERR_CHARS:])
+                        self._stderr_len = _MAX_STDERR_CHARS
+                    else:
+                        self._stderr_chunks.append(text)
+                        self._stderr_len += len(text)
+                        while self._stderr_len > _MAX_STDERR_CHARS and self._stderr_chunks:
+                            overflow = self._stderr_len - _MAX_STDERR_CHARS
+                            head = self._stderr_chunks[0]
+                            if len(head) <= overflow:
+                                self._stderr_chunks.popleft()
+                                self._stderr_len -= len(head)
+                            else:
+                                self._stderr_chunks[0] = head[overflow:]
+                                self._stderr_len -= overflow
+                text = ""
         except (OSError, ValueError):
             pass
+
+    def _check_not_reader_thread(self, action: str) -> None:
+        if self._reader is not None and threading.current_thread() is self._reader:
+            raise ServeError(f"cannot call {action} from inside on_event")
 
     @property
     def process(self) -> subprocess.Popen:
         return self._process
 
     @property
-    def hello(self) -> dict:
+    def bad_lines(self) -> List[bytes]:
         with self._changed:
-            if self._hello is not None:
-                return dict(self._hello)
-        return dict(self.wait_event("hello", timeout=30.0))
+            return list(self._bad_lines)
+
+    def _wait_hello(self, timeout: float = 30.0) -> dict:
+        deadline = time.monotonic() + timeout
+        with self._changed:
+            while self._hello is None:
+                if self._ended:
+                    raise ServeError("vehicle_sil_launch serve events ended without hello")
+                self._check_not_reader_thread("hello/instance before hello is processed")
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise ServeError(f"no hello within {timeout} s")
+                self._changed.wait(left)
+            return dict(self._hello)
+
+    @property
+    def hello(self) -> dict:
+        return self._wait_hello(timeout=30.0)
 
     @property
     def instance(self) -> str:
-        with self._changed:
-            hello = self._hello
-        if hello is None:
-            hello = self.wait_event("hello", timeout=30.0)
+        hello = self._wait_hello(timeout=30.0)
         if not hello or "launcher" not in hello:
             raise ServeError("hello event has no launcher instance ID")
         return hello["launcher"]
@@ -480,73 +561,25 @@ class Serve:
         with self._changed:
             return "".join(self._stderr_chunks)
 
-    def snapshot(self) -> List[dict]:
-        with self._changed:
-            return list(self.events)
-
-    def window(self, run_id: str) -> List[dict]:
-        with self._changed:
-            return [e for e in self.events if e.get("run") == run_id]
-
-    def wait_for(
-        self,
-        condition: Callable[[dict], bool],
-        what: str = "event",
-        timeout: float = 60.0,
-        after: Optional[Mapping[str, Any]] = None,
-    ) -> dict:
-        """Wait for the first event after `after` (by `seq`) satisfying `condition`."""
-        deadline = time.monotonic() + timeout
-        after_seq = -1 if after is None else after["seq"]
-        with self._changed:
-            start = 0
-            while True:
-                for index in range(start, len(self.events)):
-                    e = self.events[index]
-                    if e.get("seq", -1) > after_seq and condition(e):
-                        return e
-                start = len(self.events)
-                if self._ended:
-                    raise ServeError(f"vehicle_sil_launch serve events ended without {what}")
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise ServeError(f"no {what} within {timeout} s")
-                self._changed.wait(min(left, 1.0))
-
-    def wait_event(
-        self,
-        event: str,
-        timeout: float = 60.0,
-        after: Optional[Mapping[str, Any]] = None,
-        **keys: Any,
-    ) -> dict:
-        return self.wait_for(
-            lambda e: e.get("event") == event and all(e.get(k) == v for k, v in keys.items()),
-            f"{event} {keys or ''}",
-            timeout,
-            after,
-        )
-
-    def ready(self, timeout: float = 60.0) -> dict:
-        """Wait until the launcher has emitted its initial status and has no active run in flight."""
-        deadline = time.monotonic() + timeout
-        with self._changed:
-            while True:
-                if self._hello is not None and self._ready and self._active_run_id is None and self.events:
-                    return self.events[-1]
-                if self._startup_result is not None or self._ended:
-                    raise ServeError("vehicle_sil_launch serve ended before becoming ready")
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise ServeError(f"vehicle_sil_launch serve did not become ready within {timeout} s")
-                self._changed.wait(min(left, 1.0))
-
     def _next_command_id(self) -> int:
         if self._closed or self._ended:
             raise ServeError("vehicle_sil_launch serve has ended")
-        cmd_id = self._next_id
-        self._next_id = 1 if cmd_id >= MAX_COMMAND_ID else cmd_id + 1
-        return cmd_id
+        for _ in range(len(self._pending) + 1):
+            cmd_id = self._next_id
+            self._next_id = 1 if cmd_id >= MAX_COMMAND_ID else cmd_id + 1
+            if cmd_id not in self._pending:
+                return cmd_id
+        raise ServeError("no available command id")
+
+    def _register_pending(self, cmd_id: int, kind: str) -> _PendingCommand:
+        if isinstance(cmd_id, bool) or not isinstance(cmd_id, int):
+            raise TypeError("id must be an int")
+        with self._changed:
+            if cmd_id in self._pending:
+                raise ServeError(f"command id {cmd_id} is already pending", reason="invalid-command")
+            slot = _PendingCommand(kind)
+            self._pending[cmd_id] = slot
+            return slot
 
     def _write_line(self, line_bytes: bytes) -> None:
         wire = line_bytes + b"\n"
@@ -580,6 +613,7 @@ class Serve:
         timeout: float = 30.0,
     ) -> dict:
         """Prepare the configuration (`prepare` command) and return the `prepare` reply event."""
+        self._check_not_reader_thread("prepare()")
         if variant is not None and (not isinstance(variant, str) or not variant):
             raise ValueError("variant must be a non-empty string")
         disable_list = validate_name_sequence(disable, "disable")
@@ -602,16 +636,16 @@ class Serve:
         if len(line_bytes) > MAX_COMMAND_LINE:
             raise ServeError("prepare command exceeds 64 KiB line limit", reason="invalid-command")
 
-        self._write_line(line_bytes)
-
-        deadline = time.monotonic() + timeout
-        with self._changed:
-            try:
+        slot = self._register_pending(cmd_id, "prepare")
+        try:
+            self._write_line(line_bytes)
+            deadline = time.monotonic() + timeout
+            with self._changed:
                 while True:
-                    if cmd_id in self._prepare_replies:
-                        return self._prepare_replies.pop(cmd_id)
-                    if cmd_id in self._command_refusals:
-                        ev = self._command_refusals.pop(cmd_id)
+                    if slot.reply is not None:
+                        return slot.reply
+                    if slot.refusal is not None:
+                        ev = slot.refusal
                         raise ServeError(ev.get("message") or "prepare refused", reason=ev.get("reason"))
                     if self._ended:
                         raise ServeError("vehicle_sil_launch serve ended before answering prepare")
@@ -619,26 +653,28 @@ class Serve:
                     if left <= 0:
                         raise ServeError(f"prepare did not answer within {timeout} s")
                     self._changed.wait(left)
-            finally:
-                self._prepare_replies.pop(cmd_id, None)
-                self._command_refusals.pop(cmd_id, None)
+        finally:
+            with self._changed:
+                if self._pending.get(cmd_id) is slot:
+                    self._pending.pop(cmd_id, None)
 
     def status(self, timeout: float = 30.0, *, id: Optional[int] = None) -> dict:
         """Query the current `ExecutionStatus` (`status` command) and return the `status` event."""
+        self._check_not_reader_thread("status()")
         with self._changed:
             cmd_id = self._next_command_id() if id is None else id
 
         line_bytes = _encode_ndjson({"command": "status", "id": cmd_id})
-        self._write_line(line_bytes)
-
-        deadline = time.monotonic() + timeout
-        with self._changed:
-            try:
+        slot = self._register_pending(cmd_id, "status")
+        try:
+            self._write_line(line_bytes)
+            deadline = time.monotonic() + timeout
+            with self._changed:
                 while True:
-                    if cmd_id in self._status_replies:
-                        return self._status_replies.pop(cmd_id)
-                    if cmd_id in self._command_refusals:
-                        ev = self._command_refusals.pop(cmd_id)
+                    if slot.reply is not None:
+                        return slot.reply
+                    if slot.refusal is not None:
+                        ev = slot.refusal
                         raise ServeError(ev.get("message") or "status refused", reason=ev.get("reason"))
                     if self._ended:
                         raise ServeError("vehicle_sil_launch serve ended before answering status")
@@ -646,9 +682,10 @@ class Serve:
                     if left <= 0:
                         raise ServeError(f"status did not answer within {timeout} s")
                     self._changed.wait(left)
-            finally:
-                self._status_replies.pop(cmd_id, None)
-                self._command_refusals.pop(cmd_id, None)
+        finally:
+            with self._changed:
+                if self._pending.get(cmd_id) is slot:
+                    self._pending.pop(cmd_id, None)
 
     def start(
         self,
@@ -673,6 +710,7 @@ class Serve:
         timeout: float = 60.0,
     ) -> RunHandle:
         """Start one simulation run (`run` command) and return its `RunHandle`."""
+        self._check_not_reader_thread("start()")
         disable_list = validate_name_sequence(disable, "disable")
         enable_list = validate_name_sequence(enable, "enable")
         manual_list = validate_name_sequence(manual, "manual")
@@ -787,43 +825,48 @@ class Serve:
                 raise ServeError("run command exceeds 64 KiB line limit", reason="invalid-command")
 
         try:
-            self._write_line(line_bytes)
+            slot = self._register_pending(cmd_id, "run")
         except BaseException:
             self._unlink_temp(temp_request_path)
             raise
 
-        deadline = time.monotonic() + timeout
         temp_to_delete: Optional[str] = None
         try:
+            try:
+                self._write_line(line_bytes)
+            except BaseException:
+                temp_to_delete = temp_request_path
+                temp_request_path = None
+                raise
+
+            deadline = time.monotonic() + timeout
             with self._changed:
-                try:
-                    while True:
-                        if cmd_id in self._run_starts:
-                            ev = self._run_starts.pop(cmd_id)
-                            run_handle = self._runs[ev["run"]]
-                            temp_to_delete = temp_request_path
-                            temp_request_path = None
-                            break
-                        if cmd_id in self._command_refusals:
-                            ev = self._command_refusals.pop(cmd_id)
-                            temp_to_delete = temp_request_path
-                            temp_request_path = None
-                            raise ServeError(
-                                ev.get("message") or f"run refused ({ev.get('reason')})",
-                                reason=ev.get("reason"),
-                            )
-                        if self._ended:
-                            temp_to_delete = temp_request_path
-                            temp_request_path = None
-                            raise ServeError("vehicle_sil_launch serve ended before starting the run")
-                        left = deadline - time.monotonic()
-                        if left <= 0:
-                            raise ServeError(f"run did not start within {timeout} s")
-                        self._changed.wait(left)
-                finally:
-                    self._run_starts.pop(cmd_id, None)
-                    self._command_refusals.pop(cmd_id, None)
+                while True:
+                    if slot.reply is not None:
+                        run_handle = slot.reply
+                        temp_to_delete = temp_request_path
+                        temp_request_path = None
+                        break
+                    if slot.refusal is not None:
+                        ev = slot.refusal
+                        temp_to_delete = temp_request_path
+                        temp_request_path = None
+                        raise ServeError(
+                            ev.get("message") or f"run refused ({ev.get('reason')})",
+                            reason=ev.get("reason"),
+                        )
+                    if self._ended:
+                        temp_to_delete = temp_request_path
+                        temp_request_path = None
+                        raise ServeError("vehicle_sil_launch serve ended before starting the run")
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        raise ServeError(f"run did not start within {timeout} s")
+                    self._changed.wait(left)
         finally:
+            with self._changed:
+                if self._pending.get(cmd_id) is slot:
+                    self._pending.pop(cmd_id, None)
             self._unlink_temp(temp_to_delete)
 
         return run_handle
@@ -839,6 +882,7 @@ class Serve:
 
     def wait(self, timeout: float = 60.0) -> int:
         """Wait for the launcher child process to exit and return its exit code."""
+        self._check_not_reader_thread("wait()")
         try:
             self._process.wait(timeout)
         except subprocess.TimeoutExpired:
@@ -860,6 +904,7 @@ class Serve:
 
     def close(self, timeout: float = 60.0) -> Optional[int]:
         """Close stdin (EOF shutdown), wait for the child process, join reader threads, and clean temp files."""
+        self._check_not_reader_thread("close()")
         with self._changed:
             if self._closed:
                 return self._process.poll()

@@ -91,7 +91,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `test_launcher.py` | ランチャーの Control Server（認証、TLS、役割、監査も） |
 | `test_python_client.py` | Python のクライアントと CLI |
 | `test_serve_unit.py` | モックした子プロセス入出力による `Serve` と `RunHandle` の単体テスト（`scripts/verify-python.py` でも実行） |
-| `test_serve_client.py` | 実プロセスの `vehicle_sil_launch serve` と gRPC に対する `Serve` と `RunHandle` のテスト（`tests/serve/serve_support.py` は `vehicle_sil_control.Serve` を故障注入 `send_raw` と `/proc` RSS 計測で包みます） |
+| `test_serve_client.py` | 実プロセスの `vehicle_sil_launch serve` と gRPC に対する `Serve` と `RunHandle` のテスト（`tests/serve/serve_support.py` は `vehicle_sil_control.Serve` を `on_event` による全ストリーム記録、故障注入 `send_raw`、`/proc` RSS 計測で包みます） |
 | `control_server.example_write_before_start`、`control_server.example_pause_and_step`、`control_server.example_serve_runs` | `examples/launch_control` |
 | `test_guide_operate_signals.py` | ガイド `docs/howto/operate-signals.md` と、例、CLI、標準入力のコマンドの照合（印は「[ドキュメントの例とテスト](code-map-testing.md#ドキュメントの例とテスト)」） |
 
@@ -221,7 +221,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - `ServerOptions::external_hub`
 - `python/pyproject.toml`、`python/vehicle_sil_control/protocol.py`、`python/vehicle_sil_control/grpc_helpers.py`（`gui/server` と共有）
 - `python/vehicle_sil_control/launcher.py`（`serve --once` を使う `Launch`）
-- `python/vehicle_sil_control/serve.py`（Events v4 の `Serve` / `RunHandle`。`tests/serve/serve_support.py` は故障注入用に `Serve` を包む）
+- `python/vehicle_sil_control/serve.py`（Events v4 の `Serve` / `RunHandle`。`tests/serve/serve_support.py` は `on_event` による全ストリーム記録と故障注入のために `Serve` を包む）
 
 合わせて直すドキュメント:
 
