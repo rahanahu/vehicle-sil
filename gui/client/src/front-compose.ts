@@ -74,8 +74,14 @@ export function runOf(s: Snapshot): RunState {
   const outcome = runOutcome(session);
   if (outcome === 'crashed') return starting ? 'starting' : 'crashed';
   if (outcome === 'ended' || outcome === 'finishing') return starting ? 'starting' : 'ended';
-  if (outcome === 'stopping' || outcome === 'forcing' || s.stopConfirmed) return 'stopping';
   const state = session.launcherState;
+  if (
+    outcome === 'stopping' ||
+    outcome === 'forcing' ||
+    s.stopConfirmed ||
+    (state?.stop?.requests ?? 0) > 0
+  )
+    return 'stopping';
   const phase = state?.phase || session.phase;
   const paused = state?.paused ?? null;
   switch (phase) {
@@ -268,7 +274,11 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
   const session = s.session;
   const live = isRunActive(session) && run !== 'ended' && run !== 'crashed';
   const state = session?.launcherState ?? null;
-  const stopsAsked = Math.max(session?.stopRequests ?? 0, s.stopConfirmed ? 1 : 0);
+  const stopsAsked = Math.max(
+    session?.stopRequests ?? 0,
+    state?.stop?.requests ?? 0,
+    s.stopConfirmed ? 1 : 0,
+  );
 
   // start: the GUI server owns it. The client adds the connection and its own request on its way.
   let start: Control;
@@ -290,9 +300,16 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
       : control(true);
 
   // stop: whatever the connection says, as long as the last known state is a run (or a start is on its way)
-  // (a launcher that runs on after its result is not live, but the server, which knows its launcher, still stops it)
+  // (a launcher that runs on after its result is not live, but the server, which knows its launcher, still stops it;
+  // after a first stop `allowed.stop` turns to `already-stopping` while `allowed.force` stays `ok`)
   const serverStop = s.allowed?.stop;
-  const stoppable = s.busy.has('start') || live || run === 'starting' || serverStop?.ok === true;
+  const serverForce = s.allowed?.force;
+  const stoppable =
+    s.busy.has('start') ||
+    live ||
+    run === 'starting' ||
+    serverStop?.ok === true ||
+    serverForce?.ok === true;
   let stop: Control;
   if (!s.busy.has('start') && s.allowed?.start.reason === 'starting')
     stop = control(false, reason('starting', 'wait until the new run can be identified'));
@@ -310,7 +327,6 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
   else stop = control(true);
 
   // force_stop: also the server's, and only after a first stop (it is the second step)
-  const serverForce = s.allowed?.force;
   let force: Control;
   if (s.busy.has('start') || s.allowed?.start.reason === 'starting')
     force = control(false, reason('starting', 'wait until the new run can be identified'));

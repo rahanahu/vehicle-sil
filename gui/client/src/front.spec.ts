@@ -95,10 +95,10 @@ const commandEvent = (
   ...more,
 });
 
-const serverAllowed = (_rev: number, start: object, stop: object = ok) => ({
+const serverAllowed = (_rev: number, start: object, stop: object = ok, force: object = stop) => ({
   start,
   stop,
-  force: stop,
+  force,
   save: { ok: true, reason: null, message: null, caution: null },
 });
 const startOk = { ok: true, reason: null, message: null };
@@ -522,6 +522,191 @@ describe('the front door', () => {
       );
       expect(rig.front.status.get().run).toBe('ended');
       expect(rig.front.controls.get().stop.ok).toBe(true);
+    });
+
+    it('keeps force_stop available after a first stop while a cold launcher runs on after its result', async () => {
+      const rig = await running();
+      await rig.deliver(
+        event({
+          event: 'result',
+          seq: 50,
+          t_ms: 50,
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            message: 'The run reached its end without errors',
+            interrupted_by: null,
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+            participants: [],
+            findings: [],
+          },
+        }),
+      );
+      expect(rig.front.status.get().run).toBe('ended');
+      expect(rig.front.controls.get().stop.ok).toBe(true);
+      expect(rig.front.controls.get().force_stop).toMatchObject({
+        ok: false,
+        reason: { code: 'not-stopping' },
+      });
+
+      const firstStop = rig.front.run.stop();
+      const firstRequest = rig.http.expectOne('api/stop-session');
+      expect(firstRequest.request.body).toEqual({ force: false, run_id: '1', instance: 'x' });
+      firstRequest.flush({ instance: 'x', run_id: '1' });
+      await firstStop;
+
+      const alreadyStopping = refusal(
+        'already-stopping',
+        'a stop was already asked for: wait for the run to end, or stop it without waiting (force)',
+      );
+      await rig.deliver({
+        type: 'session',
+        session: summary({
+          state: 'running',
+          launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
+          stop: 'requested',
+          allowed: serverAllowed(4, alreadyRunning, alreadyStopping, ok),
+        }),
+      });
+      expect(rig.front.status.get().run).toBe('ended');
+      expect(rig.front.controls.get().stop).toMatchObject({
+        ok: false,
+        reason: { code: 'already-stopping' },
+      });
+      expect(rig.front.controls.get().force_stop).toEqual({
+        ok: true,
+        reason: null,
+        caution: null,
+      });
+
+      const force = rig.front.run.forceStop();
+      const forceRequest = rig.http.expectOne('api/stop-session');
+      expect(forceRequest.request.body).toEqual({ force: true, run_id: '1', instance: 'x' });
+      forceRequest.flush({ instance: 'x', run_id: '1' });
+      await expect(force).resolves.toBeUndefined();
+
+      await rig.deliver({
+        type: 'session',
+        session: summary({
+          state: 'running',
+          launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
+          stop: 'forced',
+          allowed: serverAllowed(
+            5,
+            alreadyRunning,
+            alreadyStopping,
+            refusal('already-forced', 'the stop was already forced: wait for the run to end'),
+          ),
+        }),
+      });
+      expect(rig.front.controls.get().force_stop).toMatchObject({
+        ok: false,
+        reason: { code: 'already-forced' },
+      });
+
+      await rig.deliver({
+        type: 'session',
+        session: summary({
+          state: 'ended',
+          launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
+          stop: 'forced',
+          allowed: serverAllowed(6, startOk, notRunning, notRunning),
+        }),
+      });
+      expect(rig.front.controls.get().stop.reason?.code).toBe('not-running');
+      expect(rig.front.controls.get().force_stop.reason?.code).toBe('not-running');
+    });
+
+    it('offers force_stop and reports stopping after an external first stop while live', async () => {
+      const rig = await running();
+      const alreadyStopping = refusal(
+        'already-stopping',
+        'a stop was already asked for: wait for the run to end, or stop it without waiting (force)',
+      );
+      await rig.deliver(event(stateEvent(2, { stop: { requests: 1, by: 'control_server' } })), {
+        type: 'allowed',
+        run_id: '1',
+        allowed: serverAllowed(4, alreadyRunning, alreadyStopping, ok),
+      });
+      expect(rig.front.status.get().run).toBe('stopping');
+      expect(rig.front.controls.get().stop).toMatchObject({
+        ok: false,
+        reason: { code: 'already-stopping' },
+      });
+      expect(rig.front.controls.get().force_stop).toEqual({
+        ok: true,
+        reason: null,
+        caution: null,
+      });
+
+      const force = rig.front.run.forceStop();
+      const forceRequest = rig.http.expectOne('api/stop-session');
+      expect(forceRequest.request.body).toEqual({ force: true, run_id: '1', instance: 'x' });
+      forceRequest.flush({ instance: 'x', run_id: '1' });
+      await expect(force).resolves.toBeUndefined();
+    });
+
+    it('offers force_stop after an external first stop on a post-result cold launcher, and keeps hot drain not-running', async () => {
+      const rig = await running();
+      const alreadyStopping = refusal(
+        'already-stopping',
+        'a stop was already asked for: wait for the run to end, or stop it without waiting (force)',
+      );
+      await rig.deliver(
+        event({
+          event: 'result',
+          seq: 50,
+          t_ms: 50,
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            message: 'The run reached its end without errors',
+            interrupted_by: null,
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+            participants: [],
+            findings: [],
+          },
+        }),
+        event(stateEvent(2, { phase: 'ended', stop: { requests: 1, by: 'control_server' } })),
+        {
+          type: 'allowed',
+          run_id: '1',
+          allowed: serverAllowed(4, alreadyRunning, alreadyStopping, ok),
+        },
+      );
+      expect(rig.front.status.get().run).toBe('ended');
+      expect(rig.front.controls.get().stop).toMatchObject({
+        ok: false,
+        reason: { code: 'already-stopping' },
+      });
+      expect(rig.front.controls.get().force_stop).toEqual({
+        ok: true,
+        reason: null,
+        caution: null,
+      });
+
+      const force = rig.front.run.forceStop();
+      const forceRequest = rig.http.expectOne('api/stop-session');
+      expect(forceRequest.request.body).toEqual({ force: true, run_id: '1', instance: 'x' });
+      forceRequest.flush({ instance: 'x', run_id: '1' });
+      await expect(force).resolves.toBeUndefined();
+
+      // When the server marks both stop and force as not-running (e.g. hot post-result drain), both stay not-running.
+      await rig.deliver({
+        type: 'allowed',
+        run_id: '1',
+        allowed: serverAllowed(5, alreadyRunning, notRunning, notRunning),
+      });
+      expect(rig.front.controls.get().stop.reason?.code).toBe('not-running');
+      expect(rig.front.controls.get().force_stop.reason?.code).toBe('not-running');
     });
 
     it('passes on what the launcher says of the result, and a stop by the operator is not a failure', async () => {
