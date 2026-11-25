@@ -780,6 +780,8 @@ This table applies to the participants whose SIL Kit configuration vehicle-sil c
 
 When participants listen on loopback only, TCP uses `127.0.0.1` (`::1` if the URI uses `::1`). On systems other than Windows, they also listen on a local-domain socket in a temporary directory.
 
+In a loopback run, `run` and `serve` place the local-domain sockets of the child processes they manage in a per-run temporary directory and remove any leftover sockets and that directory when the run ends, even if a child terminates abnormally (for example, `SIGKILL`, a crash, or forced termination after a stop timeout). Local-domain sockets can still remain in the temporary directory when `vehicle_sil_launch` itself is killed with `SIGKILL`, for `manual`, standalone, or external SIL Kit binaries, or in non-loopback runs (standard POSIX `AF_UNIX` behavior).
+
 With a non-loopback address, anyone who can connect to this computer can join the simulation, because SIL Kit has no authentication (note `registry-on-network`).
 
 The registry listens on the address of its own URI, over TCP only (no local-domain socket). If another program or another `run` uses that port, or the host of `registry_uri` is not an address of this computer, `run` starts nothing and reports the `setup` error (exit code 3, `the registry cannot listen at <URI>: ...`). In parentheses, the error says which of these is likely and what to write in `registry_uri` instead.

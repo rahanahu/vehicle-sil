@@ -28,6 +28,11 @@ namespace vehicle_sil {
 /// their own loopback address, where another program may answer: the join then fails.
 inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN_ON_NETWORK";
 
+/// Internal launcher-to-participant environment variable (POSIX only): absolute path of a
+/// per-run directory for local-domain acceptor sockets (`vsil-<16hex>.silkit`). Ignored if
+/// unset, empty, not an existing writable absolute directory, or too long for sockaddr_un::sun_path.
+inline constexpr std::string_view kSocketDirectoryVariable = "VEHICLE_SIL_SOCKET_DIR";
+
 namespace registry_uri_detail {
 
 /// The host of "silkit://<host>:<port>...", without the brackets of an IPv6 address; empty if

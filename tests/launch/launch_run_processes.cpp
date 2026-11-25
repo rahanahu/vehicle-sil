@@ -25,6 +25,8 @@
 //   timeout      an ECU hangs in a step: --timeout-ms aborts the run
 //   no_console   (Windows) the launcher without a console ends a participant at once
 //   killed       the launcher dies (SIGKILL / TerminateProcess): no participant is left
+//   sigkill_socket_cleanup  (POSIX) a managed child ECU dies with SIGKILL mid-run: its local-domain
+//                socket and the per-run socket directory are removed when the run ends
 //   usage        wrong command lines (exit 4), also with --json
 //   disabled     participants left out (enabled: false, --disable): not started, not waited for,
 //                no log; --enable takes one in again; a name the file does not have (exit 4)
@@ -856,6 +858,85 @@ void killed(const Options& o)
     }
     require(participantsGone, "no participant is left after the launcher died");
     require(grandchildGone, "no process a participant started is left after the launcher died (the job objects end them)");
+}
+
+void sigkill_socket_cleanup(const Options& o)
+{
+#ifdef _WIN32
+    static_cast<void>(o);
+    throw Skip("POSIX per-run local-domain socket cleanup is not used on Windows");
+#else
+    std::string tmpl = "/tmp/vsil-t-XXXXXX";
+    require(::mkdtemp(tmpl.data()) != nullptr, "mkdtemp for isolated TMPDIR failed");
+    struct TempGuard
+    {
+        fs::path path;
+        ~TempGuard()
+        {
+            std::error_code ignored;
+            fs::remove_all(path, ignored);
+        }
+    } isolated{fs::path(tmpl)};
+
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 2\n"
+                                      "networks: []\n"
+                                      "participants:\n"
+                                      "  - name: Engine\n"
+                                      "    command: [" + ecu(o) + "]\n"
+                                      "  - name: Brake\n"
+                                      "    command: [" + ecu(o) + "]\n",
+                                      {{"Engine", "pid"}, {"Brake", "pid"}});
+
+    fs::path run_socket_dir;
+    std::size_t sockets_during_run = 0;
+    const auto result = run_until_running(
+        o, dir,
+        [&](vehicle_sil::process::Process&) {
+            const long engine_pid = read_pid((dir / "Engine.pid").string(), 60s);
+            const long brake_pid = read_pid((dir / "Brake.pid").string(), 60s);
+            require(engine_pid > 0 && brake_pid > 0, "both ECUs wrote their process IDs");
+
+            std::size_t run_dirs = 0;
+            for (const auto& entry : fs::directory_iterator(isolated.path))
+            {
+                const std::string name = entry.path().filename().string();
+                if (entry.is_directory() && name.rfind("vsil-", 0) == 0)
+                {
+                    ++run_dirs;
+                    run_socket_dir = entry.path();
+                }
+            }
+            require(run_dirs == 1, "expected exactly one per-run vsil-* socket directory in isolated TMPDIR");
+            for (const auto& entry : fs::directory_iterator(run_socket_dir))
+            {
+                const std::string name = entry.path().filename().string();
+                if (name.rfind("vsil-", 0) == 0 && name.size() == 28 && name.compare(21, 7, ".silkit") == 0)
+                {
+                    ++sockets_during_run;
+                }
+            }
+            require(sockets_during_run >= 2, "expected both managed ECUs to bind sockets in the per-run directory");
+
+            // Kill Engine with SIGKILL mid-run so SIL Kit cannot unlink its local-domain socket.
+            kill_one(engine_pid);
+        },
+        {"run", "sim.yaml"},
+        {{"TMPDIR", isolated.path.native()}, {"VEHICLE_SIL_SOCKET_DIR", "/nonexistent-inherited-socket-dir"}});
+
+    require(result.first.has_value() && result.first->code == 1,
+            "launcher should abort with exit code 1 after child SIGKILL, got " + code_text(result.first) + "\n" + result.second);
+    require(all_gone(dir, {"Engine.pid", "Brake.pid"}, 10s), "every participant has ended");
+
+    std::vector<std::string> leftovers;
+    for (const auto& entry : fs::recursive_directory_iterator(isolated.path))
+    {
+        leftovers.push_back(entry.path().string());
+    }
+    require(leftovers.empty(), "expected zero leftover sockets or vsil-* directories after run end, found " +
+                                   std::to_string(leftovers.size()) +
+                                   (leftovers.empty() ? std::string{} : " (first: " + leftovers.front() + ")"));
+#endif
 }
 
 void usage(const Options& o)

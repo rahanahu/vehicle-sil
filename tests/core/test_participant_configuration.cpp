@@ -31,6 +31,12 @@
 #include <string_view>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 using namespace vehicle_sil;
@@ -645,4 +651,106 @@ TEST_CASE(a_participant_told_to_listen_on_the_network_listens_on_every_address)
     options.listen_on_network = true;
     ParticipantRuntime participant(std::move(options));
     CHECK(count(listening_sockets(), Listen::Any) > 0);
+}
+
+TEST_CASE(local_acceptor_uses_socket_directory_variable_when_valid_and_falls_back_otherwise)
+{
+    struct EnvGuard
+    {
+        std::string name;
+        std::optional<std::string> previous;
+        explicit EnvGuard(std::string_view key) : name(key)
+        {
+            if (const char* current = std::getenv(name.c_str()); current != nullptr)
+            {
+                previous = current;
+            }
+        }
+        ~EnvGuard() noexcept
+        {
+#ifdef _WIN32
+            static_cast<void>(_putenv_s(name.c_str(), previous ? previous->c_str() : ""));
+#else
+            static_cast<void>(previous ? ::setenv(name.c_str(), previous->c_str(), 1) : ::unsetenv(name.c_str()));
+#endif
+        }
+    };
+
+    const EnvGuard listen_guard(kListenOnNetworkVariable);
+    const EnvGuard socket_dir_guard(kSocketDirectoryVariable);
+    set_variable(kListenOnNetworkVariable.data(), nullptr);
+    set_variable(kSocketDirectoryVariable.data(), nullptr);
+#ifdef _WIN32
+    // Windows disables domain sockets; VEHICLE_SIL_SOCKET_DIR has no effect.
+    const TemporaryDirectory valid("sockdir");
+    set_variable(kSocketDirectoryVariable.data(), valid.path.string().c_str());
+    const std::string cfg = default_participant_configuration("silkit://127.0.0.1:8500");
+    CHECK(!contains(cfg, "local://"));
+    CHECK(contains(cfg, R"("AcceptorUris":["tcp://127.0.0.1:0"])"));
+#else
+    const EnvGuard tmpdir_guard("TMPDIR");
+    set_variable("TMPDIR", "/tmp");
+    const std::filesystem::path default_temp = std::filesystem::temp_directory_path();
+    const std::string fallback_prefix = R"({"Middleware":{"AcceptorUris":["local://)" + (default_temp / "vsil-").string();
+
+    // Unset: default temporary directory.
+    CHECK(default_participant_configuration("silkit://127.0.0.1:8500").rfind(fallback_prefix, 0) == 0);
+
+    // Valid absolute writable directory.
+    const TemporaryDirectory valid("sockdir");
+    set_variable(kSocketDirectoryVariable.data(), valid.path.c_str());
+    const std::string custom = default_participant_configuration("silkit://127.0.0.1:8500");
+    const std::string custom_prefix = R"({"Middleware":{"AcceptorUris":["local://)" + (valid.path / "vsil-").string();
+    CHECK(custom.rfind(custom_prefix, 0) == 0);
+    CHECK(contains(custom, R"(.silkit","tcp://127.0.0.1:0"]})"));
+
+    // Empty value -> fallback.
+    set_variable(kSocketDirectoryVariable.data(), "");
+    CHECK(default_participant_configuration("silkit://127.0.0.1:8500").rfind(fallback_prefix, 0) == 0);
+
+    // Relative path -> fallback.
+    set_variable(kSocketDirectoryVariable.data(), "relative/vsil-socket-dir");
+    CHECK(default_participant_configuration("silkit://127.0.0.1:8500").rfind(fallback_prefix, 0) == 0);
+
+    // Nonexistent absolute path -> fallback.
+    const std::filesystem::path missing = valid.path / "does-not-exist";
+    set_variable(kSocketDirectoryVariable.data(), missing.c_str());
+    CHECK(default_participant_configuration("silkit://127.0.0.1:8500").rfind(fallback_prefix, 0) == 0);
+
+    // Regular file (not a directory) -> fallback.
+    valid.write("not-a-dir", "hello");
+    const std::filesystem::path regular_file = valid.path / "not-a-dir";
+    set_variable(kSocketDirectoryVariable.data(), regular_file.c_str());
+    CHECK(default_participant_configuration("silkit://127.0.0.1:8500").rfind(fallback_prefix, 0) == 0);
+
+    // Non-writable directory -> fallback (root bypasses mode bits).
+    if (::geteuid() != 0)
+    {
+        const std::filesystem::path ro = valid.path / "readonly";
+        std::filesystem::create_directory(ro);
+        CHECK(::chmod(ro.c_str(), 0500) == 0);
+        set_variable(kSocketDirectoryVariable.data(), ro.c_str());
+        const std::string cfg = default_participant_configuration("silkit://127.0.0.1:8500");
+        CHECK(::chmod(ro.c_str(), 0700) == 0);
+        CHECK(cfg.rfind(fallback_prefix, 0) == 0);
+    }
+
+    // Path too long for sockaddr_un::sun_path -> fallback to system temp directory.
+    std::filesystem::path too_long = valid.path;
+    constexpr std::size_t kMaxSunPath = sizeof(sockaddr_un::sun_path) - 1;
+    while (too_long.native().size() + 1 + 28 <= kMaxSunPath)
+    {
+        too_long /= "abcdefghij";
+    }
+    std::filesystem::create_directories(too_long);
+    set_variable(kSocketDirectoryVariable.data(), too_long.c_str());
+    CHECK(default_participant_configuration("silkit://127.0.0.1:8500").rfind(fallback_prefix, 0) == 0);
+
+    // When even the fallback temp directory exceeds sun_path, omit local-domain socket and keep TCP.
+    set_variable(kSocketDirectoryVariable.data(), "");
+    set_variable("TMPDIR", too_long.c_str());
+    const std::string tcp_only = default_participant_configuration("silkit://127.0.0.1:8500");
+    CHECK(!contains(tcp_only, "local://"));
+    CHECK(contains(tcp_only, R"("AcceptorUris":["tcp://127.0.0.1:0"])"));
+#endif
 }

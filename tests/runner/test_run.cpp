@@ -48,6 +48,13 @@
 
 #ifndef _WIN32
 #include <csignal>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
 #endif
 
 using namespace std::chrono_literals;
@@ -1782,4 +1789,219 @@ TEST_CASE(run_watch_wakes_immediately_on_non_signal_stop_for_plain_and_scenario_
             CHECK(elapsed < vehicle_sil::test::scaled_timeout(2s));
         }
     }
+}
+
+#ifndef _WIN32
+namespace {
+
+void bind_unix_socket(const std::filesystem::path& path)
+{
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    const std::string native = path.native();
+    CHECK(native.size() < sizeof(addr.sun_path));
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(fd >= 0);
+    std::memcpy(addr.sun_path, native.c_str(), native.size() + 1);
+    const int rc = ::bind(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+    ::close(fd);
+    CHECK(rc == 0);
+}
+
+struct ScopedPathCleanup
+{
+    std::filesystem::path path;
+    ~ScopedPathCleanup()
+    {
+        if (!path.empty())
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all(path, ignored);
+        }
+    }
+};
+
+struct RunnerEnvGuard
+{
+    std::string name;
+    std::optional<std::string> previous;
+    explicit RunnerEnvGuard(const char* key) : name(key)
+    {
+        if (const char* current = std::getenv(key); current != nullptr)
+        {
+            previous = current;
+        }
+    }
+    ~RunnerEnvGuard()
+    {
+        if (previous)
+        {
+            static_cast<void>(::setenv(name.c_str(), previous->c_str(), 1));
+        }
+        else
+        {
+            static_cast<void>(::unsetenv(name.c_str()));
+        }
+    }
+};
+
+} // namespace
+#endif
+
+TEST_CASE(run_socket_dir_cleans_only_matching_sockets_and_resists_tampering)
+{
+    using vehicle_sil::runner::detail::RunSocketDir;
+#ifdef _WIN32
+    RunSocketDir dir;
+    CHECK(dir.path().empty());
+    dir.ensure_created();
+    CHECK(dir.path().empty());
+    dir.cleanup();
+    CHECK(dir.path().empty());
+#else
+    namespace fs = std::filesystem;
+    const RunnerEnvGuard tmpdir_guard("TMPDIR");
+    CHECK(::setenv("TMPDIR", "/tmp", 1) == 0);
+
+    // 1. Normal lifecycle: 0700 directory, removes matching socket and empty dir, idempotent.
+    {
+        RunSocketDir dir;
+        CHECK(dir.path().empty());
+        dir.ensure_created();
+        CHECK(!dir.path().empty());
+        const fs::path created = dir.path();
+        dir.ensure_created();
+        CHECK(dir.path() == created.native());
+
+        struct stat st{};
+        CHECK(::lstat(created.c_str(), &st) == 0);
+        CHECK(S_ISDIR(st.st_mode));
+        CHECK((st.st_mode & 0777) == 0700);
+
+        const fs::path sock = created / "vsil-0123456789abcdef.silkit";
+        bind_unix_socket(sock);
+        CHECK(fs::exists(sock));
+
+        dir.cleanup();
+        CHECK(dir.path().empty());
+        CHECK(!fs::exists(sock));
+        CHECK(!fs::exists(created));
+        dir.cleanup(); // idempotent
+    }
+
+    // 2. Non-sockets, symlinks (even to sockets), subdirs and non-matching names are untouched;
+    //    rmdir leaves the non-empty directory intact.
+    {
+        StartBoundaryDirectory external;
+        const fs::path target_file = external.path / "keep.txt";
+        {
+            std::ofstream out(target_file);
+            out << "keep";
+            CHECK(out.good());
+        }
+        const fs::path target_sock = external.path / "keep.sock";
+        bind_unix_socket(target_sock);
+
+        RunSocketDir dir;
+        dir.ensure_created();
+        const fs::path created = dir.path();
+        ScopedPathCleanup guard{created};
+
+        const fs::path matching_sock = created / "vsil-0123456789abcdef.silkit";
+        const fs::path regular_file = created / "vsil-1111111111111111.silkit";
+        const fs::path symlink_to_file = created / "vsil-2222222222222222.silkit";
+        const fs::path symlink_to_sock = created / "vsil-3333333333333333.silkit";
+        const fs::path subdir = created / "vsil-4444444444444444.silkit";
+        const fs::path other_sock = created / "other.silkit";
+        const fs::path upper_sock = created / "vsil-0123456789ABCDEF.silkit";
+
+        bind_unix_socket(matching_sock);
+        {
+            std::ofstream out(regular_file);
+            out << "not-a-socket";
+            CHECK(out.good());
+        }
+        fs::create_symlink(target_file, symlink_to_file);
+        fs::create_symlink(target_sock, symlink_to_sock);
+        fs::create_directory(subdir);
+        bind_unix_socket(other_sock);
+        bind_unix_socket(upper_sock);
+
+        dir.cleanup();
+        CHECK(dir.path().empty());
+        CHECK(!fs::exists(matching_sock));
+        CHECK(fs::exists(created));
+        CHECK(fs::is_regular_file(regular_file));
+        CHECK(fs::is_symlink(symlink_to_file));
+        CHECK(fs::is_symlink(symlink_to_sock));
+        CHECK(fs::exists(target_file));
+        CHECK(fs::exists(target_sock));
+        CHECK(fs::is_directory(subdir));
+        CHECK(fs::exists(other_sock));
+        CHECK(fs::exists(upper_sock));
+    }
+
+    // 3. Directory swapped for another directory (different inode) -> untouched.
+    {
+        RunSocketDir dir;
+        dir.ensure_created();
+        const fs::path created = dir.path();
+        ScopedPathCleanup guard{created};
+
+        // Create decoy while `created` still exists so it gets a distinct inode.
+        const fs::path decoy = created.parent_path() / (created.filename().string() + "-decoy");
+        ScopedPathCleanup decoy_guard{decoy};
+        fs::create_directory(decoy);
+        const fs::path decoy_sock = decoy / "vsil-aaaaaaaaaaaaaaaa.silkit";
+        bind_unix_socket(decoy_sock);
+
+        CHECK(::rmdir(created.c_str()) == 0);
+        fs::rename(decoy, created);
+        decoy_guard.path.clear();
+
+        dir.cleanup();
+        CHECK(fs::exists(created / "vsil-aaaaaaaaaaaaaaaa.silkit"));
+    }
+
+    // 4. Directory swapped for a symlink -> untouched.
+    {
+        StartBoundaryDirectory target;
+        const fs::path target_sock = target.path / "vsil-bbbbbbbbbbbbbbbb.silkit";
+        bind_unix_socket(target_sock);
+
+        RunSocketDir dir;
+        dir.ensure_created();
+        const fs::path created = dir.path();
+        ScopedPathCleanup guard{created};
+
+        CHECK(::rmdir(created.c_str()) == 0);
+        fs::create_symlink(target.path, created);
+
+        dir.cleanup();
+        CHECK(fs::is_symlink(created));
+        CHECK(fs::exists(target_sock));
+    }
+
+    // 5. Long TMPDIR falls back to /tmp so "<dir>/vsil-<16hex>.silkit" fits sun_path.
+    {
+        StartBoundaryDirectory root;
+        fs::path long_tmp = root.path;
+        constexpr std::size_t kMaxSunPath = sizeof(sockaddr_un::sun_path) - 1;
+        while (long_tmp.native().size() + 1 + 11 + 1 + 28 <= kMaxSunPath)
+        {
+            long_tmp /= "abcdefghij";
+        }
+        fs::create_directories(long_tmp);
+
+        const RunnerEnvGuard tmpdir("TMPDIR");
+        CHECK(::setenv("TMPDIR", long_tmp.c_str(), 1) == 0);
+
+        RunSocketDir dir;
+        dir.ensure_created();
+        CHECK(dir.path().rfind("/tmp/vsil-", 0) == 0);
+        const fs::path created = dir.path();
+        dir.cleanup();
+        CHECK(!fs::exists(created));
+    }
+#endif
 }
