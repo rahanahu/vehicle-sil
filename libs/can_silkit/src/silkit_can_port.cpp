@@ -302,24 +302,11 @@ bool SilKitCanPort::resolve_and_free_corr_slot(std::uint16_t tag, std::uint64_t&
     return true;
 }
 
-void SilKitCanPort::reclaim_corr_slot_if_unused(std::uint16_t tag) noexcept
+bool SilKitCanPort::reclaim_corr_slot_if_unused(std::uint16_t tag) noexcept
 {
-    const std::uint16_t slot = static_cast<std::uint16_t>(tag & kCorrSlotMask);
-    const std::uint8_t gen = static_cast<std::uint8_t>((tag >> kCorrSlotBits) & kCorrGenMask);
-    if (slot >= corr_slots_.size())
-    {
-        return;
-    }
-    CorrSlot& entry = corr_slots_[slot];
-    if (!entry.in_use || entry.gen != gen)
-    {
-        return;
-    }
-    entry.in_use = false;
-    entry.gen = static_cast<std::uint8_t>((entry.gen + 1u) & kCorrGenMask);
-    const std::size_t tail = (corr_free_head_ + corr_free_count_) % corr_free_ring_.size();
-    corr_free_ring_[tail] = slot;
-    ++corr_free_count_;
+    std::uint64_t unusedToken = 0;
+    SimTime unusedSendTime{};
+    return resolve_and_free_corr_slot(tag, unusedToken, unusedSendTime);
 }
 
 void SilKitCanPort::clear_corr_table() noexcept
@@ -355,7 +342,7 @@ void SilKitCanPort::push_event(const PortEvent& event, bool acknowledgement) noe
 {
     // Every outstanding frame will bring an acknowledgement: keep a place for each of them
     // (acknowledgements already queued are counted twice, which only errs on the safe side).
-    const std::size_t reserve = acknowledgement ? 0 : outstanding_.load(std::memory_order_relaxed);
+    const std::size_t reserve = acknowledgement ? 0 : outstanding_.load(std::memory_order_acquire);
     if (real_time_)
     {
         static_cast<void>(real_time_->push_event(event, reserve)); // counts a refusal or a full queue
@@ -531,6 +518,7 @@ SendResult SilKitCanPort::send(const TimedFrame& frame, std::uint64_t token)
         }
         context = encode_correlated_send_time(frame.time, *tag);
     }
+    outstanding_.fetch_add(1, std::memory_order_release);
     try
     {
         controller_.SendFrame(out, context);
@@ -539,14 +527,39 @@ SendResult SilKitCanPort::send(const TimedFrame& frame, std::uint64_t token)
     {
         if (tag)
         {
-            const std::lock_guard lock(corr_mutex_);
-            reclaim_corr_slot_if_unused(*tag);
+            bool reclaimed = false;
+            {
+                const std::lock_guard lock(corr_mutex_);
+                reclaimed = reclaim_corr_slot_if_unused(*tag);
+            }
+            if (!reclaimed)
+            {
+                // on_transmit() already resolved this slot synchronously and queued a correlated
+                // PortEvent; treat the send as Accepted so outstanding_ and channel notifications
+                // stay conserved without double-notifying or stealing another frame's outstanding.
+                sent_.fetch_add(1, std::memory_order_relaxed);
+                return SendResult::Accepted;
+            }
         }
+        outstanding_.fetch_sub(1, std::memory_order_acq_rel);
         send_failed_.fetch_add(1, std::memory_order_relaxed);
         return SendResult::Failed;
     }
+    catch (...)
+    {
+        bool rollBackOutstanding = true;
+        if (tag)
+        {
+            const std::lock_guard lock(corr_mutex_);
+            rollBackOutstanding = reclaim_corr_slot_if_unused(*tag);
+        }
+        if (rollBackOutstanding)
+        {
+            outstanding_.fetch_sub(1, std::memory_order_acq_rel);
+        }
+        throw;
+    }
     sent_.fetch_add(1, std::memory_order_relaxed);
-    outstanding_.fetch_add(1, std::memory_order_relaxed);
     return SendResult::Accepted;
 }
 

@@ -5,6 +5,7 @@
 #include "fake_ethernet_controller.hpp"
 #include "test_harness.hpp"
 
+#include "vehicle_sil/eth/channel.hpp"
 #include "vehicle_sil/eth_silkit/silkit_eth_port.hpp"
 
 #include <chrono>
@@ -482,10 +483,13 @@ TEST_CASE(silkit_eth_port_does_not_leak_correlation_slots_on_overflow_or_send_ex
         controller.throw_on_send = false;
         controller.callback_then_throw = true;
         controller.callback_time = 2ms;
-        CHECK(port.send(TimedFrame{at(2ms), frame}, 555) == SendResult::Failed);
-        CHECK_EQ(port.statistics().outstanding, 0u);
-        // Draining the event emitted before the throw must not underflow outstanding.
-        static_cast<void>(release_events(port, at(3ms)));
+        // on_transmit() already resolved the slot and committed the correlated event before the
+        // exception, so send() returns Accepted and outstanding remains balanced.
+        CHECK(port.send(TimedFrame{at(2ms), frame}, 555) == SendResult::Accepted);
+        CHECK_EQ(port.statistics().outstanding, 1u);
+        const auto committed = release_events(port, at(3ms));
+        CHECK_EQ(committed.size(), 1u);
+        CHECK((committed[0] == PortEvent{PortEvent::Kind::TransmitCompleted, at(2ms), 0, at(2ms), 555, true}));
         CHECK_EQ(port.statistics().outstanding, 0u);
 
         controller.callback_then_throw = false;
@@ -496,6 +500,68 @@ TEST_CASE(silkit_eth_port_does_not_leak_correlation_slots_on_overflow_or_send_ex
         CHECK((events[0] == PortEvent{PortEvent::Kind::TransmitCompleted, at(4ms), 0, at(3ms), 777, true}));
         CHECK_EQ(port.statistics().outstanding, 0u);
     }
+}
+
+TEST_CASE(silkit_eth_port_callback_then_throw_with_in_flight_frame_and_channel)
+{
+    DeferredEthernetController controller;
+    SilKitEthPort port(controller);
+    port.start();
+    vehicle_sil::eth::Channel channel(port);
+    std::vector<vehicle_sil::eth::TransmitEvent> txEvents;
+    channel.on_transmit([&](const vehicle_sil::eth::TransmitEvent& ev) { txEvents.push_back(ev); });
+    vehicle_sil::step::Member& m = channel;
+    m.start(std::nullopt);
+
+    const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+    auto stepChannel = [&](SimTime now, auto&& app) {
+        m.begin(now);
+        m.receive(now);
+        m.process();
+        app();
+        m.flush();
+    };
+
+    // Step 1ms: Frame A (token 100) sent and remains in flight.
+    stepChannel(at(1ms), [&] { CHECK(channel.send(frame, 100) == vehicle_sil::eth::SendStatus::Ok); });
+    CHECK_EQ(port.statistics().outstanding, 1u);
+    CHECK_EQ(channel.statistics().outstanding, 1u);
+
+    // Step 2ms: Frame B (token 200) triggers callback_then_throw inside SendFrame().
+    controller.callback_then_throw = true;
+    controller.callback_time = 2ms;
+    stepChannel(at(2ms), [&] { CHECK(channel.send(frame, 200) == vehicle_sil::eth::SendStatus::Ok); });
+    controller.callback_then_throw = false;
+    // Port treated Frame B as Accepted (single notification path), so Frame A is undisturbed.
+    CHECK_EQ(port.statistics().sent, 2u);
+    CHECK_EQ(port.statistics().send_failed, 0u);
+    CHECK_EQ(port.statistics().outstanding, 2u);
+    CHECK_EQ(channel.statistics().frames_sent, 2u);
+    CHECK_EQ(channel.statistics().frames_dropped, 0u);
+    CHECK_EQ(channel.statistics().outstanding, 2u);
+
+    // Step 3ms: Frame B's single Completed notification arrives; Frame A stays outstanding == 1.
+    stepChannel(at(3ms), [] {});
+    CHECK_EQ(txEvents.size(), 1u);
+    CHECK((txEvents[0] ==
+           vehicle_sil::eth::TransmitEvent{vehicle_sil::eth::TransmitEvent::Kind::Completed, 200, at(2ms), at(2ms)}));
+    CHECK_EQ(port.statistics().outstanding, 1u);
+    CHECK_EQ(channel.statistics().outstanding, 1u);
+
+    // Frame A is acknowledged at 3ms; step 4ms delivers Frame A and balances conservation to 0.
+    controller.ack_index(0, sk::EthernetTransmitStatus::Transmitted, 3ms);
+    stepChannel(at(4ms), [] {});
+    CHECK_EQ(txEvents.size(), 2u);
+    CHECK((txEvents[1] ==
+           vehicle_sil::eth::TransmitEvent{vehicle_sil::eth::TransmitEvent::Kind::Completed, 100, at(1ms), at(3ms)}));
+    CHECK_EQ(port.statistics().outstanding, 0u);
+    const auto& s = channel.statistics();
+    CHECK_EQ(s.outstanding, 0u);
+    CHECK_EQ(s.transmit_completed, 2u);
+    CHECK_EQ(s.transmit_failed, 0u);
+    CHECK_EQ(s.frames_sent + s.frames_dropped,
+             s.transmit_completed + s.transmit_failed + s.transmit_event_overflows + s.port_event_overflows +
+                 s.outstanding);
 }
 
 TEST_CASE(silkit_eth_port_uncorrelated_ack_overflow_does_not_decrement_outstanding)

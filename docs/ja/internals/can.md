@@ -325,7 +325,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 
 ## 仮想バス（`VirtualCanBus`）
 
-`attach()`（およびエンドポイントごとに `inbox_capacity`、`event_capacity`、`transmit_queue_capacity` を上書きする `attach(VirtualCanBusEndpointOptions)`。`0` は `VirtualCanBusOptions` を継承）が、バス上の 1 つの CAN コントローラーにあたるポートを作ります。`Endpoint::transmit_capabilities()` は `TransmitCapabilities::Correlated` を返し、`Endpoint::outstanding()` は終端のポートイベントがまだ解放（または `EventOverflow` として計上）されていない受け付け済みフレーム数を返します。仮想バスは 1 つのスレッドから使います。
+`attach()`（およびエンドポイントごとに `inbox_capacity`、`event_capacity`、`transmit_queue_capacity` を上書きする `attach(VirtualCanBusEndpointOptions)`。`0` は `VirtualCanBusOptions` を継承し、`transmit_queue_capacity > event_capacity` のとき `attach()` は `std::invalid_argument` を投げる）が、バス上の 1 つの CAN コントローラーにあたるポートを作ります。`Endpoint::transmit_capabilities()` は `TransmitCapabilities::Correlated` を返し、`Endpoint::outstanding()` は終端のポートイベントがまだ解放（または `EventOverflow` として計上）されていない受け付け済みフレーム数を返します。仮想バスは 1 つのスレッドから使います。
 
 ### タイミングの有無
 
@@ -334,7 +334,12 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 | タイミングなし（既定） | 時刻 t で送信したフレームを、他の全ポートが時刻 t のまま受信し（調停と送信時間はない）、送信したポートには対応付きの `TransmitCompleted` イベント（`time = t`、`send_time = t`、`token`、`correlated = true`）が積まれる（より後のステップ `T' > t` で解放）。 |
 | タイミングあり（`VirtualCanBusOptions::timing`） | フレームは下の「バスのタイミング」のルールでバスに出て、他のポートは送信の終わりの時刻でフレームを、送信したポートは同じ時刻の対応付き `TransmitCompleted` を受信する。 |
 
-ポートごとの送信キュー（`transmit_queue_capacity`、タイミングありの既定は `64`、タイミングなしでは指定しない限り `0` = 無制限）が満杯（`outstanding_ >= limit`）なら `send()` は `QueueFull` を返します。タイミングありで数えるのは送信してバスを決めた時点でまだ始まっていないフレーム（`Host` は送信する前に同じステップの受信を取り出すので、ステップの時刻の状態）、タイミングなしで数えるのは次ステップの解放待ちになっている未確認フレームです。エンドポイントのイベントキューがあふれた場合は、捨てた送信確認を数えて `OverflowCollector` 経由で `PortEvent::Kind::EventOverflow` を出します。
+`QueueFull` を決める送信キュー容量には 2 つの異なる設定があります。
+
+- **バスモデルの FIFO 容量（`VirtualCanBusTiming::transmit_queue_capacity`、既定 `64`）**: `CanBusSimulatorOptions::transmit_queue_capacity` に相当します。タイミングありで、送信してバスを決めた時点でまだ送信が始まっていないフレームが送信側ごとの FIFO 上限に達すると、`send()` は `QueueFull` を返します（`Host` は送信する前に同じステップの受信を取り出すので、ステップの時刻の状態です）。
+- **エンドポイントごとの未確認フレーム上限（`VirtualCanBusEndpointOptions::transmit_queue_capacity`、既定 `0` = 無制限）**: `> 0` のとき、タイミングの有無、通信断、`FaultAction::TransmitFailed` にかかわらず、`outstanding_ >= limit` であれば `Endpoint::send()` は `QueueFull` を返します。
+
+エンドポイントのイベントキューがあふれた場合は、捨てた送信確認を数えて `OverflowCollector` 経由で `PortEvent::Kind::EventOverflow` を出します。
 
 タイミングありのバスは遅れて決めます。どれかのポートが `now` より前のフレームかイベントを取り出すとき、`now` より前に始まる送信をすべて決めます。
 
@@ -354,7 +359,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 |---|---|---|
 | `Deliver` | 通常どおり。 | — |
 | `Drop` | `Accepted` を返して、バスの他のポートに配送しない。 | フレームはバスを占有してからどこにも配送されない（送信したポートは `TransmitCompleted` を受信する）。 |
-| `Duplicate` | 同じ時刻で 2 回配送する（最初の 1 つだけが `correlated = true` と呼び出し元の `token` を持ち、複製側は `correlated = false, token = 0` で、どちらも `send_time` は保持する）。 | 2 回送信する。 |
+| `Duplicate` | 同じ時刻で 2 回配送する（タイミングなしでは対応付き `TransmitCompleted` を 1 つ出す）。 | 2 回送信する（最初の 1 つだけが `correlated = true` と呼び出し元の `token` を持ち、複製側は `correlated = false, token = 0` で、どちらも `send_time` は保持する）。 |
 | `Delay` | 時刻 + 遅れで配送する。 | 送信した時刻 + 遅れからバスを争う。 |
 | `QueueFull`、`Failed` | その結果を返して配送しない。 | — |
 | `FaultAction::transmit_failed()` | `Accepted` を返してどこにも配送せず、送信側に送信時刻の `TransmitFailed` を出す（非同期の送信失敗）。 | バスを使わない。 |
@@ -667,7 +672,7 @@ vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--lo
 ## ソース互換性と ABI
 
 - **追加によるソース互換性**: 1 引数版の `Port::send(frame)` と `RawChannel::send(frame)` は 2 引数版とともに残っており、1 引数版の `send()` だけをオーバーライドする独自の `Port` 派生クラスは `TransmitCapabilities::None` としてそのままコンパイルできます。また、`0xA5` 送信時刻エンコードは `0xA6` とともに引き続き受け入れられ、`PortEvent`、`TapRecord`、`*Options`、`*Statistics` の新しいフィールドはすべて既定メンバー初期化子付きで末尾に追加されているため、既存の集成体初期化も有効なままです。
-- **ABI への影響**: `can::Port`（`transmit_capabilities()`、2 引数版 `send()`）と `can::Steppable`（`bind_port()`）への仮想関数追加は vtable 配置を変え、`PortEvent`、`TapRecord`、`RawChannelOptions`、`RawChannelStatistics`、`VirtualCanBusEndpointOptions`、`RawChannel`、`SilKitCanPort` へのフィールド追加は構造体・クラスのメモリ配置を変えます。利用側は更新後のヘッダーに対して再コンパイルしてください。
+- **ABI への影響**: `can::Port`（`transmit_capabilities()`、2 引数版 `send()`）と `can::Steppable`（`bind_port()`）への仮想関数追加は vtable 配置を変え、`PortEvent`、`TapRecord`、`RawChannelOptions`、`RawChannelStatistics`、`SilKitCanPortStatistics`、`VirtualCanBus::Endpoint`、`RawChannel`、`SilKitCanPort` へのフィールド追加は構造体・クラスのメモリ配置を変えます。利用側は更新後のヘッダーに対して再コンパイルしてください。
 
 ## 関連するドキュメント
 

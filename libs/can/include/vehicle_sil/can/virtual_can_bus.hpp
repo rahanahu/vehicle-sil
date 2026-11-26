@@ -96,8 +96,9 @@ struct VirtualCanBusEndpointOptions
     std::size_t inbox_capacity = 0;
     /// Event queue capacity (0: use VirtualCanBusOptions::inbox_capacity).
     std::size_t event_capacity = 0;
-    /// Maximum unacknowledged frames (0: with timing, use VirtualCanBusTiming::transmit_queue_capacity;
-    /// without timing, unlimited).
+    /// Maximum unacknowledged frames allowed at this endpoint (0: no endpoint-level limit;
+    /// with timing, VirtualCanBusTiming::transmit_queue_capacity still bounds the bus-model FIFO).
+    /// Must not exceed the effective event_capacity (std::invalid_argument).
     std::size_t transmit_queue_capacity = 0;
 };
 
@@ -232,14 +233,14 @@ public:
         std::size_t allocate_tx_slot(SimTime send_time, std::uint64_t token, bool lost, bool correlated) noexcept;
         TxSlot release_tx_slot(std::size_t slot) noexcept;
         Endpoint(VirtualCanBus& bus, std::size_t index, std::size_t capacity, std::size_t event_capacity,
-                 std::size_t staged_capacity, std::size_t transmit_capacity, std::size_t slot_capacity);
+                 std::size_t staged_capacity, std::size_t endpoint_transmit_limit, std::size_t slot_capacity);
 
         VirtualCanBus& bus_;
         std::size_t index_;
         StepInbox<Frame> inbox_;
         StepInbox<PortEvent> events_;
         StepInbox<Staged> staged_; ///< with timing: sent, not yet handed to the bus model (by ready time)
-        std::size_t transmit_capacity_ = 0;
+        std::size_t endpoint_transmit_limit_ = 0; ///< 0: unlimited at endpoint (caps outstanding_)
         std::vector<TxSlot> tx_slots_;
         std::vector<std::size_t> free_slots_;
         std::optional<SimTime> released_before_; ///< `now` of the last release_before() (frames before it are gone)

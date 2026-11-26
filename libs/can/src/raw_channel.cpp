@@ -184,9 +184,12 @@ void RawChannel::on_port_event(const PortEvent& event)
         return;
     case PortEvent::Kind::EventOverflow: {
         statistics_.port_event_overflows += event.count;
-        const std::size_t dropped =
-            static_cast<std::size_t>(std::min<std::uint64_t>(statistics_.outstanding, event.count));
-        statistics_.outstanding -= dropped;
+        if (transmit_capabilities() == TransmitCapabilities::Correlated)
+        {
+            const std::size_t dropped =
+                static_cast<std::size_t>(std::min<std::uint64_t>(statistics_.outstanding, event.count));
+            statistics_.outstanding -= dropped;
+        }
         return;
     }
     case PortEvent::Kind::TransmitCompleted:

@@ -1052,17 +1052,17 @@ TEST_CASE(netsim_correlates_same_id_burst_queue_full_and_reset_cancellation_with
     // as untagged_requests (never unwrapped negative).
     vehicle_sil::unit::InProcessRegistry registry;
     constexpr const char* kNet = "CorrCAN";
-    constexpr SimTime kEnd = SimTime{} + 40ms;
+    constexpr SimTime kStopTime = SimTime{} + 40ms;
 
     vehicle_sil::SimulationControllerOptions controllerOptions;
     controllerOptions.registry_uri = registry.uri;
     controllerOptions.required_participants = {"Sim", "Sender", "Foreign"};
-    controllerOptions.stop_at = kEnd - SimTime{} + 20ms;
+    controllerOptions.stop_at = kStopTime - SimTime{} + 20ms;
     SimulationController controller(controllerOptions);
 
     // Simulator participant with small per-controller transmit queue (2).
     ParticipantRuntime simRuntime(
-        coordinated_options("Sim", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kEnd}));
+        coordinated_options("Sim", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
     CanBusSimulatorOptions simOpts;
     simOpts.default_bitrate = 250'000;
     simOpts.transmit_queue_capacity = 2;
@@ -1071,7 +1071,7 @@ TEST_CASE(netsim_correlates_same_id_burst_queue_full_and_reset_cancellation_with
 
     // Sender participant using SilKitCanPort + RawChannel (0xA6 correlated tokens).
     ParticipantRuntime senderRuntime(
-        coordinated_options("Sender", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kEnd}));
+        coordinated_options("Sender", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
     auto* senderCtrl = senderRuntime.participant().CreateCanController("CAN", kNet);
     SilKitCanPortOptions portOpts;
     portOpts.bitrate = 250'000;
@@ -1119,7 +1119,7 @@ TEST_CASE(netsim_correlates_same_id_burst_queue_full_and_reset_cancellation_with
 
     // Foreign participant sending one legacy 0xA5 frame and one forged high-residue 0xA6 at t == 0.
     ParticipantRuntime foreignRuntime(
-        coordinated_options("Foreign", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kEnd}));
+        coordinated_options("Foreign", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
     auto* foreignCtrl = foreignRuntime.participant().CreateCanController("CAN", kNet);
     foreignRuntime.add_communication_ready_handler([&] { foreignCtrl->Start(); });
     foreignRuntime.set_step_handler([&](SimTime now, SimDuration) {
@@ -1193,16 +1193,16 @@ TEST_CASE(netsim_rejects_backward_unwrapped_0xA6_at_600s_and_round_trips_past_40
 {
     vehicle_sil::unit::InProcessRegistry registry;
     constexpr const char* kNet = "WrapCAN";
-    constexpr SimTime kEnd = SimTime{} + 1200s;
+    constexpr SimTime kStopTime = SimTime{} + 1200s;
 
     vehicle_sil::SimulationControllerOptions controllerOptions;
     controllerOptions.registry_uri = registry.uri;
     controllerOptions.required_participants = {"Sim", "Sender", "Foreign"};
-    controllerOptions.stop_at = kEnd - SimTime{} + 20s;
+    controllerOptions.stop_at = kStopTime - SimTime{} + 20s;
     SimulationController controller(controllerOptions);
 
     ParticipantRuntime simRuntime(
-        coordinated_options("Sim", registry.uri, VirtualTimeOptions{10s, std::nullopt, kEnd}));
+        coordinated_options("Sim", registry.uri, VirtualTimeOptions{10s, std::nullopt, kStopTime}));
     CanBusSimulatorOptions simOpts;
     simOpts.default_bitrate = 250'000;
     simOpts.future_limit = 1s; // effective symmetric window limit = max(1s, 10s) = 10s
@@ -1210,7 +1210,7 @@ TEST_CASE(netsim_rejects_backward_unwrapped_0xA6_at_600s_and_round_trips_past_40
     simRuntime.set_step_handler([&](SimTime now, SimDuration step) { simulator.step(now, step); });
 
     ParticipantRuntime senderRuntime(
-        coordinated_options("Sender", registry.uri, VirtualTimeOptions{10s, std::nullopt, kEnd}));
+        coordinated_options("Sender", registry.uri, VirtualTimeOptions{10s, std::nullopt, kStopTime}));
     auto* senderCtrl = senderRuntime.participant().CreateCanController("CAN", kNet);
     SilKitCanPortOptions portOpts;
     portOpts.bitrate = 250'000;
@@ -1251,7 +1251,7 @@ TEST_CASE(netsim_rejects_backward_unwrapped_0xA6_at_600s_and_round_trips_past_40
     vehicle_sil::can::bind_host(senderRuntime, senderHost);
 
     ParticipantRuntime foreignRuntime(
-        coordinated_options("Foreign", registry.uri, VirtualTimeOptions{10s, std::nullopt, kEnd}));
+        coordinated_options("Foreign", registry.uri, VirtualTimeOptions{10s, std::nullopt, kStopTime}));
     auto* foreignCtrl = foreignRuntime.participant().CreateCanController("CAN", kNet);
     foreignRuntime.add_communication_ready_handler([&] { foreignCtrl->Start(); });
     foreignRuntime.set_step_handler([&](SimTime now, SimDuration) {
@@ -1308,7 +1308,7 @@ TEST_CASE(netsim_standalone_executable_correlates_raw_channel_tokens)
 {
     vehicle_sil::unit::InProcessRegistry registry;
     constexpr const char* kNet = "CAN1";
-    constexpr SimTime kEnd = SimTime{} + 30ms;
+    constexpr SimTime kStopTime = SimTime{} + 30ms;
 
     const auto config = scratch_dir() / "netsim-corr.yaml";
     const auto logFile = scratch_dir() / "netsim-corr.log";
@@ -1332,18 +1332,21 @@ TEST_CASE(netsim_standalone_executable_correlates_raw_channel_tokens)
         {
             break;
         }
-        CHECK(!child.poll() && std::chrono::steady_clock::now() <= deadline);
+        if (child.poll() || std::chrono::steady_clock::now() > deadline)
+        {
+            throw std::runtime_error("vehicle_sil_can_bus_simulator did not come up, log: " + logFile.string());
+        }
         std::this_thread::sleep_for(10ms);
     }
 
     vehicle_sil::SimulationControllerOptions controllerOptions;
     controllerOptions.registry_uri = registry.uri;
     controllerOptions.required_participants = {"NetworkSimulator", "Sender", "Receiver"};
-    controllerOptions.stop_at = kEnd - SimTime{} + 20ms;
+    controllerOptions.stop_at = kStopTime - SimTime{} + 20ms;
     SimulationController controller(controllerOptions);
 
     ParticipantRuntime senderRuntime(
-        coordinated_options("Sender", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kEnd}));
+        coordinated_options("Sender", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
     auto* senderCtrl = senderRuntime.participant().CreateCanController("CAN", kNet);
     SilKitCanPortOptions portOpts;
     portOpts.bitrate = 250'000;
@@ -1372,7 +1375,7 @@ TEST_CASE(netsim_standalone_executable_correlates_raw_channel_tokens)
     vehicle_sil::can::bind_host(senderRuntime, senderHost);
 
     ParticipantRuntime receiverRuntime(
-        coordinated_options("Receiver", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kEnd}));
+        coordinated_options("Receiver", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
     auto* receiverCtrl = receiverRuntime.participant().CreateCanController("CAN", kNet);
     SilKitCanPort receiverPort(*receiverCtrl, portOpts);
     receiverRuntime.add_communication_ready_handler([&] { receiverPort.start(); });

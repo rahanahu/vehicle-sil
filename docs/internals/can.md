@@ -325,7 +325,7 @@ If you call `stop()` from inside a step, it only tells the thread to end. A late
 
 ## Virtual bus (`VirtualCanBus`)
 
-`attach()` (and `attach(VirtualCanBusEndpointOptions)`, which overrides per-endpoint `inbox_capacity`, `event_capacity`, and `transmit_queue_capacity`; `0` inherits from `VirtualCanBusOptions`) creates a port that stands for one CAN controller on the bus. `Endpoint::transmit_capabilities()` returns `TransmitCapabilities::Correlated`, and `Endpoint::outstanding()` returns the number of accepted frames whose terminal port event has not yet been released (or accounted for by `EventOverflow`). Use a virtual bus from one thread.
+`attach()` (and `attach(VirtualCanBusEndpointOptions)`, which overrides per-endpoint `inbox_capacity`, `event_capacity`, and `transmit_queue_capacity`; `0` inherits from `VirtualCanBusOptions`, and `attach()` throws `std::invalid_argument` if `transmit_queue_capacity > event_capacity`) creates a port that stands for one CAN controller on the bus. `Endpoint::transmit_capabilities()` returns `TransmitCapabilities::Correlated`, and `Endpoint::outstanding()` returns the number of accepted frames whose terminal port event has not yet been released (or accounted for by `EventOverflow`). Use a virtual bus from one thread.
 
 ### With and without timing
 
@@ -334,7 +334,12 @@ If you call `stop()` from inside a step, it only tells the thread to end. A late
 | Without timing (default) | A frame sent at time t is delivered to every other port at time t (no arbitration and no transmission time), and a correlated `TransmitCompleted` event (`time = t`, `send_time = t`, `token`, `correlated = true`) is queued for the sending port (released in a later step `T' > t`). |
 | With timing (`VirtualCanBusOptions::timing`) | Frames go on the bus by the rules in "Bus timing" below. The other ports receive the frame at the end of its transmission, and the sending port receives a correlated `TransmitCompleted` with the same time. |
 
-`send()` returns `QueueFull` when the port's transmit queue (`transmit_queue_capacity`, default `64` with timing, `0` = unlimited without timing unless set) is full (`outstanding_ >= limit`). With timing, the queue counts frames that were sent but whose transmission had not started when the bus was resolved (`Host` takes the step's received frames before it sends, so this is the state at the step's time); without timing, it bounds unacknowledged frames waiting for release in the next step. If the per-endpoint event queue overflows, dropped acknowledgements are counted and emitted as `PortEvent::Kind::EventOverflow` via `OverflowCollector`.
+Two distinct transmit queue capacities govern `QueueFull`:
+
+- **Bus-model FIFO capacity (`VirtualCanBusTiming::transmit_queue_capacity`, default `64`)**: Analogous to `CanBusSimulatorOptions::transmit_queue_capacity`. With timing enabled, `send()` returns `QueueFull` when the bus model's per-sender FIFO holds frames that were sent but whose transmission had not started when the bus was resolved (`Host` takes the step's received frames before it sends, so this is the state at the step's time).
+- **Per-endpoint unacknowledged-frame bound (`VirtualCanBusEndpointOptions::transmit_queue_capacity`, default `0` = unlimited)**: When `> 0`, `Endpoint::send()` returns `QueueFull` whenever `outstanding_ >= limit`, across both timed and timing-less modes, outages, and `FaultAction::TransmitFailed`.
+
+If the per-endpoint event queue overflows, dropped acknowledgements are counted and emitted as `PortEvent::Kind::EventOverflow` via `OverflowCollector`.
 
 A bus with timing is resolved lazily. When any port takes frames or events before `now`, the bus resolves every transmission that starts before `now`.
 
@@ -354,7 +359,7 @@ With `Endpoint::set_fault_injector(f)`, `f` returns a `FaultAction` for each fra
 |---|---|---|
 | `Deliver` | As usual. | — |
 | `Drop` | Returns `Accepted` and does not deliver the frame to the other ports on the bus. | The frame occupies the bus, then is delivered nowhere (the sending port receives `TransmitCompleted`). |
-| `Duplicate` | Delivers the frame twice with the same time (only the primary copy sets `correlated = true` with the caller's `token`; the duplicate sets `correlated = false, token = 0`, while both keep `send_time`). | Sends the frame twice. |
+| `Duplicate` | Delivers the frame twice with the same time (and emits 1 correlated `TransmitCompleted` without timing). | Sends the frame twice (copy 0 sets `correlated = true` with the caller's `token`; copy 1 sets `correlated = false, token = 0`, while both keep `send_time`). |
 | `Delay` | Delivers the frame at its time + the delay. | The frame contends for the bus from its send time + the delay. |
 | `QueueFull`, `Failed` | Returns that result and does not deliver the frame. | — |
 | `FaultAction::transmit_failed()` | Returns `Accepted`, delivers the frame nowhere and gives the sender a `TransmitFailed` at the send time (an asynchronous transmit failure). | Does not use the bus. |
@@ -667,7 +672,7 @@ The simulator is designed so that swapping the executable is all it takes. Both 
 ## Source compatibility and ABI
 
 - **Source-compatible additions**: The 1-argument `Port::send(frame)` and `RawChannel::send(frame)` overloads remain alongside the 2-argument token overloads, custom `Port` subclasses that override only 1-argument `send()` continue to compile with `TransmitCapabilities::None`, `0xA5` send-time encoding remains accepted alongside `0xA6`, and new fields on `PortEvent`, `TapRecord`, `*Options`, and `*Statistics` are appended at the end with default member initializers so existing aggregate initializers remain valid.
-- **ABI impact**: Adding virtual functions to `can::Port` (`transmit_capabilities()`, 2-arg `send()`) and `can::Steppable` (`bind_port()`) changes vtable layouts, and adding fields to `PortEvent`, `TapRecord`, `RawChannelOptions`, `RawChannelStatistics`, `VirtualCanBusEndpointOptions`, `RawChannel`, and `SilKitCanPort` changes struct and class layouts. Recompile all consumers against the updated headers.
+- **ABI impact**: Adding virtual functions to `can::Port` (`transmit_capabilities()`, 2-arg `send()`) and `can::Steppable` (`bind_port()`) changes vtable layouts, and adding fields to `PortEvent`, `TapRecord`, `RawChannelOptions`, `RawChannelStatistics`, `SilKitCanPortStatistics`, `VirtualCanBus::Endpoint`, `RawChannel`, and `SilKitCanPort` changes struct and class layouts. Recompile all consumers against the updated headers.
 
 ## See also
 

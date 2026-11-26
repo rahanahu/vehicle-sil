@@ -226,7 +226,6 @@ private:
 
     void take_event(const PortEvent& event) noexcept;
     void push_transmit_event(const TransmitEvent& event) noexcept;
-    void drain_flush_failed_before(SimTime limit) noexcept;
     void take_frame(const TimedFrame& frame);
     [[nodiscard]] bool accepted(const Frame& frame) const noexcept;
     SendStatus queue(std::span<const std::uint8_t> bytes, std::uint64_t token);
@@ -242,8 +241,7 @@ private:
     bool pulls_ = false;                 ///< receive() has been called
     std::vector<Outgoing> outgoing_;     ///< this step's sends (capacity send_capacity)
     std::vector<TransmitEvent> flush_failed_;    ///< rejections from previous flush() (capacity send_capacity)
-    std::vector<TransmitEvent> transmit_events_; ///< merged transmit events for this step (capacity transmit_event_capacity_)
-    std::size_t flush_failed_cursor_ = 0;
+    std::vector<TransmitEvent> transmit_events_; ///< correlated port events for this step (capacity transmit_event_capacity_)
     ChannelStatistics statistics_;
     SimTime now_{};
     Phase phase_ = Phase::Setup;

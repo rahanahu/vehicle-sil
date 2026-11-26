@@ -235,15 +235,6 @@ void Channel::push_transmit_event(const TransmitEvent& event) noexcept
     transmit_events_.push_back(event);
 }
 
-void Channel::drain_flush_failed_before(SimTime limit) noexcept
-{
-    while (flush_failed_cursor_ < flush_failed_.size() && flush_failed_[flush_failed_cursor_].time < limit)
-    {
-        push_transmit_event(flush_failed_[flush_failed_cursor_]);
-        ++flush_failed_cursor_;
-    }
-}
-
 void Channel::take_event(const PortEvent& event) noexcept
 {
     switch (event.kind)
@@ -316,23 +307,7 @@ void Channel::take_frame(const TimedFrame& frame)
 
 void Channel::receive(SimTime now)
 {
-    flush_failed_cursor_ = 0;
-    port_->release_events_before(now, [this](const PortEvent& event) {
-        drain_flush_failed_before(event.time);
-        take_event(event);
-    });
-    drain_flush_failed_before(now);
-    if (flush_failed_cursor_ == flush_failed_.size())
-    {
-        flush_failed_.clear();
-    }
-    else if (flush_failed_cursor_ > 0)
-    {
-        flush_failed_.erase(flush_failed_.begin(),
-                            flush_failed_.begin() + static_cast<std::ptrdiff_t>(flush_failed_cursor_));
-    }
-    flush_failed_cursor_ = 0;
-
+    port_->release_events_before(now, [this](const PortEvent& event) { take_event(event); });
     port_->release_before(now, [this](const TimedFrame& frame) { take_frame(frame); });
     // The port releases by time, then arrival. Equal times from different senders arrive in an
     // order that depends on the backend's threads; the source address makes it deterministic
@@ -361,8 +336,7 @@ void Channel::receive(SimTime now)
 
 void Channel::process()
 {
-    for (const TransmitEvent& event : transmit_events_)
-    {
+    const auto emitTransmit = [this](const TransmitEvent& event) {
         if (event.kind == TransmitEvent::Kind::Completed)
         {
             ++statistics_.transmit_completed;
@@ -379,7 +353,35 @@ void Channel::process()
         {
             handler(event);
         }
+    };
+
+    // Merge previous step's due flush() rejections (fail.time < now_) before the first port event
+    // whose time is strictly greater, preserving send order at equal timestamps and monotonic time
+    // order on timed backends.
+    std::size_t pi = 0;
+    std::size_t fi = 0;
+    while (pi < transmit_events_.size() || (fi < flush_failed_.size() && flush_failed_[fi].time < now_))
+    {
+        const bool haveDueFailure = fi < flush_failed_.size() && flush_failed_[fi].time < now_;
+        if (pi < transmit_events_.size() && (!haveDueFailure || transmit_events_[pi].time <= flush_failed_[fi].time))
+        {
+            emitTransmit(transmit_events_[pi++]);
+        }
+        else
+        {
+            emitTransmit(flush_failed_[fi++]);
+        }
     }
+    transmit_events_.clear();
+    if (fi >= flush_failed_.size())
+    {
+        flush_failed_.clear();
+    }
+    else if (fi > 0)
+    {
+        flush_failed_.erase(flush_failed_.begin(), flush_failed_.begin() + static_cast<std::ptrdiff_t>(fi));
+    }
+
     for (const std::uint32_t index : order_)
     {
         const TimedFrame& frame = received_[index];
@@ -406,7 +408,18 @@ void Channel::flush()
         {
             ++statistics_.outstanding;
         }
-        flush_failed_.push_back(TransmitEvent{TransmitEvent::Kind::Failed, token, now_, now_});
+        if (flush_failed_.size() < options_.send_capacity)
+        {
+            flush_failed_.push_back(TransmitEvent{TransmitEvent::Kind::Failed, token, now_, now_});
+        }
+        else
+        {
+            ++statistics_.transmit_event_overflows;
+            if (statistics_.outstanding > 0)
+            {
+                --statistics_.outstanding;
+            }
+        }
     };
     std::size_t i = 0;
     for (; i < outgoing_.size(); ++i)

@@ -286,3 +286,46 @@ TEST_CASE(virtual_bus_counts_events_beyond_the_event_queue)
     CHECK_EQ(events[2].count, 1u);
     CHECK_EQ(a.outstanding(), 0u);
 }
+
+TEST_CASE(virtual_bus_outage_and_transmit_failed_honor_endpoint_transmit_limit)
+{
+    for (const bool timing : {false, true})
+    {
+        // OutageDirection::Send respects endpoint transmit_queue_capacity without EventOverflow.
+        {
+            VirtualCanBus bus(timing ? timed() : VirtualCanBusOptions{});
+            auto& a = bus.attach(
+                vehicle_sil::can::VirtualCanBusEndpointOptions{.event_capacity = 2, .transmit_queue_capacity = 2});
+            a.add_outage(at(0ms), at(10ms), OutageDirection::Send);
+            CHECK(a.send(TimedFrame{at(1ms), frame(0x10)}, 0) == SendResult::Accepted);
+            CHECK(a.send(TimedFrame{at(1ms), frame(0x10)}, 1) == SendResult::Accepted);
+            CHECK(a.send(TimedFrame{at(1ms), frame(0x10)}, 2) == SendResult::QueueFull);
+            CHECK_EQ(a.outstanding(), 2u);
+            CHECK_EQ(a.outage_lost(), 2u);
+            CHECK_EQ(a.event_overflows(), 0u);
+            const auto evs = events_before(a, at(2ms));
+            CHECK_EQ(evs.size(), 2u);
+            CHECK(evs[0].kind == PortEvent::Kind::TransmitFailed && evs[0].correlated && evs[0].token == 0u);
+            CHECK(evs[1].kind == PortEvent::Kind::TransmitFailed && evs[1].correlated && evs[1].token == 1u);
+            CHECK_EQ(a.outstanding(), 0u);
+        }
+
+        // FaultAction::TransmitFailed respects endpoint transmit_queue_capacity without EventOverflow.
+        {
+            VirtualCanBus bus(timing ? timed() : VirtualCanBusOptions{});
+            auto& a = bus.attach(
+                vehicle_sil::can::VirtualCanBusEndpointOptions{.event_capacity = 2, .transmit_queue_capacity = 2});
+            a.set_fault_injector([](const TimedFrame&) { return FaultAction::transmit_failed(); });
+            CHECK(a.send(TimedFrame{at(1ms), frame(0x20)}, 10) == SendResult::Accepted);
+            CHECK(a.send(TimedFrame{at(1ms), frame(0x20)}, 20) == SendResult::Accepted);
+            CHECK(a.send(TimedFrame{at(1ms), frame(0x20)}, 30) == SendResult::QueueFull);
+            CHECK_EQ(a.outstanding(), 2u);
+            CHECK_EQ(a.event_overflows(), 0u);
+            const auto evs = events_before(a, at(2ms));
+            CHECK_EQ(evs.size(), 2u);
+            CHECK(evs[0].kind == PortEvent::Kind::TransmitFailed && evs[0].correlated && evs[0].token == 10u);
+            CHECK(evs[1].kind == PortEvent::Kind::TransmitFailed && evs[1].correlated && evs[1].token == 20u);
+            CHECK_EQ(a.outstanding(), 0u);
+        }
+    }
+}

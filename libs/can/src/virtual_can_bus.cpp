@@ -10,13 +10,14 @@
 namespace vehicle_sil::can {
 
 VirtualCanBus::Endpoint::Endpoint(VirtualCanBus& bus, std::size_t index, std::size_t capacity, std::size_t event_capacity,
-                                  std::size_t staged_capacity, std::size_t transmit_capacity, std::size_t slot_capacity)
+                                  std::size_t staged_capacity, std::size_t endpoint_transmit_limit,
+                                  std::size_t slot_capacity)
   : bus_(bus),
     index_(index),
     inbox_(capacity),
     events_(event_capacity),
     staged_(staged_capacity),
-    transmit_capacity_(transmit_capacity),
+    endpoint_transmit_limit_(endpoint_transmit_limit),
     tx_slots_(slot_capacity)
 {
     free_slots_.reserve(slot_capacity);
@@ -70,18 +71,24 @@ VirtualCanBus::Endpoint& VirtualCanBus::attach(VirtualCanBusEndpointOptions opti
     const std::size_t index = endpoints_.size();
     const std::size_t inboxCapacity = options.inbox_capacity > 0 ? options.inbox_capacity : options_.inbox_capacity;
     const std::size_t eventCapacity = options.event_capacity > 0 ? options.event_capacity : options_.inbox_capacity;
-    // Without timing the transmit queue stays empty (staged_ still needs capacity >= 1 for StepInbox).
-    const std::size_t transmitCapacity =
-        model_ ? (options.transmit_queue_capacity > 0 ? options.transmit_queue_capacity : model_->queue_capacity())
-               : options.transmit_queue_capacity;
-    const std::size_t stagedCapacity = model_ ? transmitCapacity : 1;
-    const std::size_t slotCapacity = model_ ? transmitCapacity : 0;
+    if (options.transmit_queue_capacity > eventCapacity)
+    {
+        throw std::invalid_argument(
+            "vehicle_sil::can::VirtualCanBus: transmit_queue_capacity must not exceed event_capacity");
+    }
+    // Without timing the bus-model queue stays empty (staged_ still needs capacity >= 1 for StepInbox).
+    // With timing, VirtualCanBusTiming::transmit_queue_capacity sizes the bus-model FIFO (analogous to
+    // CanBusSimulatorOptions::transmit_queue_capacity), while options.transmit_queue_capacity sets the
+    // per-endpoint unacknowledged-frame bound (analogous to SilKitCanPortOptions::transmit_queue_capacity).
+    const std::size_t busQueueCapacity = model_ ? model_->queue_capacity() : 0;
+    const std::size_t stagedCapacity = model_ ? busQueueCapacity : 1;
+    const std::size_t slotCapacity = busQueueCapacity;
     // Endpoint's constructor is private; make_unique cannot reach it.
-    endpoints_.push_back(std::unique_ptr<Endpoint>(
-        new Endpoint(*this, index, inboxCapacity, eventCapacity, stagedCapacity, transmitCapacity, slotCapacity)));
+    endpoints_.push_back(std::unique_ptr<Endpoint>(new Endpoint(
+        *this, index, inboxCapacity, eventCapacity, stagedCapacity, options.transmit_queue_capacity, slotCapacity)));
     if (model_)
     {
-        model_->add_sender(transmitCapacity); // index == the endpoint's index
+        model_->add_sender(); // index == the endpoint's index
     }
     return *endpoints_.back();
 }
@@ -119,7 +126,7 @@ SendResult VirtualCanBus::submit(Endpoint& from, const TimedFrame& frame, const 
     // (deciding the bus up to the step time) before it sends, so for hosts this is the queue at
     // the send time. (Not deciding here keeps a frame sent ahead of time, as tests inject them,
     // from freezing the bus up to its time.)
-    if (from.staged_.size() + model_->queued(from.index_) + copies > from.transmit_capacity_)
+    if (from.staged_.size() + model_->queued(from.index_) + copies > model_->queue_capacity())
     {
         return SendResult::QueueFull;
     }
@@ -334,6 +341,10 @@ SendResult VirtualCanBus::Endpoint::send(const TimedFrame& frame, std::uint64_t 
     {
         return SendResult::Failed;
     }
+    if (endpoint_transmit_limit_ > 0 && outstanding_ >= endpoint_transmit_limit_)
+    {
+        return SendResult::QueueFull;
+    }
     if (cut_off(frame.time, OutageDirection::Send))
     {
         bus_.check_causality(*this, frame);
@@ -357,26 +368,13 @@ SendResult VirtualCanBus::Endpoint::send(const TimedFrame& frame, std::uint64_t 
         {
             throw std::invalid_argument("vehicle_sil::can::VirtualCanBus: a fault delay must be > 0");
         }
-        bus_.check_causality(*this, TimedFrame{frame.time + action.delay, frame.frame});
+        bus_.deliver(*this, TimedFrame{frame.time + action.delay, frame.frame});
         break;
     case FaultAction::Kind::TransmitFailed:
         bus_.check_causality(*this, frame);
         transmit_failed(frame, token);
         return SendResult::Accepted;
     case FaultAction::Kind::Deliver:
-    case FaultAction::Kind::Duplicate:
-        bus_.check_causality(*this, frame);
-        break;
-    case FaultAction::Kind::Drop:
-        break;
-    }
-    if (transmit_capacity_ > 0 && outstanding_ >= transmit_capacity_)
-    {
-        return SendResult::QueueFull;
-    }
-    switch (action.kind)
-    {
-    case FaultAction::Kind::Deliver:
         bus_.deliver(*this, frame);
         break;
     case FaultAction::Kind::Drop:
@@ -384,13 +382,6 @@ SendResult VirtualCanBus::Endpoint::send(const TimedFrame& frame, std::uint64_t 
     case FaultAction::Kind::Duplicate:
         bus_.deliver(*this, frame);
         bus_.deliver(*this, frame);
-        break;
-    case FaultAction::Kind::Delay:
-        bus_.deliver(*this, TimedFrame{frame.time + action.delay, frame.frame});
-        break;
-    case FaultAction::Kind::QueueFull:
-    case FaultAction::Kind::Failed:
-    case FaultAction::Kind::TransmitFailed:
         break;
     }
     transmit_completed(frame, token);

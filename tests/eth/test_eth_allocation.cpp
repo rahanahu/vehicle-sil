@@ -133,3 +133,61 @@ TEST_CASE(steps_do_not_allocate)
     CHECK(receiver.statistics().frames_not_taken > 0u);
     CHECK_EQ(receiver.statistics().receive_overflows, 0u);
 }
+
+TEST_CASE(equal_now_flush_rejections_do_not_allocate)
+{
+    class AlwaysFailPort final : public vehicle_sil::eth::Port
+    {
+    public:
+        [[nodiscard]] vehicle_sil::eth::TimeDomain time_domain() const noexcept override
+        {
+            return vehicle_sil::eth::TimeDomain::Virtual;
+        }
+        [[nodiscard]] vehicle_sil::eth::TransmitCapabilities transmit_capabilities() const noexcept override
+        {
+            return vehicle_sil::eth::TransmitCapabilities::Correlated;
+        }
+        std::size_t release_before(SimTime, vehicle_sil::eth::FrameSink) override { return 0; }
+        vehicle_sil::eth::SendResult send(const TimedFrame&) override { return vehicle_sil::eth::SendResult::Failed; }
+        vehicle_sil::eth::SendResult send(const TimedFrame&, std::uint64_t) override
+        {
+            return vehicle_sil::eth::SendResult::Failed;
+        }
+    };
+
+    AlwaysFailPort port;
+    ChannelOptions options;
+    options.send_capacity = 2;
+    Channel channel(port, options);
+    std::size_t failedCallbacks = 0;
+    channel.on_transmit([&](const TransmitEvent& ev) {
+        if (ev.kind == TransmitEvent::Kind::Failed)
+        {
+            ++failedCallbacks;
+        }
+    });
+    vehicle_sil::step::Member& m = channel;
+    m.start(std::nullopt);
+    const auto frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+
+    auto stepAt = [&](SimTime now, std::uint64_t baseTok) {
+        m.begin(now);
+        m.receive(now);
+        m.process();
+        CHECK(channel.send(frame, baseTok) == SendStatus::Ok);
+        CHECK(channel.send(frame, baseTok + 1) == SendStatus::Ok);
+        m.flush();
+    };
+
+    g_allocations.store(0);
+    g_counting.store(true);
+    stepAt(SimTime{} + 1ms, 10);
+    stepAt(SimTime{} + 1ms, 20); // exceeds flush_failed_ capacity without reallocating
+    stepAt(SimTime{} + 2ms, 30);
+    g_counting.store(false);
+
+    CHECK_EQ(g_allocations.load(), 0u);
+    CHECK_EQ(failedCallbacks, 2u);
+    CHECK_EQ(channel.statistics().transmit_event_overflows, 2u);
+    CHECK_EQ(channel.statistics().outstanding, 2u);
+}

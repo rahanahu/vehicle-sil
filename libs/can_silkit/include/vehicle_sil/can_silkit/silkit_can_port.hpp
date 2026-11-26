@@ -207,8 +207,10 @@ private:
     std::optional<std::uint16_t> allocate_corr_slot(std::uint64_t token, SimTime send_time) noexcept;
     /// Resolves and immediately frees a correlation slot (caller holds corr_mutex_).
     bool resolve_and_free_corr_slot(std::uint16_t tag, std::uint64_t& token, SimTime& send_time) noexcept;
-    /// Rolls back a correlation slot on SendFrame() exception if not already freed (caller holds corr_mutex_).
-    void reclaim_corr_slot_if_unused(std::uint16_t tag) noexcept;
+    /// Rolls back a correlation slot on SendFrame() exception if not already freed (caller holds
+    /// corr_mutex_). Returns true if the slot was still in use and reclaimed; false if on_transmit()
+    /// already resolved and freed it.
+    bool reclaim_corr_slot_if_unused(std::uint16_t tag) noexcept;
     /// Resets the correlation table (caller holds corr_mutex_).
     void clear_corr_table() noexcept;
 

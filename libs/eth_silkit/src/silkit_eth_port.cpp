@@ -420,6 +420,9 @@ SendResult SilKitEthPort::send(const TimedFrame& frame, std::uint64_t token)
         std::copy(bytes.begin(), bytes.end(), padded.begin());
         out = SilKit::Util::Span<const std::uint8_t>(padded.data(), padded.size());
     }
+    // Increment outstanding_ before SendFrame() so a synchronous callback or concurrent
+    // observer sees the frame as in flight immediately.
+    outstanding_.fetch_add(1, std::memory_order_release);
     try
     {
         // corr_mutex_ is released before SendFrame() so synchronous trivial-sim callbacks in
@@ -428,22 +431,36 @@ SendResult SilKitEthPort::send(const TimedFrame& frame, std::uint64_t token)
     }
     catch (const std::exception&)
     {
+        bool reclaimed = false;
         {
             const std::lock_guard lock(corr_mutex_);
-            static_cast<void>(reclaim_if_unused_locked(slot, gen));
+            reclaimed = reclaim_if_unused_locked(slot, gen);
         }
-        send_failed_.fetch_add(1, std::memory_order_relaxed);
-        return SendResult::Failed;
+        if (reclaimed)
+        {
+            outstanding_.fetch_sub(1, std::memory_order_acq_rel);
+            send_failed_.fetch_add(1, std::memory_order_relaxed);
+            return SendResult::Failed;
+        }
+        // on_transmit() already resolved this slot and committed the correlated event:
+        // treat the frame as accepted so callers receive one notification and outstanding_
+        // stays balanced.
+        sent_.fetch_add(1, std::memory_order_relaxed);
+        return SendResult::Accepted;
     }
     catch (...)
     {
+        bool reclaimed = false;
         {
             const std::lock_guard lock(corr_mutex_);
-            static_cast<void>(reclaim_if_unused_locked(slot, gen));
+            reclaimed = reclaim_if_unused_locked(slot, gen);
+        }
+        if (reclaimed)
+        {
+            outstanding_.fetch_sub(1, std::memory_order_acq_rel);
         }
         throw;
     }
-    outstanding_.fetch_add(1, std::memory_order_release);
     sent_.fetch_add(1, std::memory_order_relaxed);
     return SendResult::Accepted;
 }

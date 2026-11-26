@@ -777,3 +777,58 @@ TEST_CASE(channel_conserves_outstanding_on_overflow_without_handler_and_on_uncor
                                     s.port_event_overflows + s.outstanding);
     }
 }
+
+TEST_CASE(channel_equal_now_flush_rejections_cap_buffer_and_conserve_outstanding)
+{
+    // A correlated port that always returns Failed so two flush() calls at equal now try to
+    // queue > send_capacity flush_failed_ entries.
+    class AlwaysFailCorrelatedPort final : public Port
+    {
+    public:
+        [[nodiscard]] TimeDomain time_domain() const noexcept override { return TimeDomain::Virtual; }
+        [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept override
+        {
+            return TransmitCapabilities::Correlated;
+        }
+        std::size_t release_before(SimTime, FrameSink) override { return 0; }
+        SendResult send(const TimedFrame&) override { return SendResult::Failed; }
+        SendResult send(const TimedFrame&, std::uint64_t) override { return SendResult::Failed; }
+    };
+
+    AlwaysFailCorrelatedPort port;
+    ChannelOptions options;
+    options.send_capacity = 2;
+    options.transmit_event_capacity = 1; // intentionally smaller than send_capacity (m3 check)
+    Channel ch(port, options);
+    std::vector<TransmitEvent> txEvents;
+    ch.on_transmit([&](const TransmitEvent& ev) { txEvents.push_back(ev); });
+    member(ch).start(std::nullopt);
+
+    const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+    // Two steps at equal timestamp 1ms: first queues 2 flush_failed_ (full), second overflows 2.
+    run_step(ch, at(1ms), [&] {
+        CHECK(ch.send(frame, 10) == SendStatus::Ok);
+        CHECK(ch.send(frame, 11) == SendStatus::Ok);
+    });
+    run_step(ch, at(1ms), [&] {
+        CHECK(ch.send(frame, 12) == SendStatus::Ok);
+        CHECK(ch.send(frame, 13) == SendStatus::Ok);
+    });
+    CHECK(txEvents.empty()); // none delivered at equal timestamp 1ms
+    CHECK_EQ(ch.statistics().frames_dropped, 4u);
+    CHECK_EQ(ch.statistics().transmit_event_overflows, 2u);
+    CHECK_EQ(ch.statistics().outstanding, 2u);
+
+    // Step at 2ms delivers the 2 retained flush_failed_ entries (even though transmit_event_capacity == 1).
+    run_step(ch, at(2ms), [] {});
+    CHECK_EQ(txEvents.size(), 2u);
+    CHECK((txEvents[0] == TransmitEvent{TransmitEvent::Kind::Failed, 10, at(1ms), at(1ms)}));
+    CHECK((txEvents[1] == TransmitEvent{TransmitEvent::Kind::Failed, 11, at(1ms), at(1ms)}));
+    const auto& s = ch.statistics();
+    CHECK_EQ(s.transmit_failed, 2u);
+    CHECK_EQ(s.transmit_event_overflows, 2u);
+    CHECK_EQ(s.outstanding, 0u);
+    CHECK_EQ(s.frames_sent + s.frames_dropped,
+             s.transmit_completed + s.transmit_failed + s.transmit_event_overflows + s.port_event_overflows +
+                 s.outstanding);
+}

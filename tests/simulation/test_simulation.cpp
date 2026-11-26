@@ -1477,6 +1477,157 @@ TEST_CASE(simulation_can_tx_completion_parity_timed_local_bench_and_netsim)
 #endif
 }
 
+// Pair 2 cross-step-boundary parity regression: at 125 kbps with 1 ms ECU & simulator steps and
+// port_transmit_queue_capacity = 1 / port_event_capacity = 1, an 8-byte extended frame sent at
+// t = 0 ms starts at 1 ms and finishes on the wire after 2 ms (tx.end > 2 ms). Sends at t = 1 ms
+// (while queued) and t = 2 ms (while on the wire after CanBusModel pop) must both hit port
+// QueueFull on LocalBench AND on SIL Kit + CanBusSimulator, with zero port_event_overflows and
+// identical TransmitEvent order, timestamps, and tokens.
+TEST_CASE(simulation_can_cross_step_tx_queue_limit_parity_timed_local_and_netsim)
+{
+    constexpr std::uint32_t kSlowBitrate = 125'000;
+    constexpr std::size_t kBusQueue = 64;
+    constexpr SimDuration kStep = 1ms;
+    constexpr std::uint32_t kExtId = 0x18FF1080u;
+
+    const auto make_ext_frame = [] {
+        can::Frame f;
+        f.id = kExtId;
+        f.format = can::IdFormat::Extended;
+        f.length = 8;
+        f.data = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+        return f;
+    };
+
+    class CrossStepSender
+    {
+    public:
+        CrossStepSender(Ecu& ecu, can::Frame frame) :
+          raw(ecu.can("CAN", can::RawChannelOptions{.send_capacity = 4,
+                                                    .port_event_capacity = 1,
+                                                    .port_transmit_queue_capacity = 1,
+                                                    .port_bitrate = kSlowBitrate})),
+          frame_(frame)
+        {
+            CHECK(raw.transmit_capabilities() == can::TransmitCapabilities::Correlated);
+            raw.on_transmit([this](const can::TransmitEvent& ev) { tx_events.push_back(ev); });
+            ecu.on_step([this](SimTime now) {
+                if (now == at(0ms))
+                {
+                    CHECK(raw.send(frame_, 0) == can::RawSendStatus::Ok);
+                }
+                else if (now == at(1ms))
+                {
+                    // Frame 0 is queued (not yet started): must hit port QueueFull.
+                    CHECK(raw.send(frame_, 1) == can::RawSendStatus::Ok);
+                }
+                else if (now == at(2ms))
+                {
+                    // Frame 0 started at 1 ms and ends at > 2 ms (on the wire, popped from CanBusModel):
+                    // must still hit port QueueFull because outstanding == 1.
+                    CHECK(raw.send(frame_, 2) == can::RawSendStatus::Ok);
+                }
+                else if (now == at(3ms))
+                {
+                    // Frame 0 completed before 3 ms (outstanding == 0): must be accepted.
+                    CHECK(raw.send(frame_, 3) == can::RawSendStatus::Ok);
+                }
+            });
+        }
+
+        can::RawChannel& raw;
+        std::vector<can::TransmitEvent> tx_events;
+
+    private:
+        can::Frame frame_;
+    };
+
+    struct CrossStepResult
+    {
+        std::vector<can::TransmitEvent> tx;
+        can::RawChannelStatistics stats;
+    };
+
+    const can::Frame frame = make_ext_frame();
+
+    // Backend 1: LocalBench with timing-enabled VirtualCanBus.
+    CrossStepResult local;
+    {
+        can::VirtualCanBusOptions busOptions;
+        busOptions.timing = can::VirtualCanBusTiming{kSlowBitrate, kBusQueue, kStep};
+        vehicle_sil::LocalBench bench(busOptions);
+        auto& ecu = bench.add_ecu("Sender", kStep);
+        auto& sender = ecu.emplace<CrossStepSender>(ecu, frame);
+        bench.run_for(8ms);
+        local = {sender.tx_events, sender.raw.statistics()};
+    }
+
+    CHECK_EQ(local.tx.size(), 4u);
+    CHECK(local.tx[0] == (can::TransmitEvent{can::TransmitEvent::Kind::Failed, 1, kExtId, at(1ms), at(1ms)}));
+    CHECK(local.tx[1] == (can::TransmitEvent{can::TransmitEvent::Kind::Failed, 2, kExtId, at(2ms), at(2ms)}));
+    CHECK(local.tx[2].kind == can::TransmitEvent::Kind::Completed && local.tx[2].token == 0 &&
+          local.tx[2].id == kExtId && local.tx[2].send_time == at(0ms) && local.tx[2].time > at(2ms) &&
+          local.tx[2].time < at(3ms));
+    CHECK(local.tx[3].kind == can::TransmitEvent::Kind::Completed && local.tx[3].token == 3 &&
+          local.tx[3].id == kExtId && local.tx[3].send_time == at(3ms) && local.tx[3].time > at(5ms) &&
+          local.tx[3].time < at(6ms));
+    CHECK_EQ(local.stats.frames_sent, 2u);
+    CHECK_EQ(local.stats.frames_dropped, 2u);
+    CHECK_EQ(local.stats.transmit_completed, 2u);
+    CHECK_EQ(local.stats.transmit_failed, 2u);
+    CHECK_EQ(local.stats.port_event_overflows, 0u);
+    CHECK_EQ(local.stats.transmit_event_overflows, 0u);
+    CHECK_EQ(local.stats.outstanding, 0u);
+
+#ifdef VEHICLE_SIL_HAS_CAN_NETSIM
+    // Backend 2: Simulation on SIL Kit + CanBusSimulator.
+    CrossStepResult netsim;
+    {
+        Simulation sim(SilKitOptions{.other_participants = {"CanNetSim"}});
+        auto& sender = sim.add<CrossStepSender>("Sender", kStep, frame);
+
+        vehicle_sil::ParticipantRuntimeOptions simOpts;
+        simOpts.participant_name = "CanNetSim";
+        simOpts.registry_uri = sim.registry_uri();
+        simOpts.lifecycle_mode = vehicle_sil::LifecycleMode::Coordinated;
+        simOpts.virtual_time = vehicle_sil::VirtualTimeOptions{kStep, std::nullopt, std::nullopt};
+        vehicle_sil::ParticipantRuntime simRuntime(simOpts);
+        can::CanBusSimulator simulator(simRuntime.participant(), {"CAN"},
+                                       can::CanBusSimulatorOptions{.transmit_queue_capacity = kBusQueue});
+        simRuntime.set_step_handler([&simulator](SimTime now, SimDuration step) { simulator.step(now, step); });
+
+        std::exception_ptr netSimError;
+        {
+            std::jthread simThread([&] {
+                try
+                {
+                    simRuntime.start(30s);
+                    static_cast<void>(simRuntime.wait_until_finished(scaled_timeout(60s)));
+                }
+                catch (...)
+                {
+                    netSimError = std::current_exception();
+                }
+            });
+            sim.run_for(8ms);
+        }
+        simRuntime.stop("test cleanup");
+        CHECK(!netSimError);
+        CHECK_EQ(simulator.statistics("CAN").bitrate, kSlowBitrate);
+        netsim = {sender.tx_events, sender.raw.statistics()};
+    }
+
+    CHECK(netsim.tx == local.tx);
+    CHECK_EQ(netsim.stats.frames_sent, 2u);
+    CHECK_EQ(netsim.stats.frames_dropped, 2u);
+    CHECK_EQ(netsim.stats.transmit_completed, 2u);
+    CHECK_EQ(netsim.stats.transmit_failed, 2u);
+    CHECK_EQ(netsim.stats.port_event_overflows, 0u);
+    CHECK_EQ(netsim.stats.transmit_event_overflows, 0u);
+    CHECK_EQ(netsim.stats.outstanding, 0u);
+#endif
+}
+
 // Shutdown with outstanding > 0: stopping while frames are unacknowledged leaves outstanding
 // observable on both CAN RawChannel and Ethernet Channel across LocalBench and SIL Kit.
 TEST_CASE(simulation_shutdown_leaves_outstanding_observable_for_can_and_ethernet)

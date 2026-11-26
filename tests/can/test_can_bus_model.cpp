@@ -786,11 +786,11 @@ TEST_CASE(virtual_bus_with_timing_lets_a_frame_sent_when_the_bus_frees_up_compet
 TEST_CASE(virtual_bus_duplicate_correlates_only_first_copy_and_per_endpoint_capacities_apply)
 {
     // With timing: FaultAction::Duplicate produces 2 bus transmissions, only copy 0 is correlated.
-    VirtualCanBus timedBus(timed(250'000, {}, 64));
-    auto& a = timedBus.attach(vehicle_sil::can::VirtualCanBusEndpointOptions{.transmit_queue_capacity = 2});
+    VirtualCanBus timedBus(timed(250'000, {}, 2));
+    auto& a = timedBus.attach();
     auto& r = timedBus.attach();
     a.set_fault_injector([](const TimedFrame&) { return FaultAction::duplicate(); });
-    CHECK(a.send({at(0ms), ext(0x100)}, 0) == SendResult::Accepted); // takes 2 places in queue of 2
+    CHECK(a.send({at(0ms), ext(0x100)}, 0) == SendResult::Accepted); // takes 2 places in bus-model FIFO of 2
     CHECK(a.send({at(0ms), ext(0x100)}, 1) == SendResult::QueueFull);
     CHECK_EQ(a.outstanding(), 1u); // only 1 correlated outcome expected
     const auto frames = release(r, at(10ms));
@@ -806,6 +806,38 @@ TEST_CASE(virtual_bus_duplicate_correlates_only_first_copy_and_per_endpoint_capa
     CHECK_EQ(events[1].token, 0u);
     CHECK(events[1].send_time == std::optional<SimTime>(at(0ms)));
     CHECK_EQ(a.outstanding(), 0u);
+
+    // attach() rejects transmit_queue_capacity > effective event_capacity.
+    CHECK(vehicle_sil::unit::throws<std::invalid_argument>([&] {
+        static_cast<void>(
+            timedBus.attach(vehicle_sil::can::VirtualCanBusEndpointOptions{.event_capacity = 2, .transmit_queue_capacity = 8}));
+    }));
+
+    // Timed cross-step test: 125 kbps, simulator_step = 1ms, event_capacity = 1, transmit_queue_capacity = 1.
+    // An 8-byte extended frame takes 1048 us at 125 kbps: sent at 0ms, starts at 1ms, finishes at 2.048ms (> 2ms).
+    // At t = 2ms it is still unacknowledged, so a second send must return QueueFull with 0 event overflows.
+    {
+        VirtualCanBus slowBus(timed(125'000, 1ms, 64));
+        auto& sa = slowBus.attach(
+            vehicle_sil::can::VirtualCanBusEndpointOptions{.event_capacity = 1, .transmit_queue_capacity = 1});
+        auto& sr = slowBus.attach();
+        CHECK(sa.send({at(0ms), ext(0x100, 8, 1)}, 0) == SendResult::Accepted);
+        CHECK_EQ(sa.outstanding(), 1u);
+        CHECK(release_events(sa, at(2ms)).empty());
+        CHECK(release(sr, at(2ms)).empty());
+        CHECK_EQ(sa.outstanding(), 1u);
+        CHECK(sa.send({at(2ms), ext(0x100, 8, 2)}, 1) == SendResult::QueueFull);
+        CHECK_EQ(sa.outstanding(), 1u);
+        CHECK_EQ(sa.event_overflows(), 0u);
+
+        const auto slowEvents = release_events(sa, at(3ms));
+        CHECK_EQ(slowEvents.size(), 1u);
+        CHECK(slowEvents[0].kind == PortEvent::Kind::TransmitCompleted);
+        CHECK(slowEvents[0].correlated && slowEvents[0].token == 0u);
+        CHECK(slowEvents[0].time > at(2ms));
+        CHECK_EQ(sa.outstanding(), 0u);
+        CHECK_EQ(sa.event_overflows(), 0u);
+    }
 
     // Without timing: per-endpoint transmit_queue_capacity caps outstanding frames.
     VirtualCanBus plainBus;

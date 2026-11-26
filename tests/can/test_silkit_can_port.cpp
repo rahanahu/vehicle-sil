@@ -6,8 +6,10 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/can/host.hpp"
+#include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/can/real_time_clock.hpp"
 #include "vehicle_sil/can/real_time_driver.hpp"
+#include "vehicle_sil/can/step_driver.hpp"
 #include "vehicle_sil/can_silkit/send_time_tag.hpp"
 #include "vehicle_sil/can_silkit/silkit_can_port.hpp"
 
@@ -717,11 +719,15 @@ TEST_CASE(silkit_port_correlates_out_of_order_acks_handles_overflow_without_slot
         CHECK(events[2].correlated && events[2].token == 111u);
         CHECK_EQ(port.statistics().outstanding, 0u);
 
-        // Callback-then-throw must not double-free correlation slot or underflow outstanding.
+        // Callback-then-throw: on_transmit() already committed a correlated event synchronously, so
+        // send() treats it as Accepted (no double-free, no underflow, no duplicate failure event).
         controller.callback_then_throw = true;
-        CHECK(port.send(TimedFrame{at(10ms), f}, 777) == SendResult::Failed);
+        CHECK(port.send(TimedFrame{at(10ms), f}, 777) == SendResult::Accepted);
         controller.callback_then_throw = false;
-        static_cast<void>(release_events(port, at(20ms)));
+        CHECK_EQ(port.statistics().outstanding, 1u);
+        const auto cbEvents = release_events(port, at(20ms));
+        CHECK_EQ(cbEvents.size(), 1u);
+        CHECK(cbEvents[0].correlated && cbEvents[0].token == 777u);
         CHECK_EQ(port.statistics().outstanding, 0u);
 
         // Fill correlation table (1024 slots) without acknowledging -> 1025th returns QueueFull.
@@ -842,4 +848,75 @@ TEST_CASE(silkit_port_counts_uncorrelated_acks_preserves_outstanding_and_recover
     CHECK(finalEvents[0].time == SimTime{} + delayedAckTime);
     CHECK(!finalEvents[1].correlated);
     CHECK_EQ(port.statistics().outstanding, 0u);
+}
+
+TEST_CASE(silkit_port_callback_then_throw_with_inflight_frame_conserves_raw_channel_outstanding)
+{
+    DeferredCanController controller;
+    SilKitCanPort port(controller);
+    port.start();
+
+    vehicle_sil::can::RawChannel raw;
+    vehicle_sil::can::Host host;
+    host.add(raw, port);
+
+    std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+    raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+
+    Frame f;
+    f.id = 0x100;
+    f.format = IdFormat::Standard;
+    f.length = 1;
+    f.data = {0x55};
+
+    host.set_application([&](SimTime now) {
+        if (now == at(0ms))
+        {
+            // Frame A stays in flight (unacknowledged).
+            CHECK(raw.send(f, 10) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == at(1ms))
+        {
+            CHECK_EQ(raw.statistics().outstanding, 1u);
+            CHECK_EQ(port.statistics().outstanding, 1u);
+            // Frame B triggers synchronous on_transmit() inside SendFrame() and then throws.
+            controller.callback_then_throw = true;
+            CHECK(raw.send(f, 20) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == at(2ms))
+        {
+            controller.callback_then_throw = false;
+            // Frame B delivered exactly once as Completed; frame A remains outstanding == 1.
+            CHECK_EQ(txEvents.size(), 1u);
+            CHECK(txEvents[0].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+            CHECK_EQ(txEvents[0].token, 20u);
+            CHECK_EQ(raw.statistics().outstanding, 1u);
+            CHECK_EQ(port.statistics().outstanding, 1u);
+            // Now acknowledge frame A.
+            controller.ack_index(0, sk::CanTransmitStatus::Transmitted, 2ms);
+        }
+    });
+
+    vehicle_sil::can::StepDriver driver;
+    driver.add(host, 1ms);
+    driver.run_until(at(4ms));
+
+    CHECK(!host.failed());
+    CHECK_EQ(txEvents.size(), 2u);
+    CHECK(txEvents[0].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+    CHECK_EQ(txEvents[0].token, 20u);
+    CHECK(txEvents[1].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+    CHECK_EQ(txEvents[1].token, 10u);
+
+    const auto& rs = raw.statistics();
+    CHECK_EQ(rs.frames_sent, 2u);
+    CHECK_EQ(rs.frames_dropped, 0u);
+    CHECK_EQ(rs.transmit_completed, 2u);
+    CHECK_EQ(rs.transmit_failed, 0u);
+    CHECK_EQ(rs.outstanding, 0u);
+    CHECK_EQ(rs.frames_sent + rs.frames_dropped,
+             rs.transmit_completed + rs.transmit_failed + rs.transmit_event_overflows + rs.port_event_overflows +
+                 rs.outstanding);
+    CHECK_EQ(port.statistics().outstanding, 0u);
+    CHECK_EQ(port.statistics().send_failed, 0u);
 }
