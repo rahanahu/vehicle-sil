@@ -50,6 +50,38 @@ struct ChannelOptions
     /// With Accept::Addressed: further destination addresses that are accepted (multicast
     /// groups).
     std::vector<MacAddress> multicast{};
+    /// Transmit events kept for one step (0: max(1024, 2 * send_capacity,
+    /// port_transmit_queue_capacity + send_capacity)). Further events of that step are dropped
+    /// and counted (ChannelStatistics::transmit_event_overflows). Allocated once.
+    std::size_t transmit_event_capacity = 0;
+    /// Receive inbox capacity of the port below (0: 2 * receive_capacity). Read by
+    /// Channel::port_inbox_capacity().
+    std::size_t port_inbox_capacity = 0;
+    /// Event queue capacity of the port below (0: max(1024, 2 * send_capacity, effective
+    /// transmit_event_capacity, port_transmit_queue_capacity)). Read by
+    /// Channel::port_event_capacity().
+    std::size_t port_event_capacity = 0;
+    /// Maximum unacknowledged frames at the port below (0: backend default; > 0: at most
+    /// port_event_capacity when port_event_capacity > 0).
+    std::size_t port_transmit_queue_capacity = 0;
+};
+
+/// Outcome of one frame accepted by Channel::send(), reported in a later step's process() stage
+/// via on_transmit().
+struct TransmitEvent
+{
+    enum class Kind : std::uint8_t
+    {
+        Completed, ///< The backend transmitted the frame.
+        Failed,    ///< The port rejected the frame in flush() or the backend did not transmit it.
+    };
+
+    Kind kind = Kind::Completed;
+    std::uint64_t token = 0; ///< Caller token passed to Channel::send(..., token) (0 for 1-arg send()).
+    SimTime send_time{};     ///< Step time of the originating send() call.
+    SimTime time{};          ///< Backend completion/failure time (or send_time for a flush() rejection).
+
+    [[nodiscard]] friend bool operator==(const TransmitEvent&, const TransmitEvent&) noexcept = default;
 };
 
 /// Outcome of Channel::send().
@@ -81,6 +113,10 @@ struct ChannelStatistics
     std::uint64_t port_event_overflows = 0; ///< Port events: events the port dropped because its
                                             ///< event queue was full (transmit_completed and
                                             ///< transmit_failed miss them).
+    std::uint64_t transmit_event_overflows = 0; ///< Transmit events dropped because
+                                                ///< transmit_event_capacity was reached.
+    std::uint64_t outstanding = 0; ///< Accepted frames awaiting a transmit event (including
+                                   ///< in-step sends and undelivered flush rejections).
 };
 
 /// Raw Ethernet frames of an application on one port: no protocol stack, no timers. It is a
@@ -116,23 +152,23 @@ class Channel final : public step::Member
 {
 public:
     using FrameHandler = std::function<void(const TimedFrame& frame)>;
+    using TransmitHandler = std::function<void(const TransmitEvent& event)>;
 
     /// `port` must outlive the channel. std::invalid_argument for a capacity of 0, a
-    /// max_frame_bytes outside [kHeaderBytes, Frame::kCapacity], or Accept::Addressed without
-    /// a mac.
+    /// max_frame_bytes outside [kHeaderBytes, Frame::kCapacity], Accept::Addressed without a mac,
+    /// or port_event_capacity > 0 with port_transmit_queue_capacity > port_event_capacity.
     explicit Channel(Port& port, ChannelOptions options = {});
     /// Throws what the constructor throws for `options` (for a caller that must know before it
     /// makes the port).
     static void validate(const ChannelOptions& options);
     /// The receive inbox a port needs so that it drops nothing while no step of the channel
-    /// gets more than `options.receive_capacity` frames: twice that. When a step at time t
-    /// starts, the inbox holds the frames the step takes (times before t) and, from senders
-    /// whose step at t ran first, frames with the time t, which belong to the next step. A
-    /// sender cannot be further ahead (the hosts step in time order; SIL Kit's time
-    /// synchronization does the same), so each part is at most receive_capacity, whatever the
-    /// senders' step sizes. Frames from senders outside the time synchronization are not
-    /// covered. Saturates instead of overflowing.
+    /// gets more than `options.receive_capacity` frames: `options.port_inbox_capacity` when > 0,
+    /// otherwise twice `options.receive_capacity`. Saturates instead of overflowing.
     [[nodiscard]] static std::size_t port_inbox_capacity(const ChannelOptions& options) noexcept;
+    /// The event queue capacity a port needs: `options.port_event_capacity` when > 0, otherwise
+    /// max(1024, 2 * send_capacity, effective transmit_event_capacity,
+    /// port_transmit_queue_capacity). Saturates instead of overflowing.
+    [[nodiscard]] static std::size_t port_event_capacity(const ChannelOptions& options) noexcept;
     Channel(const Channel&) = delete;
     Channel& operator=(const Channel&) = delete;
 
@@ -140,15 +176,26 @@ public:
     /// an empty handler; std::logic_error once the host has started.
     void on_frame(FrameHandler handler);
 
+    /// Adds `handler` for correlated transmit outcomes (and flush rejections), called in the
+    /// process stage of a later step before on_frame(). std::invalid_argument for an empty
+    /// handler; std::logic_error once the host has started.
+    void on_transmit(TransmitHandler handler);
+
     /// Takes the frame for this step's flush (see the class comment and SendStatus; a rejected
     /// frame is counted in sends_rejected). std::logic_error outside a step.
     SendStatus send(std::span<const std::uint8_t> bytes);
+    SendStatus send(std::span<const std::uint8_t> bytes, std::uint64_t token);
     SendStatus send(const Frame& frame);
+    SendStatus send(const Frame& frame, std::uint64_t token);
 
     /// The next frame of this step that receive() has not returned yet; std::nullopt when there
     /// is none (or before the receive stage). std::logic_error outside a step.
     [[nodiscard]] std::optional<TimedFrame> receive();
 
+    [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept
+    {
+        return port_->transmit_capabilities();
+    }
     [[nodiscard]] const ChannelStatistics& statistics() const noexcept { return statistics_; }
     [[nodiscard]] const ChannelOptions& options() const noexcept { return options_; }
 
@@ -171,19 +218,32 @@ private:
         InStep, ///< begin() .. flush()
     };
 
+    struct Outgoing
+    {
+        Frame frame;
+        std::uint64_t token = 0;
+    };
+
     void take_event(const PortEvent& event) noexcept;
+    void push_transmit_event(const TransmitEvent& event) noexcept;
+    void drain_flush_failed_before(SimTime limit) noexcept;
     void take_frame(const TimedFrame& frame);
     [[nodiscard]] bool accepted(const Frame& frame) const noexcept;
-    SendStatus queue(std::span<const std::uint8_t> bytes);
+    SendStatus queue(std::span<const std::uint8_t> bytes, std::uint64_t token);
 
     Port* port_;
     ChannelOptions options_;
+    std::size_t transmit_event_capacity_ = 0;
     std::vector<FrameHandler> handlers_;
+    std::vector<TransmitHandler> transmit_handlers_;
     std::vector<TimedFrame> received_;   ///< this step's frames, as they arrived (capacity receive_capacity)
     std::vector<std::uint32_t> order_;   ///< indices into received_, in the order they are handed over
     std::size_t next_taken_ = 0;         ///< order_[next_taken_] is the next for receive()
     bool pulls_ = false;                 ///< receive() has been called
-    std::vector<Frame> outgoing_;      ///< this step's sends (capacity send_capacity)
+    std::vector<Outgoing> outgoing_;     ///< this step's sends (capacity send_capacity)
+    std::vector<TransmitEvent> flush_failed_;    ///< rejections from previous flush() (capacity send_capacity)
+    std::vector<TransmitEvent> transmit_events_; ///< merged transmit events for this step (capacity transmit_event_capacity_)
+    std::size_t flush_failed_cursor_ = 0;
     ChannelStatistics statistics_;
     SimTime now_{};
     Phase phase_ = Phase::Setup;

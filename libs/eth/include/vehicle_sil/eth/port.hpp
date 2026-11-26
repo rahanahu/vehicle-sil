@@ -10,11 +10,22 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace vehicle_sil::eth {
 
 using TimeDomain = step::TimeDomain;
 using Wakeup = step::Wakeup;
+
+/// Whether a port emits token-correlated per-frame transmit outcomes.
+enum class TransmitCapabilities : std::uint8_t
+{
+    /// Backend does not emit correlated per-frame transmit outcomes.
+    None,
+    /// Every Accepted send produces a token-correlated TransmitCompleted or TransmitFailed
+    /// event (or EventOverflow / shutdown outstanding).
+    Correlated,
+};
 
 /// Synchronous outcome of Port::send().
 enum class SendResult : std::uint8_t
@@ -52,6 +63,9 @@ struct PortEvent
     Kind kind = Kind::TransmitCompleted;
     SimTime time{};
     std::uint64_t count = 0; ///< ReceiveOverflow: frames dropped. EventOverflow: events dropped.
+    std::optional<SimTime> send_time{}; ///< TransmitCompleted, TransmitFailed: originating send time when correlated.
+    std::uint64_t token = 0;            ///< TransmitCompleted, TransmitFailed: caller token when `correlated` is true.
+    bool correlated = false;            ///< True when `token` and `send_time` identify the originating send() call.
 
     [[nodiscard]] friend bool operator==(const PortEvent&, const PortEvent&) noexcept = default;
 };
@@ -82,12 +96,25 @@ public:
 
     [[nodiscard]] virtual TimeDomain time_domain() const noexcept = 0;
 
+    /// Whether this port emits token-correlated transmit events.
+    [[nodiscard]] virtual TransmitCapabilities transmit_capabilities() const noexcept
+    {
+        return TransmitCapabilities::None;
+    }
+
     /// Calls `sink` for every received frame with time < `now` (see above) and removes it.
     /// Returns the number of frames released.
     virtual std::size_t release_before(SimTime now, FrameSink sink) = 0;
 
     /// Hands `frame` to the backend.
     virtual SendResult send(const TimedFrame& frame) = 0;
+
+    /// Hands `frame` to the backend with caller-chosen `token` for correlated transmit events.
+    virtual SendResult send(const TimedFrame& frame, std::uint64_t token)
+    {
+        static_cast<void>(token);
+        return send(frame);
+    }
 
     /// Calls `sink` for every event with time < `now` and removes it. Returns the number of
     /// events released. The default reports none.

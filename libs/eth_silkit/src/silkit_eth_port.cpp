@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <exception>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -13,23 +15,79 @@ namespace {
 namespace sk = SilKit::Services::Ethernet;
 
 constexpr const char* kWho = "vehicle_sil::eth::SilKitEthPort: ";
+constexpr std::size_t kMinCorrTableCapacity = 1024;
+constexpr std::uint64_t kContextMarker = 0xA7ull << 56;
+constexpr std::uint64_t kContextMarkerMask = 0xFFull << 56;
+constexpr std::uint32_t kGenMask = 0x00FF'FFFFu;
 
-std::size_t checked_capacity(std::size_t capacity, const char* name)
+static_assert(sizeof(void*) == sizeof(std::uint64_t),
+              "SilKitEthPort 0xA7 userContext correlation requires 64-bit pointers");
+
+void* encode_context(std::uint32_t slot, std::uint32_t gen) noexcept
 {
-    if (capacity == 0)
+    const std::uint64_t bits =
+        kContextMarker | (static_cast<std::uint64_t>(gen & kGenMask) << 32) | static_cast<std::uint64_t>(slot);
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(bits));
+}
+
+bool decode_context(const void* context, std::uint32_t& slot, std::uint32_t& gen) noexcept
+{
+    const auto bits = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(context));
+    if ((bits & kContextMarkerMask) != kContextMarker)
     {
-        throw std::invalid_argument(std::string(kWho) + name + " must be > 0");
+        return false;
     }
-    return capacity;
+    slot = static_cast<std::uint32_t>(bits & 0xFFFF'FFFFull);
+    gen = static_cast<std::uint32_t>((bits >> 32) & kGenMask);
+    return true;
+}
+
+std::size_t validated_tx_queue_capacity(const SilKitEthPortOptions& options)
+{
+    SilKitEthPort::validate(options);
+    return options.transmit_queue_capacity;
 }
 
 } // namespace
 
+void SilKitEthPort::validate(const SilKitEthPortOptions& options)
+{
+    if (options.inbox_capacity == 0)
+    {
+        throw std::invalid_argument(std::string(kWho) + "inbox_capacity must be > 0");
+    }
+    if (options.event_capacity == 0)
+    {
+        throw std::invalid_argument(std::string(kWho) + "event_capacity must be > 0");
+    }
+    if (options.transmit_queue_capacity > options.event_capacity)
+    {
+        throw std::invalid_argument(std::string(kWho) + "transmit_queue_capacity must be <= event_capacity");
+    }
+    if (options.event_capacity > std::numeric_limits<std::uint32_t>::max())
+    {
+        throw std::invalid_argument(std::string(kWho) + "event_capacity exceeds 32-bit correlation slot limit");
+    }
+}
+
 SilKitEthPort::SilKitEthPort(sk::IEthernetController& controller, SilKitEthPortOptions options) :
   controller_(controller),
-  inbox_(checked_capacity(options.inbox_capacity, "inbox_capacity")),
-  events_(checked_capacity(options.event_capacity, "event_capacity"))
+  transmit_queue_capacity_(validated_tx_queue_capacity(options)),
+  inbox_(options.inbox_capacity),
+  events_(options.event_capacity)
 {
+    const std::size_t corrCapacity =
+        std::max<std::size_t>({options.event_capacity, options.transmit_queue_capacity, kMinCorrTableCapacity});
+    corr_slots_.resize(corrCapacity);
+    corr_free_ring_.resize(corrCapacity);
+    for (std::size_t i = 0; i < corrCapacity; ++i)
+    {
+        corr_free_ring_[i] = static_cast<std::uint32_t>(i);
+    }
+    corr_free_head_ = 0;
+    corr_free_tail_ = 0;
+    corr_free_count_ = corrCapacity;
+
     const std::lock_guard lock(lifecycle_mutex_);
     try
     {
@@ -149,9 +207,81 @@ void SilKitEthPort::close() noexcept
     }
     inbox_.clear();
     events_.clear();
-    const std::lock_guard overflowLock(overflow_mutex_);
-    overflow_.clear();
-    event_overflow_.clear();
+    {
+        const std::lock_guard overflowLock(overflow_mutex_);
+        overflow_.clear();
+        event_overflow_.clear();
+    }
+    {
+        const std::lock_guard corrLock(corr_mutex_);
+        clear_corr_table_locked();
+    }
+    // Keep outstanding_ inspectable after close() so callers can detect in-flight frames lost
+    // at shutdown.
+}
+
+bool SilKitEthPort::allocate_slot_locked(std::uint64_t token, SimTime send_time, std::uint32_t& out_slot,
+                                         std::uint32_t& out_gen) noexcept
+{
+    if (corr_free_count_ == 0)
+    {
+        return false;
+    }
+    const std::uint32_t slot = corr_free_ring_[corr_free_head_];
+    corr_free_head_ = (corr_free_head_ + 1) % corr_free_ring_.size();
+    --corr_free_count_;
+    CorrelationSlot& entry = corr_slots_[slot];
+    entry.token = token;
+    entry.send_time = send_time;
+    entry.in_use = true;
+    out_slot = slot;
+    out_gen = entry.generation;
+    return true;
+}
+
+bool SilKitEthPort::resolve_and_free_locked(std::uint32_t slot, std::uint32_t gen, std::uint64_t& out_token,
+                                            SimTime& out_send_time) noexcept
+{
+    if (slot >= corr_slots_.size())
+    {
+        return false;
+    }
+    CorrelationSlot& entry = corr_slots_[slot];
+    if (!entry.in_use || entry.generation != gen)
+    {
+        return false;
+    }
+    out_token = entry.token;
+    out_send_time = entry.send_time;
+    entry.in_use = false;
+    entry.generation = (entry.generation + 1u) & kGenMask;
+    corr_free_ring_[corr_free_tail_] = slot;
+    corr_free_tail_ = (corr_free_tail_ + 1) % corr_free_ring_.size();
+    ++corr_free_count_;
+    return true;
+}
+
+bool SilKitEthPort::reclaim_if_unused_locked(std::uint32_t slot, std::uint32_t gen) noexcept
+{
+    std::uint64_t unusedToken = 0;
+    SimTime unusedSendTime{};
+    return resolve_and_free_locked(slot, gen, unusedToken, unusedSendTime);
+}
+
+void SilKitEthPort::clear_corr_table_locked() noexcept
+{
+    for (std::size_t i = 0; i < corr_slots_.size(); ++i)
+    {
+        if (corr_slots_[i].in_use)
+        {
+            corr_slots_[i].in_use = false;
+            corr_slots_[i].generation = (corr_slots_[i].generation + 1u) & kGenMask;
+        }
+        corr_free_ring_[i] = static_cast<std::uint32_t>(i);
+    }
+    corr_free_head_ = 0;
+    corr_free_tail_ = 0;
+    corr_free_count_ = corr_slots_.size();
 }
 
 SimTime SilKitEthPort::stamp(std::chrono::nanoseconds timestamp) const noexcept
@@ -211,8 +341,28 @@ void SilKitEthPort::on_transmit(const sk::EthernetFrameTransmitEvent& event) noe
     default:
         return;
     }
+    // Resolve and free the correlation slot before pushing into events_ so a full event queue
+    // never leaks correlation slots.
+    std::uint32_t slot = 0;
+    std::uint32_t gen = 0;
+    if (decode_context(event.userContext, slot, gen))
+    {
+        const std::lock_guard lock(corr_mutex_);
+        std::uint64_t token = 0;
+        SimTime sendTime{};
+        if (resolve_and_free_locked(slot, gen, token, sendTime))
+        {
+            out.send_time = sendTime;
+            out.token = token;
+            out.correlated = true;
+        }
+    }
+    if (!out.correlated)
+    {
+        tx_uncorrelated_.fetch_add(1, std::memory_order_relaxed);
+    }
     out.time = stamp(event.timestamp);
-    if (!events_.push(out.time, out)) // a full queue counts it
+    if (!events_.push(out.time, out) && out.correlated) // a full queue counts correlated drops
     {
         const std::lock_guard lock(overflow_mutex_);
         event_overflow_.note(out.time);
@@ -233,12 +383,33 @@ std::size_t SilKitEthPort::release_before(SimTime now, FrameSink sink)
 
 SendResult SilKitEthPort::send(const TimedFrame& frame)
 {
+    return send(frame, 0);
+}
+
+SendResult SilKitEthPort::send(const TimedFrame& frame, std::uint64_t token)
+{
     if (!is_open() || frame.frame.size() < kHeaderBytes)
     {
         send_failed_.fetch_add(1, std::memory_order_relaxed);
         return SendResult::Failed;
     }
     require_started("send()");
+    if (transmit_queue_capacity_ > 0 && outstanding_.load(std::memory_order_acquire) >= transmit_queue_capacity_)
+    {
+        send_queue_full_.fetch_add(1, std::memory_order_relaxed);
+        return SendResult::QueueFull;
+    }
+    std::uint32_t slot = 0;
+    std::uint32_t gen = 0;
+    {
+        const std::lock_guard lock(corr_mutex_);
+        if (!allocate_slot_locked(token, frame.time, slot, gen))
+        {
+            send_queue_full_.fetch_add(1, std::memory_order_relaxed);
+            return SendResult::QueueFull;
+        }
+    }
+    void* const context = encode_context(slot, gen);
     const auto bytes = frame.frame.bytes();
     // At least the minimum frame size (without the FCS): a receiving SIL Kit controller pads a
     // shorter frame itself, but a network simulator may refuse it.
@@ -251,13 +422,28 @@ SendResult SilKitEthPort::send(const TimedFrame& frame)
     }
     try
     {
-        controller_.SendFrame(sk::EthernetFrame{out});
+        // corr_mutex_ is released before SendFrame() so synchronous trivial-sim callbacks in
+        // on_transmit() never re-enter corr_mutex_.
+        controller_.SendFrame(sk::EthernetFrame{out}, context);
     }
     catch (const std::exception&)
     {
+        {
+            const std::lock_guard lock(corr_mutex_);
+            static_cast<void>(reclaim_if_unused_locked(slot, gen));
+        }
         send_failed_.fetch_add(1, std::memory_order_relaxed);
         return SendResult::Failed;
     }
+    catch (...)
+    {
+        {
+            const std::lock_guard lock(corr_mutex_);
+            static_cast<void>(reclaim_if_unused_locked(slot, gen));
+        }
+        throw;
+    }
+    outstanding_.fetch_add(1, std::memory_order_release);
     sent_.fetch_add(1, std::memory_order_relaxed);
     return SendResult::Accepted;
 }
@@ -275,8 +461,26 @@ std::size_t SilKitEthPort::release_events_before(SimTime now, PortEventSink sink
         overflow = overflow_.take_before(now);
         eventOverflow = event_overflow_.take_before(now);
     }
+    auto accountingSink = [&](const PortEvent& event) {
+        if ((event.kind == PortEvent::Kind::TransmitCompleted || event.kind == PortEvent::Kind::TransmitFailed) &&
+            event.correlated)
+        {
+            const std::size_t cur = outstanding_.load(std::memory_order_relaxed);
+            if (cur > 0)
+            {
+                outstanding_.store(cur - 1, std::memory_order_release);
+            }
+        }
+        else if (event.kind == PortEvent::Kind::EventOverflow)
+        {
+            const std::size_t cur = outstanding_.load(std::memory_order_relaxed);
+            const std::size_t drop = static_cast<std::size_t>(std::min<std::uint64_t>(cur, event.count));
+            outstanding_.store(cur - drop, std::memory_order_release);
+        }
+        sink(event);
+    };
     // Both overflow events at their place in time order among the queued events.
-    return OverflowCollector::release_merged(overflow, sink, [&](auto&& forward) {
+    return OverflowCollector::release_merged(overflow, accountingSink, [&](auto&& forward) {
         return OverflowCollector::release_merged(eventOverflow, forward, [&](auto&& inner) {
             return events_.drain_before(now, [&inner](SimTime, PortEvent& event) { inner(event); });
         });
@@ -299,6 +503,9 @@ SilKitEthPortStatistics SilKitEthPort::statistics() const
     s.tx_invalid_frame = tx_invalid_frame_.load(std::memory_order_relaxed);
     s.event_overflows = events_.overflows();
     s.link_up = link_up_.load(std::memory_order_relaxed);
+    s.send_queue_full = send_queue_full_.load(std::memory_order_relaxed);
+    s.outstanding = outstanding_.load(std::memory_order_acquire);
+    s.tx_uncorrelated = tx_uncorrelated_.load(std::memory_order_relaxed);
     return s;
 }
 

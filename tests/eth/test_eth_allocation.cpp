@@ -22,10 +22,13 @@
 using namespace std::chrono_literals;
 using vehicle_sil::SimTime;
 using vehicle_sil::eth::Channel;
+using vehicle_sil::eth::ChannelOptions;
 using vehicle_sil::eth::kBroadcast;
 using vehicle_sil::eth::SendStatus;
 using vehicle_sil::eth::TimedFrame;
+using vehicle_sil::eth::TransmitEvent;
 using vehicle_sil::eth::VirtualEthernetBus;
+using vehicle_sil::eth::VirtualEthernetEndpointOptions;
 using vehicle_sil::unit::mac;
 using vehicle_sil::unit::make_frame;
 
@@ -34,20 +37,49 @@ TEST_CASE(steps_do_not_allocate)
     // Three senders with the same step size (their frames have equal times) and addresses in
     // the opposite order of their registration, so the receiver has to reorder them. The
     // receiver takes half of the frames with its handler's count and the other half with
-    // receive(), and answers each one.
+    // receive(), and answers each one. One sender also has a port transmit queue limit smaller
+    // than its per-step burst so flush() rejections and next-step Failed transmit events run
+    // under the zero-allocation check.
     constexpr std::size_t kSenders = 3;
     VirtualEthernetBus bus;
     std::vector<std::unique_ptr<Channel>> senders;
     std::vector<std::unique_ptr<vehicle_sil::step::Host>> hosts;
     for (std::size_t i = 0; i < kSenders; ++i)
     {
-        senders.push_back(std::make_unique<Channel>(bus.attach()));
+        auto& endpoint = (i == 0) ? bus.attach(VirtualEthernetEndpointOptions{.transmit_queue_capacity = 2}) : bus.attach();
+        senders.push_back(std::make_unique<Channel>(endpoint));
         hosts.push_back(std::make_unique<vehicle_sil::step::Host>());
         hosts.back()->add(*senders.back());
     }
     Channel receiver(bus.attach());
     vehicle_sil::step::Host receiverHost;
     receiverHost.add(receiver);
+
+    std::size_t txCompleted = 0;
+    std::size_t txFailed = 0;
+    for (std::size_t i = 0; i < kSenders; ++i)
+    {
+        senders[i]->on_transmit([&](const TransmitEvent& ev) {
+            if (ev.kind == TransmitEvent::Kind::Completed)
+            {
+                ++txCompleted;
+            }
+            else
+            {
+                ++txFailed;
+            }
+        });
+    }
+    receiver.on_transmit([&](const TransmitEvent& ev) {
+        if (ev.kind == TransmitEvent::Kind::Completed)
+        {
+            ++txCompleted;
+        }
+        else
+        {
+            ++txFailed;
+        }
+    });
 
     std::array<std::uint8_t, kSenders> seq{};
     for (std::size_t i = 0; i < kSenders; ++i)
@@ -58,7 +90,8 @@ TEST_CASE(steps_do_not_allocate)
         hosts[i]->set_application([channel, address, counter](SimTime) {
             for (int n = 0; n < 4; ++n)
             {
-                CHECK(channel->send(make_frame(kBroadcast, address, 1, (*counter)++, n % 2 == 0 ? 20 : 300)) ==
+                const std::uint64_t token = static_cast<std::uint64_t>(*counter);
+                CHECK(channel->send(make_frame(kBroadcast, address, 1, (*counter)++, n % 2 == 0 ? 20 : 300), token) ==
                       SendStatus::Ok);
             }
         });
@@ -67,7 +100,7 @@ TEST_CASE(steps_do_not_allocate)
     std::size_t taken = 0;
     receiver.on_frame([&](const TimedFrame& f) {
         ++handled;
-        CHECK(receiver.send(make_frame(f.frame.source(), mac(9), 2, f.frame.bytes()[15])) == SendStatus::Ok);
+        CHECK(receiver.send(make_frame(f.frame.source(), mac(9), 2, f.frame.bytes()[15]), handled) == SendStatus::Ok);
     });
     receiverHost.set_application([&](SimTime) {
         while (const auto f = receiver.receive())
@@ -93,8 +126,10 @@ TEST_CASE(steps_do_not_allocate)
     driver.run_until(SimTime{} + 105ms);
     g_counting.store(false);
     CHECK_EQ(g_allocations.load(), 0u);
-    CHECK(handled > 1000u);
+    CHECK(handled > 900u);
     CHECK(taken > 100u);
+    CHECK(txCompleted > 1000u);
+    CHECK(txFailed > 150u);
     CHECK(receiver.statistics().frames_not_taken > 0u);
     CHECK_EQ(receiver.statistics().receive_overflows, 0u);
 }

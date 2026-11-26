@@ -16,6 +16,8 @@
 #include "vehicle_sil/step/host.hpp"
 #include "vehicle_sil/step/step_driver.hpp"
 
+#include <silkit/experimental/netsim/all.hpp>
+#include <silkit/experimental/participant/ParticipantExtensions.hpp>
 #include <silkit/services/ethernet/all.hpp>
 
 #include <chrono>
@@ -23,6 +25,7 @@
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -45,6 +48,8 @@ using vehicle_sil::eth::Port;
 using vehicle_sil::eth::SendStatus;
 using vehicle_sil::eth::SilKitEthPort;
 using vehicle_sil::eth::TimedFrame;
+using vehicle_sil::eth::TransmitCapabilities;
+using vehicle_sil::eth::TransmitEvent;
 using vehicle_sil::unit::coordinated_options;
 using vehicle_sil::unit::frame_bytes;
 using vehicle_sil::unit::group;
@@ -81,6 +86,11 @@ class Node
 public:
     Node(std::uint8_t number, Port& port) : number_(number), channel_(port, options_for(number))
     {
+        if (channel_.transmit_capabilities() != TransmitCapabilities::Correlated)
+        {
+            throw std::runtime_error("expected Correlated transmit capability");
+        }
+        channel_.on_transmit([this](const TransmitEvent& ev) { note_tx(ev); });
         if (number_ != 2)
         {
             channel_.on_frame([this](const TimedFrame& f) { on_frame(f); });
@@ -89,6 +99,7 @@ public:
 
     [[nodiscard]] Channel& channel() noexcept { return channel_; }
     [[nodiscard]] const std::vector<std::string>& record() const noexcept { return record_; }
+    [[nodiscard]] const std::vector<std::string>& tx_record() const noexcept { return tx_record_; }
 
     void application(SimTime)
     {
@@ -130,7 +141,8 @@ private:
 
     void send(const std::vector<std::uint8_t>& bytes)
     {
-        if (channel_.send(bytes) != SendStatus::Ok)
+        const std::uint64_t token = next_token_++;
+        if (channel_.send(bytes, token) != SendStatus::Ok)
         {
             throw std::runtime_error("node " + std::to_string(number_) + ": send() did not take the frame");
         }
@@ -145,6 +157,13 @@ private:
         }
     }
 
+    void note_tx(const TransmitEvent& ev)
+    {
+        tx_record_.push_back("tx=" + std::string(ev.kind == TransmitEvent::Kind::Completed ? "ok" : "fail") +
+                             " tok=" + std::to_string(ev.token) + " send=" + std::to_string(to_ns(ev.send_time)) +
+                             " t=" + std::to_string(to_ns(ev.time)));
+    }
+
     void note(const TimedFrame& f)
     {
         const auto bytes = f.frame.bytes();
@@ -156,16 +175,23 @@ private:
     std::uint8_t number_;
     Channel channel_;
     std::uint8_t seq_ = 0;
+    std::uint64_t next_token_ = 0; // starts at 0 to exercise token == 0 end-to-end
     std::vector<std::string> record_;
+    std::vector<std::string> tx_record_;
 };
 
 void check_statistics(const Channel& channel)
 {
     const auto& s = channel.statistics();
     if (s.receive_overflows != 0 || s.frames_invalid != 0 || s.frames_dropped != 0 || s.transmit_failed != 0 ||
-        s.port_receive_overflows != 0)
+        s.port_receive_overflows != 0 || s.port_event_overflows != 0 || s.transmit_event_overflows != 0)
     {
         throw std::runtime_error("unexpected channel statistics");
+    }
+    if (s.frames_sent != s.transmit_completed + s.transmit_failed + s.transmit_event_overflows +
+                             s.port_event_overflows + s.outstanding)
+    {
+        throw std::runtime_error("outstanding conservation mismatch");
     }
 }
 
@@ -190,6 +216,7 @@ Records run_on_virtual_bus(const std::vector<SimDuration>& steps)
     {
         check_statistics(node->channel());
         records.push_back(node->record());
+        records.push_back(node->tx_record());
     }
     return records;
 }
@@ -279,6 +306,7 @@ Records run_on_silkit(const std::vector<SimDuration>& steps)
         check_statistics(n.node->channel());
         n.port->close();
         records.push_back(n.node->record());
+        records.push_back(n.node->tx_record());
     }
     return records;
 }
@@ -331,9 +359,22 @@ void check_same_records(const std::vector<SimDuration>& steps)
     std::size_t sameTime = 0;
     std::size_t padded = 0;
     std::size_t replies = 0;
-    for (const auto& record : reference)
+    std::size_t txEvents = 0;
+    for (std::size_t n = 0; n < kNodes; ++n)
     {
+        const auto& record = reference[n * 2];
+        const auto& txRecord = reference[n * 2 + 1];
         CHECK(!record.empty());
+        if (n < 3)
+        {
+            CHECK(!txRecord.empty());
+            CHECK(txRecord[0].find("tok=0 ") != std::string::npos);
+            txEvents += txRecord.size();
+        }
+        else
+        {
+            CHECK(txRecord.empty());
+        }
         const SameTime same = same_time_senders(record);
         sameTime += same.senders_differ;
         CHECK_EQ(same.out_of_order, 0u); // fails on the virtual network alone if the channel does not order
@@ -346,8 +387,9 @@ void check_same_records(const std::vector<SimDuration>& steps)
     CHECK(sameTime > 0u); // frames from different senders with equal times
     CHECK(padded > 0u);   // short frames arrive padded
     CHECK(replies > 0u);  // answers sent from a handler
+    CHECK(txEvents > 0u); // correlated transmit completions matched across VirtualEthernetBus & SIL Kit
     // Node 3 takes only frames to itself and broadcasts: nothing to node 3's group.
-    for (const auto& line : reference[2])
+    for (const auto& line : reference[2 * 2])
     {
         CHECK(line.find("to=03:") == std::string::npos);
     }
@@ -377,4 +419,250 @@ TEST_CASE(records_match_the_virtual_network_steps_1_2_3_5)
 TEST_CASE(records_match_the_virtual_network_steps_3_1_2_7)
 {
     check_same_records({3ms, 1ms, 2ms, 7ms});
+}
+
+namespace {
+
+namespace ns = SilKit::Experimental::NetworkSimulation;
+namespace sketh = SilKit::Services::Ethernet;
+
+struct CapturedEthRequest
+{
+    ns::ControllerDescriptor sender{};
+    std::vector<std::uint8_t> bytes;
+    void* user_context = nullptr;
+};
+
+struct EthNetSimState
+{
+    std::mutex mutex;
+    std::unique_ptr<ns::Ethernet::IEthernetEventProducer> producer;
+    std::vector<ns::ControllerDescriptor> controllers;
+    std::vector<CapturedEthRequest> requests;
+};
+
+class TestSimEthController final : public ns::Ethernet::ISimulatedEthernetController
+{
+public:
+    TestSimEthController(std::shared_ptr<EthNetSimState> state, ns::ControllerDescriptor descriptor) :
+      state_(std::move(state)),
+      descriptor_(descriptor)
+    {
+    }
+
+    void OnFrameRequest(const ns::Ethernet::EthernetFrameRequest& request) override
+    {
+        const std::lock_guard lock(state_->mutex);
+        state_->requests.push_back(CapturedEthRequest{
+            descriptor_,
+            std::vector<std::uint8_t>(request.ethernetFrame.raw.begin(), request.ethernetFrame.raw.end()),
+            request.userContext,
+        });
+    }
+
+    void OnSetControllerMode(const ns::Ethernet::EthernetControllerMode&) override {}
+
+private:
+    std::shared_ptr<EthNetSimState> state_;
+    ns::ControllerDescriptor descriptor_;
+};
+
+class TestSimEthNetwork final : public ns::ISimulatedNetwork
+{
+public:
+    explicit TestSimEthNetwork(std::shared_ptr<EthNetSimState> state) : state_(std::move(state)) {}
+
+    auto ProvideSimulatedController(ns::ControllerDescriptor descriptor) -> ns::ISimulatedController* override
+    {
+        const std::lock_guard lock(state_->mutex);
+        state_->controllers.push_back(descriptor);
+        auto& slot = controllers_[descriptor];
+        slot = std::make_unique<TestSimEthController>(state_, descriptor);
+        return slot.get();
+    }
+
+    void SimulatedControllerRemoved(ns::ControllerDescriptor) override {}
+
+    void SetEventProducer(std::unique_ptr<ns::IEventProducer> producer) override
+    {
+        const std::lock_guard lock(state_->mutex);
+        state_->producer.reset(dynamic_cast<ns::Ethernet::IEthernetEventProducer*>(producer.release()));
+    }
+
+private:
+    std::shared_ptr<EthNetSimState> state_;
+    std::map<ns::ControllerDescriptor, std::unique_ptr<TestSimEthController>> controllers_;
+};
+
+} // namespace
+
+TEST_CASE(network_simulator_correlates_delayed_reordered_identical_frames)
+{
+    // Real in-process SIL Kit INetworkSimulator (ISimulatedEthernetController): Sender emits 4
+    // identical Ethernet frames in one step (tokens 0, 10, 20, 30); the simulator delays and
+    // acknowledges them out of order across later steps with mixed statuses (Dropped,
+    // Transmitted, LinkDown, Transmitted) and forwards only the Transmitted frames to Receiver.
+    InProcessRegistry registry;
+    constexpr auto kSimEnd = SimTime{} + 10ms;
+    SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = registry.uri;
+    controllerOptions.required_participants = {"EthNetSim", "Sender", "Receiver"};
+    controllerOptions.stop_at = 15ms;
+    SimulationController controller(controllerOptions);
+
+    auto simState = std::make_shared<EthNetSimState>();
+    auto simRuntime = std::make_unique<ParticipantRuntime>(
+        coordinated_options("EthNetSim", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kSimEnd}));
+    auto* simulator = SilKit::Experimental::Participant::CreateNetworkSimulator(&simRuntime->participant());
+    simulator->SimulateNetwork(kNetwork, ns::SimulatedNetworkType::Ethernet,
+                               std::make_unique<TestSimEthNetwork>(simState));
+    simulator->Start();
+
+    simRuntime->set_step_handler([simState](SimTime now, SimDuration) {
+        const std::lock_guard lock(simState->mutex);
+        if (!simState->producer || simState->requests.size() < 4)
+        {
+            return;
+        }
+        auto emit = [&](std::size_t idx, sketh::EthernetTransmitStatus status, bool deliver) {
+            const auto& req = simState->requests[idx];
+            const std::chrono::nanoseconds ts(to_ns(now));
+            const ns::ControllerDescriptor senderArr[1] = {req.sender};
+            simState->producer->Produce(sketh::EthernetFrameTransmitEvent{ts, status, req.user_context},
+                                        SilKit::Util::Span<const ns::ControllerDescriptor>(senderArr, 1));
+            if (deliver)
+            {
+                std::vector<ns::ControllerDescriptor> others;
+                for (const auto d : simState->controllers)
+                {
+                    if (d != req.sender)
+                    {
+                        others.push_back(d);
+                    }
+                }
+                if (!others.empty())
+                {
+                    sketh::EthernetFrameEvent rx{};
+                    rx.timestamp = ts;
+                    rx.frame.raw = SilKit::Util::Span<const std::uint8_t>(req.bytes.data(), req.bytes.size());
+                    rx.direction = SilKit::Services::TransmitDirection::RX;
+                    rx.userContext = nullptr;
+                    simState->producer->Produce(
+                        rx, SilKit::Util::Span<const ns::ControllerDescriptor>(others.data(), others.size()));
+                }
+            }
+        };
+        if (now == SimTime{} + 2ms)
+        {
+            emit(2, sketh::EthernetTransmitStatus::Dropped, false);
+        }
+        else if (now == SimTime{} + 3ms)
+        {
+            emit(0, sketh::EthernetTransmitStatus::Transmitted, true);
+        }
+        else if (now == SimTime{} + 4ms)
+        {
+            emit(3, sketh::EthernetTransmitStatus::LinkDown, false);
+        }
+        else if (now == SimTime{} + 5ms)
+        {
+            emit(1, sketh::EthernetTransmitStatus::Transmitted, true);
+        }
+    });
+
+    struct EndpointParticipant
+    {
+        ~EndpointParticipant()
+        {
+            if (runtime)
+            {
+                runtime->stop("test cleanup");
+            }
+            if (port)
+            {
+                port->close();
+            }
+        }
+        std::unique_ptr<ParticipantRuntime> runtime;
+        std::unique_ptr<SilKitEthPort> port;
+        std::unique_ptr<Channel> channel;
+        std::unique_ptr<vehicle_sil::step::Host> host;
+    };
+
+    EndpointParticipant sender;
+    sender.runtime = std::make_unique<ParticipantRuntime>(
+        coordinated_options("Sender", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kSimEnd}));
+    sender.port = std::make_unique<SilKitEthPort>(
+        *sender.runtime->participant().CreateEthernetController(kNetwork, kNetwork));
+    sender.runtime->add_communication_ready_handler([p = sender.port.get()] { p->start(); });
+    sender.channel = std::make_unique<Channel>(*sender.port);
+    sender.host = std::make_unique<vehicle_sil::step::Host>();
+    sender.host->add(*sender.channel);
+
+    std::vector<TransmitEvent> senderTx;
+    sender.channel->on_transmit([&](const TransmitEvent& ev) { senderTx.push_back(ev); });
+    const auto identicalBytes = frame_bytes(mac(2), mac(1), 7, 1, 64);
+    sender.host->set_application([&, identicalBytes](SimTime now) {
+        if (now == SimTime{} + 1ms)
+        {
+            for (const std::uint64_t token : {std::uint64_t{0}, std::uint64_t{10}, std::uint64_t{20}, std::uint64_t{30}})
+            {
+                CHECK(sender.channel->send(identicalBytes, token) == SendStatus::Ok);
+            }
+        }
+    });
+    vehicle_sil::bind_host(*sender.runtime, *sender.host);
+
+    EndpointParticipant receiver;
+    receiver.runtime = std::make_unique<ParticipantRuntime>(
+        coordinated_options("Receiver", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kSimEnd}));
+    receiver.port = std::make_unique<SilKitEthPort>(
+        *receiver.runtime->participant().CreateEthernetController(kNetwork, kNetwork));
+    receiver.runtime->add_communication_ready_handler([p = receiver.port.get()] { p->start(); });
+    receiver.channel = std::make_unique<Channel>(*receiver.port);
+    receiver.host = std::make_unique<vehicle_sil::step::Host>();
+    receiver.host->add(*receiver.channel);
+
+    std::vector<SimTime> receivedTimes;
+    receiver.channel->on_frame([&](const TimedFrame& f) { receivedTimes.push_back(f.time); });
+    vehicle_sil::bind_host(*receiver.runtime, *receiver.host);
+
+    std::vector<ParticipantRuntime*> runtimes = {simRuntime.get(), sender.runtime.get(), receiver.runtime.get()};
+    start_together(controller, runtimes, 30s);
+    for (ParticipantRuntime* rt : runtimes)
+    {
+        const auto state = rt->wait_until_finished(60s);
+        CHECK(state.has_value() && *state == orch::ParticipantState::Shutdown);
+    }
+
+    CHECK(!sender.host->failed());
+    CHECK(!receiver.host->failed());
+    CHECK_EQ(senderTx.size(), 4u);
+    CHECK((senderTx[0] == TransmitEvent{TransmitEvent::Kind::Failed, 20, SimTime{} + 1ms, SimTime{} + 2ms}));
+    CHECK((senderTx[1] == TransmitEvent{TransmitEvent::Kind::Completed, 0, SimTime{} + 1ms, SimTime{} + 3ms}));
+    CHECK((senderTx[2] == TransmitEvent{TransmitEvent::Kind::Failed, 30, SimTime{} + 1ms, SimTime{} + 4ms}));
+    CHECK((senderTx[3] == TransmitEvent{TransmitEvent::Kind::Completed, 10, SimTime{} + 1ms, SimTime{} + 5ms}));
+
+    const auto& chStats = sender.channel->statistics();
+    CHECK_EQ(chStats.frames_sent, 4u);
+    CHECK_EQ(chStats.transmit_completed, 2u);
+    CHECK_EQ(chStats.transmit_failed, 2u);
+    CHECK_EQ(chStats.outstanding, 0u);
+    CHECK_EQ(chStats.port_event_overflows, 0u);
+    CHECK_EQ(chStats.transmit_event_overflows, 0u);
+
+    const auto portStats = sender.port->statistics();
+    CHECK_EQ(portStats.outstanding, 0u);
+    CHECK_EQ(portStats.tx_uncorrelated, 0u);
+    CHECK_EQ(portStats.tx_transmitted, 2u);
+    CHECK_EQ(portStats.tx_dropped, 1u);
+    CHECK_EQ(portStats.tx_link_down, 1u);
+
+    CHECK_EQ(receivedTimes.size(), 2u);
+    CHECK(receivedTimes[0] == SimTime{} + 3ms);
+    CHECK(receivedTimes[1] == SimTime{} + 5ms);
+
+    sender.port->close();
+    receiver.port->close();
+    simRuntime->stop("test done");
 }

@@ -22,8 +22,10 @@ using vehicle_sil::eth::MacAddress;
 using vehicle_sil::eth::PortEvent;
 using vehicle_sil::eth::SendResult;
 using vehicle_sil::eth::TimedFrame;
+using vehicle_sil::eth::TransmitCapabilities;
 using vehicle_sil::eth::VirtualEthernetBus;
 using vehicle_sil::eth::VirtualEthernetBusOptions;
+using vehicle_sil::eth::VirtualEthernetEndpointOptions;
 using vehicle_sil::unit::group;
 using vehicle_sil::unit::mac;
 using vehicle_sil::unit::make_frame;
@@ -216,4 +218,111 @@ TEST_CASE(virtual_bus_gives_an_endpoint_the_inbox_asked_for)
     CHECK(throws_with<std::invalid_argument>(
         [&] { bus.attach(0); }, "vehicle_sil::eth::VirtualEthernetBus: attach(): inbox_capacity must be > 0"));
     CHECK_EQ(bus.endpoint_count(), 3u);
+}
+
+TEST_CASE(virtual_bus_emits_correlated_transmit_events_including_token_zero)
+{
+    VirtualEthernetBus bus;
+    auto& a = bus.attach();
+    auto& b = bus.attach();
+    CHECK(a.transmit_capabilities() == TransmitCapabilities::Correlated);
+
+    const Frame identical = make_frame(mac(2), mac(1), 1, 7, 64);
+    const std::vector<std::uint64_t> tokens = {0, 42, 0xFFFF'FFFF'FFFF'FFFFull, 7};
+    for (const std::uint64_t token : tokens)
+    {
+        CHECK(a.send(TimedFrame{at(5ms), identical}, token) == SendResult::Accepted);
+    }
+    CHECK_EQ(a.outstanding(), tokens.size());
+
+    // Strict `< now`: nothing released at 5ms.
+    std::vector<PortEvent> atSameStep;
+    a.release_events_before(at(5ms), [&](const PortEvent& e) { atSameStep.push_back(e); });
+    CHECK(atSameStep.empty());
+    CHECK_EQ(a.outstanding(), tokens.size());
+
+    // Released at 6ms with exact tokens, send_time, and correlated == true.
+    std::vector<PortEvent> events;
+    a.release_events_before(at(6ms), [&](const PortEvent& e) { events.push_back(e); });
+    CHECK_EQ(events.size(), tokens.size());
+    for (std::size_t i = 0; i < tokens.size(); ++i)
+    {
+        CHECK(events[i].kind == PortEvent::Kind::TransmitCompleted);
+        CHECK(events[i].time == at(5ms));
+        CHECK(events[i].send_time.has_value());
+        CHECK(*events[i].send_time == at(5ms));
+        CHECK_EQ(events[i].token, tokens[i]);
+        CHECK(events[i].correlated);
+    }
+    CHECK_EQ(a.outstanding(), 0u);
+    CHECK_EQ(release(b, at(6ms)).size(), tokens.size());
+}
+
+TEST_CASE(virtual_bus_enforces_transmit_queue_capacity_and_reports_event_overflow)
+{
+    VirtualEthernetBusOptions busOptions;
+    busOptions.event_capacity = 4;
+    busOptions.transmit_queue_capacity = 0;
+    VirtualEthernetBus bus(busOptions);
+
+    auto& bounded = bus.attach(VirtualEthernetEndpointOptions{
+        .inbox_capacity = 8,
+        .event_capacity = 4,
+        .transmit_queue_capacity = 2,
+    });
+    auto& peer = bus.attach();
+
+    const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+    CHECK(bounded.send(TimedFrame{at(1ms), frame}, 10) == SendResult::Accepted);
+    CHECK(bounded.send(TimedFrame{at(1ms), frame}, 20) == SendResult::Accepted);
+    CHECK(bounded.send(TimedFrame{at(1ms), frame}, 30) == SendResult::QueueFull);
+    CHECK_EQ(bounded.outstanding(), 2u);
+    CHECK_EQ(release(peer, at(2ms)).size(), 2u); // QueueFull frame was not delivered
+
+    std::vector<PortEvent> events;
+    bounded.release_events_before(at(2ms), [&](const PortEvent& e) { events.push_back(e); });
+    CHECK_EQ(events.size(), 2u);
+    CHECK_EQ(events[0].token, 10u);
+    CHECK_EQ(events[1].token, 20u);
+    CHECK_EQ(bounded.outstanding(), 0u);
+    CHECK(bounded.send(TimedFrame{at(2ms), frame}, 30) == SendResult::Accepted);
+    CHECK_EQ(bounded.outstanding(), 1u);
+
+    // Event overflow when transmit_queue_capacity == 0 and sends exceed event_capacity.
+    auto& overflowing = bus.attach(VirtualEthernetEndpointOptions{
+        .event_capacity = 2,
+        .transmit_queue_capacity = 0,
+    });
+    for (std::uint64_t tok = 0; tok < 5; ++tok)
+    {
+        CHECK(overflowing.send(TimedFrame{at(3ms), frame}, tok) == SendResult::Accepted);
+    }
+    CHECK_EQ(overflowing.event_overflows(), 3u);
+    CHECK_EQ(overflowing.outstanding(), 5u);
+    events.clear();
+    overflowing.release_events_before(at(4ms), [&](const PortEvent& e) { events.push_back(e); });
+    CHECK_EQ(events.size(), 3u);
+    CHECK(events[0].kind == PortEvent::Kind::TransmitCompleted);
+    CHECK_EQ(events[0].token, 0u);
+    CHECK(events[1].kind == PortEvent::Kind::TransmitCompleted);
+    CHECK_EQ(events[1].token, 1u);
+    CHECK(events[2].kind == PortEvent::Kind::EventOverflow);
+    CHECK(events[2].time == at(3ms));
+    CHECK_EQ(events[2].count, 3u);
+    CHECK_EQ(overflowing.outstanding(), 0u);
+
+    // Validation checks.
+    VirtualEthernetBusOptions zeroEvent;
+    zeroEvent.event_capacity = 0;
+    CHECK(throws_with<std::invalid_argument>([&] { VirtualEthernetBus bad(zeroEvent); }, "event_capacity must be > 0"));
+    VirtualEthernetBusOptions txTooBig;
+    txTooBig.event_capacity = 2;
+    txTooBig.transmit_queue_capacity = 3;
+    CHECK(throws_with<std::invalid_argument>([&] { VirtualEthernetBus bad(txTooBig); },
+                                             "transmit_queue_capacity must be <= event_capacity"));
+    CHECK(throws_with<std::invalid_argument>(
+        [&] {
+            static_cast<void>(bus.attach(VirtualEthernetEndpointOptions{.event_capacity = 2, .transmit_queue_capacity = 3}));
+        },
+        "transmit_queue_capacity must be <= event_capacity"));
 }

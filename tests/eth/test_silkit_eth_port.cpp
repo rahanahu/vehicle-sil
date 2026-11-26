@@ -23,6 +23,7 @@ using vehicle_sil::eth::SilKitEthPort;
 using vehicle_sil::eth::SilKitEthPortOptions;
 using vehicle_sil::eth::TimedFrame;
 using vehicle_sil::eth::TimeDomain;
+using vehicle_sil::eth::TransmitCapabilities;
 using vehicle_sil::unit::FakeEthernetController;
 using vehicle_sil::unit::frame_bytes;
 using vehicle_sil::unit::mac;
@@ -254,5 +255,287 @@ TEST_CASE(silkit_eth_port_reports_acknowledgements_its_event_queue_could_not_kee
     CHECK(events[1].kind == PortEvent::Kind::EventOverflow);
     CHECK(events[1].time == at(1ms));
     CHECK_EQ(events[1].count, 3u);
+    CHECK_EQ(port.statistics().outstanding, 0u);
     CHECK(release_events(port, at(10ms)).empty());
+}
+
+namespace {
+
+/// In-memory IEthernetController that records SendFrame() calls and lets the test fire
+/// transmit acknowledgements later, in any order and with any status.
+class DeferredEthernetController final : public sk::IEthernetController
+{
+public:
+    struct PendingSend
+    {
+        std::vector<std::uint8_t> bytes;
+        void* user_context = nullptr;
+    };
+
+    bool throw_on_send = false;
+    bool callback_then_throw = false;
+    std::chrono::nanoseconds callback_time{0};
+    std::vector<PendingSend> pending;
+
+    void ack_index(std::size_t index, sk::EthernetTransmitStatus status, std::chrono::nanoseconds timestamp)
+    {
+        const auto context = pending.at(index).user_context;
+        ack_raw(context, status, timestamp);
+    }
+
+    void ack_raw(void* user_context, sk::EthernetTransmitStatus status, std::chrono::nanoseconds timestamp)
+    {
+        const sk::EthernetFrameTransmitEvent ev{timestamp, status, user_context};
+        for (const auto& [id, handler] : transmit_handlers_)
+        {
+            handler(this, ev);
+        }
+    }
+
+    void Activate() override {}
+    void Deactivate() override {}
+    SilKit::Util::HandlerId AddFrameHandler(FrameHandler, SilKit::Services::DirectionMask) override { return next_id(); }
+    void RemoveFrameHandler(SilKit::Util::HandlerId) override {}
+    SilKit::Util::HandlerId AddFrameTransmitHandler(FrameTransmitHandler handler,
+                                                    sk::EthernetTransmitStatusMask) override
+    {
+        const auto id = next_id();
+        transmit_handlers_[id] = std::move(handler);
+        return id;
+    }
+    void RemoveFrameTransmitHandler(SilKit::Util::HandlerId id) override { transmit_handlers_.erase(id); }
+    SilKit::Util::HandlerId AddStateChangeHandler(StateChangeHandler) override { return next_id(); }
+    void RemoveStateChangeHandler(SilKit::Util::HandlerId) override {}
+    SilKit::Util::HandlerId AddBitrateChangeHandler(BitrateChangeHandler) override { return next_id(); }
+    void RemoveBitrateChangeHandler(SilKit::Util::HandlerId) override {}
+    void SendFrame(sk::EthernetFrame msg, void* userContext) override
+    {
+        if (callback_then_throw)
+        {
+            ack_raw(userContext, sk::EthernetTransmitStatus::Transmitted, callback_time);
+            throw std::runtime_error("callback then throw");
+        }
+        if (throw_on_send)
+        {
+            throw std::runtime_error("send failed");
+        }
+        pending.push_back(PendingSend{std::vector<std::uint8_t>(msg.raw.begin(), msg.raw.end()), userContext});
+    }
+
+private:
+    SilKit::Util::HandlerId next_id() { return static_cast<SilKit::Util::HandlerId>(++last_id_); }
+    std::uint64_t last_id_ = 0;
+    std::map<SilKit::Util::HandlerId, FrameTransmitHandler> transmit_handlers_;
+};
+
+} // namespace
+
+TEST_CASE(silkit_eth_port_validates_options_and_reports_correlated_capability)
+{
+    FakeEthernetController controller;
+    SilKitEthPort port(controller);
+    CHECK(port.transmit_capabilities() == TransmitCapabilities::Correlated);
+
+    CHECK(throws_with<std::invalid_argument>(
+        [] { SilKitEthPort::validate(SilKitEthPortOptions{.inbox_capacity = 0}); }, "inbox_capacity must be > 0"));
+    CHECK(throws_with<std::invalid_argument>(
+        [] { SilKitEthPort::validate(SilKitEthPortOptions{.event_capacity = 0}); }, "event_capacity must be > 0"));
+    CHECK(throws_with<std::invalid_argument>(
+        [] { SilKitEthPort::validate(SilKitEthPortOptions{.event_capacity = 4, .transmit_queue_capacity = 5}); },
+        "transmit_queue_capacity must be <= event_capacity"));
+    CHECK(throws_with<std::invalid_argument>(
+        [&] {
+            SilKitEthPort bad(controller, SilKitEthPortOptions{.event_capacity = 4, .transmit_queue_capacity = 5});
+        },
+        "transmit_queue_capacity must be <= event_capacity"));
+}
+
+TEST_CASE(silkit_eth_port_correlates_out_of_order_acks_and_identical_frames_with_token_zero)
+{
+    DeferredEthernetController controller;
+    SilKitEthPort port(controller);
+    port.start();
+
+    const Frame identical = make_frame(mac(2), mac(1), 1, 7, 64);
+    const std::vector<std::uint64_t> tokens = {0, 11, 22, 33, 44};
+    for (std::size_t i = 0; i < tokens.size(); ++i)
+    {
+        CHECK(port.send(TimedFrame{at(1ms + std::chrono::milliseconds(i)), identical}, tokens[i]) ==
+              SendResult::Accepted);
+    }
+    CHECK_EQ(port.statistics().outstanding, 5u);
+
+    // Acknowledge out of order with every transmit status variant.
+    controller.ack_index(3, sk::EthernetTransmitStatus::InvalidFrameFormat, 10ms);
+    controller.ack_index(0, sk::EthernetTransmitStatus::Transmitted, 11ms);
+    controller.ack_index(4, sk::EthernetTransmitStatus::ControllerInactive, 12ms);
+    controller.ack_index(2, sk::EthernetTransmitStatus::Dropped, 13ms);
+    controller.ack_index(1, sk::EthernetTransmitStatus::LinkDown, 14ms);
+
+    // Replaying a stale context must NOT correlate or decrement outstanding.
+    controller.ack_index(0, sk::EthernetTransmitStatus::Transmitted, 15ms);
+    // Foreign nullptr context must remain uncorrelated.
+    controller.ack_raw(nullptr, sk::EthernetTransmitStatus::Transmitted, 16ms);
+
+    const auto events = release_events(port, at(20ms));
+    CHECK_EQ(events.size(), 7u);
+
+    CHECK((events[0] == PortEvent{PortEvent::Kind::TransmitFailed, at(10ms), 0, at(4ms), 33, true}));
+    CHECK((events[1] == PortEvent{PortEvent::Kind::TransmitCompleted, at(11ms), 0, at(1ms), 0, true}));
+    CHECK((events[2] == PortEvent{PortEvent::Kind::TransmitFailed, at(12ms), 0, at(5ms), 44, true}));
+    CHECK((events[3] == PortEvent{PortEvent::Kind::TransmitFailed, at(13ms), 0, at(3ms), 22, true}));
+    CHECK((events[4] == PortEvent{PortEvent::Kind::TransmitFailed, at(14ms), 0, at(2ms), 11, true}));
+    CHECK(!events[5].correlated);
+    CHECK(!events[6].correlated);
+    CHECK_EQ(port.statistics().outstanding, 0u);
+    CHECK_EQ(port.statistics().tx_invalid_frame, 1u);
+    CHECK_EQ(port.statistics().tx_controller_inactive, 1u);
+    CHECK_EQ(port.statistics().tx_dropped, 1u);
+    CHECK_EQ(port.statistics().tx_link_down, 1u);
+    CHECK_EQ(port.statistics().tx_transmitted, 3u);
+    CHECK_EQ(port.statistics().tx_uncorrelated, 2u);
+}
+
+TEST_CASE(silkit_eth_port_enforces_transmit_queue_capacity_and_preserves_outstanding_on_close)
+{
+    DeferredEthernetController controller;
+    SilKitEthPortOptions options;
+    options.event_capacity = 4;
+    options.transmit_queue_capacity = 2;
+    SilKitEthPort port(controller, options);
+    port.start();
+
+    const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+    CHECK(port.send(TimedFrame{at(1ms), frame}, 100) == SendResult::Accepted);
+    CHECK(port.send(TimedFrame{at(1ms), frame}, 200) == SendResult::Accepted);
+    CHECK(port.send(TimedFrame{at(1ms), frame}, 300) == SendResult::QueueFull);
+    CHECK_EQ(port.statistics().send_queue_full, 1u);
+    CHECK_EQ(port.statistics().outstanding, 2u);
+
+    controller.ack_index(0, sk::EthernetTransmitStatus::Transmitted, 2ms);
+    const auto first = release_events(port, at(3ms));
+    CHECK_EQ(first.size(), 1u);
+    CHECK_EQ(first[0].token, 100u);
+    CHECK_EQ(port.statistics().outstanding, 1u);
+
+    // Room for one more frame now.
+    CHECK(port.send(TimedFrame{at(3ms), frame}, 300) == SendResult::Accepted);
+    CHECK_EQ(port.statistics().outstanding, 2u);
+
+    // Close while 2 frames remain unacknowledged: outstanding stays inspectable for shutdown detection.
+    port.close();
+    CHECK_EQ(port.statistics().outstanding, 2u);
+}
+
+TEST_CASE(silkit_eth_port_does_not_leak_correlation_slots_on_overflow_or_send_exceptions)
+{
+    // 1. Repeated event_capacity overflows across > 2500 sends (exceeding 1024 correlation slots).
+    {
+        FakeEthernetController controller;
+        SilKitEthPortOptions options;
+        options.event_capacity = 2;
+        options.transmit_queue_capacity = 0;
+        SilKitEthPort port(controller, options);
+        port.start();
+
+        const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+        for (int burst = 0; burst < 250; ++burst)
+        {
+            const auto t = std::chrono::milliseconds(burst + 1);
+            controller.now = t;
+            for (int k = 0; k < 10; ++k)
+            {
+                const std::uint64_t tok = static_cast<std::uint64_t>(burst * 10 + k);
+                CHECK(port.send(TimedFrame{at(t), frame}, tok) == SendResult::Accepted);
+            }
+            const auto events = release_events(port, at(t + 1ms));
+            CHECK_EQ(events.size(), 3u); // 2 kept + 1 EventOverflow(count=8)
+            CHECK(events[0].correlated);
+            CHECK_EQ(events[0].token, static_cast<std::uint64_t>(burst * 10));
+            CHECK(events[1].correlated);
+            CHECK_EQ(events[1].token, static_cast<std::uint64_t>(burst * 10 + 1));
+            CHECK(events[2].kind == PortEvent::Kind::EventOverflow);
+            CHECK_EQ(events[2].count, 8u);
+            CHECK_EQ(port.statistics().outstanding, 0u);
+        }
+        CHECK_EQ(port.statistics().send_queue_full, 0u);
+        CHECK_EQ(port.statistics().event_overflows, 2000u);
+    }
+
+    // 2. Throwing SendFrame() (plain throw and callback-then-throw) reclaims slots cleanly.
+    {
+        DeferredEthernetController controller;
+        SilKitEthPortOptions options;
+        options.event_capacity = 4;
+        SilKitEthPort port(controller, options);
+        port.start();
+
+        const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+        controller.throw_on_send = true;
+        for (int i = 0; i < 1500; ++i)
+        {
+            CHECK(port.send(TimedFrame{at(1ms), frame}, static_cast<std::uint64_t>(i)) == SendResult::Failed);
+        }
+        CHECK_EQ(port.statistics().outstanding, 0u);
+        CHECK_EQ(port.statistics().send_queue_full, 0u);
+
+        controller.throw_on_send = false;
+        controller.callback_then_throw = true;
+        controller.callback_time = 2ms;
+        CHECK(port.send(TimedFrame{at(2ms), frame}, 555) == SendResult::Failed);
+        CHECK_EQ(port.statistics().outstanding, 0u);
+        // Draining the event emitted before the throw must not underflow outstanding.
+        static_cast<void>(release_events(port, at(3ms)));
+        CHECK_EQ(port.statistics().outstanding, 0u);
+
+        controller.callback_then_throw = false;
+        CHECK(port.send(TimedFrame{at(3ms), frame}, 777) == SendResult::Accepted);
+        controller.ack_index(0, sk::EthernetTransmitStatus::Transmitted, 4ms);
+        const auto events = release_events(port, at(5ms));
+        CHECK_EQ(events.size(), 1u);
+        CHECK((events[0] == PortEvent{PortEvent::Kind::TransmitCompleted, at(4ms), 0, at(3ms), 777, true}));
+        CHECK_EQ(port.statistics().outstanding, 0u);
+    }
+}
+
+TEST_CASE(silkit_eth_port_uncorrelated_ack_overflow_does_not_decrement_outstanding)
+{
+    DeferredEthernetController controller;
+    SilKitEthPortOptions options;
+    options.event_capacity = 1;
+    SilKitEthPort port(controller, options);
+    port.start();
+
+    const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+    CHECK(port.send(TimedFrame{at(1ms), frame}, 10) == SendResult::Accepted);
+    CHECK(port.send(TimedFrame{at(1ms), frame}, 20) == SendResult::Accepted);
+    CHECK_EQ(port.statistics().outstanding, 2u);
+
+    // 4 uncorrelated acks overflow event_capacity=1 (1 queued, 3 dropped): must increment
+    // tx_uncorrelated and must NOT emit EventOverflow or subtract from outstanding of the 2
+    // genuinely in-flight correlated frames.
+    for (int i = 0; i < 4; ++i)
+    {
+        controller.ack_raw(nullptr, sk::EthernetTransmitStatus::Transmitted, 2ms);
+    }
+    CHECK_EQ(port.statistics().tx_uncorrelated, 4u);
+
+    const auto uncorrelated = release_events(port, at(3ms));
+    CHECK_EQ(uncorrelated.size(), 1u);
+    CHECK(uncorrelated[0].kind == PortEvent::Kind::TransmitCompleted);
+    CHECK(!uncorrelated[0].correlated);
+    CHECK_EQ(port.statistics().outstanding, 2u);
+
+    // Genuine correlated acks arrive one by one and bring outstanding back to 0.
+    controller.ack_index(0, sk::EthernetTransmitStatus::Transmitted, 3ms);
+    const auto first = release_events(port, at(4ms));
+    CHECK_EQ(first.size(), 1u);
+    CHECK((first[0] == PortEvent{PortEvent::Kind::TransmitCompleted, at(3ms), 0, at(1ms), 10, true}));
+    CHECK_EQ(port.statistics().outstanding, 1u);
+
+    controller.ack_index(1, sk::EthernetTransmitStatus::Dropped, 4ms);
+    const auto second = release_events(port, at(5ms));
+    CHECK_EQ(second.size(), 1u);
+    CHECK((second[0] == PortEvent{PortEvent::Kind::TransmitFailed, at(4ms), 0, at(1ms), 20, true}));
+    CHECK_EQ(port.statistics().outstanding, 0u);
 }
