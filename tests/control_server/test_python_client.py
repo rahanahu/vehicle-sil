@@ -496,7 +496,16 @@ class RunBindingTest(unittest.TestCase):
             Control("127.0.0.1:1", run="")
 
 
-def mock_values_server(test, *, watch_delay: float = 0.0, watch_hang: bool = False):
+def mock_values_server(
+    test,
+    *,
+    watch_delay: float = 0.0,
+    watch_hang: bool = False,
+    ping_delay: float = 0.0,
+    ping_hang: bool = False,
+    ping_calls=None,
+    watch_deadlines=None,
+):
     """In-process gRPC server serving Ping, ListPeers, GetValues, GetSnapshot, and Watch."""
     from concurrent import futures
     import grpc
@@ -537,10 +546,15 @@ def mock_values_server(test, *, watch_delay: float = 0.0, watch_hang: bool = Fal
         values=[pb.Value(b=True), pb.Value(d=1.5), pb.Value(i=3), pb.Value(i=1800), pb.Value(i=1)],
     )
     stop_watch = threading.Event()
-    test.addCleanup(stop_watch.set)
 
     class Service(rpc.ControlServiceServicer):
         def Ping(self, request, context):
+            if ping_calls is not None:
+                ping_calls.append(request.text)
+            if ping_hang:
+                stop_watch.wait(timeout=10.0)
+            elif ping_delay > 0:
+                stop_watch.wait(timeout=ping_delay)
             return pb.PingReply(text=request.text, server_version="vehicle-sil control v1",
                                 vehicle_sil=vehicle_sil_control.__version__, run="r-1")
 
@@ -558,6 +572,8 @@ def mock_values_server(test, *, watch_delay: float = 0.0, watch_hang: bool = Fal
             )
 
         def Watch(self, request, context):
+            if watch_deadlines is not None:
+                watch_deadlines.append(context.time_remaining())
             if watch_hang:
                 stop_watch.wait(timeout=5.0)
                 return
@@ -572,6 +588,7 @@ def mock_values_server(test, *, watch_delay: float = 0.0, watch_hang: bool = Fal
     port = server.add_insecure_port("127.0.0.1:0")
     server.start()
     test.addCleanup(server.stop, None)
+    test.addCleanup(stop_watch.set)
     return f"127.0.0.1:{port}"
 
 
@@ -624,6 +641,68 @@ class ClientSdkUnitTest(unittest.TestCase):
             with self.assertRaises(ControlError) as ctx:
                 list(c.watch(timeout=0.1))
         self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+
+    def test_watch_timeout_bounds_initial_release_check_ping(self):
+        import grpc
+
+        pings = []
+        watch_deadlines = []
+        address = mock_values_server(self, ping_hang=True, ping_calls=pings, watch_deadlines=watch_deadlines)
+        with Control(address, timeout=10.0) as c:
+            t0 = time.monotonic()
+            with self.assertRaises(ControlError) as ctx:
+                list(c.watch(timeout=0.1))
+            elapsed = time.monotonic() - t0
+            self.assertFalse(c._checked)
+        self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+        self.assertLess(elapsed, scaled(2.0))
+        self.assertEqual(watch_deadlines, [])
+
+    def test_watch_timeout_carries_remaining_budget_after_slow_ping(self):
+        import grpc
+
+        pings = []
+        watch_deadlines = []
+        address = mock_values_server(
+            self, ping_delay=0.15, watch_hang=True, ping_calls=pings, watch_deadlines=watch_deadlines
+        )
+        with Control(address, timeout=10.0) as c:
+            t0 = time.monotonic()
+            with self.assertRaises(ControlError) as ctx:
+                list(c.watch(timeout=0.45))
+            elapsed = time.monotonic() - t0
+            self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+            self.assertLess(elapsed, scaled(2.0))
+            self.assertEqual(len(pings), 1)
+            self.assertEqual(len(watch_deadlines), 1)
+            # Watch received only the remaining budget after the 0.15s Ping, not a fresh 0.45s.
+            self.assertLess(watch_deadlines[0], 0.35)
+            # The successful release check is cached and not retried by later calls.
+            self.assertIsNotNone(c.values("Engine"))
+            self.assertEqual(len(pings), 1)
+
+    def test_watch_timeout_non_positive_and_nan(self):
+        import grpc
+
+        pings = []
+        address = mock_values_server(self, ping_calls=pings)
+        with Control(address, timeout=10.0) as c:
+            for bad in (0, 0.0, -1.0, float("-inf")):
+                with self.assertRaises(ControlError) as ctx:
+                    list(c.watch(timeout=bad))
+                self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+            self.assertEqual(pings, [])
+            with self.assertRaises(ValueError):
+                list(c.watch(timeout=float("nan")))
+            self.assertEqual(pings, [])
+            # After release check succeeds, non-positive timeouts still raise DEADLINE_EXCEEDED immediately.
+            updates = list(c.watch(timeout=None))
+            self.assertEqual(len(pings), 1)
+            self.assertIn(("initial_done",), updates)
+            for bad in (0.0, -1.0):
+                with self.assertRaises(ControlError) as ctx:
+                    list(c.watch(timeout=bad))
+                self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
 
 
 if __name__ == "__main__":

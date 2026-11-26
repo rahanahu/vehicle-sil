@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import sys
 import threading
+from time import monotonic as _monotonic
 import warnings
 from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
@@ -444,7 +446,7 @@ class Control:
     def close(self) -> None:
         self._channel.close()
 
-    def _check_release(self) -> None:
+    def _check_release(self, timeout: Optional[float] = None) -> None:
         """Before the first call: the server must be of this client's vehicle-sil release (one Ping, once
         per Control; a Ping that fails is tried again at the next call). Another release:
         ControlError FAILED_PRECONDITION."""
@@ -454,7 +456,7 @@ class Control:
             if self._checked:
                 return
             try:
-                reply = self._stub.Ping(pb.PingRequest(), timeout=self._timeout)
+                reply = self._stub.Ping(pb.PingRequest(), timeout=self._timeout if timeout is None else timeout)
             except grpc.RpcError as e:
                 raise _error(e) from None
             if reply.vehicle_sil != __version__:
@@ -585,13 +587,27 @@ class Control:
         SimulationState (with simulation=True: participants' states, a failure, the end) and
         ("initial_done",) once the current state has been sent, until the caller stops iterating,
         the server ends the stream, or `timeout` wall-clock seconds pass (raising ControlError with
-        code `DEADLINE_EXCEEDED`; `None` waits indefinitely)."""
-        self._check_release()
+        code `DEADLINE_EXCEEDED`; `None` waits indefinitely). When `timeout` is given, it bounds both
+        the initial release check (if not yet performed) and the stream."""
+        if timeout is None:
+            self._check_release()
+            watch_timeout: Optional[float] = None
+        else:
+            if math.isnan(timeout):
+                raise ValueError("timeout must not be NaN")
+            if timeout <= 0:
+                raise ControlError(grpc.StatusCode.DEADLINE_EXCEEDED, "watch timeout expired")
+            deadline = _monotonic() + timeout
+            ping_timeout = timeout if self._timeout is None else min(self._timeout, timeout)
+            self._check_release(timeout=ping_timeout)
+            watch_timeout = deadline - _monotonic()
+            if watch_timeout <= 0:
+                raise ControlError(grpc.StatusCode.DEADLINE_EXCEEDED, "watch timeout expired")
         schemas: Dict[tuple, List[Variable]] = {}
         enum_maps: Dict[tuple, Dict[str, Dict[int, str]]] = {}
         request = pb.WatchRequest(peers=list(peers), values=values, events=events, operations=operations,
                                   capacity=capacity, time=time, simulation=simulation)
-        stream = self._stub.Watch(request, timeout=timeout)
+        stream = self._stub.Watch(request, timeout=watch_timeout)
         try:
             for u in stream:
                 kind = u.WhichOneof("kind")
