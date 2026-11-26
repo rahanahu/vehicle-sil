@@ -379,16 +379,22 @@ void state_on_arrival(const Options& o)
     const fs::path dir = one_ecu(o, "", "pid");
     Live live(o, dir, {"serve", "--once", "--stdin-commands", "--start-paused", "sim.yaml"});
     const std::string stateEvent = "\"event\":\"state\"";
-    const auto says_paused = [](const std::string& state) { return contains(state, "\"paused\":true,\"paused_at_ms\":"); };
-    // Waits for the time event that stands still at `ms`, then until the latest state says paused.
+    const auto paused_at = [](const std::string& state, std::int64_t ms) {
+        return contains(state, "\"paused\":true,\"paused_at_ms\":" + std::to_string(ms) + ",");
+    };
+    const auto going = [](const std::string& state) {
+        return contains(state, "\"paused\":false,\"paused_at_ms\":null,");
+    };
+    // Waits for the time event at `ms`, then until the latest state says paused at `ms`
+    // (a prior state with `paused_at_ms:null` or an earlier time does not count).
     const auto stands_at = [&](std::int64_t ms) {
         live.wait_for({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","});
         live.wait_until(
             [&](const std::vector<std::string>& current) {
                 const std::vector<std::string> states = events_with(current, {stateEvent});
-                return !states.empty() && says_paused(states.back());
+                return !states.empty() && paused_at(states.back(), ms);
             },
-            "the state does not say paused although the time event at " + std::to_string(ms) + " ms does");
+            "the state does not say paused at " + std::to_string(ms) + " ms although the time event does");
     };
     stands_at(0);
     live.write("{\"command\":\"step\",\"ms\":30,\"id\":1}\n");
@@ -417,7 +423,7 @@ void state_on_arrival(const Options& o)
         }
         return lines.size();
     };
-    const auto arrival = [&](const std::string& id, std::int64_t ms, const std::string& next) {
+    const auto arrival = [&](const std::string& id, std::int64_t prev_ms, std::int64_t ms, const std::string& next) {
         const std::size_t sent = at({"\"event\":\"command\"", "\"accepted\":true,", "\"id\":" + id + "}"});
         const std::size_t time = at({"\"event\":\"time\"", "\"sim_ms\":" + std::to_string(ms) + ","}, sent);
         const std::size_t after = at({"\"event\":\"command\"", "\"id\":" + next + "}"}, sent);
@@ -431,11 +437,16 @@ void state_on_arrival(const Options& o)
                 prev_state = i;
             }
         }
-        require(prev_state < sent, "a state before command " + id + ":\n" + all);
+        require(prev_state < sent && paused_at(lines[prev_state], prev_ms),
+                "a state paused at " + std::to_string(prev_ms) + " ms before command " + id + ":\n" + all);
         const std::int64_t prev_rev = std::stoll(value_of(lines[prev_state], "rev"));
-        // The states the command and the arrival made: 1 paused state at `ms` if the simulation
-        // arrived before Tell::~Tell() ran (sub-ms step/run_until), or 2 states (going, then
-        // paused at `ms` after the time event) otherwise.
+        // The states the command and the arrival made:
+        // - 1 paused state at `ms` before `time` with rev == prev_rev + 1 if the simulation arrived
+        //   before Tell::~Tell() ran (sub-ms step/run_until);
+        // - 1 paused state at `ms` after `time` with rev == prev_rev + 2 if EventStream replaced a
+        //   still-queued going state (prev_rev + 1) with the look's arrival state (prev_rev + 2);
+        // - 2 states (going rev == prev_rev + 1 before `time`, then paused at `ms` rev == prev_rev + 2
+        //   after `time`) otherwise.
         std::vector<std::size_t> states;
         for (std::size_t i = sent; i < after; ++i)
         {
@@ -446,26 +457,28 @@ void state_on_arrival(const Options& o)
         }
         if (states.size() == 1)
         {
-            require(says_paused(lines[states[0]]) && value_of(lines[states[0]], "paused_at_ms") == std::to_string(ms),
+            require(paused_at(lines[states[0]], ms),
                     "after command " + id + ": the single arrival state says paused at " + std::to_string(ms) + " ms:\n" + all);
-            require(std::stoll(value_of(lines[states[0]], "rev")) == prev_rev + 1,
-                    "the single arrival state increments rev by 1:\n" + all);
+            const std::int64_t rev = std::stoll(value_of(lines[states[0]], "rev"));
+            const bool direct_arrival = states[0] < time && rev == prev_rev + 1;
+            const bool coalesced_going = time < states[0] && rev == prev_rev + 2;
+            require(direct_arrival || coalesced_going,
+                    "after command " + id + ": single arrival state must be rev+1 before time or coalesced rev+2 after time:\n" + all);
             return;
         }
         // It goes (the command's state), then it stands still (the look's state, after the look's time
         // event): one change each, so the rev goes up by one.
-        require(states.size() == 2 && !says_paused(lines[states[0]]) && states[0] < time && says_paused(lines[states[1]]) &&
-                    value_of(lines[states[1]], "paused_at_ms") == std::to_string(ms) && time < states[1],
+        require(states.size() == 2 && going(lines[states[0]]) && states[0] < time && paused_at(lines[states[1]], ms) && time < states[1],
                 "after command " + id + ": a state that goes, the time event at " + std::to_string(ms) +
                     " ms, a state that says paused:\n" + all);
         require(std::stoll(value_of(lines[states[0]], "rev")) == prev_rev + 1 &&
                     std::stoll(value_of(lines[states[1]], "rev")) == prev_rev + 2,
                 "the state that says paused is the next one (rev) after the state that goes:\n" + all);
     };
-    arrival("1", 30, "2");
-    arrival("2", 100, "3");
-    // Whatever came between: the state before each next command says paused.
-    for (const std::string id : {"2", "3"})
+    arrival("1", 0, 30, "2");
+    arrival("2", 30, 100, "3");
+    // Whatever came between: the state before each next command says paused at its arrival time.
+    for (const auto& [id, expected_ms] : std::vector<std::pair<std::string, std::int64_t>>{{"2", 30}, {"3", 100}})
     {
         const std::size_t next = at({"\"event\":\"command\"", "\"id\":" + id + "}"});
         std::size_t last = lines.size();
@@ -476,7 +489,8 @@ void state_on_arrival(const Options& o)
                 last = i;
             }
         }
-        require(last < lines.size() && says_paused(lines[last]), "the state before command " + id + " says paused:\n" + all);
+        require(last < lines.size() && paused_at(lines[last], expected_ms),
+                "the state before command " + id + " says paused at " + std::to_string(expected_ms) + " ms:\n" + all);
     }
 }
 

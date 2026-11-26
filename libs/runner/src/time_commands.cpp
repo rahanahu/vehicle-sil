@@ -7,8 +7,9 @@
 // a command (the thread that reads the commands, a control server's); the run's main thread
 // attaches and detaches the controller; the start window's thread holds before the first step.
 // Taken while that mutex is held: whatever on_command and on_change take (the event stream's, for
-// the "command" and "state" events), what the `f` of look() takes (RunControls::set_phase(): the
-// event stream's, for the "phase" event), the controller's gate's (pause, resume, run_until, set_speed,
+// the "command" and "state" events), what the `f` of look() and look_with_gate() take
+// (RunControls::set_phase() and RunNotes::note_time(): the event stream's, for the "phase" and
+// "time" events), the controller's gate's (pause, resume, run_until, set_speed,
 // time_state) and whatever on_detach takes.
 // hold_before_start() calls on_hold and give_up without it.
 //
@@ -109,15 +110,16 @@ template <typename S> ControlSituation situation_of(const S& s)
     return ControlSituation{stage, s.paused, s.scenario, s.time_locked, s.time_free};
 }
 
-/// The facts of `s` now. Under its mutex; reads the gate.
-template <typename S> TimeFacts facts_of(S& s)
+/// The facts of `s` now. Under its mutex; reads the gate unless `pre_read` supplies a snapshot
+/// already taken under the same lock.
+template <typename S> TimeFacts facts_of(S& s, const TimeState* pre_read = nullptr)
 {
     TimeFacts f;
     f.situation = situation_of(s);
     f.holding = s.holding;
     if (s.controller != nullptr)
     {
-        const TimeState t = s.controller->time_state();
+        const TimeState t = pre_read != nullptr ? *pre_read : s.controller->time_state();
         // It stands still, or does with its next step (the same rule as noted_standing() of the time events).
         f.standing = s.holding || t.paused || (t.pause_target && *t.pause_target <= t.now);
         if (t.paused)
@@ -401,6 +403,16 @@ void detail::TimeCommandsAccess::attach(TimeCommands& commands, SimulationContro
     }
     tell(s);
     s.wait_signal->notify();
+}
+
+void detail::TimeCommandsAccess::look_with_gate(
+    TimeCommands& commands, SimulationController& controller,
+    const std::function<void(const TimeState& gate, const TimeFacts& facts)>& f)
+{
+    TimeCommands::State& s = *commands.state_;
+    const std::lock_guard lock(s.mutex);
+    const TimeState gate = controller.time_state();
+    f(gate, facts_of(s, s.controller == &controller ? &gate : nullptr));
 }
 
 void TimeCommands::set_on_change(OnChange on_change)

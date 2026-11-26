@@ -17,6 +17,10 @@
 
 namespace vehicle_sil::runner {
 
+namespace detail {
+struct RunControlsAccess;
+} // namespace detail
+
 /// The stages of a run, in this order (a run may skip some, never goes back).
 enum class Phase
 {
@@ -243,6 +247,7 @@ public:
     [[nodiscard]] RunState state();
 
 private:
+    friend struct detail::RunControlsAccess;
     /// The state of `facts`, the phase, the pacing and the stop requests, without `rev`. Under
     /// TimeCommands' mutex.
     [[nodiscard]] RunState compose(const TimeFacts& facts) const;

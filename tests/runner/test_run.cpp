@@ -18,6 +18,7 @@
 #include "run_scenario.hpp"
 #include "run_start.hpp"
 #include "run_watch.hpp"
+#include "time_commands_internal.hpp"
 #include "spawn_sleeper.hpp"
 #include "vehicle_sil/runner/detail/run_samples.hpp"
 #include "vehicle_sil/runner/detail/run_start_limit.hpp"
@@ -2004,4 +2005,151 @@ TEST_CASE(run_socket_dir_cleans_only_matching_sockets_and_resists_tampering)
         CHECK(!fs::exists(created));
     }
 #endif
+}
+
+TEST_CASE(note_time_emits_time_and_state_from_one_gate_snapshot)
+{
+    using vehicle_sil::runner::detail::attach_controller;
+    using vehicle_sil::runner::detail::RunContext;
+    using vehicle_sil::runner::detail::RunNotes;
+    using vehicle_sil::runner::detail::RunOutput;
+    using vehicle_sil::runner::detail::RunParticipants;
+    using vehicle_sil::runner::detail::TimeNote;
+
+    struct RecordingEvents : RunEvents
+    {
+        std::mutex mutex;
+        std::vector<std::string> recorded;
+        std::function<void(const TimeEvent&)> on_time;
+        void record(std::string entry)
+        {
+            const std::lock_guard lock(mutex);
+            recorded.push_back(std::move(entry));
+        }
+        void clear()
+        {
+            const std::lock_guard lock(mutex);
+            recorded.clear();
+        }
+        std::vector<std::string> snapshot()
+        {
+            const std::lock_guard lock(mutex);
+            return recorded;
+        }
+        void registry(const std::string&) override {}
+        void control_server(const std::string&, bool, bool) override {}
+        void participant(const std::string&, ParticipantState) override {}
+        void participant_not_started(const std::string&, const std::string&) override {}
+        void participant_failed(const std::string&, std::string_view, const std::string&) override {}
+        void participant_started(const std::string&, long, const std::vector<std::string>&, const std::string&) override {}
+        void participant_ended(const std::string&, const ExitStatus&) override {}
+        void participant_manual(const std::string&, const std::vector<std::string>&, const std::string&,
+                                const std::string&, const std::vector<std::pair<std::string, std::string>>&) override
+        {
+        }
+        void control_link(const std::string&, std::string_view, std::optional<std::size_t>, std::optional<int>) override {}
+        void scenario_step(const ScenarioStepRun&) override {}
+        void log(const std::string&, const std::string&) override {}
+        void outside(const std::string&, std::uint64_t, std::uint64_t) override {}
+        void finding(const std::string&, const Finding&) override {}
+        void time(const TimeEvent& e) override
+        {
+            record("time:" + std::to_string(e.sim_ms));
+            if (on_time)
+            {
+                on_time(e);
+            }
+        }
+        std::size_t waiting_events() const override { return 0; }
+    };
+
+    RunPlan plan;
+    plan.check.file = "sim.yaml";
+    plan.check.config.emplace();
+    RunObservers observers;
+    StopRequests stops;
+    RecordingEvents events;
+    RunControls::Observers ctrl_obs;
+    ctrl_obs.on_command = [&](const Command& command, std::string_view) {
+        events.record("command:" + command.name.value_or(""));
+    };
+    ctrl_obs.on_state = [&](const RunState& state) {
+        events.record(std::string("state:") + (state.paused ? "paused:" : "going:") +
+                      (state.paused_at_ms ? std::to_string(*state.paused_at_ms) : "null"));
+    };
+    RunControls controls(stops, /*start_paused=*/true, std::move(ctrl_obs), /*scenario=*/false);
+    controls.set_time_lock({});
+    RunContext ctx{plan.config(), plan.check, plan, observers, &events, nullptr, controls, controls.time()};
+    RunOutcome outcome = planned_outcome(plan);
+    RunOutput output(ctx);
+    RunParticipants participants(ctx, output, outcome, plan.base);
+    RunNotes notes(ctx, participants);
+
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = {"Member"};
+    options.time_control = TimeControlOptions{.step = 10ms, .start_paused = true};
+    SimulationController controller(options);
+    auto peer = std::make_unique<ParticipantRuntime>(
+        vehicle_sil::unit::coordinated_options("Member", registry.uri, VirtualTimeOptions{10ms, std::nullopt}));
+    peer->set_step_handler([](SimTime, SimDuration) {});
+    attach_controller(controls.time(), controller, 10, std::nullopt);
+    vehicle_sil::unit::start_together(controller, {peer.get()}, 30s);
+    CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)) == std::optional<SimTime>(SimTime{}));
+
+    controls.set_phase(Phase::Running);
+    events.clear();
+
+    notes.note_time(controller, TimeNote::Start);
+    CHECK((events.snapshot() == std::vector<std::string>{"time:0"}));
+
+    // 1. Single TimeState snapshot: advance the controller directly to 30 ms without updating
+    // RunControls::told_ (still paused:0), then mutate the gate inside events.time(). Both time
+    // and state must still reflect the single snapshot taken at the start of note_time().
+    controller.run_until(SimTime{} + 30ms);
+    CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)) == std::optional<SimTime>(SimTime{} + 30ms));
+
+    events.clear();
+    events.on_time = [&](const TimeEvent&) { controller.resume(); };
+    notes.note_time(controller, TimeNote::Poll);
+    events.on_time = nullptr;
+    CHECK((events.snapshot() == std::vector<std::string>{"time:30", "state:paused:30"}));
+
+    // 2. Mutex atomicity across time + state: a concurrent command applied while events.time() runs
+    // must wait for TimeCommands' mutex until the look's state has been published.
+    controller.pause();
+    const auto settled = controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s));
+    CHECK(settled.has_value());
+    const SimTime next_target = *settled + 30ms;
+    const std::int64_t next_ms = std::chrono::duration_cast<std::chrono::milliseconds>(next_target.time_since_epoch()).count();
+    controller.run_until(next_target);
+    CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)) == std::optional<SimTime>(next_target));
+
+    events.clear();
+    std::promise<void> started;
+    std::future<void> ready = started.get_future();
+    bool racer_accepted = false;
+    std::thread racer;
+    events.on_time = [&](const TimeEvent&) {
+        racer = std::thread([&] {
+            started.set_value();
+            Command resume;
+            resume.name = "resume";
+            racer_accepted = controls.time().apply(resume, "stdin").accepted;
+        });
+        ready.wait();
+        std::this_thread::sleep_for(20ms); // time enough for racer to enter apply() if unlocked
+    };
+    notes.note_time(controller, TimeNote::Poll);
+    events.on_time = nullptr;
+    racer.join();
+    CHECK(racer_accepted);
+    const std::string next_text = std::to_string(next_ms);
+    CHECK((events.snapshot() == std::vector<std::string>{"time:" + next_text, "state:paused:" + next_text,
+                                                         "command:resume", "state:going:null"}));
+
+    controls.time().detach();
+    controller.stop("test done");
+    peer->stop("test done");
 }
