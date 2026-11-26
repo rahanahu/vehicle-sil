@@ -156,12 +156,12 @@ messages:
 | 名前 | 信号の名前 | メッセージの名前 |
 |---|---|---|
 | `encode`、`decode`、`bytes`、`for_each_signal`、`kPgn`、`kPriority`、`kLength`、`kFill`、`Signals`、`Selector`、`output_bytes`、`input_bytes`、`visitor`、`Visitor`、`kFillBytes` | 使えない | 使えない |
-| 信号の定義のメンバー `layout`、`name`、`unit`、`spn`、`enumerators`、`special_values` | 使えない | 使える |
+| 信号の定義のメンバー `layout`、`name`、`unit`、`spn`、`enumerators`、`enumerator_names`、`special_values` | 使えない | 使える |
 | メッセージ自身の名前 | 使えない | — |
 
 生成したコードは `std` と `vehicle_sil` を `::` から書くので、それ以外の名前（`std`、`data`、`size_t` など）は使えます。
 
-`vehicle_sil::spy::Spy::watch<M>()` で見張るメッセージは、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`state` という名前の信号も持てません（ほかの変数の名前になるため。そういう信号があると `watch()` がビルドできません）。[j1939-guide.md](j1939-guide.md#受信だけをする-participant) の「受信だけをする participant」を見てください。
+`vehicle_sil::spy::Spy::watch<M>()` で見張るメッセージは、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`stale_count`、`state` という名前の信号も持てません（ほかの変数の名前になるため。そういう信号があると `watch()` がビルドできません）。[j1939-guide.md](j1939-guide.md#受信だけをする-participant) の「受信だけをする participant」を見てください。
 
 ### YAML の値の読み方
 
@@ -400,6 +400,7 @@ struct EngineStatus
 | `set_special(name)` | 特別な値をその名前で設定する（送信する値を書く）。その名前の特別な値がなければ `std::invalid_argument` |
 | `set_not_available()`、`set_error()` | `set_special("not_available")`、`set_special("error")`（その送信する値を書く）。その特別な値がない信号ではコンパイルエラー |
 | `has_special(name)`、`specials` | 名前の特別な値があるか（constexpr）、特別な値の定義の配列（`SpecialValue`: `name`、`first`、`last`、`send`） |
+| `enumerator_names` | 定義順の `codec::Enumerator`（`name`、`value`）の constexpr 配列（`EnumSignal` と `Signals::<信号>::enumerator_names`。`enumerator_names` のない手書き `Spec` では空） |
 | `min()`、`max()`、`resolution()`、`to_physical(raw)` | 有効な物理値の範囲、raw 1 あたりの物理値、raw から物理値（`Signal` だけ。`resolution()` は constexpr） |
 | `raw_min`、`raw_max`、`lowest_raw()`、`highest_raw()` | 有効な raw 値の範囲（`EnumSignal` では最小と最大の列挙子）と、ビットに入る raw 値の範囲 |
 | `layout`、`name`、`unit`、`spn` | 定義（constexpr） |
@@ -489,7 +490,7 @@ if (const auto v = m.speed.value()) {
 |---|---|
 | メッセージの型 | `kPgn`、`kPriority`、`kLength`、`kFill` か `kFillBytes`、`for_each_signal`、`encode`、`decode` を持ちます。 |
 | `kFill` と `kFillBytes` | どちらか一方だけを持ちます（`kFillBytes` は `std::array<std::uint8_t, kLength>`）。 |
-| 信号の `Spec` | `layout`、`name`、`unit`（と、任意で `spn`、`special_values`、列挙なら `enumerators`）を持つ型です。 |
+| 信号の `Spec` | `layout`、`name`、`unit`（と、任意で `spn`、`special_values`、列挙なら `enumerators` および任意の `enumerator_names`）を持つ型です。 |
 
 | 確認の時点 | 確認すること |
 |---|---|

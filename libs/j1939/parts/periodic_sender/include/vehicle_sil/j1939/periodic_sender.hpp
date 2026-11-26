@@ -50,7 +50,10 @@ struct PeriodicSenderOptions
 
 struct PeriodicSenderStatistics
 {
-    std::uint64_t sent = 0;       ///< Node::send() returned Ok.
+    /// Node::send() returned SendStatus::Ok (queued to the Network, not confirmed bus delivery;
+    /// e.g. while ecu.connected is false, frames are dropped at the CAN port and counted in
+    /// Network::statistics().send_failures).
+    std::uint64_t sent = 0;
     std::uint64_t suppressed = 0; ///< Deadlines not sent because of BroadcastSuppression.
     std::uint64_t coalesced = 0;  ///< Deadlines merged into the send of an earlier one (Coalesce).
     std::uint64_t failures = 0;   ///< Node::send() returned another status (last_failure).
@@ -59,7 +62,7 @@ struct PeriodicSenderStatistics
 
 /// Sends `pgn` from the node every `period`:
 ///
-///     auto& eec1 = ecu.attach<PeriodicSender>(kPgnEec1, 10ms, [&](std::span<std::uint8_t> out) {
+///     auto& eec1 = node.attach<PeriodicSender>(kPgnEec1, 10ms, [&](std::span<std::uint8_t> out) {
 ///         return engine.encode_eec1(out); // bytes written
 ///     });
 ///
