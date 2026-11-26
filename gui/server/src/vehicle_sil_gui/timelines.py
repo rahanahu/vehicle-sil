@@ -14,6 +14,7 @@ import re
 import secrets
 import shutil
 import tempfile
+import threading
 from collections import OrderedDict
 from pathlib import Path
 
@@ -72,46 +73,55 @@ class Timelines:
     """The temporary directory and the files in it. Its methods touch the disk: call them off the event loop."""
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._closed = False
         self.directory: Path | None = None
         self.ready: OrderedDict[str, tuple[Path, str]] = OrderedDict()  # run_id -> (file, name), oldest first
 
     def new_file(self) -> Path:
         """A name for the next run's file (the launcher creates the file). Makes the directory on first use."""
-        if self.directory is None:
-            self.directory = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-timelines-"))
-        return self.directory / f"{secrets.token_hex(8)}.timeline.json"
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("timelines are closed")
+            if self.directory is None:
+                self.directory = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-timelines-"))
+            return self.directory / f"{secrets.token_hex(8)}.timeline.json"
 
     def finish(self, run_id: str, path: Path, usable: bool, scenario: str) -> bool:
         """The run has ended: keeps its file when the launcher wrote a whole one (usable, and the file is not
         empty), and removes the oldest beyond KEPT; otherwise removes it. Whether it is kept. scenario: the
         scenario file, whose name the file is given when it is served (<name>.timeline.json)."""
-        try:
-            kept = usable and path.stat().st_size > 0
-        except OSError:
-            kept = False
-        if not kept:
-            _remove(path)
-            return False
-        stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(scenario.replace("\\", "/")).stem) or "scenario"
-        self.ready[str(run_id)] = (path, f"{stem}.timeline.json")
-        while len(self.ready) > KEPT:
-            _, (old, _) = self.ready.popitem(last=False)
-            _remove(old)
-        return True
+        with self._lock:
+            try:
+                kept = usable and path.stat().st_size > 0
+            except OSError:
+                kept = False
+            if not kept:
+                _remove(path)
+                return False
+            stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(scenario.replace("\\", "/")).stem) or "scenario"
+            self.ready[str(run_id)] = (path, f"{stem}.timeline.json")
+            while len(self.ready) > KEPT:
+                _, (old, _) = self.ready.popitem(last=False)
+                _remove(old)
+            return True
 
     def file_of(self, run_id: str) -> tuple[Path, str] | None:
         """(the file, the name it is served under) of a run whose file is kept."""
-        found = self.ready.get(str(run_id))
-        return found if found is not None and found[0].is_file() else None
+        with self._lock:
+            found = self.ready.get(str(run_id))
+            return found if found is not None and found[0].is_file() else None
 
     def remove_all(self) -> None:
-        self.ready.clear()
-        if self.directory is not None:
-            shutil.rmtree(self.directory, ignore_errors=True)
-            if self.directory.exists():
-                log.warning("the timeline files in %s could not all be removed: remove the directory by hand",
-                            self.directory)
-            self.directory = None
+        with self._lock:
+            self._closed = True
+            self.ready.clear()
+            if self.directory is not None:
+                shutil.rmtree(self.directory, ignore_errors=True)
+                if self.directory.exists():
+                    log.warning("the timeline files in %s could not all be removed: remove the directory by hand",
+                                self.directory)
+                self.directory = None
 
 
 def _remove(path: Path) -> None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import heapq
 import hmac
 import itertools
 import json
@@ -18,6 +19,7 @@ import logging
 import os
 import secrets
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 from dataclasses import dataclass, field
@@ -46,7 +48,7 @@ from .recording import Recording
 from .refusal import Refused
 from .runtime import LauncherRuntime, RunHandle, RunSpec, ServeRuntime
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
-from .session import SILENT_AFTER_S, Limits, Session, check_timing
+from .session import SERVER_PROBLEMS, SHARED_LOG, SILENT_AFTER_S, Limits, Session, _is_count, check_timing
 from .source import Source
 from .static import MAX_FILE_BYTES, NOT_BUILT, StaticFiles, TooLarge
 from .timelines import (KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path, find_page_dir, read_page_file,
@@ -258,19 +260,261 @@ class Run:
 
 
 class _PreStartGate:
-    """Buffers runtime callbacks until the launcher's initial `check` settles on pass or fail."""
+    """Buffers runtime callbacks until the launcher's initial `check` settles on pass or fail.
 
-    def __init__(self, config_relative: str, request_path: Path | None):
+    Pre-start logs, `log_dropped` markers, heartbeats, stderr lines, and non-event stdout lines
+    are bounded using the session's `Limits` so heavy pre-start output cannot grow memory
+    unboundedly. Check results, failure diagnostics, lifecycle events, and run-end notifications
+    are stored separately and never evicted.
+    """
+
+    def __init__(self, config_relative: str, request_path: Path | None, limits: Limits | None = None):
         self.config_relative = config_relative
         self.request_path = request_path
+        self.limits = limits or Limits()
         self.live = False
         self.discard = False
         self.decision = asyncio.Event()
         self.cleanup_done = asyncio.Event()
         self.passed_check: dict | None = None
         self.failed_check: dict | None = None
-        self.buffer: list[tuple] = []
         self.cleanup_called = False
+        self._order = 0
+        self._items: deque[tuple[int, tuple]] = deque()
+        self._logs: dict[str, deque[tuple[int, int, dict]]] = {}
+        self._log_source_bytes: dict[str, int] = {}
+        self._log_bytes = 0
+        self.dropped_logs: dict[str, int] = {}
+        self._markers: deque[tuple[int, int, dict]] = deque()
+        self._marker_bytes = 0
+        self._heartbeat: tuple[int, dict, int] | None = None
+        self._stderr_first: list[tuple[int, str]] = []
+        self._stderr_last: deque[tuple[int, str]] = deque(maxlen=self.limits.stderr_last)
+        self.stderr_skipped = 0
+        self._stderr_skipped_order = 0
+        self._bad_stdout_kept = 0
+        self._line_too_long_seen = False
+        self._launcher_problems_kept = 0
+        self._server_problems_kept = 0
+        self.omitted_problems = 0
+        self._seen_first_event = False
+        self._stream_run = False
+        self._last_seq: int | None = None
+        self.checked_seq_gaps = False
+
+    @property
+    def buffered_log_count(self) -> int:
+        return sum(len(q) for q in self._logs.values())
+
+    @property
+    def buffered_log_bytes(self) -> int:
+        return self._log_bytes
+
+    @property
+    def last_seq(self) -> int | None:
+        return self._last_seq
+
+    def log_sources(self) -> tuple[str, ...]:
+        return tuple(k for k in self._logs if k != SHARED_LOG)
+
+    def clear(self) -> None:
+        """Releases all buffered payloads once a failed or cancelled start is discarded."""
+        self._items.clear()
+        self._logs.clear()
+        self._log_source_bytes.clear()
+        self._log_bytes = 0
+        self._markers.clear()
+        self._marker_bytes = 0
+        self._heartbeat = None
+        self._stderr_first.clear()
+        self._stderr_last.clear()
+
+    def _next_order(self) -> int:
+        self._order += 1
+        return self._order
+
+    def _log_key(self, source: str) -> str:
+        if source not in self._logs and len(self._logs) >= self.limits.log_sources:
+            source = SHARED_LOG
+        if source not in self._logs:
+            self._logs[source] = deque()
+            self._log_source_bytes[source] = 0
+        return source
+
+    def _record_dropped_log(self, key: str, count: int) -> None:
+        if count > 0:
+            self.dropped_logs[key] = self.dropped_logs.get(key, 0) + count
+
+    def _add_log(self, event: dict, size: int) -> None:
+        key = self._log_key(event["source"])
+        cap_bytes = min(self.limits.log_line_bytes, self.limits.log_bytes_per_source, self.limits.log_bytes)
+        if self.limits.log_lines_per_source <= 0 or size > cap_bytes:
+            self._record_dropped_log(key, 1)
+            return
+        q = self._logs[key]
+        q.append((self._next_order(), size, event))
+        self._log_source_bytes[key] += size
+        self._log_bytes += size
+        while q and (len(q) > self.limits.log_lines_per_source
+                     or self._log_source_bytes[key] > self.limits.log_bytes_per_source):
+            _, sz, _ = q.popleft()
+            self._log_source_bytes[key] -= sz
+            self._log_bytes -= sz
+            self._record_dropped_log(key, 1)
+        while self._log_bytes > self.limits.log_bytes:
+            oldest_key = min((k for k, dq in self._logs.items() if dq), key=lambda k: self._logs[k][0][0])
+            _, sz, _ = self._logs[oldest_key].popleft()
+            self._log_source_bytes[oldest_key] -= sz
+            self._log_bytes -= sz
+            self._record_dropped_log(oldest_key, 1)
+
+    def _fold_marker(self, event: dict) -> None:
+        for source, count in event["sources"].items():
+            if count > 0:
+                self._record_dropped_log(self._log_key(source), count)
+
+    def _add_log_dropped(self, event: dict, size: int) -> None:
+        max_bytes = min(self.limits.log_bytes_per_source, self.limits.log_bytes)
+        if self.limits.log_lines_per_source <= 0 or size > self.limits.log_line_bytes or size > max_bytes:
+            self._fold_marker(event)
+            return
+        self._markers.append((self._next_order(), size, event))
+        self._marker_bytes += size
+        while self._markers and (len(self._markers) > self.limits.log_lines_per_source
+                                 or self._marker_bytes > max_bytes):
+            _, sz, old = self._markers.popleft()
+            self._marker_bytes -= sz
+            self._fold_marker(old)
+
+    def add_event(self, event: dict, size: int) -> None:
+        self.inspect_event(event)
+        kind = event.get("event") if isinstance(event, dict) else None
+        seq = event.get("seq") if isinstance(event, dict) else None
+        valid_seq = isinstance(kind, str) and _is_count(seq)
+        if valid_seq and self._last_seq is not None and seq <= self._last_seq:
+            detail = repr(event)
+            n = self.limits.detail_chars
+            if len(detail) > n:
+                detail = detail[:n] + f"... ({len(detail) - n} more characters)"
+            if self.request_path is not None:
+                redacted = hide_request(detail, self.request_path)
+                detail = redacted if isinstance(redacted, str) else detail
+            self.add_problem(
+                "seq-order",
+                f"the launcher wrote seq {seq} after {self._last_seq}: the event is ignored (events must come in order)",
+                detail,
+            )
+            return
+        seq_in_order = valid_seq and (self._last_seq is None or seq > self._last_seq)
+        if seq_in_order:
+            if not self._seen_first_event:
+                self._seen_first_event = True
+                if kind == "run_start":
+                    self._stream_run = True
+            if not self._stream_run:
+                expected = 0 if self._last_seq is None else self._last_seq + 1
+                if seq != expected:
+                    missing = f"seq {expected}" if seq == expected + 1 else f"seq {expected} to {seq - 1}"
+                    self.add_problem(
+                        "seq-gap",
+                        f"events are missing: {missing} never came from the launcher",
+                        {"expected": expected, "got": seq},
+                    )
+                self.checked_seq_gaps = True
+            self._last_seq = seq
+        valid_t_ms = isinstance(event, dict) and ("t_ms" not in event or _is_count(event["t_ms"]))
+        if seq_in_order and valid_t_ms:
+            if kind == "log" and isinstance(event.get("source"), str) and isinstance(event.get("line"), str):
+                self._add_log(event, size)
+                return
+            if (
+                kind == "log_dropped"
+                and _is_count(event.get("count"))
+                and isinstance(event.get("sources"), dict)
+                and all(isinstance(s, str) and _is_count(n) for s, n in event["sources"].items())
+            ):
+                self._add_log_dropped(event, size)
+                return
+            if kind == "heartbeat":
+                self._heartbeat = (self._next_order(), event, size)
+                return
+        self._items.append((self._next_order(), ("event", event, size)))
+
+    def add_stdout(self, line: str | None) -> None:
+        if line is None:
+            if not self._line_too_long_seen:
+                self._line_too_long_seen = True
+                self._items.append((self._next_order(), ("stdout", None)))
+            elif self._bad_stdout_kept < self.limits.problems:
+                self._bad_stdout_kept += 1
+                self._items.append((self._next_order(), ("stdout", None)))
+            else:
+                self.omitted_problems += 1
+            return
+        if not line.strip():
+            return
+        if self._bad_stdout_kept < self.limits.problems:
+            self._bad_stdout_kept += 1
+            self._items.append((self._next_order(), ("stdout", line)))
+        else:
+            self.omitted_problems += 1
+
+    def add_stderr(self, line: str) -> None:
+        order = self._next_order()
+        if len(self._stderr_first) < self.limits.stderr_first:
+            self._stderr_first.append((order, line))
+            return
+        if self.limits.stderr_last > 0:
+            if len(self._stderr_last) == self.limits.stderr_last:
+                evicted_order, _ = self._stderr_last[0]
+                if self.stderr_skipped == 0:
+                    self._stderr_skipped_order = evicted_order
+                self.stderr_skipped += 1
+            self._stderr_last.append((order, line))
+        else:
+            if self.stderr_skipped == 0:
+                self._stderr_skipped_order = order
+            self.stderr_skipped += 1
+
+    def add_problem(self, code: str, message: str, detail: object = None) -> None:
+        if code in SERVER_PROBLEMS:
+            if self._server_problems_kept < self.limits.server_problems:
+                self._server_problems_kept += 1
+                self._items.append((self._next_order(), ("problem", code, message, detail)))
+            else:
+                self.omitted_problems += 1
+            return
+        if self._launcher_problems_kept < self.limits.problems:
+            self._launcher_problems_kept += 1
+            self._items.append((self._next_order(), ("problem", code, message, detail)))
+        else:
+            self.omitted_problems += 1
+
+    def add_exit(self, returncode: int | None) -> None:
+        self._items.append((self._next_order(), ("exit", returncode)))
+
+    def add_finish(self, output_cut: bool, launcher_alive: bool) -> None:
+        self._items.append((self._next_order(), ("finish", output_cut, launcher_alive)))
+
+    def drain(self) -> list[tuple]:
+        """Returns all retained pre-start callbacks in arrival order and frees internal buffers."""
+        streams: list[object] = [self._items]
+        for q in self._logs.values():
+            if q:
+                streams.append(((order, ("event", ev, sz)) for order, sz, ev in q))
+        if self._markers:
+            streams.append(((order, ("event", ev, sz)) for order, sz, ev in self._markers))
+        if self._heartbeat is not None:
+            streams.append([(self._heartbeat[0], ("event", self._heartbeat[1], self._heartbeat[2]))])
+        if self._stderr_first:
+            streams.append(((order, ("stderr", line)) for order, line in self._stderr_first))
+        if self.stderr_skipped > 0:
+            streams.append([(self._stderr_skipped_order, ("stderr_skipped", self.stderr_skipped))])
+        if self._stderr_last:
+            streams.append(((order, ("stderr", line)) for order, line in self._stderr_last))
+        ordered = [item for _, item in heapq.merge(*streams, key=lambda entry: entry[0])]
+        self.clear()
+        return ordered
 
     def pass_check(self, check: dict | None = None) -> None:
         if not self.decision.is_set():
@@ -332,8 +576,7 @@ class _RunSink:
         if gate is not None and not gate.live:
             if gate.discard:
                 return
-            gate.buffer.append(("event", event, size))
-            gate.inspect_event(event)
+            gate.add_event(event, size)
             return
         run = self._run
         self._server.relay_event(run.session, event, size, run)
@@ -343,7 +586,7 @@ class _RunSink:
         if gate is not None and not gate.live:
             if gate.discard:
                 return
-            gate.buffer.append(("stdout", line))
+            gate.add_stdout(line)
             return
         run, session = self._run, self._run.session
         if line is None:
@@ -365,7 +608,7 @@ class _RunSink:
         gate = self._gate
         if gate is not None and not gate.live:
             if not gate.discard:
-                gate.buffer.append(("stderr", line))
+                gate.add_stderr(line)
             return
         run = self._run
         text = hide_request(line, run.request) if run.request is not None else line
@@ -375,7 +618,7 @@ class _RunSink:
         gate = self._gate
         if gate is not None and not gate.live:
             if not gate.discard:
-                gate.buffer.append(("problem", code, message, detail))
+                gate.add_problem(code, message, detail)
             return
         self._server.hub.broadcast(self._run.session.problem(code, message, detail))
 
@@ -383,7 +626,7 @@ class _RunSink:
         gate = self._gate
         if gate is not None and not gate.live:
             if not gate.discard:
-                gate.buffer.append(("exit", returncode))
+                gate.add_exit(returncode)
             return
         run = self._run
         if run.silence_task is not None:
@@ -399,7 +642,7 @@ class _RunSink:
             if gate.discard:
                 return
             gate.pass_check(None)
-            gate.buffer.append(("finish", output_cut, launcher_alive))
+            gate.add_finish(output_cut, launcher_alive)
             return
         run = self._run
         if run.silence_task is not None:
@@ -1236,20 +1479,45 @@ class GuiServer:
         speed, start_paused = intent.get("speed"), intent.get("start_paused", False)
         why_not = await self._no_variables()
         self._not_closing()
-        credentials = token = None
-        if why_not is None:
-            making = asyncio.ensure_future(asyncio.to_thread(control.credentials_file))
-            try:
-                credentials, token = await asyncio.shield(making)
-            except asyncio.CancelledError:  # the request was ended meanwhile: the file is still removed
-                making.add_done_callback(lambda f: f.exception() is None and control.remove(f.result()[0]))
-                raise
-            except OSError as e:
-                why_not = f"the file with the control server's credentials could not be made ({e})"
-        # A scenario run records its timeline when the launcher can (the file is named here, the launcher makes it)
-        timeline = await asyncio.to_thread(self.timelines.new_file) \
-            if scenario is not None and FEATURE_TIMELINE in self.launcher.features else None
+        credentials: Path | None = None
+        token: str | None = None
+        timeline: Path | None = None
+        request: Path | None = None
+        handle: RunHandle | None = None
+        run: Run | None = None
         try:
+            if why_not is None:
+                making = asyncio.ensure_future(asyncio.to_thread(control.credentials_file))
+                try:
+                    credentials, token = await asyncio.shield(making)
+                except asyncio.CancelledError:  # the request was ended meanwhile: the file is still removed
+                    if making.done():
+                        if not making.cancelled() and making.exception() is None:
+                            control.remove(making.result()[0])
+                    else:
+                        making.add_done_callback(
+                            lambda f: not f.cancelled() and f.exception() is None and control.remove(f.result()[0])
+                        )
+                    raise
+                except OSError as e:
+                    why_not = f"the file with the control server's credentials could not be made ({e})"
+            # A scenario run records its timeline when the launcher can (the file is named here, the launcher makes it)
+            if scenario is not None and FEATURE_TIMELINE in self.launcher.features:
+                making_timeline = asyncio.ensure_future(asyncio.to_thread(self.timelines.new_file))
+                try:
+                    timeline = await asyncio.shield(making_timeline)
+                except asyncio.CancelledError:
+                    if making_timeline.done():
+                        if not making_timeline.cancelled() and making_timeline.exception() is None:
+                            control.remove(making_timeline.result())
+                    else:
+                        # Retrieve f.exception() too so a late RuntimeError (closed during shutdown) or OSError
+                        # never logs "Future exception was never retrieved".
+                        making_timeline.add_done_callback(
+                            lambda f: not f.cancelled() and f.exception() is None and control.remove(f.result())
+                        )
+                    raise
+            self._not_closing()
             # The last await is above: from here to the launcher's start no other request runs, so the targets are
             # compared with the lists and the file as they are when the launcher is started.
             self._check_targets(
@@ -1260,11 +1528,6 @@ class GuiServer:
                 checked_sha256,
             )
             request = self._make_request(intent)
-        except BaseException:
-            control.remove(credentials)
-            control.remove(timeline)
-            raise
-        try:
             handle = await self.runtime.start_run(RunSpec(
                 config=config.relative,
                 request=request,
@@ -1276,48 +1539,57 @@ class GuiServer:
                 manual=tuple(manual),
                 hot_decision=inspection.hot,
             ))
+            run_credentials = credentials
+            run_token = token
+            if handle.control_token is not None:
+                control.remove(run_credentials)
+                credentials = None
+                run_credentials = None
+                run_token = handle.control_token
+            run_id = f"{self.instance}-{self._next_session_id}"
+            session = Session(run_id, config.relative, disable, speed, start_paused,
+                              limits=self.o.limits, launcher_pid=handle.pid, launcher_mode=handle.mode,
+                              scenario=scenario, manual=manual)
+            session.facts = self.facts
+            session.execution_status = self.runtime.execution_status
+            session.next_stream_seq = self.next_stream_seq
+            preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
+            gate = _PreStartGate(config.relative, request, limits=self.o.limits) \
+                if getattr(handle, "waits_for_check", True) else None
+
+            def emit_variables(messages: list[dict]) -> None:
+                if gate is not None and gate.discard:
+                    return
+                self._tell_variables(messages)
+
+            variables = Variables(session.id, emit_variables, limits=self.o.variable_limits, secret=run_token,
+                                  ending=lambda: _variables_ending(session))
+            if why_not is None:
+                variables.expect()
+            else:
+                variables.set_off(why_not)
+            session.variables = variables.summary
+            recording = Recording() if why_not is None and scenario is None else Recording(
+                available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
+                is not None else f"this run has no variables to write: {why_not}")
+            run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=run_credentials,
+                      token=run_token, recording=recording, timeline=timeline, request=request,
+                      preflight_timing=preflight_timing)
+            self._runs.add(run)
+            sink = _RunSink(self, run, gate=gate)
+            handle.start(sink)
         except BaseException:
+            if run is not None:
+                self._runs.discard(run)
+            if handle is not None:
+                handle.send_stop(2, force=True)
+                abort = getattr(handle, "abort", None)
+                if abort is not None:
+                    abort()
             control.remove(credentials)
             control.remove(request)
             control.remove(timeline)
             raise
-        run_credentials = credentials
-        run_token = token
-        if handle.control_token is not None:
-            control.remove(run_credentials)
-            run_credentials = None
-            run_token = handle.control_token
-        run_id = f"{self.instance}-{self._next_session_id}"
-        session = Session(run_id, config.relative, disable, speed, start_paused,
-                          limits=self.o.limits, launcher_pid=handle.pid, launcher_mode=handle.mode,
-                          scenario=scenario, manual=manual)
-        session.facts = self.facts
-        session.execution_status = self.runtime.execution_status
-        session.next_stream_seq = self.next_stream_seq
-        preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
-        gate = _PreStartGate(config.relative, request) if getattr(handle, "waits_for_check", True) else None
-
-        def emit_variables(messages: list[dict]) -> None:
-            if gate is not None and gate.discard:
-                return
-            self._tell_variables(messages)
-
-        variables = Variables(session.id, emit_variables, limits=self.o.variable_limits, secret=run_token,
-                              ending=lambda: _variables_ending(session))
-        if why_not is None:
-            variables.expect()
-        else:
-            variables.set_off(why_not)
-        session.variables = variables.summary
-        recording = Recording() if why_not is None and scenario is None else Recording(
-            available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
-            is not None else f"this run has no variables to write: {why_not}")
-        run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=run_credentials,
-                  token=run_token, recording=recording, timeline=timeline, request=request,
-                  preflight_timing=preflight_timing)
-        self._runs.add(run)
-        sink = _RunSink(self, run, gate=gate)
-        handle.start(sink)
         if gate is not None:
             wait_cap = 5.0 if self.o.stop_timeout_s is None else self.o.stop_timeout_s
             try:
@@ -1325,6 +1597,7 @@ class GuiServer:
                     await gate.decision.wait()
             except BaseException as exc:
                 gate.discard = True
+                gate.clear()
                 try:
                     handle.send_stop(2, force=True)
                     if not gate.cleanup_done.is_set():
@@ -1347,6 +1620,7 @@ class GuiServer:
                 raise
             if gate.failed_check is not None:
                 gate.discard = True
+                gate.clear()
                 try:
                     if not gate.cleanup_done.is_set():
                         with contextlib.suppress(TimeoutError, Exception):
@@ -1367,6 +1641,7 @@ class GuiServer:
                               {"result": checked.get("result"), "findings": checked.get("findings", [])})
             if self._closing:
                 gate.discard = True
+                gate.clear()
                 await asyncio.shield(self._discard_failed_start(run))
                 raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
             if isinstance(gate.passed_check, dict):
@@ -1387,21 +1662,37 @@ class GuiServer:
         self._tell_variables([variables.message()])
         if gate is not None:
             gate.live = True
-            while gate.buffer:
-                item = gate.buffer.pop(0)
+            if gate.dropped_logs:
+                self.hub.broadcast(session.note_prestart_dropped_logs(gate.dropped_logs, sources=gate.log_sources()))
+            if gate.omitted_problems:
+                session.problems_omitted += gate.omitted_problems
+            for item in gate.drain():
                 kind = item[0]
                 if kind == "event":
-                    sink.on_stdout_event(item[1], item[2])
+                    if gate.checked_seq_gaps:
+                        session._skip_seq_gap = True
+                        try:
+                            sink.on_stdout_event(item[1], item[2])
+                        finally:
+                            session._skip_seq_gap = False
+                    else:
+                        sink.on_stdout_event(item[1], item[2])
                 elif kind == "stdout":
                     sink.on_stdout_line(item[1])
                 elif kind == "stderr":
                     sink.on_stderr_line(item[1])
+                elif kind == "stderr_skipped":
+                    session.note_skipped_stderr(item[1])
                 elif kind == "problem":
                     sink.on_problem(item[1], item[2], item[3])
                 elif kind == "exit":
                     sink.on_process_exited(item[1])
                 elif kind == "finish":
+                    if gate.last_seq is not None and (session.last_seq is None or gate.last_seq > session.last_seq):
+                        session.last_seq = gate.last_seq
                     await sink.on_run_finished(output_cut=item[1], launcher_alive=item[2])
+            if gate.last_seq is not None and (session.last_seq is None or gate.last_seq > session.last_seq):
+                session.last_seq = gate.last_seq
             if gate.cleanup_called:
                 await sink.on_run_cleanup()
         if self._closing:  # the end began while the launcher was starting: it is stopped with the others
