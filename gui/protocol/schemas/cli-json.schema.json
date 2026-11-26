@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vehicle-sil-gui --json readiness message (Protocol v4)",
+  "description": "Draft 2020-12 JSON Schema for the single JSON object printed to stdout by `vehicle-sil-gui --json` once the HTTP/WebSocket server is listening.",
+  "additionalProperties": false,
+  "properties": {
+    "vehicle_sil_gui": {
+      "const": 4,
+      "title": "Vehicle Sil Gui",
+      "type": "integer"
+    },
+    "url": {
+      "minLength": 1,
+      "title": "Url",
+      "type": "string"
+    },
+    "port": {
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Port",
+      "type": "integer"
+    },
+    "dev_url": {
+      "minLength": 1,
+      "type": "string",
+      "title": "Dev Url"
+    },
+    "auth": {
+      "const": false,
+      "type": "boolean",
+      "title": "Auth"
+    }
+  },
+  "required": [
+    "vehicle_sil_gui",
+    "url",
+    "port"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,14 @@
+{
+  "description": "Warm up the persistent runtime for a configuration when eligible.",
+  "request": {
+    "method": "POST",
+    "path": "api/prepare",
+    "body": {
+      "file": "simulation.yaml"
+    }
+  },
+  "status": 200,
+  "response": {
+    "instance": "0123456789abcdef"
+  }
+}

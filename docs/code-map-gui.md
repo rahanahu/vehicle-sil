@@ -14,8 +14,8 @@ For an introduction, see [gui.md](gui.md).
 
 | What | Location |
 |---|---|
-| GUI server | `gui/server/src/vehicle_sil_gui/` (`server.py` HTTP transport, security middleware and `RouteSpec`; `config_service.py` configs/check/save/TOCTOU; `run_manager.py` run lifecycle and `allowed()`; `ws_gateway.py` WebSocket and watches; `contracts.py` Pydantic v2 models; `control.py` connects to the Control Server) |
-| API specification and examples | `gui/protocol` |
+| GUI server | `gui/server/src/vehicle_sil_gui/` (`server.py` HTTP transport, security middleware and `RouteSpec`; `config_service.py` configs/check/save/TOCTOU; `run_manager.py` run lifecycle and `allowed()`; `ws_gateway.py` WebSocket and watches; `contracts.py` Pydantic v2 models; `openapi.py` offline OpenAPI 3.1 and WS/CLI JSON Schema exporter; `control.py` connects to the Control Server) |
+| API specification, schemas, and examples | `gui/protocol` (`README.md`, offline-generated `openapi.yaml` for all 17 HTTP endpoints and `schemas/*.schema.json` checked by `python -m vehicle_sil_gui.openapi --check` / `scripts/verify-python.py`, and 60 captured `examples/*.json`) |
 | Client library | `gui/client/src` |
 | Sample screens | `gui/web/src/app` |
 | The client library and the parts served to a screen of your own (`vsil/`) | `gui/server/src/vehicle_sil_gui/client_files.py` and `get_client_file()` in `server.py`; the files are listed again in `CLIENT_BUNDLES` of `scripts/package.py`; test: `gui/server/tests/test_client_files.py` |

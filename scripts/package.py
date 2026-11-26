@@ -626,6 +626,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 | `client/vehicle-sil-timeline.js`, `.d.ts` | the element `<vehicle-sil-timeline>`, which draws a scenario run's timeline on a screen of your own: `<script src>` it, or import it (the npm package has it as `@vehicle-sil/gui-client/timeline`); the GUI server serves it as `timeline/vehicle-sil-timeline.js` |
 | `gui_starter/` | a screen of your own to start from (parts in HTML and a short script; it loads the library and the parts from the GUI server's `vsil/`, so it has no copy of them): `vehicle-sil-gui --web gui_starter simulation.yaml` |
 | `schema/` | the JSON Schemas of the configuration (`simulation.schema.json`), of a scenario (`scenario.schema.json`), of a request file of `vehicle_sil_launch run --request` (`run-request.schema.json`) and of `<configuration>.dashboard.yaml` (`dashboard.schema.json`), and of the file that `vehicle_sil_launch run --scenario --timeline` writes (`timeline.schema.json`, for tools that read it): an editor with a YAML language server completes and checks a file whose first line is `# yaml-language-server: $schema=<path of the schema>`. `get_tools.py` of the project template copies them to the project's `schema/` |
+| `protocol/` | offline machine-readable contracts for the GUI server API (`openapi.yaml` covering all 17 `/api/*` HTTP endpoints, and Draft 2020-12 JSON Schemas under `schemas/` for WebSocket frames and `vehicle-sil-gui --json`) |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md`, `licenses/` | the license of vehicle-sil and the notices and license texts of what these tools contain |
 
 Put `bin` on PATH, then, next to your simulation.yaml:
@@ -651,6 +652,14 @@ TIMELINE_ELEMENT = ("vehicle-sil-timeline.js", "vehicle-sil-timeline.d.ts")
 # The client library and the parts (npm run build:client), which the GUI server serves under vsil/: in the server's
 # package (vehicle_sil_gui/client, see FILES in gui/server/src/vehicle_sil_gui/client_files.py) and in client/.
 CLIENT_BUNDLES = ("vehicle-sil-gui-client.mjs", "vehicle-sil-gui-elements.mjs")
+# Offline machine-readable GUI Server API contracts bundled under protocol/ in the tools archive.
+PROTOCOL_SPECS = (
+    "openapi.yaml",
+    "schemas/ws-server.schema.json",
+    "schemas/ws-client.schema.json",
+    "schemas/ws-command-event.schema.json",
+    "schemas/cli-json.schema.json",
+)
 
 
 def built_with(build: Path) -> str | None:
@@ -839,6 +848,10 @@ def tools_command(args: argparse.Namespace) -> int:
         shutil.copy2(ROOT / "schema" / "scenario.schema.json", stage / "schema")
         shutil.copy2(ROOT / "schema" / "run-request.schema.json", stage / "schema")
         shutil.copy2(ROOT / "schema" / "timeline.schema.json", stage / "schema")
+        for rel in PROTOCOL_SPECS:
+            dst = stage / "protocol" / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "gui" / "protocol" / rel, dst)
         shutil.copy2(ROOT / "LICENSE", stage)
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", stage)
         stage_licenses(s, build, stage / "licenses", web_licenses, bundled, args.allow_missing_licenses,
@@ -1235,7 +1248,8 @@ def verify_command(args: argparse.Namespace) -> int:
                      "gui_starter/index.html", "gui_starter/main.js",
                      "schema/dashboard.schema.json", "schema/simulation.schema.json",
                      "schema/scenario.schema.json", "schema/run-request.schema.json",
-                     "schema/timeline.schema.json"] + (
+                     "schema/timeline.schema.json",
+                     *(f"protocol/{rel}" for rel in PROTOCOL_SPECS)] + (
                 ["bin/vehicle-sil-gui.cmd"] if WINDOWS else [f"bin/{SOCKETCAN_BRIDGE}"]):
             if not (tools / path).is_file():
                 raise StepFailed(f"the archive has no {top}/{path}")

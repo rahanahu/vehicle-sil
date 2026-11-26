@@ -75,3 +75,34 @@ export async function webSocketExamples(dir?: string): Promise<WebSocketExample[
     .filter(([, value]) => typeof value === 'object' && value !== null && 'server' in value)
     .map(([name, value]) => ({ name, ...(value as Omit<WebSocketExample, 'name'>) }));
 }
+
+export interface ProtocolSchemas {
+  openapi: Record<string, unknown>;
+  wsServer: Record<string, unknown>;
+  wsClient: Record<string, unknown>;
+  wsCommandEvent: Record<string, unknown>;
+  cliJson: Record<string, unknown>;
+}
+
+/**
+ * Loads the generated OpenAPI 3.1 document and Draft 2020-12 JSON Schemas from gui/protocol/ (Node tests only).
+ */
+export async function protocolSchemas(protocolDir?: string): Promise<ProtocolSchemas> {
+  const fsName = 'node:fs';
+  const yamlName = 'yaml';
+  const fs = (await import(/* @vite-ignore */ fsName)) as NodeFs;
+  const yamlMod = (await import(/* @vite-ignore */ yamlName)) as {
+    parse(text: string): Record<string, unknown>;
+  };
+  const process = (globalThis as unknown as { process: NodeProcess }).process;
+  const dir = protocolDir ?? `${process.cwd()}/../protocol`;
+  const readJson = (rel: string): Record<string, unknown> =>
+    JSON.parse(fs.readFileSync(`${dir}/${rel}`, 'utf8')) as Record<string, unknown>;
+  return {
+    openapi: yamlMod.parse(fs.readFileSync(`${dir}/openapi.yaml`, 'utf8')),
+    wsServer: readJson('schemas/ws-server.schema.json'),
+    wsClient: readJson('schemas/ws-client.schema.json'),
+    wsCommandEvent: readJson('schemas/ws-command-event.schema.json'),
+    cliJson: readJson('schemas/cli-json.schema.json'),
+  };
+}

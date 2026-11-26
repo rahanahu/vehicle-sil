@@ -145,10 +145,9 @@ class ContractJsonSchemaGenerator(GenerateJsonSchema):
 # ------------------------------------------------------------ Base models & scalar types
 
 
-class ContractModel(BaseModel):
-    """Strict closed wire contract model (`extra='forbid'`, `strict=True`, rejects explicit `null` on `OmitOnly`)."""
+class _OmitOnlyMixin(BaseModel):
+    """Rejects explicit `null` for fields annotated with `OmitOnly`."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
     _omit_only_keys: ClassVar[frozenset[str]] = frozenset()
 
     @classmethod
@@ -172,7 +171,13 @@ class ContractModel(BaseModel):
         return data
 
 
-class OpenContractModel(BaseModel):
+class ContractModel(_OmitOnlyMixin):
+    """Strict closed wire contract model (`extra='forbid'`, `strict=True`, rejects explicit `null` on `OmitOnly`)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class OpenContractModel(_OmitOnlyMixin):
     """Launcher-originated payload model: types known fields while allowing future launcher keys."""
 
     model_config = ConfigDict(extra="allow")
@@ -456,7 +461,7 @@ class VariableRef(ContractModel):
     name: StrictStr
 
 
-class _WatchVariableRef(BaseModel):
+class WatchVariableRef(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
     peer: StrictStr
     name: StrictStr
@@ -587,12 +592,15 @@ class ConfigSaveRequest(ContractModel):
     stamp: StampStr | None
 
 
+UniqueNameList = Annotated[list[NonEmptyStr], Field(json_schema_extra={"uniqueItems": True})]
+
+
 class PrepareRequest(ContractModel):
     file: NonEmptyStr
     variant: OmitNonEmptyStr = None
-    disable: Annotated[list[NonEmptyStr] | None, OmitOnly] = None
-    enable: Annotated[list[NonEmptyStr] | None, OmitOnly] = None
-    manual: Annotated[list[NonEmptyStr] | None, OmitOnly] = None
+    disable: Annotated[UniqueNameList | None, OmitOnly] = None
+    enable: Annotated[UniqueNameList | None, OmitOnly] = None
+    manual: Annotated[UniqueNameList | None, OmitOnly] = None
 
     @field_validator("disable", "enable", "manual")
     @classmethod
@@ -645,8 +653,11 @@ class StopSessionRequest(ContractModel):
     instance: NonEmptyStr
 
 
+PeerWritesMap = Annotated[dict[StrictStr, Any], Field(json_schema_extra={"minProperties": 1})]
+
+
 class WritePayload(ContractModel):
-    writes: dict[StrictStr, dict[StrictStr, Any]]
+    writes: Annotated[dict[StrictStr, PeerWritesMap], Field(json_schema_extra={"minProperties": 1})]
     at_ms: AtMs | None = None
     late: Annotated[LatePolicy, OmitOnly] = "reject"
 
@@ -954,9 +965,9 @@ class ScenarioStepSummary(OpenContractModel):
     line: StrictInt | None = None
     kind: StrictStr | None = None
     text: StrictStr | None = None
-    start_ms: StrictInt | None = None
-    at_ms: StrictInt | None = None
-    end_ms: StrictInt | None = None
+    start_ms: FiniteNumber | None = None
+    at_ms: FiniteNumber | None = None
+    end_ms: FiniteNumber | None = None
     code: StrictStr | None = None
     message: StrictStr | None = None
 
@@ -966,19 +977,19 @@ class SessionScenarioSummary(ContractModel):
     name: StrictStr | None
     status: StrictStr | None
     step_count: NonNegInt | None
-    over_at_ms: StrictInt | None
+    over_at_ms: FiniteNumber | None
     steps: list[ScenarioStepSummary]
     steps_omitted: NonNegInt
     timeline_url: StrictStr | None
 
 
 class RegistrySummary(OpenContractModel):
-    uri: StrictStr | None = None
+    uri: StrictStr | None
     omitted_fields: list[StrictStr] | None = None
 
 
 class TimeSummary(OpenContractModel):
-    event: Literal["time"] | None = None
+    event: Literal["time"]
     seq: NonNegInt | None = None
     t_ms: NonNegInt | None = None
     sim_ms: StrictInt
@@ -1006,12 +1017,13 @@ class CommandSummary(OpenContractModel):
 
 class LauncherAllowedItem(OpenContractModel):
     ok: StrictBool
-    reason: StrictStr | None = None
-    message: StrictStr | None = None
-    caution: CautionInfo | None = None
+    reason: StrictStr | None
+    message: StrictStr | None
+    caution: CautionInfo | None
 
 
 class LauncherStateSummary(OpenContractModel):
+    seq: NonNegInt
     rev: CommandId
     allowed: dict[StrictStr, LauncherAllowedItem]
 
@@ -1036,9 +1048,9 @@ class ParticipantSummary(OpenContractModel):
 
 
 class ResultSummary(OpenContractModel):
-    result: StrictStr | None = None
+    result: StrictStr
+    ok: StrictBool
     end: StrictStr | None = None
-    ok: StrictBool | None = None
     message: StrictStr | None = None
 
 
@@ -1192,7 +1204,7 @@ class WsAuthMessage(BaseModel):
 class WatchPayload(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
     id: CommandId
-    variables: Literal["all"] | list[_WatchVariableRef]
+    variables: Literal["all"] | list[WatchVariableRef]
     period_ms: OmitPosInt = None
 
     @model_validator(mode="before")
@@ -1218,9 +1230,9 @@ class WatchPayload(BaseModel):
     @classmethod
     def _check_watch_limit(
         cls,
-        value: Literal["all"] | list[_WatchVariableRef],
+        value: Literal["all"] | list[WatchVariableRef],
         info: ValidationInfo,
-    ) -> Literal["all"] | list[_WatchVariableRef]:
+    ) -> Literal["all"] | list[WatchVariableRef]:
         if isinstance(value, list):
             limits = info.context.get("limits") if isinstance(info.context, dict) else None
             max_vars = getattr(limits, "watch_variables", 2000)
@@ -1300,6 +1312,9 @@ class WsCommandEventMessage(ContractModel):
 
 class _LauncherEventBase(OpenContractModel):
     event: NonEmptyStr
+    seq: CommandId
+    t_ms: OmitCommandId = None
+    run: OmitNonEmptyStr = None
 
 
 class RunStartEvent(_LauncherEventBase):
@@ -1312,17 +1327,26 @@ class PhaseEvent(_LauncherEventBase):
     phase: StrictStr
 
 
-class _InboundCheckParticipant(OpenContractModel):
+class InboundCheckParticipant(OpenContractModel):
     name: StrictStr
 
 
-class _InboundCheckObject(OpenContractModel):
-    participants: list[_InboundCheckParticipant] = Field(default_factory=list)
+class InboundCheckObject(OpenContractModel):
+    participants: list[InboundCheckParticipant] = Field(default_factory=list)
 
 
 class CheckEvent(_LauncherEventBase):
     event: Literal["check"]
-    check: _InboundCheckObject
+    check: InboundCheckObject
+
+
+class WsCheckObject(InboundCheckObject):
+    vehicle_sil_check: ExactLiteral1
+
+
+class WsCheckEvent(_LauncherEventBase):
+    event: Literal["check"]
+    check: WsCheckObject
 
 
 class RegistryEvent(_LauncherEventBase):
@@ -1432,10 +1456,21 @@ class UnknownLauncherEvent(_LauncherEventBase):
         return value
 
 
+class WsStateEvent(_LauncherEventBase):
+    event: Literal["state"]
+    rev: CommandId
+    allowed: dict[StrictStr, LauncherAllowedItem]
+
+
+class WsResultEvent(_LauncherEventBase):
+    event: Literal["result"]
+    result: ResultSummary
+
+
 LauncherEventPayload = (
     RunStartEvent
     | PhaseEvent
-    | CheckEvent
+    | WsCheckEvent
     | RegistryEvent
     | ParticipantEvent
     | LogEvent
@@ -1443,8 +1478,8 @@ LauncherEventPayload = (
     | TimeEvent
     | LogDroppedEvent
     | WsCommandEventPayload
-    | StateEvent
-    | ResultEvent
+    | WsStateEvent
+    | WsResultEvent
     | ControlLinkEvent
     | ScenarioStepEvent
     | HeartbeatEvent
@@ -1460,8 +1495,9 @@ def validate_launcher_event(event: Mapping[str, Any]) -> str | None:
     if spec is None:
         return None
     model, fallback = spec
+    payload = event if "seq" in event else {**event, "seq": 0}
     try:
-        model.model_validate(event)
+        model.model_validate(payload)
     except ValidationError:
         return fallback
     return None
@@ -1551,7 +1587,7 @@ class WsAvailabilityMessage(ContractModel):
     type: Literal["availability"]
     stream_seq: NonNegInt
     run_id: NonEmptyStr
-    peers: dict[StrictStr, dict[StrictStr, Literal["active", "inactive", "unknown"]]]
+    peers: dict[StrictStr, dict[StrictStr, Literal["active", "inactive", "unknown"]]] = Field(min_length=1)
 
 
 class WsDroppedMessage(ContractModel):

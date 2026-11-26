@@ -14,8 +14,8 @@
 
 | 内容 | 場所 |
 |---|---|
-| GUI サーバー | `gui/server/src/vehicle_sil_gui/`（HTTP 層・セキュリティミドルウェア・`RouteSpec` は `server.py`、設定・照合・保存・TOCTOU は `config_service.py`、実行ライフサイクルと `allowed()` は `run_manager.py`、WebSocket と監視は `ws_gateway.py`、Pydantic v2 モデルは `contracts.py`、Control Server に接続するのは `control.py`） |
-| API の仕様と例 | `gui/protocol` |
+| GUI サーバー | `gui/server/src/vehicle_sil_gui/`（HTTP 層・セキュリティミドルウェア・`RouteSpec` は `server.py`、設定・照合・保存・TOCTOU は `config_service.py`、実行ライフサイクルと `allowed()` は `run_manager.py`、WebSocket と監視は `ws_gateway.py`、Pydantic v2 モデルは `contracts.py`、オフラインの OpenAPI 3.1 / WS・CLI JSON Schema 生成は `openapi.py`、Control Server に接続するのは `control.py`） |
+| API の仕様・スキーマ・例 | `gui/protocol`（`README.ja.md`、`python -m vehicle_sil_gui.openapi --check` と `scripts/verify-python.py` で検証する全 17 HTTP エンドポイントの `openapi.yaml` および `schemas/*.schema.json`、60 件の `examples/*.json`） |
 | クライアントのライブラリ | `gui/client/src` |
 | サンプルの画面 | `gui/web/src/app` |
 | 自分の画面に配るクライアントライブラリと部品（`vsil/`） | `gui/server/src/vehicle_sil_gui/client_files.py`、`server.py` の `get_client_file()`。ファイルの一覧は `scripts/package.py` の `CLIENT_BUNDLES` にもあります。試験: `gui/server/tests/test_client_files.py` |

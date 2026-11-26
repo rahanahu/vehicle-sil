@@ -28,18 +28,26 @@ from conftest import (CONFIGS, CONTROL_FEATURES, REPLAY, REPOSITORY, Client, gui
                       run_async, until_async)
 from fake_runtime import _validate_run_state, _validate_status_members, validate_events_v4_event
 from vehicle_sil_gui import __version__
+from vehicle_sil_gui.contracts import ErrorCode, HTTP_ERROR_CODES
 from vehicle_sil_gui.launcher import REQUIRED_FEATURES
+from vehicle_sil_gui.openapi import TARGETS as OPENAPI_TARGETS, check_all as check_openapi_drift
+from vehicle_sil_gui.server import route_specs
 
 PROTOCOL_DIR = Path(__file__).resolve().parents[2] / "protocol"
 DIRECTORY = PROTOCOL_DIR / "examples"
 OPENAPI_PATH = PROTOCOL_DIR / "openapi.yaml"
-WS_COMMAND_SCHEMA_PATH = PROTOCOL_DIR / "schemas" / "ws-command-event.schema.json"
+SCHEMAS_DIR = PROTOCOL_DIR / "schemas"
+WS_COMMAND_SCHEMA_PATH = SCHEMAS_DIR / "ws-command-event.schema.json"
+WS_SERVER_SCHEMA_PATH = SCHEMAS_DIR / "ws-server.schema.json"
+WS_CLIENT_SCHEMA_PATH = SCHEMAS_DIR / "ws-client.schema.json"
+CLI_JSON_SCHEMA_PATH = SCHEMAS_DIR / "cli-json.schema.json"
+TIMELINE_SCHEMA_PATH = REPOSITORY / "schema" / "timeline.schema.json"
 UPDATE = os.environ.get("UPDATE_PROTOCOL_EXAMPLES") == "1"
 POSIX = sys.platform != "win32"
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:-(?:rc|beta|alpha)\.\d+)?$")
 
 EXAMPLES = {
-    "app", "configs", "session-none", "session-running", "session-ended", "check-passed", "check-disabled",
+    "app", "configs", "prepare", "timeline", "session-none", "session-running", "session-ended", "check-passed", "check-disabled",
     "check-failed", "error-check-failed", "run", "stop", "stop-force", "stop-ended",
     "error-unauthorized", "error-forbidden-host", "error-forbidden-origin", "error-cors-not-allowed",
     "error-not-found", "error-method-not-allowed", "error-too-large", "error-unsupported-media-type",
@@ -223,43 +231,9 @@ _STREAM_SEQ_TYPES = frozenset({
 
 _NO_STREAM_SEQ_TYPES = frozenset({"values", "dropped", "resync"})
 
-_WS_KEYS_BY_TYPE: dict[str, set[str]] = {
-    "hello": {"type", "vehicle_sil_gui", "version", "instance", "stream_seq", "session", "allowed", "replay", "runtime"},
-    "synced": {"type", "stream_seq", "run_id", "last_seq"},
-    "session": {"type", "stream_seq", "session"},
-    "event": {"type", "stream_seq", "run_id", "event"},
-    "allowed": {"type", "stream_seq", "run_id", "allowed"},
-    "runtime": {"type", "stream_seq", "runtime"},
-    "variables": {"type", "stream_seq", "run_id", "variables"},
-    "values": {"type", "run_id", "id", "watch_id", "sim_ms", "paused", "peers"},
-    "operation": {"type", "stream_seq", "run_id", "seq", "state", "done", "peers"},
-    "availability": {"type", "stream_seq", "run_id", "peers"},
-    "dropped": {"type", "run_id", "reason", "at_least", "events", "log"},
-    "resync": {"type", "reason", "message"},
-    "error": {"type", "code", "message", "detail", "run_id"},
-}
-
-_SESSION_BASE_KEYS = frozenset({
-    "id", "run_t0_ms", "file", "disable", "manual", "speed", "start_paused",
-    "started_at", "ended_at", "state", "launcher", "stop", "phase",
-    "last_seq", "last_t_ms", "time", "check", "registry", "participants",
-    "participants_omitted", "findings", "findings_omitted", "last_command",
-    "launcher_state", "allowed", "result", "log", "problems",
-    "problems_omitted", "scenario",
-})
-
-_LAUNCHER_SUMMARY_KEYS = frozenset({
-    "pid", "running", "exit_code", "signal", "silent_s", "mode", "process_alive",
-})
-
-_VARIABLES_SUMMARY_KEYS = frozenset({
-    "state", "reason", "peers", "peers_omitted", "variables_omitted",
-    "operations", "operations_from_seq", "operations_open_omitted",
-})
-
 _EXACT_HTTP_EXAMPLES = frozenset({
-    "configs", "recording", "run", "run-connect", "stop", "stop-force", "stop-ended",
-    "time", "write", "config", "save-config", "scenarios", "dashboard", "dashboard-errors",
+    "configs", "prepare", "recording", "run", "run-connect", "stop", "stop-force", "stop-ended",
+    "time", "timeline", "write", "config", "save-config", "scenarios", "dashboard", "dashboard-errors",
     "error-already-running", "error-commands-changed", "error-config-unreadable",
     "error-not-writable", "error-scenario-not-listed", "error-session-changed",
     "error-target-not-listed",
@@ -271,159 +245,17 @@ _EXACT_STRIP_STREAM_SEQ_WS = frozenset({
 })
 
 
-def _validate_allowed(name: str, allowed: object) -> None:
-    assert isinstance(allowed, dict), (name, allowed)
-    assert set(allowed.keys()) == {"start", "stop", "force", "save"}, (name, allowed)
-    for key in ("start", "stop", "force"):
-        item = allowed[key]
-        assert isinstance(item, dict) and set(item.keys()) == {"ok", "reason", "message"}, (name, key, item)
-        assert isinstance(item["ok"], bool), (name, key, item)
-        assert item["reason"] is None or isinstance(item["reason"], str), (name, key, item)
-        assert item["message"] is None or isinstance(item["message"], str), (name, key, item)
-    save = allowed["save"]
-    assert isinstance(save, dict) and set(save.keys()) == {"ok", "reason", "message", "caution"}, (name, save)
-    assert isinstance(save["ok"], bool), (name, save)
-    assert save["reason"] is None or isinstance(save["reason"], str), (name, save)
-    assert save["message"] is None or isinstance(save["message"], str), (name, save)
-    caution = save["caution"]
-    if caution is not None:
-        assert isinstance(caution, dict) and set(caution.keys()) == {"code", "message"}, (name, save)
-
-
-def _validate_runtime(name: str, runtime: object) -> None:
-    assert isinstance(runtime, dict), (name, runtime)
-    assert set(runtime.keys()) == {"mode", "state", "config", "reason", "message"}, (name, runtime)
-    assert runtime["mode"] in ("hot", "cold"), (name, runtime)
-    assert runtime["state"] in ("idle", "preparing", "ready", "running", "resetting", "cold"), (name, runtime)
-    assert runtime["config"] is None or isinstance(runtime["config"], str), (name, runtime)
-    assert runtime["reason"] is None or isinstance(runtime["reason"], str), (name, runtime)
-    assert runtime["message"] is None or isinstance(runtime["message"], str), (name, runtime)
-
-
-def _validate_variables_summary(name: str, variables: object) -> None:
-    assert isinstance(variables, dict), (name, variables)
-    assert set(variables.keys()) == _VARIABLES_SUMMARY_KEYS, (name, variables)
-    assert variables["state"] in ("off", "connecting", "ready", "failed", "ended"), (name, variables)
-    assert variables["reason"] is None or isinstance(variables["reason"], str), (name, variables)
-    assert isinstance(variables["peers"], list), (name, variables)
-    for peer in variables["peers"]:
-        assert isinstance(peer, dict) and isinstance(peer.get("name"), str), (name, peer)
-        assert isinstance(peer.get("variables"), list), (name, peer)
-        for var in peer["variables"]:
-            assert isinstance(var, dict) and isinstance(var.get("name"), str), (name, var)
-            assert isinstance(var.get("type"), str) and isinstance(var.get("role"), str), (name, var)
-            assert isinstance(var.get("writable"), bool), (name, var)
-            if "availability" in var:
-                assert var["availability"] in ("active", "inactive", "unknown"), (name, var)
-    assert type(variables["peers_omitted"]) is int and variables["peers_omitted"] >= 0, (name, variables)
-    assert type(variables["variables_omitted"]) is int and variables["variables_omitted"] >= 0, (name, variables)
-    assert isinstance(variables["operations"], list), (name, variables)
-    assert type(variables["operations_from_seq"]) is int, (name, variables)
-    assert type(variables["operations_open_omitted"]) is int, (name, variables)
-
-
-def _validate_session(name: str, session: object, *, allow_variables: bool = False) -> None:
-    assert isinstance(session, dict), (name, session)
-    keys = set(session.keys())
-    if allow_variables and "variables" in keys:
-        assert keys == _SESSION_BASE_KEYS | {"variables"}, (name, keys)
-        if session["variables"] is not None:
-            _validate_variables_summary(name, session["variables"])
-    else:
-        assert keys == _SESSION_BASE_KEYS, (name, keys)
-    assert isinstance(session["id"], str) and session["id"], (name, session)
-    assert isinstance(session["file"], str) and session["file"], (name, session)
-    assert session["state"] in ("running", "ended"), (name, session)
-    assert session["stop"] in ("none", "requested", "forced"), (name, session)
-    assert isinstance(session["disable"], list) and isinstance(session["manual"], list), (name, session)
-    assert isinstance(session["start_paused"], bool), (name, session)
-    launcher = session["launcher"]
-    assert isinstance(launcher, dict) and set(launcher.keys()) == _LAUNCHER_SUMMARY_KEYS, (name, launcher)
-    assert launcher["mode"] in ("hot", "cold"), (name, launcher)
-    assert isinstance(launcher["running"], bool) and isinstance(launcher["process_alive"], bool), (name, launcher)
-    _validate_allowed(name, session["allowed"])
-    assert isinstance(session["participants"], list), (name, session)
-    for pt in session["participants"]:
-        assert isinstance(pt, dict) and isinstance(pt.get("name"), str) and isinstance(pt.get("state"), str), (name, pt)
-    assert isinstance(session["findings"], list), (name, session)
-    for finding in session["findings"]:
-        assert isinstance(finding, dict) and isinstance(finding.get("severity"), str), (name, finding)
-        assert isinstance(finding.get("message"), str), (name, finding)
-    assert isinstance(session["problems"], list), (name, session)
-    for prob in session["problems"]:
-        assert isinstance(prob, dict) and set(prob.keys()) == {"code", "message", "detail"}, (name, prob)
-        assert isinstance(prob["code"], str) and isinstance(prob["message"], str), (name, prob)
-    assert isinstance(session["log"], dict), (name, session)
-    for src, counts in session["log"].items():
-        assert isinstance(src, str) and isinstance(counts, dict), (name, src, counts)
-        assert set(counts.keys()) == {"kept", "dropped"}, (name, src, counts)
-        assert type(counts["kept"]) is int and type(counts["dropped"]) is int, (name, src, counts)
-    if session["time"] is not None:
-        assert isinstance(session["time"], dict) and session["time"].get("event") == "time", (name, session["time"])
-        assert type(session["time"].get("sim_ms")) is int, (name, session["time"])
-    if session["registry"] is not None:
-        assert isinstance(session["registry"], dict) and set(session["registry"].keys()) == {"uri"}, (name, session["registry"])
-    if session["launcher_state"] is not None:
-        ls = session["launcher_state"]
-        assert isinstance(ls, dict) and type(ls.get("seq")) is int and ls["seq"] >= 0, (name, ls)
-        _validate_run_state({k: v for k, v in ls.items() if k != "seq"}, envelope=False)
-    if session["result"] is not None:
-        res = session["result"]
-        assert isinstance(res, dict) and isinstance(res.get("result"), str) and isinstance(res.get("ok"), bool), (name, res)
-    if session["scenario"] is not None:
-        sc = session["scenario"]
-        assert isinstance(sc, dict) and isinstance(sc.get("file"), str), (name, sc)
-        assert "steps" in sc and "timeline_url" in sc, (name, sc)
-
-
-def _validate_ws_event_payload(name: str, ev: object, *, is_live: bool = False) -> None:
-    assert isinstance(ev, dict) and isinstance(ev.get("event"), str), (name, ev)
-    assert type(ev.get("seq")) is int and ev["seq"] >= 0, (name, ev)
-    if name == "ws-loose-fields":
-        return
-    kind = ev["event"]
-    if is_live and kind != "mystery":
-        validate_events_v4_event(ev)
-    if kind == "run_start":
-        assert isinstance(ev.get("run"), str) and ev["run"], (name, ev)
-        assert "timeline" not in ev, (name, ev)
-    elif kind == "phase":
-        assert isinstance(ev.get("phase"), str), (name, ev)
-    elif kind == "participant":
-        assert isinstance(ev.get("name"), str) and isinstance(ev.get("state"), str), (name, ev)
-    elif kind == "time":
-        assert type(ev.get("sim_ms")) is int, (name, ev)
-    elif kind == "state":
-        _validate_run_state({k: v for k, v in ev.items() if k not in ("event", "seq", "t_ms", "run")}, envelope=False)
-    elif kind == "command":
-        assert isinstance(ev.get("accepted"), bool) and isinstance(ev.get("source"), str), (name, ev)
-        assert "message" in ev and "reason" in ev, (name, ev)
-    elif kind == "check":
-        assert isinstance(ev.get("check"), dict) and ev["check"].get("vehicle_sil_check") == 1, (name, ev)
-    elif kind == "finding":
-        assert isinstance(ev.get("severity"), str) and isinstance(ev.get("message"), str), (name, ev)
-    elif kind == "log":
-        assert isinstance(ev.get("source"), str) and isinstance(ev.get("line"), str), (name, ev)
-    elif kind == "log_dropped":
-        assert type(ev.get("count")) is int and isinstance(ev.get("sources"), dict), (name, ev)
-    elif kind == "control_link":
-        assert isinstance(ev.get("name"), str) and isinstance(ev.get("state"), str), (name, ev)
-    elif kind == "scenario_step":
-        assert type(ev.get("index")) is int and isinstance(ev.get("status"), str), (name, ev)
-    elif kind == "result":
-        assert isinstance(ev.get("result"), dict), (name, ev)
-        if "status" in ev:
-            assert isinstance(ev.get("launcher_ends"), bool), (name, ev)
-            _validate_status_members(ev["status"], exact_keys=True)
+@lru_cache(maxsize=1)
+def _openapi_document() -> dict:
+    return yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)
 def _contract_validators() -> dict[str, jsonschema.Draft202012Validator]:
-    openapi_doc = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+    openapi_doc = _openapi_document()
     uri = "urn:vehicle-sil:gui:openapi"
     registry = Registry().with_resource(uri, DRAFT202012.create_resource(openapi_doc))
-    ws_cmd_schema = json.loads(WS_COMMAND_SCHEMA_PATH.read_text(encoding="utf-8"))
-    return {
+    validators: dict[str, jsonschema.Draft202012Validator] = {
         "TimeCommandRequest": jsonschema.Draft202012Validator(
             {"$ref": f"{uri}#/components/schemas/TimeCommandRequest"}, registry=registry
         ),
@@ -436,8 +268,52 @@ def _contract_validators() -> dict[str, jsonschema.Draft202012Validator]:
         "RunTarget": jsonschema.Draft202012Validator(
             {"$ref": f"{uri}#/components/schemas/RunTarget"}, registry=registry
         ),
-        "WsCommandEvent": jsonschema.Draft202012Validator(ws_cmd_schema),
+        "WsCommandEvent": jsonschema.Draft202012Validator(
+            json.loads(WS_COMMAND_SCHEMA_PATH.read_text(encoding="utf-8"))
+        ),
+        "WsServerMessage": jsonschema.Draft202012Validator(
+            json.loads(WS_SERVER_SCHEMA_PATH.read_text(encoding="utf-8"))
+        ),
+        "WsClientMessage": jsonschema.Draft202012Validator(
+            json.loads(WS_CLIENT_SCHEMA_PATH.read_text(encoding="utf-8"))
+        ),
+        "CliReadyMessage": jsonschema.Draft202012Validator(
+            json.loads(CLI_JSON_SCHEMA_PATH.read_text(encoding="utf-8"))
+        ),
+        "Timeline": (
+            lambda s: jsonschema.validators.validator_for(s)(s)
+        )(json.loads(TIMELINE_SCHEMA_PATH.read_text(encoding="utf-8"))),
     }
+    def _with_uri(schema: dict) -> dict:
+        if isinstance(schema.get("$ref"), str) and schema["$ref"].startswith("#"):
+            return {"$ref": f"{uri}{schema['$ref']}"}
+        return schema
+
+    for path, methods in openapi_doc["paths"].items():
+        for method, op in methods.items():
+            op_key = f"{method.upper()} {path}"
+            if "requestBody" in op:
+                req_schema = _with_uri(op["requestBody"]["content"]["application/json"]["schema"])
+                validators[f"req:{op_key}"] = jsonschema.Draft202012Validator(req_schema, registry=registry)
+            ok_content = op["responses"]["200"]["content"]
+            if "application/json" in ok_content:
+                resp_schema = _with_uri(ok_content["application/json"]["schema"])
+                validators[f"resp:{op_key}"] = jsonschema.Draft202012Validator(resp_schema, registry=registry)
+    return validators
+
+
+def _assert_schema(validator: jsonschema.Draft202012Validator, instance: object, label: str) -> None:
+    try:
+        validator.validate(instance)
+    except jsonschema.ValidationError as exc:
+        raise AssertionError(f"{label}: schema validation failed: {exc.message}") from exc
+
+
+def _openapi_route_path(raw_path: str) -> str:
+    clean = "/" + raw_path.split("?", 1)[0].lstrip("/")
+    if clean.startswith("/api/timeline/"):
+        return "/api/timeline/{run_id}"
+    return clean
 
 
 def _validate_http_contracts(name: str, example: dict) -> None:
@@ -445,23 +321,57 @@ def _validate_http_contracts(name: str, example: dict) -> None:
         return
     validators = _contract_validators()
     req = example["request"]
+    method = req.get("method", "").upper()
+    route_path = _openapi_route_path(req.get("path", ""))
+    op_key = f"{method} {route_path}"
     status = example["status"]
     resp = example["response"]
     if status >= 400 and isinstance(resp, dict) and "error" in resp:
-        validators["ErrorResponse"].validate(resp)
-    if req.get("path") == "api/time" and req.get("method") == "POST":
-        if status != 400 and isinstance(req.get("body"), dict):
-            validators["TimeCommandRequest"].validate(req["body"])
-        if status == 200:
-            validators["TimeCommandAck"].validate(resp)
-    elif req.get("path") in ("api/run", "api/stop-session") and req.get("method") == "POST" and status == 200:
-        validators["RunTarget"].validate(resp)
+        _assert_schema(validators["ErrorResponse"], resp, f"{name} error response")
+        op = _openapi_document()["paths"].get(route_path, {}).get(method.lower())
+        if op is not None:
+            assert str(status) in op["responses"], (name, op_key, status, sorted(op["responses"]))
+        if status not in (400, 413, 415) and isinstance(req.get("body"), dict):
+            req_v = validators.get(f"req:{op_key}")
+            if req_v is not None:
+                _assert_schema(req_v, req["body"], f"{name} request ({op_key})")
+        return
+    if status == 200:
+        req_v = validators.get(f"req:{op_key}")
+        if req_v is not None and isinstance(req.get("body"), dict):
+            _assert_schema(req_v, req["body"], f"{name} request ({op_key})")
+        resp_v = validators.get(f"resp:{op_key}")
+        assert resp_v is not None, (name, f"missing OpenAPI response schema for {op_key}")
+        _assert_schema(resp_v, resp, f"{name} response ({op_key})")
+        if route_path == "/api/timeline/{run_id}":
+            _assert_schema(validators["Timeline"], resp, f"{name} timeline schema")
+
+
+def _validate_ws_event_payload(name: str, ev: object, *, is_live: bool = False) -> None:
+    assert isinstance(ev, dict) and isinstance(ev.get("event"), str), (name, ev)
+    assert type(ev.get("seq")) is int and ev["seq"] >= 0, (name, ev)
+    if name == "ws-loose-fields":
+        return
+    kind = ev["event"]
+    if is_live and kind != "mystery":
+        validate_events_v4_event(ev)
+    if kind == "run_start":
+        assert "timeline" not in ev, (name, ev)
+    elif kind == "state":
+        _validate_run_state({k: v for k, v in ev.items() if k not in ("event", "seq", "t_ms", "run")}, envelope=False)
+    elif kind == "result" and "status" in ev:
+        assert isinstance(ev.get("launcher_ends"), bool), (name, ev)
+        _validate_status_members(ev["status"], exact_keys=True)
 
 
 def _validate_protocol_v4_example(name: str, example: dict, *, is_live: bool = False) -> None:
+    """Validates HTTP/WS structural contracts via generated schemas and behavioral invariants (ordering/replay)."""
     _validate_http_contracts(name, example)
     if "server" not in example:
         return
+    validators = _contract_validators()
+    for idx, cmsg in enumerate(example.get("client", [])):
+        _assert_schema(validators["WsClientMessage"], cmsg, f"{name} client[{idx}]")
     messages = example["server"]
     assert isinstance(messages, list) and messages, name
     in_replay = False
@@ -472,17 +382,12 @@ def _validate_protocol_v4_example(name: str, example: dict, *, is_live: bool = F
         assert isinstance(msg, dict) and isinstance(msg.get("type"), str), (name, idx, msg)
         assert "snapshot_rev" not in msg and "problem_seq" not in msg and "event_seq" not in msg, (name, msg)
         mtype = msg["type"]
-        assert mtype in _WS_KEYS_BY_TYPE, (name, f"unknown message type {mtype!r}", msg)
-        expected_keys = _WS_KEYS_BY_TYPE[mtype]
-        if mtype == "error":
-            assert expected_keys <= set(msg.keys()) <= expected_keys | {"stream_seq"}, (name, msg)
-        else:
-            assert set(msg.keys()) == expected_keys, (name, mtype, msg.keys(), expected_keys)
+        if not (name == "ws-loose-fields" and mtype == "event"):
+            _assert_schema(validators["WsServerMessage"], msg, f"{name} server[{idx}]")
         if mtype in _NO_STREAM_SEQ_TYPES:
             assert "stream_seq" not in msg, (name, msg)
         elif mtype in _STREAM_SEQ_TYPES:
-            sseq = msg.get("stream_seq")
-            assert type(sseq) is int and sseq >= 0, (name, msg)
+            sseq = msg["stream_seq"]
             if mtype == "hello":
                 hello_seq = sseq
                 in_replay = True
@@ -496,87 +401,31 @@ def _validate_protocol_v4_example(name: str, example: dict, *, is_live: bool = F
                 in_replay = False
                 last_live_seq = sseq
             elif in_replay:
+                if hello_seq is not None:
+                    assert sseq <= hello_seq, (name, hello_seq, msg)
+                assert last_replay_seq is None or sseq > last_replay_seq, (name, last_replay_seq, msg)
+                last_replay_seq = sseq
+            else:
+                assert last_live_seq is None or sseq > last_live_seq, (name, last_live_seq, msg)
+                last_live_seq = sseq
+        elif mtype == "error" and "stream_seq" in msg:
+            sseq = msg["stream_seq"]
+            if in_replay:
+                if hello_seq is not None:
+                    assert sseq <= hello_seq, (name, hello_seq, msg)
                 assert last_replay_seq is None or sseq > last_replay_seq, (name, last_replay_seq, msg)
                 last_replay_seq = sseq
             else:
                 assert last_live_seq is None or sseq > last_live_seq, (name, last_live_seq, msg)
                 last_live_seq = sseq
 
-        if mtype == "hello":
-            assert msg["vehicle_sil_gui"] == 4, (name, msg)
-            assert isinstance(msg["version"], str) and msg["version"], (name, msg)
-            assert isinstance(msg["instance"], str) and msg["instance"], (name, msg)
-            _validate_allowed(name, msg["allowed"])
-            _validate_runtime(name, msg["runtime"])
-            if msg["session"] is not None:
-                _validate_session(name, msg["session"], allow_variables=True)
-            assert msg["replay"] is None or isinstance(msg["replay"], dict), (name, msg)
-        elif mtype == "synced":
-            assert msg["run_id"] is None or isinstance(msg["run_id"], str), (name, msg)
-            assert msg["last_seq"] is None or type(msg["last_seq"]) is int, (name, msg)
-        elif mtype == "allowed":
-            assert msg["run_id"] is None or isinstance(msg["run_id"], str), (name, msg)
-            _validate_allowed(name, msg["allowed"])
-        elif mtype == "runtime":
-            _validate_runtime(name, msg["runtime"])
-        elif mtype == "session":
-            _validate_session(name, msg["session"])
-        elif mtype == "event":
-            assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
+        if mtype == "event":
             _validate_ws_event_payload(name, msg["event"], is_live=is_live)
             if name != "ws-loose-fields" and msg["event"].get("event") == "command":
-                _contract_validators()["WsCommandEvent"].validate(msg)
-        elif mtype == "variables":
-            assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
-            _validate_variables_summary(name, msg["variables"])
-        elif mtype == "values":
-            assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
-            assert msg["id"] is None or type(msg["id"]) is int, (name, msg)
-            assert type(msg["sim_ms"]) is int and isinstance(msg["paused"], bool), (name, msg)
-            assert type(msg["watch_id"]) is int and isinstance(msg["peers"], dict), (name, msg)
-            for peer_name, pdata in msg["peers"].items():
-                assert isinstance(peer_name, str) and isinstance(pdata, dict), (name, msg)
-                assert set(pdata.keys()) == {"sample_ms", "values"}, (name, peer_name, pdata)
-                assert type(pdata["sample_ms"]) is int and isinstance(pdata["values"], dict), (name, peer_name, pdata)
-        elif mtype == "operation":
-            assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
-            assert type(msg["seq"]) is int and isinstance(msg["state"], str), (name, msg)
-            assert isinstance(msg["done"], bool) and isinstance(msg["peers"], dict), (name, msg)
-            for peer_name, pdata in msg["peers"].items():
-                assert isinstance(peer_name, str) and isinstance(pdata, dict), (name, msg)
-                assert set(pdata.keys()) == {
-                    "state", "applied_at_ms", "late", "reason", "applied_writes", "failed_write",
-                }, (name, peer_name, pdata)
-                assert isinstance(pdata["state"], str) and isinstance(pdata["late"], bool), (name, peer_name, pdata)
-                assert pdata["applied_at_ms"] is None or type(pdata["applied_at_ms"]) is int, (name, peer_name, pdata)
-                assert pdata["reason"] is None or isinstance(pdata["reason"], str), (name, peer_name, pdata)
-                assert pdata["applied_writes"] is None or type(pdata["applied_writes"]) is int, (name, peer_name, pdata)
-        elif mtype == "availability":
-            assert isinstance(msg["run_id"], str) and msg["run_id"], (name, msg)
-            assert isinstance(msg["peers"], dict) and msg["peers"], (name, msg)
-            for peer_name, vars_map in msg["peers"].items():
-                assert isinstance(peer_name, str) and isinstance(vars_map, dict), (name, msg)
-                for vname, aval in vars_map.items():
-                    assert isinstance(vname, str) and aval in ("active", "inactive", "unknown"), (name, msg)
-        elif mtype == "dropped":
-            assert isinstance(msg["reason"], str) and isinstance(msg["at_least"], list), (name, msg)
-            assert all(isinstance(s, str) for s in msg["at_least"]), (name, msg)
-            assert type(msg["events"]) is int and isinstance(msg["log"], dict), (name, msg)
-        elif mtype == "resync":
-            assert isinstance(msg["reason"], str) and isinstance(msg["message"], str), (name, msg)
-        elif mtype == "error":
-            assert isinstance(msg["code"], str) and msg["code"], (name, msg)
-            assert isinstance(msg["message"], str) and msg["message"], (name, msg)
-            assert msg["run_id"] is None or isinstance(msg["run_id"], str), (name, msg)
-            if "stream_seq" in msg:
-                sseq = msg["stream_seq"]
-                assert type(sseq) is int and sseq >= 0, (name, msg)
-                if in_replay:
-                    assert last_replay_seq is None or sseq > last_replay_seq, (name, last_replay_seq, msg)
-                    last_replay_seq = sseq
-                else:
-                    assert last_live_seq is None or sseq > last_live_seq, (name, last_live_seq, msg)
-                    last_live_seq = sseq
+                _assert_schema(validators["WsCommandEvent"], msg, f"{name} server[{idx}] command event")
+        elif mtype in ("hello", "session") and msg.get("session") and msg["session"].get("launcher_state") is not None:
+            ls = msg["session"]["launcher_state"]
+            _validate_run_state({k: v for k, v in ls.items() if k != "seq"}, envelope=False)
 
 
 def _compare_check_payload(name: str, live: dict, saved: dict) -> None:
@@ -707,10 +556,6 @@ def _compare_http_response(name: str, live: dict, saved: dict) -> None:
     if "session" in saved:
         assert live["instance"] == saved["instance"], (name, live["instance"], saved["instance"])
         assert live["allowed"] == saved["allowed"], (name, live["allowed"], saved["allowed"])
-        _validate_runtime(name, live["runtime"])
-        _validate_runtime(name, saved["runtime"])
-        _validate_session(name, live["session"], allow_variables=True)
-        _validate_session(name, saved["session"], allow_variables=True)
         _compare_session_summary(name, live["session"], saved["session"])
         return
     raise AssertionError(f"{name}: unhandled non-exact HTTP example")
@@ -881,6 +726,10 @@ def test_http_examples(tmp_path: Path) -> None:
                                      ("session-none", "api/session", "No run since the server started.")):
                 status, body = await c.get(path)
                 check_example(name, http(text, "GET", path, None, status, body), gui)
+            prep_req = {"file": "simulation.yaml"}
+            status, body = await c.post("api/prepare", prep_req)
+            check_example("prepare", http("Warm up the persistent runtime for a configuration when eligible.",
+                                          "POST", "api/prepare", prep_req, status, body), gui)
             for name, req, text in (
                     ("check-passed", {"file": "simulation.yaml", "disable": []}, "A check that passed."),
                     ("check-disabled", {"file": "simulation.yaml", "disable": ["Dashboard"]},
@@ -1393,7 +1242,7 @@ def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
                                                             body), gui)
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/fails.yaml"})
+            _, started = await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/fails.yaml"})
             await sock.until(is_ended)
             check_example("ws-scenario", ws("A run with a scenario whose second step fails: scenario_step events as "
                                             "the steps run and end, the finding scenario-failed with the scenario's "
@@ -1401,6 +1250,10 @@ def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
                                             "feature timeline), the run's end; the summary's scenario keeps the "
                                             "steps, and has timeline_url at the end.",
                                             sock.sent, sock.received), gui)
+            tl_path = f"api/timeline/{started['run_id']}"
+            status, body = await c.get(tl_path)
+            check_example("timeline", http("The recorded timeline JSON of a completed scenario run.",
+                                           "GET", tl_path, None, status, body), gui)
         run_async(talk, gui)
     # At speed 0.001 its second step runs for minutes: the scenario still runs when the write comes, however slow
     # the machine.
@@ -1674,17 +1527,75 @@ def test_protocol_v4_validators_catch_drift() -> None:
         _validate_protocol_v4_example("ws-pass", bad_pass)
 
 
+def test_openapi_and_schemas_have_no_drift() -> None:
+    """Committed gui/protocol/openapi.yaml and schemas/*.schema.json match offline generation byte-for-byte."""
+    problems = check_openapi_drift(PROTOCOL_DIR)
+    assert problems == [], "\n".join(problems)
+    assert set(OPENAPI_TARGETS) == {
+        "openapi.yaml",
+        "schemas/ws-server.schema.json",
+        "schemas/ws-client.schema.json",
+        "schemas/ws-command-event.schema.json",
+        "schemas/cli-json.schema.json",
+    }
+
+
+def test_error_tables_match_contracts_catalog() -> None:
+    """Both EN and JA gui/protocol/README error tables match contracts.ErrorCode completely (no stale no-hello)."""
+    expected_http = {code.value: status for code, status in HTTP_ERROR_CODES.items()}
+    assert ERROR_TABLES, "expected EN and JA protocol README pages"
+    for page_name, table in ERROR_TABLES.items():
+        assert table == expected_http, f"{page_name} HTTP error table drifted from contracts.HTTP_ERROR_CODES"
+    ws_codes = {code.value for code in ErrorCode if code.http_status is None}
+    for page in manual_pages("gui/protocol/README.md"):
+        text = page.read_text(encoding="utf-8")
+        assert "`no-hello`" not in text, f"{page.name} still documents removed no-hello code"
+        for code in sorted(ws_codes):
+            assert f"`{code}`" in text, f"{page.name} is missing WebSocket/problem error code {code!r}"
+
+
+def test_cli_json_schema_validates_readiness(tmp_path: Path) -> None:
+    """Real `vehicle-sil-gui --json` stdout (`gui.info`) conforms to cli-json.schema.json across modes."""
+    validator = _contract_validators()["CliReadyMessage"]
+    with gui_server(tmp_path) as gui:
+        assert gui.info is not None
+        validator.validate(gui.info)
+        assert "auth" not in gui.info and "dev_url" not in gui.info
+    with gui_server(tmp_path, args=("--no-auth",)) as gui:
+        assert gui.info is not None
+        validator.validate(gui.info)
+        assert gui.info.get("auth") is False
+    with gui_server(tmp_path, args=("--dev-origin", "http://127.0.0.1:4200")) as gui:
+        assert gui.info is not None
+        validator.validate(gui.info)
+        assert isinstance(gui.info.get("dev_url"), str) and gui.info["dev_url"].startswith("http://127.0.0.1:4200")
+    for bad in (
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "auth": True},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "auth": None},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 0},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "extra": 1},
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            validator.validate(bad)
+
+
 def test_protocol_contract_schemas_are_valid() -> None:
-    """openapi.yaml and ws-command-event.schema.json themselves pass Draft 2020-12 schema checks."""
-    openapi_doc = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+    """openapi.yaml (all 17 routes) and all 4 schemas/*.schema.json pass Draft 2020-12 schema checks."""
+    openapi_doc = _openapi_document()
     assert openapi_doc["openapi"] == "3.1.0"
-    post_time = openapi_doc["paths"]["/api/time"]["post"]
-    assert {"200", "400", "401", "403", "409", "413", "415", "503"} <= set(post_time["responses"].keys())
+    routes = route_specs()
+    assert len(routes) == 17
+    for spec in routes:
+        op = openapi_doc["paths"][spec.path][spec.method.lower()]
+        assert op["operationId"] == spec.operation_id
+        expected_statuses = {"200", *(str(s) for s in spec.error_statuses)}
+        assert expected_statuses <= set(op["responses"].keys()), (spec.path, spec.method)
+    assert "502" in openapi_doc["paths"]["/api/write"]["post"]["responses"]
     assert "bearerAuth" in openapi_doc["components"]["securitySchemes"]
     for schema_name, schema in openapi_doc["components"]["schemas"].items():
         jsonschema.Draft202012Validator.check_schema(schema)
-    ws_cmd_schema = json.loads(WS_COMMAND_SCHEMA_PATH.read_text(encoding="utf-8"))
-    jsonschema.Draft202012Validator.check_schema(ws_cmd_schema)
+    for schema_path in (WS_SERVER_SCHEMA_PATH, WS_CLIENT_SCHEMA_PATH, WS_COMMAND_SCHEMA_PATH, CLI_JSON_SCHEMA_PATH):
+        jsonschema.Draft202012Validator.check_schema(json.loads(schema_path.read_text(encoding="utf-8")))
 
 
 def test_protocol_contract_schemas_catch_drift() -> None:
@@ -1820,3 +1731,49 @@ def test_protocol_contract_schemas_catch_drift() -> None:
     ):
         with pytest.raises(jsonschema.ValidationError):
             ws_v.validate(bad_ws)
+
+    # Request schema precision: non-empty writes and unique participant lists
+    write_v = validators["req:POST /api/write"]
+    for bad_write in (
+        {"run_id": "abc-1", "writes": {}},
+        {"run_id": "abc-1", "writes": {"Engine": {}}},
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            write_v.validate(bad_write)
+    for route_key in ("req:POST /api/prepare", "req:POST /api/run", "req:POST /api/check"):
+        for field in ("disable", "enable", "manual"):
+            with pytest.raises(jsonschema.ValidationError):
+                validators[route_key].validate({"file": "simulation.yaml", field: ["A", "A"]})
+
+    # WS server schema precision: seq/t_ms on all launcher events, tightened summaries, non-empty availability, float scenario ms
+    ws_srv_v = validators["WsServerMessage"]
+    for bad_ev_frame in (
+        {"type": "event", "stream_seq": 2, "run_id": "abc-1", "event": {"event": "phase", "phase": "running"}},
+        {"type": "event", "stream_seq": 2, "run_id": "abc-1", "event": {"event": "phase", "seq": "bad", "phase": "running"}},
+        {"type": "event", "stream_seq": 2, "run_id": "abc-1", "event": {"event": "phase", "seq": 1, "t_ms": "bad", "phase": "running"}},
+        {"type": "event", "stream_seq": 2, "run_id": "abc-1", "event": {"event": "check", "seq": 1, "check": {"participants": []}}},
+        {"type": "event", "stream_seq": 2, "run_id": "abc-1", "event": {"event": "result", "seq": 1, "result": {}}},
+        {"type": "availability", "stream_seq": 2, "run_id": "abc-1", "peers": {}},
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            ws_srv_v.validate(bad_ev_frame)
+
+    import copy
+    sc_ex = json.loads((DIRECTORY / "ws-scenario.json").read_text(encoding="utf-8"))
+    end_sess = copy.deepcopy([m for m in sc_ex["server"] if m["type"] == "session"][-1])
+    # Sub-millisecond float scenario timings are accepted by both WS and HTTP session schemas
+    end_sess["session"]["scenario"]["over_at_ms"] = 12.5
+    end_sess["session"]["scenario"]["steps"][0]["start_ms"] = 0.5
+    end_sess["session"]["scenario"]["steps"][0]["at_ms"] = 10.25
+    end_sess["session"]["scenario"]["steps"][0]["end_ms"] = 12.5
+    ws_srv_v.validate(end_sess)
+    # Missing required nested summary fields are rejected directly by ws-server.schema.json
+    for mutate in (
+        lambda s: s["time"].pop("event"),
+        lambda s: s["registry"].clear(),
+        lambda s: s["result"].clear(),
+    ):
+        broken = copy.deepcopy(end_sess)
+        mutate(broken["session"])
+        with pytest.raises(jsonschema.ValidationError):
+            ws_srv_v.validate(broken)

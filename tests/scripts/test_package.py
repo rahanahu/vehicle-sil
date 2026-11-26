@@ -502,6 +502,17 @@ class PackageVersionSyncTest(unittest.TestCase):
             self.assertEqual(p.returncode, 2, (bad_args, p.stdout, p.stderr))
             self.assertIn("package: error:", p.stderr)
 
+    def test_tools_archive_bundles_all_offline_gui_protocol_specs(self) -> None:
+        protocol_dir = ROOT / "gui" / "protocol"
+        on_disk = {"openapi.yaml", *(f"schemas/{p.name}" for p in sorted((protocol_dir / "schemas").glob("*.json")))}
+        self.assertEqual(set(package_mod.PROTOCOL_SPECS), on_disk)
+        for rel in package_mod.PROTOCOL_SPECS:
+            self.assertTrue((protocol_dir / rel).is_file(), f"missing gui/protocol/{rel}")
+        self.assertIn("| `protocol/` |", package_mod.README)
+        source = PACKAGE.read_text(encoding="utf-8")
+        self.assertIn('stage / "protocol" / rel', source)
+        self.assertIn('f"protocol/{rel}" for rel in PROTOCOL_SPECS', source)
+
 
 if __name__ == "__main__":
     unittest.main()

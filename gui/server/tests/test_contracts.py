@@ -242,14 +242,18 @@ def test_ws_server_event_adapter_rejects_malformed_known_events_and_allows_unkno
     jsonschema.Draft202012Validator.check_schema(ws_schema)
     ws_v = jsonschema.Draft202012Validator(ws_schema)
 
-    mystery = {"type": "event", "stream_seq": 4, "run_id": "r1", "event": {"event": "mystery", "extra": 1}}
+    mystery = {"type": "event", "stream_seq": 4, "run_id": "r1", "event": {"event": "mystery", "seq": 1, "extra": 1}}
     C.WS_SERVER_MESSAGE_ADAPTER.validate_python(mystery)
     ws_v.validate(mystery)
 
     for bad in (
-        {"type": "event", "stream_seq": 1, "run_id": "r1", "event": {"event": "time", "sim_ms": "NOT_AN_INT"}},
-        {"type": "event", "stream_seq": 2, "run_id": "r1", "event": {"event": "log", "source": 123, "line": None}},
-        {"type": "event", "stream_seq": 3, "run_id": "r1", "event": {"event": "command", "accepted": "nope"}},
+        {"type": "event", "stream_seq": 1, "run_id": "r1", "event": {"event": "time", "seq": 1, "sim_ms": "NOT_AN_INT"}},
+        {"type": "event", "stream_seq": 2, "run_id": "r1", "event": {"event": "log", "seq": 2, "source": 123, "line": None}},
+        {"type": "event", "stream_seq": 3, "run_id": "r1", "event": {"event": "command", "seq": 3, "accepted": "nope"}},
+        {"type": "event", "stream_seq": 4, "run_id": "r1", "event": {"event": "phase", "phase": "running"}},
+        {"type": "event", "stream_seq": 5, "run_id": "r1", "event": {"event": "phase", "seq": "bad", "phase": "running"}},
+        {"type": "event", "stream_seq": 6, "run_id": "r1", "event": {"event": "phase", "seq": 1, "t_ms": "bad", "phase": "running"}},
+        {"type": "event", "stream_seq": 7, "run_id": "r1", "event": {"event": "mystery", "extra": 1}},
         {
             "type": "event", "stream_seq": 10, "run_id": "abc-1",
             "event": {
@@ -305,6 +309,26 @@ def test_live_producer_edge_cases_match_contract_models() -> None:
     assert "state" not in ws_summary["participants"][0]
     C.SessionWsSummary.model_validate(ws_summary)
     C.SessionSummary.model_validate(sess.summary(variables=True))
+
+    # 4. Sub-millisecond float scenario timings (start_ms, at_ms, end_ms, over_at_ms) match C++ w.real(...)
+    sc_sess = Session("r2", "simulation.yaml", [], None, False, scenario="scenarios/throttle.yaml")
+    sc_sess.feed_event({
+        "event": "scenario_step", "seq": 1, "t_ms": 10, "index": 1, "status": "passed",
+        "start_ms": 0.5, "at_ms": 10.25, "end_ms": 12.5,
+    }, 120)
+    sc_sess.feed_event({
+        "event": "result", "seq": 2, "t_ms": 20,
+        "result": {
+            "result": "passed", "ok": True,
+            "scenario": {
+                "file": "scenarios/throttle.yaml", "name": "sub-ms", "status": "passed",
+                "over_at_ms": 12.5,
+                "steps": [{"index": 1, "status": "passed", "start_ms": 0.5, "at_ms": 10.25, "end_ms": 12.5}],
+            },
+        },
+    }, 240)
+    C.SessionSummary.model_validate(sc_sess.summary(variables=True))
+    C.WS_SERVER_MESSAGE_ADAPTER.validate_python(sc_sess.message())
 
 
 # ------------------------------------------------------------ Protocol v4 input compatibility
@@ -381,7 +405,9 @@ def test_all_captured_protocol_examples_validate_against_typed_models() -> None:
         ("POST", "api/write"): C.WriteRequest,
     }
     examples = sorted(EXAMPLES_DIR.glob("*.json"))
-    assert len(examples) >= 58
+    assert len(examples) >= 60
+    timeline_schema = json.loads((REPOSITORY / "schema" / "timeline.schema.json").read_text(encoding="utf-8"))
+    timeline_validator = jsonschema.validators.validator_for(timeline_schema)(timeline_schema)
     for path in examples:
         data = json.loads(path.read_text(encoding="utf-8"))
         if "server" in data:
@@ -392,7 +418,11 @@ def test_all_captured_protocol_examples_validate_against_typed_models() -> None:
         else:
             status = data["status"]
             req = data["request"]
-            route = (req["method"], req["path"].split("?", 1)[0])
+            raw_path = req["path"].split("?", 1)[0]
+            route = (req["method"], raw_path)
+            if status < 400 and req["method"] == "GET" and raw_path.startswith("api/timeline/"):
+                timeline_validator.validate(data["response"])
+                continue
             model = C.ErrorResponse if status >= 400 else http_resp_models[route]
             model.model_validate(data["response"])
             if status < 400 and "body" in req:

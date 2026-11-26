@@ -34,7 +34,7 @@ flowchart LR
 | 部分 | 場所 | 役目 |
 |---|---|---|
 | GUI サーバー | `gui/server`（コマンドは `vehicle-sil-gui`） | ランチャーを起動し、API を提供し、画面の静的なファイルを配信します。 |
-| サーバーの API | [gui/protocol](../../gui/protocol/README.ja.md) | HTTP と WebSocket の形、バージョンと互換性のルール、認証を定めていて、どの言語からでも使えます。 |
+| サーバーの API | [gui/protocol](../../gui/protocol/README.ja.md) | HTTP と WebSocket の形、バージョンと互換性のルール、認証を定めており、オフラインの OpenAPI 3.1（`openapi.yaml`）および Draft 2020-12 の WebSocket / CLI JSON Schema（`schemas/*.schema.json`、ビルド済みツールアーカイブの `protocol/` にも同梱）を備えています。どの言語からでも使えます。 |
 | クライアントのライブラリ | [gui/client](../../gui/client/README.ja.md)（`@vehicle-sil/gui-client`） | 接続、実行と時間の操作、ECU の変数を扱う TypeScript のライブラリで、フレームワークに依存しません。`connect()` が返す正面の口は、画面が見せるもの（`status`、`clock`、`controls`）、Promise で返す操作、変数 1 つを持ちます。 |
 | サンプルの画面 | `gui/web`（Angular） | 上の 3 つだけで作ったリファレンス実装で、`--web` を指定しなければ GUI サーバーはこれを配信します。 |
 

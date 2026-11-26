@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vehicle-sil GUI WebSocket client-to-server message (Protocol v4)",
+  "description": "Draft 2020-12 JSON Schema for all 3 client-to-server WebSocket frames on `/ws` (`auth`, `watch`, `unwatch`) in GUI protocol 4 (`vehicle_sil_gui: 4`).",
+  "$defs": {
+    "WatchVariableRef": {
+      "properties": {
+        "peer": {
+          "title": "Peer",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "peer",
+        "name"
+      ],
+      "title": "WatchVariableRef",
+      "type": "object"
+    },
+    "WsAuthMessage": {
+      "properties": {
+        "type": {
+          "const": "auth",
+          "title": "Type",
+          "type": "string"
+        },
+        "token": {
+          "title": "Token",
+          "type": "string"
+        },
+        "instance": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instance"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "after_stream_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Stream Seq"
+        }
+      },
+      "required": [
+        "type",
+        "token"
+      ],
+      "title": "WsAuthMessage",
+      "type": "object"
+    },
+    "WsUnwatchMessage": {
+      "properties": {
+        "type": {
+          "const": "unwatch",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "title": "WsUnwatchMessage",
+      "type": "object"
+    },
+    "WsWatchMessage": {
+      "properties": {
+        "id": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "variables": {
+          "anyOf": [
+            {
+              "const": "all",
+              "type": "string"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WatchVariableRef"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "Variables"
+        },
+        "period_ms": {
+          "minimum": 1,
+          "type": "integer",
+          "title": "Period Ms"
+        },
+        "type": {
+          "const": "watch",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "variables",
+        "type"
+      ],
+      "title": "WsWatchMessage",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "auth": "#/$defs/WsAuthMessage",
+      "unwatch": "#/$defs/WsUnwatchMessage",
+      "watch": "#/$defs/WsWatchMessage"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/WsAuthMessage"
+    },
+    {
+      "$ref": "#/$defs/WsUnwatchMessage"
+    },
+    {
+      "$ref": "#/$defs/WsWatchMessage"
+    }
+  ]
+}

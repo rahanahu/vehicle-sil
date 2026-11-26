@@ -1,5 +1,7 @@
-import { HttpError, errorMessage } from './http';
-import { httpExamples, webSocketExamples } from './testing/protocol-examples';
+import { createClient } from './client';
+import { HttpError, HttpRequest, HttpTransport, errorMessage } from './http';
+import { httpExamples, protocolSchemas, webSocketExamples } from './testing/protocol-examples';
+import { FakeWebSockets } from './testing/fake-web-socket';
 import {
   ProtocolError,
   Unreadable,
@@ -36,6 +38,7 @@ const READERS: Record<string, (value: unknown) => unknown> = {
   'POST api/describe': readCheckResponse,
   'POST api/config': readSavedConfig,
   'POST api/connections': readConnections,
+  'POST api/prepare': readPrepareResponse,
   'POST api/run': readRunResponse,
   'POST api/stop-session': readRunResponse,
   'POST api/time': readTimeResponse,
@@ -65,6 +68,10 @@ describe('the readers accept every example of gui/protocol', () => {
         const error = HttpError.from(example.status, '', example.response);
         const message = (example.response as { error: { message: string } }).error.message;
         expect(errorMessage(error), example.name).toBe(message);
+        continue;
+      }
+      if (key.startsWith('GET api/timeline/')) {
+        expect((example.response as Record<string, unknown>)['vehicle_sil_timeline']).toBe(1);
         continue;
       }
       const read = READERS[key];
@@ -678,5 +685,526 @@ describe('the readers refuse what they cannot read', () => {
         },
       },
     });
+  });
+});
+
+type JsonSchema = Record<string, unknown>;
+
+function resolveSchemaRef(root: JsonSchema, ref: string): JsonSchema {
+  if (!ref.startsWith('#/')) throw new Error(`unsupported ref: ${ref}`);
+  let current: unknown = root;
+  for (const part of ref.slice(2).split('/')) {
+    if (typeof current !== 'object' || current === null) {
+      throw new Error(`dangling ref: ${ref}`);
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  if (typeof current !== 'object' || current === null) {
+    throw new Error(`dangling ref: ${ref}`);
+  }
+  return current as JsonSchema;
+}
+
+function validateAgainstSchema(
+  root: JsonSchema,
+  rawSchema: JsonSchema,
+  value: unknown,
+  path = '$',
+): string[] {
+  const schema =
+    typeof rawSchema['$ref'] === 'string' ? resolveSchemaRef(root, rawSchema['$ref']) : rawSchema;
+
+  if ('oneOf' in schema && Array.isArray(schema['oneOf'])) {
+    const disc = schema['discriminator'] as
+      { propertyName?: string; mapping?: Record<string, string> } | undefined;
+    if (
+      disc?.propertyName &&
+      disc.mapping &&
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value)
+    ) {
+      const key = (value as Record<string, unknown>)[disc.propertyName];
+      if (typeof key === 'string' && key in disc.mapping) {
+        return validateAgainstSchema(root, { $ref: disc.mapping[key] }, value, path);
+      }
+      return [`${path}.${disc.propertyName}: unexpected discriminator ${JSON.stringify(key)}`];
+    }
+    const matches = (schema['oneOf'] as JsonSchema[]).filter(
+      (branch) => validateAgainstSchema(root, branch, value, path).length === 0,
+    );
+    return matches.length === 1
+      ? []
+      : [`${path}: expected exactly 1 oneOf branch match (got ${matches.length})`];
+  }
+
+  if ('anyOf' in schema && Array.isArray(schema['anyOf'])) {
+    const ok = (schema['anyOf'] as JsonSchema[]).some(
+      (branch) => validateAgainstSchema(root, branch, value, path).length === 0,
+    );
+    return ok ? [] : [`${path}: value matched none of anyOf branches`];
+  }
+
+  if ('const' in schema && value !== schema['const']) {
+    return [`${path}: expected ${JSON.stringify(schema['const'])}, got ${JSON.stringify(value)}`];
+  }
+
+  if ('enum' in schema && Array.isArray(schema['enum']) && !schema['enum'].includes(value)) {
+    return [`${path}: expected one of ${JSON.stringify(schema['enum'])}`];
+  }
+
+  if (typeof schema['not'] === 'object' && schema['not'] !== null) {
+    if (validateAgainstSchema(root, schema['not'] as JsonSchema, value, path).length === 0) {
+      return [`${path}: matched forbidden 'not' subschema`];
+    }
+  }
+
+  const kind = schema['type'];
+  if (typeof kind === 'string') {
+    if (kind === 'null' && value !== null) return [`${path}: expected null`];
+    if (kind === 'boolean' && typeof value !== 'boolean') return [`${path}: expected boolean`];
+    if (kind === 'string' && typeof value !== 'string') return [`${path}: expected string`];
+    if (kind === 'integer' && (typeof value !== 'number' || !Number.isInteger(value))) {
+      return [`${path}: expected integer`];
+    }
+    if (kind === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) {
+      return [`${path}: expected finite number`];
+    }
+    if (kind === 'array' && !Array.isArray(value)) return [`${path}: expected array`];
+    if (
+      kind === 'object' &&
+      (typeof value !== 'object' || value === null || Array.isArray(value))
+    ) {
+      return [`${path}: expected object`];
+    }
+  }
+
+  if (typeof value === 'string') {
+    if (typeof schema['minLength'] === 'number' && value.length < schema['minLength']) {
+      return [`${path}: length < ${schema['minLength']}`];
+    }
+    if (typeof schema['pattern'] === 'string' && !new RegExp(schema['pattern']).test(value)) {
+      return [`${path}: does not match ${schema['pattern']}`];
+    }
+  }
+
+  if (typeof value === 'number') {
+    if (typeof schema['minimum'] === 'number' && value < schema['minimum']) {
+      return [`${path}: ${value} < ${schema['minimum']}`];
+    }
+    if (typeof schema['maximum'] === 'number' && value > schema['maximum']) {
+      return [`${path}: ${value} > ${schema['maximum']}`];
+    }
+  }
+
+  if (Array.isArray(value) && typeof schema['items'] === 'object' && schema['items'] !== null) {
+    const errors: string[] = [];
+    for (const [i, item] of value.entries()) {
+      errors.push(
+        ...validateAgainstSchema(root, schema['items'] as JsonSchema, item, `${path}[${i}]`),
+      );
+    }
+    return errors;
+  }
+
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    const errors: string[] = [];
+    const props = (schema['properties'] as Record<string, JsonSchema> | undefined) ?? {};
+    if (
+      typeof schema['minProperties'] === 'number' &&
+      Object.keys(obj).length < schema['minProperties']
+    ) {
+      errors.push(`${path}: property count < ${schema['minProperties']}`);
+    }
+    if (typeof schema['propertyNames'] === 'object' && schema['propertyNames'] !== null) {
+      for (const key of Object.keys(obj)) {
+        errors.push(
+          ...validateAgainstSchema(
+            root,
+            schema['propertyNames'] as JsonSchema,
+            key,
+            `${path}.${key}`,
+          ),
+        );
+      }
+    }
+    if (Array.isArray(schema['required'])) {
+      for (const reqKey of schema['required'] as string[]) {
+        if (!(reqKey in obj)) errors.push(`${path}.${reqKey}: missing required property`);
+      }
+    }
+    if (schema['additionalProperties'] === false) {
+      for (const key of Object.keys(obj)) {
+        if (!(key in props)) errors.push(`${path}.${key}: unexpected additional property`);
+      }
+    }
+    if (typeof schema['dependentRequired'] === 'object' && schema['dependentRequired'] !== null) {
+      for (const [trigger, needed] of Object.entries(
+        schema['dependentRequired'] as Record<string, string[]>,
+      )) {
+        if (trigger in obj) {
+          for (const dep of needed) {
+            if (!(dep in obj)) errors.push(`${path}.${dep}: required when ${trigger} is present`);
+          }
+        }
+      }
+    }
+    for (const [key, propVal] of Object.entries(obj)) {
+      if (key in props) {
+        errors.push(...validateAgainstSchema(root, props[key], propVal, `${path}.${key}`));
+      } else if (
+        typeof schema['additionalProperties'] === 'object' &&
+        schema['additionalProperties'] !== null
+      ) {
+        errors.push(
+          ...validateAgainstSchema(
+            root,
+            schema['additionalProperties'] as JsonSchema,
+            propVal,
+            `${path}.${key}`,
+          ),
+        );
+      }
+    }
+    return errors;
+  }
+
+  return [];
+}
+
+describe('generated OpenAPI 3.1 and WebSocket JSON Schemas align with client builders and readers', () => {
+  it('covers all 17 HTTP endpoints and validates client request payloads against OpenAPI 3.1', async () => {
+    const { openapi } = await protocolSchemas();
+    expect(openapi['openapi']).toBe('3.1.0');
+    const paths = openapi['paths'] as Record<string, Record<string, JsonSchema>>;
+
+    const expectedRoutes: [string, string][] = [
+      ['get', '/api/app'],
+      ['get', '/api/configs'],
+      ['get', '/api/config'],
+      ['post', '/api/config'],
+      ['post', '/api/check'],
+      ['post', '/api/describe'],
+      ['post', '/api/connections'],
+      ['post', '/api/prepare'],
+      ['post', '/api/run'],
+      ['post', '/api/stop-session'],
+      ['post', '/api/time'],
+      ['post', '/api/write'],
+      ['get', '/api/session'],
+      ['get', '/api/dashboard'],
+      ['get', '/api/scenarios'],
+      ['get', '/api/recording'],
+      ['get', '/api/timeline/{run_id}'],
+    ];
+    for (const [method, route] of expectedRoutes) {
+      expect(paths[route]?.[method], `${method.toUpperCase()} ${route}`).toBeDefined();
+    }
+
+    const reqSchemaOf = (route: string): JsonSchema => {
+      const op = paths[route]['post'];
+      const rb = op['requestBody'] as { content: { 'application/json': { schema: JsonSchema } } };
+      return rb.content['application/json'].schema;
+    };
+
+    const allHttpExamples = new Map((await httpExamples()).map((e) => [e.name, e.response]));
+    const recorded: HttpRequest[] = [];
+    const http: HttpTransport = (req, done) => {
+      recorded.push(req);
+      const path = req.path.split('?')[0];
+      const replies: Record<string, unknown> = {
+        'api/prepare': { instance: 'inst-1' },
+        'api/check': allHttpExamples.get('check-passed'),
+        'api/describe': allHttpExamples.get('describe'),
+        'api/config': { file: 'simulation.yaml', stamp: 'a'.repeat(64) },
+        'api/connections': allHttpExamples.get('connections'),
+        'api/run': { instance: 'inst-1', run_id: 'inst-1-1' },
+        'api/stop-session': { instance: 'inst-1', run_id: 'inst-1-1' },
+        'api/time': { run_id: 'inst-1-1', command: { command: 'pause' } },
+        'api/write': { run_id: 'inst-1-1', operation: 1 },
+      };
+      done({ ok: true, body: replies[path] ?? {} });
+      return () => undefined;
+    };
+
+    vi.useFakeTimers();
+    try {
+      const sockets = new FakeWebSockets();
+      const client = createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        token: 'secret-token',
+        http,
+        socket: sockets.factory,
+      });
+
+      // Bring WS session online so targeted stop / time / write build real targeted requests
+      const runningResp = allHttpExamples.get('session-running') as {
+        instance: string;
+        session: Record<string, unknown>;
+        allowed: Record<string, unknown>;
+        runtime: Record<string, unknown>;
+      };
+      client.connect();
+      const sock = sockets.last();
+      sock.open();
+      sock.send({
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.4.0',
+        instance: 'inst-1',
+        stream_seq: 1,
+        session: {
+          ...runningResp.session,
+          id: 'inst-1-1',
+          variables: {
+            state: 'ready',
+            reason: null,
+            peers: [],
+            peers_omitted: 0,
+            variables_omitted: 0,
+            operations: [],
+            operations_from_seq: 0,
+            operations_open_omitted: 0,
+          },
+        },
+        allowed: runningResp.allowed,
+        replay: null,
+        runtime: runningResp.runtime,
+      });
+      sock.send({ type: 'synced', stream_seq: 1, run_id: 'inst-1-1', last_seq: 1 });
+      vi.advanceTimersByTime(100);
+
+      await client.prepare({ file: 'simulation.yaml', disable: ['Logger'] });
+      await client.check({ file: 'simulation.yaml', disable: ['Dashboard'] });
+      await client.check({ file: 'simulation.yaml', text: 'vehicle_sil_simulation: 2\n' });
+      await client.describe({ file: 'simulation.yaml' });
+      await client.saveConfig({
+        file: 'simulation.yaml',
+        text: 'vehicle_sil_simulation: 2\n',
+        stamp: 'a'.repeat(64),
+      });
+      await client.connections({ file: 'connect.yaml', network: 'ETH' });
+      await client.run.stop();
+      expect(client.time.step(100)).toEqual({ sent: true });
+      // Clear waiting state via a command event so a second time command is emitted
+      sock.send({
+        type: 'event',
+        stream_seq: 2,
+        run_id: 'inst-1-1',
+        event: {
+          event: 'command',
+          seq: 99,
+          command: 'step',
+          source: 'stdin',
+          accepted: true,
+          message: null,
+          reason: null,
+          ms: 100,
+          at_ms: 100,
+          id: null,
+        },
+      });
+      vi.advanceTimersByTime(100);
+      expect(client.time.setSpeed('max')).toEqual({ sent: true });
+      const writePromise = client.variables.write({ Engine: { 'engine.demand': 40 } });
+      // Settle the write operation cleanly so no dangling rejection happens on client.close()
+      sock.send({
+        type: 'operation',
+        stream_seq: 3,
+        run_id: 'inst-1-1',
+        seq: 1,
+        state: 'applied',
+        done: true,
+        peers: {
+          Engine: {
+            state: 'applied',
+            applied_at_ms: 100,
+            late: false,
+            reason: null,
+            applied_writes: 1,
+            failed_write: null,
+          },
+        },
+      });
+      vi.advanceTimersByTime(100);
+      await writePromise;
+
+      const watch = client.variables.watch([{ peer: 'Engine', name: 'engine.speed' }], {
+        periodMs: 100,
+      });
+      watch.close();
+
+      // Start run on a fresh idle client
+      const idleClient = createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        token: 'secret-token',
+        http,
+        socket: sockets.factory,
+      });
+      await idleClient.run.start({
+        file: 'simulation.yaml',
+        disable: [],
+        speed: 'max',
+        start_paused: true,
+      });
+
+      const postRequests = recorded.filter((r) => r.method === 'POST');
+      expect(postRequests.map((r) => r.path)).toEqual(
+        expect.arrayContaining([
+          'api/prepare',
+          'api/check',
+          'api/describe',
+          'api/config',
+          'api/connections',
+          'api/stop-session',
+          'api/time',
+          'api/write',
+          'api/run',
+        ]),
+      );
+      for (const req of postRequests) {
+        const route = `/${req.path.split('?')[0]}`;
+        const errors = validateAgainstSchema(openapi, reqSchemaOf(route), req.body, route);
+        expect(errors, `${route}: ${JSON.stringify(req.body)}`).toEqual([]);
+      }
+
+      // Verify negative schema checks catch targeting & extra-key drift
+      expect(
+        validateAgainstSchema(openapi, reqSchemaOf('/api/time'), {
+          command: 'pause',
+          run_id: 'inst-1-1',
+        }).length,
+      ).toBeGreaterThan(0);
+      expect(
+        validateAgainstSchema(openapi, reqSchemaOf('/api/prepare'), {
+          file: 'simulation.yaml',
+          unknown_field: 1,
+        }).length,
+      ).toBeGreaterThan(0);
+      expect(
+        validateAgainstSchema(openapi, reqSchemaOf('/api/prepare'), {
+          file: 'simulation.yaml',
+          variant: null,
+        }).length,
+      ).toBeGreaterThan(0);
+      expect(
+        validateAgainstSchema(openapi, reqSchemaOf('/api/run'), {
+          file: 'simulation.yaml',
+          connect: { '': 'eth0' },
+        }).length,
+      ).toBeGreaterThan(0);
+      expect(
+        validateAgainstSchema(openapi, reqSchemaOf('/api/write'), {
+          run_id: 'inst-1-1',
+          writes: {},
+        }).length,
+      ).toBeGreaterThan(0);
+
+      client.close();
+      idleClient.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('validates client WS frames against ws-client.schema.json and covers all 13 ws-server types', async () => {
+    const { wsClient, wsServer } = await protocolSchemas();
+    const runningResp = (await httpExamples()).find((e) => e.name === 'session-running')
+      ?.response as {
+      session: Record<string, unknown>;
+      allowed: Record<string, unknown>;
+      runtime: Record<string, unknown>;
+    };
+    const sockets = new FakeWebSockets();
+    vi.useFakeTimers();
+    let sentFrames: unknown[];
+    try {
+      const client = createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        token: 'secret-token',
+        http: (_req, done) => {
+          done({ ok: true, body: {} });
+          return () => undefined;
+        },
+        socket: sockets.factory,
+      });
+      client.connect();
+      const sock = sockets.last();
+      sock.open();
+      sock.send({
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.4.0',
+        instance: 'inst-1',
+        stream_seq: 1,
+        session: { ...runningResp.session, id: 'inst-1-1' },
+        allowed: runningResp.allowed,
+        replay: null,
+        runtime: runningResp.runtime,
+      });
+      sock.send({ type: 'synced', stream_seq: 1, run_id: 'inst-1-1', last_seq: 1 });
+      vi.advanceTimersByTime(100);
+      const watch = client.variables.watch('all', { periodMs: 100 });
+      await Promise.resolve();
+      watch.close();
+      await Promise.resolve();
+      sentFrames = [...sock.sent];
+      client.close();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(sentFrames.map((m) => (m as { type: string }).type)).toEqual([
+      'auth',
+      'watch',
+      'unwatch',
+    ]);
+    for (const [i, frame] of sentFrames.entries()) {
+      expect(
+        validateAgainstSchema(wsClient, wsClient, frame, `ws-client[${i}]`),
+        JSON.stringify(frame),
+      ).toEqual([]);
+    }
+
+    // Every server->client frame type in ws-server.schema.json is seen in examples and read by readServerMessage
+    const mapping = (wsServer['discriminator'] as { mapping: Record<string, string> }).mapping;
+    const schemaTypes = Object.keys(mapping).sort();
+    expect(schemaTypes).toEqual([
+      'allowed',
+      'availability',
+      'dropped',
+      'error',
+      'event',
+      'hello',
+      'operation',
+      'resync',
+      'runtime',
+      'session',
+      'synced',
+      'values',
+      'variables',
+    ]);
+    const exampleTypes = new Set(
+      (await webSocketExamples()).flatMap((ex) =>
+        ex.server.map((m) => (m as { type: string }).type),
+      ),
+    );
+    // `runtime` is emitted live on prepare/run transitions; validate it against ws-server.schema.json and readServerMessage
+    const runtimeFrame = {
+      type: 'runtime',
+      stream_seq: 4,
+      runtime: {
+        mode: 'hot',
+        state: 'ready',
+        config: 'simulation.yaml',
+        reason: null,
+        message: null,
+      },
+    };
+    expect(validateAgainstSchema(wsServer, wsServer, runtimeFrame, 'ws-runtime')).toEqual([]);
+    expect(readServerMessage(runtimeFrame)).toMatchObject({ type: 'runtime' });
+    exampleTypes.add('runtime');
+    expect([...exampleTypes].sort()).toEqual(schemaTypes);
   });
 });
