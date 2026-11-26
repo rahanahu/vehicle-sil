@@ -415,7 +415,7 @@ passed: 0 errors, 0 warnings, 0 notes
 ```python
 from vehicle_sil_control import Control, Launch, ms
 
-# Starts "vehicle_sil_launch run simulation.yaml" with its control server, paused before the first step.
+# Starts "vehicle_sil_launch serve --once simulation.yaml" with its control server, paused before the first step.
 with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch:
     with Control(launch.address) as c:
         c.sim.wait_paused()                                   # every ECU stands still at 0 ms
@@ -459,7 +459,7 @@ at 500 ms: cooler.target = 22.0, cooler.temperature = 22.0
 
 | 行 | すること |
 |---|---|
-| `Launch(..., start_paused=True)` | `vehicle_sil_launch run` を子プロセスとして起動し、どの ECU も最初のステップの前で止めます。 |
+| `Launch(..., start_paused=True)` | `vehicle_sil_launch serve --once` を子プロセスとして起動し、どの ECU も最初のステップの前で止めます。 |
 | `Control(launch.address)` | 起動した `vehicle_sil_launch` の Control Server に、gRPC で接続します。 |
 | `c.sim.wait_paused()` | シミュレーションが止まるまで待ちます。 |
 | `c.write({"Cooler": {"cooler.target": 22.0}})` | 設定ファイルの participant 名と、`--describe` の変数の名前を指定して書き込みます。 |

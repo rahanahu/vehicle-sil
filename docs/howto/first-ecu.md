@@ -415,7 +415,7 @@ Write the following into `read_cooler.py` in the project directory (next to `sim
 ```python
 from vehicle_sil_control import Control, Launch, ms
 
-# Starts "vehicle_sil_launch run simulation.yaml" with its control server, paused before the first step.
+# Starts "vehicle_sil_launch serve --once simulation.yaml" with its control server, paused before the first step.
 with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch:
     with Control(launch.address) as c:
         c.sim.wait_paused()                                   # every ECU stands still at 0 ms
@@ -461,7 +461,7 @@ What each line of the script does:
 
 | Line | What it does |
 |---|---|
-| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch run` as a child process and holds every ECU before its first simulation step. |
+| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch serve --once` as a child process and holds every ECU before its first simulation step. |
 | `Control(launch.address)` | Connects over gRPC to the Control Server of the `vehicle_sil_launch` it started. |
 | `c.sim.wait_paused()` | Waits until the simulation is paused. |
 | `c.write({"Cooler": {"cooler.target": 22.0}})` | Writes a value. It names the participant as in the configuration file and the variable as in the `--describe` output. |
