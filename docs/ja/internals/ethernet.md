@@ -14,6 +14,7 @@
 | [SIL Kit のポート（`SilKitEthPort`）](#sil-kit-のポートsilkitethport) | 開始と終了、受信、送信、時刻同期に参加していない送信側、終了の順序 |
 | [ECU から使う（`Ecu::ethernet()`）](#ecu-から使うecuethernet) | `Peer` と `LocalBench` が作るもの、`ecu.connected`、`--describe` の出力 |
 | [未確認の値](#未確認の値) | 規格で確認していない値と、その変え方 |
+| [ソース互換性と ABI](#ソース互換性と-abi) | 追加によるソース互換性と、バイナリ配置・vtable の変更 |
 | [検証の範囲](#検証の範囲) | テストが確認していること |
 
 ## ライブラリの構成
@@ -62,8 +63,9 @@
 - 時刻がちょうど `now` のフレームは次の呼び出しで渡します。
 - 同じ時刻のフレームを並べ替えるのはチャネルです。
 - 自分が送信したフレームは受信しません。
-- `send()` は同期の結果を返します（`Accepted`、`QueueFull`、`Failed`）。`kHeaderBytes`（14）より短いフレームは `Failed` です。
-- `release_events_before(now, sink)` は、時刻が `now` より前のイベントを同じ順で渡します。ホストは同じステップで `release_before()` より先に呼びます。
+- `send()` は同期の結果を返します（`Accepted`、`QueueFull`、`Failed`）。`kHeaderBytes`（14）より短いフレームは `Failed` です。1 引数の `send(const TimedFrame&)` と 2 引数の `send(const TimedFrame&, std::uint64_t token)`（既定は 1 引数版へ委譲）があり、`token` はポート単位でスコープされる不透明な値です（`0` はセンチネルではなく通常の有効なトークン）。`Accepted` が送信ステップ `T` 内で完了を生むことはありません。
+- `transmit_capabilities()` は `TransmitCapabilities::None`（既定）または `TransmitCapabilities::Correlated` を返します。`None` を返すバックエンドは `Accepted` から `TransmitCompleted` を捏造しません。
+- `release_events_before(now, sink)` は、`time < now` のイベントだけを同じ順で渡します。時刻 `T` のイベントは、より後のステップ `T' > T` で解放されます。ホストは同じステップで `release_before()` より先に呼びます。
 
 ### ポートのイベント（`PortEvent`）
 
@@ -76,7 +78,7 @@
 | `ReceiveOverflow` | 受信キューが満杯で受信フレームを捨てた。`count` は捨てた数 | 捨てたフレームのうち最も早い時刻 |
 | `EventOverflow` | イベントのキューが満杯で、送信の確認のイベントを捨てた。`count` は捨てた数 | 捨てたイベントのうち最も早い時刻 |
 
-`ReceiveOverflow` と `EventOverflow` はイベントのキューの容量を使いません（`OverflowCollector`）。送信の確認を押し出さず、キューが満杯でも渡されます。
+`PortEvent` は、対応付きの送信確認のために `send_time`、`token`、`correlated`（`bool`、既定 `false`）も持ちます（`token == 0` を非対応イベントと明確に区別するため）。`ReceiveOverflow` と `EventOverflow` はイベントのキューの容量を使いません（`OverflowCollector`）。送信の確認を押し出さず、キューが満杯でも渡され、`OverflowCollector::release_merged` が各あふれを `event.time > overflow.time` となる最初のキュー済みイベントの直前に差し込みます。
 
 ## チャネル（`Channel`）
 
@@ -88,12 +90,12 @@
 
 | 段 | すること |
 |---|---|
-| 1. 受信 | ポートが `now` より前に渡したフレームのうち、フィルターと長さの検査を通ったものを、時刻、送信元のアドレス、到着の順に並べる |
-| 2. 処理 | `on_frame()` で追加したハンドラーを、フレームごとに、追加した順に呼ぶ |
+| 1. 受信 | `now` より前のポートイベントを取り出し（あふれを数え、対応付きの送信イベントを以前のステップの `flush()` 拒否とマージして積む）、フィルターと長さの検査を通った受信フレームを時刻、送信元アドレス、到着の順に並べる |
+| 2. 処理 | まず `on_transmit()` ハンドラーを呼び（`transmit_completed` / `transmit_failed` の更新と `outstanding` の減算の後）、続いてフレームごとに `on_frame()` ハンドラーを、追加した順にドライバーのスレッド上で呼ぶ |
 | 3. アプリケーション | `receive()` が同じフレームを同じ順に 1 つずつ返す |
 | 4. 送信 | そのステップの `send()` のフレームを、呼んだ順に、時刻 `now` でポートに渡す |
 
-受信の段では、ポートのイベントは数えるだけです。
+受信の段では、`on_transmit()` ハンドラーが未登録でも `Channel` は送信イベントを取り出して数えます。
 
 アプリケーションの段のルール:
 
@@ -103,14 +105,34 @@
 
 送信の段のルール:
 
-- ポートが受け付けなかったフレームは数えて捨てます（キューが満杯ならそのフレームと残り全部、失敗ならそのフレーム）。
+- ポートが受け付けなかったフレームは `frames_dropped` に数え、より後のステップの `process()` で配送するために `TransmitEvent::Kind::Failed`（`send_time = now`、`time = now`）を積みます（キューが満杯ならそのフレームと残り全部、失敗ならそのフレーム）。
 - 送信し直しはしません。
 
 呼べる時点:
 
-- `send()` と `receive()` は、ステップの中（ハンドラーかアプリケーション）だけで呼べます。外から呼ぶと `std::logic_error` です。
+- `send()`（1 引数または `token` 付き 2 引数）と `receive()` は、ステップの中（ハンドラーかアプリケーション）だけで呼べます。外から呼ぶと `std::logic_error` です。
 - ハンドラーから同じホストのほかのチャネルに送信することもできます（ゲートウェイ）。そのフレームは同じステップの送信の段で送信されます。
-- `on_frame()` はホストが始まる前だけです。
+- `on_frame()` と `on_transmit()` はホストが始まる前だけです（空のハンドラーは `std::invalid_argument`、開始後は `std::logic_error`）。
+
+### 送信通知、トークン、`outstanding` の保存則
+
+- `transmit_capabilities()` はポートの `TransmitCapabilities` をそのまま返します。
+- `TransmitEvent` は `kind`（`Completed` または `Failed`）、`token`、`send_time`（送信元ステップ時刻 `T`）、`time`（バックエンドの完了・失敗時刻、または `VirtualEthernetBus`、SIL Kit 簡易シミュレーション、`flush()` での拒否時は `T`）を持ちます。
+- `Accepted`（`send() == Ok`）と送信完了は厳密に分離されます。`on_transmit` がステップ `T` 内で呼ばれることはなく、イベントは `release_events_before(now)` により `T' > T` の `process()` で配送されます。
+- `token`（`std::uint64_t`）はチャネル単位でスコープされる不透明な値であり、`0` はセンチネルではなく通常の有効なトークンです。
+- `send()` から同期で返る `SendStatus::QueueFull` / `InvalidFrame` は `sends_rejected` を増やし、`TransmitEvent` を出さず、`outstanding` も変えません。後のステップで同じトークンをそのまま再試行でき、二重完了になりません。
+- `Correlated` バックエンド上で `send() == Ok` になると、そのトークンは `Completed` / `Failed` としての配送、`EventOverflow`（`port_event_overflows`）または `transmit_event_overflows` による計上、あるいは `close()` / 終了後の `outstanding` 残留の観測に至るまで `outstanding` に留まります。送信中のトークンを再利用すると、2 つのイベントを区別できなくなります。`Correlated` ポートでは、非対応または複製のポートイベント（`!event.correlated`）は `transmit_completed` / `transmit_failed` を増やさず、`outstanding` の保存則を保ちます。`None` バックエンドでは、ポートが `Accepted` を返した送信で `outstanding` を増やさず、`Completed` も捏造しません。
+- ステップ `T' > T` の中では、`TransmitEvent` の通知（`time < now_` の対応付きポートイベントと `fail.time < now_` の `flush()` 拒否の双方）は結果のタイムスタンプ `time` の単調順に並びます（たとえばタイミング付きバックエンドでは `time == T` の `flush()` 失敗が後続の完了より先になります）。同一タイムスタンプの `send()` 呼び出し順は保証されず、呼び出し元は `token` で結果を対応付けます。
+- `Correlated` バックエンドでは、あらゆる時点で次の `outstanding` 保存則が成り立ちます。
+
+```text
+accepted_by_channel == in_step_outgoing + frames_sent + frames_dropped
+accepted_by_channel == transmit_completed + transmit_failed
+                     + transmit_event_overflows + port_event_overflows
+                     + outstanding
+```
+
+- `port_event_capacity` と `transmit_event_capacity` を既定の `0` のままにして（`max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)` 以上へ自動サイジングさせる）`port_transmit_queue_capacity > 0` を設定すると、`EventOverflow` は構造上防げます（超過バーストは決定的に `QueueFull` または次ステップの `Failed` を受けます）。`EventOverflow` と `transmit_event_overflows` は失われた `token` 値ではなく件数だけを報告するため、`TxConfirmation` 駆動の ECU やテストハーネスは個別の送信バッファを選択的に解放できず、`port_event_overflows > 0 || transmit_event_overflows > 0` を回復不能な確認欠落エラーとして扱う必要があります（`ReceiveOverflow` と同じく、ステップ／実行を失敗させるかチャネル／コントローラーの TX 状態をリセットします）。
 
 ### 同じ時刻のフレームの順
 
@@ -130,6 +152,12 @@ SIL Kit では、違う送信側から同じ時刻に受信したフレームの
 | `receive_capacity` | 1024 | 1 ステップで渡すフレームの数（フィルターを通ったもの）。超えた分は捨てて `receive_overflows` に数える |
 | `max_frame_bytes` | 1522 | 送信できるフレームと、渡すフレームの最大の長さ（FCS なし）。`kHeaderBytes` から `Frame::kCapacity`（2048）まで |
 | `accept` | `All` | 渡すフレームのフィルター（`All` か `Addressed`） |
+| `transmit_event_capacity` | 0（導出） | 未配送 `TransmitEvent` 用のチャネルバッファ容量。0 のとき `max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)` |
+| `port_inbox_capacity` | 0（導出） | ポート受信キュー容量（`Channel::port_inbox_capacity()` は 0 のとき `2 * receive_capacity` を返す） |
+| `port_event_capacity` | 0（導出） | ポートイベントキュー容量（`Channel::port_event_capacity()` は 0 のとき `max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)` を返す） |
+| `port_transmit_queue_capacity` | 0（バックエンド既定） | ポートで許容する未確認送信の上限（`> 0` で送信中フレーム数を制限） |
+
+`Channel::validate(options)` は `port_event_capacity > 0 && port_transmit_queue_capacity > port_event_capacity` の場合も `std::invalid_argument` を投げます。
 
 `receive_capacity`:
 
@@ -151,7 +179,7 @@ SIL Kit では、違う送信側から同じ時刻に受信したフレームの
 
 ### メモリの確保
 
-どちらの受信キューも、生成のときに 1 回だけ確保します。ステップの中では確保しません。並べ替えは、受信した順のフレームを動かさずに、添字の配列を並べます。`eth.steps_do_not_allocate` が確認します。
+どちらの受信キューも、送信通知用のバッファ（`flush_failed_`、`transmit_events_`）も、生成のときに 1 回だけ確保します。ステップの中では確保しません。並べ替えは、受信した順のフレームを動かさずに、添字の配列を並べます。`eth.steps_do_not_allocate` が確認します。
 
 1 フレームは `Frame::kCapacity` バイトを持つので、既定の容量では次の大きさになります。
 
@@ -185,7 +213,7 @@ SIL Kit では、違う送信側から同じ時刻に受信したフレームの
 
 ### 統計（`ChannelStatistics`）
 
-数は増えるだけです。
+数は増えるだけです（現在の未確認送信中フレーム数を追跡する `outstanding` を除く）。
 
 | 名前 | 数えるもの |
 |---|---|
@@ -200,23 +228,28 @@ SIL Kit では、違う送信側から同じ時刻に受信したフレームの
 | `frames_dropped` | `send()` が受け取った送信のフレームのうち、ポートが受け付けなかったもの |
 | `transmit_completed`、`transmit_failed`、`port_receive_overflows` | ポートのイベント |
 | `port_event_overflows` | ポートのイベントのうち、ポートが捨てた送信の確認（その分 `transmit_completed` と `transmit_failed` が少ない） |
+| `transmit_event_overflows` | チャネルの `transmit_event_capacity` バッファ満杯で捨てた `TransmitEvent` 数 |
+| `outstanding` | 現在の未確認送信中フレーム数（`close()` / 終了後も参照可能） |
 
 ## 仮想ネットワーク（`VirtualEthernetBus`）
 
-プロセスの中のイーサネットです。SIL Kit の Network Simulator なしの Ethernet と同じく、ハブとして振る舞います。スレッドセーフではありません。1 つのスレッド（`StepDriver` のループ）から使います。
+プロセスの中のイーサネットです。SIL Kit の Network Simulator なしの Ethernet と同じく、ハブとして振る舞います。`Endpoint::transmit_capabilities()` は `TransmitCapabilities::Correlated` を返します。スレッドセーフではありません。1 つのスレッド（`StepDriver` のループ）から使います。
 
 | 場面 | 振る舞い |
 |---|---|
-| `attach()` | 呼ぶごとに 1 つのエンドポイント（`Port`）を作る |
+| `attach()` | 呼ぶごとに `VirtualEthernetBusOptions`（`inbox_capacity` 2048、`event_capacity` 1024、`transmit_queue_capacity` 0）で 1 つのエンドポイント（`Port`）を作る |
 | `attach(inbox_capacity)` | そのエンドポイントの受信キューの容量を決める（0 は `std::invalid_argument`） |
+| `attach(VirtualEthernetEndpointOptions)` | エンドポイントごとに `inbox_capacity`、`event_capacity`、`transmit_queue_capacity` を上書きする（`0` は `VirtualEthernetBusOptions` を継承） |
 | 時刻 t での送信 | 宛先のアドレスによらず、ほかの全部のエンドポイントが時刻 t で受信する（自分は受信しない） |
-| 送信の確認 | イベントを出さない |
+| 送信の確認 | 送信側エンドポイントに対応付きの `PortEvent::TransmitCompleted`（`time = t`、`send_time = t`、`token`、`correlated = true`）を積む（`T' > t` で解放）。`transmit_queue_capacity > 0` で `outstanding() >= limit` のとき `send()` は `QueueFull` を返す |
+| イベントキューのあふれ | 捨てた確認を数え（`event_overflows()`）、`OverflowCollector` 経由で `EventOverflow` を出す |
 | `min_frame_bytes`（既定 60）より短いフレーム | 受信側に 0 で埋めて渡す（0 にすると埋めない） |
 | 受信側がすでに渡した時刻より前のフレーム | `std::logic_error` で拒否する（ホストを時刻の順に実行していない） |
 | 受信キュー（`inbox_capacity`、既定 2048）のあふれ | 捨てて数え、`ReceiveOverflow` を出す |
 
 - 短いフレームを 0 で埋めるのは、SIL Kit と同じ記録にするためです。
 - `StepDriver` は時刻の順を守ります。
+- `Endpoint::outstanding()` は、終端イベントがまだ解放（または `EventOverflow` として計上）されていない受け付け済みフレーム数を返します。
 - 受信キューの容量の決め方は「ポートの受信キューの容量」にあります。
 
 ## SIL Kit のポート（`SilKitEthPort`）
@@ -246,16 +279,21 @@ CommunicationReady は、SIL Kit が `Activate()` を呼ぶよう勧めている
 
 ### 送信と送信の確認
 
-送信は、そのステップの時刻で `SendFrame()` を呼びます。送信の確認は、Network Simulator がなければ `SendFrame()` の中で返るので、イベントとしてキューに入れて次のステップで渡します（チャネルをその場で呼びません）。
+`SilKitEthPort::transmit_capabilities()` は `TransmitCapabilities::Correlated` を返します。送信時には、事前確保された FIFO 空きスロットリングからスロットを確保し、`SendFrame()` の `userContext` に `0xA7` 目印付きのタグ（`[63:56] = 0xA7`、24 ビット世代、32 ビットスロット添字）を渡します。対応表のミューテックスは `SendFrame()` の前に解放し、`SendFrame()` が例外を投げたときはスロットを安全に回収します。
+
+送信の確認は、Network Simulator がなければ `SendFrame()` の中で返るので、`on_transmit()` の中から `(token, send_time)` を解決して即座に対応スロットを解放してから対応付き `PortEvent` をイベントの受信箱へ積み（イベントの受信箱があふれてもスロットは漏れない）、次のステップで渡します（チャネルをその場で呼びません）。
 
 | SIL Kit の状態 | イベント |
 |---|---|
-| `Transmitted` | `TransmitCompleted` |
-| `ControllerInactive`、`LinkDown`、`Dropped`、`InvalidFrameFormat` | `TransmitFailed` |
+| `Transmitted` | `TransmitCompleted`（`correlated = true`） |
+| `ControllerInactive`、`LinkDown`、`Dropped`、`InvalidFrameFormat` | `TransmitFailed`（`correlated = true`） |
 
+- `SilKitEthPort::validate(options)` は、`inbox_capacity > 0`、`event_capacity > 0`、`transmit_queue_capacity <= event_capacity` を検査します。
+- `SilKitEthPortOptions::transmit_queue_capacity > 0` のとき、送信中の `outstanding` が上限に達すると `send()` は `QueueFull` を返し、`SilKitEthPortStatistics::send_queue_full` を増やします。`SilKitEthPortStatistics::outstanding` は `close()` 後も参照できます。
+- **外部の `INetworkSimulator` の `userContext` 契約**: SIL Kit は `userContext` をプロセス間で 64 ビットそのまま運び、シミュレーターには `ack.userContext = request.userContext` をそのまま返すことを要求します。完全な 64 ビットの `send_time` をスロット表に保持しているため、シミュレーターの遅延の長さによらず正確な `send_time` と `token` を復元できます。外部シミュレーターが `userContext` を落としたり書き換えたりした場合（または実行途中で確認を返さず離脱した場合）、`SilKitEthPort` は FIFO 順を推測せず、完了も捏造しません。非対応の送信確認は `SilKitEthPortStatistics::tx_uncorrelated` を増やし（`EventOverflow` は出さない）、未確認のままのフレームは `outstanding`（`> 0`）から観測できます。
 - 種類ごとの数は統計にあります。
 - `event_capacity`（既定 1024）は、1 ステップに送信するフレームの数（チャネルの `send_capacity`）以上にします。
-- あふれた確認は捨てて数え、`EventOverflow` で通知します。
+- 非対応の送信確認は `release_events_before()` 時に時刻順でマージされる別の `event_capacity` キューを使うため（`EventOverflow` は出しません）、対応付き送信完了が非対応イベントと枠を奪い合うことはありません（`transmit_queue_capacity > 0` かつ `transmit_queue_capacity <= event_capacity` で対応付きの `EventOverflow` を構造上防げます）。（`transmit_queue_capacity == 0` で）あふれた対応付き確認は捨てて数え、`EventOverflow`（`OverflowCollector`）で通知します。
 
 60 バイトより短いフレームは、ポートが 0 で 60 バイトまで埋めてから SIL Kit に渡します。受信側の SIL Kit も短いフレームを埋めますが、Network Simulator は短いフレームを拒否することがあるため、送信する側でそろえます。
 
@@ -290,19 +328,20 @@ CAN の仮想時間のポート（`SilKitCanPort`）も同じルールです。
 
 | 項目 | ルール |
 |---|---|
-| ポートの受信キュー | `receive_capacity` の 2 倍（`Channel::port_inbox_capacity()`。「ポートの受信キューの容量」） |
-| 送信の確認のキュー | `send_capacity` 以上（既定の 1024 より小さくはしない） |
+| ポートの受信キュー | `Channel::port_inbox_capacity(options)`（`port_inbox_capacity == 0` なら `receive_capacity` の 2 倍。「ポートの受信キューの容量」） |
+| ポートのイベントキュー | `Channel::port_event_capacity(options)`（`port_event_capacity == 0` なら `max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)` 以上） |
+| ポートの送信キュー上限 | `options.port_transmit_queue_capacity`（`0` = 上限なし） |
 | `start()` | CommunicationReady のハンドラー（`ParticipantRuntime::add_communication_ready_handler()`）で、CAN のポートの後、LIN の `init()` の前 |
-| `close()` | `Peer::stop()` がステップを止めた後 |
-| オプションの検査 | `Channel::validate()` で先に確認する（SIL Kit のコントローラーは作ると外せないため） |
+| `close()` | `Peer::stop()` がステップを止めた後（`outstanding` は参照可能なまま） |
+| オプションの検査 | `Channel::validate()` と `SilKitEthPort::validate()` で先に確認する（SIL Kit のコントローラーは作ると外せないため） |
 
 ### `LocalBench` が作るもの
 
-`LocalBench` は、名前ごとの `VirtualEthernetBus`（既定のオプション）に、受信キューが `receive_capacity` の 2 倍のエンドポイント（`attach(Channel::port_inbox_capacity(options))`）を追加し、その上に `GatedEthPort` と `Channel` を作ります。受信キューはエンドポイントごとなので、`receive_capacity` の違う ECU が同じネットワークに接続できます。テストが `ethernet_bus(network).attach()` で追加するエンドポイントは、既定の容量です。
+`LocalBench` は、最初にオプションを検査し（バスを作ったり名前を付けたりする前）、名前ごとの `VirtualEthernetBus`（既定のオプション）に、`Channel::port_inbox_capacity(options)`、`Channel::port_event_capacity(options)`、`options.port_transmit_queue_capacity` を `attach(VirtualEthernetEndpointOptions)` で設定したエンドポイントを追加して、その上に `GatedEthPort` と `Channel` を作ります。容量はエンドポイントごとなので、異なるオプションを持つ ECU が同じネットワークに接続できます。テストが `ethernet_bus(network).attach()` で追加するエンドポイントは、既定の容量です。
 
 ### `ecu.connected`
 
-`GatedEthPort` が、切断している間の送信を `SendResult::Failed` にし（チャネルの `frames_dropped`）、切断している間の時刻のフレームを捨てます。判定の時点は CAN と同じです（`BusConnection`）。ポートのイベント（送信の確認、あふれ）は通します。
+`GatedEthPort` は `transmit_capabilities()` と 2 引数版の `send()` を転送します。`GatedEthPort` が、切断している間の送信を `SendResult::Failed` にし（チャネルは `frames_dropped` に数え、トークンを漏らさないよう次のステップの `process()` で `send_time == T, time == T` の `TransmitEvent::Kind::Failed` を通知する）、切断している間の時刻の受信フレームを捨てます。判定の時点は CAN と同じです（`BusConnection`）。ポートのイベント（送信の確認、あふれ）は通します。
 
 ### `--describe` の出力
 
@@ -310,7 +349,7 @@ CAN の仮想時間のポート（`SilKitCanPort`）も同じルールです。
 
 ### 確認していない振る舞い
 
-SIL Kit の Network Simulator がイーサネットのネットワークを模擬しているときの振る舞い（確認の時刻、リンクの状態）は、確認していません。
+SIL Kit の Network Simulator がイーサネットのネットワークを模擬しているときの振る舞い（確認の時刻、リンクの状態、および Vector のシミュレーターが送信確認で `userContext` をそのまま返すかどうか）は、確認していません。外部シミュレーターが `userContext` を省略または変更した場合、`SilKitEthPort` は `tx_uncorrelated` を数えて `outstanding > 0` を残します。
 
 ## 未確認の値
 
@@ -323,6 +362,11 @@ SIL Kit の Network Simulator がイーサネットのネットワークを模�
 | 先頭の 14 バイト（宛先 6、送信元 6、EtherType か長さ 2）と、アドレスのバイトの並び | `kHeaderBytes`、`Frame::destination()`、`source()`、送信できる最短のフレーム | 変えられない |
 | アドレスのグループのビット（1 バイト目の最下位のビット）と、ブロードキャスト（全部 0xFF） | `MacAddress::is_multicast()`、`is_broadcast()`、`Accept::Addressed` | `Accept::All` なら使わない |
 | テストと例の EtherType 0x88B5（ローカルの実験用として知られる値）と、ローカル管理のアドレス `02:00:00:...`、`03:00:00:...` | テストと `examples/ethernet` だけ（vehicle-sil のライブラリは使わない） | 例は `--ethertype <数>`（`ethernet_example::Options::ether_type`）で変えられる。アドレスは例のヘッダーの定数 |
+
+## ソース互換性と ABI
+
+- **追加によるソース互換性**: 1 引数版の `Port::send()` と `Channel::send()` は 2 引数版とともに残っており、1 引数版の `send()` だけをオーバーライドする独自の `Port` 派生クラスは `TransmitCapabilities::None` としてそのままコンパイルできます。また、`PortEvent`、`ChannelOptions`、`ChannelStatistics`、`VirtualEthernetBusOptions`、`SilKitEthPortOptions`、`SilKitEthPortStatistics` の新しいフィールドはすべて既定メンバー初期化子付きで末尾に追加されているため、既存の集成体初期化も有効なままです。
+- **ABI への影響**: `eth::Port`（`transmit_capabilities()`、2 引数版 `send()`）への仮想関数追加は vtable 配置を変え、`PortEvent`、`ChannelOptions`、`ChannelStatistics`、`VirtualEthernetBusOptions`、`SilKitEthPortOptions`、`SilKitEthPortStatistics`、`Channel`、`SilKitEthPort` へのフィールド追加は構造体・クラスのメモリ配置を変えます。利用側は更新後のヘッダーに対して再コンパイルしてください。
 
 ## 検証の範囲
 

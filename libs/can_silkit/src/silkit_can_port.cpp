@@ -22,7 +22,41 @@ constexpr sk::CanFrameFlagMask flag(sk::CanFrameFlag f) noexcept
 constexpr sk::CanFrameFlagMask kUnsupportedFlags = flag(sk::CanFrameFlag::Rtr) | flag(sk::CanFrameFlag::Fdf) |
                                                    flag(sk::CanFrameFlag::Xlf);
 
+constexpr std::uint16_t kCorrSlotMask = 0x3FFFu;
+constexpr unsigned kCorrSlotBits = 14;
+constexpr std::uint8_t kCorrGenMask = 0x3u;
+constexpr std::size_t kMinCorrCapacity = 1024;
+
+std::size_t validated_inbox_capacity(const SilKitCanPortOptions& options)
+{
+    SilKitCanPort::validate(options);
+    return options.real_time_clock != nullptr ? 1 : options.inbox_capacity;
+}
+
 } // namespace
+
+void SilKitCanPort::validate(const SilKitCanPortOptions& options)
+{
+    if (options.inbox_capacity == 0)
+    {
+        throw std::invalid_argument("vehicle_sil::can::SilKitCanPort: inbox_capacity must be > 0");
+    }
+    if (options.event_capacity == 0)
+    {
+        throw std::invalid_argument("vehicle_sil::can::SilKitCanPort: event_capacity must be > 0");
+    }
+    if (options.transmit_queue_capacity > options.event_capacity)
+    {
+        // An acknowledgement lost to a full event queue would keep its place for good.
+        throw std::invalid_argument(
+            "vehicle_sil::can::SilKitCanPort: transmit_queue_capacity must not exceed event_capacity");
+    }
+    if (options.real_time_clock == nullptr && options.transmit_queue_capacity > kMaxCorrelatedInFlight)
+    {
+        throw std::invalid_argument(
+            "vehicle_sil::can::SilKitCanPort: transmit_queue_capacity must not exceed kMaxCorrelatedInFlight");
+    }
+}
 
 std::optional<Frame> from_silkit_frame(const sk::CanFrame& in) noexcept
 {
@@ -69,10 +103,11 @@ bool to_silkit_frame(const Frame& in, sk::CanFrame& out) noexcept
 
 SilKitCanPort::SilKitCanPort(sk::ICanController& controller, SilKitCanPortOptions options) :
   controller_(controller),
-  // StepInbox rejects 0 (std::invalid_argument), like VirtualCanBus. With real time, the
-  // RealTimeReceiver holds the frames and events instead.
-  inbox_(options.real_time_clock != nullptr && options.inbox_capacity > 0 ? 1 : options.inbox_capacity),
-  events_(options.real_time_clock != nullptr && options.event_capacity > 0 ? 1 : options.event_capacity),
+  // validate() runs via validated_inbox_capacity() before StepInbox or RealTimeReceiver are built.
+  // With real time, the RealTimeReceiver holds the frames and events instead.
+  inbox_(validated_inbox_capacity(options)),
+  events_(options.real_time_clock != nullptr ? 1 : options.event_capacity),
+  uncorrelated_events_(options.real_time_clock != nullptr ? 1 : options.event_capacity),
   transmit_capacity_(options.transmit_queue_capacity),
   bitrate_(options.bitrate)
 {
@@ -80,11 +115,15 @@ SilKitCanPort::SilKitCanPort(sk::ICanController& controller, SilKitCanPortOption
     {
         real_time_.emplace(*options.real_time_clock, options.inbox_capacity, options.event_capacity);
     }
-    if (transmit_capacity_ > options.event_capacity)
+    else
     {
-        // An acknowledgement lost to a full event queue would keep its place for good.
-        throw std::invalid_argument(
-            "vehicle_sil::can::SilKitCanPort: transmit_queue_capacity must not exceed event_capacity");
+        uncorrelated_drain_.reserve(options.event_capacity);
+        const std::size_t corrCapacity = std::clamp<std::size_t>(
+            std::max({options.event_capacity, options.transmit_queue_capacity, kMinCorrCapacity}), 1,
+            kMaxCorrelatedInFlight);
+        corr_slots_.resize(corrCapacity);
+        corr_free_ring_.resize(corrCapacity);
+        clear_corr_table();
     }
     const std::lock_guard lock(lifecycle_mutex_);
     try
@@ -210,15 +249,79 @@ void SilKitCanPort::close() noexcept
     }
     inbox_.clear();
     events_.clear();
+    uncorrelated_events_.clear();
     {
         const std::lock_guard overflowLock(overflow_mutex_);
         overflow_.clear();
+        event_overflow_.clear();
+    }
+    {
+        const std::lock_guard corrLock(corr_mutex_);
+        clear_corr_table();
     }
     if (real_time_)
     {
         real_time_->set_wakeup({});
         real_time_->clear();
     }
+}
+
+std::optional<std::uint16_t> SilKitCanPort::allocate_corr_slot(std::uint64_t token, SimTime send_time) noexcept
+{
+    if (corr_free_count_ == 0)
+    {
+        return std::nullopt;
+    }
+    const std::uint16_t slot = corr_free_ring_[corr_free_head_];
+    corr_free_head_ = (corr_free_head_ + 1) % corr_free_ring_.size();
+    --corr_free_count_;
+    CorrSlot& entry = corr_slots_[slot];
+    entry.token = token;
+    entry.send_time = send_time;
+    entry.in_use = true;
+    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(entry.gen) << kCorrSlotBits) | slot);
+}
+
+bool SilKitCanPort::resolve_and_free_corr_slot(std::uint16_t tag, std::uint64_t& token, SimTime& send_time) noexcept
+{
+    const std::uint16_t slot = static_cast<std::uint16_t>(tag & kCorrSlotMask);
+    const std::uint8_t gen = static_cast<std::uint8_t>((tag >> kCorrSlotBits) & kCorrGenMask);
+    if (slot >= corr_slots_.size())
+    {
+        return false;
+    }
+    CorrSlot& entry = corr_slots_[slot];
+    if (!entry.in_use || entry.gen != gen)
+    {
+        return false;
+    }
+    token = entry.token;
+    send_time = entry.send_time;
+    entry.in_use = false;
+    entry.gen = static_cast<std::uint8_t>((entry.gen + 1u) & kCorrGenMask);
+    const std::size_t tail = (corr_free_head_ + corr_free_count_) % corr_free_ring_.size();
+    corr_free_ring_[tail] = slot;
+    ++corr_free_count_;
+    return true;
+}
+
+bool SilKitCanPort::reclaim_corr_slot_if_unused(std::uint16_t tag) noexcept
+{
+    std::uint64_t unusedToken = 0;
+    SimTime unusedSendTime{};
+    return resolve_and_free_corr_slot(tag, unusedToken, unusedSendTime);
+}
+
+void SilKitCanPort::clear_corr_table() noexcept
+{
+    for (std::size_t i = 0; i < corr_slots_.size(); ++i)
+    {
+        corr_slots_[i].in_use = false;
+        corr_slots_[i].gen = 0;
+        corr_free_ring_[i] = static_cast<std::uint16_t>(i);
+    }
+    corr_free_head_ = 0;
+    corr_free_count_ = corr_free_ring_.size();
 }
 
 SimTime SilKitCanPort::stamp(std::chrono::nanoseconds timestamp) const noexcept
@@ -240,20 +343,24 @@ void SilKitCanPort::set_wakeup(Wakeup wakeup)
 
 void SilKitCanPort::push_event(const PortEvent& event, bool acknowledgement) noexcept
 {
-    // Every outstanding frame will bring an acknowledgement: keep a place for each of them
-    // (acknowledgements already queued are counted twice, which only errs on the safe side).
-    const std::size_t reserve = acknowledgement ? 0 : outstanding_.load(std::memory_order_relaxed);
     if (real_time_)
     {
+        // Every outstanding frame will bring an acknowledgement: keep a place for each of them
+        // (acknowledgements already queued are counted twice, which only errs on the safe side).
+        const std::size_t reserve = acknowledgement ? 0 : outstanding_.load(std::memory_order_acquire);
         static_cast<void>(real_time_->push_event(event, reserve)); // counts a refusal or a full queue
         return;
     }
-    if (!acknowledgement && events_.size() + reserve >= events_.capacity())
+    if (event.correlated)
     {
-        event_refusals_.fetch_add(1, std::memory_order_relaxed);
+        if (!events_.push(event.time, event)) // a full queue counts it
+        {
+            const std::lock_guard lock(overflow_mutex_);
+            event_overflow_.note(event.time, 1);
+        }
         return;
     }
-    static_cast<void>(events_.push(event.time, event)); // a full queue counts it
+    static_cast<void>(uncorrelated_events_.push(event.time, event)); // a full queue counts it
 }
 
 void SilKitCanPort::on_error_state(const sk::CanErrorStateChangeEvent& event) noexcept
@@ -330,7 +437,34 @@ void SilKitCanPort::on_transmit(const sk::CanFrameTransmitEvent& event) noexcept
     }
     out.time = stamp(event.timestamp);
     out.id = event.canId;
-    out.send_time = decode_send_time(event.userContext);
+    if (!real_time_)
+    {
+        if (const auto tag = decode_correlated_tag(event.userContext))
+        {
+            std::uint64_t token = 0;
+            SimTime sendTime{};
+            bool resolved = false;
+            {
+                const std::lock_guard lock(corr_mutex_);
+                resolved = resolve_and_free_corr_slot(*tag, token, sendTime);
+            }
+            if (resolved)
+            {
+                out.send_time = sendTime;
+                out.token = token;
+                out.correlated = true;
+            }
+            else
+            {
+                tx_uncorrelated_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        else
+        {
+            out.send_time = decode_send_time(event.userContext);
+            tx_uncorrelated_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     push_event(out, true);
 }
 
@@ -352,6 +486,11 @@ std::size_t SilKitCanPort::release_before(SimTime now, FrameSink sink)
 
 SendResult SilKitCanPort::send(const TimedFrame& frame)
 {
+    return send(frame, 0);
+}
+
+SendResult SilKitCanPort::send(const TimedFrame& frame, std::uint64_t token)
+{
     sk::CanFrame out;
     if (!is_open() || !to_silkit_frame(frame.frame, out))
     {
@@ -364,17 +503,63 @@ SendResult SilKitCanPort::send(const TimedFrame& frame)
         send_queue_full_.fetch_add(1, std::memory_order_relaxed);
         return SendResult::QueueFull;
     }
+    void* context = nullptr;
+    std::optional<std::uint16_t> tag;
+    if (!real_time_)
+    {
+        {
+            const std::lock_guard lock(corr_mutex_);
+            tag = allocate_corr_slot(token, frame.time);
+        }
+        if (!tag)
+        {
+            send_queue_full_.fetch_add(1, std::memory_order_relaxed);
+            return SendResult::QueueFull;
+        }
+        context = encode_correlated_send_time(frame.time, *tag);
+    }
+    outstanding_.fetch_add(1, std::memory_order_release);
     try
     {
-        controller_.SendFrame(out, real_time_ ? nullptr : encode_send_time(frame.time));
+        controller_.SendFrame(out, context);
     }
     catch (const std::exception&)
     {
+        if (tag)
+        {
+            bool reclaimed = false;
+            {
+                const std::lock_guard lock(corr_mutex_);
+                reclaimed = reclaim_corr_slot_if_unused(*tag);
+            }
+            if (!reclaimed)
+            {
+                // on_transmit() already resolved this slot synchronously and queued a correlated
+                // PortEvent; treat the send as Accepted so outstanding_ and channel notifications
+                // stay conserved without double-notifying or stealing another frame's outstanding.
+                sent_.fetch_add(1, std::memory_order_relaxed);
+                return SendResult::Accepted;
+            }
+        }
+        outstanding_.fetch_sub(1, std::memory_order_acq_rel);
         send_failed_.fetch_add(1, std::memory_order_relaxed);
         return SendResult::Failed;
     }
+    catch (...)
+    {
+        bool rollBackOutstanding = true;
+        if (tag)
+        {
+            const std::lock_guard lock(corr_mutex_);
+            rollBackOutstanding = reclaim_corr_slot_if_unused(*tag);
+        }
+        if (rollBackOutstanding)
+        {
+            outstanding_.fetch_sub(1, std::memory_order_acq_rel);
+        }
+        throw;
+    }
     sent_.fetch_add(1, std::memory_order_relaxed);
-    outstanding_.fetch_add(1, std::memory_order_relaxed);
     return SendResult::Accepted;
 }
 
@@ -387,9 +572,21 @@ std::size_t SilKitCanPort::release_events_before(SimTime now, PortEventSink sink
     const auto release = [this, &sink](const PortEvent& event) {
         const bool transmit =
             event.kind == PortEvent::Kind::TransmitCompleted || event.kind == PortEvent::Kind::TransmitFailed;
-        if (transmit && outstanding_.load(std::memory_order_relaxed) > 0)
+        if (transmit && (real_time_ || event.correlated))
         {
-            outstanding_.fetch_sub(1, std::memory_order_relaxed); // ends one frame this port sent
+            if (outstanding_.load(std::memory_order_relaxed) > 0)
+            {
+                outstanding_.fetch_sub(1, std::memory_order_relaxed); // ends one frame this port sent
+            }
+        }
+        else if (event.kind == PortEvent::Kind::EventOverflow)
+        {
+            const std::size_t current = outstanding_.load(std::memory_order_relaxed);
+            const std::size_t dropped = static_cast<std::size_t>(std::min<std::uint64_t>(current, event.count));
+            if (dropped > 0)
+            {
+                outstanding_.fetch_sub(dropped, std::memory_order_relaxed);
+            }
         }
         sink(event);
     };
@@ -398,13 +595,35 @@ std::size_t SilKitCanPort::release_events_before(SimTime now, PortEventSink sink
         return real_time_->release_events_before(now, release);
     }
     std::optional<PortEvent> overflow;
+    std::optional<PortEvent> eventOverflow;
     {
         const std::lock_guard lock(overflow_mutex_);
         overflow = overflow_.take_before(now);
+        eventOverflow = event_overflow_.take_before(now);
     }
-    return OverflowCollector::release_merged(overflow, release, [&](auto&& forward) {
-        return events_.drain_before(now, [&forward](SimTime, PortEvent& event) { forward(event); });
+    uncorrelated_drain_.clear();
+    uncorrelated_events_.drain_before(now, [this](SimTime, PortEvent& event) {
+        uncorrelated_drain_.push_back(event);
     });
+    std::size_t ui = 0;
+    const std::size_t count = OverflowCollector::release_merged(overflow, release, [&](auto&& forward) {
+        return OverflowCollector::release_merged(eventOverflow, forward, [&](auto&& inner) {
+            const std::size_t correlated = events_.drain_before(now, [&](SimTime, PortEvent& event) {
+                while (ui < uncorrelated_drain_.size() && uncorrelated_drain_[ui].time < event.time)
+                {
+                    inner(uncorrelated_drain_[ui++]);
+                }
+                inner(event);
+            });
+            while (ui < uncorrelated_drain_.size())
+            {
+                inner(uncorrelated_drain_[ui++]);
+            }
+            return correlated + uncorrelated_drain_.size();
+        });
+    });
+    uncorrelated_drain_.clear();
+    return count;
 }
 
 SilKitCanPortStatistics SilKitCanPort::statistics() const
@@ -422,8 +641,8 @@ SilKitCanPortStatistics SilKitCanPort::statistics() const
     s.tx_transmitted = tx_transmitted_.load(std::memory_order_relaxed);
     s.tx_canceled = tx_canceled_.load(std::memory_order_relaxed);
     s.tx_queue_full = tx_queue_full_.load(std::memory_order_relaxed);
-    s.event_overflows =
-        real_time_ ? real_time_->event_overflows() : events_.overflows() + event_refusals_.load(std::memory_order_relaxed);
+    s.tx_uncorrelated = tx_uncorrelated_.load(std::memory_order_relaxed);
+    s.event_overflows = real_time_ ? real_time_->event_overflows() : events_.overflows() + uncorrelated_events_.overflows();
     return s;
 }
 

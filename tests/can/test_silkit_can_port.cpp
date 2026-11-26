@@ -6,12 +6,16 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/can/host.hpp"
+#include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/can/real_time_clock.hpp"
 #include "vehicle_sil/can/real_time_driver.hpp"
+#include "vehicle_sil/can/step_driver.hpp"
+#include "vehicle_sil/can_silkit/send_time_tag.hpp"
 #include "vehicle_sil/can_silkit/silkit_can_port.hpp"
 
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -487,22 +491,490 @@ TEST_CASE(silkit_port_keeps_places_for_outstanding_acknowledgements)
 {
     FakeCanController controller;
     SilKitCanPortOptions options;
-    options.event_capacity = 3;
-    options.transmit_queue_capacity = 1;
+    options.event_capacity = 2;
+    options.transmit_queue_capacity = 2;
     SilKitCanPort port(controller, options);
     port.start();
+
+    // Fill and overflow the uncorrelated event queue with BusStateChanged events BEFORE any send()
+    // (while outstanding == 0): correlated transmit completions use a separate queue and must never
+    // be displaced or trigger EventOverflow.
+    controller.deliver_error_state(sk::CanErrorState::ErrorPassive, 1ms);
+    controller.deliver_error_state(sk::CanErrorState::BusOff, 2ms);
+    controller.deliver_error_state(sk::CanErrorState::ErrorActive, 3ms); // overflows uncorrelated queue
+    CHECK_EQ(port.statistics().error_state_changes, 3u);
+    CHECK_EQ(port.statistics().event_overflows, 1u);
+
     Frame f;
     f.id = 0x100;
     f.length = 1;
-    CHECK(port.send(TimedFrame{at(0ms), f}) == SendResult::Accepted); // its acknowledgement is queued
-    // One place stays free for the outstanding frame: one error state fits, the next does not.
-    controller.deliver_error_state(sk::CanErrorState::ErrorPassive, 1ms);
-    controller.deliver_error_state(sk::CanErrorState::BusOff, 2ms);
-    CHECK_EQ(port.statistics().error_state_changes, 2u);
-    CHECK_EQ(port.statistics().event_overflows, 1u);
+    controller.ack_timestamp = 0ms;
+    CHECK(port.send(TimedFrame{at(0ms), f}, 0) == SendResult::Accepted);
+    CHECK(port.send(TimedFrame{at(0ms), f}, 42) == SendResult::Accepted);
+    CHECK_EQ(port.statistics().outstanding, 2u);
+
     const auto events = release_events(port, at(10ms));
-    CHECK_EQ(events.size(), 2u);
-    CHECK(events[0].kind == PortEvent::Kind::TransmitCompleted);
-    CHECK(events[1].bus_state == BusState::ErrorPassive);
+    CHECK_EQ(events.size(), 4u);
+    CHECK(events[0].kind == PortEvent::Kind::TransmitCompleted && events[0].correlated && events[0].token == 0u);
+    CHECK(events[1].kind == PortEvent::Kind::TransmitCompleted && events[1].correlated && events[1].token == 42u);
+    CHECK(events[2].kind == PortEvent::Kind::BusStateChanged && events[2].bus_state == BusState::ErrorPassive);
+    CHECK(events[3].kind == PortEvent::Kind::BusStateChanged && events[3].bus_state == BusState::BusOff);
     CHECK_EQ(port.statistics().outstanding, 0u);
+}
+
+TEST_CASE(silkit_port_uncorrelated_events_before_send_do_not_displace_raw_channel_completions)
+{
+    FakeCanController controller;
+    SilKitCanPortOptions options;
+    options.event_capacity = 2;
+    options.transmit_queue_capacity = 2;
+    SilKitCanPort port(controller, options);
+    port.start();
+
+    vehicle_sil::can::RawChannel raw;
+    vehicle_sil::can::Host host;
+    host.add(raw, port);
+    std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+    raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+
+    Frame f;
+    f.id = 0x123;
+    f.format = IdFormat::Standard;
+    f.length = 1;
+
+    host.set_application([&](SimTime now) {
+        if (now == at(0ms))
+        {
+            // Fill and overflow uncorrelated_events_ with BusStateChanged at step time while outstanding == 0.
+            controller.deliver_error_state(sk::CanErrorState::ErrorPassive, 0ms);
+            controller.deliver_error_state(sk::CanErrorState::BusOff, 0ms);
+            controller.deliver_error_state(sk::CanErrorState::ErrorActive, 0ms);
+            controller.ack_timestamp = 0ms;
+            CHECK(raw.send(f, 0) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(raw.send(f, 99) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+    });
+
+    vehicle_sil::can::StepDriver driver;
+    driver.add(host, 5ms);
+    driver.run_until(at(10ms));
+
+    CHECK(!host.failed());
+    CHECK_EQ(txEvents.size(), 2u);
+    CHECK(txEvents[0].kind == vehicle_sil::can::TransmitEvent::Kind::Completed && txEvents[0].token == 0u);
+    CHECK(txEvents[1].kind == vehicle_sil::can::TransmitEvent::Kind::Completed && txEvents[1].token == 99u);
+    CHECK_EQ(raw.statistics().port_event_overflows, 0u);
+    CHECK_EQ(raw.statistics().outstanding, 0u);
+    CHECK_EQ(port.statistics().outstanding, 0u);
+    CHECK_EQ(port.statistics().event_overflows, 1u); // only the 3rd BusStateChanged overflowed
+}
+
+TEST_CASE(correlated_send_time_tag_unwraps_boundaries_and_rejects_negative_wrap_at_zero)
+{
+    using vehicle_sil::can::decode_correlated_tag;
+    using vehicle_sil::can::decode_send_time;
+    using vehicle_sil::can::encode_correlated_send_time;
+    using vehicle_sil::can::encode_send_time;
+    using vehicle_sil::can::kCorrelatedTimeHalf;
+    using vehicle_sil::can::kCorrelatedTimeMod;
+
+    // 0xA6 tag round-trip with extreme 16-bit tag values.
+    {
+        const SimTime t = SimTime{} + 123'456'789ns;
+        void* const ctx0 = encode_correlated_send_time(t, 0);
+        void* const ctxMax = encode_correlated_send_time(t, 0xFFFFu);
+        CHECK(decode_correlated_tag(ctx0) == std::optional<std::uint16_t>(0));
+        CHECK(decode_correlated_tag(ctxMax) == std::optional<std::uint16_t>(0xFFFFu));
+        CHECK(decode_send_time(ctx0, t) == std::optional<SimTime>(t));
+        CHECK(decode_send_time(ctxMax, t) == std::optional<SimTime>(t));
+        // 1-arg decode_send_time is 0xA5 only.
+        CHECK(!decode_send_time(ctx0).has_value());
+    }
+
+    // Legacy 0xA5 still decodes identically via both 1-arg and 2-arg decode_send_time.
+    {
+        const SimTime t = SimTime{} + std::chrono::nanoseconds(static_cast<std::int64_t>(kCorrelatedTimeMod * 3 + 77));
+        void* const legacy = encode_send_time(t);
+        CHECK(!decode_correlated_tag(legacy).has_value());
+        CHECK(decode_send_time(legacy) == std::optional<SimTime>(t));
+        CHECK(decode_send_time(legacy, SimTime{}) == std::optional<SimTime>(t));
+        CHECK(!decode_send_time(nullptr, SimTime{}).has_value());
+        int local = 0;
+        CHECK(!decode_send_time(&local, SimTime{}).has_value());
+    }
+
+    // Critical t == 0 high-residue boundary: must NEVER unwrap to a negative SimTime.
+    {
+        const SimTime nearWrap = SimTime{} + std::chrono::nanoseconds(static_cast<std::int64_t>(kCorrelatedTimeMod - 1));
+        void* const forgedHigh = encode_correlated_send_time(nearWrap, 7);
+        const auto unwrapped = decode_send_time(forgedHigh, SimTime{});
+        CHECK(unwrapped.has_value());
+        CHECK(*unwrapped >= SimTime{});
+        CHECK_EQ(vehicle_sil::to_ns(*unwrapped), static_cast<std::int64_t>(kCorrelatedTimeMod - 1));
+
+        const SimTime half = SimTime{} + std::chrono::nanoseconds(static_cast<std::int64_t>(kCorrelatedTimeHalf));
+        const auto unwrappedHalf = decode_send_time(encode_correlated_send_time(half, 1), SimTime{});
+        CHECK(unwrappedHalf.has_value());
+        CHECK_EQ(vehicle_sil::to_ns(*unwrappedHalf), static_cast<std::int64_t>(kCorrelatedTimeHalf));
+    }
+
+    // Exact 2^40 ns ± 1 ns wraparound boundaries (both forward and backward).
+    for (const std::uint64_t k : {1ull, 2ull, 5ull})
+    {
+        const std::int64_t base = static_cast<std::int64_t>(k * kCorrelatedTimeMod);
+        const SimTime before = SimTime{} + std::chrono::nanoseconds(base - 1);
+        const SimTime exact = SimTime{} + std::chrono::nanoseconds(base);
+        const SimTime after = SimTime{} + std::chrono::nanoseconds(base + 1);
+
+        CHECK(decode_send_time(encode_correlated_send_time(before, 1), exact) == std::optional<SimTime>(before));
+        CHECK(decode_send_time(encode_correlated_send_time(before, 2), after) == std::optional<SimTime>(before));
+        CHECK(decode_send_time(encode_correlated_send_time(exact, 3), before) == std::optional<SimTime>(exact));
+        CHECK(decode_send_time(encode_correlated_send_time(after, 4), before) == std::optional<SimTime>(after));
+        CHECK(decode_send_time(encode_correlated_send_time(after, 5), exact) == std::optional<SimTime>(after));
+    }
+
+    // int64_t max overflow guard.
+    {
+        const SimTime nearMax = SimTime{} + std::chrono::nanoseconds(std::numeric_limits<std::int64_t>::max() - 10);
+        const SimTime ahead = SimTime{} + std::chrono::nanoseconds(100);
+        // Construct residue that is +100 ns ahead of nearMax modulo 2^40.
+        const std::uint64_t targetMod = (static_cast<std::uint64_t>(vehicle_sil::to_ns(nearMax)) + 100ull) & (kCorrelatedTimeMod - 1);
+        void* const ctx = encode_correlated_send_time(SimTime{} + std::chrono::nanoseconds(static_cast<std::int64_t>(targetMod)), 1);
+        static_cast<void>(ahead);
+        CHECK(!decode_send_time(ctx, nearMax).has_value());
+    }
+}
+
+namespace {
+
+/// Minimal deferred ICanController to test out-of-order acks, never-acked sends,
+/// correlation-table exhaustion, and callback-then-throw rollback.
+class DeferredCanController final : public sk::ICanController
+{
+public:
+    struct Pending
+    {
+        std::uint32_t can_id = 0;
+        void* user_context = nullptr;
+    };
+
+    bool callback_then_throw = false;
+    std::vector<Pending> pending;
+
+    void ack_index(std::size_t index, sk::CanTransmitStatus status, std::chrono::nanoseconds timestamp)
+    {
+        const Pending p = pending.at(index);
+        ack_raw(p.can_id, p.user_context, status, timestamp);
+    }
+
+    void ack_raw(std::uint32_t canId, void* userContext, sk::CanTransmitStatus status, std::chrono::nanoseconds timestamp)
+    {
+        sk::CanFrameTransmitEvent ev{};
+        ev.canId = canId;
+        ev.timestamp = timestamp;
+        ev.status = status;
+        ev.userContext = userContext;
+        if (transmit_handler_)
+        {
+            transmit_handler_(this, ev);
+        }
+    }
+
+    void SetBaudRate(uint32_t, uint32_t, uint32_t) override {}
+    void Reset() override {}
+    void Start() override {}
+    void Stop() override {}
+    void Sleep() override {}
+
+    void SendFrame(const sk::CanFrame& msg, void* userContext = nullptr) override
+    {
+        pending.push_back(Pending{msg.canId, userContext});
+        if (callback_then_throw)
+        {
+            ack_index(pending.size() - 1, sk::CanTransmitStatus::Transmitted, 1ms);
+            throw std::runtime_error("throw after callback");
+        }
+    }
+
+    auto AddFrameHandler(FrameHandler, SilKit::Services::DirectionMask) -> SilKit::Util::HandlerId override
+    {
+        return static_cast<SilKit::Util::HandlerId>(1);
+    }
+    void RemoveFrameHandler(SilKit::Util::HandlerId) override {}
+    auto AddStateChangeHandler(StateChangeHandler) -> SilKit::Util::HandlerId override
+    {
+        return static_cast<SilKit::Util::HandlerId>(2);
+    }
+    void RemoveStateChangeHandler(SilKit::Util::HandlerId) override {}
+    auto AddErrorStateChangeHandler(ErrorStateChangeHandler) -> SilKit::Util::HandlerId override
+    {
+        return static_cast<SilKit::Util::HandlerId>(3);
+    }
+    void RemoveErrorStateChangeHandler(SilKit::Util::HandlerId) override {}
+    auto AddFrameTransmitHandler(FrameTransmitHandler handler, sk::CanTransmitStatusMask)
+        -> SilKit::Util::HandlerId override
+    {
+        transmit_handler_ = std::move(handler);
+        return static_cast<SilKit::Util::HandlerId>(4);
+    }
+    void RemoveFrameTransmitHandler(SilKit::Util::HandlerId) override { transmit_handler_ = nullptr; }
+
+private:
+    FrameTransmitHandler transmit_handler_;
+};
+
+} // namespace
+
+TEST_CASE(silkit_port_correlates_out_of_order_acks_handles_overflow_without_slot_leaks_and_keeps_outstanding_on_close)
+{
+    // Part 1: Capabilities & validate() limits.
+    {
+        SilKitCanPortOptions tooLarge;
+        tooLarge.event_capacity = SilKitCanPort::kMaxCorrelatedInFlight + 1;
+        tooLarge.transmit_queue_capacity = SilKitCanPort::kMaxCorrelatedInFlight + 1;
+        CHECK(vehicle_sil::unit::throws<std::invalid_argument>([&] { SilKitCanPort::validate(tooLarge); }));
+
+        ManualRealTimeClock clock;
+        FakeCanController rtCtrl;
+        SilKitCanPortOptions rtOpts;
+        rtOpts.real_time_clock = &clock;
+        SilKitCanPort rtPort(rtCtrl, rtOpts);
+        CHECK(rtPort.transmit_capabilities() == vehicle_sil::can::TransmitCapabilities::None);
+    }
+
+    // Part 2: Out-of-order acks on identical CAN ID & payload including token == 0, plus
+    // callback-then-throw safety, correlation-table exhaustion, and shutdown outstanding inspection.
+    {
+        DeferredCanController controller;
+        SilKitCanPort port(controller);
+        CHECK(port.transmit_capabilities() == vehicle_sil::can::TransmitCapabilities::Correlated);
+        port.start();
+
+        Frame f;
+        f.id = 0x123;
+        f.format = IdFormat::Standard;
+        f.length = 2;
+        f.data = {0xAA, 0xBB};
+
+        CHECK(port.send(TimedFrame{at(1ms), f}, 0) == SendResult::Accepted);
+        CHECK(port.send(TimedFrame{at(1ms), f}, 111) == SendResult::Accepted);
+        CHECK(port.send(TimedFrame{at(1ms), f}, 222) == SendResult::Accepted);
+        CHECK_EQ(port.statistics().outstanding, 3u);
+
+        // Acknowledge out of order: #2 failed, #0 transmitted, #1 transmitted.
+        controller.ack_index(2, sk::CanTransmitStatus::TransmitQueueFull, 2ms);
+        controller.ack_index(0, sk::CanTransmitStatus::Transmitted, 3ms);
+        controller.ack_index(1, sk::CanTransmitStatus::Transmitted, 4ms);
+
+        const auto events = release_events(port, at(10ms));
+        CHECK_EQ(events.size(), 3u);
+        CHECK(events[0].kind == PortEvent::Kind::TransmitFailed);
+        CHECK(events[0].correlated && events[0].token == 222u);
+        CHECK(events[0].send_time == std::optional<SimTime>(at(1ms)));
+        CHECK(events[1].kind == PortEvent::Kind::TransmitCompleted);
+        CHECK(events[1].correlated && events[1].token == 0u);
+        CHECK(events[2].kind == PortEvent::Kind::TransmitCompleted);
+        CHECK(events[2].correlated && events[2].token == 111u);
+        CHECK_EQ(port.statistics().outstanding, 0u);
+
+        // Callback-then-throw: on_transmit() already committed a correlated event synchronously, so
+        // send() treats it as Accepted (no double-free, no underflow, no duplicate failure event).
+        controller.callback_then_throw = true;
+        CHECK(port.send(TimedFrame{at(10ms), f}, 777) == SendResult::Accepted);
+        controller.callback_then_throw = false;
+        CHECK_EQ(port.statistics().outstanding, 1u);
+        const auto cbEvents = release_events(port, at(20ms));
+        CHECK_EQ(cbEvents.size(), 1u);
+        CHECK(cbEvents[0].correlated && cbEvents[0].token == 777u);
+        CHECK_EQ(port.statistics().outstanding, 0u);
+
+        // Fill correlation table (1024 slots) without acknowledging -> 1025th returns QueueFull.
+        for (std::size_t i = 0; i < 1024; ++i)
+        {
+            CHECK(port.send(TimedFrame{at(20ms), f}, i) == SendResult::Accepted);
+        }
+        CHECK(port.send(TimedFrame{at(20ms), f}, 9999) == SendResult::QueueFull);
+        CHECK_EQ(port.statistics().send_queue_full, 1u);
+        CHECK_EQ(port.statistics().outstanding, 1024u);
+
+        // close() keeps outstanding inspectable for shutdown diagnostics.
+        port.close();
+        CHECK_EQ(port.statistics().outstanding, 1024u);
+    }
+
+    // Part 3: Repeated StepInbox EventOverflow bursts across > 65,536 frames -> zero slot leaks,
+    // exact EventOverflow count, and outstanding returns to 0 after drain.
+    {
+        FakeCanController controller;
+        SilKitCanPortOptions options;
+        options.event_capacity = 4; // small queue: bursts of 16 overflow 12 each time
+        SilKitCanPort port(controller, options);
+        port.start();
+
+        Frame f;
+        f.id = 0x100;
+        f.format = IdFormat::Standard;
+        f.length = 1;
+
+        std::uint64_t totalSent = 0;
+        std::uint64_t totalDelivered = 0;
+        std::uint64_t totalOverflowed = 0;
+        constexpr int kBatches = 4200; // 4200 * 16 = 67,200 > 65,536 (> full 16-bit tag space)
+        for (int b = 0; b < kBatches; ++b)
+        {
+            const auto t = std::chrono::milliseconds(b + 1);
+            controller.ack_timestamp = t;
+            for (int i = 0; i < 16; ++i)
+            {
+                const std::uint64_t token = totalSent;
+                CHECK(port.send(TimedFrame{at(t), f}, token) == SendResult::Accepted);
+                ++totalSent;
+            }
+            const auto events = release_events(port, at(t + 1ms));
+            CHECK_EQ(events.size(), 5u); // 4 TransmitCompleted + 1 EventOverflow(12)
+            for (const auto& ev : events)
+            {
+                if (ev.kind == PortEvent::Kind::TransmitCompleted)
+                {
+                    CHECK(ev.correlated);
+                    ++totalDelivered;
+                }
+                else if (ev.kind == PortEvent::Kind::EventOverflow)
+                {
+                    totalOverflowed += ev.count;
+                }
+            }
+            CHECK_EQ(port.statistics().outstanding, 0u);
+        }
+        CHECK_EQ(totalSent, 67'200u);
+        CHECK_EQ(totalDelivered, 4200u * 4u);
+        CHECK_EQ(totalOverflowed, 4200u * 12u);
+        CHECK_EQ(port.statistics().send_queue_full, 0u);
+        CHECK_EQ(port.statistics().outstanding, 0u);
+        CHECK_EQ(port.statistics().tx_uncorrelated, 0u);
+    }
+}
+
+TEST_CASE(silkit_port_counts_uncorrelated_acks_preserves_outstanding_and_recovers_full_send_time_past_40bit_delay)
+{
+    DeferredCanController controller;
+    SilKitCanPortOptions options;
+    options.event_capacity = 2; // small queue to also test uncorrelated EventOverflow isolation
+    SilKitCanPort port(controller, options);
+    port.start();
+
+    Frame f;
+    f.id = 0x123;
+    f.format = IdFormat::Standard;
+    f.length = 2;
+    f.data = {0x11, 0x22};
+
+    // Send one frame at t = 1ms with token = 0xCAFE; keep it in flight while an external simulator
+    // delivers uncorrelated nullptr acks that overflow the event queue.
+    CHECK(port.send(TimedFrame{at(1ms), f}, 0xCAFEull) == SendResult::Accepted);
+    CHECK_EQ(port.statistics().outstanding, 1u);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        controller.ack_raw(f.id, nullptr, sk::CanTransmitStatus::Transmitted, 2ms + std::chrono::milliseconds(i));
+    }
+    CHECK_EQ(port.statistics().tx_uncorrelated, 4u);
+    const auto uncorrEvents = release_events(port, at(10ms));
+    CHECK_EQ(uncorrEvents.size(), 2u); // no EventOverflow emitted for uncorrelated acks
+    for (const auto& ev : uncorrEvents)
+    {
+        CHECK(ev.kind == PortEvent::Kind::TransmitCompleted);
+        CHECK(!ev.correlated);
+    }
+    // Genuine in-flight frame is still tracked in outstanding!
+    CHECK_EQ(port.statistics().outstanding, 1u);
+
+    // Deliver the genuine ack delayed by > 2^40 ns (~1200 s): exact 64-bit send_time (1ms) and
+    // token must still be recovered from the correlation table.
+    const auto delayedAckTime = std::chrono::seconds(1200);
+    controller.ack_index(0, sk::CanTransmitStatus::Transmitted, delayedAckTime);
+    // A duplicate ack with the same userContext must be counted as tx_uncorrelated and not corrupt outstanding.
+    controller.ack_index(0, sk::CanTransmitStatus::Transmitted, delayedAckTime + 1ms);
+    CHECK_EQ(port.statistics().tx_uncorrelated, 5u);
+
+    const auto finalEvents = release_events(port, SimTime{} + delayedAckTime + 10ms);
+    CHECK_EQ(finalEvents.size(), 2u);
+    CHECK(finalEvents[0].kind == PortEvent::Kind::TransmitCompleted);
+    CHECK(finalEvents[0].correlated);
+    CHECK_EQ(finalEvents[0].token, 0xCAFEull);
+    CHECK(finalEvents[0].send_time == std::optional<SimTime>(at(1ms)));
+    CHECK(finalEvents[0].time == SimTime{} + delayedAckTime);
+    CHECK(!finalEvents[1].correlated);
+    CHECK_EQ(port.statistics().outstanding, 0u);
+}
+
+TEST_CASE(silkit_port_callback_then_throw_with_inflight_frame_conserves_raw_channel_outstanding)
+{
+    DeferredCanController controller;
+    SilKitCanPort port(controller);
+    port.start();
+
+    vehicle_sil::can::RawChannel raw;
+    vehicle_sil::can::Host host;
+    host.add(raw, port);
+
+    std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+    raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+
+    Frame f;
+    f.id = 0x100;
+    f.format = IdFormat::Standard;
+    f.length = 1;
+    f.data = {0x55};
+
+    host.set_application([&](SimTime now) {
+        if (now == at(0ms))
+        {
+            // Frame A stays in flight (unacknowledged).
+            CHECK(raw.send(f, 10) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == at(1ms))
+        {
+            CHECK_EQ(raw.statistics().outstanding, 1u);
+            CHECK_EQ(port.statistics().outstanding, 1u);
+            // Frame B triggers synchronous on_transmit() inside SendFrame() and then throws.
+            controller.callback_then_throw = true;
+            CHECK(raw.send(f, 20) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == at(2ms))
+        {
+            controller.callback_then_throw = false;
+            // Frame B delivered exactly once as Completed; frame A remains outstanding == 1.
+            CHECK_EQ(txEvents.size(), 1u);
+            CHECK(txEvents[0].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+            CHECK_EQ(txEvents[0].token, 20u);
+            CHECK_EQ(raw.statistics().outstanding, 1u);
+            CHECK_EQ(port.statistics().outstanding, 1u);
+            // Now acknowledge frame A.
+            controller.ack_index(0, sk::CanTransmitStatus::Transmitted, 2ms);
+        }
+    });
+
+    vehicle_sil::can::StepDriver driver;
+    driver.add(host, 1ms);
+    driver.run_until(at(4ms));
+
+    CHECK(!host.failed());
+    CHECK_EQ(txEvents.size(), 2u);
+    CHECK(txEvents[0].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+    CHECK_EQ(txEvents[0].token, 20u);
+    CHECK(txEvents[1].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+    CHECK_EQ(txEvents[1].token, 10u);
+
+    const auto& rs = raw.statistics();
+    CHECK_EQ(rs.frames_sent, 2u);
+    CHECK_EQ(rs.frames_dropped, 0u);
+    CHECK_EQ(rs.transmit_completed, 2u);
+    CHECK_EQ(rs.transmit_failed, 0u);
+    CHECK_EQ(rs.outstanding, 0u);
+    CHECK_EQ(rs.frames_sent + rs.frames_dropped,
+             rs.transmit_completed + rs.transmit_failed + rs.transmit_event_overflows + rs.port_event_overflows +
+                 rs.outstanding);
+    CHECK_EQ(port.statistics().outstanding, 0u);
+    CHECK_EQ(port.statistics().send_failed, 0u);
 }

@@ -88,8 +88,10 @@ public:
     /// Throws std::invalid_argument for a bitrate or queue capacity of 0.
     explicit CanBusModel(CanBusModelOptions options = {});
 
-    /// Adds a sender and returns its index (0, 1, ...).
+    /// Adds a sender with the model's default queue capacity and returns its index (0, 1, ...).
     std::size_t add_sender();
+    /// Adds a sender with its own queue capacity (> 0, std::invalid_argument otherwise) and returns its index.
+    std::size_t add_sender(std::size_t queue_capacity);
 
     /// Queues `frame` of `sender`, ready from `ready` on. `context` comes back with the
     /// transmission. Returns false (and queues nothing) if the sender's queue is full. Throws
@@ -142,7 +144,7 @@ private:
     };
     struct Queue
     {
-        std::vector<Pending> slots; // ring buffer of capacity_ entries
+        std::vector<Pending> slots; // ring buffer of slots.size() entries
         std::size_t head = 0;
         std::size_t size = 0;
 

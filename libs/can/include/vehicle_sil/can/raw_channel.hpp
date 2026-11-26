@@ -17,6 +17,25 @@
 
 namespace vehicle_sil::can {
 
+/// Outcome of one correlated frame sent through RawChannel, delivered in process() of a step
+/// strictly after the sending step.
+struct TransmitEvent
+{
+    enum class Kind : std::uint8_t
+    {
+        Completed, ///< The port reported the frame transmitted.
+        Failed,    ///< Rejected in flush() or reported TransmitFailed by the port.
+    };
+
+    Kind kind = Kind::Completed;
+    std::uint64_t token = 0; ///< Caller token passed to send() (0 is a valid value).
+    std::uint32_t id = 0;    ///< CAN identifier of the frame.
+    SimTime send_time{};     ///< Step time when the frame was sent.
+    SimTime time{};          ///< Completion or failure time in the port's time domain.
+
+    [[nodiscard]] friend bool operator==(const TransmitEvent&, const TransmitEvent&) noexcept = default;
+};
+
 struct RawChannelOptions
 {
     /// Frames send() takes in one step (> 0). Further sends in that step return
@@ -25,6 +44,19 @@ struct RawChannelOptions
     /// Received frames kept for the handlers in one step (> 0). Further frames of that step are
     /// dropped and counted (RawChannelStatistics::receive_overflows). Allocated once.
     std::size_t receive_capacity = 1024;
+    /// Transmit completion/failure events kept for on_transmit() in one step.
+    /// 0: max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity).
+    std::size_t transmit_event_capacity = 0;
+    /// Receive inbox capacity of the port created by Ecu::can() (0: 2 * receive_capacity).
+    std::size_t port_inbox_capacity = 0;
+    /// Event queue capacity of the port created by Ecu::can()
+    /// (0: max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)).
+    std::size_t port_event_capacity = 0;
+    /// Maximum unacknowledged frames at the port created by Ecu::can() (0: backend default).
+    std::size_t port_transmit_queue_capacity = 0;
+    /// Bit rate in bit/s passed to SilKitCanPortOptions::bitrate (SetBaudRate() at start()) by
+    /// Ecu::can() / Peer (0: do not set; unused on VirtualCanBus / LocalBench).
+    std::uint32_t port_bitrate = 0;
 };
 
 /// Outcome of RawChannel::send().
@@ -45,12 +77,19 @@ struct RawChannelStatistics
     std::uint64_t frames_dropped = 0;         ///< Frames send() took that the port did not accept.
     std::uint64_t port_receive_overflows = 0; ///< Port events: frames the port dropped because its
                                               ///< inbox was full (as far as the port knows the number).
+    std::uint64_t transmit_completed = 0;     ///< Correlated transmit completions processed.
+    std::uint64_t transmit_failed = 0;        ///< Correlated transmit failures (port or flush()) processed.
+    std::uint64_t transmit_event_overflows = 0; ///< Transmit events dropped because transmit_event_capacity was reached.
+    std::uint64_t port_event_overflows = 0;   ///< Port EventOverflow count: transmit events dropped at the port.
+    std::size_t outstanding = 0;              ///< Accepted frames awaiting a terminal transmit outcome.
 };
 
 /// Raw CAN frames (11 and 29 bit) of an application on one port: no protocol, no timers. A Host
 /// steps it like any other Steppable; Ecu::can() makes one on its own port.
 ///
 /// One step at `now`:
+/// - Correlated transmit events (from the port and from the previous step's flush() rejections)
+///   are delivered to on_transmit() handlers in process(), strictly before on_frame() handlers.
 /// - The handlers (on_frame()) are called in process() for every frame the port released before
 ///   `now`, in the order the port released them and with the frame's time (see Port: ordered by
 ///   time; frames with equal times in the order they arrived, which on SIL Kit depends on the
@@ -59,10 +98,12 @@ struct RawChannelStatistics
 /// - send() is allowed from begin() until the flush: from a handler of this or another Steppable
 ///   of the same host, or from the application. The frames leave in this step's flush, in the
 ///   order of the send() calls, with the time `now`. A frame the port does not accept is dropped
-///   and counted (frames_dropped): when the port's queue is full, that frame and the ones after
-///   it in this step; when the port fails it, that frame. Nothing is retried.
+///   and counted (frames_dropped) and reported as TransmitEvent::Kind::Failed in the next step's
+///   process(): when the port's queue is full, that frame and the ones after it in this step; when
+///   the port fails it, that frame. Nothing is retried.
 ///
-/// Set up (on_frame()) before the host starts (Steppable::start()); afterwards std::logic_error.
+/// Set up (on_frame(), on_transmit()) before the host starts (Steppable::start()); afterwards
+/// std::logic_error.
 ///
 /// Threading: not thread safe. The host's driver calls the Steppable functions; send() and the
 /// handlers run on its thread. Read statistics() from that thread or after the steps ended.
@@ -70,8 +111,16 @@ class RawChannel final : public Steppable
 {
 public:
     using FrameHandler = std::function<void(const TimedFrame& frame)>;
+    using TransmitHandler = std::function<void(const TransmitEvent& event)>;
 
-    /// std::invalid_argument if a capacity is 0.
+    /// Validates `options` (throws std::invalid_argument on invalid capacities).
+    static void validate(const RawChannelOptions& options);
+    /// Effective port receive inbox capacity derived from `options`.
+    [[nodiscard]] static std::size_t port_inbox_capacity(const RawChannelOptions& options) noexcept;
+    /// Effective port event queue capacity derived from `options`.
+    [[nodiscard]] static std::size_t port_event_capacity(const RawChannelOptions& options) noexcept;
+
+    /// std::invalid_argument if `options` is invalid (validate()).
     explicit RawChannel(RawChannelOptions options = {});
     RawChannel(const RawChannel&) = delete;
     RawChannel& operator=(const RawChannel&) = delete;
@@ -80,14 +129,26 @@ public:
     /// an empty handler; std::logic_error once the host has started.
     void on_frame(FrameHandler handler);
 
-    /// Takes `frame` for this step's flush (see the class comment and RawSendStatus; a rejected
-    /// frame is counted in sends_rejected). std::logic_error outside a step (before begin() or
-    /// from the flush on), e.g. from another thread's code or between runs.
+    /// Adds `handler` for every transmit completion or failure event (see the class comment).
+    /// std::invalid_argument for an empty handler; std::logic_error once the host has started.
+    void on_transmit(TransmitHandler handler);
+
+    /// Takes `frame` for this step's flush (token = 0). See send(const Frame&, std::uint64_t).
     RawSendStatus send(const Frame& frame);
 
+    /// Takes `frame` with caller-chosen opaque `token` (0 is valid) for this step's flush (see
+    /// the class comment and RawSendStatus; a rejected frame is counted in sends_rejected and
+    /// emits no TransmitEvent). std::logic_error outside a step (before begin() or from the flush
+    /// on), e.g. from another thread's code or between runs.
+    RawSendStatus send(const Frame& frame, std::uint64_t token);
+
+    /// Transmit completion capability of the bound port (TransmitCapabilities::None if unbound).
+    [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept;
+    [[nodiscard]] const RawChannelOptions& options() const noexcept { return options_; }
     [[nodiscard]] const RawChannelStatistics& statistics() const noexcept { return statistics_; }
 
     // Steppable (called by the host).
+    void bind_port(const Port& port) noexcept override;
     void start(std::optional<SimDuration> step_size) override;
     void begin(SimTime now) override;
     void receive(const TimedFrame& frame) override;
@@ -103,10 +164,22 @@ private:
         InStep, ///< begin() .. flush()
     };
 
+    struct Outgoing
+    {
+        Frame frame{};
+        std::uint64_t token = 0;
+        bool counted_in_outstanding = false;
+    };
+
     RawChannelOptions options_;
+    std::size_t transmit_event_capacity_ = 0;
+    const Port* port_ = nullptr;
     std::vector<FrameHandler> handlers_;
-    std::vector<TimedFrame> received_; ///< this step's frames (capacity receive_capacity)
-    std::vector<Frame> outgoing_;      ///< this step's sends (capacity send_capacity)
+    std::vector<TransmitHandler> transmit_handlers_;
+    std::vector<TimedFrame> received_;            ///< this step's frames (capacity receive_capacity)
+    std::vector<Outgoing> outgoing_;              ///< this step's sends (capacity send_capacity)
+    std::vector<TransmitEvent> transmit_events_;  ///< this step's port transmit events (capacity transmit_event_capacity_)
+    std::vector<TransmitEvent> flush_failed_;     ///< previous step's flush() rejections (capacity send_capacity)
     RawChannelStatistics statistics_;
     SimTime now_{};
     Phase phase_ = Phase::Setup;

@@ -11,6 +11,33 @@ namespace vehicle_sil::eth {
 
 namespace {
 constexpr const char* kWho = "vehicle_sil::eth::Channel: ";
+
+constexpr std::size_t kDefaultTransmitEventCapacity = 1024;
+
+std::size_t saturating_add(std::size_t a, std::size_t b) noexcept
+{
+    constexpr std::size_t kMax = std::numeric_limits<std::size_t>::max();
+    return a > kMax - b ? kMax : a + b;
+}
+
+std::size_t saturating_double(std::size_t value) noexcept
+{
+    constexpr std::size_t kMax = std::numeric_limits<std::size_t>::max();
+    return value > kMax / 2 ? kMax : value * 2;
+}
+
+std::size_t effective_transmit_event_capacity(const ChannelOptions& options) noexcept
+{
+    if (options.transmit_event_capacity > 0)
+    {
+        return options.transmit_event_capacity;
+    }
+    return std::max<std::size_t>({
+        kDefaultTransmitEventCapacity,
+        saturating_double(options.send_capacity),
+        saturating_add(options.port_transmit_queue_capacity, options.send_capacity),
+    });
+}
 } // namespace
 
 void Channel::validate(const ChannelOptions& options)
@@ -29,20 +56,46 @@ void Channel::validate(const ChannelOptions& options)
     {
         throw std::invalid_argument(std::string(kWho) + "Accept::Addressed needs the channel's own address (mac)");
     }
+    if (options.port_event_capacity > 0 && options.port_transmit_queue_capacity > options.port_event_capacity)
+    {
+        throw std::invalid_argument(std::string(kWho) + "port_transmit_queue_capacity must be <= port_event_capacity");
+    }
 }
 
 std::size_t Channel::port_inbox_capacity(const ChannelOptions& options) noexcept
 {
-    constexpr std::size_t kMax = std::numeric_limits<std::size_t>::max();
-    return options.receive_capacity > kMax / 2 ? kMax : options.receive_capacity * 2;
+    if (options.port_inbox_capacity > 0)
+    {
+        return options.port_inbox_capacity;
+    }
+    return saturating_double(options.receive_capacity);
 }
 
-Channel::Channel(Port& port, ChannelOptions options) : port_(&port), options_(std::move(options))
+std::size_t Channel::port_event_capacity(const ChannelOptions& options) noexcept
+{
+    if (options.port_event_capacity > 0)
+    {
+        return options.port_event_capacity;
+    }
+    return std::max<std::size_t>({
+        kDefaultTransmitEventCapacity,
+        saturating_double(options.send_capacity),
+        effective_transmit_event_capacity(options),
+        options.port_transmit_queue_capacity,
+    });
+}
+
+Channel::Channel(Port& port, ChannelOptions options) :
+  port_(&port),
+  options_(std::move(options)),
+  transmit_event_capacity_(effective_transmit_event_capacity(options_))
 {
     validate(options_);
     received_.reserve(options_.receive_capacity);
     order_.reserve(options_.receive_capacity);
     outgoing_.reserve(options_.send_capacity);
+    flush_failed_.reserve(options_.send_capacity);
+    transmit_events_.reserve(transmit_event_capacity_);
 }
 
 void Channel::on_frame(FrameHandler handler)
@@ -58,17 +111,40 @@ void Channel::on_frame(FrameHandler handler)
     handlers_.push_back(std::move(handler));
 }
 
+void Channel::on_transmit(TransmitHandler handler)
+{
+    if (phase_ != Phase::Setup)
+    {
+        throw std::logic_error(std::string(kWho) + "on_transmit() is only allowed before the host starts");
+    }
+    if (!handler)
+    {
+        throw std::invalid_argument(std::string(kWho) + "empty handler");
+    }
+    transmit_handlers_.push_back(std::move(handler));
+}
+
 SendStatus Channel::send(const Frame& frame)
 {
-    return queue(frame.bytes());
+    return queue(frame.bytes(), 0);
+}
+
+SendStatus Channel::send(const Frame& frame, std::uint64_t token)
+{
+    return queue(frame.bytes(), token);
 }
 
 SendStatus Channel::send(std::span<const std::uint8_t> bytes)
 {
-    return queue(bytes);
+    return queue(bytes, 0);
 }
 
-SendStatus Channel::queue(std::span<const std::uint8_t> bytes)
+SendStatus Channel::send(std::span<const std::uint8_t> bytes, std::uint64_t token)
+{
+    return queue(bytes, token);
+}
+
+SendStatus Channel::queue(std::span<const std::uint8_t> bytes, std::uint64_t token)
 {
     if (phase_ != Phase::InStep)
     {
@@ -86,7 +162,12 @@ SendStatus Channel::queue(std::span<const std::uint8_t> bytes)
         return SendStatus::QueueFull;
     }
     outgoing_.emplace_back();
-    static_cast<void>(outgoing_.back().assign(bytes)); // fits: max_frame_bytes <= Frame::kCapacity
+    static_cast<void>(outgoing_.back().frame.assign(bytes)); // fits: max_frame_bytes <= Frame::kCapacity
+    outgoing_.back().token = token;
+    if (port_->transmit_capabilities() == TransmitCapabilities::Correlated)
+    {
+        ++statistics_.outstanding;
+    }
     return SendStatus::Ok;
 }
 
@@ -126,6 +207,7 @@ void Channel::begin(SimTime now)
     order_.clear();
     next_taken_ = 0;
     outgoing_.clear();
+    transmit_events_.clear();
 }
 
 bool Channel::accepted(const Frame& frame) const noexcept
@@ -139,21 +221,66 @@ bool Channel::accepted(const Frame& frame) const noexcept
            std::find(options_.multicast.begin(), options_.multicast.end(), destination) != options_.multicast.end();
 }
 
+void Channel::push_transmit_event(const TransmitEvent& event) noexcept
+{
+    if (transmit_events_.size() >= transmit_event_capacity_)
+    {
+        ++statistics_.transmit_event_overflows;
+        if (statistics_.outstanding > 0)
+        {
+            --statistics_.outstanding;
+        }
+        return;
+    }
+    transmit_events_.push_back(event);
+}
+
 void Channel::take_event(const PortEvent& event) noexcept
 {
     switch (event.kind)
     {
     case PortEvent::Kind::TransmitCompleted:
-        ++statistics_.transmit_completed;
+        if (!event.correlated)
+        {
+            if (port_->transmit_capabilities() == TransmitCapabilities::None)
+            {
+                ++statistics_.transmit_completed;
+            }
+            break;
+        }
+        push_transmit_event(TransmitEvent{
+            TransmitEvent::Kind::Completed,
+            event.token,
+            event.send_time.value_or(event.time),
+            event.time,
+        });
         break;
     case PortEvent::Kind::TransmitFailed:
-        ++statistics_.transmit_failed;
+        if (!event.correlated)
+        {
+            if (port_->transmit_capabilities() == TransmitCapabilities::None)
+            {
+                ++statistics_.transmit_failed;
+            }
+            break;
+        }
+        push_transmit_event(TransmitEvent{
+            TransmitEvent::Kind::Failed,
+            event.token,
+            event.send_time.value_or(event.time),
+            event.time,
+        });
         break;
     case PortEvent::Kind::ReceiveOverflow:
         statistics_.port_receive_overflows += event.count;
         break;
     case PortEvent::Kind::EventOverflow:
         statistics_.port_event_overflows += event.count;
+        if (port_->transmit_capabilities() == TransmitCapabilities::Correlated)
+        {
+            const std::uint64_t drop = std::min(statistics_.outstanding, event.count);
+            statistics_.outstanding -= drop;
+        }
         break;
     }
 }
@@ -209,6 +336,53 @@ void Channel::receive(SimTime now)
 
 void Channel::process()
 {
+    const auto emitTransmit = [this](const TransmitEvent& event) {
+        if (event.kind == TransmitEvent::Kind::Completed)
+        {
+            ++statistics_.transmit_completed;
+        }
+        else
+        {
+            ++statistics_.transmit_failed;
+        }
+        if (statistics_.outstanding > 0)
+        {
+            --statistics_.outstanding;
+        }
+        for (const TransmitHandler& handler : transmit_handlers_)
+        {
+            handler(event);
+        }
+    };
+
+    // Merge due flush() rejections (fail.time < now_) with transmit_events_ in result-time order.
+    // Equal-timestamp port events are emitted before flush() rejections as a deterministic
+    // tie-breaker; the public contract guarantees result-time ordering and token correlation,
+    // not same-timestamp send() order.
+    std::size_t pi = 0;
+    std::size_t fi = 0;
+    while (pi < transmit_events_.size() || (fi < flush_failed_.size() && flush_failed_[fi].time < now_))
+    {
+        const bool haveDueFailure = fi < flush_failed_.size() && flush_failed_[fi].time < now_;
+        if (pi < transmit_events_.size() && (!haveDueFailure || transmit_events_[pi].time <= flush_failed_[fi].time))
+        {
+            emitTransmit(transmit_events_[pi++]);
+        }
+        else
+        {
+            emitTransmit(flush_failed_[fi++]);
+        }
+    }
+    transmit_events_.clear();
+    if (fi >= flush_failed_.size())
+    {
+        flush_failed_.clear();
+    }
+    else if (fi > 0)
+    {
+        flush_failed_.erase(flush_failed_.begin(), flush_failed_.begin() + static_cast<std::ptrdiff_t>(fi));
+    }
+
     for (const std::uint32_t index : order_)
     {
         const TimedFrame& frame = received_[index];
@@ -228,24 +402,47 @@ void Channel::flush()
     {
         statistics_.frames_not_taken += order_.size() - next_taken_;
     }
+    const bool correlatedPort = port_->transmit_capabilities() == TransmitCapabilities::Correlated;
+    auto recordFlushFailed = [this, correlatedPort](std::uint64_t token) {
+        ++statistics_.frames_dropped;
+        if (!correlatedPort)
+        {
+            ++statistics_.outstanding;
+        }
+        if (flush_failed_.size() < options_.send_capacity)
+        {
+            flush_failed_.push_back(TransmitEvent{TransmitEvent::Kind::Failed, token, now_, now_});
+        }
+        else
+        {
+            ++statistics_.transmit_event_overflows;
+            if (statistics_.outstanding > 0)
+            {
+                --statistics_.outstanding;
+            }
+        }
+    };
     std::size_t i = 0;
     for (; i < outgoing_.size(); ++i)
     {
-        const SendResult result = port_->send(TimedFrame{now_, outgoing_[i]});
+        const SendResult result = port_->send(TimedFrame{now_, outgoing_[i].frame}, outgoing_[i].token);
         if (result == SendResult::Accepted)
         {
             ++statistics_.frames_sent;
         }
         else if (result == SendResult::QueueFull)
         {
+            for (; i < outgoing_.size(); ++i)
+            {
+                recordFlushFailed(outgoing_[i].token);
+            }
             break; // this frame and the rest are dropped (no retry)
         }
         else
         {
-            ++statistics_.frames_dropped;
+            recordFlushFailed(outgoing_[i].token);
         }
     }
-    statistics_.frames_dropped += outgoing_.size() - i;
     outgoing_.clear();
 }
 

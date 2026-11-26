@@ -83,8 +83,13 @@ public:
     GatedCanPort(can::Port& inner, const BusConnection& connection) noexcept : inner_(inner), connection_(connection) {}
 
     [[nodiscard]] can::TimeDomain time_domain() const noexcept override { return inner_.time_domain(); }
+    [[nodiscard]] can::TransmitCapabilities transmit_capabilities() const noexcept override
+    {
+        return inner_.transmit_capabilities();
+    }
     std::size_t release_before(SimTime now, can::FrameSink sink) override;
     can::SendResult send(const can::TimedFrame& frame) override;
+    can::SendResult send(const can::TimedFrame& frame, std::uint64_t token) override;
     std::size_t release_events_before(SimTime now, can::PortEventSink sink) override
     {
         return inner_.release_events_before(now, sink);
@@ -106,8 +111,13 @@ public:
     GatedEthPort(eth::Port& inner, const BusConnection& connection) noexcept : inner_(inner), connection_(connection) {}
 
     [[nodiscard]] eth::TimeDomain time_domain() const noexcept override { return inner_.time_domain(); }
+    [[nodiscard]] eth::TransmitCapabilities transmit_capabilities() const noexcept override
+    {
+        return inner_.transmit_capabilities();
+    }
     std::size_t release_before(SimTime now, eth::FrameSink sink) override;
     eth::SendResult send(const eth::TimedFrame& frame) override;
+    eth::SendResult send(const eth::TimedFrame& frame, std::uint64_t token) override;
     std::size_t release_events_before(SimTime now, eth::PortEventSink sink) override
     {
         return inner_.release_events_before(now, sink);

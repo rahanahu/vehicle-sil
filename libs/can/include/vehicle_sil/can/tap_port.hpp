@@ -29,6 +29,7 @@ struct TapRecord
     Frame frame{};                          ///< Received, Sent.
     SendResult result = SendResult::Accepted; ///< Sent.
     PortEvent event{};                      ///< Event.
+    std::uint64_t token = 0;                ///< Sent.
 };
 
 class TapPort;
@@ -79,8 +80,13 @@ public:
     [[nodiscard]] Port& inner() const noexcept { return inner_; }
 
     [[nodiscard]] TimeDomain time_domain() const noexcept override { return inner_.time_domain(); }
+    [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept override
+    {
+        return inner_.transmit_capabilities();
+    }
     std::size_t release_before(SimTime now, FrameSink sink) override;
     SendResult send(const TimedFrame& frame) override;
+    SendResult send(const TimedFrame& frame, std::uint64_t token) override;
     std::size_t release_events_before(SimTime now, PortEventSink sink) override;
     void set_wakeup(Wakeup wakeup) override { inner_.set_wakeup(std::move(wakeup)); }
 

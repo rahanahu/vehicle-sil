@@ -40,6 +40,9 @@ public:
     /// Sends what the step produced, through `port` (the port registered with this Steppable).
     virtual void flush(Port& port) = 0;
 
+    /// Called by Host::add() once this Steppable is bound to `port`, before start().
+    virtual void bind_port(const Port& port) noexcept { static_cast<void>(port); }
+
     /// Called once by the host before the first step's begin(), with the host's step size if it
     /// is known (Host::set_step_size()). A Steppable checks here whether its protocol can run
     /// with that step size and throws (e.g. std::invalid_argument) if not; the host then fails.

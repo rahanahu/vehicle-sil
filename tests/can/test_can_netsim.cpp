@@ -11,6 +11,7 @@
 
 #include "vehicle_sil/can/bus_model.hpp"
 #include "vehicle_sil/can/host.hpp"
+#include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/can/step_driver.hpp"
 #include "vehicle_sil/can/virtual_can_bus.hpp"
 #include "vehicle_sil/can_netsim/can_bus_simulator.hpp"
@@ -23,6 +24,7 @@
 #include <silkit/services/can/all.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -1035,6 +1037,384 @@ TEST_CASE(send_time_tag_round_trips_and_ignores_other_pointers)
     CHECK(!vehicle_sil::can::decode_send_time(nullptr));
     int local = 0;
     CHECK(!vehicle_sil::can::decode_send_time(&local));
+    void* const correlated = vehicle_sil::can::encode_correlated_send_time(t, 0x1234u);
+    CHECK(vehicle_sil::can::decode_correlated_tag(correlated) == std::optional<std::uint16_t>(0x1234u));
+    CHECK(vehicle_sil::can::decode_send_time(correlated, t) == t);
+}
+
+TEST_CASE(netsim_correlates_same_id_burst_queue_full_and_reset_cancellation_with_exact_tokens)
+{
+    // A SilKitCanPort + RawChannel sending a same-ID same-payload burst with distinct tokens
+    // (including token == 0) into a CanBusSimulator with transmit_queue_capacity == 2:
+    // frames 0 and 1 enter the bus queue (Transmitted later at tx.end), while frames 2 and 3 are
+    // immediately refused with TransmitQueueFull at step T -> out-of-order completion/failure with
+    // exact token correlation! Also tests forged high-residue 0xA6 context at t == 0 being counted
+    // as untagged_requests (never unwrapped negative).
+    vehicle_sil::unit::InProcessRegistry registry;
+    constexpr const char* kNet = "CorrCAN";
+    constexpr SimTime kStopTime = SimTime{} + 40ms;
+
+    vehicle_sil::SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = registry.uri;
+    controllerOptions.required_participants = {"Sim", "Sender", "Foreign"};
+    controllerOptions.stop_at = kStopTime - SimTime{} + 20ms;
+    SimulationController controller(controllerOptions);
+
+    // Simulator participant with small per-controller transmit queue (2).
+    ParticipantRuntime simRuntime(
+        coordinated_options("Sim", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
+    CanBusSimulatorOptions simOpts;
+    simOpts.default_bitrate = 250'000;
+    simOpts.transmit_queue_capacity = 2;
+    CanBusSimulator simulator(simRuntime.participant(), {kNet}, simOpts);
+    simRuntime.set_step_handler([&](SimTime now, SimDuration step) { simulator.step(now, step); });
+
+    // Sender participant using SilKitCanPort + RawChannel (0xA6 correlated tokens).
+    ParticipantRuntime senderRuntime(
+        coordinated_options("Sender", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
+    auto* senderCtrl = senderRuntime.participant().CreateCanController("CAN", kNet);
+    SilKitCanPortOptions portOpts;
+    portOpts.bitrate = 250'000;
+    SilKitCanPort senderPort(*senderCtrl, portOpts);
+    senderRuntime.add_communication_ready_handler([&] { senderPort.start(); });
+
+    vehicle_sil::can::RawChannel raw;
+    Host senderHost;
+    senderHost.add(raw, senderPort);
+    CHECK(raw.transmit_capabilities() == vehicle_sil::can::TransmitCapabilities::Correlated);
+
+    std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+    raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+    senderHost.set_application([&](SimTime now) {
+        if (now == at(5ms))
+        {
+            // Identical ID, identical payload, identical send step, tokens {0, 10, 20, 30}.
+            Frame identical;
+            identical.id = 0x18FF5010u;
+            identical.format = IdFormat::Extended;
+            identical.length = 8;
+            identical.data = {1, 2, 3, 4, 5, 6, 7, 8};
+            CHECK(raw.send(identical, 0) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(raw.send(identical, 10) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(raw.send(identical, 20) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(raw.send(identical, 30) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == at(20ms))
+        {
+            // Queue two frames then call Reset() so the simulator cancels them.
+            Frame identical;
+            identical.id = 0x18FF5010u;
+            identical.format = IdFormat::Extended;
+            identical.length = 8;
+            identical.data = {1, 2, 3, 4, 5, 6, 7, 8};
+            CHECK(raw.send(identical, 40) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(raw.send(identical, 50) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == at(21ms))
+        {
+            senderCtrl->Reset();
+        }
+    });
+    vehicle_sil::can::bind_host(senderRuntime, senderHost);
+
+    // Foreign participant sending one legacy 0xA5 frame and one forged high-residue 0xA6 at t == 0.
+    ParticipantRuntime foreignRuntime(
+        coordinated_options("Foreign", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
+    auto* foreignCtrl = foreignRuntime.participant().CreateCanController("CAN", kNet);
+    foreignRuntime.add_communication_ready_handler([&] { foreignCtrl->Start(); });
+    foreignRuntime.set_step_handler([&](SimTime now, SimDuration) {
+        if (now == at(0ms))
+        {
+            sk::CanFrame f{};
+            f.canId = 0x100;
+            const std::uint8_t d[1] = {0x99};
+            f.dlc = 1;
+            f.dataField = SilKit::Util::Span<const std::uint8_t>(d, 1);
+            // Forged high-residue 0xA6 (2^40 - 1 ns) at t == 0: must NOT unwrap negative; rejected by future_limit.
+            const SimTime forgedTime =
+                SimTime{} + std::chrono::nanoseconds(static_cast<std::int64_t>(vehicle_sil::can::kCorrelatedTimeMod - 1));
+            foreignCtrl->SendFrame(f, vehicle_sil::can::encode_correlated_send_time(forgedTime, 1));
+        }
+        else if (now == at(10ms))
+        {
+            sk::CanFrame f{};
+            f.canId = 0x101;
+            const std::uint8_t d[1] = {0x55};
+            f.dlc = 1;
+            f.dataField = SilKit::Util::Span<const std::uint8_t>(d, 1);
+            // Legacy 0xA5 alongside 0xA6 participant on same network.
+            foreignCtrl->SendFrame(f, vehicle_sil::can::encode_send_time(now));
+        }
+    });
+
+    std::vector<ParticipantRuntime*> runtimes{&simRuntime, &senderRuntime, &foreignRuntime};
+    start_together(controller, runtimes, 60s);
+    for (auto* rt : runtimes)
+    {
+        const auto state = rt->wait_until_finished(scaled_timeout(60s));
+        CHECK(state && *state == orch::ParticipantState::Shutdown);
+    }
+    senderPort.close();
+    CHECK(!senderHost.failed());
+
+    // Verify burst at 5ms: tokens 20 & 30 failed with TransmitQueueFull at t=6ms BEFORE tokens 0 & 10
+    // completed at t=6ms + 524us and t=6ms + 1048us!
+    CHECK_EQ(txEvents.size(), 6u);
+    CHECK(txEvents[0].kind == vehicle_sil::can::TransmitEvent::Kind::Failed);
+    CHECK_EQ(txEvents[0].token, 20u);
+    CHECK(txEvents[0].send_time == at(5ms));
+    CHECK(txEvents[1].kind == vehicle_sil::can::TransmitEvent::Kind::Failed);
+    CHECK_EQ(txEvents[1].token, 30u);
+    CHECK(txEvents[1].send_time == at(5ms));
+    CHECK(txEvents[2].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+    CHECK_EQ(txEvents[2].token, 0u);
+    CHECK(txEvents[2].send_time == at(5ms));
+    CHECK(txEvents[2].time > at(6ms));
+    CHECK(txEvents[3].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+    CHECK_EQ(txEvents[3].token, 10u);
+    CHECK(txEvents[3].send_time == at(5ms));
+    CHECK(txEvents[3].time > txEvents[2].time);
+
+    // Tokens 40 & 50 were sent at 20ms and cancelled/completed with exact tokens (conservation == 0).
+    CHECK((txEvents[4].token == 40u && txEvents[5].token == 50u) ||
+          (txEvents[4].token == 50u && txEvents[5].token == 40u));
+    CHECK_EQ(raw.statistics().outstanding, 0u);
+    CHECK_EQ(senderPort.statistics().outstanding, 0u);
+    CHECK_EQ(senderPort.statistics().tx_queue_full, 2u);
+
+    const auto simStats = simulator.statistics(kNet);
+    CHECK_EQ(simStats.transmit_queue_full, 2u);
+    // Forged high-residue 0xA6 at t == 0 was rejected by future_limit and counted as untagged;
+    // the legacy 0xA5 frame at 10ms and all 6 correlated 0xA6 frames were properly tagged.
+    CHECK_EQ(simStats.untagged_requests, 1u);
+}
+
+TEST_CASE(netsim_rejects_backward_unwrapped_0xA6_at_600s_and_round_trips_past_40bit_wrap)
+{
+    vehicle_sil::unit::InProcessRegistry registry;
+    constexpr const char* kNet = "WrapCAN";
+    constexpr SimTime kStopTime = SimTime{} + 1200s;
+
+    vehicle_sil::SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = registry.uri;
+    controllerOptions.required_participants = {"Sim", "Sender", "Foreign"};
+    controllerOptions.stop_at = kStopTime - SimTime{} + 20s;
+    SimulationController controller(controllerOptions);
+
+    ParticipantRuntime simRuntime(
+        coordinated_options("Sim", registry.uri, VirtualTimeOptions{10s, std::nullopt, kStopTime}));
+    CanBusSimulatorOptions simOpts;
+    simOpts.default_bitrate = 250'000;
+    simOpts.future_limit = 1s; // effective symmetric window limit = max(1s, 10s) = 10s
+    CanBusSimulator simulator(simRuntime.participant(), {kNet}, simOpts);
+    simRuntime.set_step_handler([&](SimTime now, SimDuration step) { simulator.step(now, step); });
+
+    ParticipantRuntime senderRuntime(
+        coordinated_options("Sender", registry.uri, VirtualTimeOptions{10s, std::nullopt, kStopTime}));
+    auto* senderCtrl = senderRuntime.participant().CreateCanController("CAN", kNet);
+    SilKitCanPortOptions portOpts;
+    portOpts.bitrate = 250'000;
+    SilKitCanPort senderPort(*senderCtrl, portOpts);
+    senderRuntime.add_communication_ready_handler([&] { senderPort.start(); });
+
+    vehicle_sil::can::RawChannel raw;
+    Host senderHost;
+    senderHost.add(raw, senderPort);
+
+    std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+    raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+    senderHost.set_application([&](SimTime now) {
+        Frame f;
+        f.id = 0x18FF6010u;
+        f.format = IdFormat::Extended;
+        f.length = 8;
+        f.data = {9, 8, 7, 6, 5, 4, 3, 2};
+        if (now == SimTime{} + 600s)
+        {
+            CHECK(raw.send(f, 0) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == SimTime{} + 1090s)
+        {
+            // Just before 2^40 ns (~1099.51 s).
+            CHECK(raw.send(f, 101) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == SimTime{} + 1100s)
+        {
+            // Just after 2^40 ns wraparound!
+            CHECK(raw.send(f, 202) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+        else if (now == SimTime{} + 1150s)
+        {
+            CHECK(raw.send(f, 303) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+    });
+    vehicle_sil::can::bind_host(senderRuntime, senderHost);
+
+    ParticipantRuntime foreignRuntime(
+        coordinated_options("Foreign", registry.uri, VirtualTimeOptions{10s, std::nullopt, kStopTime}));
+    auto* foreignCtrl = foreignRuntime.participant().CreateCanController("CAN", kNet);
+    foreignRuntime.add_communication_ready_handler([&] { foreignCtrl->Start(); });
+    foreignRuntime.set_step_handler([&](SimTime now, SimDuration) {
+        if (now == SimTime{} + 600s)
+        {
+            sk::CanFrame f{};
+            f.canId = 0x200;
+            const std::uint8_t d[1] = {0x42};
+            f.dlc = 1;
+            f.dataField = SilKit::Util::Span<const std::uint8_t>(d, 1);
+            // Forged 0xA6 residue that unwraps backward to 500s (< last - 10s): must be rejected as untagged.
+            foreignCtrl->SendFrame(f, vehicle_sil::can::encode_correlated_send_time(SimTime{} + 500s, 1));
+            // Forged 0xA6 residue that unwraps forward to 700s (> last + 10s): must be rejected as untagged.
+            foreignCtrl->SendFrame(f, vehicle_sil::can::encode_correlated_send_time(SimTime{} + 700s, 2));
+            // Legacy 0xA5 at 500s (in the past, <= last + limit): remains accepted by legacy 0xA5 rules.
+            foreignCtrl->SendFrame(f, vehicle_sil::can::encode_send_time(SimTime{} + 500s));
+        }
+    });
+
+    std::vector<ParticipantRuntime*> runtimes{&simRuntime, &senderRuntime, &foreignRuntime};
+    start_together(controller, runtimes, 60s);
+    for (auto* rt : runtimes)
+    {
+        const auto state = rt->wait_until_finished(scaled_timeout(60s));
+        CHECK(state && *state == orch::ParticipantState::Shutdown);
+    }
+    senderPort.close();
+    CHECK(!senderHost.failed());
+
+    CHECK_EQ(txEvents.size(), 4u);
+    const std::array<std::pair<std::uint64_t, SimTime>, 4> expected{{
+        {0u, SimTime{} + 600s},
+        {101u, SimTime{} + 1090s},
+        {202u, SimTime{} + 1100s},
+        {303u, SimTime{} + 1150s},
+    }};
+    for (std::size_t i = 0; i < expected.size(); ++i)
+    {
+        CHECK(txEvents[i].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+        CHECK_EQ(txEvents[i].token, expected[i].first);
+        CHECK(txEvents[i].send_time == expected[i].second);
+        CHECK(txEvents[i].time > expected[i].second);
+    }
+    CHECK_EQ(raw.statistics().outstanding, 0u);
+    CHECK_EQ(senderPort.statistics().outstanding, 0u);
+    CHECK_EQ(senderPort.statistics().tx_uncorrelated, 0u);
+
+    const auto simStats = simulator.statistics(kNet);
+    CHECK_EQ(simStats.transmissions, 7u);
+    CHECK_EQ(simStats.untagged_requests, 2u); // ONLY the two out-of-window 0xA6 frames
+}
+
+TEST_CASE(netsim_standalone_executable_correlates_raw_channel_tokens)
+{
+    vehicle_sil::unit::InProcessRegistry registry;
+    constexpr const char* kNet = "CAN1";
+    constexpr SimTime kStopTime = SimTime{} + 30ms;
+
+    const auto config = scratch_dir() / "netsim-corr.yaml";
+    const auto logFile = scratch_dir() / "netsim-corr.log";
+    std::ofstream(config) << "SchemaVersion: 1\n"
+                             "Description: vehicle-sil token correlation test\n"
+                             "SimulationStepSizeNanoseconds: 1000000\n"
+                             "SimulatedNetworks:\n"
+                             "  - Name: CAN1\n"
+                             "    Type: CAN\n";
+    vehicle_sil::process::ChildProcess child(
+        VEHICLE_SIL_CAN_BUS_SIMULATOR,
+        std::vector<std::string>{"--connect-uri", registry.uri, "--log", "info", "--start-timeout-ms", "60000",
+                                 "--default-bitrate", "250000", vehicle_sil::process::utf8_from_path(config)},
+        logFile);
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(30s);
+    while (true)
+    {
+        std::ifstream log(logFile);
+        const std::string text((std::istreambuf_iterator<char>(log)), std::istreambuf_iterator<char>());
+        if (text.find("waiting for the simulation to start") != std::string::npos)
+        {
+            break;
+        }
+        if (child.poll() || std::chrono::steady_clock::now() > deadline)
+        {
+            throw std::runtime_error("vehicle_sil_can_bus_simulator did not come up, log: " + logFile.string());
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+
+    vehicle_sil::SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = registry.uri;
+    controllerOptions.required_participants = {"NetworkSimulator", "Sender", "Receiver"};
+    controllerOptions.stop_at = kStopTime - SimTime{} + 20ms;
+    SimulationController controller(controllerOptions);
+
+    ParticipantRuntime senderRuntime(
+        coordinated_options("Sender", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
+    auto* senderCtrl = senderRuntime.participant().CreateCanController("CAN", kNet);
+    SilKitCanPortOptions portOpts;
+    portOpts.bitrate = 250'000;
+    SilKitCanPort senderPort(*senderCtrl, portOpts);
+    senderRuntime.add_communication_ready_handler([&] { senderPort.start(); });
+
+    vehicle_sil::can::RawChannel senderRaw;
+    Host senderHost;
+    senderHost.add(senderRaw, senderPort);
+    std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+    senderRaw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+    senderHost.set_application([&](SimTime now) {
+        if (now == at(5ms))
+        {
+            Frame identical;
+            identical.id = 0x18FF7020u;
+            identical.format = IdFormat::Extended;
+            identical.length = 8;
+            identical.data = {0xAA, 0xBB, 0xCC, 0xDD, 1, 2, 3, 4};
+            CHECK(senderRaw.send(identical, 0) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(senderRaw.send(identical, 11) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(senderRaw.send(identical, 22) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(senderRaw.send(identical, 33) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+    });
+    vehicle_sil::can::bind_host(senderRuntime, senderHost);
+
+    ParticipantRuntime receiverRuntime(
+        coordinated_options("Receiver", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kStopTime}));
+    auto* receiverCtrl = receiverRuntime.participant().CreateCanController("CAN", kNet);
+    SilKitCanPort receiverPort(*receiverCtrl, portOpts);
+    receiverRuntime.add_communication_ready_handler([&] { receiverPort.start(); });
+    vehicle_sil::can::RawChannel receiverRaw;
+    Host receiverHost;
+    receiverHost.add(receiverRaw, receiverPort);
+    std::vector<TimedFrame> received;
+    receiverRaw.on_frame([&](const TimedFrame& f) { received.push_back(f); });
+    vehicle_sil::can::bind_host(receiverRuntime, receiverHost);
+
+    std::vector<ParticipantRuntime*> runtimes{&senderRuntime, &receiverRuntime};
+    start_together(controller, runtimes, 60s);
+    for (auto* rt : runtimes)
+    {
+        const auto state = rt->wait_until_finished(scaled_timeout(60s));
+        CHECK(state && *state == orch::ParticipantState::Shutdown);
+    }
+    senderPort.close();
+    receiverPort.close();
+    const auto code = child.wait_for(scaled_timeout(30s));
+    CHECK(code && *code == 0);
+    CHECK(!senderHost.failed());
+    CHECK(!receiverHost.failed());
+
+    CHECK_EQ(received.size(), 4u);
+    CHECK_EQ(txEvents.size(), 4u);
+    const std::array<std::uint64_t, 4> expectedTokens{0u, 11u, 22u, 33u};
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        CHECK(txEvents[i].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+        CHECK_EQ(txEvents[i].token, expectedTokens[i]);
+        CHECK_EQ(txEvents[i].id, 0x18FF7020u);
+        CHECK(txEvents[i].send_time == at(5ms));
+        CHECK(txEvents[i].time == received[i].time);
+        CHECK(txEvents[i].time > at(6ms));
+    }
+    CHECK_EQ(senderRaw.statistics().outstanding, 0u);
+    CHECK_EQ(senderPort.statistics().outstanding, 0u);
+    CHECK_EQ(senderPort.statistics().tx_uncorrelated, 0u);
 }
 
 TEST_CASE(simulator_executable_gives_the_same_frame_times)

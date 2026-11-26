@@ -190,10 +190,18 @@ public:
         }
         const SimTime last = SimTime{} + std::chrono::nanoseconds(last_step_ns_.load(std::memory_order_acquire));
         SimTime sent = last;
-        const auto tagged = decode_send_time(request.userContext);
+        const auto tagged = decode_send_time(request.userContext, last);
         // At least one step ahead: a sender may be a step ahead of the simulator's last step.
         const SimDuration limit = std::max(options_.future_limit, SimDuration{step_ns_.load(std::memory_order_relaxed)});
-        if (tagged && *tagged <= last + limit)
+        // For 0xA6's 40-bit modular unwrap, enforce a symmetric [last - limit, last + limit] window
+        // so a forged/wrapped residue > limit ahead cannot unwrap backward into [last - 2^39, last)
+        // once last >= 2^39 ns (~550 s). Legacy 0xA5 keeps its upper-bound check only.
+        const bool isCorrelatedTag = decode_correlated_tag(request.userContext).has_value();
+        const bool withinWindow =
+            tagged && *tagged >= SimTime{} &&
+            (isCorrelatedTag ? (*tagged >= last ? (*tagged - last <= limit) : (last - *tagged <= limit))
+                             : (*tagged <= last + limit));
+        if (withinWindow)
         {
             sent = *tagged;
         }

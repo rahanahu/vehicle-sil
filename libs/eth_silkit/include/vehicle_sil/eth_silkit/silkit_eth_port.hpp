@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 namespace vehicle_sil::eth {
 
@@ -34,9 +35,12 @@ struct SilKitEthPortOptions
     /// channel's send_capacity); acknowledgements that do not fit are dropped, counted and
     /// reported as a PortEvent::EventOverflow.
     std::size_t event_capacity = 1024;
+    /// Maximum unacknowledged frames allowed at the port (0: unlimited up to the correlation
+    /// table capacity; otherwise <= event_capacity).
+    std::size_t transmit_queue_capacity = 0;
 };
 
-/// What a SilKitEthPort has seen. Counters only grow.
+/// What a SilKitEthPort has seen. Counters only grow, except `link_up` and `outstanding`.
 struct SilKitEthPortStatistics
 {
     std::uint64_t received = 0;              ///< Frames queued for the channel.
@@ -54,6 +58,11 @@ struct SilKitEthPortStatistics
     std::uint64_t event_overflows = 0;       ///< Acknowledgements dropped because the event queue
                                              ///< was full.
     bool link_up = false;                    ///< The controller's last state was LinkUp.
+    std::uint64_t send_queue_full = 0;       ///< send() calls that returned QueueFull.
+    std::size_t outstanding = 0;             ///< Accepted sends whose transmit event has not yet
+                                             ///< been released (remains inspectable after close()).
+    std::uint64_t tx_uncorrelated = 0;       ///< Transmit acknowledgements whose userContext did
+                                             ///< not match an active correlation slot.
 };
 
 /// A vehicle_sil::eth::Port on a SIL Kit Ethernet controller of a participant with virtual time
@@ -103,16 +112,24 @@ struct SilKitEthPortStatistics
 class SilKitEthPort final : public Port
 {
 public:
-    /// std::invalid_argument for a capacity of 0.
+    /// std::invalid_argument for a capacity of 0 or transmit_queue_capacity > event_capacity.
     explicit SilKitEthPort(SilKit::Services::Ethernet::IEthernetController& controller, SilKitEthPortOptions options = {});
+    /// Throws what the constructor throws for `options` (for a caller that must validate before
+    /// creating the SIL Kit controller).
+    static void validate(const SilKitEthPortOptions& options);
     ~SilKitEthPort() override;
 
     SilKitEthPort(const SilKitEthPort&) = delete;
     SilKitEthPort& operator=(const SilKitEthPort&) = delete;
 
     [[nodiscard]] TimeDomain time_domain() const noexcept override { return TimeDomain::Virtual; }
+    [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept override
+    {
+        return TransmitCapabilities::Correlated;
+    }
     std::size_t release_before(SimTime now, FrameSink sink) override;
     SendResult send(const TimedFrame& frame) override;
+    SendResult send(const TimedFrame& frame, std::uint64_t token) override;
     std::size_t release_events_before(SimTime now, PortEventSink sink) override;
 
     /// Activates the controller. From the participant's CommunicationReady handler (see the
@@ -131,6 +148,14 @@ public:
     [[nodiscard]] SilKitEthPortStatistics statistics() const;
 
 private:
+    struct CorrelationSlot
+    {
+        std::uint64_t token = 0;
+        SimTime send_time{};
+        std::uint32_t generation = 0; // 24-bit
+        bool in_use = false;
+    };
+
     void on_frame(const SilKit::Services::Ethernet::EthernetFrameEvent& event);
     void on_transmit(const SilKit::Services::Ethernet::EthernetFrameTransmitEvent& event) noexcept;
     /// The time of a received frame or event: SIL Kit's timestamp, or for a negative one the
@@ -138,10 +163,25 @@ private:
     [[nodiscard]] SimTime stamp(std::chrono::nanoseconds timestamp) const noexcept;
     /// Throws std::logic_error unless started; `what` is what happened before start().
     void require_started(const char* what) const;
+    bool allocate_slot_locked(std::uint64_t token, SimTime send_time, std::uint32_t& out_slot,
+                              std::uint32_t& out_gen) noexcept;
+    bool resolve_and_free_locked(std::uint32_t slot, std::uint32_t gen, std::uint64_t& out_token,
+                                 SimTime& out_send_time) noexcept;
+    bool reclaim_if_unused_locked(std::uint32_t slot, std::uint32_t gen) noexcept;
+    void clear_corr_table_locked() noexcept;
 
     SilKit::Services::Ethernet::IEthernetController& controller_;
+    std::size_t transmit_queue_capacity_ = 0;
     StepInbox<Frame> inbox_;
     StepInbox<PortEvent> events_;
+    StepInbox<PortEvent> uncorrelated_events_;
+    std::vector<PortEvent> uncorrelated_drain_; ///< driver-thread scratch buffer (capacity event_capacity)
+    std::mutex corr_mutex_;
+    std::vector<CorrelationSlot> corr_slots_;
+    std::vector<std::uint32_t> corr_free_ring_;
+    std::size_t corr_free_head_ = 0;
+    std::size_t corr_free_tail_ = 0;
+    std::size_t corr_free_count_ = 0;
     std::mutex overflow_mutex_; ///< guards overflow_ and event_overflow_
     OverflowCollector overflow_;
     OverflowCollector event_overflow_{PortEvent::Kind::EventOverflow};
@@ -160,11 +200,14 @@ private:
     std::atomic<std::uint64_t> receive_rejected_{0};
     std::atomic<std::uint64_t> sent_{0};
     std::atomic<std::uint64_t> send_failed_{0};
+    std::atomic<std::uint64_t> send_queue_full_{0};
+    std::atomic<std::size_t> outstanding_{0};
     std::atomic<std::uint64_t> tx_transmitted_{0};
     std::atomic<std::uint64_t> tx_controller_inactive_{0};
     std::atomic<std::uint64_t> tx_link_down_{0};
     std::atomic<std::uint64_t> tx_dropped_{0};
     std::atomic<std::uint64_t> tx_invalid_frame_{0};
+    std::atomic<std::uint64_t> tx_uncorrelated_{0};
     std::atomic<bool> link_up_{false};
 };
 

@@ -19,6 +19,7 @@
 #include "vehicle_sil/simulation/ecu_main.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -1367,4 +1368,80 @@ TEST_CASE(ecu_main_map_network_refuses_a_silkit_configuration_that_names_a_netwo
     const std::string unnamed = files.write("unnamed.silkit.yaml", "CanControllers:\n  - Name: CAN\n");
     const Result fine = call({"--registry-uri", nowhere, "--silkit-config", unnamed, "--map-network", "VehicleCAN=CAN"});
     require(fine.code == 3 && fine.err.rfind("error: Engine: cannot join the simulation at ", 0) == 0, "no Network, no refusal", fine);
+}
+
+TEST_CASE(ecu_main_local_runs_tx_completion_driven_ecu)
+{
+    namespace can = vehicle_sil::can;
+    namespace eth = vehicle_sil::eth;
+
+    std::vector<can::TransmitEvent> canEvents;
+    std::vector<eth::TransmitEvent> ethEvents;
+    can::RawChannelStatistics finalCanStats{};
+    eth::ChannelStatistics finalEthStats{};
+
+    const Result r = call_with({"--local", "--run-for-ms", "50"}, [&](Ecu& ecu) {
+        auto& raw = ecu.can("CAN", can::RawChannelOptions{.send_capacity = 4, .port_transmit_queue_capacity = 2});
+        auto& ethCh = ecu.ethernet("ETH", eth::ChannelOptions{.send_capacity = 4, .port_transmit_queue_capacity = 2});
+        CHECK(raw.transmit_capabilities() == can::TransmitCapabilities::Correlated);
+        CHECK(ethCh.transmit_capabilities() == eth::TransmitCapabilities::Correlated);
+
+        auto inStep = std::make_shared<bool>(false);
+        raw.on_transmit([&canEvents, inStep](const can::TransmitEvent& ev) {
+            CHECK(!*inStep);
+            canEvents.push_back(ev);
+        });
+        ethCh.on_transmit([&ethEvents, inStep](const eth::TransmitEvent& ev) {
+            CHECK(!*inStep);
+            ethEvents.push_back(ev);
+        });
+        ecu.on_step([&raw, &ethCh, &finalCanStats, &finalEthStats, inStep](SimTime now) {
+            *inStep = true;
+            std::array<std::uint8_t, 60> ethBytes{};
+            ethBytes.fill(0x5A);
+            if (now == SimTime{})
+            {
+                // 3 sends with port_transmit_queue_capacity = 2 -> tokens 0, 1 Completed; token 2 Failed.
+                const can::Frame frame{0x123, can::IdFormat::Standard, 2, {0xAA, 0xBB}};
+                for (std::uint64_t tok = 0; tok < 3; ++tok)
+                {
+                    CHECK(raw.send(frame, tok) == can::RawSendStatus::Ok);
+                    CHECK(ethCh.send(ethBytes, tok) == eth::SendStatus::Ok);
+                }
+            }
+            else if (now == SimTime{} + 10ms)
+            {
+                const can::Frame frame{0x123, can::IdFormat::Standard, 2, {0xCC, 0xDD}};
+                CHECK(raw.send(frame, 0) == can::RawSendStatus::Ok);
+                CHECK(ethCh.send(ethBytes, 0) == eth::SendStatus::Ok);
+            }
+            finalCanStats = raw.statistics();
+            finalEthStats = ethCh.statistics();
+            *inStep = false;
+        });
+    });
+
+    require(r.code == 0, "ecu_main --local succeeded", r);
+    require(r.out.empty() && r.err.empty(), "no output on stdout/stderr", r);
+
+    const std::vector<can::TransmitEvent> expectedCan{
+        {can::TransmitEvent::Kind::Completed, 0, 0x123, SimTime{}, SimTime{}},
+        {can::TransmitEvent::Kind::Completed, 1, 0x123, SimTime{}, SimTime{}},
+        {can::TransmitEvent::Kind::Failed, 2, 0x123, SimTime{}, SimTime{}},
+        {can::TransmitEvent::Kind::Completed, 0, 0x123, SimTime{} + 10ms, SimTime{} + 10ms},
+    };
+    const std::vector<eth::TransmitEvent> expectedEth{
+        {eth::TransmitEvent::Kind::Completed, 0, SimTime{}, SimTime{}},
+        {eth::TransmitEvent::Kind::Completed, 1, SimTime{}, SimTime{}},
+        {eth::TransmitEvent::Kind::Failed, 2, SimTime{}, SimTime{}},
+        {eth::TransmitEvent::Kind::Completed, 0, SimTime{} + 10ms, SimTime{} + 10ms},
+    };
+    CHECK(canEvents == expectedCan);
+    CHECK(ethEvents == expectedEth);
+    CHECK_EQ(finalCanStats.frames_sent, 3u);
+    CHECK_EQ(finalCanStats.frames_dropped, 1u);
+    CHECK_EQ(finalCanStats.outstanding, 0u);
+    CHECK_EQ(finalEthStats.frames_sent, 3u);
+    CHECK_EQ(finalEthStats.frames_dropped, 1u);
+    CHECK_EQ(finalEthStats.outstanding, 0u);
 }

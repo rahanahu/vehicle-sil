@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -1466,4 +1467,103 @@ TEST_CASE(peer_stop_closes_lin_ports_cleanly_while_traffic_runs)
     CHECK(!masterPeer.failed());
     CHECK(!slavePeer.failed());
     CHECK(slaveHeaders.load(std::memory_order_relaxed) >= 2u);
+}
+
+TEST_CASE(peer_validates_raw_can_and_ethernet_capacities_before_creating_controllers)
+{
+    namespace eth = vehicle_sil::eth;
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "CapacityPeer";
+    o.registry_uri = registry.uri;
+    o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(30ms)};
+    Peer peer(o);
+    vehicle_sil::Ecu& ecu = peer;
+
+    // Invalid RawChannelOptions: port_transmit_queue_capacity > port_event_capacity.
+    CHECK(throws<std::invalid_argument>([&] {
+        static_cast<void>(ecu.can("CAN_CAP", can::RawChannelOptions{.port_event_capacity = 4,
+                                                                    .port_transmit_queue_capacity = 8}));
+    }));
+    // Invalid SilKitCanPortOptions: port_transmit_queue_capacity > kMaxCorrelatedInFlight (passes RawChannel::validate,
+    // must be caught by SilKitCanPort::validate BEFORE CreateCanController).
+    CHECK(throws<std::invalid_argument>([&] {
+        static_cast<void>(ecu.can(
+            "CAN_CAP", can::RawChannelOptions{.port_transmit_queue_capacity = can::SilKitCanPort::kMaxCorrelatedInFlight + 1}));
+    }));
+    // Invalid send_capacity == 0.
+    CHECK(throws<std::invalid_argument>([&] {
+        static_cast<void>(ecu.can("CAN_CAP", can::RawChannelOptions{.send_capacity = 0}));
+    }));
+    // No orphaned CAN controller was created: adding "CAN_CAP" with valid options now succeeds!
+    auto& raw = ecu.can("CAN_CAP", can::RawChannelOptions{.send_capacity = 6, .port_transmit_queue_capacity = 2});
+    CHECK(raw.transmit_capabilities() == can::TransmitCapabilities::Correlated);
+
+    // Invalid eth::ChannelOptions: port_transmit_queue_capacity > port_event_capacity.
+    CHECK(throws<std::invalid_argument>([&] {
+        static_cast<void>(ecu.ethernet("ETH_CAP", eth::ChannelOptions{.port_event_capacity = 4,
+                                                                      .port_transmit_queue_capacity = 8}));
+    }));
+    // Invalid SilKitEthPortOptions: port_event_capacity > uint32_t max (caught by SilKitEthPort::validate before controller).
+    if constexpr (sizeof(std::size_t) > sizeof(std::uint32_t))
+    {
+        CHECK(throws<std::invalid_argument>([&] {
+            static_cast<void>(
+                ecu.ethernet("ETH_CAP", eth::ChannelOptions{.port_event_capacity =
+                                                                static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1}));
+        }));
+    }
+    // No orphaned Ethernet controller was created: adding "ETH_CAP" with valid options now succeeds!
+    auto& ethernet = ecu.ethernet("ETH_CAP", eth::ChannelOptions{.send_capacity = 6, .port_transmit_queue_capacity = 2});
+    CHECK(ethernet.transmit_capabilities() == eth::TransmitCapabilities::Correlated);
+
+    // Verify valid port_transmit_queue_capacity = 2 is enforced at runtime for both CAN and Ethernet,
+    // and that stopping with unacknowledged frames leaves outstanding > 0 observable.
+    std::vector<can::TransmitEvent> canTx;
+    std::vector<eth::TransmitEvent> ethTx;
+    raw.on_transmit([&](const can::TransmitEvent& ev) { canTx.push_back(ev); });
+    ethernet.on_transmit([&](const eth::TransmitEvent& ev) { ethTx.push_back(ev); });
+    peer.on_step([&](SimTime now) {
+        std::array<std::uint8_t, 60> ethBytes{};
+        ethBytes.fill(0x33);
+        const can::Frame frame{0x150, can::IdFormat::Standard, 1, {0x55}};
+        if (now == at(0ms))
+        {
+            for (std::uint64_t tok = 0; tok < 4; ++tok)
+            {
+                CHECK(raw.send(frame, tok) == can::RawSendStatus::Ok);
+                CHECK(ethernet.send(ethBytes, tok) == eth::SendStatus::Ok);
+            }
+        }
+        else if (now == at(20ms))
+        {
+            // Last step before end=30ms: leave 1 unacknowledged frame on each channel at shutdown.
+            CHECK(raw.send(frame, 777) == can::RawSendStatus::Ok);
+            CHECK(ethernet.send(ethBytes, 777) == eth::SendStatus::Ok);
+        }
+    });
+
+    CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
+    CHECK(!peer.failed());
+    CHECK_EQ(canTx.size(), 4u);
+    CHECK(canTx[0] == (can::TransmitEvent{can::TransmitEvent::Kind::Completed, 0, 0x150, at(0ms), at(0ms)}));
+    CHECK(canTx[1] == (can::TransmitEvent{can::TransmitEvent::Kind::Completed, 1, 0x150, at(0ms), at(0ms)}));
+    CHECK(canTx[2] == (can::TransmitEvent{can::TransmitEvent::Kind::Failed, 2, 0x150, at(0ms), at(0ms)}));
+    CHECK(canTx[3] == (can::TransmitEvent{can::TransmitEvent::Kind::Failed, 3, 0x150, at(0ms), at(0ms)}));
+    CHECK_EQ(ethTx.size(), 4u);
+    CHECK(ethTx[0] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Completed, 0, at(0ms), at(0ms)}));
+    CHECK(ethTx[1] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Completed, 1, at(0ms), at(0ms)}));
+    CHECK(ethTx[2] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Failed, 2, at(0ms), at(0ms)}));
+    CHECK(ethTx[3] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Failed, 3, at(0ms), at(0ms)}));
+    // Outstanding from step 20ms remains observable after stop/shutdown.
+    CHECK_EQ(raw.statistics().outstanding, 1u);
+    CHECK_EQ(ethernet.statistics().outstanding, 1u);
+
+    // Real-time Peer reports TransmitCapabilities::None on raw CAN.
+    PeerOptions rt;
+    rt.participant = "RealTimeCap";
+    rt.registry_uri = registry.uri;
+    rt.virtual_time = std::nullopt;
+    Peer rtPeer(rt);
+    CHECK(static_cast<vehicle_sil::Ecu&>(rtPeer).can("RT_CAN").transmit_capabilities() == can::TransmitCapabilities::None);
 }

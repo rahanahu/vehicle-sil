@@ -755,6 +755,8 @@ void Network::on_port_event(const can::PortEvent& event)
     case can::PortEvent::Kind::ErrorFrame:
         ++statistics_.error_frames;
         break;
+    case can::PortEvent::Kind::EventOverflow:
+        break;
     }
     if (observed())
     {

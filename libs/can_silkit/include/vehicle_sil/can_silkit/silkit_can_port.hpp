@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 namespace vehicle_sil::can {
 
@@ -82,6 +83,8 @@ struct SilKitCanPortStatistics
                                          ///< for error states, had no place besides the ones kept
                                          ///< for outstanding acknowledgements).
     std::size_t outstanding = 0;         ///< Frames sent whose acknowledgement was not released yet.
+    std::uint64_t tx_uncorrelated = 0;   ///< Virtual time: transmit acknowledgements that did not
+                                         ///< match an active 0xA6 correlation slot.
 };
 
 /// A vehicle_sil::can::Port on a SIL Kit CAN controller: of a participant with virtual time
@@ -148,6 +151,13 @@ struct SilKitCanPortStatistics
 class SilKitCanPort final : public Port
 {
 public:
+    /// Maximum number of simultaneously in-flight correlated frames (14-bit slot index in 0xA6 tag).
+    inline static constexpr std::size_t kMaxCorrelatedInFlight = 16'384;
+
+    /// Validates `options` (throws std::invalid_argument if invalid). Call before creating a SIL
+    /// Kit controller when constructing options dynamically.
+    static void validate(const SilKitCanPortOptions& options);
+
     SilKitCanPort(SilKit::Services::Can::ICanController& controller, SilKitCanPortOptions options = {});
     ~SilKitCanPort() override;
 
@@ -158,8 +168,13 @@ public:
     {
         return real_time_ ? TimeDomain::RealTime : TimeDomain::Virtual;
     }
+    [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept override
+    {
+        return real_time_ ? TransmitCapabilities::None : TransmitCapabilities::Correlated;
+    }
     std::size_t release_before(SimTime now, FrameSink sink) override;
     SendResult send(const TimedFrame& frame) override;
+    SendResult send(const TimedFrame& frame, std::uint64_t token) override;
     std::size_t release_events_before(SimTime now, PortEventSink sink) override;
     void set_wakeup(Wakeup wakeup) override;
 
@@ -180,6 +195,25 @@ public:
     [[nodiscard]] SilKitCanPortStatistics statistics() const;
 
 private:
+    struct CorrSlot
+    {
+        std::uint64_t token = 0;
+        SimTime send_time{};
+        std::uint8_t gen = 0;
+        bool in_use = false;
+    };
+
+    /// Allocates a FIFO correlation slot (caller holds corr_mutex_); nullopt if table is full.
+    std::optional<std::uint16_t> allocate_corr_slot(std::uint64_t token, SimTime send_time) noexcept;
+    /// Resolves and immediately frees a correlation slot (caller holds corr_mutex_).
+    bool resolve_and_free_corr_slot(std::uint16_t tag, std::uint64_t& token, SimTime& send_time) noexcept;
+    /// Rolls back a correlation slot on SendFrame() exception if not already freed (caller holds
+    /// corr_mutex_). Returns true if the slot was still in use and reclaimed; false if on_transmit()
+    /// already resolved and freed it.
+    bool reclaim_corr_slot_if_unused(std::uint16_t tag) noexcept;
+    /// Resets the correlation table (caller holds corr_mutex_).
+    void clear_corr_table() noexcept;
+
     void on_frame(const SilKit::Services::Can::CanFrameEvent& event);
     void on_transmit(const SilKit::Services::Can::CanFrameTransmitEvent& event) noexcept;
     void on_error_state(const SilKit::Services::Can::CanErrorStateChangeEvent& event) noexcept;
@@ -192,15 +226,22 @@ private:
     void require_started(const char* what) const;
 
     SilKit::Services::Can::ICanController& controller_;
-    StepInbox<Frame> inbox_;      ///< virtual time
-    StepInbox<PortEvent> events_; ///< virtual time
-    std::mutex overflow_mutex_;   ///< virtual time: guards overflow_
+    StepInbox<Frame> inbox_;                    ///< virtual time
+    StepInbox<PortEvent> events_;               ///< virtual time: correlated transmit events only
+    StepInbox<PortEvent> uncorrelated_events_;  ///< virtual time: BusStateChanged, ErrorFrame, uncorrelated acks
+    std::vector<PortEvent> uncorrelated_drain_; ///< driver thread scratch buffer for release_events_before()
+    std::mutex overflow_mutex_;                 ///< virtual time: guards overflow_ and event_overflow_
     OverflowCollector overflow_;
+    OverflowCollector event_overflow_{PortEvent::Kind::EventOverflow};
+    std::mutex corr_mutex_;                  ///< virtual time: guards corr_slots_ and corr_free_ring_
+    std::vector<CorrSlot> corr_slots_;       ///< virtual time: fixed-capacity correlation table
+    std::vector<std::uint16_t> corr_free_ring_; ///< virtual time: FIFO ring free-list of slot indices
+    std::size_t corr_free_head_ = 0;
+    std::size_t corr_free_count_ = 0;
     std::optional<RealTimeReceiver> real_time_;
     /// Virtual time: `now` of the latest release_before(), in ns (written on the driver's thread,
     /// read on SIL Kit's).
     std::atomic<std::int64_t> step_time_ns_{0};
-    std::atomic<std::uint64_t> event_refusals_{0}; ///< virtual time: error states without a place
     std::size_t transmit_capacity_;
     std::uint32_t bitrate_; ///< for start()
     std::atomic<std::size_t> outstanding_{0}; ///< changed on the driver's thread only; atomic for statistics()
@@ -220,6 +261,7 @@ private:
     std::atomic<std::uint64_t> tx_transmitted_{0};
     std::atomic<std::uint64_t> tx_canceled_{0};
     std::atomic<std::uint64_t> tx_queue_full_{0};
+    std::atomic<std::uint64_t> tx_uncorrelated_{0};
     std::atomic<std::uint64_t> error_state_changes_{0};
 };
 

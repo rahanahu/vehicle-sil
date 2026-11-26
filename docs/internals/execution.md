@@ -141,15 +141,17 @@ Each rule lives in one place, shared by the ECUs of `Peer` and `LocalBench`.
 
 ### Raw CAN (`can::RawChannel`)
 
-`RawChannel` is the foundation for protocols other than J1939. Receive with `on_frame(handler)` and send with `send(frame)`.
+`RawChannel` is the foundation for protocols other than J1939. Receive with `on_frame(handler)`, observe transmit completions/failures with `on_transmit(handler)` (setup only), and send with `send(frame)` or `send(frame, token)`. For full details of `TransmitEvent`, `outstanding` conservation, and `RawChannelOptions` capacity derivations, see [can.md](can.md#raw-channel-rawchannel).
 
 | Item | Specification |
 |---|---|
 | Where `send()` can be called | Only inside a step (elsewhere, `std::logic_error`) |
-| Result of `send()` | `RawSendStatus` (`Ok`, `QueueFull`, `InvalidFrame`) |
+| Result of `send()` | `RawSendStatus` (`Ok`, `QueueFull`, `InvalidFrame`; synchronous rejections emit no event and can be retried with the same token) |
 | When frames are sent | At the end of that step, in the order of the `send()` calls, with the time of the step |
-| Limits (`RawChannelOptions`) | Per step: 64 sent, 1024 received |
-| Frames beyond the limits | Counted and dropped; not retried |
+| `token` and `transmit_capabilities()` | Opaque per-channel `std::uint64_t` (`0` is valid); `transmit_capabilities()` (`None` or `Correlated`) is available during setup before `start()` |
+| Transmit notification (`on_transmit()`) | Never emitted in send step `T`; delivered in `process()` at `T' > T` before `on_frame()` (including `flush()` rejections at `time == T`) |
+| Limits (`RawChannelOptions`) | Per step: 64 sent, 1024 received; plus optional `transmit_event_capacity`, `port_inbox_capacity`, `port_event_capacity`, `port_transmit_queue_capacity`, `port_bitrate` |
+| Frames beyond the limits | Counted and dropped; not retried (frames accepted by `send()` that fail in `flush()` emit `TransmitEvent::Kind::Failed` in the next step) |
 | Frames the channel sent itself | Not received |
 
 If one ECU has both `j1939()` and `can()` on the same network name, they act as separate controllers and receive each other's frames. They receive them in the next step, but with the time of the step that sent them. A J1939 network ignores 11-bit frames. However, when a `Peer`'s J1939 network runs on a user port (`j1939(name, port)`, such as Vector XL), the two are on separate buses, because the raw channel is always on SIL Kit.
@@ -179,9 +181,10 @@ Errors in the schedule and options are `std::invalid_argument` from the engine's
 
 | Item | Specification |
 |---|---|
-| Receiving (`on_frame(handler)`) | Called at the start of the step, in order of reception (set it before the run) |
+| Receiving (`on_frame(handler)`) | Called in `process()` after `on_transmit()` handlers, in order of reception (set it before the run) |
+| Transmit notifications (`on_transmit(handler)`) | Called in `process()` at `T' > T` before `on_frame()` (never in send step `T`; `transmit_capabilities()` is `Correlated` in virtual time) |
 | Receiving (`receive()`) | Takes that step's frames one at a time, from `on_step()` and so on |
-| Sending (`send()`) | Can be called only inside a step. The frame is sent at the end of that step. |
+| Sending (`send(frame)` / `send(frame, token)`) | Can be called only inside a step (`0` is a valid token). The frame is sent at the end of that step. |
 | Channels that receive a frame | Every other channel on the same network (regardless of the destination address, as with a hub) |
 | Step of reception | A frame sent in the step at time t is received in the receiving ECU's "first step that starts after t" |
 | Order of frames with the same time | By source address; the order is the same in `Peer` and `LocalBench` |
@@ -192,11 +195,11 @@ Errors in the schedule and options are `std::invalid_argument` from the engine's
 | `Peer` | A SIL Kit Ethernet controller named after the network, and an `eth::SilKitEthPort` |
 | `LocalBench` | An endpoint of the `eth::VirtualEthernetBus` of that name |
 
-A `Peer`'s channel works in virtual time only. In real time, it throws `std::logic_error` with what to do in the message. The controller is activated at CommunicationReady. The transmit acknowledgement queue is made at least `send_capacity` long.
+A `Peer`'s channel works in virtual time only. In real time, it throws `std::logic_error` with what to do in the message. The controller is activated at CommunicationReady.
 
-Both implementations make the port's receive queue twice `receive_capacity`. If at most `receive_capacity` frames arrive from the network in one step, no frame is dropped, whatever the order in which the ECUs run and the timing of the threads.
+Both implementations propagate `ChannelOptions::port_inbox_capacity` (default `2 * receive_capacity`), `port_event_capacity` (at least `max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)` when `0`), and `port_transmit_queue_capacity` (`0` = backend default) to the port. If at most `receive_capacity` frames arrive from the network in one step, no frame is dropped, whatever the order in which the ECUs run and the timing of the threads.
 
-Option errors (`eth::Channel::validate()`) are rejected with `std::invalid_argument` before any controller or network is created, so you can call again with the same name.
+Option errors (`eth::Channel::validate()` and, on `Peer`, `eth::SilKitEthPort::validate()`) are rejected with `std::invalid_argument` before any controller or network is created, so you can call again with the same name.
 
 ### Disconnecting from the bus (`ecu.connected`)
 
@@ -216,11 +219,13 @@ Writing false and then true in the same step counts as never having been disconn
 
 #### CAN
 
+`detail::GatedCanPort` forwards `transmit_capabilities()` and 2-arg `send(frame, token)` to the underlying port.
+
 | While disconnected | What happens |
 |---|---|
 | Sending | The port returns `SendResult::Failed` |
 | J1939 `Network` | Counts the frame in `send_failures` and drops it (frames are not held, so they are not sent all at once on reconnection) |
-| Raw channel | Counts the frame in `frames_dropped` |
+| Raw channel | Counts the frame in `frames_dropped` and emits `TransmitEvent::Kind::Failed` (`send_time = T`, `time = T`) in the next step's `process()` instead of leaking the token |
 | J1939 transport protocol | The peer's responses do not arrive, so the transfer ends by timeout |
 | Sender of a BAM | Counts as having finished sending, even though the packets are not sent |
 | Bus state (`bus_state`) | Unchanged |
@@ -229,9 +234,9 @@ If the virtual bus has a timing model (`CanBusModel`), frames accepted before th
 
 #### Ethernet
 
-The timing rules are the same as for CAN.
+`detail::GatedEthPort` forwards `transmit_capabilities()` and 2-arg `send(frame, token)`. The timing rules are the same as for CAN.
 
-- Sending while disconnected gives the port's `SendResult::Failed`, and the channel counts the frame in `frames_dropped` and drops it.
+- Sending while disconnected gives the port's `SendResult::Failed`, and the channel counts the frame in `frames_dropped`, drops it, and emits `TransmitEvent::Kind::Failed` (`send_time = T`, `time = T`) in the next step's `process()` so the token is not leaked.
 - Frames are dropped at the end of the step, so `send()` still returns `Ok`.
 - Frames with a time while the ECU is disconnected are not passed to the channel.
 - Nothing is sent on reconnection.
@@ -415,8 +420,9 @@ Get what was created with these functions:
 LIN and Ethernet controllers start at the communication ready notification.
 
 - LIN nodes call `init()` at the communication ready notification.
-- A SIL Kit controller cannot be removed once created, so the LIN name, schedule and options are checked first (the engine's checks are `LinMaster::validate()` and `LinSlave::validate()`, the same checks the constructors make).
-- A `lin_master()` or `lin_slave()` that threw leaves nothing behind and can be called again with the same name.
+- A SIL Kit controller cannot be removed once created, so options are validated first: LIN name, schedule and options (`LinMaster::validate()`, `LinSlave::validate()`), raw CAN options (`can::RawChannel::validate()`, `can::SilKitCanPort::validate()` including `transmit_queue_capacity <= kMaxCorrelatedInFlight` in virtual time), and Ethernet options (`eth::Channel::validate()`, `eth::SilKitEthPort::validate()`). `can()` forwards `RawChannelOptions::port_bitrate` to `SilKitCanPortOptions::bitrate` (`SetBaudRate()` at `CommunicationReady`).
+- Virtual-time `SilKitCanPort` and `SilKitEthPort` report `TransmitCapabilities::Correlated` statically without runtime probing or downgrading if a simulator disconnects or omits `userContext`; any unacknowledged or uncorrelated frames are surfaced via `tx_uncorrelated` and `outstanding > 0`.
+- A `can()`, `ethernet()`, `lin_master()` or `lin_slave()` call that threw leaves nothing behind and can be called again with the same name.
 - The Ethernet controller is activated at the communication ready notification (`SilKitEthPort::start()`). If that fails, the participant goes to Error, with the network name in the message.
 
 Overlapping controller names are refused as follows:
@@ -500,7 +506,7 @@ The `Peer` owns the participant, the controllers, the ports, the `Network`s, the
 3. Close the SIL Kit ports.
 4. Set the Agent's pending writes to `Cancelled`.
 
-After `stop()`, the `Network`s and the Agent remain, so you can read statistics, records and the last values.
+After `stop()`, the `Network`s, channels (`RawChannel`, `eth::Channel`), and the Agent remain, so you can read statistics (including `outstanding` for any unacknowledged in-flight frames at shutdown), records and the last values.
 
 Destruction then destroys, in this order:
 
@@ -551,11 +557,11 @@ CHECK(events.has(j1939::EventKind::AddressChanged));
 |---|---|
 | `add_ecu(name, step)` | Creates an ECU and returns an `Ecu&` |
 | `Ecu::j1939(network)` | Adds an endpoint to the bus named `network`, wraps it in a `TapPort` and creates a `Network` |
-| `Ecu::can(network)` | Creates a raw channel. The raw channel also has its own endpoint on that bus. |
+| `Ecu::can(network)` | Validates options, creates a raw channel, and attaches its own endpoint on that bus with `VirtualCanBusEndpointOptions` (`port_inbox_capacity`, `port_event_capacity`, `port_transmit_queue_capacity`; `port_bitrate` is unused on `LocalBench`). |
 | `add_j1939(name, step, options)` | Shorthand that creates an ECU with one J1939 network |
 
 - Each ECU has its own host and step size (the same structure as giving each ECU its own participant on SIL Kit).
-- If there is no bus named `network`, `Ecu::j1939(network)` creates it with the constructor's options.
+- If there is no bus named `network`, `Ecu::j1939(network)` creates it with the constructor's options. `VirtualCanBusOptions::inbox_capacity` is the bus default for endpoints without channel-derived capacities (`Ecu::j1939()`, `injector()`, direct `bus().attach()`), whereas `Ecu::can()` (like `Ecu::ethernet()` and `Peer::can()`) derives endpoint capacities from `RawChannelOptions::port_inbox_capacity` and `RawChannelOptions::port_event_capacity` (set `RawChannelOptions::port_inbox_capacity` to tighten receive inbox capacity consistently across `LocalBench` and `Peer`).
 - ECUs that use the same name share the same bus.
 - An ECU can have `Network`s on several buses (a gateway).
 
@@ -581,7 +587,7 @@ CHECK(events.has(j1939::EventKind::AddressChanged));
 
 ### Virtual Ethernet
 
-`Ecu::ethernet(network)` attaches an endpoint to the virtual Ethernet network named `network` and creates an `eth::Channel`. The network is an `eth::VirtualEthernetBus`, created with default options when an ECU first uses the name.
+`Ecu::ethernet(network)` validates `ChannelOptions` before creating or naming any bus, attaches an endpoint to the virtual Ethernet network named `network` with per-endpoint capacities (`port_inbox_capacity`, `port_event_capacity`, `port_transmit_queue_capacity`), and creates an `eth::Channel`. The network is an `eth::VirtualEthernetBus`, created with default options when an ECU first uses the name.
 
 - Using the name of a CAN or LIN bus throws `std::invalid_argument` with both kinds in the message, in either order.
 - Get an ECU's channel with `ethernet(ecu, network)` and the network with `ethernet_bus(network)`.

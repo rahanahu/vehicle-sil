@@ -471,3 +471,184 @@ TEST_CASE(ethernet_of_a_local_bench_is_found_by_name_and_takes_frames_of_a_test)
                "vehicle_sil::LocalBench: ethernet_bus(\"CAN1\"): no Ethernet network named \"CAN1\". Ethernet networks: "
                "\"ETH\" (an ECU's ethernet(network) makes one); \"CAN1\" is a CAN bus");
 }
+
+namespace {
+
+std::string format_eth_tx(SimTime step, const eth::TransmitEvent& ev)
+{
+    return std::to_string(ms_of(step)) + " tx " + (ev.kind == eth::TransmitEvent::Kind::Completed ? "ok " : "fail ") +
+           "tok=" + std::to_string(ev.token) + " send=" + std::to_string(ms_of(ev.send_time)) +
+           " time=" + std::to_string(ms_of(ev.time));
+}
+
+class EthTxBurstSender
+{
+public:
+    explicit EthTxBurstSender(Ecu& ecu) :
+      channel(ecu.ethernet("ETH", {.send_capacity = 8, .mac = mac(0x01), .port_transmit_queue_capacity = 3}))
+    {
+        CHECK(channel.transmit_capabilities() == eth::TransmitCapabilities::Correlated);
+        channel.on_transmit([this](const eth::TransmitEvent& ev) {
+            CHECK(!in_on_step_);
+            CHECK(!saw_rx_since_last_step_);
+            step_tx_.push_back(ev);
+        });
+        channel.on_frame([this](const eth::TimedFrame& f) {
+            CHECK(!in_on_step_);
+            saw_rx_since_last_step_ = true;
+            step_rx_.push_back(f);
+        });
+        ecu.on_step([this](SimTime now) {
+            in_on_step_ = true;
+            for (const auto& ev : step_tx_)
+            {
+                CHECK(now > ev.send_time);
+                log.push_back(format_eth_tx(now, ev));
+                tx_events.push_back(ev);
+            }
+            for (const auto& f : step_rx_)
+            {
+                log.push_back(line(now, f));
+            }
+            step_tx_.clear();
+            step_rx_.clear();
+            saw_rx_since_last_step_ = false;
+
+            const eth::Frame identical = frame(eth::kBroadcast, mac(0x01), 0x77);
+            if (now == SimTime{})
+            {
+                // 5 identical-payload frames; port_transmit_queue_capacity = 3 ->
+                // tokens 0, 1, 2 Completed; tokens 3, 4 Failed via flush() QueueFull.
+                for (std::uint64_t tok = 0; tok < 5; ++tok)
+                {
+                    CHECK(channel.send(identical, tok) == eth::SendStatus::Ok);
+                }
+            }
+            else if (now == SimTime{} + 10ms)
+            {
+                CHECK(channel.send(identical, 0) == eth::SendStatus::Ok);
+                CHECK(channel.send(identical, 99) == eth::SendStatus::Ok);
+            }
+            in_on_step_ = false;
+        });
+    }
+
+    eth::Channel& channel;
+    std::vector<std::string> log;
+    std::vector<eth::TransmitEvent> tx_events;
+
+private:
+    std::vector<eth::TransmitEvent> step_tx_;
+    std::vector<eth::TimedFrame> step_rx_;
+    bool saw_rx_since_last_step_ = false;
+    bool in_on_step_ = false;
+};
+
+class EthTxBurstPeer
+{
+public:
+    explicit EthTxBurstPeer(Ecu& ecu) : channel(ecu.ethernet("ETH", {.mac = mac(0x02)}))
+    {
+        CHECK(channel.transmit_capabilities() == eth::TransmitCapabilities::Correlated);
+        channel.on_transmit([this](const eth::TransmitEvent& ev) {
+            CHECK(!in_on_step_);
+            CHECK(!saw_rx_since_last_step_);
+            step_tx_.push_back(ev);
+        });
+        channel.on_frame([this](const eth::TimedFrame& f) {
+            CHECK(!in_on_step_);
+            saw_rx_since_last_step_ = true;
+            step_rx_.push_back(f);
+        });
+        ecu.on_step([this](SimTime now) {
+            in_on_step_ = true;
+            for (const auto& ev : step_tx_)
+            {
+                CHECK(now > ev.send_time);
+                log.push_back(format_eth_tx(now, ev));
+            }
+            for (const auto& f : step_rx_)
+            {
+                log.push_back(line(now, f));
+            }
+            step_tx_.clear();
+            step_rx_.clear();
+            saw_rx_since_last_step_ = false;
+
+            if (now == SimTime{})
+            {
+                CHECK(channel.send(frame(eth::kBroadcast, mac(0x02), 1), 0) == eth::SendStatus::Ok);
+            }
+            in_on_step_ = false;
+        });
+    }
+
+    eth::Channel& channel;
+    std::vector<std::string> log;
+
+private:
+    std::vector<eth::TransmitEvent> step_tx_;
+    std::vector<eth::TimedFrame> step_rx_;
+    bool saw_rx_since_last_step_ = false;
+    bool in_on_step_ = false;
+};
+
+} // namespace
+
+// Pair 1 (Ethernet): LocalBench timing-less <-> SIL Kit Trivial Simulation TX-completion parity.
+TEST_CASE(ethernet_tx_completion_parity_locally_and_on_silkit)
+{
+    struct Result
+    {
+        std::vector<std::string> sender_log;
+        std::vector<std::string> peer_log;
+        std::vector<eth::TransmitEvent> sender_tx;
+        eth::ChannelStatistics sender_stats;
+        eth::ChannelStatistics peer_stats;
+    };
+    const auto run_parity = [](std::optional<SilKitOptions> silkit) {
+        Simulation sim(silkit);
+        auto& sender = sim.add<EthTxBurstSender>("Sender", 10ms);
+        auto& peer = sim.add<EthTxBurstPeer>("Peer", 10ms);
+        sim.run_for(40ms);
+        return Result{sender.log, peer.log, sender.tx_events, sender.channel.statistics(), peer.channel.statistics()};
+    };
+    const Result local = run_parity(std::nullopt);
+    const Result silkit = run_parity(SilKitOptions{});
+
+    CHECK_EQ(local.sender_tx.size(), 7u);
+    CHECK(local.sender_tx[0] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Completed, 0, SimTime{}, SimTime{}}));
+    CHECK(local.sender_tx[1] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Completed, 1, SimTime{}, SimTime{}}));
+    CHECK(local.sender_tx[2] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Completed, 2, SimTime{}, SimTime{}}));
+    CHECK(local.sender_tx[3] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Failed, 3, SimTime{}, SimTime{}}));
+    CHECK(local.sender_tx[4] == (eth::TransmitEvent{eth::TransmitEvent::Kind::Failed, 4, SimTime{}, SimTime{}}));
+    CHECK(local.sender_tx[5] ==
+          (eth::TransmitEvent{eth::TransmitEvent::Kind::Completed, 0, SimTime{} + 10ms, SimTime{} + 10ms}));
+    CHECK(local.sender_tx[6] ==
+          (eth::TransmitEvent{eth::TransmitEvent::Kind::Completed, 99, SimTime{} + 10ms, SimTime{} + 10ms}));
+
+    CHECK_EQ(local.sender_stats.frames_sent, 5u);
+    CHECK_EQ(local.sender_stats.frames_dropped, 2u);
+    CHECK_EQ(local.sender_stats.transmit_completed, 5u);
+    CHECK_EQ(local.sender_stats.transmit_failed, 2u);
+    CHECK_EQ(local.sender_stats.outstanding, 0u);
+    CHECK_EQ(local.peer_stats.outstanding, 0u);
+
+    CHECK(silkit.sender_tx == local.sender_tx);
+    CHECK(silkit.sender_log == local.sender_log);
+    CHECK(silkit.peer_log == local.peer_log);
+    CHECK_EQ(silkit.sender_stats.outstanding, 0u);
+    CHECK_EQ(silkit.peer_stats.outstanding, 0u);
+
+    // LocalBench pre-bus validation: invalid port_transmit_queue_capacity leaves no Ethernet bus.
+    {
+        vehicle_sil::LocalBench bench;
+        Ecu& ecu = bench.add_ecu("Check", 10ms);
+        check_text(
+            refusal([&] {
+                static_cast<void>(ecu.ethernet("NO_ETH", {.port_event_capacity = 4, .port_transmit_queue_capacity = 8}));
+            }),
+            "vehicle_sil::eth::Channel: port_transmit_queue_capacity must be <= port_event_capacity");
+        static_cast<void>(ecu.can("NO_ETH")); // name stayed free
+    }
+}

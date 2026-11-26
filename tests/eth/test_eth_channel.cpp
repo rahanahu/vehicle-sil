@@ -36,7 +36,10 @@ using vehicle_sil::eth::SendResult;
 using vehicle_sil::eth::SendStatus;
 using vehicle_sil::eth::TimedFrame;
 using vehicle_sil::eth::TimeDomain;
+using vehicle_sil::eth::TransmitCapabilities;
+using vehicle_sil::eth::TransmitEvent;
 using vehicle_sil::eth::VirtualEthernetBus;
+using vehicle_sil::eth::VirtualEthernetEndpointOptions;
 using vehicle_sil::unit::frame_bytes;
 using vehicle_sil::unit::group;
 using vehicle_sil::unit::mac;
@@ -434,4 +437,398 @@ TEST_CASE(channel_refuses_options_it_cannot_work_with)
                                              "Accept::Addressed needs the channel's own address (mac)"));
     Channel ok(port);
     CHECK(throws_with<std::invalid_argument>([&] { ok.on_frame({}); }, "empty handler"));
+    CHECK(throws_with<std::invalid_argument>([&] { ok.on_transmit({}); }, "empty handler"));
+
+    ChannelOptions badTxQueue;
+    badTxQueue.port_event_capacity = 8;
+    badTxQueue.port_transmit_queue_capacity = 9;
+    CHECK(throws_with<std::invalid_argument>([&] { Channel::validate(badTxQueue); },
+                                             "port_transmit_queue_capacity must be <= port_event_capacity"));
+    CHECK(throws_with<std::invalid_argument>([&] { Channel c(port, badTxQueue); },
+                                             "port_transmit_queue_capacity must be <= port_event_capacity"));
+}
+
+TEST_CASE(channel_derives_port_inbox_and_event_capacities_with_overrides)
+{
+    CHECK_EQ(Channel::port_inbox_capacity({.receive_capacity = 8, .port_inbox_capacity = 100}), std::size_t{100});
+    CHECK_EQ(Channel::port_event_capacity({}), std::size_t{1024});
+    CHECK_EQ(Channel::port_event_capacity({.send_capacity = 600}), std::size_t{1200});
+    CHECK_EQ(Channel::port_event_capacity({.send_capacity = 100, .transmit_event_capacity = 2000}), std::size_t{2000});
+    CHECK_EQ(Channel::port_event_capacity({.send_capacity = 100, .port_transmit_queue_capacity = 1500}),
+             std::size_t{1600});
+    CHECK_EQ(Channel::port_event_capacity({.send_capacity = 100, .port_event_capacity = 64}), std::size_t{64});
+}
+
+TEST_CASE(channel_on_transmit_fires_before_on_frame_in_next_step_with_token_zero_and_reentrancy)
+{
+    VirtualEthernetBus bus;
+    auto& epA = bus.attach();
+    auto& epB = bus.attach();
+    Channel a(epA);
+    Channel b(epB);
+    CHECK(a.transmit_capabilities() == TransmitCapabilities::Correlated);
+
+    std::vector<std::string> trace;
+    std::vector<TransmitEvent> txEvents;
+    bool reentrantSent = false;
+    a.on_transmit([&](const TransmitEvent& ev) {
+        trace.push_back("tx:" + std::to_string(ev.token));
+        txEvents.push_back(ev);
+        if (ev.token == 0 && !reentrantSent)
+        {
+            // outstanding has already been decremented before invoking on_transmit.
+            CHECK_EQ(a.statistics().outstanding, 2u);
+            reentrantSent = true;
+            CHECK(a.send(make_frame(mac(2), mac(1), 1, 99), 999) == SendStatus::Ok);
+            CHECK_EQ(a.statistics().outstanding, 3u);
+        }
+    });
+    a.on_frame([&](const TimedFrame& f) { trace.push_back("rx:" + std::to_string(f.frame.bytes()[15])); });
+
+    member(a).start(std::nullopt);
+    member(b).start(std::nullopt);
+    CHECK(throws_with<std::logic_error>([&] { a.on_transmit([](const TransmitEvent&) {}); },
+                                        "on_transmit() is only allowed before the host starts"));
+
+    // Step 1ms: A sends identical frames with distinct tokens including 0; B also sends to A.
+    const Frame identical = make_frame(mac(2), mac(1), 1, 7, 64);
+    run_step(a, at(1ms), [&] {
+        CHECK(a.send(identical, 0) == SendStatus::Ok);
+        CHECK(a.send(identical, 100) == SendStatus::Ok);
+        CHECK(a.send(identical, 200) == SendStatus::Ok);
+        CHECK_EQ(a.statistics().outstanding, 3u);
+        CHECK(txEvents.empty()); // never fires in send()
+    });
+    CHECK(txEvents.empty()); // never fires in flush()
+    CHECK_EQ(a.statistics().outstanding, 3u);
+    CHECK_EQ(a.statistics().transmit_completed, 0u);
+
+    run_step(b, at(1ms), [&] { CHECK(b.send(make_frame(mac(1), mac(2), 2, 55)) == SendStatus::Ok); });
+
+    // Step 2ms: A sees all 3 on_transmit events BEFORE on_frame(55), and token 0 reentrantly sends 999.
+    run_step(a, at(2ms), [] {});
+    const std::vector<std::string> expectedTrace = {"tx:0", "tx:100", "tx:200", "rx:55"};
+    CHECK(trace == expectedTrace);
+    CHECK_EQ(txEvents.size(), 3u);
+    CHECK((txEvents[0] == TransmitEvent{TransmitEvent::Kind::Completed, 0, at(1ms), at(1ms)}));
+    CHECK((txEvents[1] == TransmitEvent{TransmitEvent::Kind::Completed, 100, at(1ms), at(1ms)}));
+    CHECK((txEvents[2] == TransmitEvent{TransmitEvent::Kind::Completed, 200, at(1ms), at(1ms)}));
+    CHECK_EQ(a.statistics().transmit_completed, 3u);
+    CHECK_EQ(a.statistics().outstanding, 1u); // token 999 still awaiting step 3ms
+
+    // Step 3ms: reentrant send 999 completes; outstanding returns to 0.
+    run_step(a, at(3ms), [] {});
+    CHECK_EQ(txEvents.size(), 4u);
+    CHECK((txEvents[3] == TransmitEvent{TransmitEvent::Kind::Completed, 999, at(2ms), at(2ms)}));
+    CHECK_EQ(a.statistics().transmit_completed, 4u);
+    CHECK_EQ(a.statistics().outstanding, 0u);
+}
+
+TEST_CASE(channel_sync_rejections_do_not_emit_events_and_retry_with_same_token_works)
+{
+    VirtualEthernetBus bus;
+    ChannelOptions options;
+    options.send_capacity = 1;
+    options.max_frame_bytes = 64;
+    Channel ch(bus.attach(), options);
+    std::vector<TransmitEvent> txEvents;
+    ch.on_transmit([&](const TransmitEvent& ev) { txEvents.push_back(ev); });
+    member(ch).start(std::nullopt);
+
+    const Frame valid = make_frame(kBroadcast, mac(1), 1, 0, 64);
+    const Frame tooLong = make_frame(kBroadcast, mac(1), 1, 1, 65);
+    run_step(ch, at(1ms), [&] {
+        CHECK(ch.send(tooLong, 77) == SendStatus::InvalidFrame);
+        CHECK_EQ(ch.statistics().outstanding, 0u);
+        CHECK(ch.send(valid, 11) == SendStatus::Ok);
+        CHECK_EQ(ch.statistics().outstanding, 1u);
+        CHECK(ch.send(valid, 22) == SendStatus::QueueFull);
+        CHECK_EQ(ch.statistics().outstanding, 1u);
+    });
+    // Step 2ms: only token 11 completes; retry token 22 cleanly.
+    run_step(ch, at(2ms), [&] {
+        CHECK_EQ(txEvents.size(), 1u);
+        CHECK((txEvents[0] == TransmitEvent{TransmitEvent::Kind::Completed, 11, at(1ms), at(1ms)}));
+        CHECK(ch.send(valid, 22) == SendStatus::Ok);
+    });
+    // Step 3ms: token 22 completes exactly once.
+    run_step(ch, at(3ms), [] {});
+    CHECK_EQ(txEvents.size(), 2u);
+    CHECK((txEvents[1] == TransmitEvent{TransmitEvent::Kind::Completed, 22, at(2ms), at(2ms)}));
+    CHECK_EQ(ch.statistics().sends_rejected, 2u);
+    CHECK_EQ(ch.statistics().transmit_completed, 2u);
+    CHECK_EQ(ch.statistics().transmit_failed, 0u);
+    CHECK_EQ(ch.statistics().outstanding, 0u);
+}
+
+TEST_CASE(channel_flush_rejections_merge_chronologically_and_conserve_outstanding)
+{
+    // 1. Same-step send-order merge on VirtualEthernetBus with transmit_queue_capacity = 2.
+    {
+        VirtualEthernetBus bus;
+        auto& ep = bus.attach(VirtualEthernetEndpointOptions{.transmit_queue_capacity = 2});
+        Channel ch(ep);
+        std::vector<TransmitEvent> txEvents;
+        ch.on_transmit([&](const TransmitEvent& ev) { txEvents.push_back(ev); });
+        member(ch).start(std::nullopt);
+
+        const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+        run_step(ch, at(1ms), [&] {
+            for (std::uint64_t tok = 0; tok < 4; ++tok)
+            {
+                CHECK(ch.send(frame, tok) == SendStatus::Ok);
+            }
+        });
+        // Flush rejected tokens 2 and 3; none delivered yet.
+        CHECK(txEvents.empty());
+        CHECK_EQ(ch.statistics().frames_sent, 2u);
+        CHECK_EQ(ch.statistics().frames_dropped, 2u);
+        CHECK_EQ(ch.statistics().outstanding, 4u);
+
+        run_step(ch, at(2ms), [] {});
+        CHECK_EQ(txEvents.size(), 4u);
+        CHECK((txEvents[0] == TransmitEvent{TransmitEvent::Kind::Completed, 0, at(1ms), at(1ms)}));
+        CHECK((txEvents[1] == TransmitEvent{TransmitEvent::Kind::Completed, 1, at(1ms), at(1ms)}));
+        CHECK((txEvents[2] == TransmitEvent{TransmitEvent::Kind::Failed, 2, at(1ms), at(1ms)}));
+        CHECK((txEvents[3] == TransmitEvent{TransmitEvent::Kind::Failed, 3, at(1ms), at(1ms)}));
+        CHECK_EQ(ch.statistics().transmit_completed, 2u);
+        CHECK_EQ(ch.statistics().transmit_failed, 2u);
+        CHECK_EQ(ch.statistics().outstanding, 0u);
+    }
+
+    // 2. Chronological merge when port completion has time > flush failure time.
+    {
+        class DelayedCorrelatedPort final : public Port
+        {
+        public:
+            std::deque<SendResult> results;
+            std::deque<PortEvent> events;
+            [[nodiscard]] TimeDomain time_domain() const noexcept override { return TimeDomain::Virtual; }
+            [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept override
+            {
+                return TransmitCapabilities::Correlated;
+            }
+            std::size_t release_before(SimTime, FrameSink) override { return 0; }
+            SendResult send(const TimedFrame& frame) override { return send(frame, 0); }
+            SendResult send(const TimedFrame& frame, std::uint64_t token) override
+            {
+                SendResult r = SendResult::Accepted;
+                if (!results.empty())
+                {
+                    r = results.front();
+                    results.pop_front();
+                }
+                if (r == SendResult::Accepted)
+                {
+                    events.push_back(PortEvent{PortEvent::Kind::TransmitCompleted, frame.time + 500us, 0, frame.time,
+                                               token, true});
+                }
+                return r;
+            }
+            std::size_t release_events_before(SimTime now, PortEventSink sink) override
+            {
+                std::size_t n = 0;
+                while (!events.empty() && events.front().time < now)
+                {
+                    sink(events.front());
+                    events.pop_front();
+                    ++n;
+                }
+                return n;
+            }
+        };
+
+        DelayedCorrelatedPort port;
+        port.results = {SendResult::Accepted, SendResult::Failed};
+        Channel ch(port);
+        std::vector<TransmitEvent> txEvents;
+        ch.on_transmit([&](const TransmitEvent& ev) { txEvents.push_back(ev); });
+        member(ch).start(std::nullopt);
+
+        const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+        run_step(ch, at(1ms), [&] {
+            CHECK(ch.send(frame, 10) == SendStatus::Ok);
+            CHECK(ch.send(frame, 20) == SendStatus::Ok);
+        });
+        run_step(ch, at(2ms), [] {});
+        CHECK_EQ(txEvents.size(), 2u);
+        // Failed at 1ms precedes Completed at 1.5ms (strict monotonic TransmitEvent::time).
+        CHECK((txEvents[0] == TransmitEvent{TransmitEvent::Kind::Failed, 20, at(1ms), at(1ms)}));
+        CHECK((txEvents[1] == TransmitEvent{TransmitEvent::Kind::Completed, 10, at(1ms), at(1ms) + 500us}));
+        CHECK_EQ(ch.statistics().outstanding, 0u);
+    }
+}
+
+TEST_CASE(channel_conserves_outstanding_on_overflow_without_handler_and_on_uncorrelated_port)
+{
+    // 1. Port EventOverflow + Channel transmit_event_capacity overflow + no on_transmit handler.
+    {
+        VirtualEthernetBus bus;
+        auto& ep = bus.attach(VirtualEthernetEndpointOptions{.event_capacity = 3, .transmit_queue_capacity = 0});
+        ChannelOptions options;
+        options.transmit_event_capacity = 2;
+        Channel ch(ep, options); // no on_transmit handler registered
+        member(ch).start(std::nullopt);
+
+        const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+        run_step(ch, at(1ms), [&] {
+            for (std::uint64_t i = 0; i < 5; ++i)
+            {
+                CHECK(ch.send(frame, i) == SendStatus::Ok);
+            }
+        });
+        CHECK_EQ(ch.statistics().outstanding, 5u);
+        // Next step: port kept 3 (EventOverflow count=2); channel keeps 2 (transmit_event_overflows=1).
+        run_step(ch, at(2ms), [] {});
+        const auto& s = ch.statistics();
+        CHECK_EQ(s.transmit_completed, 2u);
+        CHECK_EQ(s.transmit_event_overflows, 1u);
+        CHECK_EQ(s.port_event_overflows, 2u);
+        CHECK_EQ(s.outstanding, 0u);
+        CHECK_EQ(s.frames_sent, s.transmit_completed + s.transmit_failed + s.transmit_event_overflows +
+                                    s.port_event_overflows + s.outstanding);
+    }
+
+    // 2. FakePort (TransmitCapabilities::None): accepted sends do not grow outstanding,
+    // uncorrelated PortEvents do not fabricate on_transmit, flush() rejections still notify Failed.
+    {
+        FakePort port;
+        port.results = {SendResult::Accepted, SendResult::Failed};
+        Channel ch(port);
+        CHECK(ch.transmit_capabilities() == TransmitCapabilities::None);
+        std::vector<TransmitEvent> txEvents;
+        ch.on_transmit([&](const TransmitEvent& ev) { txEvents.push_back(ev); });
+        member(ch).start(std::nullopt);
+
+        const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+        run_step(ch, at(1ms), [&] {
+            CHECK(ch.send(frame, 1) == SendStatus::Ok);
+            CHECK(ch.send(frame, 2) == SendStatus::Ok);
+            CHECK_EQ(ch.statistics().outstanding, 0u); // None port: not incremented on send()
+        });
+        CHECK_EQ(ch.statistics().frames_sent, 1u);
+        CHECK_EQ(ch.statistics().frames_dropped, 1u);
+        CHECK_EQ(ch.statistics().outstanding, 1u); // only the flush-rejected token 2
+
+        // Inject an uncorrelated PortEvent: updates legacy counter without fabricating on_transmit.
+        port.events.push_back(PortEvent{PortEvent::Kind::TransmitCompleted, at(1ms), 0});
+        run_step(ch, at(2ms), [] {});
+        CHECK_EQ(ch.statistics().transmit_completed, 1u);
+        CHECK_EQ(ch.statistics().transmit_failed, 1u);
+        CHECK_EQ(ch.statistics().outstanding, 0u);
+        CHECK_EQ(txEvents.size(), 1u);
+        CHECK((txEvents[0] == TransmitEvent{TransmitEvent::Kind::Failed, 2, at(1ms), at(1ms)}));
+    }
+
+    // 3. Correlated port receiving uncorrelated/duplicate acks: must NOT increment
+    // transmit_completed / transmit_failed or fabricate on_transmit, preserving the
+    // outstanding conservation identity strictly.
+    {
+        class MixedCorrelatedPort final : public Port
+        {
+        public:
+            std::deque<PortEvent> events;
+            [[nodiscard]] TimeDomain time_domain() const noexcept override { return TimeDomain::Virtual; }
+            [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept override
+            {
+                return TransmitCapabilities::Correlated;
+            }
+            std::size_t release_before(SimTime, FrameSink) override { return 0; }
+            SendResult send(const TimedFrame&) override { return SendResult::Accepted; }
+            SendResult send(const TimedFrame&, std::uint64_t) override { return SendResult::Accepted; }
+            std::size_t release_events_before(SimTime now, PortEventSink sink) override
+            {
+                std::size_t n = 0;
+                while (!events.empty() && events.front().time < now)
+                {
+                    sink(events.front());
+                    events.pop_front();
+                    ++n;
+                }
+                return n;
+            }
+        };
+
+        MixedCorrelatedPort port;
+        Channel ch(port);
+        std::vector<TransmitEvent> txEvents;
+        ch.on_transmit([&](const TransmitEvent& ev) { txEvents.push_back(ev); });
+        member(ch).start(std::nullopt);
+
+        const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+        run_step(ch, at(1ms), [&] {
+            CHECK(ch.send(frame, 42) == SendStatus::Ok);
+            CHECK(ch.send(frame, 43) == SendStatus::Ok);
+        });
+        // Simulator omits userContext for token 42 (uncorrelated Completed + Failed) while
+        // correlating token 43 normally.
+        port.events.push_back(PortEvent{PortEvent::Kind::TransmitCompleted, at(1ms), 0, std::nullopt, 0, false});
+        port.events.push_back(PortEvent{PortEvent::Kind::TransmitFailed, at(1ms), 0, std::nullopt, 0, false});
+        port.events.push_back(PortEvent{PortEvent::Kind::TransmitCompleted, at(1ms), 0, at(1ms), 43, true});
+
+        run_step(ch, at(2ms), [] {});
+        const auto& s = ch.statistics();
+        CHECK_EQ(txEvents.size(), 1u);
+        CHECK((txEvents[0] == TransmitEvent{TransmitEvent::Kind::Completed, 43, at(1ms), at(1ms)}));
+        CHECK_EQ(s.transmit_completed, 1u);
+        CHECK_EQ(s.transmit_failed, 0u);
+        CHECK_EQ(s.outstanding, 1u); // token 42 remains observably outstanding
+        CHECK_EQ(s.frames_sent, s.transmit_completed + s.transmit_failed + s.transmit_event_overflows +
+                                    s.port_event_overflows + s.outstanding);
+    }
+}
+
+TEST_CASE(channel_equal_now_flush_rejections_cap_buffer_and_conserve_outstanding)
+{
+    // A correlated port that always returns Failed so two flush() calls at equal now try to
+    // queue > send_capacity flush_failed_ entries.
+    class AlwaysFailCorrelatedPort final : public Port
+    {
+    public:
+        [[nodiscard]] TimeDomain time_domain() const noexcept override { return TimeDomain::Virtual; }
+        [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept override
+        {
+            return TransmitCapabilities::Correlated;
+        }
+        std::size_t release_before(SimTime, FrameSink) override { return 0; }
+        SendResult send(const TimedFrame&) override { return SendResult::Failed; }
+        SendResult send(const TimedFrame&, std::uint64_t) override { return SendResult::Failed; }
+    };
+
+    AlwaysFailCorrelatedPort port;
+    ChannelOptions options;
+    options.send_capacity = 2;
+    options.transmit_event_capacity = 1; // intentionally smaller than send_capacity (m3 check)
+    Channel ch(port, options);
+    std::vector<TransmitEvent> txEvents;
+    ch.on_transmit([&](const TransmitEvent& ev) { txEvents.push_back(ev); });
+    member(ch).start(std::nullopt);
+
+    const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+    // Two steps at equal timestamp 1ms: first queues 2 flush_failed_ (full), second overflows 2.
+    run_step(ch, at(1ms), [&] {
+        CHECK(ch.send(frame, 10) == SendStatus::Ok);
+        CHECK(ch.send(frame, 11) == SendStatus::Ok);
+    });
+    run_step(ch, at(1ms), [&] {
+        CHECK(ch.send(frame, 12) == SendStatus::Ok);
+        CHECK(ch.send(frame, 13) == SendStatus::Ok);
+    });
+    CHECK(txEvents.empty()); // none delivered at equal timestamp 1ms
+    CHECK_EQ(ch.statistics().frames_dropped, 4u);
+    CHECK_EQ(ch.statistics().transmit_event_overflows, 2u);
+    CHECK_EQ(ch.statistics().outstanding, 2u);
+
+    // Step at 2ms delivers the 2 retained flush_failed_ entries (even though transmit_event_capacity == 1).
+    run_step(ch, at(2ms), [] {});
+    CHECK_EQ(txEvents.size(), 2u);
+    CHECK((txEvents[0] == TransmitEvent{TransmitEvent::Kind::Failed, 10, at(1ms), at(1ms)}));
+    CHECK((txEvents[1] == TransmitEvent{TransmitEvent::Kind::Failed, 11, at(1ms), at(1ms)}));
+    const auto& s = ch.statistics();
+    CHECK_EQ(s.transmit_failed, 2u);
+    CHECK_EQ(s.transmit_event_overflows, 2u);
+    CHECK_EQ(s.outstanding, 0u);
+    CHECK_EQ(s.frames_sent + s.frames_dropped,
+             s.transmit_completed + s.transmit_failed + s.transmit_event_overflows + s.port_event_overflows +
+                 s.outstanding);
 }

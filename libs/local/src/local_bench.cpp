@@ -470,14 +470,20 @@ private:
         {
             owner_.require_new_bus(network, "can(\"" + network + "\")");
         }
+        can::RawChannel::validate(options); // before a bus is made or named
+        const can::VirtualCanBusEndpointOptions endpointOptions{
+            can::RawChannel::port_inbox_capacity(options),
+            can::RawChannel::port_event_capacity(options),
+            options.port_transmit_queue_capacity,
+        };
         auto r = std::make_unique<RawCan>();
-        r->channel = std::make_unique<can::RawChannel>(options); // std::invalid_argument
+        r->channel = std::make_unique<can::RawChannel>(options);
         // The host must not keep a channel that is not kept here: push_back() cannot throw
         // after the reserve(). (An endpoint stays on its bus once attached.)
         raw_channels_.reserve(raw_channels_.size() + 1);
         r->bus = &owner_.use_bus(existing, network);
         r->order = added_++;
-        r->endpoint = &r->bus->bus->attach();
+        r->endpoint = &r->bus->bus->attach(endpointOptions);
         r->gate = std::make_unique<detail::GatedCanPort>(*r->endpoint, agent_.connection());
         host_->add(*r->channel, *r->gate);
         raw_channels_.push_back(std::move(r));
@@ -519,6 +525,11 @@ private:
         }
         owner_.require_name(network, name_, what, NetworkKind::Ethernet);
         eth::Channel::validate(options); // before a bus is made
+        const eth::VirtualEthernetEndpointOptions endpointOptions{
+            eth::Channel::port_inbox_capacity(options),
+            eth::Channel::port_event_capacity(options),
+            options.port_transmit_queue_capacity,
+        };
         auto e = std::make_unique<EthernetChannel>();
         e->network = network;
         e->mac = options.mac;
@@ -526,8 +537,7 @@ private:
         // after the reserve(). (An endpoint stays on its network once attached.)
         ethernet_.reserve(ethernet_.size() + 1);
         // Room for receive_capacity frames in every step, in whatever order the ECUs are stepped.
-        eth::VirtualEthernetBus::Endpoint& endpoint =
-            owner_.use_ethernet_bus(network).attach(eth::Channel::port_inbox_capacity(options));
+        eth::VirtualEthernetBus::Endpoint& endpoint = owner_.use_ethernet_bus(network).attach(endpointOptions);
         e->gate = std::make_unique<detail::GatedEthPort>(endpoint, agent_.connection());
         e->channel = std::make_unique<eth::Channel>(*e->gate, std::move(options));
         host_->add(*e->channel);
