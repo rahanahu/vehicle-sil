@@ -322,6 +322,7 @@ export class SessionFeed implements ClientSession {
     const selectedRaw: unknown[] = [];
     let applied = false;
     let synced = this.synced.get();
+    let syncReset = false;
     let allowedNow = this.allowedValue.get();
     let runtimeNow = this.runtimeValue.get();
     const takeAllowed = (incoming: ServerAllowed | null | undefined) => {
@@ -356,6 +357,7 @@ export class SessionFeed implements ClientSession {
       switch (message.type) {
         case 'hello': {
           synced = false;
+          syncReset = true;
           replaying = true;
           const { session: summary, replay } = message;
           const sameInstance = instance !== null && instance === message.instance;
@@ -468,6 +470,7 @@ export class SessionFeed implements ClientSession {
         case 'resync':
           // Sent again shortly, starting with hello. Not in sync until then
           synced = false;
+          syncReset = true;
           replaying = true;
           resyncing = true;
           selectedBatch.push(message);
@@ -500,7 +503,7 @@ export class SessionFeed implements ClientSession {
     const notifySession = this.current.setDeferred(session);
     const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
     const notifyRuntime = this.runtimeValue.setDeferred(runtimeNow);
-    if (!synced) {
+    if (!synced || syncReset) {
       this.synced.set(false);
       if (!sameStream()) return;
     }
@@ -508,17 +511,9 @@ export class SessionFeed implements ClientSession {
       this.onInstance?.(instance);
       if (!sameStream()) return;
     }
-    // Update raw listeners (VariablesFeed) before marking synced or notifying session/ready subscribers, so
-    // subscribers never observe ready=true or a new session with stale variables state.
-    if (selectedRaw.length > 0) {
-      callEach(this.rawListeners, [selectedRaw, sameStream], this.onError, sameStream);
-    }
-    if (!sameStream()) return;
-    const notifySynced = this.synced.setDeferred(synced);
     notifySession();
     notifyAllowed();
     notifyRuntime();
-    notifySynced();
     if (!sameStream()) return;
     for (const notice of notices) {
       this.notify(notice);
@@ -527,6 +522,15 @@ export class SessionFeed implements ClientSession {
     if (applied) this.receivedAt.set(Date.now());
     if (!sameStream()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
+    if (!sameStream()) return;
+    if (selectedRaw.length > 0) {
+      callEach(this.rawListeners, [selectedRaw, sameStream], this.onError, sameStream);
+    }
+    if (!sameStream()) return;
+    // Mark synced and notify ready subscribers only after both session state and raw listeners
+    // (VariablesFeed) have applied the batch, so ready=true never observes stale variable state.
+    const notifySynced = this.synced.setDeferred(synced);
+    notifySynced();
     if (!sameStream()) return;
     if (selectedBatch.length > 0) {
       callEach(this.messageListeners, [selectedBatch], this.onError, sameStream);

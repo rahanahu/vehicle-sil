@@ -885,7 +885,7 @@ describe('client.variables.bind', () => {
       demand.close();
     });
 
-    it('updates VariablesFeed before notifying session/ready so immediate post-reconnect writes target the new run', async () => {
+    it('updates VariablesFeed before notifying ready so immediate post-reconnect writes target the new run', async () => {
       const demand = client.variables.bind(ref('engine.demand'));
       await deliver(hello('ready', 1), synced(1), values(100, false, { 'engine.demand': 10 }));
       expect(client.variables.state.get().session).toBe('1');
@@ -896,7 +896,6 @@ describe('client.variables.bind', () => {
 
       const observedOnSession: {
         sessionId: string | null;
-        varSession: string | null;
         ready: boolean;
       }[] = [];
       const observedOnReady: {
@@ -904,10 +903,13 @@ describe('client.variables.bind', () => {
         varSession: string | null;
         block: string | null;
       }[] = [];
+      const observedOnOnline: {
+        run: string;
+        varSession: string | null;
+      }[] = [];
       const stopSession = client.session.session.subscribe((s) => {
         observedOnSession.push({
           sessionId: s?.id ?? null,
-          varSession: client.variables.state.get().session,
           ready: client.session.ready.get(),
         });
       });
@@ -921,16 +923,155 @@ describe('client.variables.bind', () => {
         // Immediate write inside the ready notification must target run 2, not stale run 1
         demand.write(75);
       });
+      const stopStatus = front.status.subscribe((status) => {
+        if (status.link !== 'online') return;
+        observedOnOnline.push({
+          run: status.run,
+          varSession: client.variables.state.get().session,
+        });
+      });
 
       await deliver(hello('ready', 2), synced(2));
       stopSession();
       stopReady();
+      stopStatus();
 
-      expect(observedOnSession).toEqual([{ sessionId: '2', varSession: '2', ready: false }]);
+      expect(observedOnSession).toEqual([{ sessionId: '2', ready: false }]);
       expect(observedOnReady).toEqual([{ sessionId: '2', varSession: '2', block: null }]);
+      expect(observedOnOnline).toEqual([{ run: 'running', varSession: '2' }]);
       expect(requests().map((r) => r.request.body)).toEqual([
         { run_id: '2', writes: { Engine: { 'engine.demand': 75 } } },
       ]);
+      demand.close();
+    });
+
+    it('keeps front.status and front.clock coherent when event(state) and values coalesce in one batch', async () => {
+      await deliver(hello('ready', 1), synced(1));
+      const speed = front.variable('Engine.engine.speed');
+      const seen: {
+        varCond: string;
+        frontRun: string;
+        frontClockSimMs: number | null;
+      }[] = [];
+      const stop = speed.subscribe((v) => {
+        seen.push({
+          varCond: v.condition.kind,
+          frontRun: front.status.get().run,
+          frontClockSimMs: front.clock.get().sim_ms,
+        });
+      });
+
+      await deliver(
+        launcherEvent(1, { ...runningState, paused: true, paused_at_ms: 500 }),
+        values(500, true, { 'engine.speed': 1234 }),
+      );
+      stop();
+
+      expect(seen).toContainEqual({
+        varCond: 'paused',
+        frontRun: 'paused',
+        frontClockSimMs: 500,
+      });
+      // front.variable must never report paused while front.status still reports running
+      expect(seen.some((s) => s.varCond === 'paused' && s.frontRun !== 'paused')).toBe(false);
+    });
+
+    it('never emits a contradictory block/can_write state when session(Run 2) and variables(Run 2) coalesce', async () => {
+      await deliver(
+        hello('ended', 1, {
+          state: 'ended',
+          phase: 'ended',
+          launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
+          launcher_state: { ...runningState, phase: 'ended' },
+          result: {
+            vehicle_sil_run: 2,
+            file: 'sim.yaml',
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            message: 'completed',
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+            participants: [],
+            findings: [],
+          },
+        }),
+        synced(1),
+      );
+      expect(front.status.get().run).toBe('ended');
+
+      const demand = front.variable('Engine.engine.demand');
+      const seen: {
+        block: string | null;
+        canWrite: boolean;
+        why: string | null;
+        frontRun: string;
+      }[] = [];
+      const stop = demand.subscribe((v) => {
+        seen.push({
+          block: v.block,
+          canWrite: v.can_write,
+          why: v.why?.code ?? null,
+          frontRun: front.status.get().run,
+        });
+      });
+
+      await deliver(
+        {
+          type: 'session',
+          session: {
+            id: '2',
+            state: 'running',
+            phase: 'running',
+            launcher: { pid: 2, running: true, exit_code: null, signal: null, silent_s: null },
+            stop: 'none',
+            launcher_state: runningState,
+          },
+        },
+        {
+          type: 'variables',
+          run_id: '2',
+          variables: variables('ready', true),
+        },
+      );
+      stop();
+
+      expect(seen.some((s) => s.block === null && !s.canWrite)).toBe(false);
+      expect(seen.at(-1)).toEqual({
+        block: null,
+        canWrite: true,
+        why: null,
+        frontRun: 'running',
+      });
+    });
+
+    it('drops ready before updating session and variables when resync, hello and synced coalesce', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello('ready', 1), synced(1));
+      expect(client.session.ready.get()).toBe(true);
+
+      const readyTransitions: {
+        ready: boolean;
+        sessionId: string | null;
+        varSession: string | null;
+      }[] = [];
+      const stopReady = client.session.ready.subscribe((isReady) => {
+        readyTransitions.push({
+          ready: isReady,
+          sessionId: client.session.session.get()?.id ?? null,
+          varSession: client.variables.state.get().session,
+        });
+      });
+
+      await deliver({ type: 'resync' }, hello('ready', 2), synced(2));
+      stopReady();
+
+      expect(readyTransitions).toEqual([
+        { ready: false, sessionId: '2', varSession: '1' },
+        { ready: true, sessionId: '2', varSession: '2' },
+      ]);
+      expect(demand.state.get().block).toBeNull();
       demand.close();
     });
 
