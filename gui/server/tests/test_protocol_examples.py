@@ -30,7 +30,8 @@ from fake_runtime import _validate_run_state, _validate_status_members, validate
 from vehicle_sil_gui import __version__
 from vehicle_sil_gui.contracts import ErrorCode, HTTP_ERROR_CODES
 from vehicle_sil_gui.launcher import REQUIRED_FEATURES
-from vehicle_sil_gui.openapi import TARGETS as OPENAPI_TARGETS, check_all as check_openapi_drift
+from vehicle_sil_gui.openapi import (ERROR_DESCRIPTIONS, TARGETS as OPENAPI_TARGETS,
+                                     check_all as check_openapi_drift)
 from vehicle_sil_gui.server import route_specs
 
 PROTOCOL_DIR = Path(__file__).resolve().parents[2] / "protocol"
@@ -1777,3 +1778,19 @@ def test_protocol_contract_schemas_catch_drift() -> None:
         mutate(broken["session"])
         with pytest.raises(jsonschema.ValidationError):
             ws_srv_v.validate(broken)
+
+
+def test_openapi_error_descriptions_match_http_error_codes() -> None:
+    """Every HTTP status and error code in contracts.HTTP_ERROR_CODES (except router-level static 405)
+    must appear under its matching status in openapi.ERROR_DESCRIPTIONS without extras or omissions."""
+    static_only_statuses = {405}
+    codes_for_405 = {code for code, status in HTTP_ERROR_CODES.items() if status in static_only_statuses}
+    assert codes_for_405 == {ErrorCode.METHOD_NOT_ALLOWED}
+
+    expected_statuses = {status for status in HTTP_ERROR_CODES.values() if status not in static_only_statuses}
+    assert set(ERROR_DESCRIPTIONS) == expected_statuses
+
+    for status, description in ERROR_DESCRIPTIONS.items():
+        expected_codes = {code.value for code, st in HTTP_ERROR_CODES.items() if st == status}
+        described_codes = set(re.findall(r"`([a-z][a-z0-9-]*)`", description))
+        assert described_codes == expected_codes, (status, described_codes, expected_codes)

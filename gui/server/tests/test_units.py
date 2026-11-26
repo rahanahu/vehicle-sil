@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -12,11 +13,9 @@ import pytest
 from vehicle_sil_gui import process
 from vehicle_sil_gui.allowed import Facts
 from vehicle_sil_gui.hub import Client, Hub, encode
-from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, check_disable, check_enable,
-                                     check_fields, check_manual, check_params, check_speed, check_strict,
-                                     check_time_command, check_variant, command_line, request_text, serve_command,
-                                     serve_run_command, speed_argument, write_request_file, hide_request,
-                                     REQUEST_FIELDS)
+from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, command_line, hide_request,
+                                     request_text, serve_command, serve_run_command, speed_argument,
+                                     write_request_file)
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
 from vehicle_sil_gui.static import StaticFiles
@@ -26,7 +25,7 @@ def line(event: str, seq: int, **fields) -> str:
     return json.dumps({"event": event, "seq": seq, "t_ms": seq, **fields})
 
 
-def _feed_line(self: Session, text: str) -> list[dict]:
+def feed_line(session: Session, text: str) -> list[dict]:
     size = len(text.encode("utf-8", "surrogatepass"))
     try:
         ev = json.loads(
@@ -35,14 +34,10 @@ def _feed_line(self: Session, text: str) -> list[dict]:
             parse_float=lambda s: float(s) if math.isfinite(float(s)) else (_ for _ in ()).throw(ValueError(s)),
         )
     except (ValueError, RecursionError):
-        return self.bad_line(text)
+        return session.bad_line(text)
     if not isinstance(ev, dict) or not isinstance(ev.get("event"), str):
-        return self.bad_line(text)
-    return self.feed_event(ev, size)
-
-
-import math  # noqa: E402
-Session.feed_line = _feed_line  # type: ignore[attr-defined]
+        return session.bad_line(text)
+    return session.feed_event(ev, size)
 
 
 def new_session(**limits) -> Session:
@@ -60,19 +55,19 @@ def kinds(messages: list[dict]) -> list[str]:
 
 def test_session_follows_the_events() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     check = {"participants": [{"name": "A", "required": True, "enabled": True, "variables": []},
                               {"name": "B", "required": False, "enabled": False, "variables": None}]}
-    s.feed_line(line("check", 1, check=check))
-    s.feed_line(line("phase", 2, phase="running"))
-    s.feed_line(line("participant", 3, name="B", state="disabled"))
-    s.feed_line(line("participant", 4, name="A", state="started", pid=7, command=["a"], log=None))
-    s.feed_line(line("participant", 5, name="A", state="ended", exit_code=3, signal=None))
-    s.feed_line(line("finding", 6, severity="error", code="participant-failed", message="m"))
-    s.feed_line(line("time", 7, sim_ms=300))
-    s.feed_line(line("registry", 8, uri="silkit://x"))
-    s.feed_line(line("command", 9, command="stop", accepted=True))
-    s.feed_line(line("result", 10, result={"result": "failed"}))
+    feed_line(s, line("check", 1, check=check))
+    feed_line(s, line("phase", 2, phase="running"))
+    feed_line(s, line("participant", 3, name="B", state="disabled"))
+    feed_line(s, line("participant", 4, name="A", state="started", pid=7, command=["a"], log=None))
+    feed_line(s, line("participant", 5, name="A", state="ended", exit_code=3, signal=None))
+    feed_line(s, line("finding", 6, severity="error", code="participant-failed", message="m"))
+    feed_line(s, line("time", 7, sim_ms=300))
+    feed_line(s, line("registry", 8, uri="silkit://x"))
+    feed_line(s, line("command", 9, command="stop", accepted=True))
+    feed_line(s, line("result", 10, result={"result": "failed"}))
     assert kinds(s.launcher_exited(1)) == ["session"] and s.summary()["state"] == "running"
     out = s.ended()
     summary = s.summary()
@@ -99,35 +94,35 @@ def test_session_follows_the_events() -> None:
 
 def test_only_the_last_state_of_the_launcher_is_kept() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     assert s.summary()["launcher_state"] is None
     first = {"rev": 1, "phase": "starting", "allowed": {"pause": {"ok": True, "reason": None}}}
-    out = s.feed_line(line("state", 1, **first))
+    out = feed_line(s, line("state", 1, **first))
     assert kinds(out) == ["event"] and s.summary()["launcher_state"] == {"seq": 1, **first}
     second = {"rev": 2, "phase": "running", "allowed": {"pause": {"ok": False, "reason": "not-running"}}}
-    s.feed_line(line("state", 2, **second))
+    feed_line(s, line("state", 2, **second))
     assert s.summary()["launcher_state"] == {"seq": 2, **second}  # not a history: the one before is gone
     # a state of the wrong shape is not passed on and the one kept stays
-    assert kinds(s.feed_line(line("state", 3, rev="x", allowed={}))) == ["error:bad-event"]
-    assert kinds(s.feed_line(line("state", 4, rev=3, allowed=[]))) == ["error:bad-event"]
+    assert kinds(feed_line(s, line("state", 3, rev="x", allowed={}))) == ["error:bad-event"]
+    assert kinds(feed_line(s, line("state", 4, rev=3, allowed=[]))) == ["error:bad-event"]
     assert s.summary()["launcher_state"]["rev"] == 2
     # too large to keep: it is shown now, the one kept stays, and the server says so once
     big = {"rev": 4, "allowed": {}, "outside": ["x" * 5000]}
     small = new_session(state_bytes=1000)
-    small.feed_line(line("run_start", 0, run="r-1"))
-    small.feed_line(line("state", 1, rev=1, allowed={}))
-    out = small.feed_line(line("state", 2, **big))
+    feed_line(small, line("run_start", 0, run="r-1"))
+    feed_line(small, line("state", 1, rev=1, allowed={}))
+    out = feed_line(small, line("state", 2, **big))
     assert kinds(out) == ["error:kept-limit", "event"] and small.summary()["launcher_state"]["rev"] == 1
 
 
 def test_the_command_event_returns_the_id_and_the_reason() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
-    s.feed_line(line("command", 1, command="step", accepted=False, message="m", reason="not-paused", id=7))
+    feed_line(s, line("run_start", 0, run="r-1"))
+    feed_line(s, line("command", 1, command="step", accepted=False, message="m", reason="not-paused", id=7))
     assert s.summary()["last_command"] == {"seq": 1, "command": "step", "accepted": False, "message": "m",
                                            "reason": "not-paused", "id": 7}
-    assert kinds(s.feed_line(line("command", 2, command="step", accepted=True, id="7"))) == ["error:bad-event"]
-    assert kinds(s.feed_line(line("command", 3, command="step", accepted=True, id=None))) == ["event"]
+    assert kinds(feed_line(s, line("command", 2, command="step", accepted=True, id="7"))) == ["error:bad-event"]
+    assert kinds(feed_line(s, line("command", 3, command="step", accepted=True, id=None))) == ["event"]
 
 
 def test_allowed_says_what_this_server_takes() -> None:
@@ -207,16 +202,16 @@ def test_stop_requests_are_recorded_once() -> None:
 
 def test_lines_that_are_not_events_are_reported_and_not_passed_on() -> None:
     s = new_session()
-    assert kinds(s.feed_line("not json")) == ["error:launcher-output"]
-    assert kinds(s.feed_line("[1]")) == ["error:launcher-output"]
-    assert kinds(s.feed_line('{"event": "log"}')) == ["error:launcher-output"]  # no seq
-    assert kinds(s.feed_line('{"event": "log", "seq": true}')) == ["error:launcher-output"]
-    assert kinds(s.feed_line('{"event": "log", "seq": 0, "x": NaN}')) == ["error:launcher-output"]  # not JSON
-    assert kinds(s.feed_line(line("log", 0, source="A", line="x"))) == ["event"]
-    assert kinds(s.feed_line(line("mystery", 2, colour="blue"))) == ["event"]
-    assert kinds(s.feed_line(line("log", 2))) == ["error:seq-order"]
-    assert kinds(s.feed_line(line("log", 1))) == ["error:seq-order"]
-    long = s.feed_line("x" * 1000)[0]
+    assert kinds(feed_line(s, "not json")) == ["error:launcher-output"]
+    assert kinds(feed_line(s, "[1]")) == ["error:launcher-output"]
+    assert kinds(feed_line(s, '{"event": "log"}')) == ["error:launcher-output"]  # no seq
+    assert kinds(feed_line(s, '{"event": "log", "seq": true}')) == ["error:launcher-output"]
+    assert kinds(feed_line(s, '{"event": "log", "seq": 0, "x": NaN}')) == ["error:launcher-output"]  # not JSON
+    assert kinds(feed_line(s, line("log", 0, source="A", line="x"))) == ["event"]
+    assert kinds(feed_line(s, line("mystery", 2, colour="blue"))) == ["event"]
+    assert kinds(feed_line(s, line("log", 2))) == ["error:seq-order"]
+    assert kinds(feed_line(s, line("log", 1))) == ["error:seq-order"]
+    long = feed_line(s, "x" * 1000)[0]
     assert len(long["detail"]) < 400 and "more characters" in long["detail"]
 
 
@@ -261,47 +256,47 @@ def test_no_field_of_the_wrong_type_stops_the_reading() -> None:
             text = json.dumps({"event": kind, "seq": seq, "t_ms": seq, **variant})
             for marker, number in NOT_FINITE.items():
                 text = text.replace(json.dumps(marker), number)
-            out = s.feed_line(text)
+            out = feed_line(s, text)
             seq += 1
             assert all(m["type"] in ("event", "error") for m in out)
             for m in out:
                 encode(m)  # strict JSON: no NaN or Infinity
             encode(s.summary())  # the summary can still be sent
-    good = s.feed_line(line("phase", seq, phase="ended"))
+    good = feed_line(s, line("phase", seq, phase="ended"))
     assert kinds(good) == ["event"] and s.summary()["phase"] == "ended"
     assert s.summary()["problems_omitted"] > 0  # many were reported (and the summary keeps a bounded number)
 
 
 def test_numbers_that_are_not_finite_are_not_events() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     for n, number in enumerate(("1e999", "-1e999", "1E400", "-0.5e+999")):
-        out = s.feed_line(f'{{"event":"time","seq":{n + 1},"t_ms":0,"sim_ms":5,"actual_speed":{number}}}')
+        out = feed_line(s, f'{{"event":"time","seq":{n + 1},"t_ms":0,"sim_ms":5,"actual_speed":{number}}}')
         assert kinds(out) == ["error:launcher-output"], number
     assert s.summary()["time"] is None and s.last_seq == 0
     encode(s.summary())
-    assert kinds(s.feed_line(line("time", 5, sim_ms=5, actual_speed=1.5))) == ["event"]
+    assert kinds(feed_line(s, line("time", 5, sim_ms=5, actual_speed=1.5))) == ["event"]
     assert s.summary()["time"]["sim_ms"] == 5 and s.last_seq == 5
 
 
 def test_seq_and_t_ms_are_integers_javascript_reads_exactly() -> None:
     s = new_session(dropped_seqs=4, log_line_bytes=10)
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     for seq in (2 ** 63, 2 ** 64, 2 ** 53 + 1, -1):
-        assert kinds(s.feed_line(line("log", seq, source="A", line="x"))) == ["error:launcher-output"], seq
-    out = s.feed_line(json.dumps({"event": "log", "seq": 1, "t_ms": 2 ** 64, "source": "A", "line": "x"}))
+        assert kinds(feed_line(s, line("log", seq, source="A", line="x"))) == ["error:launcher-output"], seq
+    out = feed_line(s, json.dumps({"event": "log", "seq": 1, "t_ms": 2 ** 64, "source": "A", "line": "x"}))
     assert kinds(out) == ["error:bad-event"] and s.last_t_ms == 0
-    out = s.feed_line(line("log", 2 ** 53, source="A", line="a line too long to keep"))
+    out = feed_line(s, line("log", 2 ** 53, source="A", line="a line too long to keep"))
     assert kinds(out) == ["event"]
     assert s.summary()["log"] == {"A": {"kept": 0, "dropped": 1}} and s.last_seq == 2 ** 53
 
 
 def test_a_known_event_of_the_wrong_shape_is_not_passed_on() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
-    out = s.feed_line(line("check", 1, check={"participants": 5}))
+    feed_line(s, line("run_start", 0, run="r-1"))
+    out = feed_line(s, line("check", 1, check={"participants": 5}))
     assert kinds(out) == ["error:bad-event"] and s.summary()["check"] is None and s.last_seq == 1
-    assert kinds(s.feed_line(line("log", 2, source=None, line="x"))) == ["error:bad-event"]
+    assert kinds(feed_line(s, line("log", 2, source=None, line="x"))) == ["error:bad-event"]
     assert s.summary()["log"] == {}
 
 
@@ -336,14 +331,14 @@ def test_a_different_events_format_is_reported_but_passed_on(tmp_path: Path) -> 
 
 def test_ending_without_a_result_is_reported() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     s.launcher_exited(70)
     out = s.ended()
     assert kinds(out) == ["error:no-result", "session"]
     assert s.summary()["launcher"]["exit_code"] == 70 and s.summary()["problems"][0]["detail"] == {"exit_code": 70}
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
-    s.feed_line(line("result", 1, result={"result": "passed"}))
+    feed_line(s, line("run_start", 0, run="r-1"))
+    feed_line(s, line("result", 1, result={"result": "passed"}))
     s.launcher_exited(0)
     assert kinds(s.ended(output_cut=True)) == ["error:output-left-open", "session"]
 
@@ -351,7 +346,7 @@ def test_ending_without_a_result_is_reported() -> None:
 def test_problems_are_capped() -> None:
     s = new_session(problems=3)
     for _ in range(5):
-        s.feed_line("bad")
+        feed_line(s, "bad")
     assert len(s.summary()["problems"]) == 3 and s.summary()["problems_omitted"] == 2
     assert len(s.stderr_line("e" * 100_000)[0]["message"]) < 1100
 
@@ -359,7 +354,7 @@ def test_problems_are_capped() -> None:
 def test_junk_does_not_hide_the_servers_notices_or_the_last_stderr_lines() -> None:
     s = new_session()
     for n in range(120):  # junk from the launcher: more than its room
-        s.feed_line(f"junk {n}")
+        feed_line(s, f"junk {n}")
     stderr = [f"stderr {n}" for n in range(100)]
     live = [m for text in stderr for m in s.stderr_line(text)]
     assert [m["message"] for m in live] == [f"the launcher wrote: stderr {n}" for n in range(20)]  # the first
@@ -377,13 +372,13 @@ def test_junk_does_not_hide_the_servers_notices_or_the_last_stderr_lines() -> No
 
 def test_the_log_is_kept_per_source_and_bounded() -> None:
     s = new_session(log_lines_per_source=3, log_sources=2)
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     seq = 1
     for n in range(5):
         for source in ("A", "B", "C"):  # C is the third source: it shares the log of the later sources
-            s.feed_line(line("log", seq, source=source, line=f"{source}{n}"))
+            feed_line(s, line("log", seq, source=source, line=f"{source}{n}"))
             seq += 1
-        s.feed_line(line("time", seq, sim_ms=n))
+        feed_line(s, line("time", seq, sim_ms=n))
         seq += 1
     dropped, events = s.replay(None)
     lines = [m["event"]["line"] for m in events]
@@ -402,39 +397,39 @@ def test_the_log_is_kept_per_source_and_bounded() -> None:
 
 def test_memory_is_bounded_in_bytes() -> None:
     s = new_session(dropped_seqs=100)
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     seq = 1
     for n in range(3000):  # 3000 lines of 2 KiB from 20 sources: 6 MiB in all, 1 MiB per source at most
-        s.feed_line(line("log", seq, source=f"S{n % 20}", line="x" * 2048))
+        feed_line(s, line("log", seq, source=f"S{n % 20}", line="x" * 2048))
         seq += 1
-    s.feed_line(line("log", seq, source="S0", line="y" * 100_000))  # too long to keep
+    feed_line(s, line("log", seq, source="S0", line="y" * 100_000))  # too long to keep
     seq += 1
     assert all(log.bytes <= 1024 * 1024 for log in s._logs.values()) and s._log_bytes <= 16 * 1024 * 1024
     assert s.summary()["log"]["S0"]["dropped"] >= 1
     one = new_session()
     for n in range(700):  # 1.4 MiB from one source, under its line limit
-        one.feed_line(line("log", n, source="A", line="x" * 2048))
+        feed_line(one, line("log", n, source="A", line="x" * 2048))
     assert one._logs["A"].bytes <= 1024 * 1024 and one._logs["A"].dropped > 0
     small = new_session(log_bytes=100 * 1024)  # all sources together
     for n in range(200):
-        small.feed_line(line("log", n, source=f"S{n % 5}", line="x" * 2048))
+        feed_line(small, line("log", n, source=f"S{n % 5}", line="x" * 2048))
     assert small._log_bytes <= 100 * 1024 and sum(log.dropped for log in small._logs.values()) > 0
     big = {"participants": [], "stop_at_ms": 10000, "blob": "z" * (5 * 1024 * 1024)}
     assert "stop_at_ms" not in s.summary()
-    out = s.feed_line(line("check", seq, check=big))
+    out = feed_line(s, line("check", seq, check=big))
     seq += 1
     assert kinds(out) == ["error:kept-limit", "event"] and s.summary()["check"] is None
     assert s.summary()["stop_at_ms"] == 10000
-    out = s.feed_line(line("result", seq, result={"result": "passed", "blob": "z" * (5 * 1024 * 1024)}))
+    out = feed_line(s, line("result", seq, result={"result": "passed", "blob": "z" * (5 * 1024 * 1024)}))
     seq += 1
     assert kinds(out) == ["error:kept-limit", "event"] and s.summary()["result"] == {"result": "passed"}
     for n in range(1500):
-        s.feed_line(line("finding", seq, severity="note", code="c", message=f"m{n}"))
+        feed_line(s, line("finding", seq, severity="note", code="c", message=f"m{n}"))
         seq += 1
-        s.feed_line(line("participant", seq, name=f"P{n}", state="started"))
+        feed_line(s, line("participant", seq, name=f"P{n}", state="started"))
         seq += 1
     for n in range(50):
-        s.feed_line(line("mystery", seq, blob="w" * 10_000))  # unknown events are passed on, not kept
+        feed_line(s, line("mystery", seq, blob="w" * 10_000))  # unknown events are passed on, not kept
         seq += 1
     summary = s.summary()
     assert len(summary["findings"]) == 1000 and summary["findings_omitted"] == 500
@@ -446,53 +441,53 @@ def test_memory_is_bounded_in_bytes() -> None:
 
 def test_dropped_counts_are_exact_with_a_line_too_long_to_keep() -> None:
     s = new_session(log_lines_per_source=5)
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     for seq in range(1, 12):  # seq 6 is too long to keep: dropped when it comes, before 1..5
-        s.feed_line(line("log", seq, source="A", line="x" * (70_000 if seq == 6 else 1)))
+        feed_line(s, line("log", seq, source="A", line="x" * (70_000 if seq == 6 else 1)))
     for after_seq, want in ((None, 6), (0, 6), (3, 3), (5, 1)):
         dropped = s.replay(after_seq)[0]
         assert dropped["log"] == {"A": want} and dropped["at_least"] == [], after_seq
     assert s.replay(6)[0] is None
     small = new_session(log_lines_per_source=2, dropped_seqs=3)  # fewer recorded than dropped
-    small.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(small, line("run_start", 0, run="r-1"))
     for seq in range(1, 9):  # 4 too long: dropped first; kept 7, 8; dropped 1..6
-        small.feed_line(line("log", seq, source="A", line="x" * (70_000 if seq == 4 else 1)))
+        feed_line(small, line("log", seq, source="A", line="x" * (70_000 if seq == 4 else 1)))
     assert small.replay(3)[0]["log"] == {"A": 3} and small.replay(3)[0]["at_least"] == []  # 4, 5, 6
     assert small.replay(2)[0]["log"] == {"A": 3} and small.replay(2)[0]["at_least"] == ["A"]
 
 
 def test_log_dropped_is_counted_and_kept_where_it_came() -> None:
     s = new_session(log_lines_per_source=3)
-    s.feed_line(line("run_start", 0, run="r-1"))
-    s.feed_line(line("log", 1, source="A", line="a1"))
-    out = s.feed_line(line("log_dropped", 2, count=125, sources={"A": 120, "vehicle_sil_launch": 5}))
+    feed_line(s, line("run_start", 0, run="r-1"))
+    feed_line(s, line("log", 1, source="A", line="a1"))
+    out = feed_line(s, line("log_dropped", 2, count=125, sources={"A": 120, "vehicle_sil_launch": 5}))
     assert kinds(out) == ["event"]
-    s.feed_line(line("log", 3, source="A", line="a3"))
+    feed_line(s, line("log", 3, source="A", line="a3"))
     assert s.summary()["log"] == {"A": {"kept": 2, "dropped": 120}, "vehicle_sil_launch": {"kept": 0, "dropped": 5}}
     _, events = s.replay(None)
     assert [e["event"]["seq"] for e in events] == [1, 2, 3], "the marker once, in its place"
     _, events = s.replay(2)
     assert [e["event"]["seq"] for e in events] == [3]
     for n in range(4, 8):  # the marker leaves with the old lines; the counts stay
-        s.feed_line(line("log", n, source="A", line=f"a{n}"))
+        feed_line(s, line("log", n, source="A", line=f"a{n}"))
     assert s.summary()["log"]["A"] == {"kept": 3, "dropped": 120 + 3}
-    assert kinds(s.feed_line(line("log_dropped", 8, count="many", sources={}))) == ["error:bad-event"]
-    assert kinds(s.feed_line(line("log_dropped", 9, count=1, sources={"A": -1}))) == ["error:bad-event"]
+    assert kinds(feed_line(s, line("log_dropped", 8, count="many", sources={}))) == ["error:bad-event"]
+    assert kinds(feed_line(s, line("log_dropped", 9, count=1, sources={"A": -1}))) == ["error:bad-event"]
 
 
 def test_a_launcher_that_writes_nothing_is_reported_as_silent() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     start = s.last_line_at
     assert s.check_silence(start + 4.9, 5) == []
     out = s.check_silence(start + 5.2, 5)
     assert kinds(out) == ["error:launcher-silent", "session"] and s.summary()["launcher"]["silent_s"] == 5
     assert s.check_silence(start + 9.0, 5) == [], "the summary changes every 5 s, not on each look"
     assert kinds(s.check_silence(start + 10.1, 5)) == ["session"] and s.summary()["launcher"]["silent_s"] == 10
-    out = s.feed_line(line("heartbeat", 1))
+    out = feed_line(s, line("heartbeat", 1))
     assert kinds(out) == ["session", "event"] and s.summary()["launcher"]["silent_s"] is None
     assert [p["code"] for p in s.problems] == ["launcher-silent"]
-    s.feed_line(line("result", 2, result={"result": "passed"}))
+    feed_line(s, line("result", 2, result={"result": "passed"}))
     assert s.check_silence(s.last_line_at + 60, 5) == [], "nothing is promised after the result"
     s2 = new_session()
     s2.launcher_exited(0)
@@ -501,12 +496,12 @@ def test_a_launcher_that_writes_nothing_is_reported_as_silent() -> None:
 
 def test_a_participant_state_this_server_does_not_know_passes_through() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
-    s.feed_line(line("participant", 1, name="A", state="started", pid=7, command=["a"], log=None))
-    out = s.feed_line(line("participant", 2, name="A", state="failed", reason="process_ended", message="m"))
+    feed_line(s, line("run_start", 0, run="r-1"))
+    feed_line(s, line("participant", 1, name="A", state="started", pid=7, command=["a"], log=None))
+    out = feed_line(s, line("participant", 2, name="A", state="failed", reason="process_ended", message="m"))
     assert kinds(out) == ["event"]
-    s.feed_line(line("participant", 3, name="A", state="ended", exit_code=1, signal=None))
-    s.feed_line(line("participant", 4, name="B", state="sleeping", why={"x": 1}))
+    feed_line(s, line("participant", 3, name="A", state="ended", exit_code=1, signal=None))
+    feed_line(s, line("participant", 4, name="B", state="sleeping", why={"x": 1}))
     assert s.summary()["participants"] == [
         {"name": "A", "state": "ended", "pid": 7, "command": ["a"], "log": None, "reason": "process_ended",
          "message": "m", "exit_code": 1, "signal": None},
@@ -517,66 +512,66 @@ def test_the_control_link_of_a_participant_is_kept_in_its_entry() -> None:
     """The control event (a state of the participant's link to its variables) is laid over the participant's entry
     as one field, so that a screen opened later sees it; a state this server does not know passes through."""
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
-    s.feed_line(line("participant", 1, name="A", state="started", pid=7))
-    s.feed_line(line("participant", 2, name="A", state="joined"))
-    out = s.feed_line(line("control_link", 3, name="A", state="connected", variables=17))
+    feed_line(s, line("run_start", 0, run="r-1"))
+    feed_line(s, line("participant", 1, name="A", state="started", pid=7))
+    feed_line(s, line("participant", 2, name="A", state="joined"))
+    out = feed_line(s, line("control_link", 3, name="A", state="connected", variables=17))
     assert kinds(out) == ["event"]
-    s.feed_line(line("control_link", 4, name="B", state="version_mismatch", version=2))
-    s.feed_line(line("control_link", 5, name="C", state="some_new_state"))
-    s.feed_line(line("participant", 6, name="A", state="ended", exit_code=0, signal=None))
+    feed_line(s, line("control_link", 4, name="B", state="version_mismatch", version=2))
+    feed_line(s, line("control_link", 5, name="C", state="some_new_state"))
+    feed_line(s, line("participant", 6, name="A", state="ended", exit_code=0, signal=None))
     assert s.summary()["participants"] == [
         {"name": "A", "state": "ended", "pid": 7, "control_link": {"state": "connected", "variables": 17},
          "exit_code": 0, "signal": None},
         {"name": "B", "control_link": {"state": "version_mismatch", "version": 2}},
         {"name": "C", "control_link": {"state": "some_new_state"}}]
-    assert kinds(s.feed_line(line("control_link", 7, name=5, state="connected"))) == ["error:bad-event"]
+    assert kinds(feed_line(s, line("control_link", 7, name=5, state="connected"))) == ["error:bad-event"]
 
 
 def test_an_event_this_server_does_not_know_is_passed_on_and_the_reading_goes_on() -> None:
     """A launcher newer than this server may write events it does not know: they reach the screens as they are
     (the screen skips what it does not know), nothing is reported, and the events after them are read as usual."""
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
-    out = s.feed_line(line("future_thing", 1, payload={"a": [1, 2]}, note="n"))
+    feed_line(s, line("run_start", 0, run="r-1"))
+    out = feed_line(s, line("future_thing", 1, payload={"a": [1, 2]}, note="n"))
     assert kinds(out) == ["event"] and out[0]["event"]["payload"] == {"a": [1, 2]}
-    out = s.feed_line(line("phase", 2, phase="running"))
+    out = feed_line(s, line("phase", 2, phase="running"))
     assert kinds(out) == ["event"] and s.summary()["phase"] == "running"
     assert s.summary()["problems"] == [] and s.last_seq == 2
 
 
 def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
     s = new_session()
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     long_command = [f"--argument-{n}-" + "x" * 100 for n in range(45)]  # about 5 KiB
-    out = s.feed_line(line("participant", 1, name="Engine", state="started", pid=7, command=long_command,
+    out = feed_line(s, line("participant", 1, name="Engine", state="started", pid=7, command=long_command,
                            log="engine.log"))
     assert kinds(out) == ["error:kept-limit", "event"] and out[0]["detail"] == {"what": "participant"}
     assert s.summary()["participants"] == [{"name": "Engine", "state": "started", "pid": 7, "log": "engine.log",
                                             "omitted_fields": ["command"]}]
-    s.feed_line(line("participant", 2, name="Dash", state="started", pid=8, command=["dash"]))
-    s.feed_line(line("participant", 3, name="Dash", state="ended", exit_code=0, signal=None, note="n" * 5000))
-    s.feed_line(line("participant", 4, name="Engine", state="ended", exit_code=1, signal=None))
+    feed_line(s, line("participant", 2, name="Dash", state="started", pid=8, command=["dash"]))
+    feed_line(s, line("participant", 3, name="Dash", state="ended", exit_code=0, signal=None, note="n" * 5000))
+    feed_line(s, line("participant", 4, name="Engine", state="ended", exit_code=1, signal=None))
     assert s.summary()["participants"] == [
         {"name": "Engine", "state": "ended", "pid": 7, "log": "engine.log", "exit_code": 1, "signal": None,
          "omitted_fields": ["command"]},  # still not known
         {"name": "Dash", "state": "ended", "pid": 8, "command": ["dash"], "exit_code": 0, "signal": None,
          "omitted_fields": ["note"]}]
-    s.feed_line(line("participant", 5, name="Engine", state="ended", command=["engine"]))  # known again
+    feed_line(s, line("participant", 5, name="Engine", state="ended", command=["engine"]))  # known again
     assert "omitted_fields" not in s.summary()["participants"][0]
-    s.feed_line(line("phase", 6, phase="running", detail="d" * 5000))
-    s.feed_line(line("time", 7, sim_ms=100, detail="d" * 5000))
-    s.feed_line(line("command", 8, command="stop", accepted=True, message="m" * 5000))
-    s.feed_line(line("registry", 9, uri="silkit://x", detail="d" * 5000))
+    feed_line(s, line("phase", 6, phase="running", detail="d" * 5000))
+    feed_line(s, line("time", 7, sim_ms=100, detail="d" * 5000))
+    feed_line(s, line("command", 8, command="stop", accepted=True, message="m" * 5000))
+    feed_line(s, line("registry", 9, uri="silkit://x", detail="d" * 5000))
     summary = s.summary()
     assert summary["phase"] == "running"
     assert summary["time"] == {"event": "time", "seq": 7, "t_ms": 7, "sim_ms": 100, "omitted_fields": ["detail"]}
     assert summary["last_command"] == {"seq": 8, "command": "stop", "accepted": True, "omitted_fields": ["message"]}
     assert summary["registry"] == {"uri": "silkit://x", "omitted_fields": ["detail"]}
-    out = s.feed_line(line("participant", 10, name="N" * 5000, state="started"))  # not even the name fits
+    out = feed_line(s, line("participant", 10, name="N" * 5000, state="started"))  # not even the name fits
     assert kinds(out) == ["event"] and len(s.summary()["participants"]) == 2
     # The time with its lateness, however large the event: a screen opened later still sees how late it is
-    s.feed_line(line("time", 11, sim_ms=300, actual_speed=0.9, late_steps=1, max_late_ms=200,
+    feed_line(s, line("time", 11, sim_ms=300, actual_speed=0.9, late_steps=1, max_late_ms=200,
                      slipped_ms=200, late_ms=0, detail="d" * 5000))
     time = s.summary()["time"]
     assert {k: time[k] for k in ("sim_ms", "late_steps", "max_late_ms", "slipped_ms", "late_ms")} \
@@ -587,9 +582,9 @@ def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
 
 def test_dropped_counts_are_exact_while_recorded() -> None:
     s = new_session(log_lines_per_source=10, dropped_seqs=20)
-    s.feed_line(line("run_start", 0, run="r-1"))
+    feed_line(s, line("run_start", 0, run="r-1"))
     for seq in range(1, 101):
-        s.feed_line(line("log", seq, source="A", line=str(seq)))
+        feed_line(s, line("log", seq, source="A", line=str(seq)))
     # kept: seq 91..100; dropped: 1..90, of which 71..90 recorded
     assert s.replay(79)[0]["log"] == {"A": 11} and s.replay(79)[0]["at_least"] == []
     assert s.replay(90)[0] is None
@@ -762,7 +757,7 @@ def test_session_feed_event_parity_limits_and_zero_json_loads(monkeypatch) -> No
     ]
     for ev in events:
         raw = json.dumps(ev, separators=(",", ":"))
-        s_line.feed_line(raw)
+        feed_line(s_line, raw)
 
     monkeypatch.setattr(session_mod.json, "loads", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("unexpected json.loads")))
     for ev in events:
@@ -847,47 +842,25 @@ def test_the_listing_stays_under_the_root(tree: Path) -> None:
 # ---------------------------------------------------------------- the command lines
 
 
-def test_disable_and_speed_are_checked() -> None:
-    assert check_disable(["A"], ["A", "B"]) == ["A"]
-    assert check_disable(None, []) == []
-    for bad in (["C"], "A", [1], [""], ["A", "A"]):
-        with pytest.raises(InvalidRequest):
-            check_disable(bad, ["A", "B"])
-    # a name that starts with '-' is a name: it goes in the request file, where no option is read from
-    assert check_disable(["-x"], ["-x"]) == ["-x"] and check_manual(["A"], ["A"]) == ["A"]
-    assert check_enable(["Z"]) == ["Z"] and check_enable(None) == []
-    assert check_speed(None) is None and check_speed("max") == "max" and check_speed(2) == 2.0
-    for bad in (True, 0, -1, 1e9, 1e-7, float("nan"), float("inf"), "fast", [1]):
-        with pytest.raises(InvalidRequest):
-            check_speed(bad)
-    assert check_speed(0.000001) == 1e-6 and check_speed(1000000) == 1e6
-
-
 def test_speeds_and_time_commands_are_written_as_the_launcher_reads_them() -> None:
     # The shortest decimal that is the number: never rounded, and no ".0"
     assert [speed_argument(s) for s in ("max", 2.0, 0.5, 1e-6, 1.2345678, 1e6)] == \
         ["max", "2", "0.5", "1e-06", "1.2345678", "1000000"]
-    assert command_line(check_time_command({"command": "pause"})) == b'{"command":"pause"}\n'
-    assert command_line(check_time_command({"command": "resume"})) == b'{"command":"resume"}\n'
-    assert command_line(check_time_command({"command": "step", "ms": 25})) == b'{"command":"step","ms":25}\n'
-    assert command_line(check_time_command({"command": "speed", "value": 2})) == b'{"command":"speed","value":2}\n'
-    assert command_line(check_time_command({"command": "speed", "value": "max"})) == \
-        b'{"command":"speed","value":"max"}\n'
-    assert command_line(check_time_command({"command": "pause", "id": 0})) == b'{"command":"pause","id":0}\n'
-    assert command_line(check_time_command({"command": "step", "ms": 25, "id": 2 ** 53})) == \
+    assert command_line({"command": "pause"}) == b'{"command":"pause"}\n'
+    assert command_line({"command": "resume"}) == b'{"command":"resume"}\n'
+    assert command_line({"command": "step", "ms": 25}) == b'{"command":"step","ms":25}\n'
+    assert command_line({"command": "speed", "value": 2.0}) == b'{"command":"speed","value":2}\n'
+    assert command_line({"command": "speed", "value": "max"}) == b'{"command":"speed","value":"max"}\n'
+    assert command_line({"command": "pause", "id": 0}) == b'{"command":"pause","id":0}\n'
+    assert command_line({"command": "step", "ms": 25, "id": 2 ** 53}) == \
         b'{"command":"step","ms":25,"id":9007199254740992}\n'
-    assert command_line(check_time_command({"command": "speed", "value": 0.5, "id": 4})) == \
+    assert command_line({"command": "speed", "value": 0.5, "id": 4}) == \
         b'{"command":"speed","value":0.5,"id":4}\n'
-    assert command_line(check_time_command({"command": "speed", "value": "max", "id": 4})) == \
+    assert command_line({"command": "speed", "value": "max", "id": 4}) == \
         b'{"command":"speed","value":"max","id":4}\n'
-    for bad_id in (-1, 2 ** 53 + 1, 1.5, "7", True, None, [1]):
-        with pytest.raises(InvalidRequest) as e:
-            check_time_command({"command": "resume", "id": bad_id})
-        assert e.value.code == "invalid-field" and "id must be a whole number" in str(e.value)
-    for bad in ({}, {"command": None}, {"command": "stop"}, {"command": "step", "ms": 0}, {"command": "step"},
-                {"command": "speed", "value": None}, {"command": "resume", "value": 1}):
-        with pytest.raises(InvalidRequest):
-            check_time_command(bad)
+    assert command_line({"command": "speed", "value": 2.0, "id": 4}, run_id="r-1") == \
+        b'{"command":"speed","value":2,"id":4,"run":"r-1"}\n'
+    assert command_line({"command": "pause"}, run_id="r-1") == b'{"command":"pause","run":"r-1"}\n'
 
 
 # ---------------------------------------------------------------- static files
@@ -1458,18 +1431,6 @@ def test_an_unexpected_error_is_a_500_with_the_usual_headers() -> None:
 
 def test_the_intent_becomes_a_request_file_and_the_launchers_arguments(tmp_path: Path) -> None:
     launcher = Launcher(Path("vehicle_sil_launch"))
-    assert check_params({"idle_rpm": 650, "gain": 0.5, "label": "a=b ${x}", "on": True}) == \
-        {"idle_rpm": 650, "gain": 0.5, "label": "a=b ${x}", "on": True}
-    assert check_params(None) == {} and check_variant("small") == "small" and check_variant(None) is None
-    assert check_strict(True) is True and check_strict(None) is False
-    for bad in ({"a": None}, {"a": [1]}, {"a": float("inf")}, ["a"]):
-        with pytest.raises(InvalidRequest):
-            check_params(bad)
-    for bad in ("", 1, ["a"]):
-        with pytest.raises(InvalidRequest):
-            check_variant(bad)
-    with pytest.raises(InvalidRequest):
-        check_strict("yes")
     intent = {"variant": "-small", "params": {"gain": 0.5}, "scenario": "scenarios/s.yaml", "disable": ["-x"],
               "speed": 2.0, "stop_at_ms": 1003}
     assert json.loads(request_text(intent)) == {"vehicle_sil_run_request": 1, **intent}
@@ -1495,22 +1456,6 @@ def test_the_intent_becomes_a_request_file_and_the_launchers_arguments(tmp_path:
     assert json.loads(serve_run_command(request, command_id=1)) == {
         "command": "run", "request": str(request), "id": 1
     }
-
-
-def test_a_request_field_is_checked_before_anything_is_made_of_it() -> None:
-    check_fields("api/run", {"file": "a.yaml", "$schema": "x.json", "vehicle_sil_run_request": 1, "speed": 2},
-                 REQUEST_FIELDS)
-    check_fields("api/check", {"file": "a.yaml", "speed": 1, "start_paused": True}, REQUEST_FIELDS)
-    check_fields("api/run", {"file": "a.yaml", "stop_at_ms": 1003}, REQUEST_FIELDS)
-    check_fields("api/run", {"file": "a.yaml", "connect": {"N": "x"}, "time_policy": "free"}, REQUEST_FIELDS)
-    for body, code in (({"connect": None}, "invalid-field"), ({"time_policy": None}, "invalid-field"),
-                       ({"variant": None}, "invalid-field"), ({"speed": None}, "invalid-field"),
-                       ({"vehicle_sil_run_request": 2}, "invalid-field"),
-                       ({"vehicle_sil_run_request": True}, "invalid-field"), ({"control": 0}, "invalid-field"),
-                       ({"$schema": 1}, "invalid-field")):
-        with pytest.raises(InvalidRequest) as e:
-            check_fields("api/run", {"file": "a.yaml", **body}, REQUEST_FIELDS)
-        assert e.value.code == code, body
 
 
 def test_the_name_of_the_request_file_is_hidden_from_what_the_launcher_says(tmp_path: Path) -> None:
@@ -1637,11 +1582,9 @@ def test_timeout_scale(monkeypatch) -> None:
     assert conftest.scaled(4.0) == 10.0
 
 
-def test_serve_status_and_stop_command_lines() -> None:
-    from vehicle_sil_gui.launcher import serve_status_command, stop_command_line
+def test_stop_command_lines() -> None:
+    from vehicle_sil_gui.launcher import stop_command_line
 
-    assert serve_status_command() == b'{"command":"status"}\n'
-    assert serve_status_command(command_id=12) == b'{"command":"status","id":12}\n'
     assert stop_command_line() == b'{"command":"stop"}\n'
     assert stop_command_line("r-1") == b'{"command":"stop","run":"r-1"}\n'
     assert stop_command_line("r-1", force=True) == b'{"command":"stop","run":"r-1","force":true}\n'

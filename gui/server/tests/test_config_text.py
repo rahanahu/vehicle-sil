@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 from conftest import CONFIGS, Client, gui_server, run_async, scaled
-from vehicle_sil_gui.server import MAX_TEXT
+from vehicle_sil_gui.config_service import MAX_TEXT
 
 TEXT_LAUNCHER = Path(__file__).resolve().parent / "text_launcher.py"
 POSIX = sys.platform != "win32"

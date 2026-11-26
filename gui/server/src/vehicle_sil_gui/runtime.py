@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 from vehicle_sil_control.protocol import EVENTS_FORMAT
 

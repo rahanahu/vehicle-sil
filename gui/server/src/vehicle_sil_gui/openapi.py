@@ -73,45 +73,6 @@ TAGS: list[dict[str, str]] = [
     {"name": "artifacts", "description": "Recorded variable-write scenarios and completed scenario timelines."},
 ]
 
-ENDPOINT_DESCRIPTIONS: dict[str, str] = {
-    "prepareRun": (
-        "Inspects the configuration and warms up the persistent `serve` runtime when eligible. "
-        "Returns HTTP 200 `{instance}` once preparation finishes; runtime status transitions are broadcast "
-        "on `/ws` as `runtime` messages."
-    ),
-    "startRun": (
-        "Checks the configuration and starts a simulation run. HTTP 200 returns `{instance, run_id}` as soon "
-        "as the run is handed off; lifecycle, logs, variables, and the final result arrive asynchronously on "
-        "`/ws` (see `schemas/ws-server.schema.json`)."
-    ),
-    "stopSession": (
-        "Requests a graceful (`force: false`, default) or forced (`force: true`) stop of the identified run. "
-        "Requires both `run_id` and `instance` (mismatches return `409 session-changed`). Idempotent: returns "
-        "HTTP 200 `{instance, run_id}` even when the targeted run has already ended."
-    ),
-    "sendTimeCommand": (
-        "Validates the command and writes one NDJSON line to the launcher's standard input, returning HTTP 200 "
-        "as soon as the command is forwarded. HTTP 200 acknowledges forwarding only; whether the launcher "
-        "accepted or refused the command arrives asynchronously on `/ws` as an `event` message with "
-        "`event.event == \"command\"` (correlated by the optional numeric `id`; see "
-        "`schemas/ws-command-event.schema.json`).\n\n"
-        "Targeting: Protocol v4 preserves omitting both `run_id` and `instance` unchanged for compatibility "
-        "(targeting whichever run is current). However, new clients, AI agents, and CI automation should "
-        "always send both `instance` and `run_id` so the server refuses with `409 session-changed` if another "
-        "run has started or the server restarted. Sending only one of `run_id` or `instance` returns "
-        "`400 invalid-field`."
-    ),
-    "writeVariables": (
-        "Validates variable names, writability, and value bounds against the active run's schema and forwards "
-        "the write to the launcher Control Server. HTTP 200 `{run_id, operation}` acknowledges submission only; "
-        "the asynchronous execution outcome arrives on `/ws` as `operation` messages. Returns `502 write-failed` "
-        "when the Control Server write RPC fails."
-    ),
-    "getTimeline": (
-        "Streams the recorded scenario timeline JSON file for a completed scenario run (`schema/timeline.schema.json`)."
-    ),
-}
-
 REQUEST_EXAMPLES: dict[str, dict[str, Any]] = {
     "sendTimeCommand": {
         "step": {
@@ -194,10 +155,6 @@ def _canonicalize_schema(node: Any) -> Any:
     if isinstance(node, list):
         return [_canonicalize_schema(item) for item in node]
     return node
-
-
-def _sorted_defs(schema: dict[str, Any]) -> dict[str, Any]:
-    return _canonicalize_schema(schema)
 
 
 def _collect_openapi_schemas(routes: tuple[RouteSpec, ...]) -> tuple[dict[Any, dict[str, Any]], dict[str, Any]]:
@@ -294,9 +251,8 @@ def build_openapi_document() -> dict[str, Any]:
         }
         if spec.tags:
             op["tags"] = list(spec.tags)
-        desc = ENDPOINT_DESCRIPTIONS.get(spec.operation_id) or spec.description
-        if desc:
-            op["description"] = desc
+        if spec.description:
+            op["description"] = spec.description
 
         params: list[dict[str, Any]] = []
         for pname in spec.path_params:
@@ -387,7 +343,7 @@ def build_openapi_document() -> dict[str, Any]:
 def build_ws_server_schema() -> dict[str, Any]:
     """Draft 2020-12 JSON Schema covering all 13 server -> client WebSocket frames."""
     raw = WS_SERVER_MESSAGE_ADAPTER.json_schema(schema_generator=ContractJsonSchemaGenerator)
-    return _sorted_defs({
+    return _canonicalize_schema({
         "$schema": DRAFT_2020_12,
         "title": "vehicle-sil GUI WebSocket server-to-client message (Protocol v4)",
         "description": (
@@ -404,7 +360,7 @@ def build_ws_server_schema() -> dict[str, Any]:
 def build_ws_client_schema() -> dict[str, Any]:
     """Draft 2020-12 JSON Schema covering all 3 client -> server WebSocket frames."""
     raw = WS_CLIENT_MESSAGE_ADAPTER.json_schema(schema_generator=ContractJsonSchemaGenerator)
-    return _sorted_defs({
+    return _canonicalize_schema({
         "$schema": DRAFT_2020_12,
         "title": "vehicle-sil GUI WebSocket client-to-server message (Protocol v4)",
         "description": (
@@ -418,7 +374,7 @@ def build_ws_client_schema() -> dict[str, Any]:
 def build_ws_command_event_schema() -> dict[str, Any]:
     """Draft 2020-12 JSON Schema for a WebSocket `event` carrying a launcher `command` event."""
     raw = WsCommandEventMessage.model_json_schema(schema_generator=ContractJsonSchemaGenerator)
-    return _sorted_defs({
+    return _canonicalize_schema({
         "$schema": DRAFT_2020_12,
         "title": "vehicle-sil GUI WebSocket command event message (Protocol v4)",
         "description": (
@@ -434,7 +390,7 @@ def build_ws_command_event_schema() -> dict[str, Any]:
 def build_cli_json_schema() -> dict[str, Any]:
     """Draft 2020-12 JSON Schema for `vehicle-sil-gui --json` stdout readiness line."""
     raw = CliReadyMessage.model_json_schema(schema_generator=ContractJsonSchemaGenerator)
-    return _sorted_defs({
+    return _canonicalize_schema({
         "$schema": DRAFT_2020_12,
         "title": "vehicle-sil-gui --json readiness message (Protocol v4)",
         "description": (

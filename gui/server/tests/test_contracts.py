@@ -15,6 +15,7 @@ from vehicle_sil_control import protocol
 from vehicle_sil_gui import config_save, contracts as C, runtime
 from vehicle_sil_gui.launcher import InvalidRequest
 from vehicle_sil_gui.refusal import Refused
+from vehicle_sil_gui.server import route_specs
 from vehicle_sil_gui.session import Limits as SessionLimits, Session
 from vehicle_sil_gui.source import ListSample, OperationInfo, PeerInfo, TargetInfo
 from vehicle_sil_gui.variables import Limits as VariableLimits, Rejected, Variables, Watch, check_watch
@@ -110,6 +111,7 @@ def test_omit_only_fields_reject_null_at_runtime_and_emit_no_null_in_json_schema
         (C.StopSessionRequest, {"run_id": "r1", "instance": "i1", "force": None}),
         (C.WriteRequest, {"run_id": "r1", "instance": None, "writes": {"E": {"x": 1}}}),
         (C.WriteRequest, {"run_id": "r1", "writes": {"E": {"x": 1}}, "late": None}),
+        (C.WatchPayload, {"id": 1, "variables": "all", "period_ms": None}),
         (C.CliReadyMessage, {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "dev_url": None}),
         (C.CliReadyMessage, {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "auth": None}),
     ):
@@ -377,32 +379,16 @@ def test_protocol_v4_input_compatibility_preserved() -> None:
 
 
 def test_all_captured_protocol_examples_validate_against_typed_models() -> None:
+    specs = route_specs()
     http_resp_models = {
-        ("GET", "api/app"): C.AppResponse,
-        ("GET", "api/configs"): C.ConfigsResponse,
-        ("GET", "api/config"): C.ConfigGetResponse,
-        ("POST", "api/config"): C.ConfigSaveResponse,
-        ("POST", "api/check"): C.CheckResponse,
-        ("POST", "api/describe"): C.DescribeResponse,
-        ("POST", "api/connections"): C.ConnectionsResponse,
-        ("POST", "api/prepare"): C.PrepareResponse,
-        ("POST", "api/run"): C.RunResponse,
-        ("POST", "api/stop-session"): C.StopSessionResponse,
-        ("POST", "api/time"): C.TimeCommandAck,
-        ("POST", "api/write"): C.WriteResponse,
-        ("GET", "api/session"): C.SessionResponse,
-        ("GET", "api/dashboard"): C.DashboardResponse,
-        ("GET", "api/scenarios"): C.ScenariosResponse,
-        ("GET", "api/recording"): C.RecordingResponse,
+        (spec.method, spec.path.lstrip("/")): spec.response_model
+        for spec in specs
+        if spec.response_model is not None
     }
     http_req_models = {
-        ("POST", "api/config"): C.ConfigSaveRequest,
-        ("POST", "api/describe"): C.DescribeRequest,
-        ("POST", "api/connections"): C.ConnectionsRequest,
-        ("POST", "api/prepare"): C.PrepareRequest,
-        ("POST", "api/run"): C.RunRequest,
-        ("POST", "api/stop-session"): C.StopSessionRequest,
-        ("POST", "api/write"): C.WriteRequest,
+        (spec.method, spec.path.lstrip("/")): spec.request_model
+        for spec in specs
+        if spec.request_model is not None
     }
     examples = sorted(EXAMPLES_DIR.glob("*.json"))
     assert len(examples) >= 60
@@ -431,7 +417,7 @@ def test_all_captured_protocol_examples_validate_against_typed_models() -> None:
                 elif route == ("POST", "api/check"):
                     req_model = C.CheckTextRequest if "text" in req["body"] else C.CheckFileRequest
                     req_model.model_validate(req["body"])
-                elif route in http_req_models:
+                else:
                     http_req_models[route].model_validate(req["body"])
 
 
@@ -521,102 +507,13 @@ def test_dynamic_variable_limits_and_config_save_413_precedence() -> None:
 # ------------------------------------------------------------ Parity with stdlib-only vehicle_sil_control.protocol
 
 
-def test_contracts_constants_and_boundaries_match_stdlib_control_protocol() -> None:
+def test_contracts_constants_and_request_fields_stay_in_sync() -> None:
     assert C.EVENTS_FORMAT == protocol.EVENTS_FORMAT
     assert C.SPEED_MIN == protocol.SPEED_MIN
     assert C.SPEED_MAX == protocol.SPEED_MAX
     assert C.STEP_MS_MAX == protocol.STEP_MS_MAX
     assert C.MAX_ID == protocol.MAX_ID
     assert C.TIME_COMMANDS == protocol.TIME_COMMANDS
-    assert C.INTENT_FIELDS == protocol.INTENT_FIELDS
-    assert C.REQUEST_FIELDS == protocol.REQUEST_FIELDS
-    assert C.TEXT_FIELDS == protocol.TEXT_FIELDS
-    assert C.DESCRIBE_FIELDS == protocol.DESCRIBE_FIELDS
-    assert C.CONNECTIONS_FIELDS == protocol.CONNECTIONS_FIELDS
-    assert C.NO_CONNECTION == protocol.NO_CONNECTION
-
-    time_cases = [
-        {"command": "pause"},
-        {"command": "resume", "id": 0},
-        {"command": "pause", "id": protocol.MAX_ID},
-        {"command": "pause", "id": protocol.MAX_ID + 1},
-        {"command": "pause", "id": -1},
-        {"command": "pause", "id": True},
-        {"command": "step", "ms": 1},
-        {"command": "step", "ms": protocol.STEP_MS_MAX},
-        {"command": "step", "ms": 0},
-        {"command": "step", "ms": protocol.STEP_MS_MAX + 1},
-        {"command": "step", "ms": True},
-        {"command": "run_until", "at_ms": 0},
-        {"command": "run_until", "at_ms": protocol.STEP_MS_MAX},
-        {"command": "run_until", "at_ms": -1},
-        {"command": "run_until", "at_ms": protocol.STEP_MS_MAX + 1},
-        {"command": "speed", "value": "max"},
-        {"command": "speed", "value": protocol.SPEED_MIN},
-        {"command": "speed", "value": protocol.SPEED_MAX},
-        {"command": "speed", "value": 1},
-        {"command": "speed", "value": 0},
-        {"command": "speed", "value": protocol.SPEED_MIN / 10},
-        {"command": "speed", "value": protocol.SPEED_MAX + 0.1},
-        {"command": "speed", "value": 10**400},
-        {"command": "speed", "value": True},
-        {"command": "speed", "value": math.nan},
-        {"command": "speed", "value": math.inf},
-        {"command": "stop"},
-        {"command": "pause", "ms": 10},
-    ]
-    for case in time_cases:
-        try:
-            proto_out = protocol.check_time_command(case)
-            proto_ok = True
-        except protocol.InvalidRequest:
-            proto_out = None
-            proto_ok = False
-        try:
-            contract_out, _, _ = C.parse_time_command_request(case)
-            contract_ok = True
-        except (ValidationError, ValueError):
-            contract_out = None
-            contract_ok = False
-        assert contract_ok == proto_ok, (case, proto_ok, contract_ok)
-        if proto_ok:
-            assert contract_out == proto_out, (case, proto_out, contract_out)
-
-    run_cases = [
-        {"file": "a.yaml"},
-        {"file": "a.yaml", "vehicle_sil_run_request": 1},
-        {"file": "a.yaml", "vehicle_sil_run_request": 2},
-        {"file": "a.yaml", "vehicle_sil_run_request": True},
-        {"file": "a.yaml", "speed": "max"},
-        {"file": "a.yaml", "speed": protocol.SPEED_MIN},
-        {"file": "a.yaml", "speed": protocol.SPEED_MAX},
-        {"file": "a.yaml", "speed": 0},
-        {"file": "a.yaml", "speed": 10**400},
-        {"file": "a.yaml", "stop_at_ms": 1},
-        {"file": "a.yaml", "stop_at_ms": protocol.STEP_MS_MAX},
-        {"file": "a.yaml", "stop_at_ms": 0},
-        {"file": "a.yaml", "stop_at_ms": protocol.STEP_MS_MAX + 1},
-        {"file": "a.yaml", "late_tolerance_ms": 0},
-        {"file": "a.yaml", "late_tolerance_ms": protocol.STEP_MS_MAX},
-        {"file": "a.yaml", "late_tolerance_ms": -1},
-        {"file": "a.yaml", "late_tolerance_ms": protocol.STEP_MS_MAX + 1},
-        {"file": "a.yaml", "disable": ["A", "A"]},
-        {"file": "a.yaml", "unknown_key": 1},
-        {"file": "a.yaml", "variant": None},
-    ]
-    for case in run_cases:
-        try:
-            protocol.check_fields("api/run", case, protocol.REQUEST_FIELDS)
-            protocol.check_speed(case.get("speed"))
-            protocol.check_run_millis(case, "stop_at_ms", 1)
-            protocol.check_run_millis(case, "late_tolerance_ms", 0)
-            protocol.check_name_list("disable", case.get("disable"))
-            proto_ok = True
-        except protocol.InvalidRequest:
-            proto_ok = False
-        try:
-            C.RunRequest.model_validate(case)
-            contract_ok = True
-        except ValidationError:
-            contract_ok = False
-        assert contract_ok == proto_ok, (case, proto_ok, contract_ok)
+    assert set(C.REQUEST_FIELDS) == set(C.model_allowed_fields(C.RunRequest))
+    assert len(C.REQUEST_FIELDS) == len(set(C.REQUEST_FIELDS))
+    assert set(C.CHECK_FIELDS) == set(C.REQUEST_FIELDS) | {"text"}

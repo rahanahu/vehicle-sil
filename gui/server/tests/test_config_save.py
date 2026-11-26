@@ -22,7 +22,7 @@ from vehicle_sil_gui.config_save import (TEMP_PREFIX, check_text, check_unchange
 from vehicle_sil_gui.launcher import InvalidRequest
 from vehicle_sil_gui.paths import MAX_DEPTH, ConfigFile, ConfigRoot, PathRejected
 from vehicle_sil_gui.refusal import Refused
-from vehicle_sil_gui.server import MAX_TEXT
+from vehicle_sil_gui.config_service import MAX_TEXT
 
 TEXT_LAUNCHER = Path(__file__).resolve().parent / "text_launcher.py"
 POSIX = sys.platform != "win32"

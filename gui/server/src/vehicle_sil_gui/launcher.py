@@ -13,38 +13,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from vehicle_sil_control.protocol import (
-    CONNECTIONS_FIELDS,
-    DESCRIBE_FIELDS,
-    INTENT_FIELDS,
-    MAX_ID,
     NO_CONNECTION,
-    REQUEST_FIELDS,
-    REQUEST_VERSION_KEY,
     SPEED_MAX,
     SPEED_MIN,
     STEP_MS_MAX,
-    TEXT_FIELDS,
-    TIME_COMMANDS,
     InvalidRequest,
-    check_connect,
-    check_disable,
-    check_enable,
-    check_fields,
-    check_manual,
-    check_name_list,
-    check_network,
-    check_params,
-    check_run_millis,
-    check_speed,
-    check_strict,
-    check_time_command,
-    check_time_policy,
-    check_variant,
     command_line,
     request_text,
     serve_prepare_command,
     serve_run_command,
-    serve_status_command,
     speed_argument,
     stop_command_line,
     write_request_file,
@@ -69,7 +46,6 @@ VERSION_TIMEOUT_S = 10
 # before the simulation runs, where its link stands ({"name", "state", "variables" | "version"}). The states
 # (connected, no_hello, version_mismatch, not_offered, none) are passed on as they are: the server does not read
 # them. The summary keeps the event's fields in the participant's entry, under the same name as the event.
-FEATURE_CONTROL_LINKS = "control-links"
 CONTROL_EVENT = "control_link"
 CONTROL_SUMMARY_FIELD = "control_link"
 # Scenarios (docs/scenario.md): run --scenario plays one and ends the run with its outcome; check --scenario checks it.

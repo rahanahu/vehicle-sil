@@ -38,13 +38,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from vehicle_sil_control.grpc_helpers import (
-    ADDRESS,
-    PROTO,
     REASON_METADATA,
     REASON_RUN_CHANGED,
-    ROLE_LINE,
     RUN_METADATA,
-    STUBS_VARIABLE,
     check_loopback_address as check_address,
     credentials_file,
     decode_proto_snapshot_values,
