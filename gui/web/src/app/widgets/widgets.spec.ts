@@ -102,6 +102,12 @@ const hello = (state = 'ready', id: string | number = '1', write: object = TAKES
   replay: null,
 });
 
+const synced = (id: string | number = '1') => ({
+  type: 'synced',
+  run_id: String(id),
+  last_seq: null,
+});
+
 const values = (
   sampleMs: number,
   paused: boolean,
@@ -158,7 +164,7 @@ describe('variable widgets', () => {
     fixture.componentRef.setInput('ref', ref(name));
     fixture.detectChanges();
     fake.sockets[0].open();
-    await deliver(fixture, hello(state));
+    await deliver(fixture, hello(state), synced());
     return fixture;
   }
 
@@ -470,7 +476,11 @@ describe('variable widgets', () => {
       message,
       caution: null,
     });
-    await deliver(fixture, hello('ready', 1, refused('scenario-running', 'a scenario plays')));
+    await deliver(
+      fixture,
+      hello('ready', 1, refused('scenario-running', 'a scenario plays')),
+      synced(1),
+    );
     const button = element<HTMLButtonElement>(fixture, 'button[role="switch"]');
     expect(button.getAttribute('aria-disabled')).toBe('true');
     expect(text(fixture, 'widget-why')).toBe('シナリオの実行中は書けません（見るだけです）');
@@ -482,6 +492,7 @@ describe('variable widgets', () => {
     await deliver(
       fixture,
       hello('ready', 2, refused('some-new-reason', 'the launcher says no for now')),
+      synced(2),
     );
     expect(text(fixture, 'widget-why')).toBe('the launcher says no for now');
     expect(element(fixture, '[data-testid="widget-why"] [lang="en"]').textContent).toBe(
@@ -624,7 +635,12 @@ describe('variable widgets', () => {
     fixture.detectChanges();
     expect(text(fixture, 'widget-write')).toMatch(/受け付けました/);
     expect(button.getAttribute('aria-checked')).toBe('true');
-    await deliver(fixture, hello('ready', 2), values(0, false, { 'engine.enabled': false }, 2));
+    await deliver(
+      fixture,
+      hello('ready', 2),
+      synced(2),
+      values(0, false, { 'engine.enabled': false }, 2),
+    );
     expect(text(fixture, 'widget-write')).toBe('');
     expect(text(fixture, 'widget-error')).toBe('');
     expect(button.getAttribute('aria-checked')).toBe('false');

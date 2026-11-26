@@ -1,6 +1,7 @@
 import { GuiClient, createClient } from './client';
 import { BATCH_MS } from './connection';
-import { ClientTime } from './time';
+import { ClientTime, TimeState } from './time';
+import { Writable } from './values';
 import { FakeHttp } from './testing/fake-http';
 import { FakeSocket, FakeWebSockets } from './testing/fake-web-socket';
 import { httpExamples, webSocketExamples } from './testing/protocol-examples';
@@ -8,9 +9,11 @@ import { httpExamples, webSocketExamples } from './testing/protocol-examples';
 /** How long the tests wait for the launcher's answer (shorter than in production). */
 const ANSWER_MS = 1000;
 
+type CreatedClient = ReturnType<typeof createClient>;
+
 /** What the tests read (the fields of the time state, as functions that return the value), and the commands. */
-function view(client: GuiClient) {
-  const control: ClientTime = client.time;
+function view(client: CreatedClient) {
+  const control = client.time;
   const s = () => control.state.get();
   return {
     simMs: () => s().time?.simMs ?? null,
@@ -27,7 +30,7 @@ function view(client: GuiClient) {
     pause: () => control.pause(),
     resume: () => control.resume(),
     step: (ms: number) => control.step(ms),
-    runUntil: (atMs: number) => control.send({ command: 'run_until', at_ms: atMs }),
+    runUntil: (atMs: number) => control.runUntil(atMs),
   };
 }
 type TimeView = ReturnType<typeof view>;
@@ -37,7 +40,7 @@ describe('TimeControl', () => {
   let http: FakeHttp;
   let server: Map<string, unknown[]>;
   let app: unknown;
-  let client: GuiClient;
+  let client: CreatedClient;
 
   beforeAll(async () => {
     server = new Map((await webSocketExamples()).map((e) => [e.name, e.server]));
@@ -176,6 +179,7 @@ describe('TimeControl', () => {
 
   it('sends run_until with the time to pause at', async () => {
     const { time, socket } = await open();
+    expect(time.runUntil(500)).toEqual({ sent: false, reason: 'no-session' });
     await play(socket, 'ws-time', 0, standing);
     expect(time.runUntil(500)).toEqual({ sent: true });
     const sent = http.expectOne('api/time');
@@ -186,6 +190,7 @@ describe('TimeControl', () => {
       instance: '0123456789abcdef',
     });
     expect(time.sending()).toBe('run_until');
+    expect(time.runUntil(600)).toEqual({ sent: false, reason: 'waiting' });
   });
 
   it('does not call a small lateness within the tolerance late', async () => {
@@ -363,5 +368,39 @@ describe('TimeControl', () => {
     await sendStep(time);
     client.close();
     expect(time.sending()).toBeNull();
+  });
+
+  it('keeps ClientTime backwards-compatible without runUntil while createClient provides runUntil directly', () => {
+    const legacyState = new Writable<TimeState>({
+      time: null,
+      paced: false,
+      lateness: null,
+      behind: false,
+      lastCommand: null,
+      sending: null,
+      failure: null,
+    });
+    // Legacy ClientTime wrappers/mocks omitting runUntil still satisfy ClientTime and GuiClient
+    const legacyTime: ClientTime = {
+      state: legacyState.readonly(),
+      answerTimeoutMs: ANSWER_MS,
+      pause: () => ({ sent: false, reason: 'no-session' }),
+      resume: () => ({ sent: false, reason: 'no-session' }),
+      step: () => ({ sent: false, reason: 'no-session' }),
+      setSpeed: () => ({ sent: false, reason: 'no-session' }),
+      send: () => ({ sent: false, reason: 'no-session' }),
+    };
+    const legacyClient: GuiClient = { ...client, time: legacyTime };
+    expect(legacyClient.time.runUntil).toBeUndefined();
+
+    // createClient() narrows time so runUntil can be called directly without optional chaining
+    const created = createClient({
+      baseUrl: 'http://127.0.0.1:1/',
+      token: 'secret',
+      http: http.transport,
+      socket: fake.factory,
+    });
+    expect(created.time.runUntil(500)).toEqual({ sent: false, reason: 'no-session' });
+    created.close();
   });
 });

@@ -72,6 +72,12 @@ const hello = (id: string | number = '1', more: object = {}) => ({
   replay: null,
 });
 
+const synced = (id: string | number = '1') => ({
+  type: 'synced',
+  run_id: String(id),
+  last_seq: null,
+});
+
 const peers = (state: string) => ({
   Engine: { state, applied_at_ms: state === 'applied' ? 200 : null, late: false, reason: null },
 });
@@ -120,7 +126,7 @@ describe('the writes of a bound variable', () => {
     told = bound.state.get();
     bound.state.subscribe((state) => (told = state));
     socket().open();
-    await deliver(hello());
+    await deliver(hello(), synced());
   });
 
   afterEach(() => {
@@ -290,7 +296,7 @@ describe('the writes of a bound variable', () => {
     writes.write(OFFSET, 50);
     const [first] = requests();
     writes.write(OFFSET, 60); // A held value: not sent to the next run
-    await deliver(hello(2));
+    await deliver(hello(2), synced(2));
     expect(status()).toEqual({ kind: 'idle' });
     expect(pending()).toBeNull();
     first.flush({ run_id: '1', operation: 4 });
@@ -306,7 +312,7 @@ describe('the writes of a bound variable', () => {
     writes.write(OFFSET, 50);
     requests()[0].flush({ run_id: '1', operation: 4 });
     writes.reject(OFFSET, 'not a number');
-    await deliver(hello(2));
+    await deliver(hello(2), synced(2));
     expect(status()).toEqual({ kind: 'idle' });
     expect(pending()).toBeNull();
     expectNextIsSent(70);
@@ -325,6 +331,7 @@ describe('the writes of a bound variable', () => {
     for (let seq = 9; seq <= 40; seq++) kept.push(listed(seq, 'applied', true));
     await deliver(
       hello(1, { operations: kept, operations_from_seq: 9, operations_open_omitted: 0 }),
+      synced(1),
     );
     expect(status()).toEqual({ kind: 'queued', seq: 1 });
     expect(pending()).toBe(50);
@@ -344,6 +351,7 @@ describe('the writes of a bound variable', () => {
     for (let seq = 9; seq <= 40; seq++) kept.push(listed(seq, 'applied', true));
     await deliver(
       hello(1, { operations: kept, operations_from_seq: 9, operations_open_omitted: 0 }),
+      synced(1),
     );
     expect(status()).toMatchObject({ kind: 'no-answer' });
     expect(pending()).toBeNull();

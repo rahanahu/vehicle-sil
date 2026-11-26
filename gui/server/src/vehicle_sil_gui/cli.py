@@ -119,8 +119,14 @@ def bind(port: int) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     if sys.platform == "win32":  # no other program may bind the same port and take the connections
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-    sock.bind(("127.0.0.1", port))
-    sock.listen(128)
+    if sys.platform != "win32" and port != 0:  # allow immediate restart on a fixed port across TIME_WAIT
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+        sock.listen(128)
+    except OSError:
+        sock.close()
+        raise
     sock.setblocking(False)
     return sock
 

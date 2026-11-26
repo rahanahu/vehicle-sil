@@ -31,7 +31,7 @@ import {
 } from './protocol';
 import { ClientRun, RunControl } from './run';
 import { ClientSession, SessionFeed } from './session';
-import { ANSWER_TIMEOUT_MS, ClientTime, TimeControl } from './time';
+import { ANSWER_TIMEOUT_MS, ClientTime, SendResult, TimeControl } from './time';
 import { webSocketUrl } from './urls';
 import { VariableBinder } from './variable-binding';
 import { ClientVariables, VariablesFeed } from './variables';
@@ -197,13 +197,15 @@ export function defaultOrigin(baseUrl: string, runtime: object = globalThis): st
 }
 
 /** Creates a client for the GUI server. Creating it does not connect (call connect()). */
-export function createClient(options: ClientOptions): GuiClient {
+export function createClient(
+  options: ClientOptions,
+): GuiClient & { readonly time: ClientTime & { runUntil(atMs: number): SendResult } } {
   return buildClient(options).client;
 }
 
 /** What the front (front.ts) needs besides the client: the transport and the error sink. */
 export interface ClientParts {
-  client: GuiClient;
+  client: GuiClient & { readonly time: ClientTime & { runUntil(atMs: number): SendResult } };
   http: HttpTransport;
   onError: ErrorSink;
   runControl: RunControl;
@@ -268,6 +270,7 @@ export function buildClient(options: ClientOptions): ClientParts {
   const binder = new VariableBinder({
     variables,
     connection: connection.state,
+    ready: session.ready,
     connectionEpoch: () => connection.batchEpoch(),
     session: session.session,
     onError,
@@ -292,7 +295,7 @@ export function buildClient(options: ClientOptions): ClientParts {
     );
 
   // Expose only the read side and the safe operations (not the methods of the internal parts)
-  const client: GuiClient = {
+  const client: ClientParts['client'] = {
     connection: {
       state: connection.state,
       failures: connection.failures,
@@ -332,6 +335,7 @@ export function buildClient(options: ClientOptions): ClientParts {
       pause: () => time.pause(),
       resume: () => time.resume(),
       step: (ms) => time.step(ms),
+      runUntil: (atMs) => time.runUntil(atMs),
       setSpeed: (value) => time.setSpeed(value),
       send: (command) => time.send(command),
     },

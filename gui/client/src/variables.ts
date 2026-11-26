@@ -1,4 +1,4 @@
-import { HttpError, HttpTransport, errorMessage } from './http';
+import { HttpError, HttpRequest, HttpTransport, errorMessage } from './http';
 import {
   Open,
   Unreadable,
@@ -196,6 +196,11 @@ export interface WriteOptions {
    * `operations`, so a widget can show "accepted, waiting to be applied" or know that it may send the next write.
    */
   onAccepted?: (operation: { session: string; seq: number }) => void;
+  /**
+   * Forwarded to the HTTP transport (`HttpRequest.keepalive` -> `fetch(..., { keepalive })`). Set `true` for a
+   * release write sent from a browser `pagehide` handler so the request can finish as the page unloads.
+   */
+  keepalive?: boolean;
 }
 
 /**
@@ -590,6 +595,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private readonly handles = new Set<Handle>();
   private readonly buckets = new Map<number, Bucket>();
   private readonly readings = new Map<string, VariableReading>();
+  /** Cached keys kept across a reconnect until a post-reconnect `values` sample arrives. */
+  private readonly awaitingRefresh = new Set<string>();
   private readonly histories = new Map<string, History>();
   private readonly pending = new Set<Pending>();
   /** Variables someone watches (null: a watch observes all). */
@@ -633,6 +640,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   /** Messages sent right after connecting (after authentication): all current subscriptions. */
   resume(): unknown[] {
     this.syncQueued = false;
+    for (const key of this.readings.keys()) this.awaitingRefresh.add(key);
     const messages: unknown[] = [];
     for (const [periodMs, wanted] of this.wanted()) {
       const bucket = this.bucket(periodMs);
@@ -717,6 +725,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
                 notifyOperations = this.prepareOperations(currentOps, listed, sameIdentity);
               }
               const next = readVariables(variables, id);
+              if (next.status === 'ended' || next.status === 'off' || next.status === 'failed') {
+                this.awaitingRefresh.clear();
+              }
               this.stateValue.set(next);
               notifyOperations();
               if (
@@ -771,7 +782,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
               touchedAll = true;
             }
           }
-          this.stateValue.set(readVariables(details, id));
+          const next = readVariables(details, id);
+          if (next.status === 'ended' || next.status === 'off' || next.status === 'failed') {
+            this.awaitingRefresh.clear();
+          }
+          this.stateValue.set(next);
           break;
         }
         case 'values': {
@@ -861,6 +876,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     // Clear every observable part before notifying any subscriber. A subscriber can synchronously
     // fetch the new run, so it must never observe or revive the previous run's values or schema.
     this.readings.clear();
+    this.awaitingRefresh.clear();
     this.histories.clear();
     this.historyReserved = 0;
     const initial = { ...NO_VARIABLES, session };
@@ -907,6 +923,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         const key = keyOf(peer, name);
         // Do not keep variables nobody watches (values arriving right after a stop, extras of an "all" subscription)
         if (this.watched !== null && !this.watched.has(key)) continue;
+        const refreshed = this.awaitingRefresh.delete(key);
         const before = this.readings.get(key);
         if (
           before &&
@@ -915,6 +932,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           before.paused === paused &&
           Object.is(before.value, value)
         ) {
+          if (refreshed) touched.add(key);
           continue;
         }
         this.readings.set(key, { value, sampleMs, simMs, paused });
@@ -1072,7 +1090,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         this.operationsValue
           .get()
           .find((o) => o.seq === pending.seq && o.session === pending.session);
-      this.http({ method: 'POST', path: 'api/write', body }, (outcome) => {
+      const request: HttpRequest = { method: 'POST', path: 'api/write', body };
+      if (options.keepalive !== undefined) request.keepalive = options.keepalive;
+      this.http(request, (outcome) => {
         if (!this.pending.has(pending)) return; // close() failed it first
         if (!outcome.ok) {
           const error = outcome.error;
@@ -1205,6 +1225,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     };
   }
 
+  isStale(ref: VariableRef): boolean {
+    return this.awaitingRefresh.has(keyOf(ref.peer, ref.name));
+  }
+
   /**
    * Turns a requested interval into the longest of WATCH_PERIODS_MS that is not longer, kept within the server's range
    * (lower and upper limit).
@@ -1245,7 +1269,12 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       }
     }
     if (all) return;
-    for (const key of this.readings.keys()) if (!seen.has(key)) this.readings.delete(key);
+    for (const key of this.readings.keys()) {
+      if (!seen.has(key)) {
+        this.readings.delete(key);
+        this.awaitingRefresh.delete(key);
+      }
+    }
   }
 
   /**

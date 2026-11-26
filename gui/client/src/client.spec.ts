@@ -55,6 +55,25 @@ describe('fetchTransport', () => {
       redirect: 'error',
     });
     expect(calls[1].init.headers).not.toHaveProperty('Origin');
+    expect(calls[0].init).not.toHaveProperty('keepalive');
+    expect(calls[1].init).not.toHaveProperty('keepalive');
+  });
+
+  it('forwards optional keepalive to fetch()', async () => {
+    const { calls, fetch } = fakeFetch(() => json({ run_id: '1', operation: 1 }));
+    const send = fetchTransport({
+      baseUrl: 'http://127.0.0.1:8765/',
+      token: 'secret',
+      fetch,
+    });
+    await new Promise((done) =>
+      send({ method: 'POST', path: 'api/write', body: {}, keepalive: true }, done),
+    );
+    await new Promise((done) =>
+      send({ method: 'POST', path: 'api/write', body: {}, keepalive: false }, done),
+    );
+    expect(calls[0].init.keepalive).toBe(true);
+    expect(calls[1].init.keepalive).toBe(false);
   });
 
   it('turns an aborted request into status 0 with the time it waited', async () => {

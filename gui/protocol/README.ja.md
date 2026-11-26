@@ -469,7 +469,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 ## サーバーが受け付けること（`allowed`）
 
-`allowed` は `{start, stop, force, save}` です。4 つはそれぞれ `{ok, reason, message}` で（`save` には `caution` もあります）、`ok` はサーバーがいまそのリクエストを受け付けるか、`reason` は理由のコード（`ok` のときは `null`）、`message` は人に見せる英語の 1 文（`ok` のときは `null`）です。`session`（要約）と `allowed` のメッセージに入り、実行がないときにも読めるように、`hello` と `api/session` の答えの最上位にも入ります。画面は、`ok` でボタンを使えるようにし、`message` を出せば、自分の表を持たずに済みます。それでも送られた `api/run` は、`start` の理由と同じコードのエラーを返します（409 `already-running`、`starting`、503 `shutting-down`、`launcher-unusable`）。`api/stop-session` は 200 `{instance, run_id}` か 409 `session-changed` を返します。それでも送られた `POST api/config` は、403 `save-disabled` か 503 `shutting-down` を返します。
+`allowed` は `{start, stop, force, save}` です。4 つはそれぞれ `{ok, reason, message}` で（`save` には `caution` もあります）、`ok` はサーバーがいまそのリクエストを受け付けるか、`reason` は理由のコード（`ok` のときは `null`）、`message` は人に見せる英語の 1 文（`ok` のときは `null`）です。「版と互換」のエラー `code` と同じく、`message` の文言は安定契約ではなく変わることがあります。プログラムの分岐には `reason`（と `caution.code`）を使ってください。`session`（要約）と `allowed` のメッセージに入り、実行がないときにも読めるように、`hello` と `api/session` の答えの最上位にも入ります。画面は、`ok` でボタンを使えるようにし、`message` を出せば、自分の表を持たずに済みます。それでも送られた `api/run` は、`start` の理由と同じコードのエラーを返します（409 `already-running`、`starting`、503 `shutting-down`、`launcher-unusable`）。`api/stop-session` は 200 `{instance, run_id}` か 409 `session-changed` を返します。それでも送られた `POST api/config` は、403 `save-disabled` か 503 `shutting-down` を返します。
 
 | フィールド | `reason` | いつ |
 |---|---|---|

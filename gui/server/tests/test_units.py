@@ -1966,3 +1966,91 @@ def test_gui_server_shutdown_awaits_cancelled_ticker_and_evicting_tasks(
         assert "evict-boom" in caplog.text
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------- cli.bind
+
+
+def test_cli_bind_socket_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket as socket_module
+    from vehicle_sil_gui import cli
+
+    class FakeSocket:
+        def __init__(self, family: int, kind: int) -> None:
+            self.family = family
+            self.kind = kind
+            self.opts: list[tuple[int, int, int]] = []
+            self.bound: tuple[str, int] | None = None
+            self.backlog: int | None = None
+            self.blocking: bool | None = None
+            self.closed = False
+
+        def setsockopt(self, level: int, optname: int, value: int) -> None:
+            self.opts.append((level, optname, value))
+
+        def bind(self, address: tuple[str, int]) -> None:
+            self.bound = address
+
+        def listen(self, backlog: int) -> None:
+            self.backlog = backlog
+
+        def setblocking(self, flag: bool) -> None:
+            self.blocking = flag
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(cli.socket, "socket", FakeSocket)
+    monkeypatch.setattr(cli.socket, "SO_EXCLUSIVEADDRUSE", 9999, raising=False)
+
+    # POSIX fixed port sets SO_REUSEADDR (never SO_REUSEPORT or SO_EXCLUSIVEADDRUSE).
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    fixed = cli.bind(8765)
+    assert fixed.opts == [(socket_module.SOL_SOCKET, socket_module.SO_REUSEADDR, 1)]
+    assert fixed.bound == ("127.0.0.1", 8765)
+    assert fixed.backlog == 128 and fixed.blocking is False and not fixed.closed
+
+    # POSIX port == 0 never sets SO_REUSEADDR so parallel ephemeral binds stay isolated.
+    ephemeral = cli.bind(0)
+    assert ephemeral.opts == []
+    assert ephemeral.bound == ("127.0.0.1", 0)
+
+    # Windows sets SO_EXCLUSIVEADDRUSE and never SO_REUSEADDR for both fixed and ephemeral ports.
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    for port in (8765, 0):
+        win_sock = cli.bind(port)
+        assert win_sock.opts == [(socket_module.SOL_SOCKET, 9999, 1)]
+        assert win_sock.bound == ("127.0.0.1", port)
+
+
+def test_cli_bind_real_posix_socket_reuseaddr() -> None:
+    import socket as socket_module
+    from vehicle_sil_gui import cli
+
+    if sys.platform == "win32":
+        pytest.skip("POSIX SO_REUSEADDR check")
+
+    ephemeral = cli.bind(0)
+    try:
+        assert ephemeral.getsockopt(socket_module.SOL_SOCKET, socket_module.SO_REUSEADDR) == 0
+    finally:
+        ephemeral.close()
+
+    fixed = None
+    for _ in range(5):
+        probe = socket_module.socket(socket_module.AF_INET, socket_module.SOCK_STREAM)
+        try:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        finally:
+            probe.close()
+        try:
+            fixed = cli.bind(port)
+            break
+        except OSError:
+            continue
+    assert fixed is not None
+    try:
+        assert fixed.getsockopt(socket_module.SOL_SOCKET, socket_module.SO_REUSEADDR) != 0
+    finally:
+        fixed.close()

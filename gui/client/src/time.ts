@@ -87,6 +87,10 @@ export interface ClientTime {
    * While paused, advances virtual time by ms and pauses again (the launcher rounds up to a multiple of the time step).
    */
   step(ms: number): SendResult;
+  /**
+   * Advances virtual time until atMs and pauses there (the launcher rounds up to a multiple of the time step).
+   */
+  runUntil?(atMs: number): SendResult;
   /** Changes the speed (a pause stays in effect). */
   setSpeed(value: number | 'max'): SendResult;
   /**
@@ -153,6 +157,13 @@ export class TimeControl implements ClientTime {
    */
   step(ms: number): SendResult {
     return this.send({ command: 'step', ms });
+  }
+
+  /**
+   * Advances virtual time until atMs and pauses there (the launcher rounds up to a multiple of the time step).
+   */
+  runUntil(atMs: number): SendResult {
+    return this.send({ command: 'run_until', at_ms: atMs });
   }
 
   /** Changes the speed (a pause stays in effect). */

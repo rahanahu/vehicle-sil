@@ -26,9 +26,6 @@ const PASSED_THROUGH: readonly string[] = [
   'check result: participants[].command',
   'check result: participants[].describe',
   'check result: participants[].reported',
-  'check result: participants[].variables[].description',
-  'check result: participants[].variables[].items',
-  'check result: participants[].variables[].step',
   'check result: participants[].network_map',
   'check result: participants[].j1939_nodes',
   'check result: scenario.inputs',
@@ -311,5 +308,153 @@ describe('raw of the launcher objects', () => {
     const partly = readRunResult({ ...launcher, traffic: 'none' }, 'result', u);
     expect(partly.traffic).toBeNull();
     expect(u.parts).toEqual(['traffic']);
+  });
+
+  it('types step, description and enum items on check variables, and handles older or nullable inputs', async () => {
+    const checkExample = (await httpExamples()).find((e) => e.name === 'check-text');
+    const checkRaw = (checkExample?.response as { check: Fields }).check;
+    const parsed = readCheckResult(checkRaw, 'check');
+    const engine = parsed.participants.find((p) => p.name === 'Engine');
+    const mode = engine?.variables?.find((v) => v.name === 'engine.mode');
+    expect(mode).toMatchObject({
+      name: 'engine.mode',
+      type: 'enum',
+      step: null,
+      description: 'operating mode',
+    });
+    expect(mode?.items?.length).toBeGreaterThan(0);
+    expect(mode?.items?.[0]).toEqual({ name: 'off', value: 0 });
+    expect(mode?.items?.[0]?.raw).toEqual({ name: 'off', value: 0 });
+
+    const withStep = readCheckResult(
+      {
+        vehicle_sil_check: 1,
+        file: 'sim.yaml',
+        result: 'passed',
+        errors: 0,
+        warnings: 0,
+        notes: 0,
+        stop_at_ms: null,
+        participants: [
+          {
+            name: 'Engine',
+            line: 1,
+            required: true,
+            enabled: true,
+            step_ms: 10,
+            status: 'described',
+            variables: [
+              {
+                name: 'engine.throttle',
+                type: 'real',
+                causality: 'input',
+                unit: '%',
+                min: 0,
+                max: 100,
+                step: 0.5,
+                description: 'throttle pedal',
+                items: [],
+                builtin: false,
+              },
+              {
+                // Older launcher omitting step, description and items
+                name: 'engine.legacy',
+                type: 'integer',
+                causality: 'output',
+              },
+              {
+                // Explicit nulls
+                name: 'engine.nullable',
+                type: 'enum',
+                causality: 'input',
+                step: null,
+                description: null,
+                items: null,
+              },
+            ],
+            control: null,
+          },
+        ],
+        networks: [],
+        findings: [],
+        scenario: null,
+      },
+      'check',
+    );
+    expect(withStep.participants[0]?.variables).toEqual([
+      {
+        name: 'engine.throttle',
+        type: 'real',
+        causality: 'input',
+        unit: '%',
+        min: 0,
+        max: 100,
+        step: 0.5,
+        description: 'throttle pedal',
+        items: [],
+        builtin: false,
+      },
+      {
+        name: 'engine.legacy',
+        type: 'integer',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        step: null,
+        description: '',
+        items: [],
+        builtin: null,
+      },
+      {
+        name: 'engine.nullable',
+        type: 'enum',
+        causality: 'input',
+        unit: '',
+        min: null,
+        max: null,
+        step: null,
+        description: null,
+        items: null,
+        builtin: null,
+      },
+    ]);
+
+    expect(() =>
+      readCheckResult(
+        {
+          vehicle_sil_check: 1,
+          file: 'sim.yaml',
+          result: 'passed',
+          errors: 0,
+          warnings: 0,
+          notes: 0,
+          stop_at_ms: null,
+          participants: [
+            {
+              name: 'Engine',
+              line: 1,
+              required: true,
+              enabled: true,
+              step_ms: 10,
+              status: 'described',
+              variables: [
+                {
+                  name: 'engine.mode',
+                  type: 'enum',
+                  causality: 'input',
+                  items: [{ name: 'off', value: 1.5 }],
+                },
+              ],
+              control: null,
+            },
+          ],
+          networks: [],
+          findings: [],
+          scenario: null,
+        },
+        'check',
+      ),
+    ).toThrow(ProtocolError);
   });
 });

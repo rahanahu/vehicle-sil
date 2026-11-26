@@ -293,7 +293,7 @@ export interface VariableView {
  */
 export interface FrontVariable extends Readable<VariableView> {
   /** Resolves when the value has been applied in an ECU step. Rejects with an ActionError (`no-answer` is `unknown`: it is not sent again). */
-  write(value: number | boolean | string): Promise<void>;
+  write(value: number | boolean | string, options?: { keepalive?: boolean }): Promise<void>;
 }
 
 /** The front door: `connect()` returns it. */

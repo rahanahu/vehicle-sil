@@ -43,6 +43,7 @@ GUI サーバーは、2 つの `.mjs` のファイルも、トークンなしで
 
 - **1 つにまとめたファイル**: ブラウザでも Node（22 以上）でも読めます。`scripts/verify-gui.py` が、このファイルを Node から使う例を、記録を再生するランチャーを相手に動かして確認します。
 - **パッケージ**: 中身は、1 つにまとめた ESM、`.d.ts`、`exports`、README、LICENSE です（作り方は `pack.mjs`）。バージョンは GUI サーバーと同じです。型はブラウザの型（`lib` の `DOM`）を使います。エントリーポイントは `.`、`./elements`、`./timeline` です（`testing` と `internal` は入りません）。
+- **開発サーバー（Vite、`ng serve` など）**: `/api/`、`/vsil/`、`/ws` を GUI サーバーへプロキシし、`vehicle-sil-gui` を `--dev-origin http://127.0.0.1:<port>` 付きで起動します（ローカル開発で再起動ごとのトークン更新を省きたい場合は `--no-auth` も付けられます。[docs/ja/gui.md](../../docs/ja/gui.md#開発サーバーを使う) の「開発サーバーを使う」）。
 
 ## エントリーポイント
 
@@ -141,11 +142,11 @@ editor.setVisible(true);
 
 ### 時間
 
-| 種類 | 名前                                                                                      |
-| ---- | ----------------------------------------------------------------------------------------- |
-| 型   | `ClientTime`（`state`、`answerTimeoutMs`、`pause`、`resume`、`step`、`setSpeed`、`send`） |
-| 型   | `TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`                     |
-| 定数 | `ANSWER_TIMEOUT_MS`                                                                       |
+| 種類 | 名前                                                                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------ |
+| 型   | `ClientTime`（`state`、`answerTimeoutMs`、`pause`、`resume`、`step`、`runUntil?`、`setSpeed`、`send`） |
+| 型   | `TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`                                  |
+| 定数 | `ANSWER_TIMEOUT_MS`                                                                                    |
 
 `front.time` と `client.time` は、把握している実行 ID とサーバーの識別子をコマンドに付けます。実行が切り替わった場合、サーバーはランチャーに送る前にコマンドを拒否します。この指定に対応していないサーバーはリクエストを拒否します。
 
@@ -320,27 +321,35 @@ try {
 }
 ```
 
-| 名前                                                               | 内容                                                                                                                                                                                                                                                           |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `status`                                                           | 見せる状態 1 つ: `link`、`run`、`file`、`result`、`problem`（下）。離散の値だけです                                                                                                                                                                            |
-| `clock`                                                            | `sim_ms`（仮想時間の ms。実行の前は `null`）、`speed`、`actual_speed`（直近のおよそ 1 秒に出た速さ。止まっている間と、始まった直後は `null`）、`pacing`（`not-paced`、`on-time`、`late`）。よく変わるので `status` と分けています                              |
-| `controls`                                                         | 操作ごとの、いま使えるか: `start`、`stop`、`force_stop`、`pause`、`resume`、`step`（`min_ms` と `max_ms` つき）、`run_until`、`speed`（`min`、`max`、`fastest`（数のほかに `'max'` を受けるか）つき）、`save`                                                  |
-| `scenario`                                                         | いまの（か最後の）実行のシナリオ: `file`、`name`、`status`、`steps`、`timeline_url`。シナリオのない実行では `null`                                                                                                                                             |
-| `runtime`                                                          | 常駐 hot / cold 実行の状態: `mode`、`state`、`config`、`reason`、`message`                                                                                                                                                                                     |
-| `prepare(options?)`                                                | 対応していれば `file` 用の常駐ランチャーを事前準備（`POST api/prepare`）し、非対応なら理由つきで `cold` を返す                                                                                                                                                 |
-| `configs()`                                                        | サーバーの root 配下の構成ファイル一覧を取得する（`GET api/configs`）                                                                                                                                                                                          |
-| `recording()`                                                      | いまの（か最後の）実行で反映された書き込みのシナリオ YAML（`GET api/recording`）、なければ `null` を返す                                                                                                                                                       |
-| `outside`                                                          | 実行の `connect` が実機のバスにつないだネットワーク（下の「ネットワークを外につなぐ」）                                                                                                                                                                        |
-| `connections({ network }, { file }?)`、`check(intent?, { file }?)` | ネットワークをつなげる先と、始めずに意図を確かめた結果（下の「ネットワークを外につなぐ」）                                                                                                                                                                     |
-| `readConfig({ file }?)`                                            | 構成ファイルの、保存されているとおりの文と `stamp`（下の「構成ファイルの文を編集する」）                                                                                                                                                                       |
-| `check(intent?, { file, text }?)`                                  | `text` つきなら、そのファイルの、まだ保存していない文の check（同じ節）                                                                                                                                                                                        |
-| `describeAgain({ file, variant }?)`                                | 保存したファイルの参加者の説明を保存し直し、その check を返す（同じ節）                                                                                                                                                                                        |
-| `saveConfig({ file, text, stamp })`                                | 文をそのファイルとして、読んだときの `stamp`（`null` は新しいファイル）つきで保存し、新しい `stamp` を返す（同じ節）                                                                                                                                           |
-| `run`                                                              | `start(intent?, { file, onStarted }?)`、`stop()`、`forceStop()`                                                                                                                                                                                                |
-| `time`                                                             | `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`、`runUntil(ms)`                                                                                                                                                                                           |
-| `variable(ref)`                                                    | 変数 1 つ。`"ECU.変数"`（最初の点で切る）か `{ peer, name }`（名前に点を含む ECU）で指します                                                                                                                                                                   |
-| `low`、`close()`                                                   | 同じ接続の `GuiClient`。`close()` は切ります（共有している接続は、次の `connect()` がつなぎ直します）                                                                                                                                                          |
-| `watch(source, fn)`、`until(source, test, options)`                | `watch` は、いますぐ `fn` を呼び、変わるたびに呼びます（複数の元は `watch([a, b], (a, b) => ...)`）。戻り値で止めます。`until` は、`test` を満たす最初の値で解決します。時間切れと中止は `ActionError`（`timeout`、`aborted`。どちらも `unknown`）で拒否します |
+| 名前                                                               | 内容                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                                                           | 見せる状態 1 つ: `link`、`run`、`file`、`result`、`problem`（下）。離散の値だけです                                                                                                                                                                                                                                  |
+| `clock`                                                            | `sim_ms`（仮想時間の ms。最初の実行の前は `null` で、実行の終了後も次の実行が始まるまで保持されます）、`speed`、`actual_speed`（直近のおよそ 1 秒に出た速さ。止まっている間と、始まった直後は `null`）、`pacing`（`not-paced`、`on-time`、`late`）。よく変わるので `status` と分けています                           |
+| `controls`                                                         | 操作ごとの、いま使えるか: `start`、`stop`、`force_stop`、`pause`、`resume`、`step`（`min_ms` と `max_ms` つき）、`run_until`、`speed`（`min`、`max`、`fastest`（数のほかに `'max'` を受けるか）つき）、`save`                                                                                                        |
+| `scenario`                                                         | いまの（か最後の）実行のシナリオ: `file`、`name`、`status`、`steps`、`timeline_url`。シナリオのない実行では `null`                                                                                                                                                                                                   |
+| `runtime`                                                          | 常駐 hot / cold 実行の状態: `mode`、`state`、`config`、`reason`、`message`                                                                                                                                                                                                                                           |
+| `prepare(options?)`                                                | 対応していれば `file` 用の常駐ランチャーを事前準備（`POST api/prepare`）し、非対応なら理由つきで `cold` を返す                                                                                                                                                                                                       |
+| `configs()`                                                        | サーバーの root 配下の構成ファイル一覧を取得する（`GET api/configs`）                                                                                                                                                                                                                                                |
+| `recording()`                                                      | いまの（か最後の）実行で反映された書き込みのシナリオ YAML（`GET api/recording`）、なければ `null` を返す                                                                                                                                                                                                             |
+| `outside`                                                          | 実行の `connect` が実機のバスにつないだネットワーク（下の「ネットワークを外につなぐ」）                                                                                                                                                                                                                              |
+| `connections({ network }, { file }?)`、`check(intent?, { file }?)` | ネットワークをつなげる先と、始めずに意図を確かめた結果（下の「ネットワークを外につなぐ」）                                                                                                                                                                                                                           |
+| `readConfig({ file }?)`                                            | 構成ファイルの、保存されているとおりの文と `stamp`（下の「構成ファイルの文を編集する」）                                                                                                                                                                                                                             |
+| `check(intent?, { file, text }?)`                                  | `text` つきなら、そのファイルの、まだ保存していない文の check（同じ節）                                                                                                                                                                                                                                              |
+| `describeAgain({ file, variant }?)`                                | 保存したファイルの参加者の説明を保存し直し、その check を返す（同じ節）                                                                                                                                                                                                                                              |
+| `saveConfig({ file, text, stamp })`                                | 文をそのファイルとして、読んだときの `stamp`（`null` は新しいファイル）つきで保存し、新しい `stamp` を返す（同じ節）                                                                                                                                                                                                 |
+| `run`                                                              | `start(intent?, { file, onStarted }?)`、`stop()`、`forceStop()`                                                                                                                                                                                                                                                      |
+| `time`                                                             | `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`、`runUntil(ms)`                                                                                                                                                                                                                                                 |
+| `variable(ref)`                                                    | 変数 1 つ。`"ECU.変数"`（最初の点で切る）か `{ peer, name }`（名前に点を含む ECU）で指します                                                                                                                                                                                                                         |
+| `low`、`close()`                                                   | 同じ接続の `GuiClient`。`close()` は切ります（共有している接続は、次の `connect()` がつなぎ直します）                                                                                                                                                                                                                |
+| `watch(source, fn)`、`until(source, test, options)`                | `watch` は、いますぐ `fn` を呼び、変わるたびに呼びます（複数の元は `watch([a, b], (a, b) => ...)`）。戻り値で止めます。`until` は、`test` を満たす最初の値で解決します。待ちの上限や中断には `{ timeout_ms, signal }` を渡し、時間切れと中止は `ActionError`（`timeout`、`aborted`。どちらも `unknown`）で拒否します |
+
+```ts
+const controller = new AbortController();
+const settled = await until(client.status, (s) => s.run === 'ended' || s.run === 'crashed', {
+  timeout_ms: 10_000,
+  signal: controller.signal,
+});
+```
 
 データの欄は wire の名前（`force_stop`、`sim_ms`）、関数は JavaScript の慣習（`forceStop`、`runUntil`）です。状態はどれも `Readable` です。変わっていなければ `get()` は同じオブジェクトを返し、`get` と `subscribe` は `this` なしで動きます（`useSyncExternalStore` にそのまま渡せます）。
 
@@ -360,7 +369,7 @@ try {
 
 ### `controls`
 
-各項目は `{ ok, reason, caution }` です。`ok` が偽のとき `reason` は `{ code, message }`、`caution` は、受けるが先に知っておくことがある操作に付く同じ形です。コードは変わりません（増えることはありますが、意味は変わりません）。文は英語で、規則の持ち主が書いたものです。
+各項目は `{ ok, reason, caution }` です。`ok` が偽のとき `reason` は `{ code, message }`、`caution` は、受けるが先に知っておくことがある操作に付く同じ形です。コードは変わりません（増えることはありますが、意味は変わりません）。`message` は表示用の英語の文で、文言は変わることがあるため、`message` の文字列一致ではなく `code` で分岐してください。
 
 | 項目                                            | 出どころ                                                                                                                                                                                                                                                                                                                                                                       |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -402,7 +411,7 @@ const stop = watch(client.outside, (rows) => console.log(rows.map((r) => r.condi
 
 - **`connections({ network }, { file }?)`** は `POST api/connections` を呼び、答えを答えの順のまま 1 列に並べます。先ごとに `{ backend, value, label, detail, usable, reason }`、一覧を作れなかった backend と、ファイルの誤りは `{ backend, error }`（ランチャーの文）です。2 つは `'error' in entry` で見分けます。backend の一覧が欠けた答え（終了コード 1）は失敗にしません。GUI サーバーの PC でそのネットワークのブリッジを起こします（Windows では、そこで Npcap が権限の昇格を求めることがあります）。そのため、ページを開いたときではなく、利用者が選択を開いたときに呼びます。一覧はその PC のもので、ブラウザーの PC のものではありません。断られると `ActionError`（`check-busy`、`unknown-network` など）で reject します。
 - **`intent.connect`** は、ネットワークの名前から、一覧が `usable: true` で出した `value`（書かれたとおり）への対応です。`'none'` は SIL Kit だけにつなぎ、キーを省くのと同じです。そのネットワークの最後の一覧が出していない値は、サーバーが `target-not-listed` で断ります。一覧を取り直してください。**`intent.time_policy`** は `realtime`（ランチャーの既定。外につないだ実行は実時間を保つ）か `free` です。
-- **`check(intent?, { file, signal }?)`** は、`run.start(intent)` が始めるものをランチャーが確かめた結果を返します（`findings`。`time_lock` と `networks[].outside` は `raw` にあります）。断られると `ActionError` で reject します。その失敗は `status.problem` に入れません。照合は 1 つずつ送ります: 次は前の照合の答えの後に送ります（サーバーは照合を 1 つずつ実行し、待つものが多すぎると `check-busy` で断ります）。待っているか送っている途中の照合と同じ意図、同じファイルの照合は、それを分け合います。そのため、同じページの意図を照合するページの部品と画面は、1 回の照合で済みます。待っている照合は、呼んだすべての側の `signal` が中断していれば送らず、その signal の理由で reject します。送っている最中の照合も分け合い、その答えは送ったときのファイルを読んだものです。利用者が照合し直すよう頼んだときは `fresh: true` を渡します（待っている照合だけを分け合います）。`close()` の後、待っている照合は送らず、`closed` で reject します。
+- **`check(intent?, { file, signal }?)`** は、`run.start(intent)` が始めるものをランチャーが確かめた結果を返します（`findings`。`time_lock` と `networks[].outside` は `raw` にあります）。返される `participants[].variables[]` には、実行を始める前の時点で各 ECU の `--describe` メタデータ（`unit`、`min`、`max`、`step`、`description`、enum の `items`（`[{ name, value }]`）、`builtin`）が入っているため、初回実行前に範囲・ラベル・enum 選択肢を組み立てられます。断られると `ActionError` で reject します。その失敗は `status.problem` に入れません。照合は 1 つずつ送ります: 次は前の照合の答えの後に送ります（サーバーは照合を 1 つずつ実行し、待つものが多すぎると `check-busy` で断ります）。待っているか送っている途中の照合と同じ意図、同じファイルの照合は、それを分け合います。そのため、同じページの意図を照合するページの部品と画面は、1 回の照合で済みます。待っている照合は、呼んだすべての側の `signal` が中断していれば送らず、その signal の理由で reject します。送っている最中の照合も分け合い、その答えは送ったときのファイルを読んだものです。利用者が照合し直すよう頼んだときは `fresh: true` を渡します（待っている照合だけを分け合います）。`close()` の後、待っている照合は送らず、`closed` で reject します。
 - **`outside`** は、実行の `connect` がつないだネットワークごとに 1 行です: `network`、`target`、`participant`、`link`（Ethernet）か `bus`（CAN）、`condition`（`ok`、`interrupted`、`degraded`）、`reasons`（code。ランチャーの順）、`nothing_received`（`condition` とは別）、`to_outside` と `from_outside`（このページに `outside` の事象が届くまで `null`）。実行がないときと、構成ファイルの `role: bridge` の参加者が外につなぐ実行では空です。外につながっているかどうかを、これから読まないでください（実行が実時間を保つ理由は、check の `time_lock.because` が言います）。実行の終わり方は、`connect-failed` と `connect-lost` も含めて `status` にあります。
 
 ### 構成ファイルの文を編集する
@@ -465,8 +474,9 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 見え方（view）は、`value`、`text`（enum は項目の名前）、`unit`、`min`、`max`、`step`、`sim_ms`、`stale`、`note`（値が生きたものでないときの 1 文）、`availability`（`unknown`、`active`、`inactive`。ECU がその変数をいま使っているか。表示のための情報で、`can_write`、`why`、`note` は見ません。接続が切れても変わりません。実行の要約にその変数が届くまでは `unknown`、届いたあと、送らない古い GUI サーバーでは `active`）、`can_write`（変数自身の条件と、ランチャーが受けるか（`state.allowed.write`））、`why`（書けない理由の `{ code, message }`。変数自身の理由が先、次にランチャーの理由）、`writing`、`problem`（このページの直前の書き込みが通らなかった理由）と、`client.low.variables.bind` の値（`condition`、`block`、`write_status`）を持ちます。
 
 - 最初の購読がサーバーに値を頼み、最後の購読の解除がやめます。`close()` はありません。
-- `write(value)` は購読がなくても書けます（その 1 回だけ送ります）。`ActionError` で拒否します。`no-answer` は `unknown` で、答えの来なかった書き込みは送り直しません。
-- バインド（`client.low.variables.bind`）は、書き込みが向かっている間、次の値を保留してまとめます（スライダーのため）。正面の口の `write()` は、呼ぶたびに送ります。
+- `write(value, options?)` は購読がなくても書けます（その 1 回だけ送ります）。ブラウザの `pagehide` ハンドラから保持入力を解除するときは `{ keepalive: true }` を渡すと、ページ離脱中も `fetch()` を完了させられます。`ActionError` で拒否します。`no-answer` は `unknown` で、答えの来なかった書き込みは送り直しません。
+- バインド（`client.low.variables.bind`）は、書き込みが向かっている間、次の値を保留してまとめ（スライダーのため）、`block !== null` の間は何もせずに無視します。正面の口の `write()` は呼ぶたびに送り、拒否されたら `ActionError` で reject します。
+- `Readable` の通知は同期なので、`subscribe()` のコールバック内でガードなしに再入する書き込みを起こさないでください（副作用を遅延するか状態遷移でガードします）。モーメンタリ／保持入力、`keepalive`、`atMs` パルス、切断復帰、バス観測については、[docs/ja/gui.md](../../docs/ja/gui.md#保持入力切断復帰バス観測) の「保持入力・切断復帰・バス観測」を参照してください。
 
 ## 部品（custom element）
 
@@ -527,7 +537,7 @@ stop(); // 最後の購読を解除すると、サーバーに値を頼むのを
 
 文言は英語です。ボタンの名前は属性で替えられます（表の `label-start` など、`<vsil-write>` は `label`）。理由の文（使えないボタン、`caution`、問題、変数が書けない理由）は理由の持ち主の英語の文で、`setReasonText(fn)` で替えます。`fn(reason)` が文を返せばそれを出し、`null` か `undefined` なら英語のままにします。`setReasonText(null)` で外します。部品をページに置く前に呼びます。部品の自前の語（`ready`、`writing…`、`(no scenario)`、`fastest`、`behind real time`、`Step (ms)`、`Until (ms)`、`Speed`、`-`、既定の `on` と `off`、`SIL Kit only (not connected)`、SIL Kit だけに戻した選択の文、`<vsil-outside>` の `link`、`bus`、`to outside`、`from outside`、`nothing received`）は替えられません。
 
-選ぶ部品と開始のボタンは別の要素なので、次の実行に選んだものはモジュールが `pageIntent` に持ちます（`get()`、`subscribe(fn)`、`update(patch)`。`''` か `undefined` の欄は消えます）。`<vsil-scenario-select>` が `scenario` を書き、`<vsil-run-controls>` は `{ ...pageIntent.get(), ...intent }` で開始するので、`intent` プロパティが勝ちます。開始するファイルは `status.file` のもので、`<vsil-scenario-select>` がシナリオを並べるファイルと同じです（実行をまだ始めていなければ、サーバーの起動時のファイル）。自分のコードで開始する画面は、意図を `client.run.start(intent)` に自分で渡します。照合が見る選択は `pageIntent` にも書きます。そうすると `<vsil-connect>` は、画面が始めるものを照合します。
+選ぶ部品と開始のボタンは別の要素なので、次の実行に選んだものはモジュールが `pageIntent` に持ちます（`get()`、`subscribe(fn)`、`update(patch)`。`''` か `undefined` の欄は消えます）。`pageIntent` は常に **次の実行** に対する意図を保持し、実行中のセッションの設定で上書きされることはないため、実行中にコントロールを変えても次の開始に備えられます。`<vsil-scenario-select>` が `scenario` を書き、`<vsil-run-controls>` は `{ ...pageIntent.get(), ...intent }` で開始するので、`intent` プロパティが勝ちます。開始するファイルは `status.file` のもので、`<vsil-scenario-select>` がシナリオを並べるファイルと同じです（実行をまだ始めていなければ、サーバーの起動時のファイル）。自分のコードで開始する画面は、意図を `client.run.start(intent)` に自分で渡します。照合が見る選択は `pageIntent` にも書きます。そうすると `<vsil-connect>` は、画面が始めるものを照合します。
 
 GUI サーバーは、構成ファイルを付けて起動します（`vehicle-sil-gui --web my-screen simulation.yaml`）。付けないとサーバーに起動時のファイルがなく、部品だけの画面は実行を開始できません。断った理由（`no-file`）は `<vsil-status>` に出ます。そのときファイルを指定できるのは、自分のコードだけです: `client.run.start(intent, { file })`。
 
@@ -674,6 +684,7 @@ watch.close();
 - `onAccepted` は、「受け付けた、反映を待っている」を見せる、次の書き込みを送ってよいと知る、のに使います。`bind` の書き込みは、これを使って、受け取られる前の次の値を送らずに覚えておき、受け取られたら最後の値だけを送ります。
 - `timeoutMs`（既定 `WRITE_TIMEOUT_MS`）は、HTTP のレスポンスが来てから数えます。`Infinity` は時間で切りません（実行が替わるか `close()` するまで待ちます）。2^31-1 ms（約 24.8 日）より長い値は、そこに丸めます。数でない値と 0 以下は既定の時間です。
 - 書き込みは、指定した仮想時間（`atMs`。省くと次のステップ）のステップで反映されるので、止まっている間は確定しません。止めて書くときは、`client.variables.operations` で `queued` を見てから進めます（リポジトリのクローンにある `examples/gui_client/variables.mjs`）。
+- `keepalive`（`WriteOptions.keepalive`、`HttpRequest.keepalive` を通じて `fetch(..., { keepalive })` へ転送）を使うと、ブラウザの `pagehide` ハンドラから送る解除書き込みに `Authorization` と `Origin` ヘッダーを付けたままページ離脱後も完了させられます。保持入力の使い分けと限界は [docs/ja/gui.md](../../docs/ja/gui.md#保持入力切断復帰バス観測) の「保持入力・切断復帰・バス観測」を見てください。
 - 最近の操作（ほかのクライアントの書き込みも。シナリオ自身の書き込みは除く）は `client.variables.operations` で読めます。
 
 ### 最初のステップの前に書く
@@ -733,12 +744,12 @@ throttle.close();
 
 `unavailable` の `status` は、実行していない、この実行に変数はない、接続している途中、接続できない、のどれかです。`stale` の `why` は次のとおりです。
 
-| `why`          | 意味                                     |
-| -------------- | ---------------------------------------- |
-| `connection`   | クライアントとサーバーの接続が切断された |
-| `reconnecting` | サーバーがランチャーに再接続している     |
-| `peer`         | ECU が切断された                         |
-| `reading`      | 値の読み取りが失敗し続けている           |
+| `why`          | 意味                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `connection`   | クライアントとサーバーの接続が切断された、または同じ実行への再接続後、キャッシュされた値に最初の `values` サンプルがまだ届いていない |
+| `reconnecting` | サーバーがランチャーに再接続している                                                                                                 |
+| `peer`         | ECU が切断された                                                                                                                     |
+| `reading`      | 値の読み取りが失敗し続けている                                                                                                       |
 
 ### 書けない理由（`block`）
 
@@ -774,7 +785,7 @@ throttle.close();
 | `refused`、`failed`、`no-answer`、`closed` | `WriteError` の `kind`（`message` と `code` を持つ）        |
 
 - `isWriteError(writeStatus)` は、`message` を持つもの（うまくいかなかったもの）を見分けます。
-- `message` は英語です。画面の言葉にするときは `kind` から作ります。
+- `message` は人向けの英語で文言が変わることがあります（ローカライズされていません）。分岐や画面の文言の組み立てには `kind` と `code` を使ってください。
 - `pending` があれば、読んだ値の代わりに表示します（押したスイッチが、結果を待つ間に元へ戻って見えません）。
 
 ### `write(value)` の動き

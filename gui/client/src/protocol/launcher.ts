@@ -102,12 +102,29 @@ export interface Variable extends FromLauncher {
   unit: string;
   min: number | null;
   max: number | null;
+  /** Suggested increment for editing (not enforced). null if not set or from an older launcher. */
+  step?: number | null;
+  /** Description of the variable (empty string when absent or from an older launcher). */
+  description?: string | null;
+  /** Enum items (`[]` for non-enums or when absent from an older launcher; null if explicitly null). */
+  items?: (FromLauncher & { name: string; value: number })[] | null;
   /**
    * true for a variable vehicle-sil adds to every ECU (`ecu.connected` and so on), false for a variable the ECU
    * declared. null from an older launcher that does not write it.
    */
   builtin: boolean | null;
 }
+
+const readVariableEnumItem: Reader<FromLauncher & { name: string; value: number }> = (
+  value,
+  path,
+) => {
+  const f = object(value, path);
+  return withRaw(f, {
+    name: field(f, path, 'name', string),
+    value: field(f, path, 'value', integer),
+  });
+};
 
 const readVariable: Reader<Variable> = (value, path) => {
   const f = object(value, path);
@@ -118,6 +135,9 @@ const readVariable: Reader<Variable> = (value, path) => {
     unit: field(f, path, 'unit', optional(string, '')),
     min: field(f, path, 'min', optional(nullable(number), null)),
     max: field(f, path, 'max', optional(nullable(number), null)),
+    step: field(f, path, 'step', optional(nullable(number), null)),
+    description: field(f, path, 'description', optional(nullable(string), '')),
+    items: field(f, path, 'items', optional(nullable(array(readVariableEnumItem)), [])),
     builtin: field(f, path, 'builtin', optional(nullable(boolean), null)),
   });
 };

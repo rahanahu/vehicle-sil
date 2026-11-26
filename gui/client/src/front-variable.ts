@@ -199,20 +199,28 @@ export function makeVariable(
   return {
     get: readable.get,
     subscribe: readable.subscribe,
-    write: (value: WriteValue) => {
+    write: (value: WriteValue, options?: { keepalive?: boolean }) => {
       const own = refuse();
       if (own) return Promise.reject(own);
       track.set({ writing: true, problem: null });
-      return low.variables.write({ [ref.peer]: { [ref.name]: value } }).then(
-        () => {
-          track.set({ writing: false, problem: null });
-        },
-        (error: unknown) => {
-          const failure = writeFailure(error);
-          track.set({ writing: false, problem: { code: failure.code, message: failure.message } });
-          throw failure;
-        },
-      );
+      return low.variables
+        .write(
+          { [ref.peer]: { [ref.name]: value } },
+          options?.keepalive !== undefined ? { keepalive: options.keepalive } : undefined,
+        )
+        .then(
+          () => {
+            track.set({ writing: false, problem: null });
+          },
+          (error: unknown) => {
+            const failure = writeFailure(error);
+            track.set({
+              writing: false,
+              problem: { code: failure.code, message: failure.message },
+            });
+            throw failure;
+          },
+        );
     },
   };
 }
