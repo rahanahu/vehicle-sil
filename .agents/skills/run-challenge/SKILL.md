@@ -91,7 +91,10 @@ complete. Continue other authorized work while applying existing acceptance poli
 ## 4. Assess the report
 
 Confirm that the report identifies its snapshot, evidence, established findings,
-and unchallenged areas. Treat its result as input to the existing decision process:
+and unchallenged areas. Assess any reported mismatch that needs a contract decision
+against the original requirements and user-facing documentation. Record the
+disposition even when the behavior matches existing code. Treat the result as
+input to the existing decision process:
 
 | Result | Coordinator action |
 | --- | --- |

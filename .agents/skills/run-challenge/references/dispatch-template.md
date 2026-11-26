@@ -9,8 +9,13 @@ separate tracking system when the host already has task notes.
   tests, and applicable repository-instruction paths.
 - **Original requirements:** observable behavior, non-negotiable constraints, and
   accepted tradeoffs. Distinguish these from the author's implementation claims.
-- **Candidate claims:** one to three important claims and why a counterexample
-  would matter. Select another material hypothesis if the evidence warrants it.
+- **Candidate claims:** one to three observable promises to try to disprove.
+  State what the affected user or consumer should observe, under what conditions,
+  and why a counterexample would matter. Do not frame the chosen implementation
+  as the expected answer. For example, ask whether a run with the new option off
+  still honors its shutdown deadline, not whether the new lock is used correctly.
+  Leave the choice of probes open, including at affected callers or consumers.
+  Select another material hypothesis if the evidence warrants it.
 - **Existing verification:** commands, environments, actual results, useful logs,
   and checks owned by the primary reviewer.
 - **Scope:** included behavior and boundaries; deliberate exclusions.

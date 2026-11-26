@@ -42,7 +42,8 @@ Choose the smallest method that can meaningfully support or refute a claim:
 - Trace a concrete code path, ownership relationship, invariant, or event order.
 - Exercise boundaries, invalid input, cancellation, partial failure, and recovery.
 - Compare implementations or before/after behavior using the same input and
-  documented conditions.
+  documented conditions. For a non-breaking claim, a useful starting point is
+  a previously valid input that does not opt in to the new feature.
 - Introduce a controlled defect in an isolated copy to test whether the relevant
   existing assertion or quality gate detects it.
 - Use targeted fault injection, sanitizers, ordering probes, or bounded stress
@@ -83,6 +84,13 @@ established by a complete code-path argument without executing a reproducer.
   remain subject to the original task's authorization and the host's permissions.
 
 ## Report
+
+If a material observed behavior may conflict with the user-facing contract but
+the expected behavior is unclear, flag it explicitly for the Coordinator to
+decide. State what happened and which wording or requirement is in question.
+Matching existing code does not settle the contract. Keep the observation and
+open decision separate from established defects, and count the gap as material
+when it prevents assessing the assigned claim.
 
 Use the host's existing handoff mechanism. Keep the report short enough to act on:
 
