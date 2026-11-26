@@ -633,6 +633,9 @@ void usage(const Options& o)
     expect_usage({"check", "a.yaml", "--events"}, "--events is not for check: check starts no participant");
     expect_usage({"check", "a.yaml", "--events-stall-ms", "1000"}, "--events-stall-ms is for serve, not for check");
     expect_usage({"check", "a.yaml", "--stdin-commands"}, "--stdin-commands is for run: check starts no participant");
+    const Captured version = launch(o, {"version", "--json"});
+    expect_code(version, 0, "vehicle_sil_launch version --json");
+    const bool hasControlServer = contains(version.standard_output, "\"control-server\"");
     for (const std::vector<std::string>& args : {std::vector<std::string>{"--help"}, {"check", "x.yaml", "-h"}})
     {
         const Captured help = launch(o, args);
@@ -642,7 +645,8 @@ void usage(const Options& o)
                     contains(lf(help.standard_output),
                              "[--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
                              "                                [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n") &&
-                    contains(help.standard_output, "\n  --time-policy realtime|free the time of a run that is connected outside"),
+                    contains(help.standard_output, "\n  --time-policy realtime|free the time of a run that is connected outside") &&
+                    contains(help.standard_output, "VEHICLE_SIL_BUILD_CONTROL_SERVER=ON") != hasControlServer,
                 "--help wrote:\n" + help.standard_output + help.standard_error);
     }
     // With --json, a wrong command line is JSON on stdout too.

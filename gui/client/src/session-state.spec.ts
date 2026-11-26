@@ -200,19 +200,23 @@ describe('applyEvents', () => {
     expect(applyEvents(again, all.slice(0, 2))).toBe(again);
   });
 
-  it('preserves t_ms on log and log_dropped lines, and sets null when absent', () => {
+  it('preserves t_ms (including 0) on log and log_dropped lines, and sets null when absent', () => {
     const session = applyEvents(
       emptySession(),
       events(
+        { event: 'log', source: 'A', line: 'at zero', t_ms: 0 },
         { event: 'log', source: 'A', line: 'with time', t_ms: 42 },
         { event: 'log', source: 'A', line: 'without time', t_ms: null },
+        { event: 'log_dropped', count: 2, sources: { A: 2 }, t_ms: 0 },
         { event: 'log_dropped', count: 3, sources: { A: 3 }, t_ms: 75 },
         { event: 'log_dropped', count: 1, sources: { B: 1 }, t_ms: null },
       ),
     );
     expect(session.logs.map((l) => [l.source, l.line, l.tMs, !!l.gap])).toEqual([
+      ['A', 'at zero', 0, false],
       ['A', 'with time', 42, false],
       ['A', 'without time', null, false],
+      ['A', '', 0, true],
       ['A', '', 75, true],
       ['B', '', null, true],
     ]);
