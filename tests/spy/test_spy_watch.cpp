@@ -103,7 +103,7 @@ TEST_CASE(watch_publishes_each_signal_and_when_the_message_came)
         CHECK(info.type == ValueType::Enum);
         CHECK_EQ(info.items.size(), std::size_t{7});
     }
-    for (const char* name : {"st.torque.state", "st.counter.state", "st.flag.state", "st.stale"})
+    for (const char* name : {"st.torque.state", "st.counter.state", "st.flag.state", "st.stale", "st.stale_count"})
     {
         CHECK(!has_variable(rig.ecu, name));
     }
@@ -295,13 +295,22 @@ TEST_CASE(watch_stale_turns_on_when_nothing_came_for_longer_than_stale_after)
         return bool_of(rig.ecu, "r.stale");
     };
     CHECK(!stale_at(at(50ms))); // before the first message, counted from the time 0
+    CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 0);
     CHECK(stale_at(at(60ms)));
+    CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 1);
     rig.inject(at(70ms), frame(6, kPgnPropA, kA, kB, bytes_of(reading(1.0, 1)))); // taken in the step at 80 ms
     CHECK(stale_at(at(70ms)));
+    CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 1); // stays 1 while continuously stale
     CHECK(!stale_at(at(80ms)));
+    CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 1); // recovers without decrementing
     CHECK(!stale_at(at(120ms))); // exactly 50 ms
+    CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 1);
     CHECK(stale_at(at(130ms)));
+    CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 2); // second false -> true transition
+    CHECK(stale_at(at(140ms)));
+    CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 2);
     CHECK(info_of(rig.ecu, "r.stale").type == ValueType::Bool);
+    CHECK(info_of(rig.ecu, "r.stale_count").type == ValueType::Integer);
 }
 
 TEST_CASE(watch_errors_say_what_is_wrong_and_how_to_fix_it)
@@ -337,6 +346,31 @@ TEST_CASE(watch_errors_say_what_is_wrong_and_how_to_fix_it)
         CHECK_EQ(integer_of(rig.ecu, "r.count"), 0);
     }
     {
+        // Pre-existing ECU variable r.stale_count blocks a watch with stale_after atomically,
+        // and is allowed when stale_after is unset.
+        Rig rig;
+        rig.ecu.set_agent_options({.sample_period = std::chrono::milliseconds(0)});
+        std::int64_t other = 7;
+        rig.ecu.output("r.stale_count", &other);
+        Spy& spy = make_spy(rig);
+        CHECK_MESSAGE(message_of<std::invalid_argument>([&] { spy.watch<Reading>("r", {.stale_after = 50ms}); }),
+                      "vehicle_sil::spy::Spy::watch() \"r\": the ECU has the variable \"r.stale_count\" already, and "
+                      "the watch publishes it too: give the watch another name, or rename the other variable (the "
+                      "watch published nothing)");
+        for (const char* name : {"r.level", "r.level.state", "r.code", "r.stale", "r.count"})
+        {
+            CHECK(!has_variable(rig.ecu, name));
+        }
+        // Without stale_after, the watch does not publish r.stale_count, so the pre-existing variable
+        // does not collide (and the failed watch above did not reserve "r").
+        spy.watch<Reading>("r");
+        rig.inject(at(3ms), frame(6, kPgnPropA, kA, kB, bytes_of(reading(42.0, 3))));
+        rig.bench.run_until(at(10ms) + 1ns);
+        CHECK_EQ(integer_of(rig.ecu, "r.count"), 1);
+        CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 7);
+        CHECK(!has_variable(rig.ecu, "r.stale"));
+    }
+    {
         Rig rig;
         Spy& spy = make_spy(rig);
         rig.bench.run_until(at(10ms) + 1ns);
@@ -345,7 +379,7 @@ TEST_CASE(watch_errors_say_what_is_wrong_and_how_to_fix_it)
                       "constructor");
     }
     // The names a signal may not have (a build error: j1939_spy.watch_of_a_signal_named_count_does_not_build).
-    for (const char* item : {"count", "last_ms", "period_ms", "size", "invalid", "stale", "state"})
+    for (const char* item : {"count", "last_ms", "period_ms", "size", "invalid", "stale", "stale_count", "state"})
     {
         CHECK(vehicle_sil::spy::detail::is_watch_item(item));
     }
@@ -389,10 +423,12 @@ TEST_CASE(guide_example_publishes_what_it_hears)
     CHECK_EQ(integer_of(ecu, "answer.result"), 0);
     CHECK_EQ(integer_of(ecu, "answer.result.state"), 0);
     CHECK(!std::get<bool>(value_of(ecu, "answer.stale")));
+    CHECK_EQ(integer_of(ecu, "answer.stale_count"), 0);
     CHECK_EQ(integer_of(ecu, "block.count"), 2); // the answer and the connection
     CHECK_EQ(integer_of(ecu, "block.bytes"), 20);
     CHECK(info_of(ecu, "block.bytes").unit == "bytes");
     CHECK_EQ(integer_of(ecu, "spy.missed"), 0);
     bench.run_until(at(510ms));
     CHECK(std::get<bool>(value_of(ecu, "answer.stale")));
+    CHECK_EQ(integer_of(ecu, "answer.stale_count"), 1);
 }

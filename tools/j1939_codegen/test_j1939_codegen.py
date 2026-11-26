@@ -189,10 +189,18 @@ class Errors(Checks):
         """), "is unsigned")
 
     def test_generated_names(self):
-        for name in ("name", "unit", "layout", "spn", "enumerators", "output_bytes", "visitor", "M"):
+        for name in ("name", "unit", "layout", "spn", "enumerators", "enumerator_names", "output_bytes", "visitor", "M"):
             self.assertError(message("""
                 - {name: %s, start_bit: 0, length: 8}
             """ % name), "signal name '%s' is used by the generated type" % name)
+        # Enum signals also reject SPEC_MEMBERS names such as enumerator_names.
+        self.assertError(message("""
+            - {name: enumerator_names, start_bit: 0, length: 2, values: {a: 0, b: 1}}
+        """), "signal name 'enumerator_names' is used by the generated type")
+        # SPEC_MEMBERS names remain allowed as message names.
+        code, header = run("namespace: n\nmessages:\n  - {name: enumerator_names, pgn: 0xFF00}\n")
+        self.assertEqual(code, 0, header)
+        self.assertIn("struct enumerator_names\n", header)
         self.assertError("namespace: n\nmessages:\n  - {name: Signals, pgn: 0xFF00}\n", "is used by the generated type")
         self.assertError('namespace: n\nmessages:\n  - {name: "a\\n", pgn: 0xFF00}\n', "is not a C++ identifier")
 
@@ -270,6 +278,27 @@ class Output(Checks):
         """))
         self.assertEqual(code, 0, header)
         self.assertIn("enum class A : ::std::uint8_t { off = 0, on = 1 };", header)
+
+    def test_enumerator_names_table(self):
+        code, header = run(message("""
+            - {name: mode, start_bit: 0, length: 8, values: {idle: 0, active: 2, fault: 5}}
+            - {name: wide, start_bit: 8, length: 64, values: {low: 0, high: 0xF000000000000000}}
+        """, extra="pgn: 0xFF00\n    length: 9"))
+        self.assertEqual(code, 0, header)
+        self.assertIn("static constexpr ::std::array<::std::uint64_t, 3> enumerators{0, 2, 5};", header)
+        self.assertIn(
+            'static constexpr ::std::array<::vehicle_sil::j1939::codec::Enumerator, 3> enumerator_names{{\n'
+            '                {"idle", 0x0ull},\n'
+            '                {"active", 0x2ull},\n'
+            '                {"fault", 0x5ull}}};',
+            header,
+        )
+        self.assertIn(
+            'static constexpr ::std::array<::vehicle_sil::j1939::codec::Enumerator, 2> enumerator_names{{\n'
+            '                {"low", 0x0ull},\n'
+            '                {"high", 0xF000000000000000ull}}};',
+            header,
+        )
 
     def test_without_a_choice_every_bit_pattern_is_a_value(self):
         code, header = run(message("""

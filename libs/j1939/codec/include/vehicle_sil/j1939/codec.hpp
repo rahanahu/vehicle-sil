@@ -58,6 +58,13 @@ struct SpecialValue
     std::uint64_t send = 0;
 };
 
+/// A named enumerator of an EnumSignal: `name` as written in the definition and its raw `value`.
+struct Enumerator
+{
+    std::string_view name;
+    std::uint64_t value = 0;
+};
+
 /// The names with a SignalState of their own.
 inline constexpr std::string_view kError = "error";
 inline constexpr std::string_view kNotAvailable = "not_available";
@@ -196,6 +203,19 @@ constexpr auto specials_of() noexcept
 }
 
 template <typename Spec>
+constexpr auto enumerator_names_of() noexcept
+{
+    if constexpr (requires { Spec::enumerator_names; })
+    {
+        return Spec::enumerator_names;
+    }
+    else
+    {
+        return std::array<Enumerator, 0>{};
+    }
+}
+
+template <typename Spec>
 constexpr std::optional<std::uint32_t> spn_of() noexcept
 {
     if constexpr (requires { Spec::spn; })
@@ -216,7 +236,8 @@ constexpr std::optional<std::uint32_t> spn_of() noexcept
 ///     static constexpr std::string_view name, unit;
 /// optionally static constexpr std::uint32_t spn (a number for the reader; the codec does not use
 /// it) and static constexpr std::array<SpecialValue, N> special_values (none if absent), and, for
-/// an EnumSignal, static constexpr std::array<std::uint64_t, N> enumerators (the valid raw values).
+/// an EnumSignal, static constexpr std::array<std::uint64_t, N> enumerators (the valid raw values)
+/// and optionally static constexpr std::array<Enumerator, N> enumerator_names.
 template <typename Spec>
 class SignalBase
 {
@@ -516,6 +537,10 @@ template <typename Spec, typename E>
 class EnumSignal : public SignalBase<Spec>
 {
 public:
+    /// The enumerators with their names from the definition (empty for a hand-written Spec without
+    /// enumerator_names).
+    static constexpr auto enumerator_names = detail::enumerator_names_of<Spec>();
+
     /// The enumerator while the signal is Valid; empty otherwise.
     [[nodiscard]] constexpr std::optional<E> value() const noexcept
     {

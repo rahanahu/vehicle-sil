@@ -36,7 +36,7 @@ xor xor_eq final override import module
 
 # The members of a signal's description (Signals::<signal name>): a signal of the same name would
 # be a member with the name of its class.
-SPEC_MEMBERS = {"layout", "name", "unit", "spn", "enumerators", "special_values"}
+SPEC_MEMBERS = {"layout", "name", "unit", "spn", "enumerators", "enumerator_names", "special_values"}
 
 # Names the generated message type uses itself (members and the parameters of its functions).
 MESSAGE_MEMBERS = {"kPgn", "kPriority", "kLength", "kFill", "kFillBytes", "Selector", "Signals", "encode", "decode",
@@ -765,6 +765,10 @@ def emit_message(msg):
         if sig.enumerators:
             out.append("            static constexpr ::std::array<::std::uint64_t, %d> enumerators{%s};" % (
                 len(sig.enumerators), ", ".join(cpp_unsigned(raw) for _, raw in sig.enumerators)))
+            out.append("            static constexpr ::std::array<%s::Enumerator, %d> enumerator_names{{"
+                       % (CODEC, len(sig.enumerators)))
+            items = ["{%s, %s}" % (cpp_string(name), cpp_u64(raw)) for name, raw in sig.enumerators]
+            out.append(",\n".join(" " * 16 + item for item in items) + "}};")
         out.append("        };")
     out.append("    };")
     out.append("")

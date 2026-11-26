@@ -156,12 +156,12 @@ Signals and messages cannot use the names that the generated types use.
 | Name | Signal name | Message name |
 |---|---|---|
 | `encode`, `decode`, `bytes`, `for_each_signal`, `kPgn`, `kPriority`, `kLength`, `kFill`, `Signals`, `Selector`, `output_bytes`, `input_bytes`, `visitor`, `Visitor`, `kFillBytes` | Not allowed | Not allowed |
-| Members of the signal definition: `layout`, `name`, `unit`, `spn`, `enumerators`, `special_values` | Not allowed | Allowed |
+| Members of the signal definition: `layout`, `name`, `unit`, `spn`, `enumerators`, `enumerator_names`, `special_values` | Not allowed | Allowed |
 | The message's own name | Not allowed | — |
 
 The generated code fully qualifies `std` and `vehicle_sil` (with a leading `::`), so you can use any other name, including `std`, `data` and `size_t`.
 
-A message that `vehicle_sil::spy::Spy::watch<M>()` watches also cannot have a signal named `count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale` or `state` (they name its other variables; `watch()` does not build with such a signal). See "Listen-only participants" in [j1939-guide.md](j1939-guide.md#listen-only-participants).
+A message that `vehicle_sil::spy::Spy::watch<M>()` watches also cannot have a signal named `count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, `stale_count` or `state` (they name its other variables; `watch()` does not build with such a signal). See "Listen-only participants" in [j1939-guide.md](j1939-guide.md#listen-only-participants).
 
 ### How YAML values are read
 
@@ -400,6 +400,7 @@ struct EngineStatus
 | `set_special(name)` | Sets the special value with that name (writes the value sent for it); `std::invalid_argument` if there is no special value with that name |
 | `set_not_available()`, `set_error()` | `set_special("not_available")`, `set_special("error")` (write the values sent for them). A compile error for a signal without that special value |
 | `has_special(name)`, `specials` | Whether there is a special value with that name (constexpr); the array of special value definitions (`SpecialValue`: `name`, `first`, `last`, `send`) |
+| `enumerator_names` | Constexpr array of `codec::Enumerator` (`name`, `value`) in definition order (`EnumSignal` and `Signals::<signal>::enumerator_names`; empty for a hand-written `Spec` without `enumerator_names`) |
 | `min()`, `max()`, `resolution()`, `to_physical(raw)` | Valid range of the physical value, physical value per raw step of 1, raw to physical (`Signal` only; `resolution()` is constexpr) |
 | `raw_min`, `raw_max`, `lowest_raw()`, `highest_raw()` | Valid range of raw values (for `EnumSignal`, the lowest and highest enumerators), and the range of raw values that fit in the bits |
 | `layout`, `name`, `unit`, `spn` | The definition (constexpr) |
@@ -489,7 +490,7 @@ You can write a type of the same form in C++ without the generator. The type mus
 |---|---|
 | Message type | Has `kPgn`, `kPriority`, `kLength`, `kFill` or `kFillBytes`, `for_each_signal`, `encode` and `decode`. |
 | `kFill` and `kFillBytes` | Has exactly one of them (`kFillBytes` is a `std::array<std::uint8_t, kLength>`). |
-| Signal `Spec` | A type with `layout`, `name` and `unit` (and optionally `spn` and `special_values`, plus `enumerators` for an enum). |
+| Signal `Spec` | A type with `layout`, `name` and `unit` (and optionally `spn` and `special_values`, plus `enumerators` and optionally `enumerator_names` for an enum). |
 
 | When | What is checked |
 |---|---|

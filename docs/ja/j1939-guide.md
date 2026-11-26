@@ -143,7 +143,18 @@ public:
 
 `ecu.can(network)` は、J1939 を通さない生の CAN チャネル（`can::RawChannel`）を返します。`on_frame(handler)` で受信し、`send(frame)` で送信します。タイマーも分割もないので、周期の処理は `every()` や `on_step()` で書きます。
 
-`ecu.can()` を使うコードは、`tests/simulation/test_disconnect.cpp` の `Engine` と `Dashboard` にあります。
+断片です（`ecu` は `Ecu&`、`last_byte` は利用者のもの）。`ecu.can()` を使う完全なコードは、`tests/simulation/test_disconnect.cpp` の `Engine` と `Dashboard` にあります。
+
+```cpp
+namespace can = vehicle_sil::can;
+auto& raw = ecu.can("VehicleCAN");
+raw.on_frame([&](const can::TimedFrame& f) {
+    if (f.frame.id == 0x100 && f.frame.length >= 1) { last_byte = f.frame.data[0]; }
+});
+ecu.every(100ms, [&raw](vehicle_sil::SimTime) {
+    static_cast<void>(raw.send(can::Frame{0x100, can::IdFormat::Standard, 1, {0x42}}));
+});
+```
 
 | 項目 | ルール |
 |---|---|
@@ -909,7 +920,7 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 
 ### 受信だけをする participant
 
-ほかの ECU どうしのやり取りをシナリオで確認するときは、何も送信しない ECU を設定ファイルに追加して、聞いたことを変数に書きます（「外部から信号を読み書きする」）。送信しなければ、バスには何も出ません。
+バストラフィックを監視し、ほかの ECU どうしのやり取りをシナリオで確認するときは、何も送信しない受信専用の ECU（バスモニタ）を設定ファイルに追加して、聞いたことを変数に書きます（「外部から信号を読み書きする」）。送信しなければ、バスには何も出ません。
 
 ほかの ECU が受信するもの、送信するもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator でテストしています）。
 
@@ -1011,8 +1022,8 @@ private:
 
 | 受信のしかた | 使うもの | 見えるもの |
 |---|---|---|
-| J1939 で受信する | ノードを追加しない `Network`（`ecu.j1939(network)`）と、それに付けた `vehicle_sil::spy::Spy`（または `j1939::Listener` を直に） | ほかの participant が送信したメッセージとフレームが、宛先が誰でも時刻つきで見えます。 |
-| 生の CAN で受信する | `ecu.can(network)` の `on_frame` | 全部のフレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受信します。 |
+| J1939 で受信する | ノードを追加しない `Network`（`ecu.j1939(network)`）と、それに付けた `vehicle_sil::spy::Spy`（または `j1939::Listener` を直に） | ほかの participant が送信したメッセージとフレーム（`Scope::on_frame`）が、宛先が誰でも時刻つきで見えます。 |
+| 生の CAN で受信する | `ecu.can(network).on_frame()` | `ecu_main` の participant で生フレームを確認・記録するために、全部の CAN フレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受信します。 |
 
 - `Spy(ecu, network)` は、その `Network` に `j1939::Listener`（ヘッダー `vehicle_sil/j1939/listener.hpp`）を 1 つ作ります。ノードを追加しない `Network` は、Address Claim も、Request への応答も、ACK と NACK もしません。`Listener` も聞くだけで、何も送信しません。
 - `watch<M>(名前, options)` は、型のあるメッセージ `M` を見張ります。`M` は `vehicle_sil_add_j1939_codec()` が作った型か、同じ形で手で書いた型です。ヘッダー `vehicle_sil/spy/watch.hpp` が要ります（`vehicle_sil::j1939_codec` も要りますが、作ったメッセージのターゲットがリンクします）。`M` の PGN のメッセージのうち `M` に直せるもの（長さが足り、`M` にセレクターがあればそれが合うもの）を、`options.from` と `options.to` を書いたときはその送り元からとその宛先へのもの（ブロードキャストは `j1939::kGlobalAddress`）だけ受け取り、次の変数を書きます。
@@ -1027,9 +1038,11 @@ private:
   | `<名前>.size` | 整数 | 最後のメッセージのバイト数（型より長く来たメッセージは、その長さ） |
   | `<名前>.invalid` | 整数 | 有効でない信号を含んでいたメッセージの数 |
   | `<名前>.stale` | bool | `options.stale_after` を書いたときだけ。その時間より長く 1 回も来ていない間 true（最初のメッセージの前は、ECU の最初のステップから数えます）。ECU のステップで変わるので、最大 1 ステップ遅れます |
+  | `<名前>.stale_count` | 整数 | `options.stale_after` を書いたときだけ。`<名前>.stale` が false から true に変わった回数（ECU のステップで数えます） |
 
   - 「最後」は `Message::time` で決めます。最後のメッセージより古いメッセージ（接続のメッセージは受け手の確認の後に渡るので、後から来た単一フレームより後に渡ることがあります）は、`count` と `invalid` にだけ数え、ほかは変えません。同じ時刻の 2 つ（送り手の 1 つのステップで送ったもの）は、後に渡った方を最後とし、`period_ms` は 0 です。
-  - 項目と同じ名前（`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`state`）の信号は、ビルドの誤りになり、文がそう言います（「a signal of M is named like an item the watch publishes ...」。どの信号かはコンパイラーが示します）。定義の側で信号の名前を変えます。
+  - 項目と同じ名前（`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`stale_count`、`state`）の信号は、ビルドの誤りになり、文がそう言います（「a signal of M is named like an item the watch publishes ...」。どの信号かはコンパイラーが示します）。定義の側で信号の名前を変えます。
+  - ブラウザー GUI での見え方: `Spy` が公開する変数は、そのまま GUI の自動ダッシュボードに並びます（[gui.md](gui.md)）。読み取り専用の数値（`<名前>.<信号>`、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale_after` 指定時の `stale_count`、`spy.missed` とその内訳）はグラフ（`graph`）、`<名前>.stale` はランプ（`lamp`）、`<名前>.<信号>.state` は値表示（`value`）になります。GUI は実時間 20〜100 ms ごとに最新値だけを読むため、全イベントの捕捉や周期の揺らぎ確認は下の `PeriodWatch` のような見張りで集計し、生 CAN フレームの記録は `Scope::on_frame` や `ecu.can(network).on_frame()` を使ってください。
   - `watch()` は `spy::Watch<M>&` を返します。その `count()` と `latest()`（最後のメッセージを `M` で）は、自分のコードから使えます。名前の誤り、空の名前、聞きこぼしの前置きと同じ名前、始まった後の追加は `add()` と同じに断り、0 以下の `stale_after` は `std::invalid_argument` です（「... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<名前>.stale"」）。見張りの変数のどれかを ECU が既に持っていると（ほかのコードの `write.count` など）、`watch()` は 1 つも足さずに `std::invalid_argument` を投げます（「... the ECU has the variable "write.count" already, and the watch publishes it too: give the watch another name, or rename the other variable (the watch published nothing)」）。
 - `add<W>(名前, 引数...)` は見張り `W(scope, 引数...)` を作り、`Spy` が持ちます。見張りは `spy::Scope&` を最初に取るコンストラクターを持つクラスで、何も継ぎません。見張りのハンドラーは、追加した順に呼ばれます（見張りをまたいでも）。`Scope` の口:
   - `on_message(pgn, handler)`、`on_any_message`、`on_transfer_end`、`on_frame`: `Listener` の同じ名前の口にハンドラーを追加します（渡るものは下の「J1939 で聞く」）。登録は `Scope` が持ち、`Spy` が見張りを壊す前に外すので、見張りは `ListenerSubscription` を持ちません。
@@ -1045,6 +1058,56 @@ private:
   - `now()`: その ECU の最後のステップの時刻です。変数の getter の中では標本を取るステップの時刻なので、「最後に聞いてから何 ms」は `now()` と最後の `Message::time` の差で出せます（結果はステップ幅の粒で変わります）。ハンドラーの中では 1 つ前のステップの時刻です。ハンドラーでは `Message::time` を使います。
   - `has_variable(item)`: ECU が `<名前>.<item>` を既に持っていれば true。変数をいくつも書く見張りは、先に全部を確かめれば、最初の変数の前に失敗できます（変数は取り消せません）。
   - 見張りの追加も、ハンドラーと変数の登録も、ECU のクラスのコンストラクターの中でします。始まった後は `std::logic_error` です（「... after the run started: add the watchers in the ECU class's constructor」）。名前の誤りは `std::invalid_argument` です。同じ名前の 2 回目、空か `.` で始まる・終わる名前、聞きこぼしの前置き（下）と同じ名前が誤りで、文に直し方が出ます。
+- カスタム見張りのレシピ（ECU のコンストラクターで `spy_.add<...>(...)` で追加します）:
+  - **最小・最大周期とジッタの集計（`PeriodWatch`）**: `Watch` の `period_ms` は直近 1 間隔をミリ秒に切り捨てた値だけを持つため、短時間バースト、`stale_after` 未満の単発遅延、ミリ秒未満のジッタは取りこぼします。`Scope::on_message` でマイクロ秒単位の最小・最大間隔を集計できます（起動直後の間隔を外すなら `skip` を指定します）。
+
+    ```cpp
+    class PeriodWatch { // min/max inter-arrival period (us) for one PGN; skips the first `skip` intervals
+    public:
+        PeriodWatch(vehicle_sil::spy::Scope& s, j1939::Pgn pgn, j1939::Address from, int skip = 0) : skip_(skip) {
+            s.on_message(pgn, [this, from](const j1939::Message& m) {
+                if (m.source != from || (last_ && m.time < *last_)) { return; }
+                if (last_ && ++intervals_ > skip_) {
+                    const auto dt = std::chrono::duration_cast<std::chrono::microseconds>(m.time - *last_).count();
+                    min_us_ = min_us_ < 0 ? dt : std::min(min_us_, dt);
+                    max_us_ = std::max(max_us_, dt);
+                }
+                last_ = m.time;
+            });
+            s.output("min_us", &min_us_, {.unit = "us"});
+            s.output("max_us", &max_us_, {.unit = "us"});
+        }
+    private:
+        int skip_, intervals_ = 0; std::optional<vehicle_sil::SimTime> last_{};
+        std::int64_t min_us_ = -1, max_us_ = -1;
+    };
+    ```
+
+  - **DM1 のアクティブ DTC 監視（`Dm1Watch`）**: `Scope::on_message(j1939::kPgnDm1, ...)` は単一フレームと BAM 組み立て済みの両方の DM1 を受け取れます。`j1939::parse_dtc_list()`（`vehicle_sil/j1939/diagnostics.hpp`、`vehicle_sil::j1939_diagnostics` をリンク）で確保なしに読めます。
+
+    ```cpp
+    class Dm1Watch { // active DTC count, lamps, and first DTC from one ECU's DM1 (diagnostics.hpp)
+    public:
+        Dm1Watch(vehicle_sil::spy::Scope& s, j1939::Address from) {
+            s.on_message(j1939::kPgnDm1, [this, from](const j1939::Message& m) {
+                if (m.source != from || (last_ && m.time < *last_)) { return; }
+                const auto list = j1939::parse_dtc_list(m.data);
+                if (!list.valid()) { return; }
+                last_ = m.time;
+                active_ = static_cast<std::int64_t>(list.size());
+                amber_ = list.lamp(j1939::Lamp::AmberWarning).has_value();
+                red_ = list.lamp(j1939::Lamp::RedStop).has_value();
+                if (list.empty()) { first_spn_ = 0; first_fmi_ = 0; }
+                else { const auto dtc = *list.begin(); first_spn_ = dtc.spn; first_fmi_ = dtc.fmi; }
+            });
+            s.output("active", &active_); s.output("amber", &amber_); s.output("red", &red_);
+            s.output("first_spn", &first_spn_); s.output("first_fmi", &first_fmi_);
+        }
+    private:
+        std::optional<vehicle_sil::SimTime> last_{};
+        std::int64_t active_ = 0, first_spn_ = 0, first_fmi_ = 0; bool amber_ = false, red_ = false;
+    };
+    ```
 - 見張りのコンストラクターの中から、受け取った `Spy&` で別の見張りを `add()` できます（見張りを組み合わせた見張り）。追加した見張りは、組み合わせた見張りより後に壊れます（`Spy` は `add()` が返った順の逆に壊します）。コンストラクターが投げると、それまでに登録したハンドラーと `on_step` の関数を外し、追加した見張りも壊します。
 - 聞きこぼしの変数: `Spy` は、`Listener` の数を、次の変数に書きます（増えるだけの整数）。シナリオで `spy.missed` が 0 のままなら、`Spy` が追い始めた転送で途切れたものはありません。どちらの側で欠けたかは区別しません。送り手がバスに出さなかった BAM のパケットも数えます（`transport_bam_dropped` か `transport_bam_replaced`）。最後まで来なかった転送は `spy.timed_out` で見ます。
 

@@ -113,7 +113,8 @@ struct SpyOptions
     std::string statistics_as = "spy";
 };
 
-/// Which messages Spy::watch<M>() takes, and whether it publishes "<as>.stale".
+/// Which messages Spy::watch<M>() takes, and whether it publishes "<as>.stale" and
+/// "<as>.stale_count".
 struct WatchOptions
 {
     /// Only the messages from this source address. Empty: from any.
@@ -121,8 +122,8 @@ struct WatchOptions
     /// Only the messages to this destination address (j1939::kGlobalAddress for a broadcast and
     /// for a group without a destination). Empty: to any.
     std::optional<j1939::Address> to{};
-    /// Publishes "<as>.stale": true while no message came for more than this. Above 0. Empty:
-    /// no such variable.
+    /// Publishes "<as>.stale" (true while no message came for more than this) and
+    /// "<as>.stale_count" (number of false -> true transitions). Above 0. Empty: neither variable.
     std::optional<SimDuration> stale_after{};
 };
 

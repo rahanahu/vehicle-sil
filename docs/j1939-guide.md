@@ -143,7 +143,18 @@ public:
 
 `ecu.can(network)` returns a raw CAN channel (`can::RawChannel`) that bypasses J1939. Receive with `on_frame(handler)` and send with `send(frame)`. The channel has no timers and no segmentation, so write periodic processing with `every()` or `on_step()`.
 
-For code that uses `ecu.can()`, see `Engine` and `Dashboard` in `tests/simulation/test_disconnect.cpp`.
+A fragment (`ecu` is an `Ecu&`, `last_byte` is yours). For complete code that uses `ecu.can()`, see `Engine` and `Dashboard` in `tests/simulation/test_disconnect.cpp`.
+
+```cpp
+namespace can = vehicle_sil::can;
+auto& raw = ecu.can("VehicleCAN");
+raw.on_frame([&](const can::TimedFrame& f) {
+    if (f.frame.id == 0x100 && f.frame.length >= 1) { last_byte = f.frame.data[0]; }
+});
+ecu.every(100ms, [&raw](vehicle_sil::SimTime) {
+    static_cast<void>(raw.send(can::Frame{0x100, can::IdFormat::Standard, 1, {0x42}}));
+});
+```
 
 | Item | Rule |
 |---|---|
@@ -909,7 +920,7 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 
 ### Listen-only participants
 
-To check the communication between other ECUs in a scenario, add an ECU that sends nothing to the configuration file, and write what it hears to variables (see "Read and write signals from outside"). If it sends nothing, it puts nothing on the bus.
+To monitor bus traffic and check the communication between other ECUs in a scenario, add a listen-only ECU (a bus monitor) that sends nothing to the configuration file, and write what it hears to variables (see "Read and write signals from outside"). If it sends nothing, it puts nothing on the bus.
 
 What the other ECUs receive and send, their transmit acknowledgements, and the times of all of these are the same with or without that ECU, and do not depend on its step size (tested on the virtual bus, on SIL Kit's trivial simulation and on the simple CAN network simulator).
 
@@ -1011,8 +1022,8 @@ Add it in `CalSpy`'s constructor with `spy_.add<WriteCheck>("check", 200ms);`. A
 
 | How it receives | Use | What it sees |
 |---|---|---|
-| On J1939 | A `Network` with no nodes (`ecu.j1939(network)`), and a `vehicle_sil::spy::Spy` on it (or a `j1939::Listener` directly) | The messages and frames that other participants sent, whatever their destination, with their times. |
-| On raw CAN | `on_frame` of `ecu.can(network)` | Every frame (including 11-bit frames, TP.CM and TP.DT). |
+| On J1939 | A `Network` with no nodes (`ecu.j1939(network)`), and a `vehicle_sil::spy::Spy` on it (or a `j1939::Listener` directly) | The messages and frames (`Scope::on_frame`) that other participants sent, whatever their destination, with their times. |
+| On raw CAN | `ecu.can(network).on_frame()` | Every CAN frame (including 11-bit frames, TP.CM and TP.DT) for raw-frame inspection or recording in an `ecu_main` participant. |
 
 - `Spy(ecu, network)` creates one `j1939::Listener` (header `vehicle_sil/j1939/listener.hpp`) on that `Network`. A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK. The `Listener` only listens, too, and sends nothing.
 - `watch<M>(name, options)` watches the typed message `M`: a type that `vehicle_sil_add_j1939_codec()` generated, or one written by hand in the same form. It needs the header `vehicle_sil/spy/watch.hpp` (and `vehicle_sil::j1939_codec`, which the target of the generated messages links). It takes the messages of `M`'s PGN that decode as `M` (long enough, and with `M`'s selector if it has one), only from `options.from` and only to `options.to` when they are given (`j1939::kGlobalAddress` for broadcasts), and writes these variables:
@@ -1027,9 +1038,11 @@ Add it in `CalSpy`'s constructor with `spy_.add<WriteCheck>("check", 200ms);`. A
   | `<name>.size` | Integer | Bytes of the latest message (a message that came longer than the type keeps its length) |
   | `<name>.invalid` | Integer | Messages with a signal that was not valid |
   | `<name>.stale` | Bool | Only with `options.stale_after`: true while no message came for more than that (before the first one: since the ECU's first step). It changes in the ECU's steps, so it shows up to one step late |
+  | `<name>.stale_count` | Integer | Only with `options.stale_after`: number of times `<name>.stale` changed from false to true (counted in the ECU's steps) |
 
   - "Latest" is by `Message::time`. A message older than the latest one (the message of a connection is passed after the receiver's acknowledgement, so possibly after a single frame that came later) is counted in `count` and `invalid` and changes nothing else. Of two messages with the same time (sent in one step of the sender), the one passed later is the latest, and `period_ms` is 0.
-  - A signal named like one of the items (`count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, `state`) is a build error that says so ("a signal of M is named like an item the watch publishes ..."; the compiler shows which signal). Rename the signal in the definition.
+  - A signal named like one of the items (`count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, `stale_count`, `state`) is a build error that says so ("a signal of M is named like an item the watch publishes ..."; the compiler shows which signal). Rename the signal in the definition.
+  - Viewing in the browser GUI: every variable that `Spy` publishes appears automatically in the GUI's auto-dashboard (see [gui.md](gui.md)). Read-only numeric outputs (`<name>.<signal>`, `count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale_count` when `stale_after` is set, and `spy.missed` and its breakdown) render as charts (`graph`), `<name>.stale` renders as a `lamp`, and `<name>.<signal>.state` renders as a `value` display. Because the GUI polls only the latest value at real-time intervals (20–100 ms), use a watcher (such as `PeriodWatch` below) to capture every event or sub-period timing jitter, or `Scope::on_frame` / `ecu.can(network).on_frame()` to record raw CAN frames.
   - `watch()` returns the `spy::Watch<M>&`; its `count()` and `latest()` (the latest message as `M`) are for code of your own. The names, the empty name, the name of the missed-traffic prefix and "after the run started" are refused as with `add()`, and a `stale_after` that is not above 0 is a `std::invalid_argument` ("... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<name>.stale""). If the ECU has one of the watch's variables already (for example `write.count` from other code), `watch()` adds none of them and throws `std::invalid_argument` ("... the ECU has the variable "write.count" already, and the watch publishes it too: give the watch another name, or rename the other variable (the watch published nothing)").
 - `add<W>(name, args...)` creates the watcher `W(scope, args...)`, and the `Spy` owns it. A watcher is a class whose constructor takes a `spy::Scope&` first; it has no base class. The watchers' handlers are called in the order the watchers were added (also across watchers). What `Scope` offers:
   - `on_message(pgn, handler)`, `on_any_message`, `on_transfer_end`, `on_frame`: add a handler to the `Listener` function of the same name (for what each passes, see "On J1939" below). The `Scope` keeps the registration, and the `Spy` removes it before it destroys the watcher, so a watcher holds no `ListenerSubscription`.
@@ -1045,6 +1058,56 @@ Add it in `CalSpy`'s constructor with `spy_.add<WriteCheck>("check", 200ms);`. A
   - `now()`: the time of the ECU's last step. In a variable's getter it is the time of the step being sampled, so "how many ms since the last message" is the difference between `now()` and the last `Message::time` (the result depends on the granularity of the step size). In a handler it is the time of the previous step; use `Message::time` there.
   - `has_variable(item)`: true if the ECU has `<name>.<item>` already. A watcher that writes several variables can check them all first, so that it fails before the first (variables cannot be taken back).
   - Add watchers, and register their handlers and variables, in the constructor of the ECU class. After the run has started, these are a `std::logic_error` ("... after the run started: add the watchers in the ECU class's constructor"). A wrong name is a `std::invalid_argument`: a name used a second time, an empty name, a name that starts or ends with `.`, or the name of the missed-traffic prefix (below). The message says how to fix it.
+- Custom watcher recipes (add each with `spy_.add<...>(...)` in the ECU constructor):
+  - **Min/max period and jitter (`PeriodWatch`)**: `Watch`'s `period_ms` records only the latest interval truncated to whole milliseconds, so it misses short bursts, single delays below `stale_after`, and sub-millisecond jitter. Measure min/max intervals in microseconds with `Scope::on_message` (pass `skip` to ignore startup intervals):
+
+    ```cpp
+    class PeriodWatch { // min/max inter-arrival period (us) for one PGN; skips the first `skip` intervals
+    public:
+        PeriodWatch(vehicle_sil::spy::Scope& s, j1939::Pgn pgn, j1939::Address from, int skip = 0) : skip_(skip) {
+            s.on_message(pgn, [this, from](const j1939::Message& m) {
+                if (m.source != from || (last_ && m.time < *last_)) { return; }
+                if (last_ && ++intervals_ > skip_) {
+                    const auto dt = std::chrono::duration_cast<std::chrono::microseconds>(m.time - *last_).count();
+                    min_us_ = min_us_ < 0 ? dt : std::min(min_us_, dt);
+                    max_us_ = std::max(max_us_, dt);
+                }
+                last_ = m.time;
+            });
+            s.output("min_us", &min_us_, {.unit = "us"});
+            s.output("max_us", &max_us_, {.unit = "us"});
+        }
+    private:
+        int skip_, intervals_ = 0; std::optional<vehicle_sil::SimTime> last_{};
+        std::int64_t min_us_ = -1, max_us_ = -1;
+    };
+    ```
+
+  - **Watching DM1 active DTCs (`Dm1Watch`)**: `Scope::on_message(j1939::kPgnDm1, ...)` receives both single-frame and BAM-reassembled DM1 messages; parse them without allocation using `j1939::parse_dtc_list()` (`vehicle_sil/j1939/diagnostics.hpp`, link `vehicle_sil::j1939_diagnostics`):
+
+    ```cpp
+    class Dm1Watch { // active DTC count, lamps, and first DTC from one ECU's DM1 (diagnostics.hpp)
+    public:
+        Dm1Watch(vehicle_sil::spy::Scope& s, j1939::Address from) {
+            s.on_message(j1939::kPgnDm1, [this, from](const j1939::Message& m) {
+                if (m.source != from || (last_ && m.time < *last_)) { return; }
+                const auto list = j1939::parse_dtc_list(m.data);
+                if (!list.valid()) { return; }
+                last_ = m.time;
+                active_ = static_cast<std::int64_t>(list.size());
+                amber_ = list.lamp(j1939::Lamp::AmberWarning).has_value();
+                red_ = list.lamp(j1939::Lamp::RedStop).has_value();
+                if (list.empty()) { first_spn_ = 0; first_fmi_ = 0; }
+                else { const auto dtc = *list.begin(); first_spn_ = dtc.spn; first_fmi_ = dtc.fmi; }
+            });
+            s.output("active", &active_); s.output("amber", &amber_); s.output("red", &red_);
+            s.output("first_spn", &first_spn_); s.output("first_fmi", &first_fmi_);
+        }
+    private:
+        std::optional<vehicle_sil::SimTime> last_{};
+        std::int64_t active_ = 0, first_spn_ = 0, first_fmi_ = 0; bool amber_ = false, red_ = false;
+    };
+    ```
 - From inside a watcher's constructor, you can `add()` another watcher through the `Spy&` it received (a watcher composed of watchers). The added watcher is destroyed after the composing one (the `Spy` destroys watchers in the reverse order in which `add()` returned). If the constructor throws, the handlers and `on_step` functions it registered so far are removed, and the watchers it added are destroyed.
 - Missed-traffic variables: the `Spy` writes the counts of the `Listener` to the following variables (integers that only grow). If a scenario checks that `spy.missed` stays 0, no transfer that the `Spy` followed broke off. It does not tell on which side a frame was lost: a BAM packet that the sender never put on the bus also counts (in `transport_bam_dropped` or `transport_bam_replaced`). Transfers whose end never came are in `spy.timed_out`.
 
