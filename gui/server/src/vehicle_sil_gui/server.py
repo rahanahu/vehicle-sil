@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
-import heapq
 import hmac
 import itertools
 import json
@@ -19,7 +18,6 @@ import logging
 import os
 import secrets
 import time
-from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 from dataclasses import dataclass, field
@@ -46,9 +44,9 @@ from .descriptions import Descriptions
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .refusal import Refused
-from .runtime import LauncherRuntime, RunHandle, RunSpec, ServeRuntime
+from .runtime import HotDecision, LauncherRuntime, RunHandle, RunSpec, ServeRuntime
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
-from .session import SERVER_PROBLEMS, SHARED_LOG, SILENT_AFTER_S, Limits, Session, _is_count, check_timing
+from .session import SILENT_AFTER_S, Limits, Session, _Staging, check_timing
 from .source import Source
 from .static import MAX_FILE_BYTES, NOT_BUILT, StaticFiles, TooLarge
 from .timelines import (KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path, find_page_dir, read_page_file,
@@ -259,320 +257,45 @@ class Run:
     preflight_timing: dict = field(default_factory=dict)
 
 
-class _PreStartGate:
-    """Buffers runtime callbacks until the launcher's initial `check` settles on pass or fail.
-
-    Pre-start logs, `log_dropped` markers, heartbeats, stderr lines, and non-event stdout lines
-    are bounded using the session's `Limits` so heavy pre-start output cannot grow memory
-    unboundedly. Check results, failure diagnostics, lifecycle events, and run-end notifications
-    are stored separately and never evicted.
-    """
-
-    def __init__(self, config_relative: str, request_path: Path | None, limits: Limits | None = None):
-        self.config_relative = config_relative
-        self.request_path = request_path
-        self.limits = limits or Limits()
-        self.live = False
-        self.discard = False
-        self.decision = asyncio.Event()
-        self.cleanup_done = asyncio.Event()
-        self.passed_check: dict | None = None
-        self.failed_check: dict | None = None
-        self.cleanup_called = False
-        self._order = 0
-        self._items: deque[tuple[int, tuple]] = deque()
-        self._logs: dict[str, deque[tuple[int, int, dict]]] = {}
-        self._log_source_bytes: dict[str, int] = {}
-        self._log_bytes = 0
-        self.dropped_logs: dict[str, int] = {}
-        self._markers: deque[tuple[int, int, dict]] = deque()
-        self._marker_bytes = 0
-        self._heartbeat: tuple[int, dict, int] | None = None
-        self._stderr_first: list[tuple[int, str]] = []
-        self._stderr_last: deque[tuple[int, str]] = deque(maxlen=self.limits.stderr_last)
-        self.stderr_skipped = 0
-        self._stderr_skipped_order = 0
-        self._bad_stdout_kept = 0
-        self._line_too_long_seen = False
-        self._launcher_problems_kept = 0
-        self._server_problems_kept = 0
-        self.omitted_problems = 0
-        self._last_seq: int | None = None
-
-    @property
-    def buffered_log_count(self) -> int:
-        return sum(len(q) for q in self._logs.values())
-
-    @property
-    def buffered_log_bytes(self) -> int:
-        return self._log_bytes
-
-    @property
-    def last_seq(self) -> int | None:
-        return self._last_seq
-
-    def log_sources(self) -> tuple[str, ...]:
-        return tuple(k for k in self._logs if k != SHARED_LOG)
-
-    def clear(self) -> None:
-        """Releases all buffered payloads once a failed or cancelled start is discarded."""
-        self._items.clear()
-        self._logs.clear()
-        self._log_source_bytes.clear()
-        self._log_bytes = 0
-        self._markers.clear()
-        self._marker_bytes = 0
-        self._heartbeat = None
-        self._stderr_first.clear()
-        self._stderr_last.clear()
-
-    def _next_order(self) -> int:
-        self._order += 1
-        return self._order
-
-    def _log_key(self, source: str) -> str:
-        if source not in self._logs and len(self._logs) >= self.limits.log_sources:
-            source = SHARED_LOG
-        if source not in self._logs:
-            self._logs[source] = deque()
-            self._log_source_bytes[source] = 0
-        return source
-
-    def _record_dropped_log(self, key: str, count: int) -> None:
-        if count > 0:
-            self.dropped_logs[key] = self.dropped_logs.get(key, 0) + count
-
-    def _add_log(self, event: dict, size: int) -> None:
-        key = self._log_key(event["source"])
-        cap_bytes = min(self.limits.log_line_bytes, self.limits.log_bytes_per_source, self.limits.log_bytes)
-        if self.limits.log_lines_per_source <= 0 or size > cap_bytes:
-            self._record_dropped_log(key, 1)
-            return
-        q = self._logs[key]
-        q.append((self._next_order(), size, event))
-        self._log_source_bytes[key] += size
-        self._log_bytes += size
-        while q and (len(q) > self.limits.log_lines_per_source
-                     or self._log_source_bytes[key] > self.limits.log_bytes_per_source):
-            _, sz, _ = q.popleft()
-            self._log_source_bytes[key] -= sz
-            self._log_bytes -= sz
-            self._record_dropped_log(key, 1)
-        while self._log_bytes > self.limits.log_bytes:
-            oldest_key = min((k for k, dq in self._logs.items() if dq), key=lambda k: self._logs[k][0][0])
-            _, sz, _ = self._logs[oldest_key].popleft()
-            self._log_source_bytes[oldest_key] -= sz
-            self._log_bytes -= sz
-            self._record_dropped_log(oldest_key, 1)
-
-    def _fold_marker(self, event: dict) -> None:
-        for source, count in event["sources"].items():
-            if count > 0:
-                self._record_dropped_log(self._log_key(source), count)
-
-    def _add_log_dropped(self, event: dict, size: int) -> None:
-        max_bytes = min(self.limits.log_bytes_per_source, self.limits.log_bytes)
-        if self.limits.log_lines_per_source <= 0 or size > self.limits.log_line_bytes or size > max_bytes:
-            self._fold_marker(event)
-            return
-        self._markers.append((self._next_order(), size, event))
-        self._marker_bytes += size
-        while self._markers and (len(self._markers) > self.limits.log_lines_per_source
-                                 or self._marker_bytes > max_bytes):
-            _, sz, old = self._markers.popleft()
-            self._marker_bytes -= sz
-            self._fold_marker(old)
-
-    def add_event(self, event: dict, size: int) -> None:
-        self.inspect_event(event)
-        kind = event.get("event") if isinstance(event, dict) else None
-        seq = event.get("seq") if isinstance(event, dict) else None
-        valid_seq = isinstance(kind, str) and _is_count(seq)
-        if valid_seq and self._last_seq is not None and seq <= self._last_seq:
-            detail = repr(event)
-            n = self.limits.detail_chars
-            if len(detail) > n:
-                detail = detail[:n] + f"... ({len(detail) - n} more characters)"
-            if self.request_path is not None:
-                redacted = hide_request(detail, self.request_path)
-                detail = redacted if isinstance(redacted, str) else detail
-            self.add_problem(
-                "seq-order",
-                f"the launcher wrote seq {seq} after {self._last_seq}: the event is ignored (events must come in order)",
-                detail,
-            )
-            return
-        seq_in_order = valid_seq and (self._last_seq is None or seq > self._last_seq)
-        if seq_in_order:
-            self._last_seq = seq
-        valid_t_ms = isinstance(event, dict) and ("t_ms" not in event or _is_count(event["t_ms"]))
-        if seq_in_order and valid_t_ms:
-            if kind == "log" and isinstance(event.get("source"), str) and isinstance(event.get("line"), str):
-                self._add_log(event, size)
-                return
-            if (
-                kind == "log_dropped"
-                and _is_count(event.get("count"))
-                and isinstance(event.get("sources"), dict)
-                and all(isinstance(s, str) and _is_count(n) for s, n in event["sources"].items())
-            ):
-                self._add_log_dropped(event, size)
-                return
-            if kind == "heartbeat":
-                self._heartbeat = (self._next_order(), event, size)
-                return
-        self._items.append((self._next_order(), ("event", event, size)))
-
-    def add_stdout(self, line: str | None) -> None:
-        if line is None:
-            if not self._line_too_long_seen:
-                self._line_too_long_seen = True
-                self._items.append((self._next_order(), ("stdout", None)))
-            elif self._bad_stdout_kept < self.limits.problems:
-                self._bad_stdout_kept += 1
-                self._items.append((self._next_order(), ("stdout", None)))
-            else:
-                self.omitted_problems += 1
-            return
-        if not line.strip():
-            return
-        if self._bad_stdout_kept < self.limits.problems:
-            self._bad_stdout_kept += 1
-            self._items.append((self._next_order(), ("stdout", line)))
-        else:
-            self.omitted_problems += 1
-
-    def add_stderr(self, line: str) -> None:
-        order = self._next_order()
-        if len(self._stderr_first) < self.limits.stderr_first:
-            self._stderr_first.append((order, line))
-            return
-        if self.limits.stderr_last > 0:
-            if len(self._stderr_last) == self.limits.stderr_last:
-                evicted_order, _ = self._stderr_last[0]
-                if self.stderr_skipped == 0:
-                    self._stderr_skipped_order = evicted_order
-                self.stderr_skipped += 1
-            self._stderr_last.append((order, line))
-        else:
-            if self.stderr_skipped == 0:
-                self._stderr_skipped_order = order
-            self.stderr_skipped += 1
-
-    def add_problem(self, code: str, message: str, detail: object = None) -> None:
-        if code in SERVER_PROBLEMS:
-            if self._server_problems_kept < self.limits.server_problems:
-                self._server_problems_kept += 1
-                self._items.append((self._next_order(), ("problem", code, message, detail)))
-            else:
-                self.omitted_problems += 1
-            return
-        if self._launcher_problems_kept < self.limits.problems:
-            self._launcher_problems_kept += 1
-            self._items.append((self._next_order(), ("problem", code, message, detail)))
-        else:
-            self.omitted_problems += 1
-
-    def add_exit(self, returncode: int | None) -> None:
-        self._items.append((self._next_order(), ("exit", returncode)))
-
-    def add_finish(self, output_cut: bool, launcher_alive: bool) -> None:
-        self._items.append((self._next_order(), ("finish", output_cut, launcher_alive)))
-
-    def drain(self) -> list[tuple]:
-        """Returns all retained pre-start callbacks in arrival order and frees internal buffers."""
-        streams: list[object] = [self._items]
-        for q in self._logs.values():
-            if q:
-                streams.append(((order, ("event", ev, sz)) for order, sz, ev in q))
-        if self._markers:
-            streams.append(((order, ("event", ev, sz)) for order, sz, ev in self._markers))
-        if self._heartbeat is not None:
-            streams.append([(self._heartbeat[0], ("event", self._heartbeat[1], self._heartbeat[2]))])
-        if self._stderr_first:
-            streams.append(((order, ("stderr", line)) for order, line in self._stderr_first))
-        if self.stderr_skipped > 0:
-            streams.append([(self._stderr_skipped_order, ("stderr_skipped", self.stderr_skipped))])
-        if self._stderr_last:
-            streams.append(((order, ("stderr", line)) for order, line in self._stderr_last))
-        ordered = [item for _, item in heapq.merge(*streams, key=lambda entry: entry[0])]
-        self.clear()
-        return ordered
-
-    def pass_check(self, check: dict | None = None) -> None:
-        if not self.decision.is_set():
-            self.passed_check = check
-            self.decision.set()
-
-    def fail_check(self, check: dict) -> None:
-        if not self.decision.is_set():
-            self.failed_check = check
-            self.decision.set()
-
-    def inspect_event(self, ev: dict) -> None:
-        if self.decision.is_set():
-            return
-        kind = ev.get("event")
-        if kind == "check" and isinstance(ev.get("check"), dict):
-            chk = ev["check"]
-            if chk.get("result") == "passed":
-                self.pass_check(chk)
-            else:
-                self.fail_check(chk)
-        elif kind == "result" and isinstance(ev.get("result"), dict):
-            res = ev["result"]
-            chk = res.get("check")
-            if isinstance(chk, dict) and chk.get("result") != "passed":
-                self.fail_check(chk)
-            elif res.get("result") in ("check_failed", "usage"):
-                self.fail_check({
-                    "result": res["result"],
-                    "errors": res.get("errors") if isinstance(res.get("errors"), int) else 1,
-                    "findings": res.get("findings") if isinstance(res.get("findings"), list) and res.get("findings") else [{
-                        "severity": "error",
-                        "code": res["result"],
-                        "file": self.config_relative,
-                        "line": None,
-                        "participant": None,
-                        "network": None,
-                        "message": res.get("message") or "check failed",
-                    }],
-                })
-            else:
-                self.pass_check(chk if isinstance(chk, dict) else None)
-        elif (kind == "phase" and ev.get("phase") not in ("checking", "ended")) or kind in (
-            "registry", "control_server", "participant", "time"
-        ):
-            self.pass_check(None)
+@dataclass(frozen=True)
+class _ResolvedRun:
+    config: ConfigFile
+    scenario: str | None
+    intent: dict
+    disable: list[str]
+    manual: list[str]
+    hot_decision: HotDecision
+    known_networks: list[str] | None
+    checked_stamp: tuple
+    checked_sha256: str | None
 
 
 class _RunSink:
     """Routes runtime lifecycle callbacks for one run to GuiServer, Session, Variables, and Hub."""
 
-    def __init__(self, server: GuiServer, run: Run, *, gate: _PreStartGate | None = None):
+    def __init__(self, server: GuiServer, run: Run):
         self._server = server
         self._run = run
-        self._gate = gate
+        self.check_decision = asyncio.Event()
+        self.cleanup_done = asyncio.Event()
 
     def on_stdout_event(self, event: dict, size: int) -> None:
-        gate = self._gate
-        if gate is not None and not gate.live:
-            if gate.discard:
-                return
-            gate.add_event(event, size)
-            return
         run = self._run
+        if run.session.discarded:
+            return
         self._server.relay_event(run.session, event, size, run)
+        st = run.session._staging
+        if st is not None and st.decision:
+            self.check_decision.set()
 
     def on_stdout_line(self, line: str | None) -> None:
-        gate = self._gate
-        if gate is not None and not gate.live:
-            if gate.discard:
-                return
-            gate.add_stdout(line)
-            return
         run, session = self._run, self._run.session
+        if session.discarded:
+            return
         if line is None:
+            if session.staged:
+                session.stage_line_too_long()
+                return
             messages = session.problem("line-too-long", f"the launcher wrote a line longer than "
                                        f"{MAX_LINE} bytes: it is skipped", None)
             if session.check is None and not session.check_timing and run.preflight_timing:
@@ -583,35 +306,33 @@ class _RunSink:
         elif line.strip():
             raw = hide_request(line, run.request) if run.request is not None else line
             text = raw if isinstance(raw, str) else line
-            self._server.hub.broadcast(session.bad_line(text))
+            messages = session.bad_line(text)
+            if messages:
+                self._server.hub.broadcast(messages)
 
     def on_stderr_line(self, line: str) -> None:
-        if not line:
-            return
-        gate = self._gate
-        if gate is not None and not gate.live:
-            if not gate.discard:
-                gate.add_stderr(line)
+        if not line or self._run.session.discarded:
             return
         run = self._run
-        text = hide_request(line, run.request) if run.request is not None else line
-        self._server.hub.broadcast(run.session.stderr_line(text))
+        raw = hide_request(line, run.request) if run.request is not None else line
+        text = raw if isinstance(raw, str) else line
+        messages = run.session.stderr_line(text)
+        if messages:
+            self._server.hub.broadcast(messages)
 
     def on_problem(self, code: str, message: str, detail: object = None) -> None:
-        gate = self._gate
-        if gate is not None and not gate.live:
-            if not gate.discard:
-                gate.add_problem(code, message, detail)
+        session = self._run.session
+        if session.discarded:
             return
-        self._server.hub.broadcast(self._run.session.problem(code, message, detail))
+        messages = session.problem(code, message, detail)
+        if messages:
+            self._server.hub.broadcast(messages)
 
     def on_process_exited(self, returncode: int | None) -> None:
-        gate = self._gate
-        if gate is not None and not gate.live:
-            if not gate.discard:
-                gate.add_exit(returncode)
-            return
         run = self._run
+        if run.session.staged:
+            run.session.stage_exit(returncode)
+            return
         if run.silence_task is not None:
             run.silence_task.cancel()
         # Recorded now (api/session and a stop see it), sent with the end: a summary sent before the
@@ -620,14 +341,12 @@ class _RunSink:
         run.request_gone = control.remove(run.request)  # the launcher has ended: it needs the file no more
 
     async def on_run_finished(self, *, output_cut: bool = False, launcher_alive: bool = False) -> None:
-        gate = self._gate
-        if gate is not None and not gate.live:
-            if gate.discard:
-                return
-            gate.pass_check(None)
-            gate.add_finish(output_cut, launcher_alive)
-            return
         run = self._run
+        if run.session.staged:
+            run.session.stage_finish(output_cut, launcher_alive)
+            if not run.session.discarded:
+                self.check_decision.set()
+            return
         if run.silence_task is not None:
             run.silence_task.cancel()
         if not run.request_gone:
@@ -637,14 +356,14 @@ class _RunSink:
         self._server.hub.broadcast(run.session.ended(output_cut=output_cut, launcher_alive=launcher_alive))
 
     async def on_run_cleanup(self) -> None:
-        gate = self._gate
-        if gate is not None and not gate.live:
-            if not gate.discard:
-                gate.cleanup_called = True
-                gate.cleanup_done.set()
+        session = self._run.session
+        if session.staged:
+            if not session.discarded:
+                session.mark_cleanup_staged()
+                self.cleanup_done.set()
                 return
             await self._cleanup_run()
-            gate.cleanup_done.set()
+            self.cleanup_done.set()
             return
         await self._cleanup_run()
 
@@ -1407,6 +1126,13 @@ class GuiServer:
                 self._started.set()
 
     async def _start(self, body: dict, finish_starting: Callable[[], None]) -> web.Response:
+        resolved = await self._resolve_run_intent(body)
+        run, sink = await self._launch_run(resolved)
+        if run.session.staged:
+            await self._await_staged_check(run, sink, resolved)
+        return await self._commit_run(run, sink, finish_starting)
+
+    async def _resolve_run_intent(self, body: dict) -> _ResolvedRun:
         config = self.root.resolve(body.get("file"))
         await self._usable()
         scenario = self._scenario(config, body)
@@ -1459,220 +1185,191 @@ class GuiServer:
         intent, disable, manual = await self._intent(
             config, body, scenario, known_participants=known_participants, fetch_names=False,
         )
-        speed, start_paused = intent.get("speed"), intent.get("start_paused", False)
+        return _ResolvedRun(
+            config, scenario, intent, disable, manual, inspection.hot,
+            known_networks, checked_stamp, checked_sha256,
+        )
+
+    async def _launch_run(self, r: _ResolvedRun) -> tuple[Run, _RunSink]:
         why_not = await self._no_variables()
         self._not_closing()
-        credentials: Path | None = None
-        token: str | None = None
-        timeline: Path | None = None
-        request: Path | None = None
-        handle: RunHandle | None = None
-        run: Run | None = None
-        try:
+        async with contextlib.AsyncExitStack() as stack:
+            credentials: Path | None = None
+            token: str | None = None
+            timeline: Path | None = None
             if why_not is None:
-                making = asyncio.ensure_future(asyncio.to_thread(control.credentials_file))
                 try:
-                    credentials, token = await asyncio.shield(making)
-                except asyncio.CancelledError:  # the request was ended meanwhile: the file is still removed
-                    if making.done():
-                        if not making.cancelled() and making.exception() is None:
-                            control.remove(making.result()[0])
-                    else:
-                        making.add_done_callback(
-                            lambda f: not f.cancelled() and f.exception() is None and control.remove(f.result()[0])
-                        )
-                    raise
+                    credentials, token = await process.run_thread_reclaimable(
+                        control.credentials_file, lambda pair: control.remove(pair[0]),
+                    )
+                    stack.callback(lambda: control.remove(credentials))
                 except OSError as e:
                     why_not = f"the file with the control server's credentials could not be made ({e})"
             # A scenario run records its timeline when the launcher can (the file is named here, the launcher makes it)
-            if scenario is not None and FEATURE_TIMELINE in self.launcher.features:
-                making_timeline = asyncio.ensure_future(asyncio.to_thread(self.timelines.new_file))
-                try:
-                    timeline = await asyncio.shield(making_timeline)
-                except asyncio.CancelledError:
-                    if making_timeline.done():
-                        if not making_timeline.cancelled() and making_timeline.exception() is None:
-                            control.remove(making_timeline.result())
-                    else:
-                        # Retrieve f.exception() too so a late RuntimeError (closed during shutdown) or OSError
-                        # never logs "Future exception was never retrieved".
-                        making_timeline.add_done_callback(
-                            lambda f: not f.cancelled() and f.exception() is None and control.remove(f.result())
-                        )
-                    raise
+            if r.scenario is not None and FEATURE_TIMELINE in self.launcher.features:
+                timeline = await process.run_thread_reclaimable(self.timelines.new_file, control.remove)
+                stack.callback(control.remove, timeline)
             self._not_closing()
             # The last await is above: from here to the launcher's start no other request runs, so the targets are
             # compared with the lists and the file as they are when the launcher is started.
             self._check_targets(
-                config.relative,
-                intent.get("connect", {}),
-                known_networks,
-                checked_stamp,
-                checked_sha256,
+                r.config.relative, r.intent.get("connect", {}), r.known_networks, r.checked_stamp, r.checked_sha256,
             )
-            request = self._make_request(intent)
+            request = self._make_request(r.intent)
+            stack.callback(control.remove, request)
             handle = await self.runtime.start_run(RunSpec(
-                config=config.relative,
-                request=request,
-                credentials=credentials,
-                timeline=timeline,
-                variant=intent.get("variant"),
-                disable=tuple(disable),
-                enable=tuple(intent.get("enable", ())),
-                manual=tuple(manual),
-                hot_decision=inspection.hot,
+                config=r.config.relative, request=request, credentials=credentials, timeline=timeline,
+                variant=r.intent.get("variant"), disable=tuple(r.disable), enable=tuple(r.intent.get("enable", ())),
+                manual=tuple(r.manual), hot_decision=r.hot_decision,
             ))
-            run_credentials = credentials
-            run_token = token
+
+            def abort_handle(h: RunHandle = handle) -> None:
+                h.send_stop(force=True)
+                if (abort := getattr(h, "abort", None)) is not None:
+                    abort()
+
+            stack.callback(abort_handle)
+            run_credentials, run_token = credentials, token
             if handle.control_token is not None:
                 control.remove(run_credentials)
-                credentials = None
-                run_credentials = None
+                credentials = run_credentials = None
                 run_token = handle.control_token
-            run_id = f"{self.instance}-{self._next_session_id}"
-            session = Session(run_id, config.relative, disable, speed, start_paused,
-                              limits=self.o.limits, launcher_pid=handle.pid, launcher_mode=handle.mode,
-                              scenario=scenario, manual=manual)
-            session.facts = self.facts
-            session.execution_status = self.runtime.execution_status
-            session.next_stream_seq = self.next_stream_seq
-            preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
-            gate = _PreStartGate(config.relative, request, limits=self.o.limits) if handle.waits_for_check else None
-
-            def emit_variables(messages: list[dict]) -> None:
-                if gate is not None and gate.discard:
-                    return
-                self._tell_variables(messages)
-
-            variables = Variables(session.id, emit_variables, limits=self.o.variable_limits, secret=run_token,
-                                  ending=lambda: _variables_ending(session))
-            if why_not is None:
-                variables.expect()
-            else:
-                variables.set_off(why_not)
-            session.variables = variables.summary
-            recording = Recording() if why_not is None and scenario is None else Recording(
-                available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
-                is not None else f"this run has no variables to write: {why_not}")
-            run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=run_credentials,
-                      token=run_token, recording=recording, timeline=timeline, request=request,
-                      preflight_timing=preflight_timing)
+            run, sink = self._build_run(r, handle, why_not, run_credentials, run_token, timeline, request)
             self._runs.add(run)
-            sink = _RunSink(self, run, gate=gate)
+            stack.callback(self._runs.discard, run)
             handle.start(sink)
-        except BaseException:
-            if run is not None:
-                self._runs.discard(run)
-            if handle is not None:
+            stack.pop_all()
+            return run, sink
+
+    def _build_run(self, r: _ResolvedRun, handle: RunHandle, why_not: str | None, credentials: Path | None,
+                   token: str | None, timeline: Path | None, request: Path) -> tuple[Run, _RunSink]:
+        session = Session(
+            f"{self.instance}-{self._next_session_id}", r.config.relative, r.disable, r.intent.get("speed"),
+            r.intent.get("start_paused", False), limits=self.o.limits, launcher_pid=handle.pid,
+            launcher_mode=handle.mode, scenario=r.scenario, manual=r.manual, staged=handle.waits_for_check,
+        )
+        session.facts = self.facts
+        session.execution_status = self.runtime.execution_status
+        session.next_stream_seq = self.next_stream_seq
+        variables = Variables(
+            session.id, lambda msgs: None if session.discarded else self._tell_variables(msgs),
+            limits=self.o.variable_limits, secret=token, ending=lambda: _variables_ending(session),
+        )
+        variables.expect() if why_not is None else variables.set_off(why_not)
+        session.variables = variables.summary
+        recording = Recording() if why_not is None and r.scenario is None else Recording(
+            available=False, reason="this run plays a scenario: its writes are the scenario's own" if r.scenario
+            is not None else f"this run has no variables to write: {why_not}")
+        preflight_timing = {k: r.intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in r.intent}
+        run = Run(session, handle, variables, features=tuple(self.launcher.features), credentials=credentials,
+                  token=token, recording=recording, timeline=timeline, request=request,
+                  preflight_timing=preflight_timing)
+        return run, _RunSink(self, run)
+
+    async def _abort_staged_run(self, run: Run, sink: _RunSink, *, force_stop: bool, wait_s: float) -> None:
+        handle = run.handle
+        try:
+            if force_stop:
                 handle.send_stop(force=True)
+            if not sink.cleanup_done.is_set():
+                with contextlib.suppress(TimeoutError, Exception):
+                    async with asyncio.timeout(wait_s):
+                        await sink.cleanup_done.wait()
+            if not sink.cleanup_done.is_set():
                 abort = getattr(handle, "abort", None)
                 if abort is not None:
                     abort()
-            control.remove(credentials)
-            control.remove(request)
-            control.remove(timeline)
-            raise
-        if gate is not None:
-            wait_cap = 5.0 if self.o.stop_timeout_s is None else self.o.stop_timeout_s
-            try:
-                async with asyncio.timeout(self.o.check_timeout_s):
-                    await gate.decision.wait()
-            except BaseException as exc:
-                gate.discard = True
-                gate.clear()
-                try:
-                    handle.send_stop(force=True)
-                    if not gate.cleanup_done.is_set():
-                        with contextlib.suppress(TimeoutError, Exception):
-                            async with asyncio.timeout(min(1.0, wait_cap)):
-                                await gate.cleanup_done.wait()
-                    if not gate.cleanup_done.is_set():
-                        abort = getattr(handle, "abort", None)
-                        if abort is not None:
-                            abort()
-                        with contextlib.suppress(TimeoutError, Exception):
-                            async with asyncio.timeout(process.KILL_WAIT_S + 1.0):
-                                await gate.cleanup_done.wait()
-                finally:
-                    await asyncio.shield(self._discard_failed_start(run))
-                if isinstance(exc, TimeoutError):
-                    raise Refused(504, "check-timeout",
-                                  f"the check did not end in {self.o.check_timeout_s:g} s (it was stopped): "
-                                  "an ECU's --describe may hang") from None
-                raise
-            if gate.failed_check is not None:
-                gate.discard = True
-                gate.clear()
-                try:
-                    if not gate.cleanup_done.is_set():
-                        with contextlib.suppress(TimeoutError, Exception):
-                            async with asyncio.timeout(min(5.0, wait_cap)):
-                                await gate.cleanup_done.wait()
-                    if not gate.cleanup_done.is_set():
-                        abort = getattr(handle, "abort", None)
-                        if abort is not None:
-                            abort()
-                        with contextlib.suppress(TimeoutError, Exception):
-                            async with asyncio.timeout(process.KILL_WAIT_S + 1.0):
-                                await gate.cleanup_done.wait()
-                finally:
-                    await asyncio.shield(self._discard_failed_start(run))
-                self._not_closing()
-                checked = hide_request(gate.failed_check, request)
-                raise Refused(422, "check-failed", self._check_failed_message(config.relative, checked),
-                              {"result": checked.get("result"), "findings": checked.get("findings", [])})
-            if self._closing:
-                gate.discard = True
-                gate.clear()
-                await asyncio.shield(self._discard_failed_start(run))
-                raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
-            if isinstance(gate.passed_check, dict):
-                names = [p["name"] for p in gate.passed_check.get("participants", [])
-                         if isinstance(p, dict) and isinstance(p.get("name"), str)]
-                if names or gate.passed_check.get("result") not in ("usage",):
-                    remember(self._names, (config.relative, intent.get("variant")), (checked_stamp, names))
+                with contextlib.suppress(TimeoutError, Exception):
+                    async with asyncio.timeout(process.KILL_WAIT_S + 1.0):
+                        await sink.cleanup_done.wait()
+        finally:
+            await asyncio.shield(self._discard_failed_start(run))
 
+    async def _await_staged_check(self, run: Run, sink: _RunSink, resolved: _ResolvedRun) -> None:
+        session = run.session
+        st = session._staging
+        assert st is not None
+        wait_cap = 5.0 if self.o.stop_timeout_s is None else self.o.stop_timeout_s
+        try:
+            async with asyncio.timeout(self.o.check_timeout_s):
+                await sink.check_decision.wait()
+        except BaseException as exc:
+            session.discard_staging()
+            await self._abort_staged_run(run, sink, force_stop=True, wait_s=min(1.0, wait_cap))
+            if isinstance(exc, TimeoutError):
+                raise Refused(504, "check-timeout",
+                              f"the check did not end in {self.o.check_timeout_s:g} s (it was stopped): "
+                              "an ECU's --describe may hang") from None
+            raise
+        if st.failed_check is not None:
+            session.discard_staging()
+            await self._abort_staged_run(run, sink, force_stop=False, wait_s=min(5.0, wait_cap))
+            self._not_closing()
+            checked = hide_request(st.failed_check, run.request) if run.request is not None else st.failed_check
+            raise Refused(422, "check-failed", self._check_failed_message(resolved.config.relative, checked),
+                          {"result": checked.get("result"), "findings": checked.get("findings", [])})
+        if self._closing:
+            session.discard_staging()
+            await asyncio.shield(self._discard_failed_start(run))
+            raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
+        if isinstance(st.passed_check, dict):
+            names = [p["name"] for p in st.passed_check.get("participants", [])
+                     if isinstance(p, dict) and isinstance(p.get("name"), str)]
+            if names or st.passed_check.get("result") not in ("usage",):
+                remember(self._names, (resolved.config.relative, resolved.intent.get("variant")),
+                         (resolved.checked_stamp, names))
+
+    async def _commit_run(self, run: Run, sink: _RunSink, finish_starting: Callable[[], None]) -> web.Response:
+        session = run.session
+        staged = session.take_staged()
         self._next_session_id += 1
         self.current = run
         run.silence_task = asyncio.create_task(self._watch_silence(session))
         # Registration is complete: clear starting state before broadcasting the session and draining
-        # buffered pre-start callbacks so an already-exited launcher neither corrupts `allowed` while
-        # draining nor triggers a spurious `allowed` push when post_run() exits.
+        # staged callbacks so an already-exited launcher neither corrupts `allowed` while draining
+        # nor triggers a spurious `allowed` push when post_run() exits.
         finish_starting()
-        # The session messages do not carry the variables: a new run's are told right after it.
+        # Step 1: initial session (clean pre-event summary + allowed) followed by variables.
         self.hub.broadcast([session.message()])
-        self._tell_variables([variables.message()])
-        if gate is not None:
-            gate.live = True
-            if gate.dropped_logs:
-                self.hub.broadcast(session.note_prestart_dropped_logs(gate.dropped_logs, sources=gate.log_sources()))
-            if gate.omitted_problems:
-                session.problems_omitted += gate.omitted_problems
-            for item in gate.drain():
-                kind = item[0]
-                if kind == "event":
-                    sink.on_stdout_event(item[1], item[2])
-                elif kind == "stdout":
-                    sink.on_stdout_line(item[1])
-                elif kind == "stderr":
-                    sink.on_stderr_line(item[1])
-                elif kind == "stderr_skipped":
-                    session.note_skipped_stderr(item[1])
-                elif kind == "problem":
-                    sink.on_problem(item[1], item[2], item[3])
-                elif kind == "exit":
-                    sink.on_process_exited(item[1])
-                elif kind == "finish":
-                    if gate.last_seq is not None and (session.last_seq is None or gate.last_seq > session.last_seq):
-                        session.last_seq = gate.last_seq
-                    await sink.on_run_finished(output_cut=item[1], launcher_alive=item[2])
-            if gate.last_seq is not None and (session.last_seq is None or gate.last_seq > session.last_seq):
-                session.last_seq = gate.last_seq
-            if gate.cleanup_called:
-                await sink.on_run_cleanup()
+        self._tell_variables([run.variables.message()])
+        if staged is not None:
+            if staged.omitted_problems:
+                session.problems_omitted += staged.omitted_problems
+            # Step 2: out-of-band prestart dropped notice (no stream_seq) with watermark S_vars + 1.
+            vars_sseq = self._stream_seq
+            dropped = session.apply_prestart_dropped(staged, prestart_seq=vars_sseq + 1)
+            if dropped:
+                self.hub.broadcast(dropped)
+            # Step 3: one-by-one merged dispatch preserving _push_allowed() and per-event bad-event isolation.
+            await self._replay_staged(run, sink, staged)
+            if dropped and self._stream_seq == vars_sseq:
+                session.clamp_prestart_seq(vars_sseq)
         if self._closing:  # the end began while the launcher was starting: it is stopped with the others
             raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
         return web.json_response({"instance": self.instance, "run_id": session.id})
+
+    async def _replay_staged(self, run: Run, sink: _RunSink, staged: _Staging) -> None:
+        session = run.session
+        for item in staged.merged_items():
+            kind = item[0]
+            if kind == "event":
+                sink.on_stdout_event(item[1], item[2])
+            elif kind == "line_too_long":
+                sink.on_stdout_line(None)
+            elif kind == "stderr_first":
+                self.hub.broadcast(session._stderr_problem(item[1]))
+            elif kind == "problem":
+                sink.on_problem(item[1], item[2], item[3])
+            elif kind == "exit":
+                sink.on_process_exited(item[1])
+            elif kind == "finish":
+                if staged.last_seq is not None and (session.last_seq is None or staged.last_seq > session.last_seq):
+                    session.last_seq = staged.last_seq
+                await sink.on_run_finished(output_cut=item[1], launcher_alive=item[2])
+        if staged.last_seq is not None and (session.last_seq is None or staged.last_seq > session.last_seq):
+            session.last_seq = staged.last_seq
+        if staged.cleanup_called:
+            await sink.on_run_cleanup()
 
     async def _discard_failed_start(self, run: Run) -> None:
         self._remove_credentials(run)
@@ -2122,9 +1819,16 @@ class GuiServer:
     def relay_event(self, session: Session, event: dict, size: int, run: Run | None = None) -> None:
         """One already-parsed launcher event: into the summary and to the screens."""
         try:
-            cleaned = hide_request_in_event(event, run.request) if run is not None and run.request is not None else event
+            if run is not None and run.request is not None:
+                cleaned = (
+                    hide_request_in_event(event, run.request)
+                    if isinstance(event, dict)
+                    else hide_request(event, run.request)
+                )
+            else:
+                cleaned = event
             messages = session.feed_event(cleaned, size)
-            if self._dispatch_messages(session, messages, run):
+            if not messages or self._dispatch_messages(session, messages, run):
                 return
             error: str = "a message for the screens could not be made of it"
         except Exception as e:  # a shape the checks did not foresee
@@ -2134,8 +1838,10 @@ class GuiServer:
         if run is not None and run.request is not None:
             redacted = hide_request(detail, run.request)
             detail = redacted if isinstance(redacted, str) else detail
-        self.hub.broadcast(session.problem("bad-event", f"the server could not pass on an event ({error}): it is "
-                                                        "ignored", detail))
+        problem = session.problem("bad-event", f"the server could not pass on an event ({error}): it is "
+                                               "ignored", detail)
+        if problem:
+            self.hub.broadcast(problem)
 
     # ------------------------------------------------------------ the server's end
 
@@ -2302,17 +2008,16 @@ class GuiServer:
             return
         client = self.hub.client(ws.send_str)
         connection = Connection(client)
-        sender = asyncio.create_task(self.hub.serve(client, req_run_id, req_after_seq))
-        reader = asyncio.create_task(self._listen(ws, connection))
         try:
-            await asyncio.wait({sender, reader}, return_when=asyncio.FIRST_COMPLETED)
+            await process.race_first(
+                self.hub.serve(client, req_run_id, req_after_seq),
+                self._listen(ws, connection),
+                propagate=False,
+            )
         finally:
             for watch in connection.watches.values():
                 self._unwatch(watch)
             connection.watches.clear()
-            for task in (sender, reader):
-                task.cancel()
-            await asyncio.gather(sender, reader, return_exceptions=True)
         await ws.close(code=WSCloseCode.GOING_AWAY if self._closing else WSCloseCode.OK)
 
     async def _listen(self, ws: web.WebSocketResponse, connection: Connection) -> None:

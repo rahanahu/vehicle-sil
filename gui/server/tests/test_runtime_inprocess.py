@@ -374,7 +374,7 @@ def test_shutdown_hurry_escalation_and_kill_all(tmp_path: Path) -> None:
 
 
 class _GatedFakeRun(FakeRun):
-    """FakeRun that uses GuiServer's _PreStartGate, with a hook run inside start(sink)."""
+    """FakeRun that uses staged Session buffering, with a hook run inside start(sink)."""
 
     waits_for_check = True
 
@@ -409,7 +409,7 @@ def test_prestart_gate_buffered_exit_does_not_push_intermediate_allowed(tmp_path
         run.emit("check", check=default_check_result("simple.yaml"))
         run.emit("log", source="Dashboard", line="before crash")
         run.emit_stderr("dying on purpose")
-        # Launcher exits while _PreStartGate is still buffering, before on_run_finished runs.
+        # Launcher exits while Session is still staged, before on_run_finished runs.
         run.exit_process(70)
 
     async def main() -> None:
@@ -447,8 +447,8 @@ def test_prestart_gate_buffered_finish_preserves_ended_allowed_and_allows_next_r
             run.emit("check", check=default_check_result("simple.yaml"))
             run.emit_stderr("dying immediately")
             run.exit_process(70)
-            # While gate.live is False, on_run_finished and on_run_cleanup buffer without yielding,
-            # so finish + cleanup land in the gate buffer before _start() wakes from gate.decision.wait().
+            # While session.staged is True, on_run_finished and on_run_cleanup stage without yielding,
+            # so finish + cleanup land in staged buffers before _start() wakes from check_decision.wait().
             await run.finish(returncode=70, process_exited=False)
 
         asyncio.create_task(drive())
