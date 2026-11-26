@@ -58,7 +58,7 @@ SIL Kit のパッチ（`patches/sil-kit/`）は、クローンした時点では
 
 ### Linux
 
-WSL では、`/mnt/c` のようなマウントされた Windows ドライブではなく、WSL の Linux ファイルシステム上（たとえば `~/` 配下）にクローンしてビルドしてください（9p ファイルシステムではビルドが非常に遅くなります）。
+WSL では、`/mnt/c` のようなマウントされた Windows ドライブではなく、WSL の Linux ファイルシステム上（たとえば `~/` 配下）にクローンしてビルドしてください（9p ファイルシステムではビルドが非常に遅くなります）。また、Windows と WSL で同じ作業ツリーや `node_modules` を共有しないでください。
 
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git

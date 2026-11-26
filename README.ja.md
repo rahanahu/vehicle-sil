@@ -18,6 +18,7 @@ vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェア�
 | テストを書いて自動で実行する | YAML のシナリオに、値の設定、待機、確認の手順を書きます。 | [シナリオでテストを書く](docs/ja/howto/scenario-tests.md) |
 | 動いているシミュレーションの値を Python から読み書きする | Control API（gRPC）と、その Python のクライアントを使います。 | [信号を外から操作する](docs/ja/howto/operate-signals.md) |
 | ブラウザで値を見て操作する | `vehicle-sil-gui` が、変数をスライダーやグラフで表示します。 | [gui.md](docs/ja/gui.md) |
+| ほかの ECU に影響せずバスの通信を観測する | 受信だけの participant（`vehicle_sil::spy::Spy`）が、バスに何も送信せずに J1939 の通信をシナリオや GUI 向けの ECU 変数にします。 | [受信だけをする participant](docs/ja/j1939-guide.md#受信だけをする-participant) |
 | 外部ツールから連携する・スキーマで検証する | GUI の HTTP/WS API、OpenAPI・JSON Schema、ランチャーのイベント、実行可能なクライアント例への入口（タグ固定）。 | [external-api.md](docs/ja/external-api.md) |
 | 実機の CAN やネットワークにつなぐ | シミュレーションのバスと実機のバスの間でフレームを中継するブリッジが、Vector XL の CAN 用（Windows）、SocketCAN 用（Linux）、イーサネット用にあります。 | Vector XL（Windows）は [bridges.md](docs/ja/bridges.md)、SocketCAN（Linux）は [socketcan-bridge.md](docs/ja/socketcan-bridge.md)、イーサネットは [ethernet-bridge.md](docs/ja/ethernet-bridge.md)。自分でブリッジを作るときは [bridge-contract.md](docs/ja/bridge-contract.md) |
 | ほかの PC の ECU を参加させる | 設定ファイルに、SIL Kit の registry（参加者どうしを引き合わせるサーバー）のアドレスと、相手が自分で起動する ECU を書きます。 | [複数の PC で動かす](docs/ja/howto/multi-pc.md) |
@@ -256,7 +257,7 @@ int main(int argc, char** argv)
 | 時間と操作 | `vehicle_sil_sim_controller` からは、仮想時間の一時停止とステップ実行ができません。 | C++ の API（`SimulationController` の時間ゲート）、`vehicle_sil_launch run` の標準入力のコマンド、Control API（`--control`）からできます。 |
 | 時間と操作 | 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。 | — |
 | ツールとビルド | テスト用のライブラリ（`vehicle_sil::testkit`）に、LIN の故障注入と記録の機能はありません。 | 記録は仮想 LIN バスの観測、ECU ごとの通信断は `ecu.connected` でできます。 |
-| ツールとビルド | `LocalBench`（`vehicle_sil::local`）、`vehicle_sil::testkit`、`vehicle_sil::spy` の API は安定していません。 | — |
+| ツールとビルド | `LocalBench`（`vehicle_sil::local`）、`vehicle_sil::testkit`、`vehicle_sil::spy` の API は安定していません。 | ターゲットの区分と安定度の段階は [ターゲット](docs/ja/architecture.md#ターゲット) を参照してください（冒頭の 0.x の API 注記も参照）。 |
 | ツールとビルド | `install()` とパッケージ化（`find_package`）には未対応です。 | FetchContent か `add_subdirectory` で組み込みます（[docs/build.md](docs/ja/build.md) の「外部プロジェクトから使う（FetchContent）」）。 |
 | OS と機器 | Windows 10 は未確認です。 | Windows 11 の MSYS2 UCRT64 で確認しています。 |
 | OS と機器 | Vector XL CAN Bridge が扱うのは、クラシック CAN だけです。 | 使い方と仕様は [bridges.md](docs/ja/bridges.md) にあります。 |

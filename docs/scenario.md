@@ -164,12 +164,26 @@ A step has one action and a time. Only `ramp` and `wave` can also have an `expec
 | `at_ms` | Any | The time of the step (virtual time in milliseconds, 0 or more). |
 | `after_ms` | Any | The time of the step, in milliseconds (0 or more) after the end of the previous step. |
 | `timeout_ms: <ms>` | `wait_until` (required) | If the condition does not hold within this time, the step fails. |
-| `within_ms: <ms>` | `expect` | The step passes if the condition holds at least once within this time. The scenario moves to the next step as soon as it holds. |
+| `within_ms: <ms>` | `expect` | The step passes if the condition holds at least once in `[T, T + within_ms]` (where `T` is this step's time). The scenario moves to the next step as soon as it holds. |
 | `hold_for_ms: <ms>` | `expect` | Checks that the condition holds for the whole of this time. |
 | `expect: { <variable>: <condition>, ... }` | `ramp`, `wave` | Checks that the condition holds all the time the value moves (from the step's time to its end). |
 | `undersampled: ok` | `wave`, `dither` | The check does not report the step's waveform even if it is finer than the ECU step. |
 
 A step with neither `at_ms` nor `after_ms` is the same as `after_ms: 0`.
+
+`within_ms` is measured from that step's start time `T`, checking `[T, T + within_ms]`. Consecutive steps without `at_ms` start at the end of the previous step (`after_ms: 0`), so their windows chain serially rather than starting from the same `T`:
+
+```yaml
+steps:
+  - at_ms: 100
+    set: { Engine.engine.throttle: 50 }
+  - expect: { Engine.engine.speed: { ge: 1700 } }
+    within_ms: 500
+  - expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }
+    within_ms: 200
+```
+
+Here, the second step starts at `T = 100 ms` and checks `[100, 600]`. If it holds at 330 ms and ends at 340 ms (see [Timing](#timing)), the third step starts at `T = 340 ms` and checks `[340, 540]`.
 
 ### Variables and values
 

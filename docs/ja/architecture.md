@@ -118,6 +118,12 @@ vehicle-sil/
 | テスト用 | テストとサンプルのためのツールです。 |
 | — | 実行ファイル、生成コード、CAN ブリッジは、区分に入れていません。 |
 
+0.x の間、API の安定度は次の 3 段階に分かれます。
+
+- **利用者向け**: ECU とシミュレーションの公開 API（`vehicle_sil::Ecu`、`vehicle_sil::Simulation`、`vehicle_sil::j1939`、`vehicle_sil::spy`、`vehicle_sil::control` など）です。0.x のマイナーバージョン間では非互換の変更が入ることがあります（特に `vehicle_sil::spy` は新しく、まだ固まっていません）。
+- **基盤**: 利用者向けの層の下にある部品（`vehicle_sil::local`、`vehicle_sil::peer`、`vehicle_sil::core`、`vehicle_sil::can`、`vehicle_sil::lin`、`vehicle_sil::eth`、`vehicle_sil::step` など）です。直接使うこともできます（`LocalBench` など）が、上の層の必要に合わせて変わります。
+- **テスト用と内部用**: `vehicle_sil::testkit` はテスト・サンプル向けであり、内部用のライブラリ（`vehicle_sil::launch`、`vehicle_sil::runner`、`vehicle_sil::config`、`vehicle_sil::scenario`、`vehicle_sil::process` など）は公開 API ではなく予告なく変わります。
+
 各ターゲットがリンクするもの（依存の向き）は、[code-map.md](code-map.md#観点から探す) から、領域ごとの依存の向きの図へたどれます。
 
 | ターゲット | 区分 | 内容 | 主な型と機能 | 詳しいドキュメント |

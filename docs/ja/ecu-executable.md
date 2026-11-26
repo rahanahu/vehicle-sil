@@ -615,6 +615,9 @@ vehicle_sil_sim_controller --registry-uri silkit://localhost:8500 --required Eng
 
 `--required` には、各 ECU の名前（`--describe` の `name`）を並べます。
 
+> [!NOTE]
+> `vehicle_sil_sim_controller` と `sil-kit-registry` はビルド済みのツールアーカイブには含まれません。このリポジトリのビルドでは `build/<preset>/tools/sim_controller/` と `build/<preset>/<CMAKE_BUILD_TYPE>/`（テスト有効時、またはターゲット `sil-kit-registry` をビルド）に置かれます。`template/` など FetchContent で取り込むプロジェクトでは、これらのターゲットを明示的にビルドしてください（`--target vehicle_sil_sim_controller sil-kit-registry`）。
+
 ## 関連するドキュメント
 
 | 調べること | ドキュメント |

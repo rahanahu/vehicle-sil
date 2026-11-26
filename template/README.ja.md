@@ -22,6 +22,8 @@ pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake min
 
 Windows の GUI は、uv がダウンロードする Python で動きます。MSYS2 の Python には、GUI のパッケージをインストールできません。
 
+WSL では、`/mnt/<drive>` ではなく WSL の Linux ファイルシステム（`~/` 配下など）に置いてください（9p 上のビルドは遅くなります）。また、Windows と WSL で同じ作業ツリーや `node_modules` を共有しないでください。
+
 コマンドは、すべてテンプレートを展開したディレクトリ（`simulation.yaml` のある所）で実行します。`vehicle_sil_launch` と `vehicle-sil-gui` は、手順 2 で `PATH` に追加したものを使います。
 
 ## 全体の流れ
