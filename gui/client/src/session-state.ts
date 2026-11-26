@@ -87,6 +87,8 @@ export const MAX_FINDINGS = 500;
 export interface LogLine {
   /** seq of the event. A marker for dropped lines has the seq of the line before it + 0.5 (markers may share a seq). */
   seq: number;
+  /** Real time since the launcher started (ms, from `event.t_ms`; null when absent or on server-dropped markers). */
+  tMs?: number | null;
   /** Key the screen tells lines apart by (unique within the session, markers included). */
   key: string;
   /** The participant name, or `vehicle_sil_launch`. */
@@ -454,6 +456,7 @@ export function addDropped(session: SessionView, dropped: Dropped): SessionView 
   const mark = session.droppedMarks + 1;
   const gaps: LogLine[] = counts.map(([source, count]) => ({
     seq: session.lastSeq + 0.5,
+    tMs: null,
     key: `dropped ${mark} ${source}`,
     source,
     line: '',
@@ -763,7 +766,13 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       };
     }
     case 'log':
-      logs.push({ seq: event.seq, key: String(event.seq), source: event.source, line: event.line });
+      logs.push({
+        seq: event.seq,
+        tMs: event.t_ms,
+        key: String(event.seq),
+        source: event.source,
+        line: event.line,
+      });
       return next;
     case 'log_dropped':
       // Place a marker where the lines were dropped ("N lines were dropped here"). The marker's seq is this event's seq
@@ -771,6 +780,7 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         if (count > 0) {
           logs.push({
             seq: event.seq,
+            tMs: event.t_ms,
             key: `${event.seq} ${source}`,
             source,
             line: '',

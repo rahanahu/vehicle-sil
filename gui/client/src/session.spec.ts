@@ -97,7 +97,9 @@ describe('SessionFeed', () => {
     expect(session && runOutcome(session)).toBe('ended');
     expect(session?.participants.map((p) => [p.name, p.state])).toContainEqual(['Engine', 'ended']);
     // In the example ECUs, Dashboard writes the lines
-    expect(session?.logs.some((line) => line.source === 'Dashboard')).toBe(true);
+    const dashboardLog = session?.logs.find((line) => line.source === 'Dashboard');
+    expect(dashboardLog).toBeDefined();
+    expect(typeof dashboardLog?.tMs).toBe('number');
     expect(session?.check?.result).toBe('passed');
   });
 
@@ -269,7 +271,10 @@ describe('SessionFeed', () => {
     });
     vi.advanceTimersByTime(BATCH_MS);
     expect(run.ready()).toBe(true);
-    expect(run.session()?.logs.map((l) => l.line)).toEqual(['line 1', 'line 2']);
+    expect(run.session()?.logs.map((l) => [l.line, l.tMs])).toEqual([
+      ['line 1', 10],
+      ['line 2', 20],
+    ]);
 
     socket.fail();
     vi.advanceTimersByTime(backoffMs(1));
@@ -311,7 +316,11 @@ describe('SessionFeed', () => {
     });
     vi.advanceTimersByTime(BATCH_MS);
     expect(run.ready()).toBe(true);
-    expect(run.session()?.logs.map((l) => l.line)).toEqual(['line 1', 'line 2', 'line 3']);
+    expect(run.session()?.logs.map((l) => [l.line, l.tMs])).toEqual([
+      ['line 1', 10],
+      ['line 2', 20],
+      ['line 3', 30],
+    ]);
   });
 
   it('keeps after_stream_seq unchanged when delayed values frames arrive outside stream_seq', async () => {
@@ -574,7 +583,9 @@ describe('SessionFeed', () => {
     expect(session?.unreadable).toEqual(
       expect.arrayContaining(['participants.message', 'findings.code']),
     );
-    expect(session?.logs.some((line) => line.line === 'a log event without t_ms')).toBe(true);
+    const logWithoutTms = session?.logs.find((line) => line.line === 'a log event without t_ms');
+    expect(logWithoutTms).toBeDefined();
+    expect(logWithoutTms?.tMs).toBeNull();
   });
 
   it('shows the fields the server left out of a large participant event', () => {
@@ -632,6 +643,7 @@ describe('SessionFeed', () => {
     const gap = session?.logs.find((line) => line.gap);
     expect(gap?.source).toBe('Engine');
     expect(gap?.gap?.count).toBe(count);
+    expect(gap?.tMs).toBeNull();
   });
 
   it('builds the state again after a resync', () => {

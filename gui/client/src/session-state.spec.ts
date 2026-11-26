@@ -200,6 +200,24 @@ describe('applyEvents', () => {
     expect(applyEvents(again, all.slice(0, 2))).toBe(again);
   });
 
+  it('preserves t_ms on log and log_dropped lines, and sets null when absent', () => {
+    const session = applyEvents(
+      emptySession(),
+      events(
+        { event: 'log', source: 'A', line: 'with time', t_ms: 42 },
+        { event: 'log', source: 'A', line: 'without time', t_ms: null },
+        { event: 'log_dropped', count: 3, sources: { A: 3 }, t_ms: 75 },
+        { event: 'log_dropped', count: 1, sources: { B: 1 }, t_ms: null },
+      ),
+    );
+    expect(session.logs.map((l) => [l.source, l.line, l.tMs, !!l.gap])).toEqual([
+      ['A', 'with time', 42, false],
+      ['A', 'without time', null, false],
+      ['A', '', 75, true],
+      ['B', '', null, true],
+    ]);
+  });
+
   it('keeps the newest lines of each source, and the lines of a quiet source', () => {
     const quiet = applyEvents(emptySession(), events(...logs('Quiet', 3)));
     const loud = applyEvents(quiet, eventsFrom(3, logs('Loud', MAX_LOG_LINES_PER_SOURCE + 5)));
@@ -935,6 +953,7 @@ describe('addDropped', () => {
       'A 0',
     ]);
     expect(next.logs.find((l) => l.source === 'B')?.gap?.atLeast).toBe(true);
+    expect(dropped.logs.filter((l) => l.gap).map((l) => l.tMs)).toEqual([null, null]);
   });
 
   it('gives each mark its own key, also two marks at the same place', () => {
@@ -1004,9 +1023,9 @@ describe('addProblem', () => {
       ),
     );
     const gaps = session.logs.filter((line) => line.gap);
-    expect(gaps.map((g) => [g.source, g.seq, g.gap?.count, g.gap?.launcher])).toEqual([
-      ['Engine', 2, 120, true],
-      ['vehicle_sil_launch', 2, 5, true],
+    expect(gaps.map((g) => [g.source, g.seq, g.tMs, g.gap?.count, g.gap?.launcher])).toEqual([
+      ['Engine', 2, 20, 120, true],
+      ['vehicle_sil_launch', 2, 20, 5, true],
     ]);
     expect(session.logs.filter((l) => l.source === 'Engine').map((l) => l.seq)).toEqual([
       0, 1, 2, 3,
