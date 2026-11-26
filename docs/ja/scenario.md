@@ -271,6 +271,18 @@ JSON Schema は [schema/scenario.schema.json](../../schema/scenario.schema.json)
 
 controller のタイムステップは、設定ファイルに `time_step_ms` を書いたときはその値です。省略したときは、有効な ECU の周期と、指定されていれば停止時刻からランチャーが決めます。結果の `timing.time_step_ms` に表示し、速度やシナリオの有無では変わりません。計算方法とその制限は [simulation-run.md](simulation-run.md#タイムステップと-ecu-のステップ) の「タイムステップと ECU のステップ」を見てください。
 
+### 終了時刻（`end_ms`）
+
+最上位の `end_ms`（`0` ～ `1000000000000`（`10^12`）の整数。最上位のキーでは `${name}` のパラメーター展開は使えません）を省略したときは、スキップされない手順がすべて決まった時点でシナリオが終了します。`end_ms` を持たない既存のシナリオは、この動作のまま変わりません。
+
+`end_ms` を書いたときは、次のルールで動きます。
+
+- **静的な下限の確認**: `end_ms` は、手順が終わりうる最も早い時刻より前にはできません（待つ手順 `wait_until` と `within_ms` つきの `expect` は最小の長さ 0 として数え、その後ろの `after_ms` や時間を持つ手順はそれに足し上げます）。それより早い `end_ms` は照合で `scenario-time` のエラーになります。
+- **全手順の成功後に進める時間**: すべての手順が成功（またはスキップ）しても `end_ms` に達していなければ、controller のステップ `P >= end_ms` までシミュレーションを進めます。`wait_until` や `within_ms` つきの `expect` が `end_ms` より後に終わったときは、その手順（および続く手順）が完了した時点でシナリオが終わります。
+- **`end_ms == last.at_ms` での確定**: 最後の手順が `end_ms` の時刻への書き込みであるときは、対象の ECU ステップが `end_ms` 以前である未確定の書き込みを `P = end_ms` で確定させ、余分な 1 タイムステップを進めずに終了します。ECU のステップ幅が合わず `end_ms` より後のステップで反映される場合は、その書き込みが確定するまで待つためデッドロックしません。
+- **`dither` との関係**: `end_ms` まで進める間も各 ECU ステップで `dither` の書き込みを続け、`end_ms` より前で止めます（`t >= end_ms` には未判定の `dither` 書き込みを出しません）。全手順の成功後、`end_ms` までの間に手順に属さない `dither` の書き込みが失敗した場合は、決定済みの手順の `passed` / `skipped` を書き換えずにシナリオ全体の失敗（`scenario-write`、`over_at_ms` を記録）になります。
+- **`stop_at_ms` との関係**: `stop_at_ms < end_ms` のときは、手順がすべて成功していても `end_ms` に達する前に `stop_at_ms` で止まるため、シナリオは `incomplete`（終了コード 5）になります。`stop_at_ms >= end_ms`（`stop_at_ms == end_ms` で全手順完了時を含む）のときは成功します。
+
 ## 値の見え方
 
 ECU は、ステップの終わりの全変数の値を 1 組（サンプル）送信します。サンプルの時刻は、そのステップが始まった時刻です。条件が見るのは、このサンプルです。
@@ -761,7 +773,7 @@ steps:
 
 | 起きたこと | シナリオ | 実行 |
 |---|---|---|
-| 全部の手順が成功した | `passed` | ランチャーがその controller のステップでシミュレーションを止め、成功します（ほかにエラーがなければ終了コード 0）。 |
+| 全部の手順が成功した（`end_ms` の指定時はそこにも達した） | `passed` | 既定（`after_scenario: "stop"`）では、ランチャーがその controller のステップでシミュレーションを止め、成功します（ほかにエラーがなければ終了コード 0）。実行要求で `after_scenario: "pause"` を指定したときは、止めずにその controller のステップで一時停止して手動操作へ引き継ぎます（[simulation-run.md](simulation-run.md#シナリオを付けた実行--scenario) の「シナリオを付けた実行（`--scenario`）」）。 |
 | 手順が 1 つ失敗した | `failed` | ランチャーがシミュレーションを止め、失敗します（終了コード 1）。 |
 | シナリオが値を読む ECU が、ステップより粗い頻度で値を送信している（`samples: every_step`） | `failed` | シナリオを始めません。手順は全部 `not_run` のままで、ランチャーは最初のステップの前にシミュレーションを止め、実行は指摘 `scenario-not-observed` で失敗します（終了コード 1）。 |
 | 指定した `stop_at_ms` に先に達した | `incomplete` | 実行は `incomplete`（終了コード 5）です。シナリオの判定はありません。 |
@@ -779,7 +791,7 @@ steps:
 
 失敗として報告するのは、ランチャーが最初に知った失敗で、仮想時間の順とは限りません。ランチャーは、controller のステップ P ごとに、前の書き込みの結果、P より前のサンプル、次のタイムステップまでの書き込みの順に見ます。すぐに拒否される書き込み（範囲の外など）は、1 タイムステップ先の時刻のものを送信するときにわかります。そのため、それより前の時刻のサンプルで成り立たない条件より先に報告されることがあり、タイムステップを変えると入れ替わります。ランチャーは、タイムステップの書き込みを 1 つずつ待たずに送り、それから ECU の答えを送った順に見ます。最初に拒否されたものがその手順を失敗させ、最初の書き込みをその後に送った手順は `not_run` のままです。ランチャー自身が送れない書き込み（制御リンクがない、知らない変数、空きがない）はすぐにわかり、その後ろの書き込みは送りません。
 
-`dither` が動きのない間に出す書き込み（手順のものでない書き込み）が断られたときは、その時点で**まだ決まっていない最初の手順**が失敗します（`scenario-write`）。次の 2 つは controller のタイムステップによります。タイムステップによらない結果にするには、範囲を出ない振幅にします（照合の警告 `scenario-dither-range` が、出うる所を言います）。
+`dither` が動きのない間に出す書き込み（手順のものでない書き込み）が断られたときは、その時点で**まだ決まっていない最初の手順**が失敗します（`scenario-write`）。`end_ms` まで進めている間にすべての手順がすでに成功していた場合は、決まった手順の `passed`（または `skipped`）は変えず、シナリオ全体が `scenario-write` で失敗します。次の 2 つは controller のタイムステップによります。タイムステップによらない結果にするには、範囲を出ない振幅にします（照合の警告 `scenario-dither-range` が、出うる所を言います）。
 
 - **どの手順が失敗するか**: ランチャーが、断られる書き込みを送る時に、どの手順まで決めていたかで決まります。例: 30 ms と 60 ms の `expect` があり、50 ms の書き込みが断られるとき、タイムステップが 10 ms なら 30 ms の `expect` は決まっていて 60 ms の手順が失敗し、タイムステップが 30 ms なら 30 ms の手順が失敗します。失敗の時刻（`at`）と文は同じです。
 - **最後の手順が決まるタイムステップの書き込み**: シナリオは、手順が全部決まった時に終わり、その後の書き込みは送りません。上の例で手順が 30 ms の `expect` だけなら、タイムステップが 10 ms では 50 ms の書き込みを送る前に通り、タイムステップが 30 ms では送って失敗します。手順のものでない書き込みの結果を、シナリオの終わりで待つこともしません。
@@ -867,7 +879,7 @@ error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): 
 |---|---|
 | `scenario-failed` | `expect`（`ramp` と `wave` の横の `expect` も）が成り立たなかった。または、読む変数の participant がこの実行で接続していない。 |
 | `scenario-timeout` | `wait_until` が `timeout_ms` の間に成り立たなかった。 |
-| `scenario-write` | `set`、`ramp`、`wave` の書き込みが反映されなかった（`wave` が範囲の外の値を書こうとした、など）。または、`ramp` の始まりの値や `wave` の中心の値がない。 |
+| `scenario-write` | `set`、`ramp`、`wave`、`dither` の書き込みが反映されなかった（`wave` が範囲の外の値を書こうとした、全手順の成功後 `end_ms` までの間に `dither` の書き込みが失敗した、など）。または、`ramp` の始まりの値や `wave` の中心の値がない。 |
 | `scenario-incomplete` | シナリオが終わる前に、ほかの理由でシミュレーションが終わった。 |
 | `scenario-not-observed` | シナリオを始めなかった。シナリオが値を読む ECU が、ステップより粗い頻度で値を送信していて、サンプルとサンプルの間の変数の動きが条件から見えない。条件は 1 つも判定していない（条件が成り立たなかった `scenario-failed` とは違う）。指摘の文に、participant、その `sample_period` とステップがある。実行ファイルをこの vehicle-sil で作り直すか、`samples: as_sent` を書く（[ECU が値を送る頻度](#ecu-が値を送る頻度samples)）。 |
 
@@ -925,7 +937,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario-value` | エラー | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外。`dither` を bool か enum の変数に書いている。 |
 | `scenario-param` | エラー | `${name}` に値がない。`${...}` がキーや変数名、値の一部にある（シナリオにない名前の `--param` は、引数のエラー `usage`）。 |
 | `scenario-variant` | エラー | シナリオの `only` に、選んだ機種がない。`only` の名前が設定ファイルの機種にない。 |
-| `scenario-time` | エラー | `at_ms` が前の手順の終わりより前。待つ手順より後ろに `at_ms` がある。手順の時間を合計すると、時刻の上限（1000000000000 ms）を超える。 |
+| `scenario-time` | エラー | `at_ms` が前の手順の終わりより前、待つ手順より後ろに `at_ms` がある、`end_ms` が手順の終わりうる最も早い時刻より前、または手順の時間を合計すると時刻の上限（1000000000000 ms）を超える。 |
 | `scenario-wave-undersampled`、`scenario-wave-duty` | 警告 | `wave` か `dither` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)）。integer の入力に、振幅が 0.5 より小さい `dither` も `scenario-wave-undersampled` です（下）。 |
 | `scenario-wave-coarse`、`scenario-wave-not-checked` | 注記 | 同じ節にあります。 |
 | `scenario-dither-range` | 警告 | `dither` が入力を範囲の外へ出すかもしれない（文面からの見積もり。下）。 |
@@ -1133,7 +1145,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 
 ## 実行中に変数を見る（`--control`）
 
-`--scenario` と `--control` を一緒に付けると、シナリオの実行中も Control Server が起動します（[control-api.md](control-api.md) の「ランチャーに接続する」。Control Server を持つビルドだけ）。クライアントは、読む、待つ、時刻を動かす、止めることができます。変数は書けません。
+`--scenario` と `--control` を一緒に付けると、シナリオの実行中も Control Server が起動します（[control-api.md](control-api.md) の「ランチャーに接続する」。Control Server を持つビルドだけ）。クライアントは、読む、待つ、時刻を動かす、止めることができます。シナリオの実行中は変数を書けません（`Write` と `ForgetPeer` は `FAILED_PRECONDITION`、理由 `scenario-running` で拒否します）。実行要求で `after_scenario: "pause"` を指定しシナリオが成功すると、同じ Run のまま終了時刻の controller ステップで一時停止し（`state` イベントの `handed_over: true`）、手動制御のために `Write` と `ForgetPeer` が使えるようになります（[control-api.md](control-api.md#シナリオの実行中) の「シナリオの実行中」）。失敗、`incomplete`、または既定の `after_scenario: "stop"` では書き込みは解放されません。
 
 | クライアントの呼び出し | シナリオの実行中 |
 |---|---|

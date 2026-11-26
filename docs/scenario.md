@@ -271,6 +271,18 @@ For this reason, a step after a wait step cannot have `at_ms` (write `after_ms`)
 
 The controller's time step is `time_step_ms` in the configuration file when specified. Otherwise, the launcher resolves it from the active ECU periods and any requested stop time. The result reports it as `timing.time_step_ms`; speed and scenario selection do not change it. See "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps) for the calculation and its limits.
 
+### End time (`end_ms`)
+
+When the top-level `end_ms` (an integer from `0` to `1000000000000`, `10^12`; `${name}` parameter substitution is not supported at the top level) is omitted, the scenario ends as soon as all non-skipped steps are decided. Existing scenarios without `end_ms` keep that exact behavior.
+
+When `end_ms` is present:
+
+- **Static lower-bound check**: `end_ms` must not be earlier than the earliest possible end of `steps` (wait steps `wait_until` and `expect` with `within_ms` contribute minimum length 0, and subsequent `after_ms` and timed steps accumulate over them). An earlier `end_ms` fails the check with `scenario-time`.
+- **Advancing after all steps pass**: once every step has passed (or been skipped), if `end_ms` has not been reached yet, the scenario keeps the simulation running until the controller step `P >= end_ms`. If a `wait_until` or `expect` with `within_ms` finishes later than `end_ms`, the scenario ends when that step (and any following steps) completes.
+- **Exact settlement at `end_ms == last.at_ms`**: when the last step is a write at `end_ms`, the launcher drains and settles pending writes whose target ECU step is at or before `end_ms` at `P = end_ms` without advancing an extra controller step. If a misaligned ECU applies the write at a step after `end_ms`, the scenario waits until that write is settled so it never deadlocks.
+- **Interaction with `dither`**: `dither` writes continue on each ECU step while holding up to `end_ms`, and stop strictly before `end_ms` (no unjudged `dither` write is emitted at `t >= end_ms`). If a `dither` write that belongs to no step fails after all steps have already passed (between the last step and `end_ms`), the scenario fails at the scenario level with `scenario-write` (`over_at_ms` is recorded, while the already-decided steps keep their `passed` or `skipped` status).
+- **Interaction with `stop_at_ms`**: if `stop_at_ms < end_ms`, the simulation stops at `stop_at_ms` and the scenario becomes `incomplete` (exit code 5) even if all steps already passed, because `end_ms` was not reached. If `stop_at_ms >= end_ms` (including `stop_at_ms == end_ms` when all steps completed), the scenario passes.
+
 ## Values that conditions see
 
 An ECU sends one set of the values of all its variables at the end of an ECU step: a sample. The time of a sample is the time at which that ECU step started. Conditions look at these samples.
@@ -761,7 +773,7 @@ The result of the scenario (`status` in JSON) is decided as follows:
 
 | What happened | Scenario | Run |
 |---|---|---|
-| All steps passed | `passed` | The launcher stops the simulation at that controller step, and the run passes (exit code 0 if there are no other errors). |
+| All steps passed (and `end_ms`, if set, was reached) | `passed` | By default (`after_scenario: "stop"`), the launcher stops the simulation at that controller step, and the run passes (exit code 0 if there are no other errors). With `after_scenario: "pause"` in a run request, the launcher pauses at that controller step for manual handover instead of stopping (see "Runs with a scenario (`--scenario`)" in [simulation-run.md](simulation-run.md#runs-with-a-scenario---scenario)). |
 | One step failed | `failed` | The launcher stops the simulation, and the run fails (exit code 1). |
 | An ECU whose values the scenario reads sends them less often than its step (`samples: every_step`) | `failed` | The scenario is not begun: every step stays `not_run`, the launcher stops the simulation before its first step, and the run fails (exit code 1) with the finding `scenario-not-observed`. |
 | The requested `stop_at_ms` was reached first | `incomplete` | The run is `incomplete` (exit code 5): the scenario has no verdict. |
@@ -779,7 +791,7 @@ When one step fails, the scenario ends there. Steps that had started become `unf
 
 The failure reported is the first one the launcher learned of, which is not always the first in virtual time. At each controller step P, the launcher looks first at the results of earlier writes, then at the samples before P, then at the writes up to the next time step. A write that is rejected at once (out of range, for example) is detected when the launcher sends the writes for one time step ahead. Such a write can be reported before a condition that fails on a sample of an earlier time, and changing the time step can swap the two. The launcher sends the writes of a time step without waiting for each, and then looks at the ECUs' answers in the order sent: the first rejected one fails its step, and a step whose first write was sent after it stays `not_run`. A write the launcher itself cannot send (no control link, an unknown variable, no room) is known at once, and no write after it is sent.
 
-If a write that a `dither` makes while no motion runs (a write that belongs to no step) is refused, **the first step whose result is not yet decided** fails (`scenario-write`). Two things then depend on the controller's time step. For a result that does not, keep the amplitude within the range (the check warning `scenario-dither-range` says where it can leave it).
+If a write that a `dither` makes while no motion runs (a write that belongs to no step) is refused, **the first step whose result is not yet decided** fails (`scenario-write`); if all steps have already passed while holding up to `end_ms`, the scenario itself fails with `scenario-write` and the decided steps stay `passed` (or `skipped`). Two things then depend on the controller's time step. For a result that does not, keep the amplitude within the range (the check warning `scenario-dither-range` says where it can leave it).
 
 - **Which step fails**: this depends on how far the launcher had decided the steps when it sent the refused write. Example: with `expect`s at 30 ms and 60 ms and a refused write at 50 ms, a time step of 10 ms has already decided the 30 ms `expect`, so the 60 ms step fails; with a time step of 30 ms, the 30 ms step fails. The time of the failure (`at`) and the message are the same.
 - **Writes in the time step that decides the last step**: the scenario ends when all its steps are decided, and sends no writes after that. In the example above, if the only step is the 30 ms `expect`, with a time step of 10 ms the scenario passes before the 50 ms write is sent, and with a time step of 30 ms it sends that write and fails. The scenario does not wait at its end for the results of writes that belong to no step.
@@ -867,7 +879,7 @@ All of them are errors.
 |---|---|
 | `scenario-failed` | An `expect` (including one beside `ramp` or `wave`) did not hold, or the participant of a variable it reads is not connected in this run. |
 | `scenario-timeout` | A `wait_until` did not hold within `timeout_ms`. |
-| `scenario-write` | A write of `set`, `ramp` or `wave` was not applied (a `wave` tried to write a value out of range, for example), or there is no start value for a `ramp` or no center value for a `wave`. |
+| `scenario-write` | A write of `set`, `ramp`, `wave`, or `dither` was not applied (a `wave` tried to write a value out of range, or a `dither` write failed after all steps passed before `end_ms`, for example), or there is no start value for a `ramp` or no center value for a `wave`. |
 | `scenario-incomplete` | The simulation ended for another reason before the scenario was over. |
 | `scenario-not-observed` | The scenario was not begun: an ECU whose values it reads sends them less often than its step, so a condition would not see what a variable does between 2 samples. No condition was judged; this is not a condition that was false (`scenario-failed`). The message names the participant, its `sample_period` and its step. Build the executable again with this vehicle-sil, or write `samples: as_sent` (see [How often the ECUs send their values](#how-often-the-ecus-send-their-values-samples)). |
 
@@ -925,7 +937,7 @@ The check lists every error; it does not stop at the first one. The exit code is
 | `scenario-value` | Error | A value does not fit the type, the range or the enum items. A `ramp` or a magnitude comparison is used on a non-numeric variable. The waveform of a `wave` does not fit the variable's type, or `around` ± `amplitude` is out of range. A `dither` is written on a bool or enum variable. |
 | `scenario-param` | Error | `${name}` has no value, or `${...}` is in a key, in a variable name or in part of a value. (A `--param` with a name that is not in the scenario is the usage error `usage`.) |
 | `scenario-variant` | Error | The scenario's `only` does not include the selected variant, or a name in `only` is not a variant of the configuration file. |
-| `scenario-time` | Error | `at_ms` is before the end of the previous step, `at_ms` comes after a wait step, or the durations of the steps add up to more than the time limit (1000000000000 ms). |
+| `scenario-time` | Error | `at_ms` is before the end of the previous step, `at_ms` comes after a wait step, `end_ms` is earlier than the earliest possible end of the steps, or the durations of the steps add up to more than the time limit (1000000000000 ms). |
 | `scenario-wave-undersampled`, `scenario-wave-duty` | Warning | A `wave` or `dither` is finer than the step of the target ECU (see [Waveforms finer than the ECU step](#waveforms-finer-than-the-ecu-step)). A `dither` with an amplitude below 0.5 on an integer input also gives `scenario-wave-undersampled` (see below). |
 | `scenario-wave-coarse`, `scenario-wave-not-checked` | Note | See the same section. |
 | `scenario-dither-range` | Warning | A `dither` may take an input out of its range (an estimate from the text; see below). |
@@ -1133,7 +1145,7 @@ For a step that is skipped, `scenario_step` (`status` `skipped`, `at_ms` null) i
 
 ## Watching variables during a run (`--control`)
 
-With both `--scenario` and `--control`, the Control Server also runs during a scenario (see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher); only in builds with the Control Server). A client can read, wait, move time and stop. It cannot write variables.
+With both `--scenario` and `--control`, the Control Server also runs during a scenario (see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher); only in builds with the Control Server). A client can read, wait, move time and stop. While the scenario is running, it cannot write variables (`Write` and `ForgetPeer` are rejected with `FAILED_PRECONDITION` and `scenario-running`). If the run request sets `after_scenario: "pause"` and the scenario passes, the simulation pauses atomically at the end controller step on the same Run (`handed_over: true` in the `state` event) and unlocks `Write` and `ForgetPeer` for manual continuation (see "While a scenario runs" in [control-api.md](control-api.md#while-a-scenario-runs)); on failure, `incomplete`, or normal `after_scenario: "stop"`, writes are never unlocked.
 
 | Client call | During a scenario |
 |---|---|

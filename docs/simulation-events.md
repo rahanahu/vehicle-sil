@@ -45,7 +45,7 @@ vehicle_sil_launch serve --once simulation.yaml   # send {"command":"run"} on st
 | `finding` | A run finding is decided | The same keys as one entry of `findings[]` in the result |
 | `scenario_step` | A step of the `--scenario` scenario starts or is decided | The same keys as one entry of `scenario.steps[]` in the result |
 | `time` | Virtual time advances, the simulation pauses at another time, or the run is late | `sim_ms`, `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms`, `late_ms` |
-| `state` | Where the run stands, or what it accepts, has changed | `rev`, `phase`, `paused`, `paused_at_ms`, `holding`, `speed`, `pacing`, `stop`, `scenario`, `allowed`, `outside` |
+| `state` | Where the run stands, or what it accepts, has changed | `rev`, `phase`, `paused`, `paused_at_ms`, `holding`, `speed`, `pacing`, `stop`, `scenario`, `handed_over`, `scenario_over_at_ms`, `allowed`, `outside` |
 | `command` | A command arrives | `command`, `source`, `accepted`, `message`, `reason`, `ms`, `at_ms`, `id` |
 | `heartbeat` | Nothing was written for 1 second | None (only the 3 common keys) |
 | `result` | Last line | `result` |
@@ -215,7 +215,7 @@ How late the run is, and how fast it actually goes, are `late_ms`, `slipped_ms` 
 
 `ok` answers "would the run accept it", not "would it change anything": `pause` is `ok` while the simulation is paused (the command is accepted and does nothing). `step` can be `ok` while `paused` is `false`: right after a `pause` was accepted and until the simulation has paused, and while a step is being done.
 
-`pause`, `resume`, `step`, `run_until`, `speed` and `stop` are answered as for a stdin command. `write` (writing a variable) exists only for Control Server clients, so it is answered as for a client. In a run without a Control Server (no `--control`) nothing can send a write, so `write` has `ok` `false` with the reason `no-control-server` for the whole run. A client's time call gets the same answer as the stdin command, also during a scenario; only `write` is refused for the scenario (`scenario-running`).
+`pause`, `resume`, `step`, `run_until`, `speed` and `stop` are answered as for a stdin command. `write` (writing a variable) exists only for Control Server clients, so it is answered as for a client. In a run without a Control Server (no `--control`) nothing can send a write, so `write` has `ok` `false` with the reason `no-control-server` for the whole run. A client's time call gets the same answer as the stdin command, also during a scenario; `write` is refused while the scenario is running (`scenario-running`), and unlocks (`ok: true`) only if the scenario passes with `after_scenario: "pause"` (`handed_over: true`).
 
 In a run that is connected outside the simulation and keeps real time (`--time-policy realtime`, the default), `pause`, `step` and `run_until` have `ok` `false` with the reason `outside-real-time`, and `speed` has `min` and `max` 1 (only a speed of 1 is accepted). With `--time-policy free` they have `ok` `true` and the `caution` `outside-not-real-time`. What connects the run outside is `time_lock.because` of the `check` event.
 
@@ -271,7 +271,7 @@ The `reason` of a `command` event that was not accepted, and of `allowed` in `st
 | `not-set-up` | The launcher has not set up the simulation yet (`step`, `run_until`, `pause` with a time). Also: more than 256 commands arrived before the launcher had read the configuration file (see [When time commands are accepted](#when-time-commands-are-accepted)) |
 | `not-paused` | `step` while the simulation is not paused |
 | `not-running` | The simulation has ended, or did not start |
-| `scenario-running` | The run plays a scenario: a client cannot write variables (it can move time, as stdin can) |
+| `scenario-running` | The run plays a scenario: a client cannot write variables until a successful `after_scenario: "pause"` handover (`handed_over: true`; it can move time, as stdin can) |
 | `no-control-server` | Only in `allowed` of `state`: the run has no Control Server (`--control`), and only a Control Server client can send the operation (`write`) |
 | `outside-real-time` | The run is connected outside the simulation (`--connect`, or an enabled `role: bridge` participant) and keeps real time (`--time-policy realtime`, the default): `pause`, `step`, `run_until` and a `speed` other than 1 are refused. `resume`, a `speed` of 1 and `stop` are accepted. To move time, start the run with `--time-policy free` (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)) |
 | `out-of-range` | An argument is out of range (a client's speed, step or time) |
@@ -801,6 +801,8 @@ Each name indicates that the following are present:
 | `request` | `--request`, the findings `connect-network-unused` and `request-params-unused`, and `request_file` as the `from` of a parameter in the check and result JSON |
 | `scenario-samples` | `samples` of a scenario, `--sample-every-step` passed to executables, and the findings `scenario-samples-*` and `scenario-not-observed` |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
+| `scenario-end-ms` | Top-level `end_ms` in scenario files, and `end_ms` in `check --json`, `run --json`, and `--timeline` |
+| `scenario-handover` | `after_scenario` (`"stop"` \| `"pause"`) in run requests, `handed_over` and `scenario_over_at_ms` in the `state` event, and dynamic write unlock on handover |
 
 In a build with `scenario-control`, clients cannot write while a scenario runs: calls that write are rejected with `FAILED_PRECONDITION` (reason `scenario-running`). In a build with `scenario-time`, calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) are accepted during a scenario, as the same commands from stdin are, and do not change the result of the scenario; a build with `scenario-control` alone rejects them with the same reason (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
 
@@ -841,7 +843,7 @@ If `serve` fails at startup (usage error, including `VEHICLE_SIL_TRACE` without 
 
 - `prepare`: verifies the bound `<file>` with `--file-only` semantics (optional `"variant"`, `"disable"`, `"enable"`, `"manual"` arrays; rejects `"config"`) and replies with a `prepare` event containing `status`, `metadata`, `file_sha256`, and `findings`. Refused (`accepted: false`) with `"busy"`, `"launcher-ending"`, or `"contaminated"` when a run is active or ending.
 - `status`: replies with a `status` event holding the current launcher and active run state (`run_state` is `null` when no run is active).
-- `run`: starts a run when ready (or unprepared). `"request"` (path to a run request JSON file) and `"intent"` (inline run-request JSON object up to the 64 KiB line limit, with `"vehicle_sil_run_request"` optional) are mutually exclusive; `"timeline"` (path to write the timeline JSON) and `"id"` are optional. Refused with `"busy"` while a run or prepare is active, or `"launcher-ending"` once the launcher is ending.
+- `run`: starts a run when ready (or unprepared). `"request"` (path to a run request JSON file) and `"intent"` (inline run-request JSON object up to the 64 KiB line limit, with `"vehicle_sil_run_request"` optional, supporting fields such as `"after_scenario"`) are mutually exclusive; `"timeline"` (path to write the timeline JSON) and `"id"` are optional. Refused with `"busy"` while a run or prepare is active, or `"launcher-ending"` once the launcher is ending.
 - `stop`, `pause`, `resume`, `step`, `run_until`, `speed`: in multi-run `serve`, require `"run": "<run ID>"` (missing `"run"` is refused with `"run-required"`; any other value is refused with `"run-changed"` and `"asked_run"`); in `serve --once`, `"run"` may be omitted. On `stop`, optional boolean `"force"` selects idempotent graceful (`false`, stops at 1 request) or immediate force (`true`, raises to 2 requests). Launcher-level commands (`run`, `prepare`, `status`) ignore `"run"` if omitted or a valid string.
 - Closing stdin (EOF) ends the launcher (exit code 0 when idle; stops the active run and exits with 130 when a run is in progress).
 

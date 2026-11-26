@@ -81,11 +81,11 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
 | `GET api/config?file=<configuration file>` | ファイルの文と、そのバイト列の SHA-256: `{file, text, stamp}`（下の「構成ファイルの文」） | `config.json` |
-| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: 文をそのファイルとして保存する。既定では、実行されるコマンドを変えない編集だけ（下の「文を保存する（`POST api/config`）」） | `save-config.json`、`error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | 対象の `{instance, run_id}`、または 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
@@ -142,7 +142,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 
 ### 照合と開始（`api/check`、`api/run`）
 
-任意の整数 `stop_at_ms`（1〜10^12）は仮想時間の停止時刻を指定します。任意の整数 `late_tolerance_ms`（0〜10^12）は実時間ペーシングの遅延許容を指定します。どちらも照合と開始の両方で使えます。`run-stop-at` 機能を持たないランチャーにどちらかを送ると、サーバーは HTTP 409 `launcher-unsupported` を返します。照合は Describe の後に確定した `time_step_ms` を返します。
+任意の整数 `stop_at_ms`（1〜10^12）は仮想時間の停止時刻を指定します。任意の整数 `late_tolerance_ms`（0〜10^12）は実時間ペーシングの遅延許容を指定します。どちらも照合と開始の両方で使えます。`run-stop-at` 機能を持たないランチャーにどちらかを送ると、サーバーは HTTP 409 `launcher-unsupported` を返します。照合は Describe の後に確定した `time_step_ms` を返します。任意の文字列 `after_scenario`（`"stop"` または `"pause"`、省略時は `"stop"`）は、シナリオが通った後に実行を停止するか、シナリオ終了仮想時刻で一時停止して手動操作へ引き継ぐかを指定します。`"pause"` には `scenario` の指定と `stop_at_ms` の省略が必要で（反する場合は 400 `invalid-field`）、ランチャーに `scenario-handover` がない場合は 409 `launcher-unsupported` を返します。
 
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスは `{instance, run_id}` で、新しい実行の要約は WebSocket ストリームの `session` として届きます。**WebSocket との到達順**: サーバーは `POST api/run` の HTTP レスポンスを返す*前*に、最初の `session`、`variables`、および開始前に溜まったイベントを WebSocket へ配信します。外部の HTTP+WS クライアントは、`POST api/run` が返る前に新しい実行のイベント（速く終わった実行では `state: "ended"` の `session` も含む）が届く前提で扱ってください（[examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)、[examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)）。
 - **照合のあとの開始**: `api/run` は、`disable`/`manual` の participant 名を保存済み構成と照合したうえで、起動時にランチャー自身の単一の `check` を実行します。照合が通らなければ（`result` が `passed` でなければ）実行は進まず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。セッションを有効にする前に断るので、止めるものはありません。例: `error-check-failed.json`。
@@ -261,8 +261,8 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 409 | `starting` | `api/run`: 別の `api/run` が実行を始めている途中（ランチャーをまだ登録していない） |
 | 422 | `check-failed` | `api/run`: 実行を成す内容の照合が通らなかったので、実行を始めなかった（`detail` は `{result, findings}`。上の「照合と開始」）。例: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
-| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った |
-| 409 | `scenario-running` | `api/write`: 動いている実行がシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
+| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った、あるいは `scenario-handover` 機能のないランチャーに `after_scenario: "pause"` を送った |
+| 409 | `scenario-running` | `api/write`: 動いている実行が引き継ぎ前のシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
 | 409 | `session-changed` | `api/stop-session` と対象を指定した `api/time` では、サーバーの識別子か実行が変わった。`api/write` では、指定した実行 ID が動いている実行と違う。操作は送られていない。例 `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: ファイルの中身がもう `stamp` でない、または新しいファイル（`stamp` が `null`）がすでにある |
 | 409 | `config-busy` | `POST api/config`: ファイルを置き換えられなかった（理由はメッセージに） |
@@ -285,8 +285,8 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 504 | `check-timeout` | 照合（または `api/connections` の一覧）が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
 
-- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
-- `invalid-field` の対象: `speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`at_ms`、`value`、`id`、`run_id`、`instance`（`run_id` と `instance` の片方だけの指定を含む）、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
+- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`after_scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `invalid-field` の対象: `speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`after_scenario`（`scenario` なしの `"pause"` や `stop_at_ms` との併用も含む）、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`at_ms`、`value`、`id`、`run_id`、`instance`（`run_id` と `instance` の片方だけの指定を含む）、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
 - `unsupported` の対象: `control-server` を持たないのに `api/write` を送った。（サーバーは起動時に `time-commands`、`stdin-run-until`、`state`、`speed`、`start-paused`、`scenario`、`manual-participants` を必須として確かめるので、`api/time` にこの場合はありません。）
 
 例のファイルは次のとおりです。ほかのコードは、GUI サーバーのテストの中で確認します。
@@ -453,7 +453,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - **`time`**: 仮想時間 `sim_ms`、実際の速度 `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` です。途中から開いた画面も、これで今の時刻がわかります。一時停止しているか、その時刻、指定の速度は、`launcher_state` にあります（`paused`、`paused_at_ms`、`speed`）。一時停止している間、`time` は止まる前のものでありえます（ランチャーが次に見るまで `sim_ms` が前の時刻、`actual_speed` と `late_ms` が止まる前の値）。
 - **`check`**: participant の `required`、`enabled`、`variables` を含みます。
 - **`last_command`**: `seq`、`command`、`source`、`accepted`、`message`、`reason`、`id`、受け付けた `step` の `ms` と `at_ms`、受け付けた `run_until` の `at_ms` です（`event`、`t_ms`、`run`、`asked_run` は `last_command` から除かれますが、ランチャー側拒否の WebSocket `command` イベントには `asked_run` が含まれます）。`seq` で、新しいレスポンスか、前と同じレスポンスかがわかります。`last_command` は最後の 1 件だけを保持し、同時のコマンドでは上書きされます。`state` より前のランチャーは `reason` と `id` を書きません。
-- **`launcher_state`**: ランチャーが書いた `state` イベントそのまま（[docs/ja/simulation-events.md](../../docs/ja/simulation-events.md) の `state`）に、その `seq` を付けたものです: `rev`、`phase`、`paused`、`paused_at_ms`（一時停止している時刻）、`speed`、`stop`、`allowed`（ランチャーが受け付けること: `pause`、`resume`、`step`、`speed`、`run_until`、`stop`、`write`。それぞれ `{ok, reason, message, caution}`）など。サーバーは変えません。`rev` は変わるたびに上がるので、画面は新しいものと、同じものがもう一度届いたのとを見分けられます。これは、ランチャーが書いた時点の答えです。`ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません。`state` の後のイベント（`command`、`time`）のほうが新しいことがあります。`state` のイベントは `event` の通知としても届きますが、要約が覚えるのは最後の 1 つだけなので、後から開いた画面は要約から読み、前のものは再送されません。機能 `state` のないランチャーは何も書かず、このフィールドは `null` です。
+- **`launcher_state`**: ランチャーが書いた `state` イベントそのまま（[docs/ja/simulation-events.md](../../docs/ja/simulation-events.md) の `state`）に、その `seq` を付けたものです: `rev`、`phase`、`paused`、`paused_at_ms`（一時停止している時刻）、`speed`、`stop`、`scenario`、`handed_over`（真偽値。シナリオが通って手動操作へ引き継ぐまでは `false`）、`scenario_over_at_ms`（引き継ぎ時の仮想時刻 ms、または `null`）、`allowed`（ランチャーが受け付けること: `pause`、`resume`、`step`、`speed`、`run_until`、`stop`、`write`。それぞれ `{ok, reason, message, caution}`）など。サーバーは変えません。`rev` は変わるたびに上がるので、画面は新しいものと、同じものがもう一度届いたのとを見分けられます。これは、ランチャーが書いた時点の答えです。`ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません。`state` の後のイベント（`command`、`time`）のほうが新しいことがあります。`state` のイベントは `event` の通知としても届きますが、要約が覚えるのは最後の 1 つだけなので、後から開いた画面は要約から読み、前のものは再送されません。機能 `state` のないランチャーは何も書かず、このフィールドは `null` です。
 - **`omitted_fields`**: `time`、`registry`、`last_command`、`participants` の各要素は、大きすぎて入れなかったフィールドがあれば、その名前の配列 `omitted_fields` を持ちます。participant では、後のイベントでそのフィールドが届けば消えます（例は `ws-large-fields.json`）。
 - **`variables`**: `hello` の要約と HTTP のレスポンスにあります。**`session` の通知の要約には、このフィールドがありません**。大きく、めったに変わらないので、変わったときに `variables` の通知で送ります。同じ実行の `session` の通知では、手元の値を使い続けます。別の実行の `session` の通知の直後には、その実行の `variables` の通知が届きます。
 - **`log`**: 落とした行は、サーバーが覚えずに落とした行と、ランチャーが読む側の遅さで書けなかった行です（後者は `log_dropped` の `sources`）。`log_dropped` のイベントは、名前の挙がった source の log の、来た位置に覚えます。再接続した画面にも同じ位置に届き、1 つのイベントは 1 回だけ送ります。画面はそこに「ここで N 行が落ちた」を表示します。
@@ -690,13 +690,14 @@ participant ごとの `state` は次のとおりです。
 - 一覧に入れないもの: `.` で始まる名前、サブディレクトリ、通常のファイルでないもの（シンボリックリンクを含む）、`:` や `\` を含む名前、255 文字を超える名前。
 - `scenarios` か、その上のディレクトリ（root の下）がシンボリックリンクなら、`found` は `false` です。
 
-### 照合と実行の `scenario`
+### 照合と実行の `scenario` と `after_scenario`
 
 `api/check` と `api/run` の `scenario` は、省くとシナリオなしです（`null` は 400 `invalid-field`）。
 
 - 値は、その設定ファイルの `api/scenarios` の `path` のどれかだけです（サーバーが一覧を作り直して確認します）。ほかは 400 `scenario-not-listed` です。
 - サーバーは、それを要求ファイルの `scenario` に、構成ファイルのディレクトリからの相対で書きます（要求ファイルの相対の `scenario` は、ランチャーがそこから読みます）。`simulation.yaml` でも `sub/simulation.yaml` でも `scenarios/throttle.yaml` です。
 - `api/check` のレスポンスの `scenario` は、渡したシナリオです。
+- 任意の `after_scenario`（`"stop"` または `"pause"`、省略時は `"stop"`）は、シナリオが `passed` で完了した後の挙動を選びます。`"pause"` には `scenario` の指定と `stop_at_ms` の省略が必要で（反する場合は 400 `invalid-field`）、ランチャーの `features` に `"scenario-handover"` が必要です（なければ 409 `launcher-unsupported`）。`"pause"` でシナリオが通ると、ランチャーは `handed_over: true` と `scenario_over_at_ms` を含む `state` イベントを出し、同じ実行のままその仮想時刻で一時停止して（`speed: "max"` でも `step` か `resume` まで進みません）、`scenario-running` 拒否を解除します（`launcher_state.allowed.write.ok: true`）。失敗・停止・`stop_at_ms` 到達・未完了の実行では決して引き継がれません（`handed_over` は `false` のままです）。
 
 シナリオを実行している間にできることは、次のとおりです。
 
@@ -704,10 +705,10 @@ participant ごとの `state` は次のとおりです。
 |---|---|
 | 止めた状態で始める（`start_paused: true`） | ランチャーが断る: 422 `check-failed`（`api/run`）、`usage` の結果（`api/check`） |
 | 変数を読む | ランチャーの `features` に `control-server` があれば読める |
-| `api/write` | 409 `scenario-running` で拒否する |
+| `api/write` | 引き継ぎ成立（`handed_over: true`）までは 409 `scenario-running` で拒否する |
 | 時間のコマンド（`api/time`）と停止 | ふつうの実行と同じ |
 
-- `control-server` があれば、サーバーは `--control` を付けます（書き込みはランチャーも拒否します）。なければ、`--control` を付けず、変数の状態は `off` で、`reason` に理由が入ります。
+- `control-server` があれば、サーバーは `--control` を付けます（書き込みはランチャーも再生中は拒否し、引き継ぎ成立後に許可します）。なければ、`--control` を付けず、変数の状態は `off` で、`reason` に理由が入ります。
 - 時間のコマンドと停止は、ランチャーの標準入力に書きます。Control Server がシナリオの実行中にクライアントに対して拒否する `Pause`、`Step`、`SetSpeed` などとは別で、ランチャーは受け付けます。
 
 ### シナリオのイベントと要約
@@ -716,7 +717,7 @@ participant ごとの `state` は次のとおりです。
 - 手順の指摘（`scenario-failed` など）は、シナリオの `file` と `line` を持つ `finding` です。
 - シナリオで止まった実行の結果の `simulation` は `ended` です（結果の `scenario` があることで、participant が止めた `ended` と区別します）。
 
-要約の `scenario` は `{file, name, step_count, steps, steps_omitted, status, over_at_ms, timeline_url}` です。途中から開いた画面も、これで手順の表を作れます。
+要約の `scenario` は `{file, name, step_count, steps, steps_omitted, status, over_at_ms, timeline_url, handed_over}` です。途中から開いた画面も、これで手順の表を作れます。
 
 | フィールド | 内容 |
 |---|---|
@@ -724,7 +725,8 @@ participant ごとの `state` は次のとおりです。
 | `name`、`step_count` | 照合の結果の `scenario` から |
 | `steps` | 届いた手順（`index` の順。手順ごとに最後の状態） |
 | `steps_omitted` | 1000 手順を超えた数 |
-| `status`、`over_at_ms` | 結果の `scenario` から（結果が来るまで `null`） |
+| `status`、`over_at_ms` | 結果の `scenario` から（結果が来るまで `null`、引き継ぎ時は `state` から設定） |
+| `handed_over` | シナリオが通って手動操作へ引き継いだときだけ `true`。それ以外（通常停止、失敗、未完了、異常終了）では `false` |
 | `timeline_url` | サーバーがその実行の時間の軸のファイルを配る所（`api/timeline/<run_id>`）。実行が終わるまでと、ファイルのない実行（下）では `null` |
 
 - `steps[]` のフィールドはイベントと同じです。`text` と `message` は 1000 文字で切ります。
@@ -743,7 +745,7 @@ participant ごとの `state` は次のとおりです。
 
 GUI サーバーは、実行ごとに、自分を通した書き込み（`api/write`）のうち、反映されたもの（participant ごとの `operation` の `applied` と `applied_at_ms`）を覚えます。接続しているどの画面からの書き込みも、`api/write` を使うツールからの書き込みも対象です。`GET api/recording` は、それをシナリオの YAML にして返します（いまの実行か、終わった直後の実行。次の実行を始めるまで）。**サーバーはファイルを書きません**。画面がブラウザの保存として渡し、置き場所はブラウザで決めます。例は `recording.json` です。
 
-`{"recording": {"run_id", "file", "state", "available", "reason", "writes", "omitted", "steps", "yaml"}}`
+`{"recording": {"run_id", "file", "state", "available", "reason", "writes", "omitted", "steps", "end_ms", "yaml"}}`
 
 | フィールド | 内容 |
 |---|---|
@@ -752,11 +754,12 @@ GUI サーバーは、実行ごとに、自分を通した書き込み（`api/wr
 | `writes` | YAML に入れた値の数 |
 | `steps` | 手順（`set`）の数 |
 | `omitted` | 入れなかった値の数 |
+| `end_ms` | 実行終了後に `result.timing.sim_ms` から確定した終了仮想時刻（ms。`simulation != "not_started"` かつ最後の手順以降で有効な場合）。実行中、異常終了、`simulation == "not_started"`、または利用不可のときは `null` |
 | `yaml` | シナリオの YAML（なければ `null`） |
 
 - 入れなかった理由は YAML の先頭のコメントに書きます。理由は、上限の 2000 個を超えた、participant の名前に `.` がある、のどちらかです。シナリオでは最初の `.` までが participant の名前なので、`.` を含む名前の participant は指定できません。
-- YAML の先頭のコメントには、何を記録したか、シナリオが最後の手順の時刻で終わること、最後の手順の後も実行を続けたいときに追加する手順の例（`expect` と `hold_for_ms`）を書きます。ランチャーは最後の手順の時刻でシミュレーションを止めます。記録した実行がそれより先まで進んでいれば、その時刻も書きます。
-- YAML は `vehicle_sil_scenario: 1`、`name`、`steps` で、手順は `at_ms`（反映したステップの仮想時間）と `set` だけです。同じ時刻に反映された値は 1 つの `set` にまとめ、同じ変数の 2 つ目はその時刻の最後の値にします。
+- `end_ms` が `null` のとき（実行中、または確定した `result.timing.sim_ms` がないとき）は、YAML から `end_ms` を省き、先頭のコメントに最後の手順（`<last> ms`）で終了することを記します。実行終了後に確定すると、トップレベルに `end_ms: <end_ms>` が入り、ダミーの書き込みや常に成功する `expect` 手順なしで記録元の終了仮想時刻まで再生されます。
+- YAML は `vehicle_sil_scenario: 1`、`name`、任意の `end_ms`、`steps` で、手順は `at_ms`（反映したステップの仮想時間）と `set` だけです。同じ時刻に反映された値は 1 つの `set` にまとめ、同じ変数の 2 つ目はその時刻の最後の値にします。
 - 変数は `<participant>.<variable name>`、列挙は項目の名前（いつも引用符つき。名前が 1 つに決まらなければ値）です。
 
 YAML の書き方は次のとおりです。

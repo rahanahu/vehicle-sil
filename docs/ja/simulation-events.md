@@ -45,7 +45,7 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
 | `finding` | 実行の指摘が決まったとき | 結果の `findings[]` の 1 つと同じキー |
 | `scenario_step` | `--scenario` の手順が始まったとき、決まったとき | 結果の `scenario.steps[]` の 1 つと同じキー |
 | `time` | 仮想時間が進んだとき、別の時刻で一時停止したとき、遅れているとき | `sim_ms`、`actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
-| `state` | 実行の状態か、受け付ける操作が変わったとき | `rev`、`phase`、`paused`、`paused_at_ms`、`holding`、`speed`、`pacing`、`stop`、`scenario`、`allowed`、`outside` |
+| `state` | 実行の状態か、受け付ける操作が変わったとき | `rev`、`phase`、`paused`、`paused_at_ms`、`holding`、`speed`、`pacing`、`stop`、`scenario`、`handed_over`、`scenario_over_at_ms`、`allowed`、`outside` |
 | `command` | コマンドを受けたとき | `command`、`source`、`accepted`、`message`、`reason`、`ms`、`at_ms`、`id` |
 | `heartbeat` | 1 秒のあいだ何も書かなかったとき | なし（3 つのキーだけ） |
 | `result` | 最後の行 | `result` |
@@ -215,7 +215,7 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
 
 `ok` は「受け付けるか」の答えで、「何かが変わるか」ではありません。一時停止中も `pause` は `ok` です（受け付けて、何もしません）。`paused` が `false` でも `step` が `ok` のことがあります: `pause` を受け付けた直後でシミュレーションが止まるまでの間と、ステップを進めている間です。
 
-`pause`、`resume`、`step`、`run_until`、`speed`、`stop` は、標準入力のコマンドとして答えます。`write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、`write` を送る口がないので、実行の間ずっと、`ok` が `false`、理由は `no-control-server` です。クライアントの時間の呼び出しへの答えは、シナリオの間も、標準入力のコマンドへの答えと同じです。シナリオを理由に断るのは `write` だけです（`scenario-running`）。
+`pause`、`resume`、`step`、`run_until`、`speed`、`stop` は、標準入力のコマンドとして答えます。`write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、`write` を送る口がないので、実行の間ずっと、`ok` が `false`、理由は `no-control-server` です。クライアントの時間の呼び出しへの答えは、シナリオの間も、標準入力のコマンドへの答えと同じです。`write` はシナリオの実行中は拒否され（`scenario-running`）、`after_scenario: "pause"` でシナリオが成功して引き継いだとき（`handed_over: true`）だけ許可（`ok: true`）になります。
 
 シミュレーションの外につながっていて実時間を保つ実行（`--time-policy realtime`、既定）では、`pause`、`step`、`run_until` は、理由 `outside-real-time` で `ok` が `false` になります。`speed` は `min` と `max` が 1 になります（受け付けるのは速さ 1 だけです）。`--time-policy free` では、`ok` は `true` で、`caution` に `outside-not-real-time` が付きます。実行を外につないでいるものは、`check` イベントの `time_lock.because` にあります。
 
@@ -271,7 +271,7 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
 | `not-set-up` | ランチャーがまだシミュレーションを準備していません（`step`、`run_until`、時刻つきの `pause`）。ランチャーが構成ファイルを読む前に、256 個を超えるコマンドが届いたときも、これです（[時間のコマンドを受け付ける条件](#時間のコマンドを受け付ける条件)） |
 | `not-paused` | 一時停止していないときの `step` |
 | `not-running` | シミュレーションが終わった、または始まりませんでした |
-| `scenario-running` | シナリオを再生する実行です。クライアントは変数を書けません（時間は、標準入力と同じく動かせます） |
+| `scenario-running` | シナリオを再生する実行です。`after_scenario: "pause"` で引き継ぎに成功する（`handed_over: true`）まで、クライアントは変数を書けません（時間は、標準入力と同じく動かせます） |
 | `no-control-server` | `state` の `allowed` にだけ出ます。Control Server のない実行（`--control` なし）で、Control Server のクライアントだけが送れる操作（`write`）です |
 | `outside-real-time` | 実行がシミュレーションの外につながっていて（`--connect`、または有効な `role: bridge` の participant）、実時間を保ちます（`--time-policy realtime`、既定）。`pause`、`step`、`run_until`、1 以外の `speed` は断ります。`resume`、`speed` 1、`stop` は受け付けます。時間を動かすには、`--time-policy free` で実行を始めます（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」） |
 | `out-of-range` | 引数が範囲の外です（クライアントの速度、ステップ、時刻） |
@@ -801,6 +801,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | `request` | `--request`、指摘 `connect-network-unused` と `request-params-unused`、照合と結果の JSON でパラメーターの `from` が `request_file` になること |
 | `scenario-samples` | シナリオの `samples`、実行ファイルに渡す `--sample-every-step`、指摘 `scenario-samples-*` と `scenario-not-observed` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
+| `scenario-end-ms` | シナリオファイルの最上位 `end_ms`、および `check --json`・`run --json`・`--timeline` の `end_ms` |
+| `scenario-handover` | 実行要求の `after_scenario`（`"stop"` \| `"pause"`）、`state` イベントの `handed_over` と `scenario_over_at_ms`、引き継ぎ時の動的な書き込み解放 |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは書けません。書く呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します。`scenario-time` のあるビルドでは、時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）を、シナリオの実行中も、標準入力の同じコマンドと同じように受け付けます。シナリオの結果は変わりません。`scenario-control` だけのビルドは、これらも同じ理由で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。
 
@@ -841,7 +843,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 - `prepare`: 束縛中の `<file>` を `--file-only` 相当で検証し（任意の `"variant"`、`"disable"`、`"enable"`、`"manual"` 配列を指定可能。`"config"` は拒否）、`status`、`metadata`、`file_sha256`、`findings` を含む `prepare` イベントを返します。実行中や終了処理中は `"busy"`、`"launcher-ending"`、`"contaminated"` で拒否（`accepted: false`）します。
 - `status`: 現在のランチャーおよび実行中 Run の状態（待機中の `run_state` は `null`）を `status` イベントで返します。
-- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）と `"intent"`（64 KiB の行上限以内のインライン実行要求 JSON オブジェクト。`"vehicle_sil_run_request"` は任意）は排他です。`"timeline"`（タイムライン JSON の出力先パス）と `"id"` は任意です。実行中または検証中は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
+- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）と `"intent"`（64 KiB の行上限以内のインライン実行要求 JSON オブジェクト。`"vehicle_sil_run_request"` は任意で、`"after_scenario"` などを含む各フィールドを指定可能）は排他です。`"timeline"`（タイムライン JSON の出力先パス）と `"id"` は任意です。実行中または検証中は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
 - `stop`、`pause`、`resume`、`step`、`run_until`、`speed`: 複数回実行の `serve` では `"run": "<Run ID>"` が必須です（欄がなければ `"run-required"`、現在の実行と異なれば `"run-changed"` と `"asked_run"` で拒否）。`serve --once` では `"run"` を省略できます。`stop` では任意の真偽値 `"force"` で冪等な通常停止（`false`、停止要求 1 回）か即時強制停止（`true`、2 回へ引き上げ）を指定します。ランチャー直下のコマンド（`run`、`prepare`、`status`）は `"run"` を省略するか妥当な文字列であれば無視します。
 - 標準入力の閉鎖（EOF）はランチャー終了を意味します（待機中なら終了コード 0、実行中ならその実行を止めて終了コード 130）。
 

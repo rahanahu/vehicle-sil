@@ -81,11 +81,11 @@ Every `api/` request has these conditions:
 | `GET api/app` | Information on the server and the launcher, whether variables can be read and written, limits | `app.json` |
 | `GET api/configs` | The `.yaml` / `.yml` files under the root | `configs.json` |
 | `GET api/config?file=<configuration file>` | The text of the file and the SHA-256 of its bytes: `{file, text, stamp}` ("The text of a configuration file" below) | `config.json` |
-| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | The check of an unsaved text of the file, which starts no process; the same response as above | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: a check of the saved file that describes its executables again, for the checks of its text | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: saves the text as the file, by default only an edit that keeps the commands that run ("Saving a text (`POST api/config`)" below) | `save-config.json`, `error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}` (the identifier of the run it started; the summary arrives over WebSocket), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}` (the identifier of the run it started; the summary arrives over WebSocket), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | `{instance, run_id}` of the targeted run, or 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
@@ -142,7 +142,7 @@ A `can` or `ethernet` network can be connected to a real bus through the launche
 
 ### Check and start (`api/check`, `api/run`)
 
-The optional integer `stop_at_ms` (1–10^12) gives the virtual stop time. The optional integer `late_tolerance_ms` (0–10^12) gives the wall-clock pacing tolerance. Both fields apply to Check and Start. The server returns HTTP 409 `launcher-unsupported` if either field is sent to a launcher without the `run-stop-at` feature. Check returns the resolved `time_step_ms` after Describe.
+The optional integer `stop_at_ms` (1–10^12) gives the virtual stop time. The optional integer `late_tolerance_ms` (0–10^12) gives the wall-clock pacing tolerance. Both fields apply to Check and Start. The server returns HTTP 409 `launcher-unsupported` if either field is sent to a launcher without the `run-stop-at` feature. Check returns the resolved `time_step_ms` after Describe. The optional string `after_scenario` (`"stop"` or `"pause"`, default `"stop"`) chooses whether a passed scenario stops the run or pauses at the scenario end virtual time and hands over to manual control; `"pause"` requires `scenario` to be set and `stop_at_ms` to be omitted (400 `invalid-field` otherwise), and returns 409 `launcher-unsupported` when the launcher lacks `scenario-handover`.
 
 - **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. The response is `{instance, run_id}`, and the summary of the new run arrives over the WebSocket stream as `session`. **Ordering with WebSocket**: the server broadcasts the initial `session`, `variables`, and any buffered pre-start events over WebSocket *before* the `POST api/run` HTTP response resolves. External HTTP+WS clients must accept events (and even a fast `session` with `state: "ended"`) arriving before `POST api/run` returns (see [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs) and [examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)).
 - **Start after a check**: `api/run` validates `disable`/`manual` participant names against the saved configuration and runs the launcher's own single `check` when starting. If the check does not pass (`result` is not `passed`), the run does not proceed and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before any session becomes active, so there is nothing to stop. Example: `error-check-failed.json`.
@@ -261,8 +261,8 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 409 | `starting` | `api/run`: another `api/run` is starting a run (the launcher has not been registered yet) |
 | 422 | `check-failed` | `api/run`: the check of what the run is made of did not pass, so no run was started (`detail` holds `{result, findings}`; "Check and start" above). Example: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
-| 409 | `launcher-unsupported` | `api/check`, `api/run`: `stop_at_ms` or `late_tolerance_ms` was sent to a launcher without the `run-stop-at` feature |
-| 409 | `scenario-running` | `api/write`: the running run is running a scenario (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
+| 409 | `launcher-unsupported` | `api/check`, `api/run`: `stop_at_ms` or `late_tolerance_ms` was sent to a launcher without `run-stop-at`, or `after_scenario: "pause"` was sent to a launcher without `scenario-handover` |
+| 409 | `scenario-running` | `api/write`: the running run is running a scenario before handover (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
 | 409 | `session-changed` | `api/stop-session` and targeted `api/time`: the server instance or current run changed. `api/write`: the requested run ID differs from the running run. No operation was sent. Example: `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: the file's content no longer has `stamp`, or a new file (`stamp` `null`) is there already |
 | 409 | `config-busy` | `POST api/config`: the file could not be replaced (the message says why) |
@@ -285,8 +285,8 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 504 | `check-timeout` | The check (or the list of `api/connections`) did not finish within the time limit (it was stopped) |
 | 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
 
-- `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed`, `start_paused`, `stop_at_ms` and `late_tolerance_ms`. With `text`, `api/check` takes only `file`, `$schema`, `vehicle_sil_run_request`, `variant`, `strict` and `text`. `api/describe` takes `file` and `variant`. `POST api/config` takes `file`, `text` and `stamp` (`stamp` is required, and may be `null`). `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
-- Fields covered by `invalid-field`: `speed`, `start_paused`, `stop_at_ms`, `late_tolerance_ms`, `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms`, `at_ms`, `value`, `id`, `run_id` and `instance` of `api/time` (including sending only one of `run_id` or `instance`), `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
+- `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `after_scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed`, `start_paused`, `stop_at_ms` and `late_tolerance_ms`. With `text`, `api/check` takes only `file`, `$schema`, `vehicle_sil_run_request`, `variant`, `strict` and `text`. `api/describe` takes `file` and `variant`. `POST api/config` takes `file`, `text` and `stamp` (`stamp` is required, and may be `null`). `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
+- Fields covered by `invalid-field`: `speed`, `start_paused`, `stop_at_ms`, `late_tolerance_ms`, `after_scenario` (also `"pause"` without `scenario` or together with `stop_at_ms`), `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms`, `at_ms`, `value`, `id`, `run_id` and `instance` of `api/time` (including sending only one of `run_id` or `instance`), `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
 - Case of `unsupported`: `api/write` sent when the launcher lacks `control-server`. (The server requires `time-commands`, `stdin-run-until`, `state`, `speed`, `start-paused`, `scenario` and `manual-participants` when it starts, so `api/time` has no such case.)
 
 The example files. The GUI server's tests check the other codes.
@@ -453,7 +453,7 @@ Notes on the fields:
 - **`time`**: virtual time `sim_ms`, actual speed `actual_speed`, and the lateness figures `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms`. A screen opened midway learns the current time from this; whether the run is paused, where, and the speed set, are in `launcher_state` (`paused`, `paused_at_ms`, `speed`). While the run is paused, `time` can be from before the pause (an earlier `sim_ms` for up to one look of the launcher, and the `actual_speed` and `late_ms` from before it).
 - **`check`**: includes `required`, `enabled` and `variables` of each participant.
 - **`last_command`**: `seq`, `command`, `source`, `accepted`, `message`, `reason`, `id`, `ms` and `at_ms` of an accepted `step`, and `at_ms` of an accepted `run_until` (`event`, `t_ms`, `run` and `asked_run` are stripped from `last_command`, though `asked_run` appears on launcher-level refused `command` events over WebSocket). `seq` tells a new answer from the same answer as before. `last_command` keeps only the latest single command and overwrites earlier answers under concurrent commands. A launcher before `state` writes no `reason` and `id`.
-- **`launcher_state`**: the launcher's `state` event as it wrote it (see "`state`" in [docs/simulation-events.md](../../docs/simulation-events.md)) with its `seq`: `rev`, `phase`, `paused`, `paused_at_ms` (where it is paused), `speed`, `stop`, `allowed` (what the launcher accepts: `pause`, `resume`, `step`, `speed`, `run_until`, `stop`, `write`, each `{ok, reason, message, caution}`) and so on. The server does not change it. `rev` goes up with each change, so a screen tells a newer one from the same one sent again. It is the answer of the launcher at the moment it wrote it: `ok` says that the launcher would accept the command, not that it would change anything. Events after `state` (a `command`, a `time`) may be newer. The `state` event also comes as an `event` message; the summary holds only the last, so a screen opened later reads it from the summary and the earlier ones are not replayed. A launcher without the feature `state` writes none, and the field is `null`.
+- **`launcher_state`**: the launcher's `state` event as it wrote it (see "`state`" in [docs/simulation-events.md](../../docs/simulation-events.md)) with its `seq`: `rev`, `phase`, `paused`, `paused_at_ms` (where it is paused), `speed`, `stop`, `scenario`, `handed_over` (boolean, `false` until a scenario passes and hands over to manual control), `scenario_over_at_ms` (virtual time in ms at handover, or `null`), `allowed` (what the launcher accepts: `pause`, `resume`, `step`, `speed`, `run_until`, `stop`, `write`, each `{ok, reason, message, caution}`) and so on. The server does not change it. `rev` goes up with each change, so a screen tells a newer one from the same one sent again. It is the answer of the launcher at the moment it wrote it: `ok` says that the launcher would accept the command, not that it would change anything. Events after `state` (a `command`, a `time`) may be newer. The `state` event also comes as an `event` message; the summary holds only the last, so a screen opened later reads it from the summary and the earlier ones are not replayed. A launcher without the feature `state` writes none, and the field is `null`.
 - **`omitted_fields`**: `time`, `registry`, `last_command` and each element of `participants` have an array `omitted_fields` with the names of the fields that were too large to keep. For a participant, a name disappears when a later event brings that field (example: `ws-large-fields.json`).
 - **`variables`**: present in the `hello` summary and in HTTP responses. **The summary in a `session` notification does not have this field.** It is large and rarely changes, so it comes in a `variables` notification when it changes. On a `session` notification for the same run, the client keeps using its local value. Right after a `session` notification for another run, that run's `variables` notification arrives.
 - **`log`**: dropped lines are the lines the server dropped instead of keeping, and the lines the launcher could not write because its reader was slow (the latter are `sources` of `log_dropped`). A `log_dropped` event is kept at the position where it arrived in the log of each source it names. A screen that reconnects receives it at the same position, and each event is sent only once. The screen shows "N lines dropped here" there.
@@ -690,13 +690,14 @@ The API for using the launcher's `run --scenario` and `check --scenario` ([docs/
 - Not listed: names that start with `.`, subdirectories, anything that is not a regular file (including symbolic links), names that contain `:` or `\`, names longer than 255 characters.
 - If `scenarios` or a directory above it (under the root) is a symbolic link, `found` is `false`.
 
-### `scenario` in check and run
+### `scenario` and `after_scenario` in check and run
 
 If `scenario` of `api/check` and `api/run` is omitted, there is no scenario (`null` gives 400 `invalid-field`).
 
 - The value must be one of the `path`s that `api/scenarios` returns for that configuration file (the server builds the list again to check). Anything else gives 400 `scenario-not-listed`.
 - The server writes it into the request file as `scenario`, relative to the directory of the configuration file (the launcher reads a relative `scenario` of a request file from there): `scenarios/throttle.yaml` for `simulation.yaml` and for `sub/simulation.yaml` alike.
 - `scenario` in the `api/check` response is the scenario that was passed.
+- Optional `after_scenario` (`"stop"` or `"pause"`, default `"stop"` when omitted) chooses what happens when the scenario completes with `passed`. `"pause"` requires `scenario` to be set, `stop_at_ms` to be omitted (400 `invalid-field` otherwise), and `"scenario-handover"` in the launcher's `features` (409 `launcher-unsupported` otherwise). When `"pause"` is used and the scenario passes, the launcher emits `state` with `handed_over: true` and `scenario_over_at_ms`, pauses at that virtual time on the same run (even at `speed: "max"`) until `step` or `resume`, and lifts the `scenario-running` refusal (`launcher_state.allowed.write.ok: true`). Failed, stopped, `stop_at_ms`, or incomplete runs never hand over (`handed_over` stays `false`).
 
 What you can do while a scenario runs:
 
@@ -704,10 +705,10 @@ What you can do while a scenario runs:
 |---|---|
 | Start paused (`start_paused: true`) | the launcher refuses it: 422 `check-failed` (`api/run`), a `usage` result (`api/check`) |
 | Read variables | Possible if the launcher's `features` have `control-server` |
-| `api/write` | Rejected with 409 `scenario-running` |
+| `api/write` | Rejected with 409 `scenario-running` until a passed handover (`handed_over: true`) |
 | Time commands (`api/time`) and stop | Same as for a normal run |
 
-- With `control-server`, the server adds `--control` (the launcher also rejects writes). Without it, the server does not add `--control`, the variable state is `off`, and `reason` gives the reason.
+- With `control-server`, the server adds `--control` (the launcher also rejects writes during replay, and unlocks them after a passed handover). Without it, the server does not add `--control`, the variable state is `off`, and `reason` gives the reason.
 - Time commands and stop are written to the launcher's stdin. This is separate from `Pause`, `Step`, `SetSpeed` and the other calls that the Control Server refuses from clients while a scenario runs; the launcher accepts them.
 
 ### Scenario events and summary
@@ -716,7 +717,7 @@ What you can do while a scenario runs:
 - Step findings (`scenario-failed` and others) are `finding`s that have the scenario's `file` and `line`.
 - The `simulation` of the result of a run stopped by a scenario is `ended` (the presence of `scenario` in the result tells it from an `ended` caused by a participant).
 
-`scenario` of the summary is `{file, name, step_count, steps, steps_omitted, status, over_at_ms, timeline_url}`. A screen opened midway can build the step table from it.
+`scenario` of the summary is `{file, name, step_count, steps, steps_omitted, status, over_at_ms, timeline_url, handed_over}`. A screen opened midway can build the step table from it.
 
 | Field | Contents |
 |---|---|
@@ -724,7 +725,8 @@ What you can do while a scenario runs:
 | `name`, `step_count` | From `scenario` of the check result |
 | `steps` | The steps that have arrived (in `index` order; the last state of each step) |
 | `steps_omitted` | Number of steps beyond 1000 |
-| `status`, `over_at_ms` | From `scenario` of the result (`null` until the result arrives) |
+| `status`, `over_at_ms` | From `scenario` of the result (`null` until the result arrives, or set on handover from `state`) |
+| `handed_over` | `true` only when the scenario passed and handed over to manual control; `false` otherwise (normal stop, failure, incomplete, or crash) |
 | `timeline_url` | Where the server serves the run's timeline file (`api/timeline/<run_id>`). `null` until the run has ended, and for a run without one (see below) |
 
 - The fields of `steps[]` are the same as in the event. `text` and `message` are cut at 1000 characters.
@@ -743,7 +745,7 @@ When the launcher has `timeline` in its `features`, the server adds `--timeline 
 
 For each run, the GUI server keeps the writes made through it (`api/write`) that were applied (`applied` and `applied_at_ms` of each participant's `operation`). This covers writes from every connected screen and from tools that use `api/write`. `GET api/recording` returns them as scenario YAML (for the current run, or for the run that ended last, until the next run starts). **The server writes no file.** The screen hands the YAML to the browser to save, and the browser decides where. Example: `recording.json`.
 
-`{"recording": {"run_id", "file", "state", "available", "reason", "writes", "omitted", "steps", "yaml"}}`
+`{"recording": {"run_id", "file", "state", "available", "reason", "writes", "omitted", "steps", "end_ms", "yaml"}}`
 
 | Field | Contents |
 |---|---|
@@ -752,11 +754,12 @@ For each run, the GUI server keeps the writes made through it (`api/write`) that
 | `writes` | Number of values in the YAML |
 | `steps` | Number of steps (`set`) |
 | `omitted` | Number of values left out |
+| `end_ms` | Finalized end virtual time (ms) from `result.timing.sim_ms` once the run has ended (`simulation != "not_started"` and valid relative to the last step); `null` while running, on crash, when `simulation == "not_started"`, or when unavailable |
 | `yaml` | The scenario YAML (`null` if none) |
 
 - The comments at the top of the YAML give the reasons for values left out: either the limit of 2000 values was exceeded, or the participant name contains `.`. In a scenario, everything up to the first `.` is the participant name, so a participant whose name contains `.` cannot be addressed.
-- The comments at the top of the YAML also say what was recorded, that the scenario ends at the time of its last step, and give an example step (`expect` and `hold_for_ms`) to add if you want the run to continue after the last step. The launcher stops the simulation at the time of the last step. If the recorded run went further, the comments give that time too.
-- The YAML has `vehicle_sil_scenario: 1`, `name` and `steps`; each step has only `at_ms` (the virtual time of the step it was applied in) and `set`. Values applied at the same time go into one `set`; for a second write of the same variable, the last value at that time is kept.
+- When `end_ms` is `null` (mid-run, or when no finalized `result.timing.sim_ms` is available), `end_ms` is omitted from the YAML and the top comments note that the scenario ends at its last step (`<last> ms`). Once finalized after the run ends, the YAML includes top-level `end_ms: <end_ms>`, so replaying it runs up to the recorded run's end time without dummy writes or always-true `expect` steps.
+- The YAML has `vehicle_sil_scenario: 1`, `name`, optional `end_ms`, and `steps`; each step has only `at_ms` (the virtual time of the step it was applied in) and `set`. Values applied at the same time go into one `set`; for a second write of the same variable, the last value at that time is kept.
 - Variables are written `<participant>.<variable name>`; enums as the item name (always quoted; the value if the name is ambiguous).
 
 How the YAML is written:

@@ -353,6 +353,8 @@ scripts/run-gui.py --workbench
 
 上部の **Network** でシミュレーション構成を選ぶと、対応構成では `POST api/prepare` で Hot 起動を使います（[Hot 起動と Cold 起動](#hot-起動と-cold-起動)）。開始時は単一のチェックで判定し、Workbench 画面では数値の Run ID ではなく構成ファイルと状態で実行を示します。**Network Designer** では、その構成のバスと ECU チャネルの接続先を編集できます。上部の **Scenario** には、構成ファイルと同じ階層にあるサーバー側の `scenarios/` から実行できる YAML が並びます。**Free run** と **Record & start** は、**Stop at (ms)** を空欄にすると、仮想時間で自動停止しません。時刻を入力すると、Check と再生に同じ設定が適用されます。
 
+**Record & start** で開始した実行では、**Scenario** タブの **Load recording** で記録されたシナリオ YAML を読み込めます。実行中に読み込むと `end_ms` は省かれて最後の `set` 手順で止まり、実行終了後に読み込むと記録元の終了仮想時刻から確定した `end_ms` が入ります。シナリオを選び、ランチャーが `scenario-handover` に対応しているときは、**After scenario** で **Stop run**（既定）または **Pause for manual control** を選べます。**Pause for manual control** を選ぶと **Stop at (ms)** は無効になり送信されません。引き継ぎが成立した後は、同じ実行のまま **ECU I/O** がアンロックされ、手動書き込みと **1 step** / **Resume** / **Speed** を続けられます。
+
 **Settings → Scenario folder** では、**Scenario** タブで YAML を開いたり保存したりするローカルフォルダを選びます。ブラウザーが読み取り専用でフォルダを開く場合、**Save YAML** はファイルをダウンロードします。ローカルの YAML をサーバーで実行するには、選択中の Network のサーバー側 `scenarios/` に置き、実行リストを更新します。
 
 ## 停止と終了
@@ -471,17 +473,19 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 |---|---|
 | 置き場所 | 設定ファイルの隣の `scenarios`（`simulation.yaml` なら同じディレクトリの `scenarios/`）の `.yaml` と `.yml` が一覧に出ます。 |
 | 照合 | シナリオを選ぶと、照合もシナリオつき（`check --scenario`）になり、シナリオのエラーは、シナリオのファイルと行の付いた指摘として表示されます。 |
-| 実行 | シナリオを選んで開始すると、ランチャーがシナリオを時刻 0 から最後まで進め、終わったところでシミュレーションを止めます。 |
-| 結果 | 「シナリオ」のカードに、全体の合否と、手順の表（行、手順、状態、確定した仮想時間、失敗の理由）が表示され、「結果」のカードの「終わり方」は「シナリオが終わった」になります。 |
-| 変数 | シナリオの実行中は、変数に書き込めません（シナリオの結果を変えないため。サーバーも `scenario-running` で拒否します）。 |
+| シナリオ終了後 | 「停止して終了する」（既定: シナリオ終了時にシミュレーションを止める）または、ランチャーが `scenario-handover` に対応している場合は「一時停止して手動操作へ引き継ぐ」（ECU を再起動せず、同じ実行のまま終了仮想時刻で一時停止する）を選びます。引き継ぎを選ぶと「停止時刻（仮想時間 ms、任意）」は無効になって消去されます。 |
+| 実行 | 「停止して終了する」では、ランチャーがシナリオを時刻 0 から最後まで進め、終わったところでシミュレーションを止めます。「一時停止して手動操作へ引き継ぐ」では、シナリオが通ると終了仮想時刻で一時停止し（速度が「最速」でも）、ユーザーが「ステップ送り」か「再開」を行うまでその時刻に留まります。 |
+| 結果 | 実行が終わると、「シナリオ」のカードに、全体の合否と、手順の表（行、手順、状態、確定した仮想時間、失敗の理由）が表示され、「結果」のカードの「終わり方」は「シナリオが終わった」になります。 |
+| 変数 | シナリオの実行中は、変数に書き込めません（シナリオの結果を変えないため。サーバーも `scenario-running` で拒否します）。引き継ぎが成立した後は、同じ実行のまま通常の書き込みと時間操作（「ステップ送り」「再開」「速度」）が使えるようになります。 |
 | 時間の軸 | 実行が終わったら、「シナリオ」のカードのリンク「時間の軸」で、実行の時間の軸を図で開けます（「[シナリオの実行の時間の軸](#シナリオの実行の時間の軸)」）。 |
 
 - ほかの場所のシナリオのファイルは選べません（「[セキュリティ](#セキュリティ)」）。
 - 手順の表は、ランチャーのイベント `scenario_step` で進み、結果が出たら、実行されなかった手順を含む全部の手順になります。途中から開いた画面も同じ表を表示します。
-- シナリオは止めた状態では開始できません（「止めた状態で始める」は押せなくなります）。
+- シナリオは止めた状態では開始できず（「止めた状態で始める」は押せなくなります）、「一時停止して手動操作へ引き継ぐ」と「停止時刻（仮想時間 ms、任意）」は併用できません。
 - 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送ります。Control Server のクライアントの時間の呼び出しも、同じ答えになります。
-- ランチャーに Control Server があれば（`features` に `control-server`）、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。Control Server のないランチャーでは、シナリオの実行を含めてどの実行にも変数はなく、「変数」の画面はほかの実行と同じく理由を表示します。
-- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「シナリオ」）、ライブラリでは `front.scenarios({ file })`（その下の 1 回の呼び出しが `client.low.scenarios(file)`）と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
+- 引き継ぎが起きるのは、シナリオが `passed` で完了したときだけです。シナリオの失敗、途中での「停止」、`stop_at_ms` 到達、未完了や異常終了では決して引き継がれず、書き込み制限が維持され、引き継ぎ表示も出ません。
+- ランチャーに Control Server があれば（`features` に `control-server`）、「変数」の画面で値を見られます（再生中は書き込むコンポーネントが押せず「シナリオの実行中は書けません（見るだけです）」と表示され、引き継ぎ成立後に書けるようになります）。Control Server のないランチャーでは、シナリオの実行を含めてどの実行にも変数はなく、「変数」の画面はほかの実行と同じく理由を表示します。
+- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`、`api/run` の `scenario` と `after_scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオ) の「シナリオ」）、ライブラリでは `front.scenarios({ file })`（その下の 1 回の呼び出しが `client.low.scenarios(file)`）、`check` と `run.start` の `scenario` と `after_scenario`、正面の口の `scenario`（`handed_over` と `over_at_ms` を持つ `FrontScenario`）、`isScenarioHandedOver` / `isScenarioRunning` です。
 
 ### シナリオの実行の時間の軸
 
@@ -506,14 +510,10 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 # Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every
 # screen and tool that used it) that were applied, each at the time of the step it was applied at.
 # Not here: pauses and steps of the time, writes that were not applied (docs/gui.md).
-# This scenario ends at its last step (350 ms): the launcher stops the simulation there.
-# The recorded run went on to 1000 ms.
-# To keep it running after the last step, add a step at the end, such as
-#   - expect: { Engine.ecu.connected: true }
-#     hold_for_ms: 650
 # Add expect and wait_until steps to check what the ECUs do (docs/scenario.md).
 vehicle_sil_scenario: 1
 name: "recorded from simulation.yaml (run 3)"
+end_ms: 1000
 steps:
   - at_ms: 0
     set:
@@ -531,11 +531,11 @@ steps:
 | 上限 | 1 回の実行で記録するのは 2000 個の値までです。 |
 
 - 同じ GUI サーバーを開いているほかの画面（ほかの人）の書き込みも、`api/write` を使うツール（リポジトリの `examples/gui_client/variables.mjs` など）の書き込みも入ります。画面や人ごとには分けません。
-- ランチャーは、シナリオの最後の手順が終わったところでシミュレーションを止めます。そのため、保存したファイルを実行すると、最後の `set` の時刻で止まります（記録した実行がもっと長く動いていても）。その後も動かしたいときは、ファイルの先頭のコメントの例のように、最後に `expect` と `hold_for_ms` の手順を追加します（コメントには、記録した実行が進んだ時刻も書いてあります）。
+- **実行中の保存と終了後の保存（`end_ms`）**: 実行中に保存した場合（または異常終了や `not_started` など確定した `timing.sim_ms` なしで終わった場合）、YAML から `end_ms` は省かれ、最後の `set` 手順で終了する旨のコメントが入ります。実行が終了してランチャーが `timing.sim_ms` を報告した後に保存すると、確定したトップレベルの `end_ms` が入り、最後の `set` の後にも時間がある実行でも、手編集なしで記録元の終了仮想時刻まで再生できます。ダミーの書き込みや常に成功する `expect` 手順は生成しません。
 - 保存したファイルを `scenarios/` に置けば、そのまま照合を通り、「シナリオ」で実行できます（ECU ごとにステップの時刻が違うので、同じ書き込みでも ECU ごとに手順が分かれることがあります）。
-- 確認する手順は、エディターで追加します。
+- 確認する手順（`expect`、`wait_until`）はエディターで追加できます。また、再生完了後に同じ実行のまま手動操作を続けたいときは「一時停止して手動操作へ引き継ぐ」を選んで実行します。
 - 名前に `.` がある participant の変数は、シナリオで指定できない（最初の `.` までが participant の名前）ので入れません。入らなかった数はカードに、理由はファイルの先頭のコメントに表示されます。
-- サーバーの API は `GET api/recording`（記録したシナリオの YAML とともに `run_id` を返します。[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「操作の記録」）、ライブラリでは `client.recording()` です。
+- サーバーの API は `GET api/recording`（`run_id`、`end_ms` とともに記録したシナリオの YAML を返します。[gui/protocol/README.md](../../gui/protocol/README.ja.md#操作の記録apirecording) の「操作の記録」）、ライブラリでは `client.recording()` です。
 
 ## ECU の変数
 

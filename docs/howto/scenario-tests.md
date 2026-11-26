@@ -726,6 +726,38 @@ The code of the Dashboard ECU does the detection; the scenario only reads its ou
 | What keeps running inside an ECU while it is disconnected | "Disconnecting from the bus (`ecu.connected`)" in [internals/execution.md](../internals/execution.md#disconnecting-from-the-bus-ecuconnected) |
 | How J1939 behaves on disconnect and reconnect | "Disconnect an ECU from the bus (`ecu.connected`)" in [j1939-guide.md](../j1939-guide.md#disconnect-an-ecu-from-the-bus-ecuconnected) |
 
+## Replay to an end time and hand over to manual control
+
+When you want a scenario to keep running after its last `set` or check — for example, a scenario recorded from an interactive run so that downstream ECUs like `Dashboard` finish reacting to the final `Engine.engine.throttle` write — set `end_ms` at the top level instead of adding dummy `set` or always-true `expect` steps:
+
+```yaml
+vehicle_sil_scenario: 1
+name: throttle replay
+end_ms: 1500
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - at_ms: 400
+    set: { Engine.engine.throttle: 20 }
+```
+
+- Running `vehicle_sil_launch run simulation.yaml --scenario replay.yaml` advances virtual time cleanly to `end_ms` (1500 ms) and stops. Scenarios without `end_ms` keep ending as soon as their steps complete. See "End time (`end_ms`)" in [scenario.md](../scenario.md#end-time-end_ms).
+- To replay those initial steps and then continue testing interactively on the **same Run** (preserving ECU internal state and virtual time), pass a run request file with `"after_scenario": "pause"` together with `--control` (or `--stdin-commands`):
+
+```json
+{
+  "vehicle_sil_run_request": 1,
+  "scenario": "replay.yaml",
+  "after_scenario": "pause"
+}
+```
+
+```sh
+vehicle_sil_launch run simulation.yaml --request replay.request.json --control 0
+```
+
+While the scenario replays, writes from Control API clients are refused (`scenario-running`). Once all steps pass and `end_ms` is reached, the launcher pauses at `1500 ms` (`handed_over: true` in `state`) and unlocks writes on that same Run, so you can write new values, `step`, or `resume` as in [Read and write signals from outside](operate-signals.md). On failure, `incomplete`, or default `"after_scenario": "stop"`, writes stay locked and the run ends. See "Runs with a scenario (`--scenario`)" in [simulation-run.md](../simulation-run.md#runs-with-a-scenario---scenario) and "While a scenario runs" in [control-api.md](../control-api.md#while-a-scenario-runs).
+
 ## Pitfalls
 
 The values that a scenario sees are the samples of the ECUs. In a run with a scenario, an ECU whose values the scenario reads sends one after every ECU step. The first 2 rows of this table apply only to a scenario with `samples: as_sent`, which takes the samples every `sample_period` of each ECU (10 ms of virtual time by default); see "How often the ECUs send their values" in [scenario.md](../scenario.md#how-often-the-ecus-send-their-values-samples).
@@ -737,7 +769,7 @@ The values that a scenario sees are the samples of the ECUs. In a run with a sce
 | The run fails before the first step with `scenario-not-observed` | An ECU whose values the scenario reads sends them less often than its step: its executable does not accept `--sample-every-step`, or says that it does and does not follow it (an executable that makes its own control agent). The finding message says which. | Build the executable again with this vehicle-sil, or make it send its values after every step (`sample_period` 0). If you cannot, write `samples: as_sent` at the top of the scenario. |
 | An `after_ms` after a wait step does not match the time counted from the `at` in the table | A wait step ends a little after the time of the sample in which the condition held (`at`). | Leave a margin in the times. For how the time is decided, see "Timing" in [scenario.md](../scenario.md#timing). |
 | `--scenario cannot be used with --start-paused` (exit code 4) | A scenario itself writes the values at time 0 when it runs. | Remove `--start-paused`. |
-| A client connected with `--control` cannot write values while a scenario runs | While a scenario runs, a client cannot write: a write that is not in the scenario file would change the result. It can read, wait, pause, step and stop (pausing and stepping do not change the result). | To check values while you change them, use the methods in [Read and write signals from outside](operate-signals.md). |
+| A client connected with `--control` cannot write values while a scenario runs | While a scenario runs, a client cannot write: a write that is not in the scenario file would change the result. It can read, wait, pause, step and stop (pausing and stepping do not change the result). | To write after replay passes, use `"after_scenario": "pause"` in a `--request` file; or to write interactively from the start, use [Read and write signals from outside](operate-signals.md). |
 | The variables of a participant cannot be used in a scenario | The variables of a disabled participant, a participant with `describe: false` and a participant that runs in real time cannot be used. | See "Incompatible options and limitations" in [scenario.md](../scenario.md#incompatible-options-and-limitations). |
 
 For the rules of samples, see "Values that conditions see" in [scenario.md](../scenario.md#values-that-conditions-see).
@@ -752,6 +784,8 @@ If you use a different version of `vehicle_sil_launch`, the `features` in the ou
 | `scenario-wave` | The `wave` step |
 | `scenario-motion-expect` | `expect` beside `ramp` and `wave` |
 | `scenario-points-file` | `points` from a CSV file |
+| `scenario-end-ms` | Top-level `end_ms` |
+| `scenario-handover` | `"after_scenario": "pause"` manual handover |
 
 ## What to read next
 

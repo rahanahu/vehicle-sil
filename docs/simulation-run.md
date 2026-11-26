@@ -49,7 +49,7 @@ Stage 6: For the order in which the participants are ended, see [Stopping a run]
 
 ### Runs with a scenario (`--scenario`)
 
-With `--scenario <file>`, `run` also checks the scenario. Once the simulation has started, `run` carries out the scenario steps and stops the simulation when the scenario ends (see [scenario.md](scenario.md)).
+With `--scenario <file>`, `run` also checks the scenario. Once the simulation has started, `run` carries out the scenario steps and, by default (`after_scenario: "stop"`), stops the simulation when the scenario ends (see [scenario.md](scenario.md)).
 
 | Item | With `--scenario` |
 |---|---|
@@ -57,8 +57,15 @@ With `--scenario <file>`, `run` also checks the scenario. Once the simulation ha
 | Values of parameters (`${name}`) | Can be overridden with `params` in the configuration file, `params` of the variant, and `--param <name>=<value>`. |
 | Scenario steps that use a variable the variant does not have (`absent: true`) | Skipped and shown in the result. |
 | Scenario steps that use variables of a participant the variant disables | Also skipped and shown in the result. |
+| After the scenario passes (`after_scenario`) | Defaults to `"stop"` (including plain CLI `run --scenario`). Setting `"after_scenario": "pause"` in a `--request` file or `serve` inline `intent` pauses the simulation atomically at the end controller step instead of stopping. |
 
 A skipped step has `at_ms` null. If every checking step is skipped, the check reports the warning `scenario-nothing-checked` (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)).
+
+With `"after_scenario": "pause"` (feature `scenario-handover`):
+
+- When the scenario passes (including reaching `end_ms`, if set) without a concurrent stop or abort, the launcher pauses the simulation atomically at that controller step (`over_at_ms`), keeps the same Run and all ECU state, emits `state` with `handed_over: true` and `scenario_over_at_ms`, and holds paused even at `--speed max` until a `step`, `run_until`, or `resume` command arrives. With `--control`, `Write` and `ForgetPeer` unlock only once `handed_over` becomes `true` (see "While a scenario runs" in [control-api.md](control-api.md#while-a-scenario-runs)).
+- If the scenario fails, ends `incomplete`, hits `stop_at_ms`, or receives a concurrent stop, handover does not occur (`handed_over` stays `false`, writes stay refused, and the run ends normally).
+- Validation rules: `"after_scenario": "pause"` requires a scenario, cannot be combined with `stop_at_ms` (`--stop-at-ms`), is rejected by `test`, requires `--stdin-commands` or `--control` in `run`, is refused under `--time-policy realtime` when connected outside (`outside-real-time`), and emits the note `outside-not-real-time` under `--time-policy free`.
 
 ## Abort conditions and timeouts
 
@@ -359,9 +366,9 @@ A run is connected outside the simulation if at least one of these holds:
 
 What is connected there does not wait for the virtual time, so by default such a run keeps real time. `--time-policy` chooses:
 
-| `--time-policy` | Speed of the run | `--speed` other than 1, `--start-paused` |
+| `--time-policy` | Speed of the run | `--speed` other than 1, `--start-paused`, `after_scenario: "pause"` |
 |---|---|---|
-| `realtime` (the default) | 1. The note `outside-speed-set` reports the change when the default would be as fast as possible. | The error `outside-real-time` of the check: nothing starts. (`--start-paused` goes with `--control` or `--stdin-commands`; alone it is a usage error, exit code 4, before this check.) |
+| `realtime` (the default) | 1. The note `outside-speed-set` reports the change when the default would be as fast as possible. | The error `outside-real-time` of the check: nothing starts. (`--start-paused` goes with `--control` or `--stdin-commands`; alone it is a usage error, exit code 4, before this check. The same applies to `after_scenario: "pause"` in `run`.) |
 | `free` | As in any run: `--speed`, or else `speed` in the run request, or else as fast as possible. | Accepted. The note `outside-not-real-time` says that the run is not in real time. |
 
 - `--time-policy` has no effect on a run that is not connected outside.
@@ -651,8 +658,8 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 
 - An argument wins over the file, field by field (see [Arguments together with a request file](#arguments-together-with-a-request-file)).
 - The launcher reads only the file that `--request` names. It never looks for one: not next to the configuration file, not in the working directory or the home directory, and not through an environment variable.
-- `check --request` judges the same request as `run --request`, the speed and `start_paused` for the [time lock](#time-of-a-run-that-is-connected-outside---time-policy) included. Check first, then run. One rule is left to `run`: that `start_paused` needs `--stdin-commands` or `--control`, which are arguments of `run` only.
-- `test` accepts a request file containing `stop_at_ms` and `late_tolerance_ms`; other run intent fields are a usage error. The stop time applies to each case.
+- `check --request` judges the same request as `run --request`, the speed, `start_paused`, and `after_scenario` for the [time lock](#time-of-a-run-that-is-connected-outside---time-policy) included (as well as checking that `after_scenario: "pause"` has a scenario and no `stop_at_ms`). Check first, then run. One rule is left to `run`: that `start_paused` and `after_scenario: "pause"` need `--stdin-commands` or `--control`, which are arguments of `run` only.
+- `test` accepts a request file containing `stop_at_ms` and `late_tolerance_ms`; other run intent fields (including `after_scenario: "pause"`) are a usage error. The stop time applies to each case.
 - Write the file as JSON. The launcher may read a looser form, but that is no promise: the schema and the other tools that read the file take JSON only.
 - A mistake in the file (an unknown key, a key written twice, a value of the wrong type, `null`, another version) is a usage error (exit code 4) that names the file and the line; nothing is checked or started. Leave a key out to not set it.
 - The JSON Schema is [schema/run-request.schema.json](../schema/run-request.schema.json). An editor completes and checks a file that names it in `"$schema"`.
@@ -692,7 +699,7 @@ An argument wins over the file, field by field.
 | `params` | By name: `--param <name>=<value>` replaces the file's value of that parameter. The others stay; their `from` in the check JSON is `request_file`. |
 | `disable`, `enable`, `manual` | The names of the file and of the arguments add up. Where they disagree about a name (the file's `disable` and `--enable`, the file's `enable` or `manual` and `--disable`, the file's `disable` and `--manual`), the argument wins. |
 
-No argument takes away the file's `scenario` or one of its `params` (`--scenario` and `--param` only replace them): for a run without them, use a request file that does not have them.
+No argument takes away the file's `scenario` or one of its `params` (`--scenario` and `--param` only replace them): for a run without them, use a request file that does not have them. There is no command-line flag for `after_scenario`: plain `run --scenario` defaults `after_scenario` to `"stop"`, while `"after_scenario": "pause"` in a `--request` file (or inline `intent` in `serve`) requests manual handover unless `"after_scenario": "stop"` is written instead.
 
 Where a request file differs from the arguments:
 
@@ -1197,7 +1204,7 @@ Values of `simulation`:
 | `"interrupted"` | Stopped by a stop request (Ctrl+C, the `stop` command and similar; `end` says which kind) |
 | `"not_started"` | Did not start |
 
-In a run with `--scenario`, look at `scenario.status` to tell which meaning `"ended"` has. If it is `"passed"` or `"failed"`, the run stopped because the scenario ended. If scenario steps were skipped, `scenario.skipped_steps` has their number (`status` stays `"passed"`). A skipped step has `at_ms` null. In a run with `--timeline`, `scenario.timeline` holds the name of the timeline file, as given in the arguments, and `null` without it (see [Recording a scenario run on a timeline](#recording-a-scenario-run-on-a-timeline---timeline)).
+In a run with `--scenario`, look at `scenario.status` to tell which meaning `"ended"` has. If it is `"passed"` or `"failed"`, the run stopped because the scenario ended (or, after an `after_scenario: "pause"` handover where `scenario.status` is already `"passed"`, because a participant stopped it or a `stop` command ended the run with `"stopped"`, exit code 0 rather than `incomplete` exit code 5). If scenario steps were skipped, `scenario.skipped_steps` has their number (`status` stays `"passed"`). A skipped step has `at_ms` null. In a run with `--timeline`, `scenario.timeline` holds the name of the timeline file, as given in the arguments, and `null` without it (see [Recording a scenario run on a timeline](#recording-a-scenario-run-on-a-timeline---timeline)).
 
 Keys of `participants[]`:
 
@@ -1845,7 +1852,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 | Scenario | `recorded_to_ms` |
 |---|---|
 | Failed (`failed`) | The `at_ms` of the failed step (or of the failed dither write when all steps had already passed; in a run that ended at `stop_at_ms`, the time it stopped) |
-| Passed (`passed`) | The latest `at_ms` of the steps (extended up to `min(end_ms, now)` when `end_ms` is set) |
+| Passed (`passed`) | The latest `at_ms` of the steps (extended up to `min(end_ms, now)` when `end_ms` is set; with `after_scenario: "pause"`, the timeline closes at handover and does not record post-handover manual steps) |
 | Ended partway (`incomplete`) | The latest time among observed samples and writes sent through the last controller time (0 if there were none). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
 
