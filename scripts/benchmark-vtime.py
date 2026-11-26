@@ -451,6 +451,18 @@ def _compute_flags_warning(
     ambiguous_set = set(ambiguous_list)
     if ambiguous_list:
         warnings.append(f"ambiguous compile_commands.json entries for {', '.join(ambiguous_list)}")
+    if build_dir is not None:
+        if launcher_path is not None and not _is_path_within(launcher_path, build_dir):
+            warnings.append(f"--launcher ({launcher_path}) resolves outside build_dir ({build_dir})")
+        if bench_ecu_path is not None and not _is_path_within(bench_ecu_path, build_dir):
+            warnings.append(f"--bench-ecu ({bench_ecu_path}) resolves outside build_dir ({build_dir})")
+    if (
+        cmake_build_type
+        and cmake_build_type.lower() == "release"
+        and bench_ecu_build_info is not None
+        and bench_ecu_build_info.get("ndebug") is False
+    ):
+        warnings.append("CMAKE_BUILD_TYPE=Release but vehicle_sil_bench_ecu compiled without NDEBUG")
     if flags_source != "unavailable":
         if flags_source == "compile_commands.json":
             missing_tus = [
@@ -460,11 +472,6 @@ def _compute_flags_warning(
             ]
             if missing_tus:
                 warnings.append(f"missing target TU(s) in compile_commands.json: {', '.join(missing_tus)}")
-        if build_dir is not None:
-            if launcher_path is not None and not _is_path_within(launcher_path, build_dir):
-                warnings.append(f"--launcher ({launcher_path}) resolves outside build_dir ({build_dir})")
-            if bench_ecu_path is not None and not _is_path_within(bench_ecu_path, build_dir):
-                warnings.append(f"--bench-ecu ({bench_ecu_path}) resolves outside build_dir ({build_dir})")
 
         opt_levels = {
             name: info["effective_opt_level"]
@@ -488,8 +495,6 @@ def _compute_flags_warning(
             ]
             if san:
                 warnings.append(f"CMAKE_BUILD_TYPE=Release but sanitizers are enabled ({', '.join(san)})")
-            if bench_ecu_build_info is not None and bench_ecu_build_info.get("ndebug") is False:
-                warnings.append("CMAKE_BUILD_TYPE=Release but vehicle_sil_bench_ecu compiled without NDEBUG")
 
         be_flags = targets.get("vehicle_sil_bench_ecu", {})
         if bench_ecu_build_info is not None and be_flags.get("optimization_flags") is not None:
@@ -651,11 +656,30 @@ def extract_build_provenance(
     )
 
 
+_GIT_DISCOVERY_ENV_VARS = frozenset({
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_PREFIX",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_NAMESPACE",
+    "GIT_SUPER_PREFIX",
+})
+
+
+def _sanitized_git_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k.upper() not in _GIT_DISCOVERY_ENV_VARS}
+
+
 def _git_output(args: list[str], cwd: Path | None = None) -> str | None:
     try:
         proc = subprocess.run(
             ["git", *args],
             cwd=ROOT if cwd is None else cwd,
+            env=_sanitized_git_env(),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -668,6 +692,19 @@ def _git_output(args: list[str], cwd: Path | None = None) -> str | None:
     except (OSError, subprocess.SubprocessError):
         pass
     return None
+
+
+def _resolved_git_dir(cwd: Path) -> Path | None:
+    raw = _git_output(["rev-parse", "--git-dir"], cwd=cwd)
+    if not raw:
+        return None
+    git_dir = Path(raw)
+    if not git_dir.is_absolute():
+        git_dir = cwd / git_dir
+    try:
+        return git_dir.resolve()
+    except OSError:
+        return None
 
 
 def _collect_repo_and_dependency_provenance(
@@ -684,6 +721,7 @@ def _collect_repo_and_dependency_provenance(
             proc = subprocess.run(
                 ["git", "diff", "--quiet", "HEAD"],
                 cwd=repo_root,
+                env=_sanitized_git_env(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -706,9 +744,17 @@ def _collect_repo_and_dependency_provenance(
     silkit_tag: str | None = None
     if (silkit_dir / ".git").exists():
         toplevel = _git_output(["rev-parse", "--show-toplevel"], cwd=silkit_dir)
-        if toplevel is not None:
+        silkit_git_dir = _resolved_git_dir(silkit_dir)
+        parent_git_dir = _resolved_git_dir(repo_root)
+        if toplevel is not None and silkit_git_dir is not None:
             try:
-                is_own_repo = Path(toplevel).resolve() == silkit_dir.resolve()
+                silkit_resolved = silkit_dir.resolve()
+                repo_resolved = repo_root.resolve()
+                is_own_repo = (
+                    silkit_resolved != repo_resolved
+                    and Path(toplevel).resolve() == silkit_resolved
+                    and silkit_git_dir != parent_git_dir
+                )
             except OSError:
                 is_own_repo = False
             if is_own_repo:

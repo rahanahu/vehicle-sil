@@ -426,6 +426,25 @@ class TestBuildFlagExtraction(unittest.TestCase):
                 self.assertEqual(target_flags, BV._empty_target_flags())
             self.assertIn("ambiguous compile_commands.json entries for vehicle_sil_launch", build_info2["flags_warning"] or "")
 
+            # Even when flags_source == "unavailable" due to all-targets ambiguity, external binary path
+            # warnings and Release vs bench_ecu ndebug=False warnings must still be emitted alongside ambiguity.
+            outside_launcher = Path(tmp).parent / "outside_launcher"
+            outside_bench = Path(tmp).parent / "outside_bench_ecu"
+            with mock.patch.object(BV, "_compiler_banner", return_value=None):
+                build_info3, _ = BV.extract_build_provenance(
+                    bdir,
+                    {"ndebug": False},
+                    is_windows=False,
+                    launcher_path=outside_launcher,
+                    bench_ecu_path=outside_bench,
+                )
+            self.assertEqual(build_info3["flags_source"], "unavailable")
+            warn3 = build_info3["flags_warning"] or ""
+            self.assertIn("ambiguous compile_commands.json entries for vehicle_sil_launch", warn3)
+            self.assertIn("--launcher", warn3)
+            self.assertIn("--bench-ecu", warn3)
+            self.assertIn("compiled without NDEBUG", warn3)
+
     def test_compile_commands_identical_duplicates_accepted_without_warning(self):
         with tempfile.TemporaryDirectory() as tmp:
             bdir = Path(tmp)
@@ -474,6 +493,8 @@ class TestDependencyProvenance(unittest.TestCase):
                 "GIT_AUTHOR_EMAIL": "test@example.com",
                 "GIT_COMMITTER_NAME": "Test Author",
                 "GIT_COMMITTER_EMAIL": "test@example.com",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
             }
         )
         proc = subprocess.run(
@@ -527,6 +548,57 @@ class TestDependencyProvenance(unittest.TestCase):
                 {},
                 root=parent,
             )
+            self.assertIsNone(deps_info2["sil_kit"]["submodule_commit"])
+            self.assertIsNone(deps_info2["sil_kit"]["tag"])
+
+            # Degenerate .git file pointing back to parent's .git must also be rejected via --git-dir comparison.
+            (silkit_dir / ".git").rmdir()
+            (silkit_dir / ".git").write_text(f"gitdir: {parent / '.git'}\n", encoding="utf-8")
+            _, deps_info3 = BV._collect_repo_and_dependency_provenance(
+                {"vehicle_sil": "0.4.0", "features": []},
+                {},
+                root=parent,
+            )
+            self.assertIsNone(deps_info3["sil_kit"]["submodule_commit"])
+            self.assertIsNone(deps_info3["sil_kit"]["tag"])
+
+    def test_git_dir_env_var_does_not_leak_parent_repo_into_silkit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "repo"
+            parent_sha = self._init_repo_with_commit(parent, "README.md", "v9.9.9-parent")
+            silkit_dir = parent / "external" / "sil-kit"
+            silkit_sha = self._init_repo_with_commit(silkit_dir, "CMakeLists.txt", "v5.0.8-silkit")
+            self.assertNotEqual(parent_sha, silkit_sha)
+
+            # Even when GIT_DIR / GIT_WORK_TREE are exported (e.g. from a git hook or worktree runner),
+            # external/sil-kit must still read its own HEAD/tag and never parent's.
+            with mock.patch.dict(
+                os.environ,
+                {"GIT_DIR": str(parent / ".git"), "GIT_WORK_TREE": str(parent)},
+            ):
+                repo_info, deps_info = BV._collect_repo_and_dependency_provenance(
+                    {"vehicle_sil": "0.4.0", "features": []},
+                    {},
+                    root=parent,
+                )
+            self.assertEqual(repo_info["git_commit"], parent_sha)
+            self.assertEqual(deps_info["sil_kit"]["submodule_commit"], silkit_sha)
+            self.assertEqual(deps_info["sil_kit"]["tag"], "v5.0.8-silkit")
+
+            # Also verify uninitialized external/sil-kit stays None under exported GIT_DIR.
+            parent_uninit = Path(tmp) / "repo_uninit"
+            parent_uninit_sha = self._init_repo_with_commit(parent_uninit, "README.md", "v9.9.9-uninit")
+            (parent_uninit / "external" / "sil-kit").mkdir(parents=True)
+            with mock.patch.dict(
+                os.environ,
+                {"GIT_DIR": str(parent_uninit / ".git"), "GIT_WORK_TREE": str(parent_uninit)},
+            ):
+                repo_info2, deps_info2 = BV._collect_repo_and_dependency_provenance(
+                    {"vehicle_sil": "0.4.0", "features": []},
+                    {},
+                    root=parent_uninit,
+                )
+            self.assertEqual(repo_info2["git_commit"], parent_uninit_sha)
             self.assertIsNone(deps_info2["sil_kit"]["submodule_commit"])
             self.assertIsNone(deps_info2["sil_kit"]["tag"])
 
