@@ -1859,9 +1859,8 @@ class GuiServer:
         was written that may need draining."""
         session = run.session
         run_facts = self._run_facts()
-        if session.launcher_mode == "hot":
-            if not run_facts.stoppable or run_facts.stop == "forced" or (not force and run_facts.stop != "none"):
-                return False
+        if not run_facts.stoppable or run_facts.stop == "forced" or (not force and run_facts.stop != "none"):
+            return False
         commands = session.request_stop(force)
         if not commands:
             return False
@@ -2141,7 +2140,7 @@ class GuiServer:
                     self._control_started(run, m["event"])
                 elif m["event"]["event"] == "phase" and m["event"].get("phase") == "stopping":
                     run.variables.read_last()  # the simulation is over: its control server closes soon
-                elif m["event"]["event"] == "state" and run.session.launcher_mode == "hot":
+                elif m["event"]["event"] == "state":
                     self._push_allowed()
         return sent
 

@@ -151,10 +151,10 @@ def test_allowed_says_what_this_server_takes() -> None:
     # the server's own facts: the first that holds wins, in this order
     for facts, start, stop in (
             (Facts(launcher_usable=False, launcher_message="no launcher"), "launcher-unusable", "not-running"),
-            (Facts(starting=True, launcher_usable=False), "starting", None),
+            (Facts(starting=True, launcher_usable=False), "starting", "starting"),
             (Facts(closing=True, starting=True), "shutting-down", "shutting-down")):
         s.facts = lambda facts=facts: facts
-        assert (reasons()["start"], reasons()["stop"]) == (start, stop), facts
+        assert (reasons()["start"], reasons()["stop"], reasons()["force"]) == (start, stop, stop), facts
     assert reasons()["save"] == "shutting-down"
     s.facts = lambda: Facts(save=False)
     assert reasons()["save"] == "save-disabled" and s.allowed()["save"]["caution"] is None

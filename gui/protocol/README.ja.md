@@ -462,16 +462,17 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | | `starting` | 実行を始めている途中（`api/run` がまだ答えていない）で、動いている実行がない |
 | | `launcher-unusable` | 見つけたランチャーが使えない（`api/app` の `launcher.problems`）。最後に調べた結果のとおり |
 | `stop` | `shutting-down` | サーバーが終わろうとしていて、実行はサーバー自身が止める |
+| | `starting` | 実行を始めている途中（`api/run` がまだ答えていない）。新しい実行が確定するまで `api/stop-session` は `409 session-changed` を返す |
 | | `not-running` | ランチャーが動いている実行がない |
 | | `already-stopping` | すでに停止を頼んだ（`stop` が `requested` か `forced`） |
-| `force` | `shutting-down`、`not-running` | `stop` と同じ |
+| `force` | `shutting-down`、`starting`、`not-running` | `stop` と同じ |
 | | `already-forced` | すでに強制の停止にした |
 | `save` | `shutting-down` | サーバーが終わろうとしている |
 | | `save-disabled` | サーバーを `--no-save` で起動した |
 
 - `save` の `caution` は `null` か、保存はするが先に知っておくことがあるときの `{code, message}` です（ランチャーの `allowed` の `caution` と同じ形）。コードは `command-changes-allowed` だけです。サーバーを `--allow-command-changes` で起動したので、実行されるコマンドを変える編集と新しいファイルも保存します。画面は、保存のボタンの近くにメッセージを出します。1 つの編集を保存するかは、リクエスト（`POST api/config`）ごとに決め、`allowed` では決めません。
 
-- 当てはまる理由のうち、表の順で最初の 1 つだけを返します。実行を始めている途中は、`stop` と `force` は `ok` です。リクエストは待ち、ランチャーが始まったら効きます（「停止（`api/stop-session`）」）。
+- 当てはまる理由のうち、表の順で最初の 1 つだけを返します。実行を始めている途中は、`stop` と `force` も `ok: false`（`reason: "starting"`）です。`api/run` が `{instance, run_id}` を返してから `api/stop-session` を送ってください（「停止（`api/stop-session`）」）。
 - ランチャーが受け付けること（pause、step、speed、書き込み）はここにはありません。ランチャーが書いたままの `launcher_state` の `allowed` です。そこでの `ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません（一時停止中の `pause` も `ok`）。
 - **いつ送るか**: `allowed` は、`session` を送るたびに、そのときの値で付きます。変わったのに、それを運ぶ `session` が続かないときは、代わりに `allowed` のメッセージを送ります: 開始が始まった（`starting`）、開始に失敗して `start` が `ok` に戻った、サーバーが終わり始めた（`shutting-down`）。`session` がその変化を運ぶとき（実行を登録した、停止を頼んだ、実行が終わった）は、`allowed` のメッセージは送りません。`allowed` のメッセージは小さく、`stream_seq` を持ち、遅い接続でも落としません。このメッセージの種類を知らない読み手は無視し（「版と互換」）、`hello`、`api/session`、各要約の `allowed` は引き続き受けます。
 - 実行がなければ要約がないので、`hello`、`api/session`、`allowed` のメッセージの `allowed` がすべてです。

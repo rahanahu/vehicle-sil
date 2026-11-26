@@ -286,6 +286,7 @@ class ServeRunHandle:
         proc = self._resident.proc
         return (
             not self._ended
+            and self._resident.current_run is self
             and self._run_id is not None
             and proc.returncode is None
             and proc.stdin is not None
@@ -441,6 +442,7 @@ class ServeRuntime:
         self._track = track
         self._lock = asyncio.Lock()
         self._residents: set[_Resident] = set()
+        self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._resident: _Resident | None = None
         self._closing = False
         self.resident_starts = 0
@@ -578,13 +580,45 @@ class ServeRuntime:
         resident.execution_status = _extract_execution_status(raw)
         return True
 
+    def _track_cleanup_task(self, task: asyncio.Task[None]) -> asyncio.Task[None]:
+        self._cleanup_tasks.add(task)
+
+        def _done(t: asyncio.Task[None]) -> None:
+            self._cleanup_tasks.discard(t)
+            if not t.cancelled():
+                exc = t.exception()
+                if exc is not None:
+                    log.warning("background runtime cleanup failed: %s", exc)
+
+        task.add_done_callback(_done)
+        return task
+
+    async def _kill_and_close(self, proc: asyncio.subprocess.Process) -> None:
+        """Kills a spawned process tree, reaps it within KILL_WAIT_S, and closes its pipes."""
+        async def _reap_and_close() -> None:
+            try:
+                await process.wait_bounded(proc, process.KILL_WAIT_S)
+            finally:
+                process.close_pipes(proc)
+
+        process.kill_tree(proc)
+        task = self._track_cleanup_task(asyncio.create_task(_reap_and_close()))
+        await asyncio.shield(task)
+
+    async def _close_resident_shielded(self, resident: _Resident) -> None:
+        resident.ending = True
+        task = self._track_cleanup_task(
+            asyncio.create_task(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+        )
+        await asyncio.shield(task)
+
     async def _reset_resident(self, resident: _Resident, config: str | None) -> None:
         self._resetting = True
         self._resetting_config = config
         if not self._closing:
             self._sync_status()
         try:
-            await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+            await self._close_resident_shielded(resident)
         finally:
             self._resetting = False
             self._resetting_config = None
@@ -706,7 +740,7 @@ class ServeRuntime:
                 )
             except BaseException:
                 self._preparing_config = prev_preparing
-                await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+                await self._close_resident_shielded(resident)
                 raise
             finally:
                 self._preparing_config = prev_preparing
@@ -822,11 +856,11 @@ class ServeRuntime:
                         )
                     except BaseException:
                         self._preparing_config = None
-                        await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+                        await self._close_resident_shielded(resident)
                         raise
                     if self._closing:
                         self._preparing_config = None
-                        await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                        await self._close_resident_shielded(resident)
                         raise Refused(503, "shutting-down", "the GUI server is stopping")
                     parsed = parse_prepare_event(ev) if ev is not None else None
                     if parsed is None:
@@ -836,7 +870,7 @@ class ServeRuntime:
                             "resident-failed",
                             "the persistent launcher could not prepare the configuration",
                         )
-                        await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                        await self._close_resident_shielded(resident)
                         return self._sync_status()
                     if not parsed.hot.hot:
                         self._preparing_config = None
@@ -887,13 +921,13 @@ class ServeRuntime:
         except BaseException:
             if resident.pending_run is handle:
                 resident.pending_run = None
-            await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+            await self._close_resident_shielded(resident)
             if not self._closing:
                 self._sync_status()
             raise
 
         if self._closing:
-            await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+            await self._close_resident_shielded(resident)
             raise Refused(503, "shutting-down", "the GUI server is stopping")
 
         if handle._run_id is None:
@@ -919,11 +953,10 @@ class ServeRuntime:
         except OSError as e:
             raise Refused(502, "launcher-start", f"cannot start {self._launcher.path}: {e}") from None
         if self._closing:
-            process.kill_tree(proc)
-            process.close_pipes(proc)
+            await self._kill_and_close(proc)
             raise Refused(503, "shutting-down", "the GUI server is stopping")
 
-        resident = _Resident(
+        resident: _Resident | None = _Resident(
             config=spec.config,
             want_control=spec.credentials is not None,
             proc=proc,
@@ -941,7 +974,8 @@ class ServeRuntime:
                 resident.startup_error = "the single-run launcher did not become ready in time"
 
             if self._closing:
-                await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                to_close, resident = resident, None
+                await self._close_resident_shielded(to_close)
                 raise Refused(503, "shutting-down", "the GUI server is stopping")
 
             if (
@@ -951,17 +985,19 @@ class ServeRuntime:
                 or resident.execution_status is None
             ):
                 msg = resident.startup_error or "the single-run launcher failed during startup"
-                await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                to_close, resident = resident, None
+                await self._close_resident_shielded(to_close)
                 raise Refused(502, "launcher-output", msg)
 
             handle, err_msg = await self._start_run_on_resident(resident, spec)
             if handle is None:
-                await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                to_close, resident = resident, None
+                await self._close_resident_shielded(to_close)
                 raise Refused(502, "launcher-output", err_msg)
             return handle
         except BaseException:
-            if resident in self._residents and resident.current_run is None:
-                await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+            if resident is not None and resident in self._residents and resident.current_run is None:
+                await self._close_resident_shielded(resident)
             raise
 
     async def start_run(self, spec: RunSpec) -> RunHandle:
@@ -1001,7 +1037,7 @@ class ServeRuntime:
             handle, err_msg = await self._start_run_on_resident(resident, spec)
             if handle is None:
                 self._once_status = (spec.config, "resident-failed", err_msg)
-                await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
+                await self._close_resident_shielded(resident)
                 self._sync_status()
                 return await self._start_once(spec)
 
@@ -1072,11 +1108,10 @@ class ServeRuntime:
                 )
                 return None
             if self._closing:
-                process.kill_tree(proc)
-                process.close_pipes(proc)
+                closing_proc, proc = proc, None
                 control.remove(credentials)
                 credentials = None
-                proc = None
+                await self._kill_and_close(closing_proc)
                 raise Refused(503, "shutting-down", "the GUI server is stopping")
 
             self.resident_starts += 1
@@ -1100,8 +1135,8 @@ class ServeRuntime:
                 resident.startup_error = "the persistent launcher did not report initial status in time"
 
             if self._closing:
-                await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
-                resident = None
+                to_close, resident = resident, None
+                await self._close_resident_shielded(to_close)
                 raise Refused(503, "shutting-down", "the GUI server is stopping")
 
             if (
@@ -1111,8 +1146,8 @@ class ServeRuntime:
                 or resident.execution_status is None
             ):
                 msg = resident.startup_error or "the persistent launcher failed during startup"
-                await self._close_resident(resident, asyncio.Event(), self._escalate_wait_s)
-                resident = None
+                to_close, resident = resident, None
+                await self._close_resident_shielded(to_close)
                 self._once_status = (config, "resident-failed", msg)
                 return None
 
@@ -1121,10 +1156,9 @@ class ServeRuntime:
             return ready_resident
         except BaseException:
             if resident is not None:
-                await asyncio.shield(self._close_resident(resident, asyncio.Event(), self._escalate_wait_s))
+                await self._close_resident_shielded(resident)
             elif proc is not None:
-                process.kill_tree(proc)
-                process.close_pipes(proc)
+                await self._kill_and_close(proc)
             if credentials is not None:
                 control.remove(credentials)
             raise
@@ -1395,6 +1429,9 @@ class ServeRuntime:
         await asyncio.gather(
             *(self._close_resident(r, hurry, stop_timeout_s) for r in list(self._residents)),
         )
+        while self._cleanup_tasks:
+            pending = list(self._cleanup_tasks)
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def kill_all(self) -> None:
         for resident in list(self._residents):

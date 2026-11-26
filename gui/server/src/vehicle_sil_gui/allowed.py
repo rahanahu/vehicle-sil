@@ -79,10 +79,12 @@ def project_run_facts(
             stoppable=stoppable,
             stop=stop_of(local_stop, requests if type(requests) is int else None),
         )
+    stop_info = run_state.get("stop") if isinstance(run_state, dict) else None
+    requests = stop_info.get("requests") if isinstance(stop_info, dict) else None
     return RunFacts(
         running=running,
         stoppable=running and bool(launcher_running),
-        stop=local_stop,
+        stop=stop_of(local_stop, requests if type(requests) is int else None),
     )
 
 
@@ -111,7 +113,7 @@ def allowed_stop(facts: Facts, stoppable: bool, stop: str) -> dict:
     if facts.closing:
         return _answer("shutting-down", "the GUI server is stopping: it stops the run itself")
     if facts.starting:
-        return _answer()
+        return _answer("starting", "a run is starting: wait until it has started before stopping it")
     if not stoppable:
         return _answer("not-running", "no simulation is running: there is nothing to stop")
     if stop != "none":
@@ -124,7 +126,7 @@ def allowed_force(facts: Facts, stoppable: bool, stop: str) -> dict:
     if facts.closing:
         return _answer("shutting-down", "the GUI server is stopping: it stops the run itself")
     if facts.starting:
-        return _answer()
+        return _answer("starting", "a run is starting: wait until it has started before stopping it")
     if not stoppable:
         return _answer("not-running", "no simulation is running: there is nothing to stop")
     if stop == "forced":

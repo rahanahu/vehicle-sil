@@ -63,14 +63,14 @@
           "message": "a run is starting: wait until it has started, then stop it before starting another"
         },
         "stop": {
-          "ok": true,
-          "reason": null,
-          "message": null
+          "ok": false,
+          "reason": "starting",
+          "message": "a run is starting: wait until it has started before stopping it"
         },
         "force": {
-          "ok": true,
-          "reason": null,
-          "message": null
+          "ok": false,
+          "reason": "starting",
+          "message": "a run is starting: wait until it has started before stopping it"
         },
         "save": {
           "ok": true,
