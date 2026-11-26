@@ -454,7 +454,7 @@ python -m vehicle_sil_control.generate          # スタブを python/vehicle_si
 | Python のバージョン | 3.11 以上です。 |
 | バージョンと依存の指定 | `python/pyproject.toml`（`dependencies = []`、`python -S` でも動作し、`gui/server` と純粋な Events v4 プロトコル定数・NDJSON コマンド構築の `protocol.py` と遅延 gRPC ヘルパー `grpc_helpers.py` を共有します）、リポジトリのルートの `pyproject.toml`（`uv sync`、または Control API のみなら `uv sync --only-group control`）と `uv.lock` です（[build.md](build.md) の「Python（uv）」）。 |
 | 標準ライブラリのみと gRPC | `Launch`、`Serve`、`RunHandle`、`LaunchError`、`ServeError`、`control_address` は標準ライブラリだけを使い（`python -S` 対応）、gRPC のモジュールを読み込みません。`Control`、`Control.for_current_run()`、`run.control()`、CLI には `grpcio`、`protobuf`、生成されたスタブが必要です（別の場所に出すときは `generate --out DIR` と `VEHICLE_SIL_CONTROL_STUBS=DIR` を使います）。 |
-| ビルド済みツールアーカイブ（`Control` / gRPC） | `<tools>/python` に生成済みスタブが含まれています。`PYTHONPATH=<tools>/python uv run --no-project --no-build --python ">=3.11,<3.14" --with-requirements <tools>/python/requirements-control.txt python <script.py>` で実行します。 |
+| ビルド済みツールアーカイブ（`Control` / gRPC） | `<tools>/python` に生成済みスタブが含まれています。`PYTHONPATH=<tools>/python uv run --no-project --no-build --python ">=3.11,<3.15" --with-requirements <tools>/python/requirements-control.txt python <script.py>` で実行します。 |
 | ビルド済みツールアーカイブ（`Launch` / `Serve` のみ） | 追加の依存はありません。`PYTHONPATH=<tools>/python python -S <script.py>`（または Python 3.11 以上）で実行できます。 |
 | `.venv` の外・`uv sync` なしの場合 | `python -m vehicle_sil_control.generate` やスクリプトを実行する前に `export PYTHONPATH=$PWD/python` を設定し、`pip install grpcio grpcio-tools protobuf` でインストールします。 |
 | uv を使わない場合（MSYS2 UCRT64） | `export PYTHONPATH=$PWD/python` を設定し、`pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools` でインストールします。 |
