@@ -297,10 +297,7 @@ class _PreStartGate:
         self._launcher_problems_kept = 0
         self._server_problems_kept = 0
         self.omitted_problems = 0
-        self._seen_first_event = False
-        self._stream_run = False
         self._last_seq: int | None = None
-        self.checked_seq_gaps = False
 
     @property
     def buffered_log_count(self) -> int:
@@ -407,20 +404,6 @@ class _PreStartGate:
             return
         seq_in_order = valid_seq and (self._last_seq is None or seq > self._last_seq)
         if seq_in_order:
-            if not self._seen_first_event:
-                self._seen_first_event = True
-                if kind == "run_start":
-                    self._stream_run = True
-            if not self._stream_run:
-                expected = 0 if self._last_seq is None else self._last_seq + 1
-                if seq != expected:
-                    missing = f"seq {expected}" if seq == expected + 1 else f"seq {expected} to {seq - 1}"
-                    self.add_problem(
-                        "seq-gap",
-                        f"events are missing: {missing} never came from the launcher",
-                        {"expected": expected, "got": seq},
-                    )
-                self.checked_seq_gaps = True
             self._last_seq = seq
         valid_t_ms = isinstance(event, dict) and ("t_ms" not in event or _is_count(event["t_ms"]))
         if seq_in_order and valid_t_ms:
@@ -1554,8 +1537,7 @@ class GuiServer:
             session.execution_status = self.runtime.execution_status
             session.next_stream_seq = self.next_stream_seq
             preflight_timing = {k: intent[k] for k in ("stop_at_ms", "late_tolerance_ms") if k in intent}
-            gate = _PreStartGate(config.relative, request, limits=self.o.limits) \
-                if getattr(handle, "waits_for_check", True) else None
+            gate = _PreStartGate(config.relative, request, limits=self.o.limits) if handle.waits_for_check else None
 
             def emit_variables(messages: list[dict]) -> None:
                 if gate is not None and gate.discard:
@@ -1582,7 +1564,7 @@ class GuiServer:
             if run is not None:
                 self._runs.discard(run)
             if handle is not None:
-                handle.send_stop(2, force=True)
+                handle.send_stop(force=True)
                 abort = getattr(handle, "abort", None)
                 if abort is not None:
                     abort()
@@ -1599,7 +1581,7 @@ class GuiServer:
                 gate.discard = True
                 gate.clear()
                 try:
-                    handle.send_stop(2, force=True)
+                    handle.send_stop(force=True)
                     if not gate.cleanup_done.is_set():
                         with contextlib.suppress(TimeoutError, Exception):
                             async with asyncio.timeout(min(1.0, wait_cap)):
@@ -1669,14 +1651,7 @@ class GuiServer:
             for item in gate.drain():
                 kind = item[0]
                 if kind == "event":
-                    if gate.checked_seq_gaps:
-                        session._skip_seq_gap = True
-                        try:
-                            sink.on_stdout_event(item[1], item[2])
-                        finally:
-                            session._skip_seq_gap = False
-                    else:
-                        sink.on_stdout_event(item[1], item[2])
+                    sink.on_stdout_event(item[1], item[2])
                 elif kind == "stdout":
                     sink.on_stdout_line(item[1])
                 elif kind == "stderr":
@@ -1861,10 +1836,10 @@ class GuiServer:
         run_facts = self._run_facts()
         if not run_facts.stoppable or run_facts.stop == "forced" or (not force and run_facts.stop != "none"):
             return False
-        commands = session.request_stop(force)
-        if not commands:
+        mode = session.request_stop(force)
+        if mode is None:
             return False
-        delivered = run.handle.send_stop(commands, force=force)
+        delivered = run.handle.send_stop(force=mode == "force")
         messages = []
         if not delivered:
             messages = session.problem("stop-not-delivered", "the stop could not be written to the launcher's "
@@ -2192,8 +2167,23 @@ class GuiServer:
         for pid in self.runtime.active_pids():
             log.warning("the launcher (pid %s) could not be stopped: stop it by hand", pid)
         self.hub.close_all()
+        bg_tasks: list[asyncio.Task] = []
         if self._ticker is not None:
-            self._ticker.cancel()
+            ticker, self._ticker = self._ticker, None
+            ticker.cancel()
+            bg_tasks.append(ticker)
+        for task in list(self._evicting):
+            task.cancel()
+            bg_tasks.append(task)
+        if bg_tasks:
+            results = await asyncio.gather(*bg_tasks, return_exceptions=True)
+            for res in results:
+                if isinstance(res, asyncio.CancelledError):
+                    continue
+                if isinstance(res, Exception):
+                    log.exception("background server task failed during shutdown", exc_info=res)
+                elif isinstance(res, BaseException):
+                    raise res
         await self._close_sockets()
         await asyncio.to_thread(self.timelines.remove_all)
         await asyncio.to_thread(self.descriptions.remove_all)
@@ -2362,7 +2352,7 @@ class GuiServer:
                           lambda w: self._values_text(w, client))
             connection.watches[id] = watch
             self._watching[watch] = connection.client
-            if self._ticker is None or self._ticker.done():
+            if not self._closing and (self._ticker is None or self._ticker.done()):
                 self._ticker = asyncio.create_task(self._tick())
             self._tick_now.set()
         elif message["type"] == "unwatch":

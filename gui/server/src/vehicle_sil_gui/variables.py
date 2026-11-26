@@ -676,6 +676,8 @@ class Variables:
                 if self._closed or self.source is not source or source is None:
                     return
                 op = await source.read_operation(seq, timeout)
+                if self._closed or self.source is not source:
+                    return
                 if op is not None:
                     self.on_operations([op])
         except SourceError:
@@ -700,15 +702,31 @@ class Variables:
 
     # ------------------------------------------------------------ the end of the run
 
+    @staticmethod
+    async def _drain_cancelled(tasks: list[asyncio.Task]) -> None:
+        if not tasks:
+            return
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, asyncio.CancelledError):
+                continue
+            if isinstance(res, Exception):
+                log.exception("background variables task failed during close", exc_info=res)
+            elif isinstance(res, BaseException):
+                raise res
+
     async def close(self) -> None:
         """The run is over: the source is closed, the operations still open get their end, the last state is
         told. The last values stay (a watch still gets them once)."""
         if self._closed:
             return
         self._closed = True
-        for task in (self._reconciling, self._last_read):
-            if task is not None:
-                task.cancel()
+        current = asyncio.current_task()
+        tasks = [t for t in (self._reconciling, self._last_read) if t is not None and t is not current]
+        self._reconciling = None
+        self._last_read = None
+        for task in tasks:
+            task.cancel()
         if self._schema_timer is not None:
             self._schema_timer.cancel()
             self._schema_timer = None
@@ -720,6 +738,7 @@ class Variables:
                 await self.source.close()
             except Exception:
                 log.exception("closing the source of the variables")
+        await self._drain_cancelled(tasks)
         open_ones = [e for e in self.operations.values() if not e["done"]]
         for entry in open_ones:
             peers = {name: p if p["state"] in FINAL else

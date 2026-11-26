@@ -61,29 +61,21 @@ def project_run_facts(
     execution_status: dict | None = None,
     run_state: dict | None = None,
 ) -> RunFacts:
-    """Projects RunFacts from C++ ExecutionStatus in Hot mode or Session state in Cold mode."""
+    """Projects RunFacts from C++ ExecutionStatus and Session state."""
     running = bool(session_running)
     if launcher_mode == "hot":
         if not isinstance(execution_status, dict):
-            return RunFacts(
-                running=running,
-                stoppable=False,
-                stop=local_stop,
-            )
+            return RunFacts(running=running, stoppable=False, stop=local_stop)
         stoppable = running and execution_status.get("launcher_state") == "running"
         rs = run_state if isinstance(run_state, dict) else execution_status.get("run_state")
-        stop_info = rs.get("stop") if isinstance(rs, dict) else None
-        requests = stop_info.get("requests") if isinstance(stop_info, dict) else None
-        return RunFacts(
-            running=running,
-            stoppable=stoppable,
-            stop=stop_of(local_stop, requests if type(requests) is int else None),
-        )
-    stop_info = run_state.get("stop") if isinstance(run_state, dict) else None
+    else:
+        stoppable = running and bool(launcher_running)
+        rs = run_state
+    stop_info = rs.get("stop") if isinstance(rs, dict) else None
     requests = stop_info.get("requests") if isinstance(stop_info, dict) else None
     return RunFacts(
         running=running,
-        stoppable=running and bool(launcher_running),
+        stoppable=stoppable,
         stop=stop_of(local_stop, requests if type(requests) is int else None),
     )
 

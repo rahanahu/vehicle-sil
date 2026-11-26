@@ -37,7 +37,7 @@ def test_full_run_lifecycle_and_request_cleanup(tmp_path: Path) -> None:
             request_file = run.spec.request
             assert request_file.is_file()
 
-            run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
+            run.emit("run_start", run="r-1")
             run.emit("phase", phase="running")
             run.emit("time", sim_ms=500, actual_speed=1.0, late_steps=0, max_late_ms=0, slipped_ms=0, late_ms=0)
             run.emit("state", rev=1, paused=False, running=True, paused_at_ms=None, speed="max", allowed={})
@@ -70,16 +70,16 @@ def test_stop_and_force_stop_and_idempotency(tmp_path: Path) -> None:
             s3, _ = await app.client.post("api/stop-session", {**target1, "force": True})
             s4, _ = await app.client.post("api/stop-session", {**target1, "force": True})  # already forced
             assert (s1, s2, s3, s4) == (200, 200, 200, 200)
-            assert run1.stops == [1, 1]
+            assert run1.stops == ["graceful", "force"]
             await run1.finish(returncode=0)
 
-            # A fresh run stopped immediately with force=True receives 2 stop commands at once.
+            # A fresh run stopped immediately with force=True receives a single force stop command.
             status, started2 = await app.client.post("api/run", {"file": "simple.yaml"})
             assert status == 200
             target2 = {"run_id": started2["run_id"], "instance": started2["instance"]}
             run2 = app.runtime.runs[1]
             status, _ = await app.client.post("api/stop-session", {**target2, "force": True})
-            assert status == 200 and run2.stops == [2]
+            assert status == 200 and run2.stops == ["force"]
             await run2.finish(returncode=0)
 
     asyncio.run(main())
@@ -147,7 +147,7 @@ def test_stop_session_rejects_during_startup_and_wrong_targets(tmp_path: Path) -
                 "api/stop-session", {"run_id": run_body["run_id"], "instance": app.server.instance},
             )
             assert st_ok == 200 and stop_body == run_body
-            assert run.stops == [1]
+            assert run.stops == ["graceful"]
 
             await run.finish(returncode=0)
 
@@ -405,7 +405,7 @@ def test_prestart_gate_buffered_exit_does_not_push_intermediate_allowed(tmp_path
     root = _simple_config(tmp_path)
 
     def on_start(run: _GatedFakeRun) -> None:
-        run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
+        run.emit("run_start", run="r-1")
         run.emit("check", check=default_check_result("simple.yaml"))
         run.emit("log", source="Dashboard", line="before crash")
         run.emit_stderr("dying on purpose")
@@ -443,7 +443,7 @@ def test_prestart_gate_buffered_finish_preserves_ended_allowed_and_allows_next_r
 
     def on_start(run: _GatedFakeRun) -> None:
         async def drive() -> None:
-            run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
+            run.emit("run_start", run="r-1")
             run.emit("check", check=default_check_result("simple.yaml"))
             run.emit_stderr("dying immediately")
             run.exit_process(70)
@@ -498,7 +498,7 @@ def test_shutdown_waits_for_prestart_gate_buffered_finish_and_cleanup(tmp_path: 
 
     def on_start(run: _GatedFakeRun) -> None:
         async def drive() -> None:
-            run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
+            run.emit("run_start", run="r-1")
             run.emit("check", check=default_check_result("simple.yaml"))
             run.exit_process(70)
             await run.finish(returncode=70, process_exited=False)
@@ -547,7 +547,7 @@ def test_prestart_gate_buffers_and_replays_parsed_events(tmp_path: Path) -> None
     root = _simple_config(tmp_path)
 
     def on_start(run: _GatedFakeRun) -> None:
-        run.emit_event("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
+        run.emit_event("run_start", run="r-1")
         run.emit_event("check", check=default_check_result("simple.yaml"))
         run.emit_event("log", source="Engine", line="via event")
 

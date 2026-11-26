@@ -428,7 +428,7 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
         # 1. Pre-prepare serve resident status -> Unprepared with eligible=False, reason=None, run.ok=True -> Hot ready.
         rt_direct = ServeRuntime(launcher, cwd=configs)
         try:
-            res = await rt_direct._spawn_resident("simulation.yaml", want_control=False)
+            res = await rt_direct._spawn_process("simulation.yaml", once=False, want_control=False)
             assert res is not None
             pre_status = rt_direct.execution_status()
             assert pre_status is not None
@@ -600,8 +600,8 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
             assert s_grace["allowed"]["stop"]["reason"] == "already-stopping"
             assert s_grace["allowed"]["force"]["ok"] is True
 
-            # Verify direct ServeRunHandle.send_stop(..., force=False) also stays idempotent at requests=1 in C++.
-            assert res.current_run.send_stop(1, force=False) is True
+            # Verify direct ServeRunHandle.send_stop(force=False) also stays idempotent at requests=1 in C++.
+            assert res.current_run.send_stop(force=False) is True
             await res.current_run.drain(1.0)
             queried = rt.execution_status()
             assert queried is not None and queried["run_state"] is not None

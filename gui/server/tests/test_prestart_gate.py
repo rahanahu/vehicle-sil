@@ -367,11 +367,16 @@ def test_heavy_prestart_logs_preserve_crash_diagnostics_and_genuine_seq_gap(tmp_
 
     def on_start(run: _GatedFakeRun, sink) -> None:
         async def drive() -> None:
-            run.emit("hello", vehicle_sil_events=4, pid=run.pid, file="simple.yaml")
+            run.emit("run_start", run="r-crash")
             for i in range(100):
                 run.emit("log", source="Engine", line=f"before-gap-{i}")
-            # Inject a genuine launcher sequence gap (skip 3 seq numbers).
+            # Inject a genuine launcher sequence gap (as delivered by ServeRuntime on resident seq jump).
             run._seq += 3
+            run.emit_problem(
+                "seq-gap",
+                "events are missing: seq 101 to 103 never came from the launcher",
+                {"expected": 101, "got": 104},
+            )
             for i in range(50):
                 run.emit("log", source="Engine", line=f"after-gap-{i}")
             for i in range(20):

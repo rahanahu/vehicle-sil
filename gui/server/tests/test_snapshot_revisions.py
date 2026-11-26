@@ -21,7 +21,7 @@ def test_session_summary_list_capture_and_stream_seq():
 
     m1 = session.message()
     m2 = session.problem("stop-not-delivered", "failed", None)[0]
-    m3 = session.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4}, 48)[0]
+    m3 = session.feed_event({"event": "run_start", "seq": 0, "t_ms": 0, "run": "r-1"}, 48)[0]
     assert [m1["stream_seq"], m2["stream_seq"], m3["stream_seq"]] == [1, 2, 3]
     assert m1["session"]["id"] == m2["run_id"] == m3["run_id"] == "inst-1"
 
@@ -52,7 +52,7 @@ def test_variable_snapshot_and_availability_capture_order():
 
 def test_retained_findings_respect_limits():
     session = Session("inst-1", "sim.yaml", [], None, False, limits=Limits(findings=2))
-    session.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4}, 48)
+    session.feed_event({"event": "run_start", "seq": 0, "t_ms": 0, "run": "r-1"}, 48)
     for seq in (1, 2, 3):
         session.feed_event(
             {"event": "finding", "seq": seq, "t_ms": seq, "severity": "warning", "message": f"m{seq}"},

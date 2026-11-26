@@ -60,7 +60,7 @@ def test_spawn_resident_closing_and_exception_reap_process_and_close_pipes(
         orig_start = process.start
         orig_creds = control.credentials_file
 
-        # Case A: server starts closing right after process.start() returns in _spawn_resident.
+        # Case A: server starts closing right after process.start() returns in _spawn_process.
         rt1 = ServeRuntime(Launcher(Path("vehicle_sil_launch")), cwd=tmp_path)
         spawned1: list[asyncio.subprocess.Process] = []
         creds1: list[Path] = []
@@ -80,14 +80,14 @@ def test_spawn_resident_closing_and_exception_reap_process_and_close_pipes(
         monkeypatch.setattr(process, "start", start_then_close)
 
         with pytest.raises(Refused) as exc_info:
-            await rt1._spawn_resident("a.yaml", want_control=True)
+            await rt1._spawn_process("a.yaml", once=False, want_control=True)
         assert exc_info.value.code == "shutting-down"
         assert len(spawned1) == 1
         assert spawned1[0].returncode is not None
         assert _transport_closing(spawned1[0]) is True
         assert len(creds1) == 1 and not creds1[0].exists()
 
-        # Case B: exception raised in _spawn_resident after process.start() before _Resident is created.
+        # Case B: exception raised in _spawn_process after process.start() before _Resident is created.
         rt2 = ServeRuntime(Launcher(Path("vehicle_sil_launch")), cwd=tmp_path)
         spawned2: list[asyncio.subprocess.Process] = []
         creds2: list[Path] = []
@@ -110,7 +110,7 @@ def test_spawn_resident_closing_and_exception_reap_process_and_close_pipes(
         monkeypatch.setattr(runtime_mod, "_Resident", boom_resident)
 
         with pytest.raises(RuntimeError, match="boom before resident handoff"):
-            await rt2._spawn_resident("a.yaml", want_control=True)
+            await rt2._spawn_process("a.yaml", once=False, want_control=True)
         assert len(spawned2) == 1
         assert spawned2[0].returncode is not None
         assert _transport_closing(spawned2[0]) is True
@@ -274,6 +274,63 @@ def test_start_run_fallback_close_resident_survives_cancellation(
         assert proc.returncode is not None
         assert _transport_closing(proc) is True
         assert rt._resident is None
+        assert resident not in rt._residents
+
+    asyncio.run(main())
+
+
+def test_await_resident_ready_hot_failure_cancel_does_not_double_close_or_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def main() -> None:
+        rt = ServeRuntime(Launcher(Path("vehicle_sil_launch")), cwd=tmp_path, escalate_wait_s=0.1)
+        proc = await process.start(_sleep_proc_argv(), cwd=tmp_path)
+        resident = _Resident(config="a.yaml", want_control=False, proc=proc, credentials=None, token=None)
+        resident.startup_error = "startup refused"
+        resident.ready_or_ended.set()
+        rt._residents.add(resident)
+        rt._resident = resident
+        rt._active_resident = resident
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        finished = asyncio.Event()
+        close_calls = 0
+        orig_close = rt._close_resident
+
+        async def gated_close(res, hurry, stop_timeout_s):
+            nonlocal close_calls
+            close_calls += 1
+            entered.set()
+            await release.wait()
+            try:
+                await orig_close(res, hurry, stop_timeout_s)
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(rt, "_close_resident", gated_close)
+
+        task = asyncio.create_task(rt._await_resident_ready(resident, "a.yaml", once=False))
+        await asyncio.wait_for(entered.wait(), timeout=5.0)
+        assert close_calls == 1
+        assert resident.ending is True
+
+        # Cancelling during Hot failure teardown must unblock immediately without spawning a duplicate close.
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)
+        assert close_calls == 1
+        assert len(rt._cleanup_tasks) == 1
+
+        release.set()
+        await asyncio.wait_for(finished.wait(), timeout=5.0)
+        await asyncio.wait_for(rt.shutdown(asyncio.Event(), 1.0), timeout=5.0)
+        assert close_calls == 1
+        assert not rt._cleanup_tasks
+        assert proc.returncode is not None
+        assert _transport_closing(proc) is True
+        assert rt._resident is None
+        assert rt._active_resident is None
         assert resident not in rt._residents
 
     asyncio.run(main())
