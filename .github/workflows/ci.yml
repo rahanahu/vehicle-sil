@@ -47,7 +47,8 @@ jobs:
   #   When gui/server or gui/protocol/dashboard.schema.json changes without C++-tested docs, linux-gcc-control runs
   #   scoped to `^(launch\.shared_values|schema\.)` plus the real-launcher GUI tests, skipping linux-gcc-debug.
   # - Only non-GUI scripts (the `non_gui_scripts` allowlist) changed: python plus linux-gcc-debug and Windows
-  #   scoped to `^(scripts|template)\.` (plus `^launch_run\.trace_files$` when scripts/trace-report.py changes),
+  #   scoped to `^(scripts|template)\.` (plus `^launch_run\.trace_files$` when scripts/trace-report.py changes,
+  #   and `^benchmark\.smoke_determinism$` when scripts/benchmark-vtime.py changes),
   #   skipping gui, gui-server, linux-tsan and linux-gcc-control.
   # - Otherwise: linux-gcc-debug, linux-gcc-control, linux-tsan (the thread sanitizer), Windows and python. The presets
   #   linux-gcc-release and linux-gcc-static and the oldest CMake are added when the pull request changes how
@@ -114,7 +115,7 @@ jobs:
           # Allowlist of scripts/ and script unit tests never executed or imported by gui/gui-server jobs.
           # Scripts shared with GUI jobs (verify-gui.py, verify-web.py, web_i18n.py, busy_machine.py, run-gui.py,
           # verify_common.py, job_summary.py) are intentionally omitted so changes to them still run gui/gui-server.
-          non_gui_scripts='^scripts/(check-commits|check-docs|doctor|hotspots|mutate|package|trace-report|verify|verify-python)\.py$|^tests/scripts/test_[^/]+\.py$'
+          non_gui_scripts='^scripts/(benchmark-vtime|check-commits|check-docs|doctor|hotspots|mutate|package|trace-report|verify|verify-python)\.py$|^tests/scripts/test_[^/]+\.py$'
           if [ "$EVENT" = pull_request ]; then
             files=$(git diff --name-only --no-renames HEAD^1 HEAD)
             echo "$files"
@@ -161,10 +162,12 @@ jobs:
             gui_server=false
           elif [ "$EVENT" = pull_request ] && [ -n "${files:-}" ] && ! grep -qvE "$non_gui_scripts" <<<"$files"; then
             presets='["linux-gcc-debug"]'
+            ctest_filter='^(scripts|template)\.'
             if grep -qE '^scripts/trace-report\.py$' <<<"$files"; then
-              ctest_filter='^(scripts|template)\.|^launch_run\.trace_files$'
-            else
-              ctest_filter='^(scripts|template)\.'
+              ctest_filter="${ctest_filter}|^launch_run\\.trace_files$"
+            fi
+            if grep -qE '^scripts/benchmark-vtime\.py$' <<<"$files"; then
+              ctest_filter="${ctest_filter}|^benchmark\\.smoke_determinism$"
             fi
             tsan=false
             windows=true

@@ -25,6 +25,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 # ---------------------------------------------------------------------------
 option(VEHICLE_SIL_BUILD_EXAMPLES "Build the example peer executables" ${PROJECT_IS_TOP_LEVEL})
 option(VEHICLE_SIL_BUILD_TESTS "Build the vehicle-sil tests" ${PROJECT_IS_TOP_LEVEL})
+option(VEHICLE_SIL_BUILD_BENCHMARKS "Build the virtual-time benchmark ECU executable" ${PROJECT_IS_TOP_LEVEL})
 option(VEHICLE_SIL_TEST_FETCHCONTENT
        "Add a (slow) test that consumes this repository via FetchContent" OFF)
 option(VEHICLE_SIL_WARNINGS_AS_ERRORS "Treat warnings in vehicle-sil targets as errors" OFF)
@@ -125,6 +126,9 @@ add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
 # SocketCAN CAN bridge (physical CAN and vcan): Linux only.
 add_subdirectory(bridges/socketcan ${_vehicle_sil_exclude})
 
+if(VEHICLE_SIL_BUILD_BENCHMARKS)
+  add_subdirectory(tools/bench_ecu ${_vehicle_sil_exclude})
+endif()
 add_subdirectory(tools/can_bus_simulator ${_vehicle_sil_exclude})
 # Command-line helpers shared by the executables.
 add_subdirectory(tools/common ${_vehicle_sil_exclude})

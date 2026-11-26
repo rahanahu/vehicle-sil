@@ -1,0 +1,149 @@
+# Manual coordinated virtual-time benchmark artifact collector (workflow_dispatch only).
+# Builds Release binaries (vehicle_sil_launch and vehicle_sil_bench_ecu), runs
+# scripts/benchmark-vtime.py, uploads the machine-readable JSON report as an artifact,
+# and writes the summary table to the job summary. Never enforces wall-clock speed thresholds.
+# Security: read-only token, no secrets, actions pinned by commit hash.
+name: benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: "Release CMake preset to benchmark"
+        type: choice
+        required: true
+        default: linux-gcc-release
+        options:
+          - linux-gcc-release
+          - windows-mingw-release
+      cases:
+        description: "Cases to run (canonical = A/B/C, all = A/B/C/D)"
+        type: choice
+        required: true
+        default: canonical
+        options:
+          - canonical
+          - all
+      iterations:
+        description: "Measured iterations per case"
+        type: string
+        required: true
+        default: "5"
+      warmup:
+        description: "Warm-up iterations per case (excluded from summary)"
+        type: string
+        required: true
+        default: "1"
+      measure_ms:
+        description: "Steady-state virtual duration M in ms (multiple of 10)"
+        type: string
+        required: true
+        default: "20000"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-linux:
+    if: inputs.preset == 'linux-gcc-release'
+    name: benchmark (linux-gcc-release)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install Ninja
+        run: |
+          sudo apt-get update -q -o Acquire::Languages=none
+          sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -y -q ninja-build
+      - name: Configure and build Release benchmark binaries
+        run: |
+          cmake --preset linux-gcc-release \
+            -DVEHICLE_SIL_BUILD_TESTS=OFF \
+            -DVEHICLE_SIL_BUILD_EXAMPLES=OFF \
+            -DVEHICLE_SIL_BUILD_BENCHMARKS=ON
+          cmake --build --preset linux-gcc-release \
+            --target vehicle_sil_launch vehicle_sil_bench_ecu
+      - name: Run coordinated virtual-time benchmark suite
+        env:
+          BENCH_CASES: ${{ inputs.cases }}
+          BENCH_ITERATIONS: ${{ inputs.iterations }}
+          BENCH_WARMUP: ${{ inputs.warmup }}
+          BENCH_MEASURE_MS: ${{ inputs.measure_ms }}
+        run: |
+          python3 scripts/benchmark-vtime.py \
+            --preset linux-gcc-release \
+            --cases "$BENCH_CASES" \
+            --iterations "$BENCH_ITERATIONS" \
+            --warmup "$BENCH_WARMUP" \
+            --measure-ms "$BENCH_MEASURE_MS" \
+            --no-wait \
+            --out build/logs/benchmark-vtime.json
+      - name: Upload benchmark report artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benchmark-vtime-linux-gcc-release-${{ github.sha }}
+          path: build/logs/benchmark-vtime.json
+          retention-days: 90
+          if-no-files-found: warn
+
+  benchmark-windows:
+    if: inputs.preset == 'windows-mingw-release'
+    name: benchmark (windows-mingw-release)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Keep LF line ends
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          update: true
+          cache: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python
+      - name: Configure and build Release benchmark binaries
+        run: |
+          cmake --preset windows-mingw-release \
+            -DVEHICLE_SIL_BUILD_TESTS=OFF \
+            -DVEHICLE_SIL_BUILD_EXAMPLES=OFF \
+            -DVEHICLE_SIL_BUILD_BENCHMARKS=ON
+          cmake --build --preset windows-mingw-release \
+            --target vehicle_sil_launch vehicle_sil_bench_ecu
+      - name: Run coordinated virtual-time benchmark suite
+        env:
+          BENCH_CASES: ${{ inputs.cases }}
+          BENCH_ITERATIONS: ${{ inputs.iterations }}
+          BENCH_WARMUP: ${{ inputs.warmup }}
+          BENCH_MEASURE_MS: ${{ inputs.measure_ms }}
+        run: |
+          python3 scripts/benchmark-vtime.py \
+            --preset windows-mingw-release \
+            --cases "$BENCH_CASES" \
+            --iterations "$BENCH_ITERATIONS" \
+            --warmup "$BENCH_WARMUP" \
+            --measure-ms "$BENCH_MEASURE_MS" \
+            --no-wait \
+            --out build/logs/benchmark-vtime.json
+      - name: Upload benchmark report artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benchmark-vtime-windows-mingw-release-${{ github.sha }}
+          path: build/logs/benchmark-vtime.json
+          retention-days: 90
+          if-no-files-found: warn

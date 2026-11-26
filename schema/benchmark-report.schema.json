@@ -1,0 +1,1113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "vehicle-sil coordinated virtual-time benchmark report, format 1",
+  "description": "Machine-readable report produced by scripts/benchmark-vtime.py. Records repository/build/dependency provenance, fixed virtual workload, explicit steady-state measurement boundaries, per-iteration wall-clock/CPU/Control-transport telemetry, deterministic output and CAN communication trace verification digests, summary statistics, and anti-misinterpretation contracts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "vehicle_sil_benchmark",
+    "generated_at_utc",
+    "execution_backend",
+    "interpretation_contract",
+    "provenance",
+    "run_options",
+    "cases"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional relative path to schema/benchmark-report.schema.json for editor validation."
+    },
+    "vehicle_sil_benchmark": {
+      "const": 1,
+      "description": "Format version identifier. Always 1."
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 UTC timestamp when the report was generated."
+    },
+    "execution_backend": {
+      "const": "silkit_coordinated_multiprocess",
+      "description": "Execution backend measured by this suite. Always silkit_coordinated_multiprocess."
+    },
+    "interpretation_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Anti-misinterpretation invariants that readers and downstream tools must respect.",
+      "required": [
+        "local_bench_substitutable",
+        "process_count_equals_participant_count_assumed",
+        "wall_cpu_handler_summable",
+        "notes"
+      ],
+      "properties": {
+        "local_bench_substitutable": {
+          "const": false,
+          "description": "Always false: LocalBench or in-process microbenchmarks cannot substitute for SIL Kit coordinated sync."
+        },
+        "process_count_equals_participant_count_assumed": {
+          "const": false,
+          "description": "Always false: ecu_count, silkit_participant_count, and os_process_count are distinct quantities."
+        },
+        "wall_cpu_handler_summable": {
+          "const": false,
+          "description": "Always false: steady_state wall time, process CPU time, and Control handler_time_ns must never be summed."
+        },
+        "notes": {
+          "type": "array",
+          "minItems": 4,
+          "description": "Human-readable anti-misinterpretation rules including trivial CAN vs NetworkSimulator distinction.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Repository, build flags, dependency, and host provenance.",
+      "required": [
+        "repo",
+        "build",
+        "dependencies",
+        "host"
+      ],
+      "properties": {
+        "repo": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Git revision and launcher version provenance.",
+          "required": [
+            "git_commit",
+            "git_dirty",
+            "vehicle_sil_version",
+            "launcher_features"
+          ],
+          "properties": {
+            "git_commit": {
+              "type": ["string", "null"],
+              "description": "40-character Git commit SHA, or null outside a Git checkout."
+            },
+            "git_dirty": {
+              "type": ["boolean", "null"],
+              "description": "True if the working tree has uncommitted changes, or null outside a Git checkout."
+            },
+            "vehicle_sil_version": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Version reported by vehicle_sil_launch version --json."
+            },
+            "launcher_features": {
+              "type": "array",
+              "description": "Sorted list of feature tokens reported by vehicle_sil_launch version --json.",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "build": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Actual compiler and optimization flags extracted from build metadata (never assumed from preset name).",
+          "required": [
+            "build_dir",
+            "cmake_build_type",
+            "flags_source",
+            "flags_warning",
+            "targets",
+            "bench_ecu_build_info"
+          ],
+          "properties": {
+            "build_dir": {
+              "type": ["string", "null"],
+              "description": "Build directory inspected for compile_commands.json / CMakeCache.txt, or null."
+            },
+            "cmake_build_type": {
+              "type": ["string", "null"],
+              "description": "CMAKE_BUILD_TYPE from CMakeCache.txt, or null if unavailable."
+            },
+            "flags_source": {
+              "type": "string",
+              "enum": ["compile_commands.json", "cmake_cache", "unavailable"],
+              "description": "Provenance source for compiler and optimization flags."
+            },
+            "flags_warning": {
+              "type": ["string", "null"],
+              "description": "Non-null warning when actual flags conflict with CMAKE_BUILD_TYPE or disagree across targets."
+            },
+            "targets": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Per-target compiler and flag facts for representative translation units.",
+              "required": [
+                "vehicle_sil_launch",
+                "vehicle_sil_core",
+                "vehicle_sil_bench_ecu"
+              ],
+              "properties": {
+                "vehicle_sil_launch": { "$ref": "#/definitions/target_build_flags" },
+                "vehicle_sil_core": { "$ref": "#/definitions/target_build_flags" },
+                "vehicle_sil_bench_ecu": { "$ref": "#/definitions/target_build_flags" }
+              }
+            },
+            "bench_ecu_build_info": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Compile-time defines reported by vehicle_sil_bench_ecu --bench-build-info.",
+                  "required": [
+                    "compiler_id",
+                    "compiler_version",
+                    "ndebug",
+                    "optimize_macro",
+                    "sanitizers"
+                  ],
+                  "properties": {
+                    "compiler_id": { "type": "string", "description": "Compile-time compiler ID." },
+                    "compiler_version": { "type": "string", "description": "Compile-time compiler version." },
+                    "ndebug": { "type": "boolean", "description": "Whether NDEBUG was defined at compile time." },
+                    "optimize_macro": { "type": "integer", "minimum": 0, "description": "Value of __OPTIMIZE__ macro (0 if undefined)." },
+                    "sanitizers": {
+                      "type": "array",
+                      "description": "Sanitizers detected via compile-time macros.",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              ],
+              "description": "Compile-time defines reported by vehicle_sil_bench_ecu --bench-build-info, or null."
+            }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "flags_source": { "const": "unavailable" } } },
+              "then": {
+                "properties": {
+                  "targets": {
+                    "properties": {
+                      "vehicle_sil_launch": { "$ref": "#/definitions/unavailable_target_build_flags" },
+                      "vehicle_sil_core": { "$ref": "#/definitions/unavailable_target_build_flags" },
+                      "vehicle_sil_bench_ecu": { "$ref": "#/definitions/unavailable_target_build_flags" }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "dependencies": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "SIL Kit and optional dependency provenance.",
+          "required": [
+            "sil_kit",
+            "control_server_built"
+          ],
+          "properties": {
+            "sil_kit": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "SIL Kit submodule, tag, patch, and linkage provenance.",
+              "required": [
+                "submodule_commit",
+                "tag",
+                "patches",
+                "static_linked"
+              ],
+              "properties": {
+                "submodule_commit": { "type": ["string", "null"], "description": "Commit SHA of external/sil-kit, or null." },
+                "tag": { "type": ["string", "null"], "description": "Exact Git tag of external/sil-kit, or null." },
+                "patches": {
+                  "type": "array",
+                  "description": "Patches under patches/sil-kit/ with SHA-256 hashes.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "sha256"],
+                    "properties": {
+                      "name": { "type": "string", "description": "Patch filename." },
+                      "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 hex digest of patch file." }
+                    }
+                  }
+                },
+                "static_linked": { "type": ["boolean", "null"], "description": "VEHICLE_SIL_STATIC cache setting, or null." }
+              }
+            },
+            "control_server_built": {
+              "type": "boolean",
+              "description": "True if control-server is present in launcher_features."
+            }
+          }
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Host platform and CPU environment metadata.",
+          "required": [
+            "os",
+            "os_release",
+            "arch",
+            "cpu_model",
+            "cpu_logical_count",
+            "python_version"
+          ],
+          "properties": {
+            "os": { "type": "string", "description": "Operating system name (platform.system())." },
+            "os_release": { "type": "string", "description": "Operating system release (platform.release())." },
+            "arch": { "type": "string", "description": "CPU architecture (platform.machine())." },
+            "cpu_model": { "type": ["string", "null"], "description": "CPU model string, or null if unavailable." },
+            "cpu_logical_count": { "type": ["integer", "null"], "minimum": 1, "description": "Logical CPU count, or null." },
+            "python_version": { "type": "string", "description": "Python version running scripts/benchmark-vtime.py." }
+          }
+        }
+      }
+    },
+    "run_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Runner configuration for this benchmark invocation.",
+      "required": [
+        "profile",
+        "warmup_iterations",
+        "measured_iterations",
+        "control_metrics_mode",
+        "busy_machine_wait"
+      ],
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["default", "smoke", "custom"],
+          "description": "Workload/iteration profile used."
+        },
+        "warmup_iterations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of full warm-up iterations executed and excluded from summary statistics."
+        },
+        "measured_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of measured iterations aggregated into summary statistics."
+        },
+        "control_metrics_mode": {
+          "type": "string",
+          "enum": ["auto", "on", "off"],
+          "description": "Value of --control-metrics."
+        },
+        "busy_machine_wait": {
+          "type": "boolean",
+          "description": "Whether busy_machine.wait_until_quiet() was enabled."
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Executed benchmark cases and their per-iteration and summary results.",
+      "items": { "$ref": "#/definitions/benchmark_case" }
+    }
+  },
+  "definitions": {
+    "unavailable_target_build_flags": {
+      "type": "object",
+      "description": "Enforces null optimization/codegen/sanitizer/ndebug fields when flags_source == unavailable.",
+      "properties": {
+        "optimization_flags": { "type": "null" },
+        "effective_opt_level": { "type": "null" },
+        "codegen_and_defines": { "type": "null" },
+        "sanitizers": { "type": "null" },
+        "ndebug": { "type": "null" }
+      }
+    },
+    "target_build_flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Compiler and effective flag facts for one target translation unit.",
+      "required": [
+        "compiler_id",
+        "compiler_version",
+        "compiler_banner",
+        "optimization_flags",
+        "effective_opt_level",
+        "codegen_and_defines",
+        "sanitizers",
+        "ndebug"
+      ],
+      "properties": {
+        "compiler_id": { "type": ["string", "null"], "description": "Compiler ID (e.g. GNU, Clang, MSVC), or null." },
+        "compiler_version": { "type": ["string", "null"], "description": "Compiler version string, or null." },
+        "compiler_banner": { "type": ["string", "null"], "description": "First line of <compiler> --version, or null." },
+        "optimization_flags": {
+          "type": ["array", "null"],
+          "description": "All -O* / /O* flags in command-line order, or null when unavailable.",
+          "items": { "type": "string" }
+        },
+        "effective_opt_level": {
+          "type": ["string", "null"],
+          "description": "Last optimization flag (last-flag-wins), or null if none / unavailable."
+        },
+        "codegen_and_defines": {
+          "type": ["array", "null"],
+          "description": "Relevant codegen/define flags (-DNDEBUG, -flto*, -march=*, -g*, etc.), or null when unavailable.",
+          "items": { "type": "string" }
+        },
+        "sanitizers": {
+          "type": ["array", "null"],
+          "description": "Active -fsanitize=* flags, or null when unavailable.",
+          "items": { "type": "string" }
+        },
+        "ndebug": { "type": ["boolean", "null"], "description": "Whether -DNDEBUG is active in compile flags, or null." }
+      }
+    },
+    "stats_triple": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Summary median/min/max across measured iterations.",
+      "required": ["median", "min", "max"],
+      "properties": {
+        "median": { "type": "number", "minimum": 0, "description": "Median across measured iterations." },
+        "min": { "type": "number", "minimum": 0, "description": "Minimum across measured iterations." },
+        "max": { "type": "number", "minimum": 0, "description": "Maximum across measured iterations." }
+      }
+    },
+    "stats_with_iqr": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Summary median/min/max/IQR across measured iterations.",
+      "required": ["median", "min", "max", "iqr"],
+      "properties": {
+        "median": { "type": "number", "minimum": 0, "description": "Median across measured iterations." },
+        "min": { "type": "number", "minimum": 0, "description": "Minimum across measured iterations." },
+        "max": { "type": "number", "minimum": 0, "description": "Maximum across measured iterations." },
+        "iqr": { "type": "number", "minimum": 0, "description": "Interquartile range (Q3 - Q1) across measured iterations." }
+      }
+    },
+    "optional_cpu_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Summary CPU statistics across measured iterations, or explicit unavailable state with null values.",
+      "required": ["status", "median", "min", "max"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["available", "unavailable"],
+          "description": "available if all measured iterations collected CPU; otherwise unavailable."
+        },
+        "median": { "type": ["number", "null"], "minimum": 0, "description": "Median CPU ms, or null when unavailable." },
+        "min": { "type": ["number", "null"], "minimum": 0, "description": "Minimum CPU ms, or null when unavailable." },
+        "max": { "type": ["number", "null"], "minimum": 0, "description": "Maximum CPU ms, or null when unavailable." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "available" } } },
+          "then": {
+            "properties": {
+              "median": { "type": "number", "minimum": 0 },
+              "min": { "type": "number", "minimum": 0 },
+              "max": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "unavailable" } } },
+          "then": {
+            "properties": {
+              "median": { "type": "null" },
+              "min": { "type": "null" },
+              "max": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "per_ecu_cpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Steady-state self-CPU delta for one ECU process.",
+      "required": ["name", "status", "reason", "user_ms", "sys_ms", "total_ms"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "ECU participant name." },
+        "status": { "type": "string", "enum": ["available", "unavailable"], "description": "CPU measurement availability." },
+        "reason": { "type": ["string", "null"], "description": "Reason when unavailable; null when available." },
+        "user_ms": { "type": ["number", "null"], "minimum": 0, "description": "User CPU time in ms, or null." },
+        "sys_ms": { "type": ["number", "null"], "minimum": 0, "description": "System/kernel CPU time in ms, or null." },
+        "total_ms": { "type": ["number", "null"], "minimum": 0, "description": "Total CPU time (user + sys) in ms, or null." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "available" } } },
+          "then": {
+            "properties": {
+              "reason": { "type": "null" },
+              "user_ms": { "type": "number", "minimum": 0 },
+              "sys_ms": { "type": "number", "minimum": 0 },
+              "total_ms": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "unavailable" } } },
+          "then": {
+            "properties": {
+              "reason": { "type": "string", "minLength": 1 },
+              "user_ms": { "type": "null" },
+              "sys_ms": { "type": "null" },
+              "total_ms": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "control_transport_metrics_iteration": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional Issue 1 Control transport metrics from vehicle_sil_launch run --control-metrics.",
+      "required": ["status", "unavailable_reason", "source", "counters"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["available", "unavailable", "not_requested"],
+          "description": "Collection state for Issue 1 Control transport metrics."
+        },
+        "unavailable_reason": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "launcher_feature_unsupported",
+            "unreadable",
+            "check_failed",
+            "interrupted_before_setup",
+            "stopped_before_setup",
+            "setup_failed",
+            "internal_error"
+          ],
+          "description": "Reason why Control transport metrics are unavailable, or null."
+        },
+        "source": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["transport", "collector", "scope", "collection_point"],
+              "properties": {
+                "transport": { "const": "silkit", "description": "Control transport implementation." },
+                "collector": { "const": "HubTransport::stats", "description": "Collector source." },
+                "scope": { "const": "cumulative_hub_transport_lifetime", "description": "Cumulative HubTransport lifetime scope." },
+                "collection_point": { "type": ["string", "null"], "description": "Lifecycle collection point." }
+              }
+            }
+          ],
+          "description": "Source provenance from Issue 1 report, or null."
+        },
+        "counters": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "messages",
+                "bytes",
+                "handler_calls",
+                "handler_time_ns",
+                "max_handler_time_ns",
+                "hellos",
+                "last_words",
+                "late_messages",
+                "undecodable",
+                "unknown",
+                "refused_hellos"
+              ],
+              "properties": {
+                "messages": { "type": "integer", "minimum": 0, "description": "Decoded step/submitted messages." },
+                "bytes": { "type": "integer", "minimum": 0, "description": "Total received payload bytes." },
+                "handler_calls": { "type": "integer", "minimum": 0, "description": "Total receive-handler calls." },
+                "handler_time_ns": { "type": "integer", "minimum": 0, "description": "Cumulative controller receive-handler time in ns." },
+                "max_handler_time_ns": { "type": "integer", "minimum": 0, "description": "Maximum single receive-handler call time in ns." },
+                "hellos": { "type": "integer", "minimum": 0, "description": "Accepted agent hellos." },
+                "last_words": { "type": "integer", "minimum": 0, "description": "Received agent last words." },
+                "late_messages": { "type": "integer", "minimum": 0, "description": "Late messages counter." },
+                "undecodable": { "type": "integer", "minimum": 0, "description": "Undecodable wire messages." },
+                "unknown": { "type": "integer", "minimum": 0, "description": "Unknown-session wire messages." },
+                "refused_hellos": { "type": "integer", "minimum": 0, "description": "Refused hello messages." }
+              }
+            }
+          ],
+          "description": "HubTransport::stats() counters when status == available; null otherwise."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "available" } } },
+          "then": {
+            "properties": {
+              "unavailable_reason": { "type": "null" },
+              "source": { "type": "object" },
+              "counters": { "type": "object" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "unavailable" } } },
+          "then": {
+            "properties": {
+              "unavailable_reason": { "type": "string" },
+              "counters": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "not_requested" } } },
+          "then": {
+            "properties": {
+              "unavailable_reason": { "type": "null" },
+              "source": { "type": "null" },
+              "counters": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "iteration_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Single benchmark iteration (either warmup or measured).",
+      "required": [
+        "index",
+        "phase",
+        "steady_state",
+        "non_steady_state",
+        "process_cpu",
+        "control_transport_metrics",
+        "determinism",
+        "environment_noise"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "description": "0-based iteration index within its phase." },
+        "phase": { "type": "string", "enum": ["warmup", "measured"], "description": "Whether this iteration is warm-up or measured." },
+        "steady_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Steady-state measurements strictly over [W, W + M).",
+          "required": [
+            "wall_ns",
+            "wall_ms",
+            "window_skew_ns",
+            "virtual_to_realtime_ratio",
+            "completed_steps",
+            "app_messages"
+          ],
+          "properties": {
+            "wall_ns": { "type": "integer", "minimum": 1, "description": "max(t_end_i) - min(t_start_i) in nanoseconds." },
+            "wall_ms": { "type": "number", "exclusiveMinimum": 0, "description": "wall_ns / 1e6 in milliseconds." },
+            "window_skew_ns": { "type": "integer", "minimum": 0, "description": "Cross-ECU boundary skew: (max t_start - min t_start) + (max t_end - min t_end)." },
+            "virtual_to_realtime_ratio": { "type": "number", "exclusiveMinimum": 0, "description": "(M * 1e6) / wall_ns." },
+            "completed_steps": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "controller_window_steps",
+                "ecu_window_steps_total",
+                "ecu_window_steps_by_participant"
+              ],
+              "properties": {
+                "controller_window_steps": { "type": "integer", "minimum": 1, "description": "Controller steps in [W, W + M)." },
+                "ecu_window_steps_total": { "type": "integer", "minimum": 1, "description": "Sum of ECU steps executed in [W, W + M)." },
+                "ecu_window_steps_by_participant": {
+                  "type": "object",
+                  "additionalProperties": { "type": "integer", "minimum": 1 },
+                  "description": "Steps executed in [W, W + M) per ECU participant."
+                }
+              }
+            },
+            "app_messages": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "tx_in_window",
+                "rx_in_window",
+                "tx_total",
+                "rx_total",
+                "tx_dropped",
+                "rx_dropped"
+              ],
+              "properties": {
+                "tx_in_window": { "type": "integer", "minimum": 0, "description": "CAN TX frames in [W, W + M)." },
+                "rx_in_window": { "type": "integer", "minimum": 0, "description": "CAN RX frames whose tx_ms is in [W, W + M) (arriving in (W, W + M])." },
+                "tx_total": { "type": "integer", "minimum": 0, "description": "Total CAN TX frames in [0, W + M)." },
+                "rx_total": { "type": "integer", "minimum": 0, "description": "Total CAN RX frames in {tx_ms < W + M, rx_ms <= W + M}." },
+                "tx_dropped": { "type": "integer", "const": 0, "description": "Total rejected/dropped TX frames (always verified 0)." },
+                "rx_dropped": { "type": "integer", "const": 0, "description": "Total RX/port overflow drops (always verified 0)." }
+              }
+            }
+          }
+        },
+        "non_steady_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Quarantined non-steady-state telemetry (setup, warm-up, tail, shutdown).",
+          "required": [
+            "total_process_wall_ms",
+            "launcher_run_wall_ms",
+            "setup_and_shutdown_wall_ms",
+            "paused_ms"
+          ],
+          "properties": {
+            "total_process_wall_ms": { "type": "number", "minimum": 0, "description": "Outer monotonic wall time from vehicle_sil_launch spawn to exit." },
+            "launcher_run_wall_ms": { "type": "number", "minimum": 0, "description": "timing.wall_ms - timing.paused_ms from run --json." },
+            "setup_and_shutdown_wall_ms": { "type": "number", "minimum": 0, "description": "max(0, total_process_wall_ms - launcher_run_wall_ms)." },
+            "paused_ms": { "type": "integer", "const": 0, "description": "Paused hold duration in ms (always verified 0)." }
+          }
+        },
+        "process_cpu": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Explicitly scoped process CPU records.",
+          "required": ["ecu_steady_state", "launcher_tree_total"],
+          "properties": {
+            "ecu_steady_state": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "reason",
+                "interval",
+                "window_sim_ms",
+                "target_processes",
+                "excludes",
+                "user_ms",
+                "sys_ms",
+                "total_ms",
+                "per_process"
+              ],
+              "properties": {
+                "status": { "type": "string", "enum": ["available", "unavailable"], "description": "Availability of steady-state ECU CPU." },
+                "reason": { "type": ["string", "null"], "description": "Reason when unavailable; null when available." },
+                "interval": { "const": "steady_state_window", "description": "Measurement interval: [W, W + M]." },
+                "window_sim_ms": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": { "type": "integer", "minimum": 0 },
+                  "description": "[W, W + M] virtual-time bounds in ms."
+                },
+                "target_processes": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string" },
+                  "description": "ECU processes included in this CPU sum."
+                },
+                "excludes": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Processes explicitly excluded from ecu_steady_state."
+                },
+                "user_ms": { "type": ["number", "null"], "minimum": 0, "description": "Sum of ECU user CPU ms, or null." },
+                "sys_ms": { "type": ["number", "null"], "minimum": 0, "description": "Sum of ECU system CPU ms, or null." },
+                "total_ms": { "type": ["number", "null"], "minimum": 0, "description": "Sum of ECU total CPU ms, or null." },
+                "per_process": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "$ref": "#/definitions/per_ecu_cpu" },
+                  "description": "Per-ECU steady-state CPU breakdown."
+                }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "status": { "const": "available" } } },
+                  "then": {
+                    "properties": {
+                      "reason": { "type": "null" },
+                      "user_ms": { "type": "number", "minimum": 0 },
+                      "sys_ms": { "type": "number", "minimum": 0 },
+                      "total_ms": { "type": "number", "minimum": 0 },
+                      "per_process": {
+                        "items": {
+                          "properties": {
+                            "status": { "const": "available" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": { "properties": { "status": { "const": "unavailable" } } },
+                  "then": {
+                    "properties": {
+                      "reason": { "type": "string", "minLength": 1 },
+                      "user_ms": { "type": "null" },
+                      "sys_ms": { "type": "null" },
+                      "total_ms": { "type": "null" }
+                    }
+                  }
+                }
+              ]
+            },
+            "launcher_tree_total": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "reason",
+                "interval",
+                "includes_non_steady_state",
+                "target_processes",
+                "user_ms",
+                "sys_ms",
+                "total_ms",
+                "max_rss_kb"
+              ],
+              "properties": {
+                "status": { "type": "string", "enum": ["available", "unavailable"], "description": "Availability of launcher process-tree CPU via os.wait4." },
+                "reason": { "type": ["string", "null"], "description": "Reason when unavailable; null when available." },
+                "interval": { "const": "full_process_lifetime", "description": "Full process lifetime from spawn to reap." },
+                "includes_non_steady_state": { "const": true, "description": "Always true: includes setup, --describe, warm-up, tail, and shutdown." },
+                "target_processes": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string" },
+                  "description": "Processes accounted for by os.wait4."
+                },
+                "user_ms": { "type": ["number", "null"], "minimum": 0, "description": "Cumulative user CPU ms, or null." },
+                "sys_ms": { "type": ["number", "null"], "minimum": 0, "description": "Cumulative system CPU ms, or null." },
+                "total_ms": { "type": ["number", "null"], "minimum": 0, "description": "Cumulative total CPU ms, or null." },
+                "max_rss_kb": { "type": ["integer", "null"], "minimum": 0, "description": "Maximum resident set size in KiB, or null." }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "status": { "const": "available" } } },
+                  "then": {
+                    "properties": {
+                      "reason": { "type": "null" },
+                      "user_ms": { "type": "number", "minimum": 0 },
+                      "sys_ms": { "type": "number", "minimum": 0 },
+                      "total_ms": { "type": "number", "minimum": 0 },
+                      "max_rss_kb": { "type": "integer", "minimum": 0 }
+                    }
+                  }
+                },
+                {
+                  "if": { "properties": { "status": { "const": "unavailable" } } },
+                  "then": {
+                    "properties": {
+                      "reason": { "type": "string", "minLength": 1 },
+                      "user_ms": { "type": "null" },
+                      "sys_ms": { "type": "null" },
+                      "total_ms": { "type": "null" },
+                      "max_rss_kb": { "type": "null" }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "control_transport_metrics": { "$ref": "#/definitions/control_transport_metrics_iteration" },
+        "determinism": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Deterministic state and timestamped communication trace verification results.",
+          "required": [
+            "verified",
+            "output_sha256",
+            "comm_trace_sha256",
+            "comm_events_verified"
+          ],
+          "properties": {
+            "verified": { "const": true, "description": "True when all deterministic and causal trace invariants passed." },
+            "output_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 over canonical sorted ECU state digests and window step counts." },
+            "comm_trace_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 over canonical sorted TX/RX trace events in {tx_ms < W + M, rx_ms <= W + M}." },
+            "comm_events_verified": { "type": "integer", "minimum": 0, "description": "Total TX + RX events verified in {tx_ms < W + M, rx_ms <= W + M}." }
+          }
+        },
+        "environment_noise": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Host contention observations around this iteration.",
+          "required": [
+            "waited_s",
+            "others_before",
+            "others_after",
+            "load1_before",
+            "load1_after"
+          ],
+          "properties": {
+            "waited_s": { "type": "number", "minimum": 0, "description": "Seconds spent waiting for busy_machine processes before starting." },
+            "others_before": { "type": "array", "items": { "type": "string" }, "description": "Busy processes observed right before iteration launch." },
+            "others_after": { "type": "array", "items": { "type": "string" }, "description": "Busy processes observed right after iteration exit." },
+            "load1_before": { "type": ["number", "null"], "minimum": 0, "description": "1-minute OS load average before launch, or null on Windows." },
+            "load1_after": { "type": ["number", "null"], "minimum": 0, "description": "1-minute OS load average after exit, or null on Windows." }
+          }
+        }
+      }
+    },
+    "benchmark_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One benchmark case definition, its warm-up and measured iterations, and aggregated summary.",
+      "required": [
+        "id",
+        "description",
+        "topology",
+        "workload",
+        "measurement_boundaries",
+        "warmup_iterations",
+        "iterations",
+        "summary"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Case identifier (e.g. case_a_1ecu_1ms)." },
+        "description": { "type": "string", "minLength": 1, "description": "Human-readable description of the case." },
+        "topology": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Explicitly separated ECU, SIL Kit participant, and OS process counts.",
+          "required": [
+            "ecu_count",
+            "silkit_participant_count",
+            "os_process_count",
+            "silkit_registry_hosted_in",
+            "controller_hosted_in",
+            "ecus"
+          ],
+          "properties": {
+            "ecu_count": { "type": "integer", "minimum": 1, "description": "Number of ECU participants." },
+            "silkit_participant_count": { "type": "integer", "minimum": 2, "description": "Total coordinated SIL Kit participants (includes SimulationController)." },
+            "os_process_count": { "type": "integer", "minimum": 2, "description": "Total OS processes (vehicle_sil_launch + ECU processes)." },
+            "silkit_registry_hosted_in": { "type": "string", "description": "Process hosting the SIL Kit registry." },
+            "controller_hosted_in": { "type": "string", "description": "Process hosting SimulationController." },
+            "ecus": {
+              "type": "array",
+              "minItems": 1,
+              "description": "Per-ECU step, sampling, and CAN configuration.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "step_ms",
+                  "configured_sample_period_ms",
+                  "effective_sample_period_ms",
+                  "sample_every_step_active",
+                  "can_period_ms",
+                  "can_offset_ms"
+                ],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "description": "ECU participant name." },
+                  "step_ms": { "type": "integer", "minimum": 1, "description": "ECU virtual-time step width in ms." },
+                  "configured_sample_period_ms": { "type": "integer", "minimum": 0, "description": "AgentOptions::sample_period configured on the ECU." },
+                  "effective_sample_period_ms": { "type": "integer", "minimum": 1, "description": "Actual effective Control sample period in ms (reflecting --sample-every-step)." },
+                  "sample_every_step_active": { "type": "boolean", "description": "True when launcher passed --sample-every-step (L-03)." },
+                  "can_period_ms": { "type": "integer", "minimum": 0, "description": "Cyclic CAN TX period in ms (0 if disabled)." },
+                  "can_offset_ms": { "type": "integer", "minimum": 0, "description": "CAN TX phase offset in ms." }
+                }
+              }
+            }
+          }
+        },
+        "workload": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Fixed virtual workload parameters for this case.",
+          "required": [
+            "speed",
+            "time_step_ms_configured",
+            "time_step_ms_resolved",
+            "warmup_sim_ms",
+            "measure_sim_ms",
+            "tail_sim_ms",
+            "stop_at_ms",
+            "declared_vars_per_ecu",
+            "wire_vars_per_ecu",
+            "step_work",
+            "scenario",
+            "communication_load"
+          ],
+          "properties": {
+            "speed": { "const": "max", "description": "Simulation speed policy. Always max." },
+            "time_step_ms_configured": { "type": ["integer", "null"], "minimum": 1, "description": "Configured time_step_ms, or null when auto-derived via GCD." },
+            "time_step_ms_resolved": { "type": "integer", "minimum": 1, "description": "Resolved controller time_step_ms reported by launcher." },
+            "warmup_sim_ms": { "type": "integer", "minimum": 0, "description": "In-run warm-up virtual duration W in ms." },
+            "measure_sim_ms": { "type": "integer", "minimum": 1, "description": "Measured steady-state virtual duration M in ms." },
+            "tail_sim_ms": { "type": "integer", "minimum": 1, "description": "Post-window tail cushion in ms (>= max ECU step_ms)." },
+            "stop_at_ms": { "type": "integer", "minimum": 1, "description": "Launcher --stop-at-ms = W + M + tail_sim_ms." },
+            "declared_vars_per_ecu": { "type": "integer", "minimum": 4, "description": "Variables declared by vehicle_sil_bench_ecu." },
+            "wire_vars_per_ecu": { "type": "integer", "minimum": 8, "description": "Total wire schema variables per ECU (declared + 4 built-in Peer/ECU variables)." },
+            "step_work": { "type": "integer", "minimum": 0, "description": "Extra deterministic integer mixing iterations per step." },
+            "scenario": { "type": ["string", "null"], "description": "Scenario identifier if enabled, or null." },
+            "communication_load": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "can_network",
+                "can_simulation_mode",
+                "network_simulator",
+                "can_tx_frames_per_sim_s",
+                "can_rx_frames_per_sim_s",
+                "control_samples_per_sim_s"
+              ],
+              "properties": {
+                "can_network": { "type": "string", "minLength": 1, "description": "CAN network name." },
+                "can_simulation_mode": {
+                  "type": "string",
+                  "enum": ["silkit_trivial"],
+                  "description": "CAN simulation mode. Canonical suite measures SIL Kit built-in trivial CAN broadcast only."
+                },
+                "network_simulator": {
+                  "type": "null",
+                  "description": "Always null for canonical trivial-CAN runs (no vehicle_sil_can_bus_simulator / sil-kit-net-sim participant)."
+                },
+                "can_tx_frames_per_sim_s": { "type": "number", "minimum": 0, "description": "Aggregate CAN TX frames per virtual second." },
+                "can_rx_frames_per_sim_s": { "type": "number", "minimum": 0, "description": "Aggregate CAN RX frames per virtual second." },
+                "control_samples_per_sim_s": { "type": "number", "minimum": 0, "description": "Aggregate Control sample frames per virtual second." }
+              }
+            }
+          }
+        },
+        "measurement_boundaries": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Explicit steady-state window and excluded phases.",
+          "required": ["steady_state_window_sim_ms", "excluded_from_steady_state"],
+          "properties": {
+            "steady_state_window_sim_ms": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "integer", "minimum": 0 },
+              "description": "[W, W + M] virtual-time bounds in ms."
+            },
+            "excluded_from_steady_state": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" },
+              "description": "Phases explicitly excluded from steady_state metrics."
+            }
+          }
+        },
+        "warmup_iterations": {
+          "type": "array",
+          "description": "Warm-up iterations strictly excluded from summary statistics.",
+          "items": {
+            "allOf": [
+              { "$ref": "#/definitions/iteration_record" },
+              { "properties": { "phase": { "const": "warmup" } } }
+            ]
+          }
+        },
+        "iterations": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Measured iterations aggregated into summary statistics.",
+          "items": {
+            "allOf": [
+              { "$ref": "#/definitions/iteration_record" },
+              { "properties": { "phase": { "const": "measured" } } }
+            ]
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Aggregated statistics across measured iterations only.",
+          "required": [
+            "iteration_count",
+            "steady_state_wall_ms",
+            "virtual_to_realtime_ratio",
+            "ecu_steady_state_cpu_ms",
+            "launcher_tree_cpu_ms",
+            "control_transport_metrics",
+            "determinism"
+          ],
+          "properties": {
+            "iteration_count": { "type": "integer", "minimum": 1, "description": "Count of measured iterations aggregated." },
+            "steady_state_wall_ms": { "$ref": "#/definitions/stats_with_iqr" },
+            "virtual_to_realtime_ratio": { "$ref": "#/definitions/stats_triple" },
+            "ecu_steady_state_cpu_ms": { "$ref": "#/definitions/optional_cpu_summary" },
+            "launcher_tree_cpu_ms": { "$ref": "#/definitions/optional_cpu_summary" },
+            "control_transport_metrics": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "scope",
+                "handler_time_ns",
+                "max_handler_time_ns",
+                "messages",
+                "bytes",
+                "handler_calls"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": ["available", "unavailable", "not_requested"],
+                  "description": "Summary status for Control transport metrics."
+                },
+                "scope": {
+                  "type": ["string", "null"],
+                  "enum": [null, "cumulative_hub_transport_lifetime"],
+                  "description": "cumulative_hub_transport_lifetime when available; null otherwise."
+                },
+                "handler_time_ns": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/stats_triple" }] },
+                "max_handler_time_ns": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/stats_triple" }] },
+                "messages": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/stats_triple" }] },
+                "bytes": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/stats_triple" }] },
+                "handler_calls": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/stats_triple" }] }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "status": { "const": "available" } } },
+                  "then": {
+                    "properties": {
+                      "scope": { "const": "cumulative_hub_transport_lifetime" },
+                      "handler_time_ns": { "type": "object" },
+                      "max_handler_time_ns": { "type": "object" },
+                      "messages": { "type": "object" },
+                      "bytes": { "type": "object" },
+                      "handler_calls": { "type": "object" }
+                    }
+                  }
+                },
+                {
+                  "if": { "properties": { "status": { "enum": ["unavailable", "not_requested"] } } },
+                  "then": {
+                    "properties": {
+                      "scope": { "type": "null" },
+                      "handler_time_ns": { "type": "null" },
+                      "max_handler_time_ns": { "type": "null" },
+                      "messages": { "type": "null" },
+                      "bytes": { "type": "null" },
+                      "handler_calls": { "type": "null" }
+                    }
+                  }
+                }
+              ]
+            },
+            "determinism": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "all_iterations_identical",
+                "output_sha256",
+                "comm_trace_sha256"
+              ],
+              "properties": {
+                "all_iterations_identical": { "const": true, "description": "True when every warm-up and measured iteration matched bit-for-bit." },
+                "output_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Shared output digest across all iterations." },
+                "comm_trace_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Shared causal CAN trace digest across all iterations." }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

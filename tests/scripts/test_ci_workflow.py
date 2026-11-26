@@ -609,6 +609,8 @@ class ChangesTruthTable(unittest.TestCase):
         gui_server_filter = r"^(launch\.shared_values|schema\.)"
         scripts_filter = r"^(scripts|template)\."
         trace_scripts_filter = r"^(scripts|template)\.|^launch_run\.trace_files$"
+        bench_scripts_filter = r"^(scripts|template)\.|^benchmark\.smoke_determinism$"
+        both_scripts_filter = r"^(scripts|template)\.|^launch_run\.trace_files$|^benchmark\.smoke_determinism$"
         cases = [
             # (description, event, files, expected outputs — ctest_filter defaults to "")
             (
@@ -755,6 +757,22 @@ class ChangesTruthTable(unittest.TestCase):
                 {"docs_only": "false", "full": "false", "gui": "false", "gui_server": "false",
                  "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "true",
                  "presets": debug, "ctest_filter": trace_scripts_filter},
+            ),
+            (
+                "pure scripts/benchmark-vtime.py also runs benchmark.smoke_determinism",
+                "pull_request",
+                ["scripts/benchmark-vtime.py", "tests/scripts/test_benchmark_vtime.py"],
+                {"docs_only": "false", "full": "false", "gui": "false", "gui_server": "false",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "true",
+                 "presets": debug, "ctest_filter": bench_scripts_filter},
+            ),
+            (
+                "both trace-report.py and benchmark-vtime.py compose both smoke filters",
+                "pull_request",
+                ["scripts/trace-report.py", "scripts/benchmark-vtime.py"],
+                {"docs_only": "false", "full": "false", "gui": "false", "gui_server": "false",
+                 "gui_docs": "false", "gui_pack_docs": "false", "tsan": "false", "windows": "true",
+                 "presets": debug, "ctest_filter": both_scripts_filter},
             ),
             (
                 "GUI-related and shared scripts still run gui, gui-server, debug, control, tsan and Windows",

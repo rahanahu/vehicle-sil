@@ -145,6 +145,7 @@ These steps are a trial. They are advice: no CI check enforces them, and their e
 | `scripts/package.py` | Creates the prebuilt tools archive (`tools`), checks it by following the steps a user takes (`verify`), creates the template archive (`template`), and checks that the version numbers agree (`version`) |
 | `scripts/run-gui.py` | Starts the browser GUI from the repository (for anything missing, it names the command that builds it; it builds nothing itself) |
 | `scripts/trace-report.py` | Summarizes a profiling trace of one run: the critical path of each virtual-time step across the processes, and where each scenario write's time goes ([docs/internals/trace.md](docs/internals/trace.md)) |
+| `scripts/benchmark-vtime.py` | Runs the reproducible coordinated virtual-time benchmark suite, verifies deterministic digests and causal CAN traces, and writes a JSON report ([docs/internals/benchmark.md](docs/internals/benchmark.md)) |
 
 - **Fast local iteration vs full GUI verification:**
   - For non-timing-sensitive checks (`npm --prefix gui/web run format:check`, `lint`, `test:timeline`; `npx vitest run --config ../client/vitest.config.mjs --project node` or a single client spec; pure in-process `uv run --no-sync pytest gui/server/tests/<file>.py`), you may call the tool directly or use `scripts/verify-web.py --only ...` / `scripts/verify-gui.py --no-sync <file>`.

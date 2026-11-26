@@ -769,7 +769,7 @@ def tools_command(args: argparse.Namespace) -> int:
     def configure(s: Step) -> None:
         command = ["cmake", "-S", ROOT, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
                    "-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON", "-DVEHICLE_SIL_BUILD_TESTS=OFF",
-                   "-DVEHICLE_SIL_BUILD_EXAMPLES=OFF"]
+                   "-DVEHICLE_SIL_BUILD_EXAMPLES=OFF", "-DVEHICLE_SIL_BUILD_BENCHMARKS=OFF"]
         # Always the pinned gRPC built here and linked statically, never a system one (MSYS2's is DLLs that
         # need libstdc++-6.dll: a second C++ runtime next to the static one, and DLLs a user's PATH may mix up).
         command += ["-DCMAKE_DISABLE_FIND_PACKAGE_gRPC=ON"]
