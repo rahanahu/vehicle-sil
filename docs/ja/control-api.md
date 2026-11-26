@@ -787,7 +787,7 @@ python -m vehicle_sil_control stop
 
 - 速度を指定して遅れたときは、遅れた分だけ後ろにずれたまま、指定の速度で進みます（[internals/virtual-time.md](internals/virtual-time.md#遅れの測り方) の「遅れの測り方」）。
 - participant の失敗は、シミュレーションの状態（`watch(simulation=True)` の `failed_participant` と `failure_reason`）で読みます。
-- CAN / J1939 の生フレームを取りこぼしなく記録するには、`ecu_main` の ECU では `Spy::Scope::on_frame` または `ecu.can().on_frame()` を使います（同一プロセス内で `Peer` や `LocalBench` を直接使う場合は `Peer::tap()` / `TapPort` も利用できますが、`Ecu` からは呼べません）。SIL Kit の `TraceSinks` は CAN ではそのまま使えません。同梱の `PcapFile` / `PcapPipe` は Ethernet 専用で CAN フレームに対して例外を投げ、`Mdf4File` には vehicle-sil に同梱されていない Vector 外部拡張 `SilKitExtension_Mdf` が必要です。
+- CAN / J1939 の生フレームを取りこぼしなく記録するには、`ecu_main` の ECU では `spy::Scope::on_frame` または `ecu.can().on_frame()` を使います（同一プロセス内で `Peer` や `LocalBench` を直接使う場合は `Peer::tap()` / `TapPort` も利用できますが、`Ecu` からは呼べません）。SIL Kit の `TraceSinks` は CAN ではそのまま使えません。同梱の `PcapFile` / `PcapPipe` は Ethernet 専用で CAN フレームに対して例外を投げ、`Mdf4File` には vehicle-sil に同梱されていない Vector 外部拡張 `SilKitExtension_Mdf` が必要です。
 
 | 上限（Server の既定） | 値 |
 |---|---|

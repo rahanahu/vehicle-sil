@@ -1298,8 +1298,11 @@ class ServeUnitTest(unittest.TestCase):
             control_address([ev])
         self.assertIn("missing libfoo.so.1", str(ctx.exception))
 
-        # Long detail is truncated cleanly to _MAX_FINDING_DETAIL_CHARS + "...".
-        long_detail = "E" * (_MAX_FINDING_DETAIL_CHARS + 200)
+        # Long detail keeps both leading context (head) and final error line (tail), bounded.
+        head_marker = "the end of its standard error:\nTraceback (most recent call last):"
+        tail_marker = "ModuleNotFoundError: No module named 'missing_dep'"
+        long_detail = f"{head_marker}\n" + ("middle line\n" * 60) + tail_marker
+        self.assertGreater(len(long_detail), _MAX_FINDING_DETAIL_CHARS)
         long_ev = {
             "event": "result",
             "result": {
@@ -1308,8 +1311,10 @@ class ServeUnitTest(unittest.TestCase):
             },
         }
         long_why = _why(long_ev)
-        self.assertIn("E" * _MAX_FINDING_DETAIL_CHARS + "...", long_why)
-        self.assertNotIn("E" * (_MAX_FINDING_DETAIL_CHARS + 1), long_why)
+        self.assertIn(head_marker, long_why)
+        self.assertIn(" ... ", long_why)
+        self.assertIn(tail_marker, long_why)
+        self.assertLess(len(long_why), _MAX_FINDING_DETAIL_CHARS + 64)
 
     def test_abnormal_exit_includes_command_returncode_and_stderr_tail(self) -> None:
         # 1. Serve startup crash includes command, exit code, and stderr tail.
@@ -1381,6 +1386,57 @@ class ServeUnitTest(unittest.TestCase):
                 self.assertIn("code 5", str(l_ctx.exception))
                 self.assertIn("/fake/launch serve --once --control 0 -- sim.yaml", str(l_ctx.exception))
                 self.assertIn("launch fatal stderr", str(l_ctx.exception))
+
+    def test_idle_crash_between_commands_and_broken_pipe_include_exit_context(self) -> None:
+        procs: list[_FakeProcess] = []
+
+        def make_proc(cmd, **kw):
+            p = _FakeProcess(cmd, stderr_pipe=True)
+            procs.append(p)
+            return p
+
+        # 1. Idle crash between commands: _next_command_id() reports exit code, command, and stderr tail.
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=make_proc):
+            with Serve("/fake/launch", "sim.yaml", stderr=subprocess.PIPE) as runner:
+                assert procs[0].stderr is not None
+                procs[0].stderr.push_raw(b"idle crash fatal stderr\n")
+                procs[0].finish(134)
+                deadline = time.monotonic() + 2.0
+                while not runner._ended and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                self.assertTrue(runner._ended)
+                for call in (runner.prepare, runner.status, runner.start):
+                    with self.assertRaises(ServeError) as ctx:
+                        call()
+                    msg = str(ctx.exception)
+                    self.assertIn("exit code 134", msg)
+                    self.assertIn("/fake/launch serve -- sim.yaml", msg)
+                    self.assertIn("idle crash fatal stderr", msg)
+
+                # Explicit id= bypasses _next_command_id() and hits _write_line() BrokenPipeError.
+                def broken_write(_data: bytes) -> int:
+                    raise BrokenPipeError("broken pipe")
+
+                procs[0].stdin.write = broken_write  # type: ignore[method-assign]
+                for call in (
+                    lambda: runner.prepare(id=41),
+                    lambda: runner.status(id=42),
+                    lambda: runner.start(id=43),
+                ):
+                    with self.assertRaises(ServeError) as w_ctx:
+                        call()
+                    msg = str(w_ctx.exception)
+                    self.assertIn("exit code 134", msg)
+                    self.assertIn("/fake/launch serve -- sim.yaml", msg)
+                    self.assertIn("idle crash fatal stderr", msg)
+
+        # 2. Normal close() does NOT attach abnormal-exit context on post-close calls.
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=lambda cmd, **kw: _FakeProcess(cmd, stderr_pipe=True)):
+            runner = Serve("/fake/launch", "sim.yaml", stderr=subprocess.PIPE)
+            runner.close()
+            with self.assertRaises(ServeError) as closed_ctx:
+                runner.status()
+            self.assertEqual(str(closed_ctx.exception), "vehicle_sil_launch serve has ended")
 
     def test_launch_pid_and_participant_pids(self) -> None:
         # 1. Launch.pid and Launch.participant_pids.

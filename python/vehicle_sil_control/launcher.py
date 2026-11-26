@@ -49,7 +49,9 @@ def _format_finding(finding: Mapping) -> str:
         detail = raw_detail.strip()
         if detail:
             if len(detail) > _MAX_FINDING_DETAIL_CHARS:
-                detail = detail[:_MAX_FINDING_DETAIL_CHARS] + "..."
+                head_len = _MAX_FINDING_DETAIL_CHARS * 2 // 5
+                tail_len = _MAX_FINDING_DETAIL_CHARS - head_len
+                detail = f"{detail[:head_len]} ... {detail[-tail_len:]}"
             return f"{msg} ({detail})" if msg else detail
     return msg
 

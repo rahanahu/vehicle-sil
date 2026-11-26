@@ -582,7 +582,8 @@ class Serve:
 
     def _next_command_id(self) -> int:
         if self._closed or self._ended:
-            raise ServeError("vehicle_sil_launch serve has ended")
+            suffix = self._exit_context_locked() if self._ended and not self._closed else ""
+            raise ServeError(f"vehicle_sil_launch serve has ended{suffix}")
         for _ in range(len(self._pending) + 1):
             cmd_id = self._next_id
             self._next_id = 1 if cmd_id >= MAX_COMMAND_ID else cmd_id + 1
@@ -602,6 +603,7 @@ class Serve:
 
     def _write_line(self, line_bytes: bytes) -> None:
         wire = line_bytes + b"\n"
+        write_exc: Optional[Exception] = None
         with self._write_lock:
             if self._process.stdin is None or self._process.stdin.closed:
                 raise ServeError("vehicle_sil_launch serve stdin is closed")
@@ -609,7 +611,13 @@ class Serve:
                 self._process.stdin.write(wire)
                 self._process.stdin.flush()
             except (BrokenPipeError, ValueError, OSError) as exc:
-                raise ServeError(f"cannot write command to vehicle_sil_launch serve: {exc}") from exc
+                write_exc = exc
+        if write_exc is not None:
+            if self._stderr_reader is not None and not self._closed and self._stderr_reader.is_alive():
+                self._stderr_reader.join(0.2)
+            with self._changed:
+                suffix = self._exit_context_locked() if not self._closed else ""
+            raise ServeError(f"cannot write command to vehicle_sil_launch serve: {write_exc}{suffix}") from write_exc
 
     def _unlink_temp(self, path: Optional[str]) -> None:
         if path is None:

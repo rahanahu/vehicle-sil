@@ -787,7 +787,7 @@ Writes during a scenario have the `reason` `scenario-running`.
 
 - When a run at a set speed falls behind, it keeps going at the set speed, shifted back by the lateness (see "How lateness is measured" in [internals/virtual-time.md](internals/virtual-time.md#how-lateness-is-measured)).
 - Read participant failures from the simulation state (`failed_participant` and `failure_reason` of `watch(simulation=True)`).
-- To record every raw CAN/J1939 frame without missing intermediate frames, use `Spy::Scope::on_frame` or `ecu.can().on_frame()` in an `ecu_main` ECU (or `Peer::tap()` / `TapPort` when driving a `Peer` or `LocalBench` directly in-process; `TapPort` is not exposed on `Ecu`). Do not rely on SIL Kit `TraceSinks` for CAN: the bundled `PcapFile`/`PcapPipe` sinks are Ethernet-only and throw on CAN frames, and `Mdf4File` requires Vector's external `SilKitExtension_Mdf` extension, which is not bundled with vehicle-sil.
+- To record every raw CAN/J1939 frame without missing intermediate frames, use `spy::Scope::on_frame` or `ecu.can().on_frame()` in an `ecu_main` ECU (or `Peer::tap()` / `TapPort` when driving a `Peer` or `LocalBench` directly in-process; `TapPort` is not exposed on `Ecu`). Do not rely on SIL Kit `TraceSinks` for CAN: the bundled `PcapFile`/`PcapPipe` sinks are Ethernet-only and throw on CAN frames, and `Mdf4File` requires Vector's external `SilKitExtension_Mdf` extension, which is not bundled with vehicle-sil.
 
 | Limit (server default) | Value |
 |---|---|
