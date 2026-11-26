@@ -38,11 +38,9 @@ namespace vehicle_sil::spy {
 namespace detail {
 
 /// The items a Watch publishes beside the signals ("<as>.count" ...; "state" for
-/// "<as>.<signal>.state"): no signal may have one of these names. "stale_count" is checked at
-/// setup only when WatchOptions::stale_after is set, so existing messages with a signal of that
-/// name stay compatible when stale_after is unset.
-inline constexpr std::array<std::string_view, 7> kWatchItems{"count",   "last_ms", "period_ms", "size",
-                                                             "invalid", "stale",   "state"};
+/// "<as>.<signal>.state"): no signal may have one of these names.
+inline constexpr std::array<std::string_view, 8> kWatchItems{"count",   "last_ms", "period_ms",   "size",
+                                                             "invalid", "stale",   "stale_count", "state"};
 
 [[nodiscard]] constexpr bool is_watch_item(std::string_view name) noexcept
 {
@@ -162,10 +160,9 @@ inline std::vector<control::EnumItem> state_items()
 /// one handed on later is the latest, and period_ms is 0.
 ///
 /// No signal of M may be named like an item above (count, last_ms, period_ms, size, invalid,
-/// stale, state): a build error says so; rename the signal in M's definition. A signal named
-/// stale_count is refused at setup (std::invalid_argument) only when options.stale_after is set.
-/// If the ECU has one of the variables already, the watch publishes none (std::invalid_argument).
-/// Allocates when it is made only.
+/// stale, stale_count, state): a build error says so; rename the signal in M's definition. If the ECU has one
+/// of the variables already, the watch publishes none (std::invalid_argument). Allocates when it
+/// is made only.
 template <class M>
 class Watch final
 {
@@ -237,8 +234,7 @@ public:
 
 private:
     /// All or nothing: std::invalid_argument before the first variable if the ECU has one of
-    /// the watch's variables already, or if a signal of M clashes with "stale_count" when
-    /// options.stale_after is set.
+    /// the watch's variables already.
     void require_free(const Scope& scope) const
     {
         const auto require = [&scope](const std::string& item) {
@@ -251,18 +247,8 @@ private:
             }
         };
         M probe{};
-        std::as_const(probe).for_each_signal([&](const auto& signal) {
+        std::as_const(probe).for_each_signal([&require](const auto& signal) {
             using S = std::remove_cvref_t<decltype(signal)>;
-            if constexpr (S::name == "stale_count")
-            {
-                if (options_.stale_after)
-                {
-                    throw std::invalid_argument("vehicle_sil::spy::Spy::watch() \"" + scope.name() +
-                                                "\": a signal of M is named \"stale_count\", which WatchOptions::stale_after "
-                                                "publishes too: rename the signal in M's definition, or leave out "
-                                                "WatchOptions::stale_after (the watch published nothing)");
-                }
-            }
             require(std::string(S::name));
             if constexpr (detail::can_be_invalid<S>())
             {
@@ -292,7 +278,7 @@ private:
     {
         static_assert(!detail::is_watch_item(S::name),
                       "vehicle_sil::spy::Spy::watch<M>(): a signal of M is named like an item the watch publishes "
-                      "(count, last_ms, period_ms, size, invalid, stale, state), so two variables would have one name: "
+                      "(count, last_ms, period_ms, size, invalid, stale, stale_count, state), so two variables would have one name: "
                       "rename the signal in M's definition (the YAML file, or the type written by hand)");
         const std::string name(S::name);
         std::string description = "Latest valid value of the signal";

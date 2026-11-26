@@ -35,9 +35,8 @@ xor xor_eq final override import module
 """.split())
 
 # The members of a signal's description (Signals::<signal name>): a signal of the same name would
-# be a member with the name of its class. "enumerator_names" is only emitted for enum signals
-# (sig.enumerators non-empty), so it is rejected only for those.
-SPEC_MEMBERS = {"layout", "name", "unit", "spn", "enumerators", "special_values"}
+# be a member with the name of its class.
+SPEC_MEMBERS = {"layout", "name", "unit", "spn", "enumerators", "enumerator_names", "special_values"}
 
 # Names the generated message type uses itself (members and the parameters of its functions).
 MESSAGE_MEMBERS = {"kPgn", "kPriority", "kLength", "kFill", "kFillBytes", "Selector", "Signals", "encode", "decode",
@@ -575,8 +574,7 @@ def parse_message(where, m, defaults, profiles, defined):
     names = {}
     for i, s in enumerate(signals):
         sig = parse_signal("%s.signals[%d]" % (where, i), s, indicators, profiles, bits)
-        if (sig.name in MESSAGE_MEMBERS or sig.name in SPEC_MEMBERS or sig.name == msg.name
-                or (sig.enumerators and sig.name == "enumerator_names")):
+        if sig.name in MESSAGE_MEMBERS or sig.name in SPEC_MEMBERS or sig.name == msg.name:
             fail(where, "signal name '%s' is used by the generated type" % sig.name)
         claim("signal '%s'" % sig.name, sig.bits)
         names_here = [(sig.name, "signal")]

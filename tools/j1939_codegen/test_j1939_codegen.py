@@ -189,20 +189,18 @@ class Errors(Checks):
         """), "is unsigned")
 
     def test_generated_names(self):
-        for name in ("name", "unit", "layout", "spn", "enumerators", "output_bytes", "visitor", "M"):
+        for name in ("name", "unit", "layout", "spn", "enumerators", "enumerator_names", "output_bytes", "visitor", "M"):
             self.assertError(message("""
                 - {name: %s, start_bit: 0, length: 8}
             """ % name), "signal name '%s' is used by the generated type" % name)
-        # enumerator_names is only emitted on enum signals: rejected for enum signals, allowed otherwise.
+        # Enum signals also reject SPEC_MEMBERS names such as enumerator_names.
         self.assertError(message("""
             - {name: enumerator_names, start_bit: 0, length: 2, values: {a: 0, b: 1}}
         """), "signal name 'enumerator_names' is used by the generated type")
-        code, header = run(message("""
-            - {name: enumerator_names, start_bit: 0, length: 8}
-        """))
+        # SPEC_MEMBERS names remain allowed as message names.
+        code, header = run("namespace: n\nmessages:\n  - {name: enumerator_names, pgn: 0xFF00}\n")
         self.assertEqual(code, 0, header)
-        self.assertIn("        struct enumerator_names\n", header)
-        self.assertNotIn("enumerator_names{{", header)
+        self.assertIn("struct enumerator_names\n", header)
         self.assertError("namespace: n\nmessages:\n  - {name: Signals, pgn: 0xFF00}\n", "is used by the generated type")
         self.assertError('namespace: n\nmessages:\n  - {name: "a\\n", pgn: 0xFF00}\n', "is not a C++ identifier")
 

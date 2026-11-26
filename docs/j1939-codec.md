@@ -156,12 +156,12 @@ Signals and messages cannot use the names that the generated types use.
 | Name | Signal name | Message name |
 |---|---|---|
 | `encode`, `decode`, `bytes`, `for_each_signal`, `kPgn`, `kPriority`, `kLength`, `kFill`, `Signals`, `Selector`, `output_bytes`, `input_bytes`, `visitor`, `Visitor`, `kFillBytes` | Not allowed | Not allowed |
-| Members of the signal definition: `layout`, `name`, `unit`, `spn`, `enumerators`, `special_values`, and `enumerator_names` (for enum signals with `values:` only) | Not allowed | Allowed |
+| Members of the signal definition: `layout`, `name`, `unit`, `spn`, `enumerators`, `enumerator_names`, `special_values` | Not allowed | Allowed |
 | The message's own name | Not allowed | — |
 
 The generated code fully qualifies `std` and `vehicle_sil` (with a leading `::`), so you can use any other name, including `std`, `data` and `size_t`.
 
-A message that `vehicle_sil::spy::Spy::watch<M>()` watches also cannot have a signal named `count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale` or `state` (they name its other variables; `watch()` does not build with such a signal), nor `stale_count` when `WatchOptions::stale_after` is set (throws `std::invalid_argument` at setup; allowed when `stale_after` is unset). See "Listen-only participants" in [j1939-guide.md](j1939-guide.md#listen-only-participants).
+A message that `vehicle_sil::spy::Spy::watch<M>()` watches also cannot have a signal named `count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, `stale_count` or `state` (they name its other variables; `watch()` does not build with such a signal). See "Listen-only participants" in [j1939-guide.md](j1939-guide.md#listen-only-participants).
 
 ### How YAML values are read
 

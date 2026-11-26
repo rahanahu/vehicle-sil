@@ -156,12 +156,12 @@ messages:
 | 名前 | 信号の名前 | メッセージの名前 |
 |---|---|---|
 | `encode`、`decode`、`bytes`、`for_each_signal`、`kPgn`、`kPriority`、`kLength`、`kFill`、`Signals`、`Selector`、`output_bytes`、`input_bytes`、`visitor`、`Visitor`、`kFillBytes` | 使えない | 使えない |
-| 信号の定義のメンバー `layout`、`name`、`unit`、`spn`、`enumerators`、`special_values`、および `enumerator_names`（`values:` を持つ列挙の信号だけ） | 使えない | 使える |
+| 信号の定義のメンバー `layout`、`name`、`unit`、`spn`、`enumerators`、`enumerator_names`、`special_values` | 使えない | 使える |
 | メッセージ自身の名前 | 使えない | — |
 
 生成したコードは `std` と `vehicle_sil` を `::` から書くので、それ以外の名前（`std`、`data`、`size_t` など）は使えます。
 
-`vehicle_sil::spy::Spy::watch<M>()` で見張るメッセージは、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`state` という名前の信号も持てません（ほかの変数の名前になるため。そういう信号があると `watch()` がビルドできません）。`stale_count` も `WatchOptions::stale_after` を指定したときは使えません（設定時に `std::invalid_argument` を投げます。`stale_after` を指定しないときは使えます）。[j1939-guide.md](j1939-guide.md#受信だけをする-participant) の「受信だけをする participant」を見てください。
+`vehicle_sil::spy::Spy::watch<M>()` で見張るメッセージは、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`stale_count`、`state` という名前の信号も持てません（ほかの変数の名前になるため。そういう信号があると `watch()` がビルドできません）。[j1939-guide.md](j1939-guide.md#受信だけをする-participant) の「受信だけをする participant」を見てください。
 
 ### YAML の値の読み方
 

@@ -26,7 +26,6 @@ using vehicle_sil::spy::WatchOptions;
 using vehicle_sil::unit::spy::hand_written::FirstByte;
 using vehicle_sil::unit::spy::hand_written::Reading;
 using vehicle_sil::unit::spy::hand_written::Wide;
-using vehicle_sil::unit::spy::hand_written::WithStaleCount;
 namespace codec = vehicle_sil::j1939::codec;
 
 namespace {
@@ -347,17 +346,29 @@ TEST_CASE(watch_errors_say_what_is_wrong_and_how_to_fix_it)
         CHECK_EQ(integer_of(rig.ecu, "r.count"), 0);
     }
     {
-        // Pre-existing stale_count blocks a watch with stale_after atomically.
+        // Pre-existing ECU variable r.stale_count blocks a watch with stale_after atomically,
+        // and is allowed when stale_after is unset.
         Rig rig;
-        std::int64_t other = 0;
+        rig.ecu.set_agent_options({.sample_period = std::chrono::milliseconds(0)});
+        std::int64_t other = 7;
         rig.ecu.output("r.stale_count", &other);
         Spy& spy = make_spy(rig);
         CHECK_MESSAGE(message_of<std::invalid_argument>([&] { spy.watch<Reading>("r", {.stale_after = 50ms}); }),
                       "vehicle_sil::spy::Spy::watch() \"r\": the ECU has the variable \"r.stale_count\" already, and "
                       "the watch publishes it too: give the watch another name, or rename the other variable (the "
                       "watch published nothing)");
+        for (const char* name : {"r.level", "r.level.state", "r.code", "r.stale", "r.count"})
+        {
+            CHECK(!has_variable(rig.ecu, name));
+        }
+        // Without stale_after, the watch does not publish r.stale_count, so the pre-existing variable
+        // does not collide (and the failed watch above did not reserve "r").
+        spy.watch<Reading>("r");
+        rig.inject(at(3ms), frame(6, kPgnPropA, kA, kB, bytes_of(reading(42.0, 3))));
+        rig.bench.run_until(at(10ms) + 1ns);
+        CHECK_EQ(integer_of(rig.ecu, "r.count"), 1);
+        CHECK_EQ(integer_of(rig.ecu, "r.stale_count"), 7);
         CHECK(!has_variable(rig.ecu, "r.stale"));
-        CHECK(!has_variable(rig.ecu, "r.count"));
     }
     {
         Rig rig;
@@ -368,55 +379,11 @@ TEST_CASE(watch_errors_say_what_is_wrong_and_how_to_fix_it)
                       "constructor");
     }
     // The names a signal may not have (a build error: j1939_spy.watch_of_a_signal_named_count_does_not_build).
-    for (const char* item : {"count", "last_ms", "period_ms", "size", "invalid", "stale", "state"})
+    for (const char* item : {"count", "last_ms", "period_ms", "size", "invalid", "stale", "stale_count", "state"})
     {
         CHECK(vehicle_sil::spy::detail::is_watch_item(item));
     }
-    CHECK(!vehicle_sil::spy::detail::is_watch_item("stale_count"));
     CHECK(!vehicle_sil::spy::detail::is_watch_item("speed"));
-}
-
-TEST_CASE(watch_allows_signal_named_stale_count_only_without_stale_after)
-{
-    {
-        // Without stale_after: compiles, publishes the message's own signal as "<as>.stale_count".
-        Rig rig;
-        rig.ecu.set_agent_options({.sample_period = std::chrono::milliseconds(0)});
-        make_spy(rig).watch<WithStaleCount>("s");
-        WithStaleCount m;
-        m.value.set(42.0);
-        m.stale_count.set(7.0);
-        rig.inject(at(3ms), frame(6, kPgnPropA, kA, kB, bytes_of(m)));
-        rig.bench.run_until(at(10ms) + 1ns);
-        CHECK_EQ(integer_of(rig.ecu, "s.value"), 42);
-        CHECK_EQ(integer_of(rig.ecu, "s.stale_count"), 7);
-        CHECK_EQ(integer_of(rig.ecu, "s.count"), 1);
-        CHECK(!has_variable(rig.ecu, "s.stale"));
-    }
-    {
-        // With stale_after: throws std::invalid_argument atomically before publishing any variable.
-        Rig rig;
-        rig.ecu.set_agent_options({.sample_period = std::chrono::milliseconds(0)});
-        Spy& spy = make_spy(rig);
-        CHECK_MESSAGE(
-            message_of<std::invalid_argument>([&] { spy.watch<WithStaleCount>("s", {.stale_after = 50ms}); }),
-            "vehicle_sil::spy::Spy::watch() \"s\": a signal of M is named \"stale_count\", which "
-            "WatchOptions::stale_after publishes too: rename the signal in M's definition, or leave out "
-            "WatchOptions::stale_after (the watch published nothing)");
-        for (const char* name : {"s.value", "s.stale_count", "s.stale", "s.count"})
-        {
-            CHECK(!has_variable(rig.ecu, name));
-        }
-        // The failed watch published nothing and did not reserve the name, so watching without stale_after succeeds.
-        spy.watch<WithStaleCount>("s");
-        WithStaleCount m;
-        m.value.set(11.0);
-        m.stale_count.set(3.0);
-        rig.inject(at(3ms), frame(6, kPgnPropA, kA, kB, bytes_of(m)));
-        rig.bench.run_until(at(10ms) + 1ns);
-        CHECK_EQ(integer_of(rig.ecu, "s.value"), 11);
-        CHECK_EQ(integer_of(rig.ecu, "s.stale_count"), 3);
-    }
 }
 
 TEST_CASE(guide_example_publishes_what_it_hears)
