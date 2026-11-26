@@ -9,7 +9,11 @@ separate tracking system when the host already has task notes.
   tests, and applicable repository-instruction paths.
 - **Original requirements:** observable behavior, non-negotiable constraints, and
   accepted tradeoffs. Distinguish these from the author's implementation claims.
+- **Known regression (fix recheck only):** what failed, how to reproduce it
+  (or the code path that established it), and what should happen after the fix.
 - **Candidate claims:** one to three observable promises to try to disprove.
+  On a recheck, use this field for any further challenge. Leave untested cases
+  to the Challenger unless the case itself is an explicit requirement.
   State what the affected user or consumer should observe, under what conditions,
   and why a counterexample would matter. Do not frame the chosen implementation
   as the expected answer. For example, ask whether a run with the new option off
