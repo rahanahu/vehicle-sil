@@ -182,7 +182,7 @@ Obtain `instance` from `GET api/app`, `GET api/session`, `POST api/run`, or WebS
 | Endpoint | `run_id` and `instance` rule | On mismatch |
 |---|---|---|
 | `POST api/stop-session` | Both `run_id` and `instance` are **required** (`400 invalid-field` if either is missing or empty) | `409 session-changed` (nothing stopped) |
-| `POST api/time` | **Both or neither**: include both `run_id` and `instance` (recommended), or omit both to target whichever run is current (preserved for compatibility). Sending only one returns `400 invalid-field` | `409 session-changed` (nothing sent) |
+| `POST api/time` | **Both or neither**: Protocol v4 preserves omitting both unchanged for compatibility (targeting whichever run is current), but new clients, AI agents, and CI automation should always send both `instance` and `run_id`. Sending only one returns `400 invalid-field` | `409 session-changed` (nothing sent) |
 | `POST api/write` | `run_id` is **required**; `instance` is **optional** (checked if present; empty/non-string returns `400 invalid-field`) | `409 session-changed` (nothing written) |
 
 ### Stop (`api/stop-session`)
@@ -217,7 +217,7 @@ The body is one of the following commands, with the optional fields described be
 
 Each body may also have `"id"`, a whole number from 0 to 2^53. The server passes it to the launcher in the command line, and the launcher returns it as `id` in the `command` event that answers that line (`null` when the line had none). A screen uses it to tell the answer to its own command from the answers to the commands of other screens or of the launcher's stdin; the server does not read it. The response carries `{run_id, command}` with its `id`. An `id` that is not such a number gives 400 `invalid-field`.
 
-To target a specific run, **include both `run_id` and `instance`** (recommended; non-empty strings from `api/run`, `api/session`, or WebSocket `hello`). The server checks both fields together before writing to the launcher; a mismatch, an absent run, or a run being replaced returns 409 `session-changed`. Neither field is passed to the launcher or included in the response's `command`. **Sending only one of `run_id` or `instance` returns 400 `invalid-field`** (as does an empty, null, or unknown field). If both fields are omitted, the command targets whichever run is current when the server handles it (preserved for compatibility).
+To target a specific run, **include both `instance` and `run_id`** (non-empty strings from `api/run`, `api/session`, or WebSocket `hello`). Protocol v4 preserves omitting both `run_id` and `instance` unchanged for compatibility (targeting whichever run is current when the server handles the request), but **new clients, AI agents, and CI automation should always send both `instance` and `run_id`**. The server checks both fields together before writing to the launcher; a mismatch, an absent run, or a run being replaced returns 409 `session-changed`. Neither field is passed to the launcher or included in the response's `command`. **Sending only one of `run_id` or `instance` returns 400 `invalid-field`** (as does an empty, null, or unknown field).
 
 The server writes the command as one line to the stdin of the running run's launcher and returns HTTP 200 immediately without waiting for the launcher's decision. **HTTP 200 acknowledges forwarding to launcher stdin only—not that the launcher accepted or applied the command.**
 

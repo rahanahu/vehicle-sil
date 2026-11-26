@@ -6,6 +6,8 @@ Entry index for external tools, scripts, and custom screens that integrate with 
 
 ## GUI Server API (HTTP and WebSocket)
 
+Protocol v4 preserves omitting both `run_id` and `instance` on `POST /api/time` for compatibility, but new clients, AI agents, and CI automation should always send both `instance` and `run_id`.
+
 | Resource | Path | Contents |
 |---|---|---|
 | Protocol specification | [gui/protocol/README.md](../gui/protocol/README.md) | Authoritative HTTP and WebSocket Protocol v4 (`vehicle_sil_gui: 4`) spec: auth, Origin, run targeting (`instance` + `run_id`), `/api/time`, `/api/stop-session`, `/api/write`, reconnect replay, and limits |

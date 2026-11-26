@@ -6,6 +6,8 @@ GUI サーバー API、ランチャー CLI / イベント、Control API、およ
 
 ## GUI サーバー API（HTTP と WebSocket）
 
+プロトコル v4 では `POST /api/time` で `run_id` と `instance` の両方を省略する呼び出しを互換性のため維持していますが、新規クライアント・AI エージェント・CI 自動化では常に `instance` と `run_id` の両方を指定してください。
+
 | リソース | パス | 内容 |
 |---|---|---|
 | プロトコル仕様 | [gui/protocol/README.ja.md](../../gui/protocol/README.ja.md) | HTTP・WebSocket プロトコル v4（`vehicle_sil_gui: 4`）の正本仕様: 認証・Origin・実行の対象指定（`instance` + `run_id`）・`/api/time`・`/api/stop-session`・`/api/write`・再接続リプレイ・上限 |

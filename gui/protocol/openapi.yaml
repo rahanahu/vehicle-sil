@@ -28,17 +28,35 @@ paths:
         numeric `id`; see `schemas/ws-command-event.schema.json`).
 
 
-        Targeting: include both `run_id` and `instance` (recommended) so the
-        server refuses with `409 session-changed` if another run has started or
-        the server restarted, or omit both to target whichever run is current
-        (preserved for compatibility). Sending only one of `run_id` or
-        `instance` returns `400 invalid-field`.
+        Targeting: Protocol v4 preserves omitting both `run_id` and `instance`
+        unchanged for compatibility (targeting whichever run is current).
+        However, new clients, AI agents, and CI automation should always send
+        both `instance` and `run_id` so the server refuses with
+        `409 session-changed` if another run has started or the server
+        restarted. Sending only one of `run_id` or `instance` returns
+        `400 invalid-field`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/TimeCommandRequest"
+            examples:
+              step:
+                summary: Targeted step command (recommended for new clients, AI agents, and CI)
+                value:
+                  command: step
+                  ms: 100
+                  id: 1
+                  instance: "inst-1"
+                  run_id: "inst-1-1"
+              pause:
+                summary: Targeted pause command
+                value:
+                  command: pause
+                  id: 2
+                  instance: "inst-1"
+                  run_id: "inst-1-1"
       responses:
         "200":
           description: >
@@ -211,9 +229,11 @@ components:
     TimeCommandRequest:
       type: object
       description: >
-        Request body for `POST /api/time`. Include both `run_id` and `instance`
-        (recommended) or omit both to target the current run; supplying only one
-        fails with `400 invalid-field`.
+        Request body for `POST /api/time`. Protocol v4 preserves omitting both
+        `run_id` and `instance` unchanged for compatibility (targeting whichever
+        run is current), but new clients, AI agents, and CI automation should
+        always send both `instance` and `run_id`. Supplying only one fails with
+        `400 invalid-field`.
       allOf:
         - $ref: "#/components/schemas/TimeCommandPayload"
       properties:
