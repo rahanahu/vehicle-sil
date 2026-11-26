@@ -452,11 +452,28 @@ class Control:
         ControlError FAILED_PRECONDITION."""
         if self._checked:
             return
-        with self._check_lock:
+        if timeout is None:
+            lock_deadline: Optional[float] = None
+            self._check_lock.acquire()
+        else:
+            if math.isnan(timeout):
+                raise ValueError("timeout must not be NaN")
+            if timeout <= 0:
+                raise ControlError(grpc.StatusCode.DEADLINE_EXCEEDED, "release check timed out")
+            lock_deadline = _monotonic() + timeout
+            if not self._check_lock.acquire(timeout=min(timeout, threading.TIMEOUT_MAX)):
+                raise ControlError(grpc.StatusCode.DEADLINE_EXCEEDED, "release check timed out")
+        try:
             if self._checked:
                 return
+            if lock_deadline is None:
+                ping_timeout = self._timeout
+            else:
+                ping_timeout = lock_deadline - _monotonic()
+                if ping_timeout <= 0:
+                    raise ControlError(grpc.StatusCode.DEADLINE_EXCEEDED, "release check timed out")
             try:
-                reply = self._stub.Ping(pb.PingRequest(), timeout=self._timeout if timeout is None else timeout)
+                reply = self._stub.Ping(pb.PingRequest(), timeout=ping_timeout)
             except grpc.RpcError as e:
                 raise _error(e) from None
             if reply.vehicle_sil != __version__:
@@ -464,6 +481,8 @@ class Control:
                                    f"the control server is vehicle-sil {reply.vehicle_sil}; this vehicle_sil_control is "
                                    f"{__version__}: use the vehicle_sil_control of the same release as the launcher")
             self._checked = True
+        finally:
+            self._check_lock.release()
 
     def _call(self, method, request, timeout: Optional[float] = None):
         self._check_release()
@@ -589,7 +608,7 @@ class Control:
         the server ends the stream, or `timeout` wall-clock seconds pass (raising ControlError with
         code `DEADLINE_EXCEEDED`; `None` waits indefinitely). When `timeout` is given, it bounds both
         the initial release check (if not yet performed) and the stream."""
-        if timeout is None:
+        if timeout is None or (math.isinf(timeout) and timeout > 0):
             self._check_release()
             watch_timeout: Optional[float] = None
         else:
