@@ -538,7 +538,7 @@ def test_stubs_directory_outside_repository_without_env_is_unavailable(monkeypat
 
 
 def test_variables_ending_predicate_before_result_arrives() -> None:
-    from vehicle_sil_gui.server import _variables_ending
+    from vehicle_sil_gui.run_manager import _variables_ending
     from vehicle_sil_gui.session import Session
     from vehicle_sil_gui.source import PeerInfo, TimeInfo
     from vehicle_sil_gui.variables import Variables

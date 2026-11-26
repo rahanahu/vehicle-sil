@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from itertools import islice
 from typing import Any, Literal
 
-from .allowed import Facts, allowed as allowed_of, project_run_facts
+from .allowed import Facts, RunFacts, allowed as allowed_of, project_run_facts
 from .contracts import validate_launcher_event
 from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT, STEP_MS_MAX
 
@@ -262,8 +262,6 @@ class Session:
         self.findings_omitted = 0
         self.last_command: dict | None = None
         self.launcher_state: dict | None = None  # the last `state` event of the launcher (what it accepts now)
-        self.facts: Callable[[], Facts] = Facts  # what the server knows apart from the run (the server sets it)
-        self.execution_status: Callable[[], dict | None] = lambda: None
         self.next_stream_seq: Callable[[], int] = itertools.count(1).__next__
         self.result: dict | None = None
         self.problems: list[dict] = []
@@ -409,25 +407,25 @@ class Session:
 
     # ------------------------------------------------------------ input
 
-    def _with_silence(self, fn: Callable[[], list[dict]]) -> list[dict]:
+    def _with_silence(self, fn: Callable[[], list[dict]], *, allowed: dict | None = None) -> list[dict]:
         self.last_line_at = time.monotonic()
         if self.silent_s is not None:  # it was silent, and writes again
             self.silent_s = None
-            return [self.message(), *fn()]
+            return [self.message(allowed=allowed), *fn()]
         return fn()
 
-    def bad_line(self, line: str) -> list[dict]:
+    def bad_line(self, line: str, *, allowed: dict | None = None) -> list[dict]:
         """Records a non-event line from the launcher's standard output as a launcher-output problem."""
         return self._with_silence(lambda: self.problem(
             "launcher-output",
             "the launcher wrote a line that is not an event (a JSON object with \"event\"): "
             "the line is ignored; if it repeats, the launcher and this GUI do not match",
             self._cut(line),
-        ))
+        ), allowed=allowed)
 
-    def feed_event(self, event: dict, size: int) -> list[dict]:
+    def feed_event(self, event: dict, size: int, *, allowed: dict | None = None) -> list[dict]:
         """Takes one already-parsed event dict and its UTF-8 byte size; returns the messages for the screens."""
-        return self._with_silence(lambda: self._feed_event(event, size))
+        return self._with_silence(lambda: self._feed_event(event, size), allowed=allowed)
 
     def _feed_event(self, event: dict, size: int, *, detail: str | None = None) -> list[dict]:
         st = self._staging
@@ -801,7 +799,8 @@ class Session:
         self.stop = STOP_FORCED
         return "force"
 
-    def check_silence(self, now: float, after_s: float = SILENT_AFTER_S) -> list[dict]:
+    def check_silence(self, now: float, after_s: float = SILENT_AFTER_S, *,
+                      allowed: dict | None = None) -> list[dict]:
         """Whether the launcher has written nothing for after_s or more while its process runs and before its
         result (when it writes a heartbeat every second): the summary says for how long (`launcher.silent_s`,
         updated every after_s), and a problem says so once each time it falls silent."""
@@ -820,9 +819,10 @@ class Session:
                                "every second: it may hang; stop the run, or stop the GUI server if that does not "
                                "end it", {"seconds": shown})
         self.silent_s = shown
-        return out + [self.message()]
+        return out + [self.message(allowed=allowed)]
 
-    def launcher_exited(self, returncode: int | None, *, tell: bool = True) -> list[dict]:
+    def launcher_exited(self, returncode: int | None, *, tell: bool = True,
+                        facts: Facts | None = None, execution_status: dict | None = None) -> list[dict]:
         """The launcher process has exited (its output may still be being read). A negative returncode is the
         POSIX signal that ended it. The message is for a caller that sends it at once."""
         self.launcher_running = False
@@ -832,9 +832,10 @@ class Session:
             self.exit_code, self.signal = None, -returncode
         else:
             self.exit_code, self.signal = returncode, None
-        return [self.message()] if tell else []
+        return [self.message(allowed=self.allowed(facts, execution_status))] if tell else []
 
-    def ended(self, output_cut: bool = False, *, launcher_alive: bool = False) -> list[dict]:
+    def ended(self, output_cut: bool = False, *, launcher_alive: bool = False,
+              facts: Facts | None = None, execution_status: dict | None = None) -> list[dict]:
         """The run has ended and its output is read (or, output_cut, given up on)."""
         out: list[dict] = self._stderr_end()
         if output_cut:
@@ -851,7 +852,7 @@ class Session:
         self.launcher_running = False
         self.launcher_process_alive = bool(launcher_alive)
         self.ended_at = now_iso()
-        return out + [self.message()]
+        return out + [self.message(allowed=self.allowed(facts, execution_status))]
 
     def _cut(self, text: str, n: int | None = None) -> str:
         n = n or self.limits.detail_chars
@@ -859,7 +860,18 @@ class Session:
 
     # ------------------------------------------------------------ output
 
-    def summary(self, variables: bool = True) -> dict:
+    def run_facts(self, execution_status: dict | None = None) -> RunFacts:
+        """Projects this session's run state together with optional runtime execution status."""
+        return project_run_facts(
+            self.state == "running",
+            self.launcher_running,
+            self.stop,
+            launcher_mode=self.launcher_mode,
+            execution_status=execution_status,
+            run_state=self.launcher_state,
+        )
+
+    def summary(self, variables: bool = True, *, allowed: dict | None = None) -> dict:
         out = {
             "id": self.id, "run_t0_ms": self.run_t0_ms, "file": self.file, "disable": self.disable,
             "manual": self.manual, "speed": self.speed,
@@ -873,7 +885,7 @@ class Session:
             "participants": list(self.participants.values()), "participants_omitted": self.participants_omitted,
             "findings": list(self.findings), "findings_omitted": self.findings_omitted,
             "last_command": self.last_command, "launcher_state": self.launcher_state,
-            "allowed": self.allowed(), "result": self.result,
+            "allowed": allowed if allowed is not None else self.allowed(), "result": self.result,
             "log": {source: {"kept": log.kept, "dropped": log.dropped + log.prestart_dropped + log.launcher_dropped}
                     for source, log in self._logs.items()},
             "problems": list(self.problems), "problems_omitted": self.problems_omitted,
@@ -884,22 +896,15 @@ class Session:
             out["variables"] = self.variables() if self.variables is not None else dict(NO_VARIABLES)
         return out
 
-    def allowed(self) -> dict:
+    def allowed(self, facts: Facts | None = None, execution_status: dict | None = None) -> dict:
         """What this server accepts now: start, stop, force (see allowed.py)."""
-        run = project_run_facts(
-            self.state == "running",
-            self.launcher_running,
-            self.stop,
-            launcher_mode=self.launcher_mode,
-            execution_status=self.execution_status(),
-            run_state=self.launcher_state,
-        )
-        return allowed_of(self.facts(), run)
+        return allowed_of(facts if facts is not None else Facts(), self.run_facts(execution_status))
 
-    def message(self) -> dict:
+    def message(self, *, allowed: dict | None = None) -> dict:
         """The summary for the screens that are connected. Without `variables`: they are large, change seldom,
         and have a message of their own when they do (`variables`); hello and the HTTP answers have them."""
-        return {"type": "session", "stream_seq": self.next_stream_seq(), "session": self.summary(variables=False)}
+        return {"type": "session", "stream_seq": self.next_stream_seq(),
+                "session": self.summary(variables=False, allowed=allowed)}
 
     def replay(self, after_stream_seq: int | None) -> tuple[dict | None, list[dict]]:
         """(the dropped message, or None when nothing is missing; the log events to send), for a screen that

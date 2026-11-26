@@ -490,6 +490,8 @@ async def _serve_gui(
     variables: bool = True,
     silent_after_s: float = 5.0,
     stop_timeout_s: float = 1.0,
+    check_timeout_s: float = 120.0,
+    source=None,
     env: dict[str, str] | None = None,
 ):
     root = tmp_path / "cfg"
@@ -506,19 +508,6 @@ async def _serve_gui(
 
     port = free_port()
 
-    launcher = FakeLauncher(features=features, path=script)
-    _FakeControlSource.created.clear()
-    server = GuiServer(Options(
-        root=root,
-        launcher=launcher,
-        port=port,
-        token="test-token",
-        stop_timeout_s=stop_timeout_s,
-        silent_after_s=silent_after_s,
-        variables=variables,
-        source=(lambda addr, tok: _FakeControlSource(addr, tok)) if variables else None,
-    ))
-
     async def fake_check(argv: list[str], request: Path, descriptions: Path | None = None,
                          text: bytes | None = None) -> tuple[int, dict]:
         res = default_check_result(argv[-1])
@@ -526,7 +515,21 @@ async def _serve_gui(
             res["commands"] = "same"
         return 0, res
 
-    server._launcher_check = fake_check  # type: ignore[method-assign]
+    launcher = FakeLauncher(features=features, path=script)
+    _FakeControlSource.created.clear()
+    resolved_source = source if source is not None else ((lambda addr, tok: _FakeControlSource(addr, tok)) if variables else None)
+    server = GuiServer(Options(
+        root=root,
+        launcher=launcher,
+        port=port,
+        token="test-token",
+        stop_timeout_s=stop_timeout_s,
+        silent_after_s=silent_after_s,
+        check_timeout_s=check_timeout_s,
+        variables=variables,
+        source=resolved_source,
+        check_runner=fake_check,
+    ))
     test_server = TestServer(server.app(), host="127.0.0.1", port=port)
     await test_server.start_server()
     http = aiohttp.ClientSession()
@@ -548,7 +551,7 @@ async def _serve_gui(
 def test_serve_hot_scenario_aba_isolation_and_per_run_cleanup(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path) as (server, c, log_path):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -608,7 +611,7 @@ def test_serve_hot_scenario_aba_isolation_and_per_run_cleanup(tmp_path: Path) ->
 def test_serve_stop_stops_run_without_killing_resident_and_drops_stale_refusal(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -654,7 +657,7 @@ def test_serve_stop_stops_run_without_killing_resident_and_drops_stale_refusal(t
 def test_serve_prepare_ready_and_config_save_releases_resident(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -748,11 +751,11 @@ def test_hot_cold_auto_switch_all_five_reasons(tmp_path: Path) -> None:
         async with _serve_gui(tmp_path, env={"FAKE_SERVE_BEHAVIOR": "startup-refuse"}) as (server, c, _):
             st, body = await c.post("api/prepare", {"file": "a.yaml"})
             assert st == 200 and body == {"instance": server.instance}
-            assert server.runtime.status()["mode"] == "cold"
-            assert server.runtime.status()["reason"] == "resident-failed"
+            assert server.runs.runtime.status()["mode"] == "cold"
+            assert server.runs.runtime.status()["reason"] == "resident-failed"
             st, body = await c.post("api/prepare", {"file": "fixed.yaml"})
             assert st == 200 and body == {"instance": server.instance}
-            assert server.runtime.status()["mode"] == "cold" and server.runtime.status()["reason"] == "fixed-registry"
+            assert server.runs.runtime.status()["mode"] == "cold" and server.runs.runtime.status()["reason"] == "fixed-registry"
 
     asyncio.run(run())
 
@@ -767,7 +770,7 @@ def test_serve_recovery_after_failure_contamination_and_crash_without_retry(
 ) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": behavior}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -903,18 +906,18 @@ def test_grpc_source_run_id_metadata_and_fatal_run_changed() -> None:
 def test_serve_release_config_during_run_recycles_resident_and_prepare_rejects_starting(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
             # Prepare is refused while _starting is True (simulated via _starting flag during await)
-            server._starting = True
+            server.runs._starting = True
             try:
                 st, err = await c.post("api/prepare", {"file": "a.yaml"})
                 assert st == 409 and err["error"]["code"] == "already-running"
             finally:
-                server._starting = False
+                server.runs._starting = False
 
             st, r1 = await c.post("api/run", {"file": "a.yaml"})
             assert st == 200
@@ -996,7 +999,7 @@ def test_serve_shutdown_during_spawn_leaks_nothing(tmp_path: Path) -> None:
 def test_serve_check_failed_keeps_resident_ready_without_advancing_session_id(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "check-fail-first"}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1026,17 +1029,16 @@ def test_serve_check_failed_keeps_resident_ready_without_advancing_session_id(tm
 
 def test_serve_check_timeout_aborts_hung_launcher_and_recovers(tmp_path: Path) -> None:
     async def run() -> None:
-        async with _serve_gui(tmp_path, variables=False, stop_timeout_s=0.1,
+        async with _serve_gui(tmp_path, variables=False, stop_timeout_s=0.1, check_timeout_s=0.2,
                               env={"FAKE_SERVE_BEHAVIOR": "check-hang"}) as (server, c, _):
-            server.o.check_timeout_s = 0.2
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
             st, err = await c.post("api/run", {"file": "a.yaml"})
             assert st == 504 and err["error"]["code"] == "check-timeout", err
-            assert not server._runs
+            assert not server.runs._runs
             st_sess, cur = await c.get("api/session")
             assert st_sess == 200 and cur["session"] is None
 
@@ -1113,7 +1115,7 @@ def test_hot_single_parse_zero_intermediate_json_dumps_and_loads(tmp_path: Path,
 def test_hot_non_finite_and_invalid_stdout_fallback_preserves_seq(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1205,7 +1207,7 @@ def test_hot_inspect_waits_for_delayed_idle_after_result_and_reuses_prepare(tmp_
         async with _serve_gui(
             tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "delayed-idle"},
         ) as (server, c, log_path):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1236,7 +1238,7 @@ def test_hot_inspect_wakes_immediately_if_resident_crashes_before_idle(tmp_path:
         async with _serve_gui(
             tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "crash-before-idle"},
         ) as (server, c, log_path):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1265,7 +1267,7 @@ def test_hot_inspect_does_not_wait_for_idle_while_run_is_active(tmp_path: Path) 
         async with _serve_gui(
             tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"},
         ) as (server, c, log_path):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1305,7 +1307,7 @@ def test_hot_deep_nested_event_flows_through_drain_without_recursion_error(tmp_p
 
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1314,7 +1316,7 @@ def test_hot_deep_nested_event_flows_through_drain_without_recursion_error(tmp_p
             before = await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             assert rt._resident is not None and rt._resident.current_run is not None
             run_id = rt._resident.current_run.run_id
-            active_run = server.current
+            active_run = server.runs.current
             assert active_run is not None and active_run.request is not None
             req_path = str(active_run.request)
 
@@ -1635,7 +1637,7 @@ def test_cancelling_start_run_mid_wait_clears_pending_and_closes_resident(tmp_pa
 def test_serve_status_command_and_monotonic_execution_status_adoption(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1692,7 +1694,7 @@ def test_serve_status_command_and_monotonic_execution_status_adoption(tmp_path: 
 def test_hot_allowed_projects_cpp_stop_requests_and_post_result_drain(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1730,12 +1732,12 @@ def test_hot_allowed_projects_cpp_stop_requests_and_post_result_drain(tmp_path: 
             assert forced_msg[-1]["allowed"]["start"]["reason"] == "already-running"
 
             # Check post-result drain window: while session is still running, stoppable drops to False.
-            sess = server.session
+            sess = server.runs.session
             assert sess is not None
             # Simulate result arriving on execution_status before session.ended() runs:
             assert res.execution_status is not None
             res.execution_status["launcher_state"] = "ready"
-            drain_allowed = sess.allowed()
+            drain_allowed = server.runs.allowed(sess)
             assert drain_allowed["start"]["reason"] == "already-running"
             assert drain_allowed["stop"]["reason"] == "not-running"
             assert drain_allowed["force"]["reason"] == "not-running"
@@ -1760,10 +1762,10 @@ def test_prepare_early_returns_clear_preparing_config_without_spurious_ws_event(
             await sock.until(lambda m: m["type"] == "synced")
             st, body = await c.post("api/prepare", {"file": "a.yaml"})
             assert st == 200 and body == {"instance": server.instance}
-            assert server.runtime.status()["mode"] == "cold"
-            assert server.runtime.status()["state"] == "cold"
-            assert server.runtime.status()["reason"] == "resident-failed"
-            assert server.runtime._preparing_config is None  # type: ignore[attr-defined]
+            assert server.runs.runtime.status()["mode"] == "cold"
+            assert server.runs.runtime.status()["state"] == "cold"
+            assert server.runs.runtime.status()["reason"] == "resident-failed"
+            assert server.runs.runtime._preparing_config is None  # type: ignore[attr-defined]
             await sock.close()
 
         # 2. not parsed.hot.hot (if _run_file_only_check returns hot=True, serve prepare returns eligible=False) -> returns cold, no preparing after resetting.
@@ -1776,12 +1778,12 @@ def test_prepare_early_returns_clear_preparing_config_without_spurious_ws_event(
             async def fake_file_only(*_a, **_kw):
                 return ConfigInspection(hot=HotDecision(True))
 
-            server.runtime._run_file_only_check = fake_file_only  # type: ignore[attr-defined]
+            server.runs.runtime._run_file_only_check = fake_file_only  # type: ignore[attr-defined]
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
             st, body = await c.post("api/prepare", {"file": "fixed.yaml"})
             assert st == 200 and body == {"instance": server.instance}
-            assert server.runtime.status() == {
+            assert server.runs.runtime.status() == {
                 "mode": "cold",
                 "state": "cold",
                 "config": "fixed.yaml",
@@ -1800,7 +1802,7 @@ def test_prepare_early_returns_clear_preparing_config_without_spurious_ws_event(
 def test_execution_status_validation_and_pre_run_equal_rev_protection(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, _):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1883,7 +1885,7 @@ def test_execution_status_validation_and_pre_run_equal_rev_protection(tmp_path: 
 def test_hot_external_stop_does_not_escalate_on_graceful_api_stop_and_release_mid_run(tmp_path: Path) -> None:
     async def run() -> None:
         async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "wait-stop"}) as (server, c, log_path):
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
@@ -1910,9 +1912,9 @@ def test_hot_external_stop_does_not_escalate_on_graceful_api_stop_and_release_mi
 
             st_grace, grace_body = await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             assert st_grace == 200 and grace_body == {"instance": server.instance, "run_id": r1["run_id"]}
-            assert server.session is not None
-            assert server.session.allowed()["stop"]["reason"] == "already-stopping"
-            assert server.session.allowed()["force"]["ok"] is True
+            assert server.runs.session is not None
+            assert server.runs.allowed()["stop"]["reason"] == "already-stopping"
+            assert server.runs.allowed()["force"]["ok"] is True
 
             # Verify no unforced stop line was written while already stopping, and force=True sends {"force": true}.
             st_force, force_body = await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": True})
@@ -1942,11 +1944,14 @@ def test_hot_launcher_ends_post_result_async_drain_keeps_stoppable_false(tmp_pat
                 await self.close_gate.wait()
                 await super().close()
 
-        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": "stop-ends"}) as (server, c, _):
+        sources: list[_SlowCloseSource] = []
+        async with _serve_gui(
+            tmp_path,
+            variables=True,
+            source=lambda addr, tok: sources.append(_SlowCloseSource(addr, tok)) or sources[-1],
+            env={"FAKE_SERVE_BEHAVIOR": "stop-ends"},
+        ) as (server, c, _):
             # Enable slow variables close via source hook so post-result async drain stays observable.
-            sources: list[_SlowCloseSource] = []
-            server.o.variables = True
-            server.o.source = lambda addr, tok: sources.append(_SlowCloseSource(addr, tok)) or sources[-1]
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
@@ -1957,10 +1962,10 @@ def test_hot_launcher_ends_post_result_async_drain_keeps_stoppable_false(tmp_pat
             st_stop, _ = await c.post("api/stop-session", {"run_id": r1["run_id"], "instance": server.instance, "force": False})
             assert st_stop == 200
             # Wait for result to clear current_run and set resident.ending while _SlowCloseSource.close() holds drain.
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             await asyncio.wait_for(sources[0].close_entered.wait(), timeout=5.0)
-            assert server.session is not None and server.session.state == "running"
+            assert server.runs.session is not None and server.runs.session.state == "running"
             assert rt.execution_status() is None
 
             st_sess, sess_body = await c.get("api/session")
@@ -1994,10 +1999,13 @@ def test_hot_post_result_async_drain_stop_is_noop_without_spurious_problem(
                 await super().close()
 
         behavior = "natural-ends" if launcher_ends else "natural-pass"
-        async with _serve_gui(tmp_path, variables=False, env={"FAKE_SERVE_BEHAVIOR": behavior}) as (server, c, log_path):
-            sources: list[_SlowCloseSource] = []
-            server.o.variables = True
-            server.o.source = lambda addr, tok: sources.append(_SlowCloseSource(addr, tok)) or sources[-1]
+        sources: list[_SlowCloseSource] = []
+        async with _serve_gui(
+            tmp_path,
+            variables=True,
+            source=lambda addr, tok: sources.append(_SlowCloseSource(addr, tok)) or sources[-1],
+            env={"FAKE_SERVE_BEHAVIOR": behavior},
+        ) as (server, c, log_path):
             sock = await c.ws()
             await sock.until(lambda m: m["type"] == "synced")
 
@@ -2010,9 +2018,9 @@ def test_hot_post_result_async_drain_stop_is_noop_without_spurious_problem(
             assert st_res == 200
 
             await asyncio.wait_for(sources[0].close_entered.wait(), timeout=5.0)
-            assert server.session is not None and server.session.state == "running"
-            assert server.session.launcher_running is True
-            assert server.session.result is not None
+            assert server.runs.session is not None and server.runs.session.state == "running"
+            assert server.runs.session.launcher_running is True
+            assert server.runs.session.result is not None
 
             st_sess, sess_body = await c.get("api/session")
             assert st_sess == 200
@@ -2030,10 +2038,10 @@ def test_hot_post_result_async_drain_stop_is_noop_without_spurious_problem(
                 st_stop, stop_body = await c.post("api/stop-session", payload)
                 assert st_stop == 200, (payload, stop_body)
                 assert stop_body == {"instance": server.instance, "run_id": sid}
-                assert server.session.stop == "none"
-                assert server.session.problems == []
-                assert server.session.allowed()["stop"]["reason"] == "not-running"
-                assert server.session.allowed()["force"]["reason"] == "not-running"
+                assert server.runs.session.stop == "none"
+                assert server.runs.session.problems == []
+                assert server.runs.allowed()["stop"]["reason"] == "not-running"
+                assert server.runs.allowed()["force"]["reason"] == "not-running"
 
             sources[0].close_gate.set()
             msgs = await sock.until(is_ended)
@@ -2074,7 +2082,7 @@ def test_shutdown_waits_for_in_flight_post_prepare(tmp_path: Path) -> None:
                 prep_task = asyncio.create_task(c.post("api/prepare", {"file": "a.yaml"}))
                 await asyncio.wait_for(entered.wait(), timeout=5.0)
                 shut_task = asyncio.create_task(server.shutdown())
-                while not server._closing:
+                while not server.runs._closing:
                     await asyncio.sleep(0)
                 await asyncio.sleep(0)
                 assert not shut_task.done()
@@ -2082,7 +2090,7 @@ def test_shutdown_waits_for_in_flight_post_prepare(tmp_path: Path) -> None:
                 st, body = await prep_task
                 await shut_task
                 assert st == 503 and body["error"]["code"] == "shutting-down"
-                assert server.runtime.active_pids() == []
+                assert server.runs.runtime.active_pids() == []
                 assert created_creds and not created_creds[0].exists()
             finally:
                 for p in created_creds:

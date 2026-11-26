@@ -324,7 +324,7 @@ def test_run_finish_without_process_exit_closes_variables(tmp_path: Path) -> Non
             await sock.until(is_variables("ended"))
             await sock.until(is_ended)
             assert sources[0].closed
-            assert app.server.session is not None and app.server.session.state == "ended"
+            assert app.server.runs.session is not None and app.server.runs.session.state == "ended"
             await sock.close()
 
     asyncio.run(main())
@@ -341,7 +341,7 @@ def test_shutdown_hurry_escalation_and_kill_all(tmp_path: Path) -> None:
             start_task = asyncio.create_task(app.client.post("api/run", {"file": "simple.yaml"}))
             await rt1.start_entered.wait()
             shutdown_task = asyncio.create_task(app.server.shutdown())
-            while not app.server._closing:
+            while not app.server.runs._closing:
                 await asyncio.sleep(0)
             rt1.start_gate.set()
             st, body = await start_task
@@ -510,14 +510,14 @@ def test_shutdown_waits_for_prestart_gate_buffered_finish_and_cleanup(tmp_path: 
         async with in_process_gui(root, runtime=runtime) as app:
             entered = asyncio.Event()
             release = asyncio.Event()
-            orig_close_variables = app.server._close_variables
+            orig_close_variables = app.server.runs._close_variables
 
             async def gated_close_variables(run) -> None:
                 entered.set()
                 await release.wait()
                 await orig_close_variables(run)
 
-            app.server._close_variables = gated_close_variables  # type: ignore[method-assign]
+            app.server.runs._close_variables = gated_close_variables  # type: ignore[method-assign]
 
             start_task = asyncio.create_task(app.client.post("api/run", {"file": "simple.yaml"}))
             await entered.wait()
@@ -525,20 +525,20 @@ def test_shutdown_waits_for_prestart_gate_buffered_finish_and_cleanup(tmp_path: 
             # The handle already finished into gate.buffer, so runtime.active_pids() is empty;
             # shutdown() must still wait via _started until post_run() finishes draining and cleanup.
             assert runtime.active_pids() == []
-            assert not app.server._started.is_set()
+            assert not app.server.runs._started.is_set()
             shutdown_task = asyncio.create_task(app.server.shutdown())
             for _ in range(5):
                 await asyncio.sleep(0)
             assert not shutdown_task.done()
-            assert not app.server.hub.closed
+            assert not app.server.ws.hub.closed
 
             release.set()
             st, body = await start_task
             await shutdown_task
             assert st == 503 and body["error"]["code"] == "shutting-down"
-            assert app.server._started.is_set()
-            assert app.server._starts_in_flight == 0
-            assert not app.server._runs
+            assert app.server.runs._started.is_set()
+            assert app.server.runs._starts_in_flight == 0
+            assert not app.server.runs._runs
 
     asyncio.run(main())
 

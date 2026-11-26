@@ -12,7 +12,7 @@ import pytest
 from aiohttp.test_utils import make_mocked_request
 from fake_runtime import FakeRun, FakeRuntime, in_process_gui
 
-from vehicle_sil_gui import control, server as server_mod
+from vehicle_sil_gui import config_service as config_service_mod, control
 
 
 def _config_with_scenario(tmp_path: Path) -> Path:
@@ -75,7 +75,7 @@ def test_cancel_during_timeline_prep_cleans_credentials_and_allows_next_start(
             entered = asyncio.Event()
             release = threading.Event()
             worker_done = asyncio.Event()
-            orig_new_file = app.server.timelines.new_file
+            orig_new_file = app.server.runs.timelines.new_file
             calls = 0
 
             def gated_new_file() -> Path:
@@ -90,7 +90,7 @@ def test_cancel_during_timeline_prep_cleans_credentials_and_allows_next_start(
                         loop.call_soon_threadsafe(worker_done.set)
                 return orig_new_file()
 
-            monkeypatch.setattr(app.server.timelines, "new_file", gated_new_file)
+            monkeypatch.setattr(app.server.runs.timelines, "new_file", gated_new_file)
 
             body = {"file": "simple.yaml", "scenario": "scenarios/smoke.yaml"}
             start_task = asyncio.create_task(app.server.post_run(_post_run_request(body)))
@@ -98,9 +98,9 @@ def test_cancel_during_timeline_prep_cleans_credentials_and_allows_next_start(
 
             assert len(created_creds) == 1
             assert created_creds[0].is_file()
-            assert app.server._starting is True
-            assert app.server._starts_in_flight == 1
-            assert not app.server._started.is_set()
+            assert app.server.runs._starting is True
+            assert app.server.runs._starts_in_flight == 1
+            assert not app.server.runs._started.is_set()
 
             start_task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -110,11 +110,11 @@ def test_cancel_during_timeline_prep_cleans_credentials_and_allows_next_start(
             await asyncio.wait_for(worker_done.wait(), timeout=5.0)
 
             assert not created_creds[0].exists()
-            assert not app.server._starting
-            assert app.server._starts_in_flight == 0
-            assert app.server._started.is_set()
-            assert not app.server._runs
-            assert app.server.allowed()["start"]["ok"] is True
+            assert not app.server.runs._starting
+            assert app.server.runs._starts_in_flight == 0
+            assert app.server.runs._started.is_set()
+            assert not app.server.runs._runs
+            assert app.server.runs.allowed()["start"]["ok"] is True
 
             # Subsequent Start through HTTP succeeds cleanly.
             status, started = await app.client.post("api/run", body)
@@ -136,7 +136,7 @@ def test_exception_during_timeline_prep_cleans_credentials_and_allows_next_start
 
     async def main() -> None:
         async with in_process_gui(root, source=_dummy_source) as app:
-            orig_new_file = app.server.timelines.new_file
+            orig_new_file = app.server.runs.timelines.new_file
             calls = 0
 
             def failing_once() -> Path:
@@ -146,7 +146,7 @@ def test_exception_during_timeline_prep_cleans_credentials_and_allows_next_start
                     raise OSError("disk full")
                 return orig_new_file()
 
-            monkeypatch.setattr(app.server.timelines, "new_file", failing_once)
+            monkeypatch.setattr(app.server.runs.timelines, "new_file", failing_once)
 
             body = {"file": "simple.yaml", "scenario": "scenarios/smoke.yaml"}
             status, err = await app.client.post("api/run", body)
@@ -154,10 +154,10 @@ def test_exception_during_timeline_prep_cleans_credentials_and_allows_next_start
             assert err["error"]["code"] == "internal"
             assert len(created_creds) == 1
             assert not created_creds[0].exists()
-            assert not app.server._starting
-            assert app.server._starts_in_flight == 0
-            assert not app.server._runs
-            assert app.server.allowed()["start"]["ok"] is True
+            assert not app.server.runs._starting
+            assert app.server.runs._starts_in_flight == 0
+            assert not app.server.runs._runs
+            assert app.server.runs.allowed()["start"]["ok"] is True
 
             # Subsequent Start succeeds cleanly.
             status, started = await app.client.post("api/run", body)
@@ -210,7 +210,7 @@ def test_cancel_during_credentials_creation_cleans_file_and_allows_next_start(
             await asyncio.wait_for(entered.wait(), timeout=5.0)
             assert len(created_creds) == 1
             assert created_creds[0].is_file()
-            assert app.server._starting is True
+            assert app.server.runs._starting is True
 
             start_task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -220,10 +220,10 @@ def test_cancel_during_credentials_creation_cleans_file_and_allows_next_start(
             await asyncio.wait_for(first_removed.wait(), timeout=5.0)
 
             assert not created_creds[0].exists()
-            assert not app.server._starting
-            assert app.server._starts_in_flight == 0
-            assert app.server._started.is_set()
-            assert app.server.allowed()["start"]["ok"] is True
+            assert not app.server.runs._starting
+            assert app.server.runs._starts_in_flight == 0
+            assert app.server.runs._started.is_set()
+            assert app.server.runs.allowed()["start"]["ok"] is True
 
             status, started = await app.client.post("api/run", body)
             assert status == 200
@@ -243,14 +243,14 @@ def test_cancel_and_exception_during_start_run_clean_all_prehandoff_files(
     created_requests: list[Path] = []
     _track_credentials(monkeypatch, created_creds)
 
-    orig_write_request = server_mod.write_request_file
+    orig_write_request = config_service_mod.write_request_file
 
     def tracked_request(intent: dict) -> Path:
         path = orig_write_request(intent)
         created_requests.append(path)
         return path
 
-    monkeypatch.setattr(server_mod, "write_request_file", tracked_request)
+    monkeypatch.setattr(config_service_mod, "write_request_file", tracked_request)
 
     async def main() -> None:
         runtime = FakeRuntime()
@@ -263,7 +263,7 @@ def test_cancel_and_exception_during_start_run_clean_all_prehandoff_files(
             await asyncio.wait_for(runtime.start_entered.wait(), timeout=5.0)
             assert len(created_creds) == 1 and created_creds[0].is_file()
             assert len(created_requests) == 1 and created_requests[0].is_file()
-            assert app.server._starting is True
+            assert app.server.runs._starting is True
 
             start_task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -271,10 +271,10 @@ def test_cancel_and_exception_during_start_run_clean_all_prehandoff_files(
 
             assert not created_creds[0].exists()
             assert not created_requests[0].exists()
-            assert not app.server._starting
-            assert app.server._starts_in_flight == 0
-            assert app.server._started.is_set()
-            assert not app.server._runs
+            assert not app.server.runs._starting
+            assert app.server.runs._starts_in_flight == 0
+            assert app.server.runs._started.is_set()
+            assert not app.server.runs._runs
 
             # 2) Ordinary exception raised by runtime.start_run()
             runtime.start_gate = None
@@ -284,8 +284,8 @@ def test_cancel_and_exception_during_start_run_clean_all_prehandoff_files(
             assert err["error"]["code"] == "internal"
             assert len(created_creds) == 2 and not created_creds[1].exists()
             assert len(created_requests) == 2 and not created_requests[1].exists()
-            assert not app.server._starting
-            assert not app.server._runs
+            assert not app.server.runs._starting
+            assert not app.server.runs._runs
 
             # 3) Subsequent Start succeeds cleanly.
             runtime.start_error = None
@@ -309,14 +309,14 @@ def test_exception_in_handle_start_cleans_prehandoff_resources_and_stops_handle(
     created_requests: list[Path] = []
     _track_credentials(monkeypatch, created_creds)
 
-    orig_write_request = server_mod.write_request_file
+    orig_write_request = config_service_mod.write_request_file
 
     def tracked_request(intent: dict) -> Path:
         path = orig_write_request(intent)
         created_requests.append(path)
         return path
 
-    monkeypatch.setattr(server_mod, "write_request_file", tracked_request)
+    monkeypatch.setattr(config_service_mod, "write_request_file", tracked_request)
 
     class _FailOnceStartRun(FakeRun):
         def __init__(self, spec, *, pid: int, on_done, fail_start: bool):
@@ -361,8 +361,8 @@ def test_exception_in_handle_start_cleans_prehandoff_resources_and_stops_handle(
             assert failed_run.aborted is True
             assert len(created_creds) == 1 and not created_creds[0].exists()
             assert len(created_requests) == 1 and not created_requests[0].exists()
-            assert not app.server._runs
-            assert not app.server._starting
+            assert not app.server.runs._runs
+            assert not app.server.runs._starting
 
             status, started = await app.client.post("api/run", body)
             assert status == 200
@@ -388,7 +388,7 @@ def test_cancel_before_timelines_lock_then_shutdown_leaks_no_temp_dir(
             release = threading.Event()
             worker_done = asyncio.Event()
             worker_errors: list[BaseException] = []
-            orig_new_file = app.server.timelines.new_file
+            orig_new_file = app.server.runs.timelines.new_file
 
             def gated_new_file() -> Path:
                 loop.call_soon_threadsafe(entered.set)
@@ -401,7 +401,7 @@ def test_cancel_before_timelines_lock_then_shutdown_leaks_no_temp_dir(
                 finally:
                     loop.call_soon_threadsafe(worker_done.set)
 
-            monkeypatch.setattr(app.server.timelines, "new_file", gated_new_file)
+            monkeypatch.setattr(app.server.runs.timelines, "new_file", gated_new_file)
 
             body = {"file": "simple.yaml", "scenario": "scenarios/smoke.yaml"}
             start_task = asyncio.create_task(app.server.post_run(_post_run_request(body)))
@@ -415,12 +415,12 @@ def test_cancel_before_timelines_lock_then_shutdown_leaks_no_temp_dir(
 
             assert not created_creds[0].exists()
             await app.server.shutdown()
-            assert app.server.timelines.directory is None
+            assert app.server.runs.timelines.directory is None
 
             # Wake the late worker thread after remove_all() has run: it must refuse to create a temp dir.
             release.set()
             await asyncio.wait_for(worker_done.wait(), timeout=5.0)
-            assert app.server.timelines.directory is None
+            assert app.server.runs.timelines.directory is None
             assert len(worker_errors) == 1 and isinstance(worker_errors[0], RuntimeError)
 
     asyncio.run(main())
