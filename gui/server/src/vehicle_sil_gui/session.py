@@ -146,7 +146,7 @@ def _shape_problem(event: dict) -> str | None:
     if kind == "log_dropped":
         sources = event.get("sources")
         if not _is_count(event.get("count")) or not isinstance(sources, dict) or \
-                not all(_is_count(n) for n in sources.values()):
+                not all(isinstance(s, str) and _is_count(n) for s, n in sources.items()):
             return "count or sources is not a count, or an object of counts"
         return None
     if kind == "command":
@@ -223,18 +223,19 @@ class _Log:
     def kept(self) -> int:
         return len(self.lines) - self.markers
 
-    def drop_oldest(self) -> int:
+    def drop_oldest(self, *, record_ring: bool = True) -> int:
         seq, size, event = self.lines.popleft()
         self.bytes -= size
         if event["event"] == "log_dropped":
             self.markers -= 1
         else:
-            self.drop(seq)
+            self.drop(seq, record_ring=record_ring)
         return size
 
-    def drop(self, seq: int) -> None:
+    def drop(self, seq: int, *, record_ring: bool = True) -> None:
         self.dropped += 1
-        self.ring.add(seq)
+        if record_ring:
+            self.ring.add(seq)
 
     def dropped_from(self, seq: int | None) -> tuple[int, bool]:
         """(dropped lines with a seq >= seq, whether the count is exact)."""
@@ -245,6 +246,47 @@ class _Log:
         if self.prestart_dropped and self.prestart_seq >= seq:
             n += self.prestart_dropped
         return n, exact
+
+
+@dataclass
+class _Staging:
+    """Pre-start staging buffers; allocated on Session only while staged=True and detached on commit."""
+
+    order: int = 0
+    last_seq: int | None = None
+    items: deque[tuple[int, tuple]] = field(default_factory=deque)
+    markers: deque[tuple[int, int, dict]] = field(default_factory=deque)
+    marker_bytes: int = 0
+    heartbeat: tuple[int, dict, int] | None = None
+    problem_counts: dict[str, int] = field(default_factory=lambda: {"launcher": 0, "server": 0})
+    omitted_problems: int = 0
+    line_too_long_seen: bool = False
+    decision: bool = False
+    passed_check: dict | None = None
+    failed_check: dict | None = None
+    discarded: bool = False
+    cleanup_called: bool = False
+    logs: list[tuple[int, tuple]] = field(default_factory=list)
+    source_order: tuple[str, ...] = ()
+    prestart_counts: tuple[tuple[str, int], ...] = ()
+
+    def next_order(self) -> int:
+        self.order += 1
+        return self.order
+
+    def settle(self, *, passed: dict | None = None, failed: dict | None = None) -> None:
+        if not self.decision:
+            self.passed_check, self.failed_check, self.decision = passed, failed, True
+
+    def merged_items(self) -> list[tuple]:
+        streams: list[object] = [self.items]
+        if self.logs:
+            streams.append(self.logs)
+        if self.markers:
+            streams.append(((o, ("event", ev, sz)) for o, sz, ev in self.markers))
+        if self.heartbeat is not None:
+            streams.append([(self.heartbeat[0], ("event", self.heartbeat[1], self.heartbeat[2]))])
+        return [item for _, item in heapq.merge(*streams, key=lambda entry: entry[0])]
 
 
 @dataclass
@@ -260,6 +302,7 @@ class Session:
     started_at: str = field(default_factory=now_iso)
     scenario: str | None = None  # the scenario file given to --scenario (root-relative), or None
     manual: list[str] = field(default_factory=list)  # the names given to --manual (the user starts them)
+    staged: bool = False  # pre-start buffering until the initial check settles on pass or fail
 
     def __post_init__(self) -> None:
         self.id = str(self.id)
@@ -313,6 +356,121 @@ class Session:
         self.scenario_over_at_ms: float | None = None
         # Where the server serves the run's timeline file (api/timeline/<id>), once the run has ended with one.
         self.timeline_url: str | None = None
+        self._staging: _Staging | None = _Staging() if self.staged else None
+
+    # ------------------------------------------------------------ pre-start staging
+
+    @property
+    def discarded(self) -> bool:
+        return self._staging is not None and self._staging.discarded
+
+    def _inspect_check_decision(self, st: _Staging, ev: object) -> None:
+        if st.decision or not isinstance(ev, dict):
+            return
+        kind = ev.get("event")
+        if kind == "check" and isinstance(ev.get("check"), dict):
+            chk = ev["check"]
+            st.settle(passed=chk) if chk.get("result") == "passed" else st.settle(failed=chk)
+        elif kind == "result" and isinstance(ev.get("result"), dict):
+            res, chk = ev["result"], ev["result"].get("check")
+            if isinstance(chk, dict) and chk.get("result") != "passed":
+                st.settle(failed=chk)
+            elif res.get("result") in ("check_failed", "usage"):
+                st.settle(failed={
+                    "result": res["result"],
+                    "errors": res.get("errors") if isinstance(res.get("errors"), int) else 1,
+                    "findings": res.get("findings") if isinstance(res.get("findings"), list) and res.get("findings") else [{
+                        "severity": "error", "code": res["result"], "file": self.file, "line": None,
+                        "participant": None, "network": None, "message": res.get("message") or "check failed",
+                    }],
+                })
+            else:
+                st.settle(passed=chk if isinstance(chk, dict) else None)
+        elif (kind == "phase" and ev.get("phase") not in ("checking", "ended")) or kind in (
+            "registry", "control_server", "participant", "time"
+        ):
+            st.settle()
+
+    def _stage_problem_room(self, st: _Staging, room: str | None) -> bool:
+        if room is None:
+            return True
+        limit = self.limits.server_problems if room == "server" else self.limits.problems
+        if st.problem_counts[room] < limit:
+            st.problem_counts[room] += 1
+            return True
+        st.omitted_problems += 1
+        return False
+
+    def stage_line_too_long(self) -> None:
+        st = self._staging
+        if st is None or st.discarded:
+            return
+        if not st.line_too_long_seen:
+            st.line_too_long_seen = True
+            st.items.append((st.next_order(), ("line_too_long",)))
+        elif self._stage_problem_room(st, "launcher"):
+            st.items.append((st.next_order(), ("line_too_long",)))
+
+    def stage_exit(self, returncode: int | None) -> None:
+        if (st := self._staging) is not None and not st.discarded:
+            st.items.append((st.next_order(), ("exit", returncode)))
+
+    def stage_finish(self, output_cut: bool, launcher_alive: bool) -> None:
+        if (st := self._staging) is not None and not st.discarded:
+            st.settle()
+            st.items.append((st.next_order(), ("finish", output_cut, launcher_alive)))
+
+    def mark_cleanup_staged(self) -> None:
+        if self._staging is not None:
+            self._staging.cleanup_called = True
+
+    def discard_staging(self) -> None:
+        """Discards staged pre-start payloads when a start fails, times out, or is cancelled."""
+        if self._staging is not None:
+            self._staging = _Staging(discarded=True)
+            self._logs.clear()
+            self._log_bytes = 0
+            self._stderr_last.clear()
+
+    def take_staged(self) -> _Staging | None:
+        """Detaches staging buffers and switches to live mode, leaving pre-event summary clean."""
+        st = self._staging
+        if st is None:
+            return None
+        st.source_order = tuple(src for src in self._logs if src != SHARED_LOG)
+        st.prestart_counts = tuple(
+            (src, n) for src, log in self._logs.items() if (n := log.dropped + log.prestart_dropped) > 0
+        )
+        st.logs = sorted(
+            ((o, ("event", ev, sz)) for log in self._logs.values() for o, sz, ev in log.lines),
+            key=lambda entry: entry[0],
+        )
+        self.staged = False
+        self._staging = None
+        self._logs.clear()
+        self._log_bytes = 0
+        return st
+
+    def apply_prestart_dropped(self, st: _Staging, *, prestart_seq: int) -> list[dict]:
+        """Restores pre-start log buckets when drops occurred and returns an out-of-band `dropped` notice."""
+        if not st.prestart_counts:
+            return []
+        for src in st.source_order:
+            self._log_of(src)
+        reported: dict[str, int] = {}
+        for src, count in st.prestart_counts:
+            log = self._log_of(src)
+            log.prestart_dropped += count
+            log.prestart_seq = prestart_seq
+            reported[src] = reported.get(src, 0) + count
+        return [{"type": "dropped", "run_id": self.id, "reason": "not-kept", "log": reported,
+                 "at_least": [], "events": 0}]
+
+    def clamp_prestart_seq(self, seq: int) -> None:
+        """Clamps prestart_seq to the current stream head when zero stamped frames followed `variables`."""
+        for log in self._logs.values():
+            if log.prestart_seq > seq:
+                log.prestart_seq = seq
 
     # ------------------------------------------------------------ input
 
@@ -337,6 +495,12 @@ class Session:
         return self._with_silence(lambda: self._feed_event(event, size))
 
     def _feed_event(self, event: dict, size: int, *, detail: str | None = None) -> list[dict]:
+        st = self._staging
+        if st is not None:
+            if st.discarded:
+                return []
+            self._inspect_check_decision(st, event)
+
         def problem_detail() -> str:
             return self._cut(detail if detail is not None else repr(event))
 
@@ -349,24 +513,37 @@ class Session:
         if not _is_count(seq):
             return self.problem("launcher-output",
                                 f"the launcher wrote a '{self._cut(event['event'])}' event without a seq that is an "
-                                f"integer from 0 to 2^53: it is ignored", problem_detail())
-        if self.last_seq is not None and seq <= self.last_seq:
+                                "integer from 0 to 2^53: it is ignored", problem_detail())
+        prev_seq = st.last_seq if st is not None else self.last_seq
+        if prev_seq is not None and seq <= prev_seq:
             return self.problem("seq-order",
-                                f"the launcher wrote seq {seq} after {self.last_seq}: the event is ignored "
+                                f"the launcher wrote seq {seq} after {prev_seq}: the event is ignored "
                                 "(events must come in order)", problem_detail())
-        out: list[dict] = []
         kind = event["event"]
-        self.last_seq = seq
+        if st is not None:
+            st.last_seq = seq
+        else:
+            self.last_seq = seq
         wrong = None if "t_ms" not in event or _is_count(event["t_ms"]) else "t_ms is not an integer from 0 to 2^53"
         if wrong is None:
-            if "t_ms" in event:
+            if st is None and "t_ms" in event:
                 self.last_t_ms = event["t_ms"]
             wrong = _shape_problem(event)
         if wrong is not None:
-            return out + self.problem("bad-event", f"the launcher wrote a '{kind}' event whose {wrong}: it is "
-                                                   "ignored (not shown); the launcher and this GUI may not match",
-                                      problem_detail())
-        out += self._apply(event, size)
+            return self.problem("bad-event", f"the launcher wrote a '{kind}' event whose {wrong}: it is "
+                                             "ignored (not shown); the launcher and this GUI may not match",
+                                problem_detail())
+        if st is not None:
+            if kind == "log":
+                self._keep_log(event, size, st.next_order())
+            elif kind == "log_dropped":
+                self._stage_marker(st, event, size)
+            elif kind == "heartbeat":
+                st.heartbeat = (st.next_order(), event, size)
+            else:
+                st.items.append((st.next_order(), ("event", event, size)))
+            return []
+        out = self._apply(event, size)
         sseq = self.next_stream_seq()
         if kind == "log":
             self._keep_log(event, size, sseq)
@@ -548,8 +725,9 @@ class Session:
 
     def _keep_log(self, event: dict, size: int, stream_seq: int) -> None:
         log = self._log_of(event["source"])
-        if size > self.limits.log_line_bytes:
-            log.drop(stream_seq)
+        cap_bytes = min(self.limits.log_line_bytes, self.limits.log_bytes_per_source, self.limits.log_bytes)
+        if self.limits.log_lines_per_source <= 0 or size > cap_bytes:
+            log.drop(stream_seq, record_ring=not self.staged)
             return
         log.lines.append((stream_seq, size, event))
         log.bytes += size
@@ -563,6 +741,25 @@ class Session:
         if log is None:
             log = self._logs[source] = _Log(self.limits.dropped_seqs)
         return log
+
+    def _stage_marker(self, st: _Staging, event: dict, size: int) -> None:
+        """Holds staged log_dropped markers in one bounded deque so oversized/evicted markers fold once into
+        prestart_dropped without touching per-source log.lines or launcher_dropped."""
+        def fold(ev: dict) -> None:
+            for source, count in ev["sources"].items():
+                if count > 0:
+                    self._log_of(source).prestart_dropped += count
+
+        max_bytes = min(self.limits.log_bytes_per_source, self.limits.log_bytes)
+        if self.limits.log_lines_per_source <= 0 or size > self.limits.log_line_bytes or size > max_bytes:
+            fold(event)
+            return
+        st.markers.append((st.next_order(), size, event))
+        st.marker_bytes += size
+        while st.markers and (len(st.markers) > self.limits.log_lines_per_source or st.marker_bytes > max_bytes):
+            _, sz, old = st.markers.popleft()
+            st.marker_bytes -= sz
+            fold(old)
 
     def _keep_marker(self, event: dict, size: int, stream_seq: int) -> None:
         """A log_dropped event: counted in the dropped lines of each source it names, and kept in their logs
@@ -582,39 +779,16 @@ class Session:
             self._trim(log)
 
     def _trim(self, log: _Log) -> None:
+        record = not self.staged
         while len(log.lines) > self.limits.log_lines_per_source or log.bytes > self.limits.log_bytes_per_source:
-            self._log_bytes -= log.drop_oldest()
+            self._log_bytes -= log.drop_oldest(record_ring=record)
         while self._log_bytes > self.limits.log_bytes:  # all sources: the oldest line first
             oldest = min((l for l in self._logs.values() if l.lines), key=lambda l: l.lines[0][0])
-            self._log_bytes -= oldest.drop_oldest()
+            self._log_bytes -= oldest.drop_oldest(record_ring=record)
 
     def log_key(self, source: str) -> str:
         """The name under which the log lines of a source are counted in the summary."""
         return source if source in self._logs else SHARED_LOG
-
-    def note_prestart_dropped_logs(self, counts: dict[str, int], *, sources: tuple[str, ...] = ()) -> list[dict]:
-        """Records log lines dropped during pre-start buffering and returns a `dropped` notice for live screens."""
-        for src in sources:
-            if src != SHARED_LOG:
-                self._log_of(src)
-        positive = [(source, count) for source, count in counts.items() if count > 0]
-        if not positive:
-            return []
-        reported: dict[str, int] = {}
-        sseq = self.next_stream_seq()
-        for source, count in positive:
-            key = source if source in self._logs or len(self._logs) < self.limits.log_sources else SHARED_LOG
-            log = self._log_of(key)
-            log.prestart_dropped += count
-            log.prestart_seq = sseq
-            reported[key] = reported.get(key, 0) + count
-        return [{"type": "dropped", "stream_seq": sseq, "run_id": self.id, "reason": "not-kept", "log": reported,
-                 "at_least": [], "events": 0}]
-
-    def note_skipped_stderr(self, count: int) -> None:
-        """Accounts for stderr lines dropped between stderr_first and stderr_last during pre-start buffering."""
-        if count > 0:
-            self._stderr_lines += count
 
     def _limit(self, what: str, message: str) -> list[dict]:
         """A kept-limit problem, once per kind of thing."""
@@ -627,10 +801,15 @@ class Session:
         """A problem for the screens, kept in the summary while its room has space: the server's own problems,
         the launcher's standard error (bounded by stderr_line) and the rest of what the launcher wrote each have
         their own room."""
-        entry = {"code": code, "message": message, "detail": detail}
         room = "server" if code in SERVER_PROBLEMS else None if code == STDERR else "launcher"
-        if room is None or self._problem_counts[room] < (self.limits.server_problems if room == "server"
-                                                         else self.limits.problems):
+        st = self._staging
+        if st is not None:
+            if not st.discarded and self._stage_problem_room(st, room):
+                st.items.append((st.next_order(), ("problem", code, message, detail)))
+            return []
+        entry = {"code": code, "message": message, "detail": detail}
+        limit = self.limits.server_problems if room == "server" else self.limits.problems
+        if room is None or self._problem_counts[room] < limit:
             self.problems.append(entry)
             if room is not None:
                 self._problem_counts[room] += 1
@@ -642,9 +821,15 @@ class Session:
         """A line of the launcher's standard error. The first stderr_first lines are problems at once; of the
         later ones only the last stderr_last are kept, and they become problems when the run ends (the last
         lines of a launcher that fails say why)."""
+        st = self._staging
+        if st is not None and st.discarded:
+            return []
         self._stderr_lines += 1
         if self._stderr_lines > self.limits.stderr_first:
             self._stderr_last.append(line)
+            return []
+        if st is not None:
+            st.items.append((st.next_order(), ("stderr_first", line)))
             return []
         return self._stderr_problem(line)
 

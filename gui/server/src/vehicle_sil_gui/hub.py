@@ -240,7 +240,7 @@ class Hub:
             if (
                 self.next_stream_seq is not None
                 and "stream_seq" not in m
-                and m.get("type") not in ("resync", "values")
+                and m.get("type") not in ("resync", "values", "dropped")
             ):
                 m["stream_seq"] = self.next_stream_seq()
             told = m.get("allowed") if m.get("type") == "allowed" else \

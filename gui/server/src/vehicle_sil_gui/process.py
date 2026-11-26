@@ -14,7 +14,10 @@ import signal
 import subprocess
 import sys
 import weakref
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 WINDOWS = sys.platform == "win32"
 READ_CHUNK = 64 * 1024
@@ -165,25 +168,58 @@ async def wait_bounded(proc: asyncio.subprocess.Process, seconds: float) -> bool
         return proc.returncode is not None
 
 
+async def run_thread_reclaimable(
+    fn: Callable[..., T], cleanup: Callable[[T], object], *args: Any, **kwargs: Any,
+) -> T:
+    """Runs `fn` in a worker thread; if cancelled before returning, reclaims any produced value via `cleanup`."""
+    fut = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        def _reclaim(done: asyncio.Future[T]) -> None:
+            if not done.cancelled() and done.exception() is None:
+                cleanup(done.result())
+
+        _reclaim(fut) if fut.done() else fut.add_done_callback(_reclaim)
+        raise
+
+
+async def race_first(
+    *coros: Coroutine[Any, Any, Any], timeout: float | None = None, propagate: bool = True,
+) -> tuple[int, Any] | None:
+    """Runs coroutines until one finishes (or `timeout` expires), cancels and awaits the rest, and returns
+    `(index, result)` or `None` on timeout. When `propagate` is True, raises a single winner exception."""
+    if not coros:
+        return None
+    tasks = [asyncio.create_task(coro) for coro in coros]
+    try:
+        done, _ = await asyncio.wait(tasks, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        winner = next((i for i, task in enumerate(tasks) if task in done), None)
+        if winner is None:
+            return None
+        task = tasks[winner]
+        if task.cancelled():
+            return (winner, None)
+        exc = task.exception()
+        if exc is not None:
+            if propagate or not isinstance(exc, Exception):
+                raise exc
+            return (winner, None)
+        return (winner, task.result())
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def wait_exit_or_hurry(proc: asyncio.subprocess.Process, hurry: asyncio.Event,
                              seconds: float | None) -> bool:
     """Waits for the process to exit, at most `seconds`, returning early if `hurry` is set;
     whether it has exited."""
     if proc.returncode is not None:
         return True
-    hurry_task = asyncio.create_task(hurry.wait())
-    done = asyncio.create_task(wait_exit(proc))
-    try:
-        await asyncio.wait({hurry_task, done}, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
-        if done.done() and not done.cancelled():
-            done.result()
-        exited = (done.done() and not done.cancelled()) or proc.returncode is not None
-    finally:
-        for task in (hurry_task, done):
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(hurry_task, done, return_exceptions=True)
-    return exited
+    winner = await race_first(wait_exit(proc), hurry.wait(), timeout=seconds)
+    return (winner is not None and winner[0] == 0) or proc.returncode is not None
 
 
 def close_pipes(proc: asyncio.subprocess.Process) -> None:

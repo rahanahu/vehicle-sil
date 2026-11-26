@@ -1032,14 +1032,11 @@ class ServeRuntime:
         return await self._spawn_process(config, once=False, want_control=want_control)
 
     async def _create_hot_credentials(self, config: str) -> tuple[Path, str] | None:
-        making = asyncio.ensure_future(asyncio.to_thread(control.credentials_file))
         try:
-            credentials, token = await asyncio.shield(making)
-        except asyncio.CancelledError:
-            making.add_done_callback(
-                lambda f: not f.cancelled() and f.exception() is None and control.remove(f.result()[0])
+            credentials, token = await process.run_thread_reclaimable(
+                control.credentials_file,
+                lambda pair: control.remove(pair[0]),
             )
-            raise
         except OSError as e:
             self._cold_status = (
                 config,
