@@ -818,6 +818,115 @@ class TestBuildFlagExtraction(unittest.TestCase):
             self.assertEqual(build_info["targets"]["vehicle_sil_core"]["effective_opt_level"], "-O3")
             self.assertIsNone(build_info["flags_warning"])
 
+    def test_corrupt_cc_malformed_quotes_empty_cmd_and_cache_rsp_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            # 1. Corrupt compile_commands.json must not fall back to CMakeCache.txt.
+            b_corrupt = bdir / "corrupt_cc"
+            b_corrupt.mkdir()
+            (b_corrupt / "compile_commands.json").write_text('[{"file": "tools/launch/main.cpp"', encoding="utf-8")
+            (b_corrupt / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG\n",
+                encoding="utf-8",
+            )
+            p_corrupt, _ = BV.extract_build_provenance(b_corrupt, None, is_windows=False)
+            self.assertEqual(p_corrupt["flags_source"], "unavailable")
+            self.assertIn("unreadable or invalid compile_commands.json", p_corrupt["flags_warning"] or "")
+            self.assertEqual(p_corrupt["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+
+            # 2. CMakeCache.txt expands @response_file and fails closed on missing @rsp or unclosed quotes.
+            b_cache = bdir / "cache_rsp"
+            b_cache.mkdir()
+            (b_cache / "override_O0.rsp").write_text("-O0 -UNDEBUG\n", encoding="utf-8")
+            (b_cache / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG @override_O0.rsp\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                p_cache, _ = BV.extract_build_provenance(b_cache, None, is_windows=False)
+            self.assertEqual(p_cache["flags_source"], "cmake_cache")
+            self.assertEqual(p_cache["targets"]["vehicle_sil_launch"]["effective_opt_level"], "-O0")
+            self.assertFalse(p_cache["targets"]["vehicle_sil_launch"]["ndebug"])
+
+            (b_cache / "override_O0.rsp").unlink()
+            p_cache_missing, _ = BV.extract_build_provenance(b_cache, None, is_windows=False)
+            self.assertEqual(p_cache_missing["flags_source"], "unavailable")
+            self.assertIn("unreadable response file(s) in CMakeCache.txt", p_cache_missing["flags_warning"] or "")
+
+            (b_cache / "CMakeCache.txt").write_text(
+                'CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_CXX_FLAGS_RELEASE:STRING=-DSTR="unclosed -O3\n',
+                encoding="utf-8",
+            )
+            p_cache_quote, _ = BV.extract_build_provenance(b_cache, None, is_windows=False)
+            self.assertEqual(p_cache_quote["flags_source"], "unavailable")
+            self.assertIn("malformed CMAKE_CXX_FLAGS", p_cache_quote["flags_warning"] or "")
+
+            # 3. Unclosed quote or empty/compiler-less command in compile_commands.json fails closed cleanly.
+            b_mal = bdir / "malformed_cc"
+            b_mal.mkdir()
+            (b_mal / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG\n",
+                encoding="utf-8",
+            )
+            (b_mal / "compile_commands.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "directory": str(b_mal),
+                            "file": "tools/launch/main.cpp",
+                            "command": '/usr/bin/g++ -DSTR="unclosed -O3 -c tools/launch/main.cpp',
+                        },
+                        {
+                            "directory": str(b_mal),
+                            "file": "libs/core/src/participant_runtime.cpp",
+                            "command": "ccache env FOO=1",
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            p_mal, _ = BV.extract_build_provenance(b_mal, None, is_windows=False)
+            self.assertEqual(p_mal["flags_source"], "unavailable")
+            self.assertIn("malformed compile_commands.json command", p_mal["flags_warning"] or "")
+            self.assertEqual(p_mal["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            self.assertEqual(p_mal["targets"]["vehicle_sil_core"], BV._empty_target_flags())
+
+    def test_windows_gnu_rsp_quoting_multi_token_wrappers_and_literal_at_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            (bdir / "gnu_flags.rsp").write_text("'-DMSG=hello @world' -DFOO=a\\ @b '-O3' '-DNDEBUG'\n", encoding="utf-8")
+            at_inc = bdir / "@scope" / "inc"
+            at_inc.mkdir(parents=True)
+
+            cc_win_gnu = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\launch\\main.cpp",
+                    "command": "cmake.exe -E env CCACHE_DIR=C:\\cache ccache.exe -o sloppiness=pch_defines g++.exe @gnu_flags.rsp -I @scope/inc -c main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\libs\\core\\src\\participant_runtime.cpp",
+                    "command": "env -u CCACHE_DISABLE @tools/g++.exe @gnu_flags.rsp -Xlinker @loader_path/libfoo.dylib -c participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\bench_ecu\\main.cpp",
+                    "command": "x86_64-w64-mingw32-g++.exe @gnu_flags.rsp -c main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_win_gnu), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", side_effect=lambda cp, _: f"banner:{cp}"):
+                info, _ = BV.extract_build_provenance(bdir, {"ndebug": True}, is_windows=True)
+
+            self.assertEqual(info["flags_source"], "compile_commands.json")
+            self.assertIsNone(info["flags_warning"])
+            self.assertEqual(info["targets"]["vehicle_sil_launch"]["compiler_banner"], "banner:g++.exe")
+            self.assertEqual(info["targets"]["vehicle_sil_core"]["compiler_banner"], "banner:@tools/g++.exe")
+            for name in BV.TARGET_TU_SUFFIXES:
+                self.assertEqual(info["targets"][name]["effective_opt_level"], "-O3")
+                self.assertTrue(info["targets"][name]["ndebug"])
+
 
 @unittest.skipUnless(shutil.which("git"), "git executable is required for dependency provenance tests")
 class TestDependencyProvenance(unittest.TestCase):
@@ -1202,6 +1311,61 @@ class TestWindowsMsysGitPathNormalization(unittest.TestCase):
                 )
             self.assertIsNone(deps_info_leak["sil_kit"]["submodule_commit"])
             self.assertIsNone(deps_info_leak["sil_kit"]["tag"])
+
+            # When cygpath is unavailable on Windows and git prints an unmapped MSYS virtual path (/tmp/...),
+            # normalization must fail closed rather than fabricating C:\tmp\... and leaking parent HEAD/tag.
+            def fake_git_rel_parent_abs_silkit(args, cwd=None):
+                if cwd == parent:
+                    if args == ["rev-parse", "HEAD"]:
+                        return parent_sha
+                    if args in (["rev-parse", "--git-dir"], ["rev-parse", "--git-common-dir"]):
+                        return ".git"
+                if cwd == silkit:
+                    if args == ["rev-parse", "--show-prefix"]:
+                        return ""
+                    if args in (["rev-parse", "--git-dir"], ["rev-parse", "--git-common-dir"]):
+                        return "/tmp/tmp999/repo/.git"
+                    if args == ["rev-parse", "HEAD"]:
+                        return parent_sha
+                    if args == ["describe", "--tags", "--exact-match"]:
+                        return "v0.4.0-parent-leaked"
+                return None
+
+            with (
+                mock.patch.object(BV.os, "name", "nt"),
+                mock.patch.object(BV, "_cygpath_to_windows", return_value=None),
+                mock.patch.object(BV, "_git_output", side_effect=fake_git_rel_parent_abs_silkit),
+                mock.patch.object(BV.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)),
+                mock.patch.object(Path, "exists", fake_exists),
+            ):
+                _, deps_info_nocyg = BV._collect_repo_and_dependency_provenance(
+                    {"vehicle_sil": "0.4.0", "features": []},
+                    {},
+                    root=parent,
+                )
+            self.assertIsNone(deps_info_nocyg["sil_kit"]["submodule_commit"])
+            self.assertIsNone(deps_info_nocyg["sil_kit"]["tag"])
+
+            self.assertEqual(BV._msys_to_windows_path("/cygdrive/c/Users/dev/repo"), "C:/Users/dev/repo")
+
+    @unittest.skipUnless(shutil.which("git"), "git executable is required")
+    def test_git_ceiling_directories_env_does_not_leak_ancestor_repo_into_silkit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mono = Path(tmp) / "monorepo"
+            TestDependencyProvenance()._init_repo_with_commit(mono, "top.txt", "v9.9.9-monorepo")
+            vsil = mono / "subprojects" / "vehicle-sil"
+            silkit = vsil / "external" / "sil-kit"
+            silkit.mkdir(parents=True)
+            (silkit / ".git").write_text(f"gitdir: {(mono / '.git').as_posix()}\n", encoding="utf-8")
+
+            with mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": str(mono / "subprojects")}):
+                _, deps_info = BV._collect_repo_and_dependency_provenance(
+                    {"vehicle_sil": "0.4.0", "features": []},
+                    {},
+                    root=vsil,
+                )
+            self.assertIsNone(deps_info["sil_kit"]["submodule_commit"])
+            self.assertIsNone(deps_info["sil_kit"]["tag"])
 
 
 class TestAlignmentValidation(unittest.TestCase):
