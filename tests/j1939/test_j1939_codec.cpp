@@ -166,6 +166,21 @@ concept CanSetNotAvailable = requires(S s) { s.set_not_available(); };
 template <typename S>
 concept CanSetError = requires(S s) { s.set_error(); };
 
+/// Hand-written EnumSignal Spec without enumerator_names (backwards compatibility).
+enum class LegacyEnum : std::uint8_t
+{
+    a = 0,
+    b = 2,
+};
+
+struct LegacyEnumSpec
+{
+    static constexpr SignalLayout layout{.start_bit = 0, .length = 2, .raw_min = 0, .raw_max = 2};
+    static constexpr std::string_view name{"legacy"};
+    static constexpr std::string_view unit{""};
+    static constexpr std::array<std::uint64_t, 2> enumerators{0, 2};
+};
+
 } // namespace
 
 // --- The layout -------------------------------------------------------------------------------
@@ -514,6 +529,33 @@ TEST_CASE(enumerations)
     CHECK(r.what.state() == SignalState::Undefined); // above the enumerators too
     r.what.set_raw(0xFE);
     CHECK(r.what.state() == SignalState::Error);
+
+    // Constexpr enumerator_names table on Spec and EnumSignal, keeping Spec::enumerators intact.
+    static_assert(Status::Signals::mode::enumerators == std::array<std::uint64_t, 2>{0, 1});
+    static_assert(Status::Signals::mode::enumerator_names.size() == 2);
+    static_assert(Status::Signals::mode::enumerator_names[0].name == "off" &&
+                  Status::Signals::mode::enumerator_names[0].value == 0);
+    static_assert(Status::Signals::mode::enumerator_names[1].name == "on" &&
+                  Status::Signals::mode::enumerator_names[1].value == 1);
+    static_assert(decltype(Status::mode)::enumerator_names.size() == 2);
+    static_assert(decltype(Status::mode)::enumerator_names[1].name == "on");
+
+    static_assert(Reset::Signals::what::enumerator_names.size() == 3);
+    static_assert(Reset::Signals::what::enumerator_names[0].name == "all" &&
+                  Reset::Signals::what::enumerator_names[0].value == 0);
+    static_assert(Reset::Signals::what::enumerator_names[1].name == "faults" &&
+                  Reset::Signals::what::enumerator_names[1].value == 1);
+    static_assert(Reset::Signals::what::enumerator_names[2].name == "counters" &&
+                  Reset::Signals::what::enumerator_names[2].value == 3);
+
+    // Hand-written EnumSignal Spec without enumerator_names stays compatible.
+    codec::EnumSignal<LegacyEnumSpec, LegacyEnum> legacy;
+    static_assert(decltype(legacy)::name == "legacy" && decltype(legacy)::unit.empty());
+    static_assert(decltype(legacy)::enumerator_names.empty());
+    legacy.set(LegacyEnum::b);
+    CHECK(legacy.value() == std::optional<LegacyEnum>(LegacyEnum::b));
+    legacy.set_raw(1);
+    CHECK(legacy.state() == SignalState::Undefined);
 }
 
 TEST_CASE(selectors_tell_messages_of_one_pgn_apart)
@@ -599,4 +641,9 @@ TEST_CASE(names_that_clash_with_the_generated_code_still_work)
     p.array.set(names::Pgn::Array::big);
     CHECK_EQ(p.array.raw(), std::uint64_t{0xF000000000000000});
     CHECK(names::Pgn::decode(p.bytes())->array.value() == std::optional<names::Pgn::Array>(names::Pgn::Array::big));
+    static_assert(names::Pgn::Signals::array::enumerator_names.size() == 2);
+    static_assert(names::Pgn::Signals::array::enumerator_names[0].name == "big" &&
+                  names::Pgn::Signals::array::enumerator_names[0].value == 0xF000000000000000ull);
+    static_assert(names::Pgn::Signals::array::enumerator_names[1].name == "small" &&
+                  names::Pgn::Signals::array::enumerator_names[1].value == 1ull);
 }
