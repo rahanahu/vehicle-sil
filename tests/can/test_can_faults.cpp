@@ -5,6 +5,7 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/can/host.hpp"
+#include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/can/step_driver.hpp"
 #include "vehicle_sil/can/virtual_can_bus.hpp"
 
@@ -327,5 +328,207 @@ TEST_CASE(virtual_bus_outage_and_transmit_failed_honor_endpoint_transmit_limit)
             CHECK(evs[1].kind == PortEvent::Kind::TransmitFailed && evs[1].correlated && evs[1].token == 20u);
             CHECK_EQ(a.outstanding(), 0u);
         }
+    }
+}
+
+TEST_CASE(virtual_bus_separates_correlated_and_uncorrelated_event_queues)
+{
+    // 1. Timed VirtualCanBus {event_capacity = 2, transmit_queue_capacity = 2}:
+    //    Frame 1 (token = 10, Duplicate) + Frame 2 (token = 20, Deliver) -> both correlated tokens
+    //    (10 and 20) are delivered via RawChannel with port_event_overflows == 0 and outstanding == 0,
+    //    while Copy 1 goes into the separate uncorrelated queue (ep.event_overflows() == 0).
+    {
+        VirtualCanBus bus(timed());
+        auto& ep = bus.attach(
+            vehicle_sil::can::VirtualCanBusEndpointOptions{.event_capacity = 2, .transmit_queue_capacity = 2});
+        ep.set_fault_injector([](const TimedFrame& f) {
+            return f.frame.id == 0x10 ? FaultAction::duplicate() : FaultAction::deliver();
+        });
+        vehicle_sil::can::RawChannel raw;
+        vehicle_sil::can::Host host;
+        host.add(raw, ep);
+        std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+        raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+        host.set_application([&](SimTime now) {
+            if (now == at(0ms))
+            {
+                CHECK(raw.send(frame(0x10), 10) == vehicle_sil::can::RawSendStatus::Ok);
+                CHECK(raw.send(frame(0x20), 20) == vehicle_sil::can::RawSendStatus::Ok);
+            }
+        });
+        vehicle_sil::can::StepDriver driver;
+        driver.add(host, 5ms);
+        driver.run_until(at(10ms));
+
+        CHECK_EQ(txEvents.size(), 2u);
+        CHECK(txEvents[0].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+        CHECK_EQ(txEvents[0].token, 10u);
+        CHECK(txEvents[1].kind == vehicle_sil::can::TransmitEvent::Kind::Completed);
+        CHECK_EQ(txEvents[1].token, 20u);
+        CHECK_EQ(raw.statistics().port_event_overflows, 0u);
+        CHECK_EQ(raw.statistics().outstanding, 0u);
+        CHECK_EQ(ep.outstanding(), 0u);
+        CHECK_EQ(ep.event_overflows(), 0u);
+    }
+
+    // 2. Single-frame Duplicate at event_capacity = 2 delivers both Copy 0 and Copy 1 cleanly.
+    {
+        VirtualCanBus bus(timed());
+        auto& ep = bus.attach(
+            vehicle_sil::can::VirtualCanBusEndpointOptions{.event_capacity = 2, .transmit_queue_capacity = 2});
+        ep.set_fault_injector([](const TimedFrame&) { return FaultAction::duplicate(); });
+        CHECK(ep.send(TimedFrame{at(0ms), frame(0x30)}, 77) == SendResult::Accepted);
+        const auto evs = events_before(ep, at(5ms));
+        CHECK_EQ(evs.size(), 2u);
+        CHECK(evs[0].kind == PortEvent::Kind::TransmitCompleted && evs[0].correlated && evs[0].token == 77u);
+        CHECK(evs[1].kind == PortEvent::Kind::TransmitCompleted && !evs[1].correlated);
+        CHECK_EQ(ep.event_overflows(), 0u);
+        CHECK_EQ(ep.outstanding(), 0u);
+    }
+
+    // 3. Challenger Counterexample A: timed VirtualCanBus (500 kbps, simulator_step = 0,
+    //    {event_capacity = 2, transmit_queue_capacity = 2}), Duplicate spanning step 350us
+    //    (Copy 0 ends at 262us < 350us, Copy 1 ends at 524us > 350us), followed by 2 normal
+    //    frames at 350us -> all 3 correlated tokens delivered, port_event_overflows == 0.
+    {
+        VirtualCanBusOptions busOptions;
+        busOptions.timing = VirtualCanBusTiming{.bitrate = 500'000, .transmit_queue_capacity = 64, .simulator_step = 0ns};
+        VirtualCanBus bus(busOptions);
+        auto& ep = bus.attach(
+            vehicle_sil::can::VirtualCanBusEndpointOptions{.event_capacity = 2, .transmit_queue_capacity = 2});
+        ep.set_fault_injector([](const TimedFrame& f) {
+            return f.frame.id == 0x18FF0001u ? FaultAction::duplicate() : FaultAction::deliver();
+        });
+        vehicle_sil::can::RawChannel raw;
+        vehicle_sil::can::Host host;
+        host.add(raw, ep);
+        std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+        raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+
+        Frame ext8;
+        ext8.id = 0x18FF0001u;
+        ext8.format = vehicle_sil::can::IdFormat::Extended;
+        ext8.length = 8;
+
+        host.set_application([&](SimTime now) {
+            if (now == SimTime{})
+            {
+                CHECK(raw.send(ext8, 10) == vehicle_sil::can::RawSendStatus::Ok);
+            }
+            else if (now == SimTime{} + 350us)
+            {
+                Frame f2 = ext8;
+                f2.id = 0x18FF0002u;
+                Frame f3 = ext8;
+                f3.id = 0x18FF0003u;
+                CHECK(raw.send(f2, 20) == vehicle_sil::can::RawSendStatus::Ok);
+                CHECK(raw.send(f3, 30) == vehicle_sil::can::RawSendStatus::Ok);
+            }
+        });
+        vehicle_sil::can::StepDriver driver;
+        driver.add(host, 350us);
+        driver.run_until(SimTime{} + 2100us);
+
+        CHECK_EQ(txEvents.size(), 3u);
+        CHECK_EQ(txEvents[0].token, 10u);
+        CHECK_EQ(txEvents[1].token, 20u);
+        CHECK_EQ(txEvents[2].token, 30u);
+        CHECK_EQ(raw.statistics().port_event_overflows, 0u);
+        CHECK_EQ(raw.statistics().outstanding, 0u);
+        CHECK_EQ(ep.outstanding(), 0u);
+        CHECK_EQ(ep.event_overflows(), 0u);
+    }
+
+    // 4. Challenger Counterexample B: inject_event() filling uncorrelated_events_ BEFORE send()
+    //    on both timing-less and timed VirtualCanBus ({event_capacity = 2, transmit_queue_capacity = 2})
+    //    -> subsequent 2 sends both deliver correlated TransmitCompleted with port_event_overflows == 0.
+    for (const bool withTiming : {false, true})
+    {
+        VirtualCanBus bus(withTiming ? timed() : VirtualCanBusOptions{});
+        auto& ep = bus.attach(
+            vehicle_sil::can::VirtualCanBusEndpointOptions{.event_capacity = 2, .transmit_queue_capacity = 2});
+        PortEvent injected;
+        injected.kind = PortEvent::Kind::BusStateChanged;
+        injected.time = at(0ms);
+        injected.bus_state = BusState::ErrorPassive;
+        CHECK(ep.inject_event(injected));
+        CHECK(ep.inject_event(injected));
+        CHECK(!ep.inject_event(injected)); // uncorrelated queue full
+        CHECK_EQ(ep.event_overflows(), 1u);
+
+        vehicle_sil::can::RawChannel raw;
+        vehicle_sil::can::Host host;
+        host.add(raw, ep);
+        std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+        raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+        host.set_application([&](SimTime now) {
+            if (now == at(0ms))
+            {
+                CHECK(raw.send(frame(0x40), 100) == vehicle_sil::can::RawSendStatus::Ok);
+                CHECK(raw.send(frame(0x41), 200) == vehicle_sil::can::RawSendStatus::Ok);
+            }
+        });
+        vehicle_sil::can::StepDriver driver;
+        driver.add(host, 5ms);
+        driver.run_until(at(10ms));
+
+        CHECK_EQ(txEvents.size(), 2u);
+        CHECK_EQ(txEvents[0].token, 100u);
+        CHECK_EQ(txEvents[1].token, 200u);
+        CHECK_EQ(raw.statistics().port_event_overflows, 0u);
+        CHECK_EQ(raw.statistics().outstanding, 0u);
+        CHECK_EQ(ep.outstanding(), 0u);
+    }
+
+    // 5. Challenger Counterexample C: RawChannelOptions{.send_capacity = 64, .port_transmit_queue_capacity = 64}
+    //    (port_event_capacity = 0 -> auto 1024) + 1024 inject_event() before send() -> port_event_overflows == 0.
+    {
+        vehicle_sil::can::RawChannelOptions chOpts;
+        chOpts.send_capacity = 64;
+        chOpts.port_transmit_queue_capacity = 64;
+        const std::size_t portEventCap = vehicle_sil::can::RawChannel::port_event_capacity(chOpts);
+        CHECK_EQ(portEventCap, 1024u);
+
+        VirtualCanBus bus;
+        auto& ep = bus.attach(vehicle_sil::can::VirtualCanBusEndpointOptions{
+            .inbox_capacity = vehicle_sil::can::RawChannel::port_inbox_capacity(chOpts),
+            .event_capacity = portEventCap,
+            .transmit_queue_capacity = chOpts.port_transmit_queue_capacity,
+        });
+        PortEvent injected;
+        injected.kind = PortEvent::Kind::ErrorFrame;
+        injected.time = at(0ms);
+        for (std::size_t i = 0; i < portEventCap; ++i)
+        {
+            CHECK(ep.inject_event(injected));
+        }
+
+        vehicle_sil::can::RawChannel raw(chOpts);
+        vehicle_sil::can::Host host;
+        host.add(raw, ep);
+        std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+        raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+        host.set_application([&](SimTime now) {
+            if (now == at(0ms))
+            {
+                for (std::uint64_t i = 0; i < 64u; ++i)
+                {
+                    CHECK(raw.send(frame(0x50), i) == vehicle_sil::can::RawSendStatus::Ok);
+                }
+            }
+        });
+        vehicle_sil::can::StepDriver driver;
+        driver.add(host, 5ms);
+        driver.run_until(at(10ms));
+
+        CHECK_EQ(txEvents.size(), 64u);
+        for (std::size_t i = 0; i < 64u; ++i)
+        {
+            CHECK_EQ(txEvents[i].token, i);
+        }
+        CHECK_EQ(raw.statistics().port_event_overflows, 0u);
+        CHECK_EQ(raw.statistics().transmit_event_overflows, 0u);
+        CHECK_EQ(raw.statistics().outstanding, 0u);
+        CHECK_EQ(ep.outstanding(), 0u);
     }
 }

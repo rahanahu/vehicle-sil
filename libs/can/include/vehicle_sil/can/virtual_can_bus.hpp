@@ -177,17 +177,21 @@ public:
         [[nodiscard]] std::size_t transmit_pending() const;
         /// Accepted frames whose correlated transmit event has not been released yet.
         [[nodiscard]] std::size_t outstanding() const noexcept { return outstanding_; }
-        /// Events dropped because the event queue was full.
-        [[nodiscard]] std::uint64_t event_overflows() const { return events_.overflows(); }
+        /// Events dropped because either the correlated or uncorrelated event queue was full.
+        [[nodiscard]] std::uint64_t event_overflows() const
+        {
+            return events_.overflows() + uncorrelated_events_.overflows();
+        }
         /// Sets (or with an empty function removes) the fault injector for the frames this
         /// endpoint sends. Invalid frames are Failed before the injector is asked, and frames
         /// sent during an outage of the Send direction do not ask it.
         void set_fault_injector(FaultInjector injector) { injector_ = std::move(injector); }
 
         /// Queues `event` for this endpoint at event.time, to be released like the bus's own
-        /// events (e.g. a BusStateChanged or an ErrorFrame). Returns false if the event queue
-        /// was full (counted in event_overflows()).
-        bool inject_event(const PortEvent& event) { return events_.push(event.time, event); }
+        /// events (e.g. a BusStateChanged or an ErrorFrame). Uncorrelated events use a separate
+        /// queue of size `event_capacity` so they never displace correlated transmit completions.
+        /// Returns false if that queue was full (counted in event_overflows()).
+        bool inject_event(const PortEvent& event);
 
         /// Cuts this endpoint off the bus for the frames with a time in [from, until) (see the
         /// class comment): with Receive, the frames that reach it; with Send, the frames it
@@ -238,7 +242,9 @@ public:
         VirtualCanBus& bus_;
         std::size_t index_;
         StepInbox<Frame> inbox_;
-        StepInbox<PortEvent> events_;
+        StepInbox<PortEvent> events_;              ///< correlated transmit events only
+        StepInbox<PortEvent> uncorrelated_events_; ///< uncorrelated events (Duplicate copy 1, inject_event())
+        std::vector<PortEvent> uncorrelated_drain_; ///< pre-allocated scratch buffer for release_events_before()
         StepInbox<Staged> staged_; ///< with timing: sent, not yet handed to the bus model (by ready time)
         std::size_t endpoint_transmit_limit_ = 0; ///< 0: unlimited at endpoint (caps outstanding_)
         std::vector<TxSlot> tx_slots_;

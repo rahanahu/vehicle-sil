@@ -74,8 +74,10 @@ SilKitEthPort::SilKitEthPort(sk::IEthernetController& controller, SilKitEthPortO
   controller_(controller),
   transmit_queue_capacity_(validated_tx_queue_capacity(options)),
   inbox_(options.inbox_capacity),
-  events_(options.event_capacity)
+  events_(options.event_capacity),
+  uncorrelated_events_(options.event_capacity)
 {
+    uncorrelated_drain_.reserve(options.event_capacity);
     const std::size_t corrCapacity =
         std::max<std::size_t>({options.event_capacity, options.transmit_queue_capacity, kMinCorrTableCapacity});
     corr_slots_.resize(corrCapacity);
@@ -207,6 +209,7 @@ void SilKitEthPort::close() noexcept
     }
     inbox_.clear();
     events_.clear();
+    uncorrelated_events_.clear();
     {
         const std::lock_guard overflowLock(overflow_mutex_);
         overflow_.clear();
@@ -362,10 +365,19 @@ void SilKitEthPort::on_transmit(const sk::EthernetFrameTransmitEvent& event) noe
         tx_uncorrelated_.fetch_add(1, std::memory_order_relaxed);
     }
     out.time = stamp(event.timestamp);
-    if (!events_.push(out.time, out) && out.correlated) // a full queue counts correlated drops
+    if (out.correlated)
     {
-        const std::lock_guard lock(overflow_mutex_);
-        event_overflow_.note(out.time);
+        if (!events_.push(out.time, out)) // a full queue counts correlated drops
+        {
+            const std::lock_guard lock(overflow_mutex_);
+            event_overflow_.note(out.time);
+        }
+    }
+    else
+    {
+        // Separate queue so uncorrelated acks never compete with correlated completions or
+        // trigger correlated EventOverflow.
+        static_cast<void>(uncorrelated_events_.push(out.time, out));
     }
 }
 
@@ -496,12 +508,29 @@ std::size_t SilKitEthPort::release_events_before(SimTime now, PortEventSink sink
         }
         sink(event);
     };
-    // Both overflow events at their place in time order among the queued events.
-    return OverflowCollector::release_merged(overflow, accountingSink, [&](auto&& forward) {
+    uncorrelated_drain_.clear();
+    uncorrelated_events_.drain_before(now, [this](SimTime, PortEvent& event) { uncorrelated_drain_.push_back(event); });
+
+    // Merge correlated events, uncorrelated events, and both overflow events in time order.
+    const std::size_t released = OverflowCollector::release_merged(overflow, accountingSink, [&](auto&& forward) {
         return OverflowCollector::release_merged(eventOverflow, forward, [&](auto&& inner) {
-            return events_.drain_before(now, [&inner](SimTime, PortEvent& event) { inner(event); });
+            std::size_t ui = 0;
+            const std::size_t correlatedCount = events_.drain_before(now, [&](SimTime, PortEvent& event) {
+                while (ui < uncorrelated_drain_.size() && uncorrelated_drain_[ui].time < event.time)
+                {
+                    inner(uncorrelated_drain_[ui++]);
+                }
+                inner(event);
+            });
+            while (ui < uncorrelated_drain_.size())
+            {
+                inner(uncorrelated_drain_[ui++]);
+            }
+            return correlatedCount + uncorrelated_drain_.size();
         });
     });
+    uncorrelated_drain_.clear();
+    return released;
 }
 
 SilKitEthPortStatistics SilKitEthPort::statistics() const
@@ -518,7 +547,7 @@ SilKitEthPortStatistics SilKitEthPort::statistics() const
     s.tx_link_down = tx_link_down_.load(std::memory_order_relaxed);
     s.tx_dropped = tx_dropped_.load(std::memory_order_relaxed);
     s.tx_invalid_frame = tx_invalid_frame_.load(std::memory_order_relaxed);
-    s.event_overflows = events_.overflows();
+    s.event_overflows = events_.overflows() + uncorrelated_events_.overflows();
     s.link_up = link_up_.load(std::memory_order_relaxed);
     s.send_queue_full = send_queue_full_.load(std::memory_order_relaxed);
     s.outstanding = outstanding_.load(std::memory_order_acquire);

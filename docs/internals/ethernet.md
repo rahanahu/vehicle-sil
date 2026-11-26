@@ -122,7 +122,7 @@ When you can call what:
 - `token` (`std::uint64_t`) is opaque and scoped per channel; `0` is a normal valid token, never a sentinel.
 - Synchronous `SendStatus::QueueFull` / `InvalidFrame` from `send()` increment `sends_rejected`, emit no `TransmitEvent`, and leave `outstanding` unchanged; the same token can be retried immediately on a later step without double completion.
 - Once `send() == Ok` on a `Correlated` backend, the token stays in `outstanding` until delivered as `Completed`/`Failed`, accounted for by `EventOverflow` (`port_event_overflows`) or `transmit_event_overflows`, or observed remaining in `outstanding` after `close()` / shutdown. Reusing a token while it is still in flight makes the two events indistinguishable. On a `Correlated` port, uncorrelated or duplicate port events (`!event.correlated`) do not increment `transmit_completed` or `transmit_failed`, preserving the `outstanding` conservation identity. On a `None` backend, `Accepted` port sends do not increment `outstanding` and never fabricate `Completed`.
-- `flush()` rejections (`time == T`) merge before port events whose `event.time > fail.time`, preserving `send()` order at equal timestamps (`time == T`) and monotonic `time` order on timed backends.
+- Within a step `T' > T`, `TransmitEvent` notifications (both correlated port events with `time < now_` and `flush()` rejections with `fail.time < now_`) are ordered monotonically by result timestamp `time` (for example, on timed backends `flush()` failures at `time == T` precede later completions). Same-timestamp `send()` order is not guaranteed; callers correlate outcomes by `token`.
 - For a `Correlated` backend, the `outstanding` conservation identity holds at every point in time:
 
 ```text
@@ -131,6 +131,8 @@ accepted_by_channel == transmit_completed + transmit_failed
                      + transmit_event_overflows + port_event_overflows
                      + outstanding
 ```
+
+- Setting `port_transmit_queue_capacity > 0` while leaving `port_event_capacity` and `transmit_event_capacity` at default `0` (so they auto-size `>= max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)`) prevents `EventOverflow` by construction (excess bursts receive deterministic `QueueFull` or next-step `Failed`). Because `EventOverflow` and `transmit_event_overflows` report only a drop count and not which `token` values were lost, a `TxConfirmation`-driven ECU or test harness cannot selectively free individual buffers and must treat `port_event_overflows > 0 || transmit_event_overflows > 0` as an unrecoverable confirmation-loss error (fail the step/run or reset the channel/controller TX state, matching `ReceiveOverflow`).
 
 ### Order of frames with the same time
 
@@ -291,7 +293,7 @@ Without the Network Simulator, the transmit acknowledgement comes back inside `S
 - **External `INetworkSimulator` `userContext` contract**: SIL Kit transports `userContext` across processes as 64 bits and requires simulators to echo `ack.userContext = request.userContext`. Because the full 64-bit `send_time` lives in the slot table, `SilKitEthPort` recovers the exact `send_time` and `token` regardless of simulator delay. If an external simulator drops or alters `userContext` (or disconnects mid-run without acknowledging), `SilKitEthPort` never guesses FIFO order and never fabricates completions: uncorrelated acknowledgements increment `SilKitEthPortStatistics::tx_uncorrelated` (without generating `EventOverflow`), and unacknowledged frames remain inspectable in `outstanding` (`> 0`).
 - The statistics count each kind.
 - Set `event_capacity` (default 1024) to at least the number of frames transmitted in one step (the channel's `send_capacity`).
-- Acknowledgements that overflow (among correlated events) are dropped, counted and reported with `EventOverflow` (`OverflowCollector`).
+- Uncorrelated acknowledgements use a separate `event_capacity` queue merged in `time` order at `release_events_before()` (without triggering `EventOverflow`), so correlated transmit completions never compete with uncorrelated events (`transmit_queue_capacity > 0` with `transmit_queue_capacity <= event_capacity` prevents correlated `EventOverflow` by construction). Correlated acknowledgements that overflow (`transmit_queue_capacity == 0`) are dropped, counted and reported with `EventOverflow` (`OverflowCollector`).
 
 The port pads a frame shorter than 60 bytes with zeros to 60 bytes before giving it to SIL Kit. SIL Kit on the receiving side pads short frames too, but the Network Simulator may reject short frames, so the sending side makes them uniform.
 

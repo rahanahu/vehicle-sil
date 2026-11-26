@@ -561,7 +561,7 @@ CHECK(events.has(j1939::EventKind::AddressChanged));
 | `add_j1939(name, step, options)` | J1939 のネットワークを 1 つ持つ ECU を作る略記 |
 
 - ECU ごとに自分のホストとステップ幅を持ちます（SIL Kit で ECU ごとに participant を分けたときと同じ構成です）。
-- `Ecu::j1939(network)` は、名前 `network` のバスがなければ、コンストラクターのオプションで作ります。
+- `Ecu::j1939(network)` は、名前 `network` のバスがなければ、コンストラクターのオプションで作ります。`VirtualCanBusOptions::inbox_capacity` はチャネル由来の容量を持たないエンドポイント（`Ecu::j1939()`、`injector()`、直接の `bus().attach()`）向けのバス既定値であり、`Ecu::can()` は（`Ecu::ethernet()` や `Peer::can()` と同じく）`RawChannelOptions::port_inbox_capacity` と `RawChannelOptions::port_event_capacity` からエンドポイント容量を導出します（テストで `LocalBench` と `Peer` の受信キュー容量をそろえて絞るには `RawChannelOptions::port_inbox_capacity` を使います）。
 - 同じ名前を使う ECU は、同じバスを共有します。
 - ECU は、複数のバスに `Network` を持てます（ゲートウェイ）。
 

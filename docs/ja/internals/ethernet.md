@@ -122,7 +122,7 @@
 - `token`（`std::uint64_t`）はチャネル単位でスコープされる不透明な値であり、`0` はセンチネルではなく通常の有効なトークンです。
 - `send()` から同期で返る `SendStatus::QueueFull` / `InvalidFrame` は `sends_rejected` を増やし、`TransmitEvent` を出さず、`outstanding` も変えません。後のステップで同じトークンをそのまま再試行でき、二重完了になりません。
 - `Correlated` バックエンド上で `send() == Ok` になると、そのトークンは `Completed` / `Failed` としての配送、`EventOverflow`（`port_event_overflows`）または `transmit_event_overflows` による計上、あるいは `close()` / 終了後の `outstanding` 残留の観測に至るまで `outstanding` に留まります。送信中のトークンを再利用すると、2 つのイベントを区別できなくなります。`Correlated` ポートでは、非対応または複製のポートイベント（`!event.correlated`）は `transmit_completed` / `transmit_failed` を増やさず、`outstanding` の保存則を保ちます。`None` バックエンドでは、ポートが `Accepted` を返した送信で `outstanding` を増やさず、`Completed` も捏造しません。
-- `flush()` での拒否（`time == T`）は `event.time > fail.time` となるポートイベントの前にマージされ、等しい時刻（`time == T`）では `send()` 呼び出し順を、タイミング付きバックエンドでは単調な `time` 順を保ちます。
+- ステップ `T' > T` の中では、`TransmitEvent` の通知（`time < now_` の対応付きポートイベントと `fail.time < now_` の `flush()` 拒否の双方）は結果のタイムスタンプ `time` の単調順に並びます（たとえばタイミング付きバックエンドでは `time == T` の `flush()` 失敗が後続の完了より先になります）。同一タイムスタンプの `send()` 呼び出し順は保証されず、呼び出し元は `token` で結果を対応付けます。
 - `Correlated` バックエンドでは、あらゆる時点で次の `outstanding` 保存則が成り立ちます。
 
 ```text
@@ -131,6 +131,8 @@ accepted_by_channel == transmit_completed + transmit_failed
                      + transmit_event_overflows + port_event_overflows
                      + outstanding
 ```
+
+- `port_event_capacity` と `transmit_event_capacity` を既定の `0` のままにして（`max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)` 以上へ自動サイジングさせる）`port_transmit_queue_capacity > 0` を設定すると、`EventOverflow` は構造上防げます（超過バーストは決定的に `QueueFull` または次ステップの `Failed` を受けます）。`EventOverflow` と `transmit_event_overflows` は失われた `token` 値ではなく件数だけを報告するため、`TxConfirmation` 駆動の ECU やテストハーネスは個別の送信バッファを選択的に解放できず、`port_event_overflows > 0 || transmit_event_overflows > 0` を回復不能な確認欠落エラーとして扱う必要があります（`ReceiveOverflow` と同じく、ステップ／実行を失敗させるかチャネル／コントローラーの TX 状態をリセットします）。
 
 ### 同じ時刻のフレームの順
 
@@ -291,7 +293,7 @@ CommunicationReady は、SIL Kit が `Activate()` を呼ぶよう勧めている
 - **外部の `INetworkSimulator` の `userContext` 契約**: SIL Kit は `userContext` をプロセス間で 64 ビットそのまま運び、シミュレーターには `ack.userContext = request.userContext` をそのまま返すことを要求します。完全な 64 ビットの `send_time` をスロット表に保持しているため、シミュレーターの遅延の長さによらず正確な `send_time` と `token` を復元できます。外部シミュレーターが `userContext` を落としたり書き換えたりした場合（または実行途中で確認を返さず離脱した場合）、`SilKitEthPort` は FIFO 順を推測せず、完了も捏造しません。非対応の送信確認は `SilKitEthPortStatistics::tx_uncorrelated` を増やし（`EventOverflow` は出さない）、未確認のままのフレームは `outstanding`（`> 0`）から観測できます。
 - 種類ごとの数は統計にあります。
 - `event_capacity`（既定 1024）は、1 ステップに送信するフレームの数（チャネルの `send_capacity`）以上にします。
-- （対応付きイベントのうち）あふれた確認は捨てて数え、`EventOverflow`（`OverflowCollector`）で通知します。
+- 非対応の送信確認は `release_events_before()` 時に時刻順でマージされる別の `event_capacity` キューを使うため（`EventOverflow` は出しません）、対応付き送信完了が非対応イベントと枠を奪い合うことはありません（`transmit_queue_capacity > 0` かつ `transmit_queue_capacity <= event_capacity` で対応付きの `EventOverflow` を構造上防げます）。（`transmit_queue_capacity == 0` で）あふれた対応付き確認は捨てて数え、`EventOverflow`（`OverflowCollector`）で通知します。
 
 60 バイトより短いフレームは、ポートが 0 で 60 バイトまで埋めてから SIL Kit に渡します。受信側の SIL Kit も短いフレームを埋めますが、Network Simulator は短いフレームを拒否することがあるため、送信する側でそろえます。
 

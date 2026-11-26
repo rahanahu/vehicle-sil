@@ -36,7 +36,11 @@ namespace vehicle_sil {
 /// the same network share its bus. Ecu::can(network) (a raw CAN channel) attaches an endpoint of
 /// its own to that bus, so an ECU with j1939(network) and can(network) has two endpoints on it,
 /// and each receives the other's frames. A bus is made when an ECU first names it (or by a form
-/// without a bus name, below), with the constructor's options.
+/// without a bus name, below), with the constructor's options: VirtualCanBusOptions::inbox_capacity
+/// is the bus default for endpoints attached without channel-derived capacities (Ecu::j1939(),
+/// injector(), direct bus().attach()), whereas Ecu::can() (consistent with Ecu::ethernet() and
+/// Peer::can()) derives its endpoint capacities from RawChannelOptions::port_inbox_capacity and
+/// RawChannelOptions::port_event_capacity.
 ///
 /// Forms without a bus name (add_j1939(name, step), inject(time, frame), injector(), bus()) use
 /// the only bus. If there is no bus yet, they make it, without a name (the bus "" in the lookups

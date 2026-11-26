@@ -244,9 +244,9 @@ void RawChannel::process()
         }
     };
 
-    // Merge previous step's due flush() rejections (fail.time < now_) before the first port event
-    // whose time is strictly greater, preserving send order at equal timestamps and monotonic time
-    // order on timed buses.
+    // Merge previous step's due flush() rejections (fail.time < now_) with transmit_events_ by
+    // result timestamp `time` (emitting equal-timestamp port events before flush() rejections;
+    // callers correlate same-timestamp events by `token`).
     std::size_t pi = 0;
     std::size_t fi = 0;
     while (pi < transmit_events_.size() || (fi < flush_failed_.size() && flush_failed_[fi].time < now_))

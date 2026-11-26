@@ -174,6 +174,8 @@ private:
     std::size_t transmit_queue_capacity_ = 0;
     StepInbox<Frame> inbox_;
     StepInbox<PortEvent> events_;
+    StepInbox<PortEvent> uncorrelated_events_;
+    std::vector<PortEvent> uncorrelated_drain_; ///< driver-thread scratch buffer (capacity event_capacity)
     std::mutex corr_mutex_;
     std::vector<CorrelationSlot> corr_slots_;
     std::vector<std::uint32_t> corr_free_ring_;

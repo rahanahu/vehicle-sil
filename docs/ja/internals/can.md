@@ -173,9 +173,7 @@ CAN の上にプロトコルスタックを作るときの拡張点です。J193
 
 - `Accepted`（`send() == Ok`）と送信完了は厳密に分離されます。`on_transmit` がステップ `T` の中（`send()` の中や `flush()` の中）で呼ばれることはありません。
 - ステップ `T` の `send()` で受け付けられた後に `flush()` で拒否されたフレームは、`frames_dropped` を増やし、事前確保された `flush_failed_` 領域（容量 `send_capacity`）に `TransmitEvent{Failed, token, id, T, T}` を追加します。
-- より後のステップ `T' > T` で、`on_port_event()` は `release_events_before(T')` が解放した対応付きポートイベントを受け取り、`process()` は `fail.time < now_` となる `flush_failed_` の項目を `event.time > fail.time` となる最初のポートイベントの前にマージして送出します。
-  - 等しい時刻（`time == T`。タイミングなし `VirtualCanBus` や SIL Kit 簡易シミュレーションで先のフレームが `Accepted`、後のフレームが `QueueFull` になった場合など）では、`Accepted` 側の完了が `QueueFull` 側の失敗より先に並び、`send()` の呼び出し順を保ちます。
-  - タイミングありバス（`tx.end > T`）では、`flush()` の失敗（`time == T`）がタイミング付き完了（`tx.end`）より先に並び、`TransmitEvent::time` の単調順を保ちます。
+- ステップ `T' > T` の中では、`TransmitEvent` の通知（`release_events_before(T')` が解放した対応付きポートイベントと `fail.time < now_` の `flush()` 拒否の双方）は結果のタイムスタンプ `time` の単調順に並びます（たとえばタイミングありバスでは `time == T` の `flush()` 失敗が `tx.end > T` のタイミング付き完了より先になります）。同一タイムスタンプの `send()` 呼び出し順は保証されず、呼び出し元は `token` で結果を対応付けます。
 - ドライバーのスレッド上の `process()` の中では、`RawChannel` は `transmit_completed` / `transmit_failed` の更新と `outstanding` の減算を先に行ってから `on_transmit(event)` ハンドラーを呼びます（`on_transmit` ハンドラーが未登録でも取り出しと計数は行います）。同じ `process()` 呼び出しの中で、すべての `on_transmit` ハンドラーは `on_frame` ハンドラーより先に、同じステップ・スレッドのルールで実行されます。
 - すべてのバッファ（`received_`、`outgoing_`、`flush_failed_`、`transmit_events_`）は生成時に確保され、ステップ内ではヒープ確保を行いません（`can.steps_do_not_allocate`）。
 
@@ -193,6 +191,7 @@ accepted_by_channel == transmit_completed + transmit_failed
 - `EventOverflow(count)` は `port_event_overflows += count` を増やし、`outstanding` を `min(outstanding, count)` 減らします。
 - チャネル内部の `transmit_events_` バッファのあふれは `transmit_event_overflows` を増やし、捨てたイベント 1 件につき `outstanding` を `1` 減らします。
 - `TransmitCapabilities::None` バックエンドでは、`flush()` での拒否だけが次のステップの `process()` で `Failed` として通知されるまで `outstanding` を増やします。
+- **防止と回復契約（`EventOverflow`）**: `port_event_capacity` と `transmit_event_capacity` を既定の `0` のままにして（`max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)` 以上へ自動サイジングさせる）`port_transmit_queue_capacity > 0` を設定すると、`EventOverflow` は構造上防げます（超過バーストは決定的に `QueueFull` または次ステップの `Failed` を受けます）。`EventOverflow` と `transmit_event_overflows` は失われた `token` 値ではなく件数だけを報告するため、`TxConfirmation` 駆動の ECU やテストハーネスは個別の送信バッファを選択的に解放できず、`port_event_overflows > 0 || transmit_event_overflows > 0` を回復不能な確認欠落エラーとして扱う必要があります（`ReceiveOverflow` と同じく、ステップ／実行を失敗させるかチャネル／コントローラーの TX 状態をリセットします）。
 
 ### 容量オプション（`RawChannelOptions`）
 
@@ -339,7 +338,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 - **バスモデルの FIFO 容量（`VirtualCanBusTiming::transmit_queue_capacity`、既定 `64`）**: `CanBusSimulatorOptions::transmit_queue_capacity` に相当します。タイミングありで、送信してバスを決めた時点でまだ送信が始まっていないフレームが送信側ごとの FIFO 上限に達すると、`send()` は `QueueFull` を返します（`Host` は送信する前に同じステップの受信を取り出すので、ステップの時刻の状態です）。
 - **エンドポイントごとの未確認フレーム上限（`VirtualCanBusEndpointOptions::transmit_queue_capacity`、既定 `0` = 無制限）**: `> 0` のとき、タイミングの有無、通信断、`FaultAction::TransmitFailed` にかかわらず、`outstanding_ >= limit` であれば `Endpoint::send()` は `QueueFull` を返します。
 
-エンドポイントのイベントキューがあふれた場合は、捨てた送信確認を数えて `OverflowCollector` 経由で `PortEvent::Kind::EventOverflow` を出します。
+エンドポイントの対応付きイベントキューがあふれた場合は、捨てた対応付き送信確認を数えて `OverflowCollector` 経由で `PortEvent::Kind::EventOverflow` を出します。非対応イベント（`FaultAction::Duplicate` の複製側や `inject_event()`）は `release_events_before()` 時に時刻順でマージされる別の `event_capacity` キューを使うため、対応付き送信完了が非対応イベントと枠を奪い合うことはありません（`transmit_queue_capacity > 0` かつ `transmit_queue_capacity <= event_capacity` とすることで対応付きの `EventOverflow` を構造上防げます）。
 
 タイミングありのバスは遅れて決めます。どれかのポートが `now` より前のフレームかイベントを取り出すとき、`now` より前に始まる送信をすべて決めます。
 
@@ -474,7 +473,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 
 SIL Kit のハンドラーからプロトコル処理は呼びません（簡易シミュレーションでは送信確認が `SendFrame()` の中で返るので、呼ぶと再入になります）。送信確認の時刻は、簡易シミュレーションでは送信したステップの時刻、ネットワークシミュレーターでは送信の終わりです。
 
-イベントのキューに送信確認をまだ受信していないフレームの数の空きを残せないときは、エラー状態の通知を捨てて `event_overflows` に数えます。また、`transmit_queue_capacity == 0` のときに送信確認のバーストが `event_capacity` を超えた場合は、捨てた送信確認を `event_overflows` に数え、`OverflowCollector` 経由の `PortEvent::Kind::EventOverflow`（`release_events_before()` で `ReceiveOverflow` とともにマージ）として通知します。
+仮想時間では、非対応のポートイベント（`BusStateChanged`、`ErrorFrame`、非対応のシミュレーター送信確認）は `release_events_before()` 時に時刻順でマージされる別の `event_capacity` キューを使うため、対応付き送信完了が非対応イベントと枠を奪い合うことはありません（`transmit_queue_capacity > 0` かつ `transmit_queue_capacity <= event_capacity` で対応付きの `EventOverflow` を構造上防げます）。`transmit_queue_capacity == 0` のときに対応付き送信確認のバーストが `event_capacity` を超えた場合は、捨てた送信確認を `event_overflows` に数え、`OverflowCollector` 経由の `PortEvent::Kind::EventOverflow`（`release_events_before()` で `ReceiveOverflow` とともにマージ）として通知します。
 
 ### ビットレート（`SilKitCanPortOptions::bitrate`）
 

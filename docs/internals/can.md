@@ -173,9 +173,7 @@ An implementation that keeps returning a past deadline after the step violates t
 
 - `Accepted` (`send() == Ok`) is strictly separated from transmit completion: `on_transmit` is never invoked in step `T` (neither inside `send()` nor inside `flush()`).
 - Frames accepted by `send()` in step `T` that are rejected in `flush()` increment `frames_dropped` and append `TransmitEvent{Failed, token, id, T, T}` to pre-allocated `flush_failed_` storage (capacity `send_capacity`).
-- In a strictly later step `T' > T`, `on_port_event()` collects correlated port events released by `release_events_before(T')`, and `process()` emits `flush_failed_` entries with `fail.time < now_` merged before the first port event whose `event.time > fail.time`:
-  - At equal timestamps (`time == T`, such as timing-less `VirtualCanBus` or SIL Kit trivial simulation when earlier frames are `Accepted` and later frames hit `QueueFull`), `Accepted` completions precede `QueueFull` failures, preserving exact `send()` call order.
-  - On timed buses (`tx.end > T`), `flush()` failures (`time == T`) precede timed completions (`tx.end`), preserving monotonic `TransmitEvent::time` order.
+- Within a step `T' > T`, `TransmitEvent` notifications (both correlated port events released by `release_events_before(T')` and `flush()` rejections with `fail.time < now_`) are ordered monotonically by result timestamp `time` (for example, on timed buses `flush()` failures at `time == T` precede timed completions at `tx.end > T`). Same-timestamp `send()` order is not guaranteed; callers correlate outcomes by `token`.
 - Within `process()` on the driver's thread, `RawChannel` updates `transmit_completed` / `transmit_failed` and decrements `outstanding` before invoking `on_transmit(event)` handlers (still draining and updating counters even when no `on_transmit` handler is registered). All `on_transmit` handlers run before `on_frame` handlers in the same `process()` call, following the same step and threading rules.
 - All buffers (`received_`, `outgoing_`, `flush_failed_`, `transmit_events_`) are allocated at construction; steps perform zero heap allocations (`can.steps_do_not_allocate`).
 
@@ -193,6 +191,7 @@ accepted_by_channel == transmit_completed + transmit_failed
 - `EventOverflow(count)` increments `port_event_overflows += count` and decrements `outstanding` by `min(outstanding, count)`.
 - Overflow of the channel's internal `transmit_events_` buffer increments `transmit_event_overflows` and decrements `outstanding` by `1` per dropped event.
 - On a `TransmitCapabilities::None` backend, only `flush()` rejections increment `outstanding` until delivered as `Failed` in the next step's `process()`.
+- **Prevention and recovery (`EventOverflow`)**: Setting `port_transmit_queue_capacity > 0` while leaving `port_event_capacity` and `transmit_event_capacity` at default `0` (so they auto-size `>= max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)`) prevents `EventOverflow` by construction (excess bursts receive deterministic `QueueFull` or next-step `Failed`). Because `EventOverflow` and `transmit_event_overflows` report only a drop count and not which `token` values were lost, a `TxConfirmation`-driven ECU or test harness cannot selectively free individual buffers and must treat `port_event_overflows > 0 || transmit_event_overflows > 0` as an unrecoverable confirmation-loss error (fail the step/run or reset the channel/controller TX state, matching `ReceiveOverflow`).
 
 ### Capacity options (`RawChannelOptions`)
 
@@ -339,7 +338,7 @@ Two distinct transmit queue capacities govern `QueueFull`:
 - **Bus-model FIFO capacity (`VirtualCanBusTiming::transmit_queue_capacity`, default `64`)**: Analogous to `CanBusSimulatorOptions::transmit_queue_capacity`. With timing enabled, `send()` returns `QueueFull` when the bus model's per-sender FIFO holds frames that were sent but whose transmission had not started when the bus was resolved (`Host` takes the step's received frames before it sends, so this is the state at the step's time).
 - **Per-endpoint unacknowledged-frame bound (`VirtualCanBusEndpointOptions::transmit_queue_capacity`, default `0` = unlimited)**: When `> 0`, `Endpoint::send()` returns `QueueFull` whenever `outstanding_ >= limit`, across both timed and timing-less modes, outages, and `FaultAction::TransmitFailed`.
 
-If the per-endpoint event queue overflows, dropped acknowledgements are counted and emitted as `PortEvent::Kind::EventOverflow` via `OverflowCollector`.
+If the per-endpoint correlated event queue overflows, dropped correlated transmit acknowledgements are counted and emitted as `PortEvent::Kind::EventOverflow` via `OverflowCollector`. Uncorrelated events (`FaultAction::Duplicate` copy 1 and `inject_event()`) use a separate `event_capacity` queue merged in `time` order at `release_events_before()`, so correlated transmit completions never compete with uncorrelated events (`transmit_queue_capacity > 0` with `transmit_queue_capacity <= event_capacity` prevents correlated `EventOverflow` by construction).
 
 A bus with timing is resolved lazily. When any port takes frames or events before `now`, the bus resolves every transmission that starts before `now`.
 
@@ -474,7 +473,7 @@ The port counts transmit acknowledgements and puts them in the event queue as `P
 
 The SIL Kit handlers do not call the protocol processing (in the trivial simulation, the transmit acknowledgement comes back inside `SendFrame()`, so calling it would re-enter). The time of a transmit acknowledgement is the time of the sending step in the trivial simulation, and the end of the transmission with a network simulator.
 
-If the event queue cannot keep room for the frames whose transmit acknowledgements have not been received yet, an error state notification is dropped and counted in `event_overflows`. If a burst of transmit acknowledgements overflows `event_capacity` (`transmit_queue_capacity == 0`), the dropped acknowledgements are counted in `event_overflows` and reported as `PortEvent::Kind::EventOverflow` via `OverflowCollector` (merged alongside `ReceiveOverflow` in `release_events_before()`).
+In virtual time, uncorrelated port events (`BusStateChanged`, `ErrorFrame`, and uncorrelated simulator acknowledgements) use a separate `event_capacity` queue merged in `time` order at `release_events_before()`, so correlated transmit completions never compete with uncorrelated events (`transmit_queue_capacity > 0` with `transmit_queue_capacity <= event_capacity` prevents correlated `EventOverflow` by construction). If a burst of correlated transmit acknowledgements overflows `event_capacity` (`transmit_queue_capacity == 0`), the dropped acknowledgements are counted in `event_overflows` and reported as `PortEvent::Kind::EventOverflow` via `OverflowCollector` (merged alongside `ReceiveOverflow` in `release_events_before()`).
 
 ### Bit rate (`SilKitCanPortOptions::bitrate`)
 

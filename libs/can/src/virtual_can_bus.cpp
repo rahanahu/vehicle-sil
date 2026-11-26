@@ -16,10 +16,12 @@ VirtualCanBus::Endpoint::Endpoint(VirtualCanBus& bus, std::size_t index, std::si
     index_(index),
     inbox_(capacity),
     events_(event_capacity),
+    uncorrelated_events_(event_capacity),
     staged_(staged_capacity),
     endpoint_transmit_limit_(endpoint_transmit_limit),
     tx_slots_(slot_capacity)
 {
+    uncorrelated_drain_.reserve(event_capacity);
     free_slots_.reserve(slot_capacity);
     for (std::size_t i = slot_capacity; i > 0; --i)
     {
@@ -283,15 +285,26 @@ void VirtualCanBus::Endpoint::receive_frame(SimTime time, const Frame& frame)
     }
 }
 
+bool VirtualCanBus::Endpoint::inject_event(const PortEvent& event)
+{
+    if (event.correlated)
+    {
+        return events_.push(event.time, event);
+    }
+    return uncorrelated_events_.push(event.time, event);
+}
+
 void VirtualCanBus::Endpoint::push_transmit_event(const PortEvent& event)
 {
-    if (!events_.push(event.time, event))
+    if (event.correlated)
     {
-        if (event.correlated)
+        if (!events_.push(event.time, event))
         {
             event_overflow_.note(event.time, 1);
         }
+        return;
     }
+    static_cast<void>(uncorrelated_events_.push(event.time, event));
 }
 
 void VirtualCanBus::Endpoint::transmit_completed(const TimedFrame& frame, std::uint64_t token)
@@ -407,11 +420,29 @@ std::size_t VirtualCanBus::Endpoint::release_events_before(SimTime now, PortEven
         }
         sink(event);
     };
-    return OverflowCollector::release_merged(overflow_.take_before(now), release, [&](auto&& forward) {
+    uncorrelated_drain_.clear();
+    uncorrelated_events_.drain_before(now, [this](SimTime, PortEvent& event) {
+        uncorrelated_drain_.push_back(event);
+    });
+    std::size_t ui = 0;
+    const std::size_t count = OverflowCollector::release_merged(overflow_.take_before(now), release, [&](auto&& forward) {
         return OverflowCollector::release_merged(event_overflow_.take_before(now), forward, [&](auto&& inner) {
-            return events_.drain_before(now, [&inner](SimTime, PortEvent& event) { inner(event); });
+            const std::size_t correlated = events_.drain_before(now, [&](SimTime, PortEvent& event) {
+                while (ui < uncorrelated_drain_.size() && uncorrelated_drain_[ui].time < event.time)
+                {
+                    inner(uncorrelated_drain_[ui++]);
+                }
+                inner(event);
+            });
+            while (ui < uncorrelated_drain_.size())
+            {
+                inner(uncorrelated_drain_[ui++]);
+            }
+            return correlated + uncorrelated_drain_.size();
         });
     });
+    uncorrelated_drain_.clear();
+    return count;
 }
 
 std::size_t VirtualCanBus::Endpoint::transmit_pending() const

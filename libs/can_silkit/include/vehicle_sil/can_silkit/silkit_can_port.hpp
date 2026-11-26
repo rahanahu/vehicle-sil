@@ -226,9 +226,11 @@ private:
     void require_started(const char* what) const;
 
     SilKit::Services::Can::ICanController& controller_;
-    StepInbox<Frame> inbox_;      ///< virtual time
-    StepInbox<PortEvent> events_; ///< virtual time
-    std::mutex overflow_mutex_;   ///< virtual time: guards overflow_ and event_overflow_
+    StepInbox<Frame> inbox_;                    ///< virtual time
+    StepInbox<PortEvent> events_;               ///< virtual time: correlated transmit events only
+    StepInbox<PortEvent> uncorrelated_events_;  ///< virtual time: BusStateChanged, ErrorFrame, uncorrelated acks
+    std::vector<PortEvent> uncorrelated_drain_; ///< driver thread scratch buffer for release_events_before()
+    std::mutex overflow_mutex_;                 ///< virtual time: guards overflow_ and event_overflow_
     OverflowCollector overflow_;
     OverflowCollector event_overflow_{PortEvent::Kind::EventOverflow};
     std::mutex corr_mutex_;                  ///< virtual time: guards corr_slots_ and corr_free_ring_
@@ -240,7 +242,6 @@ private:
     /// Virtual time: `now` of the latest release_before(), in ns (written on the driver's thread,
     /// read on SIL Kit's).
     std::atomic<std::int64_t> step_time_ns_{0};
-    std::atomic<std::uint64_t> event_refusals_{0}; ///< virtual time: error states without a place
     std::size_t transmit_capacity_;
     std::uint32_t bitrate_; ///< for start()
     std::atomic<std::size_t> outstanding_{0}; ///< changed on the driver's thread only; atomic for statistics()

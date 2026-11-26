@@ -605,3 +605,41 @@ TEST_CASE(silkit_eth_port_uncorrelated_ack_overflow_does_not_decrement_outstandi
     CHECK((second[0] == PortEvent{PortEvent::Kind::TransmitFailed, at(4ms), 0, at(1ms), 20, true}));
     CHECK_EQ(port.statistics().outstanding, 0u);
 }
+
+TEST_CASE(silkit_eth_port_uncorrelated_ack_flood_does_not_evict_correlated_completions)
+{
+    DeferredEthernetController controller;
+    SilKitEthPortOptions options;
+    options.event_capacity = 2;
+    options.transmit_queue_capacity = 2;
+    SilKitEthPort port(controller, options);
+    port.start();
+
+    // Flood event_capacity uncorrelated (nullptr) acks while outstanding == 0.
+    CHECK_EQ(port.statistics().outstanding, 0u);
+    controller.ack_raw(nullptr, sk::EthernetTransmitStatus::Transmitted, 1ms);
+    controller.ack_raw(nullptr, sk::EthernetTransmitStatus::Transmitted, 3ms);
+    controller.ack_raw(nullptr, sk::EthernetTransmitStatus::Transmitted, 3ms);
+    controller.ack_raw(nullptr, sk::EthernetTransmitStatus::Transmitted, 3ms);
+    CHECK_EQ(port.statistics().tx_uncorrelated, 4u);
+    CHECK_EQ(port.statistics().event_overflows, 2u);
+
+    // Now send transmit_queue_capacity correlated frames and acknowledge them at interleaved times.
+    const Frame frame = make_frame(kBroadcast, mac(1), 1, 0, 64);
+    CHECK(port.send(TimedFrame{at(1ms), frame}, 0) == SendResult::Accepted);
+    CHECK(port.send(TimedFrame{at(1ms), frame}, 42) == SendResult::Accepted);
+    CHECK_EQ(port.statistics().outstanding, 2u);
+
+    controller.ack_index(0, sk::EthernetTransmitStatus::Transmitted, 2ms);
+    controller.ack_index(1, sk::EthernetTransmitStatus::Transmitted, 4ms);
+
+    const auto events = release_events(port, at(5ms));
+    CHECK_EQ(events.size(), 4u); // 2 uncorrelated + 2 correlated, zero EventOverflow
+    CHECK(!events[0].correlated);
+    CHECK(events[0].time == at(1ms));
+    CHECK((events[1] == PortEvent{PortEvent::Kind::TransmitCompleted, at(2ms), 0, at(1ms), 0, true}));
+    CHECK(!events[2].correlated);
+    CHECK(events[2].time == at(3ms));
+    CHECK((events[3] == PortEvent{PortEvent::Kind::TransmitCompleted, at(4ms), 0, at(1ms), 42, true}));
+    CHECK_EQ(port.statistics().outstanding, 0u);
+}

@@ -491,24 +491,82 @@ TEST_CASE(silkit_port_keeps_places_for_outstanding_acknowledgements)
 {
     FakeCanController controller;
     SilKitCanPortOptions options;
-    options.event_capacity = 3;
-    options.transmit_queue_capacity = 1;
+    options.event_capacity = 2;
+    options.transmit_queue_capacity = 2;
     SilKitCanPort port(controller, options);
     port.start();
+
+    // Fill and overflow the uncorrelated event queue with BusStateChanged events BEFORE any send()
+    // (while outstanding == 0): correlated transmit completions use a separate queue and must never
+    // be displaced or trigger EventOverflow.
+    controller.deliver_error_state(sk::CanErrorState::ErrorPassive, 1ms);
+    controller.deliver_error_state(sk::CanErrorState::BusOff, 2ms);
+    controller.deliver_error_state(sk::CanErrorState::ErrorActive, 3ms); // overflows uncorrelated queue
+    CHECK_EQ(port.statistics().error_state_changes, 3u);
+    CHECK_EQ(port.statistics().event_overflows, 1u);
+
     Frame f;
     f.id = 0x100;
     f.length = 1;
-    CHECK(port.send(TimedFrame{at(0ms), f}) == SendResult::Accepted); // its acknowledgement is queued
-    // One place stays free for the outstanding frame: one error state fits, the next does not.
-    controller.deliver_error_state(sk::CanErrorState::ErrorPassive, 1ms);
-    controller.deliver_error_state(sk::CanErrorState::BusOff, 2ms);
-    CHECK_EQ(port.statistics().error_state_changes, 2u);
-    CHECK_EQ(port.statistics().event_overflows, 1u);
+    controller.ack_timestamp = 0ms;
+    CHECK(port.send(TimedFrame{at(0ms), f}, 0) == SendResult::Accepted);
+    CHECK(port.send(TimedFrame{at(0ms), f}, 42) == SendResult::Accepted);
+    CHECK_EQ(port.statistics().outstanding, 2u);
+
     const auto events = release_events(port, at(10ms));
-    CHECK_EQ(events.size(), 2u);
-    CHECK(events[0].kind == PortEvent::Kind::TransmitCompleted);
-    CHECK(events[1].bus_state == BusState::ErrorPassive);
+    CHECK_EQ(events.size(), 4u);
+    CHECK(events[0].kind == PortEvent::Kind::TransmitCompleted && events[0].correlated && events[0].token == 0u);
+    CHECK(events[1].kind == PortEvent::Kind::TransmitCompleted && events[1].correlated && events[1].token == 42u);
+    CHECK(events[2].kind == PortEvent::Kind::BusStateChanged && events[2].bus_state == BusState::ErrorPassive);
+    CHECK(events[3].kind == PortEvent::Kind::BusStateChanged && events[3].bus_state == BusState::BusOff);
     CHECK_EQ(port.statistics().outstanding, 0u);
+}
+
+TEST_CASE(silkit_port_uncorrelated_events_before_send_do_not_displace_raw_channel_completions)
+{
+    FakeCanController controller;
+    SilKitCanPortOptions options;
+    options.event_capacity = 2;
+    options.transmit_queue_capacity = 2;
+    SilKitCanPort port(controller, options);
+    port.start();
+
+    vehicle_sil::can::RawChannel raw;
+    vehicle_sil::can::Host host;
+    host.add(raw, port);
+    std::vector<vehicle_sil::can::TransmitEvent> txEvents;
+    raw.on_transmit([&](const vehicle_sil::can::TransmitEvent& ev) { txEvents.push_back(ev); });
+
+    Frame f;
+    f.id = 0x123;
+    f.format = IdFormat::Standard;
+    f.length = 1;
+
+    host.set_application([&](SimTime now) {
+        if (now == at(0ms))
+        {
+            // Fill and overflow uncorrelated_events_ with BusStateChanged at step time while outstanding == 0.
+            controller.deliver_error_state(sk::CanErrorState::ErrorPassive, 0ms);
+            controller.deliver_error_state(sk::CanErrorState::BusOff, 0ms);
+            controller.deliver_error_state(sk::CanErrorState::ErrorActive, 0ms);
+            controller.ack_timestamp = 0ms;
+            CHECK(raw.send(f, 0) == vehicle_sil::can::RawSendStatus::Ok);
+            CHECK(raw.send(f, 99) == vehicle_sil::can::RawSendStatus::Ok);
+        }
+    });
+
+    vehicle_sil::can::StepDriver driver;
+    driver.add(host, 5ms);
+    driver.run_until(at(10ms));
+
+    CHECK(!host.failed());
+    CHECK_EQ(txEvents.size(), 2u);
+    CHECK(txEvents[0].kind == vehicle_sil::can::TransmitEvent::Kind::Completed && txEvents[0].token == 0u);
+    CHECK(txEvents[1].kind == vehicle_sil::can::TransmitEvent::Kind::Completed && txEvents[1].token == 99u);
+    CHECK_EQ(raw.statistics().port_event_overflows, 0u);
+    CHECK_EQ(raw.statistics().outstanding, 0u);
+    CHECK_EQ(port.statistics().outstanding, 0u);
+    CHECK_EQ(port.statistics().event_overflows, 1u); // only the 3rd BusStateChanged overflowed
 }
 
 TEST_CASE(correlated_send_time_tag_unwraps_boundaries_and_rejects_negative_wrap_at_zero)

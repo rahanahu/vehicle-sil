@@ -561,7 +561,7 @@ CHECK(events.has(j1939::EventKind::AddressChanged));
 | `add_j1939(name, step, options)` | Shorthand that creates an ECU with one J1939 network |
 
 - Each ECU has its own host and step size (the same structure as giving each ECU its own participant on SIL Kit).
-- If there is no bus named `network`, `Ecu::j1939(network)` creates it with the constructor's options.
+- If there is no bus named `network`, `Ecu::j1939(network)` creates it with the constructor's options. `VirtualCanBusOptions::inbox_capacity` is the bus default for endpoints without channel-derived capacities (`Ecu::j1939()`, `injector()`, direct `bus().attach()`), whereas `Ecu::can()` (like `Ecu::ethernet()` and `Peer::can()`) derives endpoint capacities from `RawChannelOptions::port_inbox_capacity` and `RawChannelOptions::port_event_capacity` (set `RawChannelOptions::port_inbox_capacity` to tighten receive inbox capacity consistently across `LocalBench` and `Peer`).
 - ECUs that use the same name share the same bus.
 - An ECU can have `Network`s on several buses (a gateway).
 

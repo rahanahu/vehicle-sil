@@ -355,9 +355,10 @@ void Channel::process()
         }
     };
 
-    // Merge previous step's due flush() rejections (fail.time < now_) before the first port event
-    // whose time is strictly greater, preserving send order at equal timestamps and monotonic time
-    // order on timed backends.
+    // Merge due flush() rejections (fail.time < now_) with transmit_events_ in result-time order.
+    // Equal-timestamp port events are emitted before flush() rejections as a deterministic
+    // tie-breaker; the public contract guarantees result-time ordering and token correlation,
+    // not same-timestamp send() order.
     std::size_t pi = 0;
     std::size_t fi = 0;
     while (pi < transmit_events_.size() || (fi < flush_failed_.size() && flush_failed_[fi].time < now_))
