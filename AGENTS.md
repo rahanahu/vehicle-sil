@@ -93,16 +93,18 @@ An agent that the owner gave a task may hand parts of it to other agents. The ta
 Skills for AI agents live in `.agents/skills/<name>/SKILL.md`, a layout that several agents read (Codex, Copilot, Gemini CLI and others). An agent that does not read that directory can open the `SKILL.md` file directly. Claude Code reads `.claude/skills/`; link it to the same directory (`ln -s ../../.agents/skills/<name> .claude/skills/<name>`) instead of keeping a copy.
 
 - `agent-prompt-design`: write briefs and handoffs that tell another agent the intended outcome, the constraints, and which decisions it can make.
-- `run-challenge`: Coordinator workflow for screening changes, delegating a bounded task to the independent `challenger` agent (`.github/agents/challenger.agent.md`; Antigravity plugin: `.agents/plugins/challenger/agents/challenger.md`), assessing its report, and closing the loop.
+- `run-challenge`: Coordinator workflow for screening changes, delegating empirical-first adversarial verification to the independent `challenger` agent (`.github/agents/challenger.agent.md`; Antigravity plugin: `.agents/plugins/challenger/agents/challenger.md`), gating on its `APPROVE` / `REJECT` / `INCOMPLETE` verdict, and closing the loop.
   - **Canonical Challenger definition & sync policy:** `.github/agents/challenger.agent.md` is the canonical source. `.agents/plugins/challenger/agents/challenger.md` mirrors its body with Antigravity-specific frontmatter (`subagent`, `mainAgent`, `tools`). Update `.github/agents/challenger.agent.md` first and mirror body changes to `.agents/plugins/challenger/agents/challenger.md` in the same pull request.
 
 ### Independent challenge
 
 Apply this instruction when acting as Coordinator.
 
-For each substantive change unit, launch one fresh independent `challenger` (`.github/agents/challenger.agent.md`, or the host's equivalent installed agent) in parallel with the reviewer as soon as core implementation is ready. Skip routine or low-risk changes; launch more than one Challenger when distinct independent perspectives are useful.
+If the host environment already runs its own built-in adversarial Challenger workflow (for example, Antigravity `/teamwork` with `teamwork_challenger`), use the host's native Challenger workflow and verdict protocol unmodified — do not overlay `run-challenge` or `.github/agents/challenger.agent.md` onto it.
 
-When applicable, follow the `run-challenge` skill for scoping, delegation, worker lifecycle, and closing findings, and handle its evidence and unresolved gaps under existing review and CI policy before declaring the work complete. Revisit the assessment if the scope changes materially.
+Otherwise (in `/swarm`, standard subagent sessions, Codex, Copilot, Claude Code, Gemini CLI, and similar hosts), launch at least one fresh independent `challenger` (`.github/agents/challenger.agent.md`, or the host's installed `challenger` agent) in parallel with the reviewer as soon as core implementation is ready. Launch two Challengers in parallel with disjoint attack surfaces when a change spans distinct layers or failure modes (such as C++ concurrency/lifetime and Python/GUI/Web state). Skip routine or low-risk changes.
+
+Follow the `run-challenge` skill for scoping, isolated empirical probing, `APPROVE` / `REJECT` / `INCOMPLETE` gate handling, and fix rechecks under existing review and CI policy before declaring the work complete. Revisit the assessment if the scope changes materially.
 
 Keep this workflow under Coordinator ownership; implementers, reviewers, and challengers must not recursively launch it.
 

@@ -1,32 +1,39 @@
 # Challenger dispatch
 
-Fill this brief with task-specific facts. Remove unused fields; do not create a
-separate tracking system when the host already has task notes.
+Fill this brief with concrete facts for the assigned attack surface. Omit unused
+fields; when dispatching in `/swarm` (`swarm{action:"add"}`), prepend the full
+instructions from `.github/agents/challenger.agent.md` so the fresh worker receives
+the complete Challenger profile.
 
-- **Subject:** repository/artifact, base and target revision, or snapshot identifier.
-  For uncommitted work, include a saved patch or content fingerprint.
-- **Source locations:** exact workspace, diff, requirements, relevant callers,
-  tests, and applicable repository-instruction paths.
-- **Original requirements:** observable behavior, non-negotiable constraints, and
-  accepted tradeoffs. Distinguish these from the author's implementation claims.
-- **Known regression (fix recheck only):** what failed, how to reproduce it
-  (or the code path that established it), and what should happen after the fix.
-- **Candidate claims:** one to three observable promises to try to disprove.
-  On a recheck, use this field for any further challenge. Leave untested cases
-  to the Challenger unless the case itself is an explicit requirement.
-  State what the affected user or consumer should observe, under what conditions,
-  and why a counterexample would matter. Do not frame the chosen implementation
-  as the expected answer. For example, ask whether a run with the new option off
-  still honors its shutdown deadline, not whether the new lock is used correctly.
-  Leave the choice of probes open, including at affected callers or consumers.
-  Select another material hypothesis if the evidence warrants it.
-- **Existing verification:** commands, environments, actual results, useful logs,
-  and checks owned by the primary reviewer.
-- **Scope:** included behavior and boundaries; deliberate exclusions.
-- **Budget:** elapsed effort or deadline, build/test concurrency, memory constraints,
-  and stopping conditions. State any justified departure from the skill's defaults.
-- **Isolation and evidence:** owned scratch workspace, retained evidence destination,
-  and where the Coordinator should receive the report.
-- **Deliverable:** follow the Challenger profile's report format; distinguish
-  established findings, unresolved hypotheses, unexecuted checks, and unchallenged
-  areas. No product edits or recursive delegation.
+- **Subject:** repository/worktree path, exact commit (`git rev-parse HEAD`) and
+  base revision (or saved diff/fingerprint for uncommitted work), and existing
+  read-only build/virtualenv/node_modules paths available for immediate probing.
+- **Source locations:** changed files, relevant callers/consumers, existing tests,
+  and repository rules (`AGENTS.md`, relevant `docs/` pages).
+- **Original requirements:** user- or consumer-observable behavior, invariants, and
+  non-negotiable constraints. Distinguish these from the author's implementation
+  claims.
+- **Known regression (fix recheck only):** what failed previously, the verbatim
+  reproducer (or line-anchored trace), and the observable outcome required on the
+  fixed commit.
+- **Attack surface & candidate claims:** one to three observable promises on this
+  Challenger's assigned surface to try to break empirically (on a fix recheck, use
+  this for any remaining promise beyond the known regression). State what callers
+  or users must observe and under what conditions — including what must still work
+  when invalid input is rejected or a new option is left off. Do not frame the
+  chosen internal mechanism as the expected answer, and leave specific probe inputs,
+  schedules, and higher-impact angles within scope open to the Challenger.
+- **Reviewer-owned checks & exclusions:** test suites (`verify-gui.py`,
+  `verify-web.py`, `verify.py` targets) or surfaces owned by the primary reviewer
+  or a parallel Challenger so work and ports/builds do not collide.
+- **Isolation & resource hygiene:** target worktree and shared build dirs are
+  strictly read-only; stage all probe scripts, bundles, mutants, and redirected
+  tool caches (`pytest -o cache_dir=...`) inside `mktemp -d "${TMPDIR:-/tmp}/challenger_probe.XXXXXX"`
+  (`chmod 700`), capture verbatim reproducers/outputs, and remove the temp dir
+  before reporting (unless an isolated `share` worktree was explicitly assigned for
+  C++/sanitizer builds).
+- **Deliverable:** report following `.github/agents/challenger.agent.md` with an
+  explicit **`APPROVE`**, **`REJECT`**, or **`INCOMPLETE`** verdict, verbatim
+  empirical commands/outputs, separated Blocking findings vs Open contract decisions
+  vs Non-blocking notes, and Unchallenged areas. No product edits or recursive
+  delegation.
