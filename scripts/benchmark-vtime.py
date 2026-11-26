@@ -255,34 +255,84 @@ def _empty_target_flags() -> dict[str, Any]:
     }
 
 
+def _strip_matching_quotes(tok: str) -> str:
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in ('"', "'"):
+        return tok[1:-1]
+    return tok
+
+
+def _split_cmd_tokens(cmd: str, windows: bool) -> list[str]:
+    tokens = shlex.split(cmd, posix=not windows)
+    if windows:
+        return [_strip_matching_quotes(t) for t in tokens]
+    return tokens
+
+
+def _expand_response_files(
+    tokens: list[str],
+    base_dir: Path | None,
+    windows: bool,
+    depth: int = 0,
+) -> list[str]:
+    if depth >= 4:
+        return tokens
+    out: list[str] = []
+    for tok in tokens:
+        if tok.startswith("@") and len(tok) > 1:
+            rsp_str = _strip_matching_quotes(tok[1:])
+            rsp_path = Path(rsp_str)
+            if not rsp_path.is_absolute() and base_dir is not None:
+                rsp_path = base_dir / rsp_path
+            if rsp_path.is_file():
+                try:
+                    rsp_text = rsp_path.read_text(encoding="utf-8", errors="replace")
+                    rsp_tokens = _split_cmd_tokens(rsp_text, windows)
+                    out.extend(_expand_response_files(rsp_tokens, rsp_path.parent, windows, depth + 1))
+                    continue
+                except OSError:
+                    pass
+        out.append(tok)
+    return out
+
+
 def parse_flag_tokens(tokens: list[str]) -> dict[str, Any]:
     """Extract optimization, codegen/define, sanitizer, and NDEBUG facts from compiler tokens."""
     opt_flags: list[str] = []
     codegen: list[str] = []
-    sanitizers: list[str] = []
+    active_sanitizers: list[tuple[str, str]] = []
     ndebug = False
 
     for tok in tokens:
-        if re.fullmatch(r"(?:-O[0-3sSzZg]?|-Ofast|/O[12bdgistyx])", tok):
+        if re.fullmatch(r"(?:-O[0-3sSzZg]?|-Ofast|/O[12dsx])", tok):
             opt_flags.append(tok)
-        elif tok == "-DNDEBUG" or tok == "/DNDEBUG":
+        elif tok in ("-DNDEBUG", "/DNDEBUG") or tok.startswith(("-DNDEBUG=", "/DNDEBUG=")):
             ndebug = True
             codegen.append(tok)
-        elif tok == "-UNDEBUG" or tok == "/UNDEBUG":
+        elif tok in ("-UNDEBUG", "/UNDEBUG"):
             ndebug = False
             codegen.append(tok)
         elif tok == "-DDEBUG" or tok.startswith(("-flto", "-march=", "-mtune=", "-mcpu=", "-ffast-math")):
             codegen.append(tok)
         elif re.fullmatch(r"-g(?:[0-3]|gdb|dwarf(?:-[2-5])?)?", tok):
             codegen.append(tok)
-        elif tok.startswith("-fsanitize="):
-            sanitizers.append(tok)
+        elif tok.startswith("-fsanitize=") or tok.startswith("/fsanitize="):
+            prefix = tok[: len("-fsanitize=")]
+            for item in tok.split("=", 1)[1].split(","):
+                name = item.strip()
+                if name and (prefix, name) not in active_sanitizers:
+                    active_sanitizers.append((prefix, name))
+        elif tok.startswith("-fno-sanitize="):
+            disabled = {item.strip() for item in tok.split("=", 1)[1].split(",") if item.strip()}
+            if "all" in disabled:
+                active_sanitizers.clear()
+            else:
+                active_sanitizers = [(p, n) for p, n in active_sanitizers if n not in disabled]
 
     return {
         "optimization_flags": opt_flags,
         "effective_opt_level": opt_flags[-1] if opt_flags else None,
         "codegen_and_defines": codegen,
-        "sanitizers": sanitizers,
+        "sanitizers": [f"{p}{n}" for p, n in active_sanitizers],
         "ndebug": ndebug,
     }
 
@@ -291,7 +341,7 @@ def _extract_compiler_path(tokens: list[str]) -> str | None:
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        base = os.path.basename(tok).lower()
+        base = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
         if base.endswith(".exe"):
             base = base[:-4]
         if base in COMPILER_WRAPPERS:
@@ -378,14 +428,35 @@ def _cache_bool(cache: dict[str, str], key: str) -> bool | None:
     return None
 
 
+def _is_path_within(path: Path, parent: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(parent.resolve())
+    except OSError:
+        return False
+
+
 def _compute_flags_warning(
     cmake_build_type: str | None,
     flags_source: str,
     targets: dict[str, dict[str, Any]],
     bench_ecu_build_info: dict[str, Any] | None,
+    *,
+    build_dir: Path | None = None,
+    launcher_path: Path | None = None,
+    bench_ecu_path: Path | None = None,
 ) -> str | None:
     warnings: list[str] = []
     if flags_source != "unavailable":
+        if flags_source == "compile_commands.json":
+            missing_tus = [name for name, info in targets.items() if info["optimization_flags"] is None]
+            if missing_tus:
+                warnings.append(f"missing target TU(s) in compile_commands.json: {', '.join(missing_tus)}")
+        if build_dir is not None:
+            if launcher_path is not None and not _is_path_within(launcher_path, build_dir):
+                warnings.append(f"--launcher ({launcher_path}) resolves outside build_dir ({build_dir})")
+            if bench_ecu_path is not None and not _is_path_within(bench_ecu_path, build_dir):
+                warnings.append(f"--bench-ecu ({bench_ecu_path}) resolves outside build_dir ({build_dir})")
+
         opt_levels = {
             name: info["effective_opt_level"]
             for name, info in targets.items()
@@ -410,6 +481,39 @@ def _compute_flags_warning(
                 warnings.append(f"CMAKE_BUILD_TYPE=Release but sanitizers are enabled ({', '.join(san)})")
             if bench_ecu_build_info is not None and bench_ecu_build_info.get("ndebug") is False:
                 warnings.append("CMAKE_BUILD_TYPE=Release but vehicle_sil_bench_ecu compiled without NDEBUG")
+
+        be_flags = targets.get("vehicle_sil_bench_ecu", {})
+        if bench_ecu_build_info is not None and be_flags.get("optimization_flags") is not None:
+            eff_opt = be_flags["effective_opt_level"]
+            flags_optimized = eff_opt not in (None, "-O0", "/Od")
+            opt_macro = bench_ecu_build_info.get("optimize_macro")
+            if isinstance(opt_macro, int) and not isinstance(opt_macro, bool):
+                if flags_optimized and opt_macro == 0:
+                    warnings.append(
+                        f"vehicle_sil_bench_ecu compile flags say {eff_opt} but --bench-build-info reports optimize_macro=0"
+                    )
+                elif not flags_optimized and opt_macro > 0:
+                    warnings.append(
+                        f"vehicle_sil_bench_ecu compile flags say {eff_opt} but --bench-build-info reports optimize_macro={opt_macro}"
+                    )
+            info_ndebug = bench_ecu_build_info.get("ndebug")
+            if isinstance(info_ndebug, bool) and be_flags["ndebug"] is not None and info_ndebug != be_flags["ndebug"]:
+                warnings.append(
+                    f"vehicle_sil_bench_ecu compile flags ndebug={be_flags['ndebug']} conflicts with --bench-build-info ndebug={info_ndebug}"
+                )
+            info_cid = bench_ecu_build_info.get("compiler_id")
+            if info_cid and be_flags["compiler_id"] and info_cid != be_flags["compiler_id"]:
+                warnings.append(
+                    f"vehicle_sil_bench_ecu compiler_id={be_flags['compiler_id']} conflicts with --bench-build-info compiler_id={info_cid}"
+                )
+            info_sans = {str(s) for s in (bench_ecu_build_info.get("sanitizers") or [])}
+            flag_sans = {s.split("=", 1)[1] for s in (be_flags["sanitizers"] or []) if "=" in s}
+            missing_in_flags = sorted(info_sans - flag_sans)
+            missing_in_bin = sorted((flag_sans & {"address", "thread"}) - info_sans)
+            if missing_in_flags or missing_in_bin:
+                warnings.append(
+                    f"vehicle_sil_bench_ecu sanitizers conflict: flags={sorted(flag_sans)} vs --bench-build-info={sorted(info_sans)}"
+                )
     return "; ".join(warnings) if warnings else None
 
 
@@ -418,6 +522,8 @@ def extract_build_provenance(
     bench_ecu_build_info: dict[str, Any] | None,
     *,
     is_windows: bool | None = None,
+    launcher_path: Path | None = None,
+    bench_ecu_path: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Extract compiler and effective optimization flags from compile_commands.json or CMakeCache.txt."""
     windows = (os.name == "nt") if is_windows is None else is_windows
@@ -450,12 +556,15 @@ def extract_build_provenance(
                 file_str = str(entry.get("file", "")).replace("\\", "/")
                 for target_name, suffix in TARGET_TU_SUFFIXES.items():
                     if file_str.endswith("/" + suffix) or file_str == suffix:
+                        entry_dir_raw = entry.get("directory")
+                        entry_dir = Path(str(entry_dir_raw)) if entry_dir_raw else build_dir
                         raw_args = entry.get("arguments")
                         if isinstance(raw_args, list) and all(isinstance(x, str) for x in raw_args):
-                            tokens = list(raw_args)
+                            tokens = [_strip_matching_quotes(x) for x in raw_args] if windows else list(raw_args)
                         else:
                             cmd_str = str(entry.get("command", ""))
-                            tokens = shlex.split(cmd_str, posix=not windows)
+                            tokens = _split_cmd_tokens(cmd_str, windows)
+                        tokens = _expand_response_files(tokens, entry_dir, windows)
                         compiler_path = _extract_compiler_path(tokens)
                         parsed = parse_flag_tokens(tokens[1:] if tokens else [])
                         targets[target_name] = {
@@ -468,13 +577,14 @@ def extract_build_provenance(
             if matched_any:
                 flags_source = "compile_commands.json"
 
-    if flags_source == "unavailable" and cache_vals:
+    is_multi_config = bool(cache_vals.get("CMAKE_CONFIGURATION_TYPES", "").strip()) and cmake_build_type is None
+    if flags_source == "unavailable" and cache_vals and not is_multi_config:
         flags_source = "cmake_cache"
         base_flags = cache_vals.get("CMAKE_CXX_FLAGS", "")
         type_key = f"CMAKE_CXX_FLAGS_{cmake_build_type.upper()}" if cmake_build_type else ""
         type_flags = cache_vals.get(type_key, "") if type_key else ""
         combined = f"{base_flags} {type_flags}".strip()
-        tokens = shlex.split(combined, posix=not windows) if combined else []
+        tokens = _split_cmd_tokens(combined, windows) if combined else []
         san_cache = [s.strip() for s in cache_vals.get("VEHICLE_SIL_SANITIZERS", "").split(";") if s.strip()]
         for san in san_cache:
             tok = f"-fsanitize={san}"
@@ -495,7 +605,15 @@ def extract_build_provenance(
     if build_dir is not None:
         build_dir_str = verify_common.rel(build_dir.resolve(), ROOT)
 
-    warning = _compute_flags_warning(cmake_build_type, flags_source, targets, bench_ecu_build_info)
+    warning = _compute_flags_warning(
+        cmake_build_type,
+        flags_source,
+        targets,
+        bench_ecu_build_info,
+        build_dir=build_dir,
+        launcher_path=launcher_path,
+        bench_ecu_path=bench_ecu_path,
+    )
     return (
         {
             "build_dir": build_dir_str,
@@ -640,6 +758,12 @@ def _os_load1() -> float | None:
 # ---------------------------------------------------------------------------
 
 
+def _popen_group_kwargs() -> dict[str, Any]:
+    if os.name == "nt" and not hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        return {}
+    return verify_common.process_group_kwargs()
+
+
 def run_launcher_with_rusage(
     cmd: list[str],
     cwd: Path,
@@ -662,36 +786,53 @@ def run_launcher_with_rusage(
             stdin=subprocess.DEVNULL,
             stdout=out_f,
             stderr=err_f,
+            **_popen_group_kwargs(),
         )
-        if os.name != "nt" and hasattr(os, "wait4"):
-            try:
-                _, status, ru = os.wait4(proc.pid, 0)
-                wall_ms = (time.monotonic_ns() - t0) / 1e6
-                returncode = os.waitstatus_to_exitcode(status)
-                proc.returncode = returncode
-                user_ms = round(max(0.0, float(ru.ru_utime) * 1000.0), 3)
-                sys_ms = round(max(0.0, float(ru.ru_stime) * 1000.0), 3)
-                total_ms = round(user_ms + sys_ms, 3)
-                raw_rss = int(ru.ru_maxrss)
-                max_rss_kb = raw_rss // 1024 if sys.platform == "darwin" else raw_rss
-                tree_cpu: dict[str, Any] = {
-                    "status": "available",
-                    "reason": None,
-                    "interval": "full_process_lifetime",
-                    "includes_non_steady_state": True,
-                    "target_processes": ["vehicle_sil_launch", "<reaped_children>"],
-                    "user_ms": user_ms,
-                    "sys_ms": sys_ms,
-                    "total_ms": total_ms,
-                    "max_rss_kb": max(0, max_rss_kb),
-                }
-                return returncode, wall_ms, tree_cpu
-            except OSError as exc:
+        try:
+            if os.name != "nt" and hasattr(os, "wait4"):
+                try:
+                    _, status, ru = os.wait4(proc.pid, 0)
+                    wall_ms = (time.monotonic_ns() - t0) / 1e6
+                    returncode = os.waitstatus_to_exitcode(status)
+                    proc.returncode = returncode
+                    user_ms = round(max(0.0, float(ru.ru_utime) * 1000.0), 3)
+                    sys_ms = round(max(0.0, float(ru.ru_stime) * 1000.0), 3)
+                    total_ms = round(user_ms + sys_ms, 3)
+                    raw_rss = int(ru.ru_maxrss)
+                    max_rss_kb = raw_rss // 1024 if sys.platform == "darwin" else raw_rss
+                    tree_cpu: dict[str, Any] = {
+                        "status": "available",
+                        "reason": None,
+                        "interval": "full_process_lifetime",
+                        "includes_non_steady_state": True,
+                        "target_processes": ["vehicle_sil_launch", "<reaped_children>"],
+                        "user_ms": user_ms,
+                        "sys_ms": sys_ms,
+                        "total_ms": total_ms,
+                        "max_rss_kb": max(0, max_rss_kb),
+                    }
+                    return returncode, wall_ms, tree_cpu
+                except OSError as exc:
+                    returncode = proc.wait()
+                    wall_ms = (time.monotonic_ns() - t0) / 1e6
+                    tree_cpu = {
+                        "status": "unavailable",
+                        "reason": f"os.wait4 failed: {exc}",
+                        "interval": "full_process_lifetime",
+                        "includes_non_steady_state": True,
+                        "target_processes": ["vehicle_sil_launch", "<reaped_children>"],
+                        "user_ms": None,
+                        "sys_ms": None,
+                        "total_ms": None,
+                        "max_rss_kb": None,
+                    }
+                    return returncode, wall_ms, tree_cpu
+            else:
                 returncode = proc.wait()
                 wall_ms = (time.monotonic_ns() - t0) / 1e6
                 tree_cpu = {
                     "status": "unavailable",
-                    "reason": f"os.wait4 failed: {exc}",
+                    "reason": "os.wait4 not available on this platform",
                     "interval": "full_process_lifetime",
                     "includes_non_steady_state": True,
                     "target_processes": ["vehicle_sil_launch", "<reaped_children>"],
@@ -701,21 +842,9 @@ def run_launcher_with_rusage(
                     "max_rss_kb": None,
                 }
                 return returncode, wall_ms, tree_cpu
-        else:
-            returncode = proc.wait()
-            wall_ms = (time.monotonic_ns() - t0) / 1e6
-            tree_cpu = {
-                "status": "unavailable",
-                "reason": "os.wait4 not available on this platform",
-                "interval": "full_process_lifetime",
-                "includes_non_steady_state": True,
-                "target_processes": ["vehicle_sil_launch", "<reaped_children>"],
-                "user_ms": None,
-                "sys_ms": None,
-                "total_ms": None,
-                "max_rss_kb": None,
-            }
-            return returncode, wall_ms, tree_cpu
+        except BaseException:
+            verify_common.stop_group(proc)
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -751,6 +880,23 @@ def parse_comm_tsv(path: Path) -> list[TraceEvent]:
     return events
 
 
+def _require_int(obj: dict[str, Any], key: str, context: str) -> int:
+    if key not in obj:
+        raise VerificationError(f"{context}: missing required integer key {key!r}")
+    val = obj[key]
+    if isinstance(val, bool) or not isinstance(val, int):
+        raise VerificationError(f"{context}: {key!r} must be an integer, got {val!r}")
+    return val
+
+
+def _payload_u64_le(payload_hex: str, context: str) -> int:
+    try:
+        raw = bytes.fromhex(payload_hex)
+    except ValueError as exc:
+        raise VerificationError(f"{context}: malformed hex payload {payload_hex!r}: {exc}") from exc
+    return int.from_bytes(raw[:8].ljust(8, b"\x00"), "little")
+
+
 def verify_iteration_traces(
     case: CaseSpec,
     warmup_ms: int,
@@ -771,35 +917,42 @@ def verify_iteration_traces(
             f"{case.case_id}: ECU trace set mismatch: expected {sorted(ecu_by_name)}, got {sorted(ecu_traces)}"
         )
 
-    # 1. Step & window completeness + zero CAN drops/overflows.
+    # 1. Step & window completeness + zero CAN drops/overflows + zero sub-ms RX timestamps.
     for ecu in case.ecus:
+        ctx = f"{case.case_id}/{ecu.name}"
         summary = ecu_summaries[ecu.name]
         if not summary.get("saw_window_start") or not summary.get("saw_window_end"):
-            raise VerificationError(f"{case.case_id}/{ecu.name}: missing steady-state window boundary snapshot")
+            raise VerificationError(f"{ctx}: missing steady-state window boundary snapshot")
         if summary.get("window_start_step_ms") != warmup_ms:
             raise VerificationError(
-                f"{case.case_id}/{ecu.name}: window_start_step_ms={summary.get('window_start_step_ms')}, expected {warmup_ms}"
+                f"{ctx}: window_start_step_ms={summary.get('window_start_step_ms')}, expected {warmup_ms}"
             )
         if summary.get("window_end_step_ms") != measure_end_ms:
             raise VerificationError(
-                f"{case.case_id}/{ecu.name}: window_end_step_ms={summary.get('window_end_step_ms')}, expected {measure_end_ms}"
+                f"{ctx}: window_end_step_ms={summary.get('window_end_step_ms')}, expected {measure_end_ms}"
             )
         expected_steps = measure_ms // ecu.step_ms
         if summary.get("window_steps") != expected_steps:
             raise VerificationError(
-                f"{case.case_id}/{ecu.name}: window_steps={summary.get('window_steps')}, expected {expected_steps}"
+                f"{ctx}: window_steps={summary.get('window_steps')}, expected {expected_steps}"
             )
-        can_stats = summary.get("can_stats", {})
+        sub_ms = _require_int(summary, "sub_ms_rx_timestamps", ctx)
+        if sub_ms != 0:
+            raise VerificationError(f"{ctx}: non-integer-ms CAN RX timestamps detected (sub_ms_rx_timestamps={sub_ms})")
+        can_stats = summary.get("can_stats")
+        if not isinstance(can_stats, dict):
+            raise VerificationError(f"{ctx}: missing required can_stats object")
         for stat_key in ("receive_overflows", "sends_rejected", "frames_dropped", "port_receive_overflows"):
-            val = can_stats.get(stat_key, 0)
+            val = _require_int(can_stats, stat_key, f"{ctx}.can_stats")
             if val != 0:
-                raise VerificationError(f"{case.case_id}/{ecu.name}: non-zero CAN drop counter {stat_key}={val}")
+                raise VerificationError(f"{ctx}: non-zero CAN drop counter {stat_key}={val}")
 
     # 2. Sender TX schedule verification over [0, W + M).
     tx_by_sender: dict[str, list[TraceEvent]] = {}
     rx_by_receiver: dict[str, list[TraceEvent]] = {}
 
     for ecu in case.ecus:
+        ctx = f"{case.case_id}/{ecu.name}"
         events = ecu_traces[ecu.name]
         tx_events = [ev for ev in events if ev.direction == "T"]
         rx_events = [ev for ev in events if ev.direction == "R"]
@@ -816,60 +969,59 @@ def verify_iteration_traces(
 
         if len(tx_events) != len(expected_tx_times):
             raise VerificationError(
-                f"{case.case_id}/{ecu.name}: TX count {len(tx_events)} != expected {len(expected_tx_times)}"
+                f"{ctx}: TX count {len(tx_events)} != expected {len(expected_tx_times)}"
             )
 
         expected_id = CAN_BASE_ID + ecu.ecu_id
         for idx, (ev, (exp_t, exp_f)) in enumerate(zip(tx_events, expected_tx_times, strict=True)):
             if ev.tx_ms >= measure_end_ms:
-                raise VerificationError(f"{case.case_id}/{ecu.name}: TX at tx_ms={ev.tx_ms} >= W+M ({measure_end_ms})")
+                raise VerificationError(f"{ctx}: TX at tx_ms={ev.tx_ms} >= W+M ({measure_end_ms})")
             if ev.tx_ms != exp_t:
-                raise VerificationError(
-                    f"{case.case_id}/{ecu.name}: TX #{idx} at tx_ms={ev.tx_ms}, expected {exp_t}"
-                )
+                raise VerificationError(f"{ctx}: TX #{idx} at tx_ms={ev.tx_ms}, expected {exp_t}")
             if ev.can_id != expected_id:
-                raise VerificationError(
-                    f"{case.case_id}/{ecu.name}: TX #{idx} id=0x{ev.can_id:x}, expected 0x{expected_id:x}"
-                )
+                raise VerificationError(f"{ctx}: TX #{idx} id=0x{ev.can_id:x}, expected 0x{expected_id:x}")
             exp_seq = idx & 0xFFFF
             if ev.seq != exp_seq:
-                raise VerificationError(
-                    f"{case.case_id}/{ecu.name}: TX #{idx} seq={ev.seq}, expected {exp_seq}"
-                )
+                raise VerificationError(f"{ctx}: TX #{idx} seq={ev.seq}, expected {exp_seq}")
             if len(ev.payload_hex) != 16:
                 raise VerificationError(
-                    f"{case.case_id}/{ecu.name}: TX #{idx} payload length {len(ev.payload_hex)} != 16 hex chars"
+                    f"{ctx}: TX #{idx} payload length {len(ev.payload_hex)} != 16 hex chars"
                 )
-            raw_bytes = bytes.fromhex(ev.payload_hex)
+            try:
+                raw_bytes = bytes.fromhex(ev.payload_hex)
+            except ValueError as exc:
+                raise VerificationError(f"{ctx}: TX #{idx} malformed hex payload {ev.payload_hex!r}: {exc}") from exc
             if raw_bytes[0] != (ecu.ecu_id & 0xFF) or raw_bytes[1] != (exp_f & 0xFF):
-                raise VerificationError(
-                    f"{case.case_id}/{ecu.name}: TX #{idx} payload header mismatch ({ev.payload_hex})"
-                )
+                raise VerificationError(f"{ctx}: TX #{idx} payload header mismatch ({ev.payload_hex})")
             wire_seq = raw_bytes[2] | (raw_bytes[3] << 8)
             if wire_seq != exp_seq:
-                raise VerificationError(
-                    f"{case.case_id}/{ecu.name}: TX #{idx} payload seq={wire_seq}, expected {exp_seq}"
-                )
+                raise VerificationError(f"{ctx}: TX #{idx} payload seq={wire_seq}, expected {exp_seq}")
 
         summary = ecu_summaries[ecu.name]
         exp_tx_in_win = sum(1 for ev in tx_events if warmup_ms <= ev.tx_ms < measure_end_ms)
         if summary.get("tx_total") != len(tx_events) or summary.get("tx_in_window") != exp_tx_in_win:
             raise VerificationError(
-                f"{case.case_id}/{ecu.name}: summary TX counts ({summary.get('tx_total')}, {summary.get('tx_in_window')}) "
+                f"{ctx}: summary TX counts ({summary.get('tx_total')}, {summary.get('tx_in_window')}) "
                 f"!= trace counts ({len(tx_events)}, {exp_tx_in_win})"
             )
+        frames_sent = _require_int(summary["can_stats"], "frames_sent", f"{ctx}.can_stats")
+        if frames_sent != len(tx_events):
+            raise VerificationError(
+                f"{ctx}: can_stats.frames_sent={frames_sent} != tx_total={len(tx_events)}"
+            )
 
-    # 3. Causal RX verification over {tx_ms < W + M, rx_ms <= W + M}.
+    # 3. Causal RX verification over {tx_ms < W + M, rx_ms <= W + M} in strict canonical order.
     for receiver in case.ecus:
+        ctx = f"{case.case_id}/{receiver.name}"
         actual_rx = rx_by_receiver[receiver.name]
         for ev in actual_rx:
             if ev.rx_ms is None or ev.rx_ms > measure_end_ms:
                 raise VerificationError(
-                    f"{case.case_id}/{receiver.name}: unexpected RX at rx_ms={ev.rx_ms} > W+M ({measure_end_ms})"
+                    f"{ctx}: unexpected RX at rx_ms={ev.rx_ms} > W+M ({measure_end_ms})"
                 )
             if ev.tx_ms >= measure_end_ms:
                 raise VerificationError(
-                    f"{case.case_id}/{receiver.name}: unexpected RX with tx_ms={ev.tx_ms} >= W+M ({measure_end_ms})"
+                    f"{ctx}: unexpected RX with tx_ms={ev.tx_ms} >= W+M ({measure_end_ms})"
                 )
 
         expected_rx: list[tuple[int, int, int, int, str]] = []
@@ -880,23 +1032,27 @@ def verify_iteration_traces(
                 exp_rx_ms = ((tx_ev.tx_ms // receiver.step_ms) + 1) * receiver.step_ms
                 if exp_rx_ms > measure_end_ms:
                     raise VerificationError(
-                        f"{case.case_id}/{receiver.name}: expected causal rx_ms={exp_rx_ms} exceeds W+M ({measure_end_ms})"
+                        f"{ctx}: expected causal rx_ms={exp_rx_ms} exceeds W+M ({measure_end_ms})"
                     )
                 expected_rx.append((exp_rx_ms, tx_ev.tx_ms, tx_ev.can_id, tx_ev.seq, tx_ev.payload_hex))
 
-        expected_rx.sort(key=lambda item: (item[0], item[1], item[2], item[4], item[3]))
-        actual_rx_tuples = sorted(
-            (ev.rx_ms, ev.tx_ms, ev.can_id, ev.seq, ev.payload_hex) for ev in actual_rx
+        # Match tools/bench_ecu/main.cpp canonical order: (rx_ms, tx_ms, id, payload_u64_le).
+        expected_rx.sort(
+            key=lambda item: (item[0], item[1], item[2], _payload_u64_le(item[4], ctx))
         )
+        # Preserve actual_rx order without re-sorting so trace reordering is caught!
+        actual_rx_tuples = [
+            (ev.rx_ms, ev.tx_ms, ev.can_id, ev.seq, ev.payload_hex) for ev in actual_rx
+        ]
 
         if len(actual_rx_tuples) != len(expected_rx):
             raise VerificationError(
-                f"{case.case_id}/{receiver.name}: RX count {len(actual_rx_tuples)} != expected {len(expected_rx)}"
+                f"{ctx}: RX count {len(actual_rx_tuples)} != expected {len(expected_rx)}"
             )
         for idx, (act, exp) in enumerate(zip(actual_rx_tuples, expected_rx, strict=True)):
             if act != exp:
                 raise VerificationError(
-                    f"{case.case_id}/{receiver.name}: RX mismatch at index {idx}: "
+                    f"{ctx}: RX mismatch at index {idx}: "
                     f"got (rx_ms={act[0]}, tx_ms={act[1]}, id=0x{act[2]:x}, seq={act[3]}, payload={act[4]}), "
                     f"expected (rx_ms={exp[0]}, tx_ms={exp[1]}, id=0x{exp[2]:x}, seq={exp[3]}, payload={exp[4]})"
                 )
@@ -905,28 +1061,28 @@ def verify_iteration_traces(
         exp_rx_in_win = sum(1 for ev in actual_rx if warmup_ms <= ev.tx_ms < measure_end_ms)
         if summary.get("rx_total") != len(actual_rx) or summary.get("rx_in_window") != exp_rx_in_win:
             raise VerificationError(
-                f"{case.case_id}/{receiver.name}: summary RX counts ({summary.get('rx_total')}, {summary.get('rx_in_window')}) "
+                f"{ctx}: summary RX counts ({summary.get('rx_total')}, {summary.get('rx_in_window')}) "
                 f"!= trace counts ({len(actual_rx)}, {exp_rx_in_win})"
             )
+        frames_received = _require_int(summary["can_stats"], "frames_received", f"{ctx}.can_stats")
+        if frames_received != len(actual_rx):
+            raise VerificationError(
+                f"{ctx}: can_stats.frames_received={frames_received} != rx_total={len(actual_rx)}"
+            )
 
-    # 4. Canonical SHA-256 digests.
+    # 4. Canonical SHA-256 digests (per-ECU order preserved without re-sorting events).
     out_hasher = hashlib.sha256()
     for ecu in sorted(case.ecus, key=lambda e: e.name):
         s = ecu_summaries[ecu.name]
         line = f"{ecu.name}\t{s['window_steps']}\t{s['state_digest_hex']}\n"
         out_hasher.update(line.encode("utf-8"))
 
-    trace_records: list[tuple[str, str, int, int, int, int, str]] = []
-    for ecu in case.ecus:
-        for ev in ecu_traces[ecu.name]:
-            trace_records.append(
-                (ecu.name, ev.direction, ev.tx_ms, -1 if ev.rx_ms is None else ev.rx_ms, ev.can_id, ev.seq, ev.payload_hex)
-            )
-    trace_records.sort()
     trace_hasher = hashlib.sha256()
-    for rec in trace_records:
-        line = f"{rec[0]}\t{rec[1]}\t{rec[2]}\t{rec[3]}\t0x{rec[4]:x}\t{rec[5]}\t{rec[6]}\n"
-        trace_hasher.update(line.encode("utf-8"))
+    for ecu in sorted(case.ecus, key=lambda e: e.name):
+        for ev in ecu_traces[ecu.name]:
+            rx_val = -1 if ev.rx_ms is None else ev.rx_ms
+            line = f"{ecu.name}\t{ev.direction}\t{ev.tx_ms}\t{rx_val}\t0x{ev.can_id:x}\t{ev.seq}\t{ev.payload_hex}\n"
+            trace_hasher.update(line.encode("utf-8"))
 
     tx_in_window = sum(int(ecu_summaries[e.name]["tx_in_window"]) for e in case.ecus)
     rx_in_window = sum(int(ecu_summaries[e.name]["rx_in_window"]) for e in case.ecus)
@@ -1252,31 +1408,45 @@ def validate_launcher_report(
         raise VerificationError(
             f"{case.case_id}: timing.time_step_ms={timing.get('time_step_ms')}, expected {expected_time_step_ms}"
         )
-    paused_ms = timing.get("paused_ms", 0)
+    paused_ms = _require_int(timing, "paused_ms", f"{case.case_id}.timing")
     if paused_ms != 0:
         raise VerificationError(f"{case.case_id}: measurement boundary violated: timing.paused_ms={paused_ms} != 0")
-    paced_steps = timing.get("paced_steps", 0)
+    paced_steps = _require_int(timing, "paced_steps", f"{case.case_id}.timing")
     if paced_steps != 0:
         raise VerificationError(f"{case.case_id}: measurement boundary violated: timing.paced_steps={paced_steps} != 0")
 
-    participants = run_report.get("participants") or []
-    by_name = {p.get("name"): p for p in participants if isinstance(p, dict)}
+    participants = run_report.get("participants")
+    if not isinstance(participants, list):
+        raise VerificationError(f"{case.case_id}: launcher run --json missing participants list")
+    by_name: dict[str, dict[str, Any]] = {}
+    for p in participants:
+        if not isinstance(p, dict) or not isinstance(p.get("name"), str):
+            raise VerificationError(f"{case.case_id}: malformed participant entry in launcher report: {p!r}")
+        if p["name"] in by_name:
+            raise VerificationError(f"{case.case_id}: duplicate participant {p['name']!r} in launcher report")
+        by_name[p["name"]] = p
+    expected_names = {ecu.name for ecu in case.ecus}
+    if set(by_name.keys()) != expected_names:
+        raise VerificationError(
+            f"{case.case_id}: launcher participants {sorted(by_name)} != expected {sorted(expected_names)}"
+        )
     for ecu in case.ecus:
-        p = by_name.get(ecu.name)
-        if p is None:
-            raise VerificationError(f"{case.case_id}: participant {ecu.name!r} missing from launcher report")
+        p = by_name[ecu.name]
         if p.get("exit_code") != 0:
             raise VerificationError(f"{case.case_id}/{ecu.name}: exit_code={p.get('exit_code')} != 0")
-        cl = p.get("control_link") or {}
+        cl = p.get("control_link")
+        if not isinstance(cl, dict):
+            raise VerificationError(f"{case.case_id}/{ecu.name}: missing control_link object")
         if cl.get("state") != "connected":
             raise VerificationError(f"{case.case_id}/{ecu.name}: control_link.state={cl.get('state')!r} != 'connected'")
-        if cl.get("late_messages", 0) != 0:
+        late_msgs = _require_int(cl, "late_messages", f"{case.case_id}/{ecu.name}.control_link")
+        if late_msgs != 0:
             raise VerificationError(
-                f"{case.case_id}/{ecu.name}: control_link.late_messages={cl.get('late_messages')} != 0"
+                f"{case.case_id}/{ecu.name}: control_link.late_messages={late_msgs} != 0"
             )
 
-    wall_ms = int(timing.get("wall_ms", 0))
-    return max(0, wall_ms - int(paused_ms)), int(paused_ms)
+    wall_ms = _require_int(timing, "wall_ms", f"{case.case_id}.timing")
+    return max(0, wall_ms - paused_ms), paused_ms
 
 
 def run_single_iteration(
@@ -1361,7 +1531,13 @@ def run_single_iteration(
         sum_path = ecu_out_dir / f"ecu_{ecu.name}.summary.json"
         if not sum_path.is_file():
             raise VerificationError(f"{case.case_id}/{ecu.name}: missing summary file {sum_path}")
-        ecu_summaries[ecu.name] = json.loads(sum_path.read_text(encoding="utf-8"))
+        try:
+            parsed_summary = json.loads(sum_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise VerificationError(f"{case.case_id}/{ecu.name}: invalid summary JSON {sum_path}: {exc}") from exc
+        if not isinstance(parsed_summary, dict):
+            raise VerificationError(f"{case.case_id}/{ecu.name}: summary JSON {sum_path} must be an object")
+        ecu_summaries[ecu.name] = parsed_summary
         ecu_traces[ecu.name] = parse_comm_tsv(ecu_out_dir / f"ecu_{ecu.name}.comm.tsv")
 
     trace_result = verify_iteration_traces(case, warmup_ms, measure_ms, ecu_summaries, ecu_traces)
@@ -1809,6 +1985,14 @@ def _print_summary(report: dict[str, Any], out_path: Path) -> None:
     print(f"  report: {verify_common.rel(out_path.resolve(), ROOT)}")
 
 
+def schema_ref_for_output(out_path: Path) -> str:
+    schema_target = ROOT / "schema" / "benchmark-report.schema.json"
+    try:
+        return Path(os.path.relpath(schema_target, out_path.parent)).as_posix()
+    except ValueError:
+        return schema_target.as_posix()
+
+
 def main(argv: list[str] | None = None) -> int:
     verify_common.reconfigure_stdio()
     parser = build_parser()
@@ -1852,7 +2036,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     bench_ecu_build_info = probe_bench_ecu_build_info(bench_ecu_path)
-    build_prov, cache_vals = extract_build_provenance(build_dir, bench_ecu_build_info)
+    build_prov, cache_vals = extract_build_provenance(
+        build_dir,
+        bench_ecu_build_info,
+        launcher_path=launcher_path,
+        bench_ecu_path=bench_ecu_path,
+    )
     repo_prov, deps_prov = _collect_repo_and_dependency_provenance(version_info, cache_vals)
     host_prov = _collect_host_provenance()
 
@@ -1913,9 +2102,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
 
-        schema_rel = os.path.relpath(ROOT / "schema" / "benchmark-report.schema.json", out_path.parent)
         report = {
-            "$schema": Path(schema_rel).as_posix(),
+            "$schema": schema_ref_for_output(out_path),
             "vehicle_sil_benchmark": BENCHMARK_FORMAT_VERSION,
             "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "execution_backend": "silkit_coordinated_multiprocess",

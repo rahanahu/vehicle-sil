@@ -107,6 +107,9 @@ def _synthesize_valid_traces(
                         payload_hex=tx_ev.payload_hex,
                     )
                 )
+        rx_list.sort(
+            key=lambda ev: (ev.rx_ms, ev.tx_ms, ev.can_id, BV._payload_u64_le(ev.payload_hex, ecu.name))
+        )
         traces[ecu.name] = [*tx_by_ecu[ecu.name], *rx_list]
         summaries[ecu.name] = {
             "name": ecu.name,
@@ -124,6 +127,7 @@ def _synthesize_valid_traces(
             "rx_in_window": sum(1 for ev in rx_list if warmup_ms <= ev.tx_ms < measure_end_ms),
             "tx_total": len(tx_by_ecu[ecu.name]),
             "rx_total": len(rx_list),
+            "sub_ms_rx_timestamps": 0,
             "state_digest_hex": f"{ecu.ecu_id + 1:016x}",
             "can_stats": {
                 "frames_received": len(rx_list),
@@ -204,6 +208,96 @@ class TestBuildFlagExtraction(unittest.TestCase):
                 self.assertIsNone(target["effective_opt_level"])
                 self.assertIsNone(target["sanitizers"])
                 self.assertIsNone(target["ndebug"])
+
+    def test_windows_quoted_tokens_response_files_msvc_and_sanitizers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            (bdir / "flags.rsp").write_text('"-O3" "-DNDEBUG=1" -fsanitize=address,undefined -fno-sanitize=undefined\n', encoding="utf-8")
+            cc = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\launch\\main.cpp",
+                    "command": '"C:\\msys64\\ucrt64\\bin\\ccache.exe" "C:\\msys64\\ucrt64\\bin\\g++.exe" @flags.rsp -c main.cpp',
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\libs\\core\\src\\participant_runtime.cpp",
+                    "command": '"C:\\Program Files\\MSVC\\cl.exe" /Od /Oi /Ot /Oy /Og /fsanitize=address /DNDEBUG=1 -c participant_runtime.cpp',
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\bench_ecu\\main.cpp",
+                    "command": '"C:\\msys64\\ucrt64\\bin\\g++.exe" -O3 -fsanitize=thread -fno-sanitize=all -DNDEBUG -c main.cpp',
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+
+            seen_compilers: list[str] = []
+
+            def fake_banner(path, _cache):
+                seen_compilers.append(path)
+                return f"banner:{path}"
+
+            with mock.patch.object(BV, "_compiler_banner", side_effect=fake_banner):
+                build_info, _ = BV.extract_build_provenance(
+                    bdir,
+                    {"compiler_id": "GNU", "ndebug": True, "optimize_macro": 1, "sanitizers": []},
+                    is_windows=True,
+                )
+
+            self.assertEqual(build_info["flags_source"], "compile_commands.json")
+            # Quotes must be stripped and ccache.exe wrapper skipped!
+            self.assertEqual(seen_compilers[0], r"C:\msys64\ucrt64\bin\g++.exe")
+            launch = build_info["targets"]["vehicle_sil_launch"]
+            self.assertEqual(launch["effective_opt_level"], "-O3")
+            self.assertTrue(launch["ndebug"])
+            self.assertEqual(launch["sanitizers"], ["-fsanitize=address"])
+
+            # /Oi, /Ot, /Oy, /Og must NOT override primary /Od!
+            core = build_info["targets"]["vehicle_sil_core"]
+            self.assertEqual(core["effective_opt_level"], "/Od")
+            self.assertEqual(core["sanitizers"], ["/fsanitize=address"])
+            self.assertTrue(core["ndebug"])
+
+            # -fno-sanitize=all clears thread sanitizer.
+            bench = build_info["targets"]["vehicle_sil_bench_ecu"]
+            self.assertEqual(bench["sanitizers"], [])
+
+    def test_multi_config_cache_is_unavailable_and_mismatches_warn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            # Multi-config generator without CMAKE_BUILD_TYPE must stay unavailable.
+            (bdir / "CMakeCache.txt").write_text(
+                "CMAKE_CONFIGURATION_TYPES:STRING=Debug;Release\nCMAKE_BUILD_TYPE:STRING=\n",
+                encoding="utf-8",
+            )
+            build_info, _ = BV.extract_build_provenance(bdir, None, is_windows=True)
+            self.assertEqual(build_info["flags_source"], "unavailable")
+
+            # Partial compile_commands.json + bench_ecu_build_info conflict + external binary override.
+            cc = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/bench_ecu/main.cpp",
+                }
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+            outside = Path(tmp).parent / "outside_launcher"
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info2, _ = BV.extract_build_provenance(
+                    bdir,
+                    {"compiler_id": "Clang", "ndebug": False, "optimize_macro": 0, "sanitizers": ["thread"]},
+                    is_windows=False,
+                    launcher_path=outside,
+                    bench_ecu_path=bdir / "tools" / "bench_ecu" / "vehicle_sil_bench_ecu",
+                )
+            warn = info2["flags_warning"] or ""
+            self.assertIn("missing target TU(s)", warn)
+            self.assertIn("--launcher", warn)
+            self.assertIn("optimize_macro=0", warn)
+            self.assertIn("ndebug", warn)
+            self.assertIn("sanitizers conflict", warn)
 
 
 class TestAlignmentValidation(unittest.TestCase):
@@ -306,6 +400,78 @@ class TestCausalTraceVerifier(unittest.TestCase):
         with self.assertRaises(BV.VerificationError):
             BV.verify_iteration_traces(case, 50, 200, s, t)
 
+        # 8. Missing can_stats or frames_sent / frames_received mismatch.
+        s, t = copy.deepcopy(base_summaries), copy.deepcopy(base_traces)
+        del s["ecu1"]["can_stats"]
+        with self.assertRaises(BV.VerificationError):
+            BV.verify_iteration_traces(case, 50, 200, s, t)
+
+        s, t = copy.deepcopy(base_summaries), copy.deepcopy(base_traces)
+        s["ecu0"]["can_stats"]["frames_sent"] += 1
+        with self.assertRaises(BV.VerificationError):
+            BV.verify_iteration_traces(case, 50, 200, s, t)
+
+        s, t = copy.deepcopy(base_summaries), copy.deepcopy(base_traces)
+        s["ecu0"]["can_stats"]["frames_received"] += 5
+        with self.assertRaises(BV.VerificationError):
+            BV.verify_iteration_traces(case, 50, 200, s, t)
+
+        # 9. Reversed/reordered RX trace in comm.tsv must fail!
+        s, t = copy.deepcopy(base_summaries), copy.deepcopy(base_traces)
+        tx_only = [ev for ev in t["ecu0"] if ev.direction == "T"]
+        rx_only = [ev for ev in t["ecu0"] if ev.direction == "R"]
+        t["ecu0"] = [*tx_only, *reversed(rx_only)]
+        with self.assertRaises(BV.VerificationError):
+            BV.verify_iteration_traces(case, 50, 200, s, t)
+
+        # 10. Non-integer-ms CAN RX timestamp detected.
+        s, t = copy.deepcopy(base_summaries), copy.deepcopy(base_traces)
+        s["ecu0"]["sub_ms_rx_timestamps"] = 1
+        with self.assertRaises(BV.VerificationError):
+            BV.verify_iteration_traces(case, 50, 200, s, t)
+
+        # 11. Malformed non-hex payload raises VerificationError (not ValueError).
+        s, t = copy.deepcopy(base_summaries), copy.deepcopy(base_traces)
+        for i, ev in enumerate(t["ecu0"]):
+            if ev.direction == "T":
+                t["ecu0"][i] = dataclasses.replace(ev, payload_hex="zzzzzzzzzzzzzzzz")
+                break
+        with self.assertRaises(BV.VerificationError):
+            BV.verify_iteration_traces(case, 50, 200, s, t)
+
+    def test_multi_frame_seq_wrap_canonical_order_passes(self):
+        # Regression for asymmetric sort-key bug when can_frames > 1 crosses uint16 seq wrap (65535 -> 0).
+        case = BV.CaseSpec(
+            case_id="multi_frame_wrap",
+            description="2 ECUs with 3 frames/slot crossing seq wrap",
+            ecus=(
+                BV.EcuSpec(ecu_id=0, name="ecu0", step_ms=1, can_period_ms=10, can_offset_ms=0, can_frames=3),
+                BV.EcuSpec(ecu_id=1, name="ecu1", step_ms=1, can_period_ms=10, can_offset_ms=1, can_frames=3),
+            ),
+        )
+        # Force payload_u64_le ordering to differ from hex-string / seq order by varying high bytes.
+        tx0 = [
+            BV.TraceEvent("T", 0, None, 0x100, 0, _make_payload_hex(0, 0, 0, word=0xFF000000)),
+            BV.TraceEvent("T", 0, None, 0x100, 1, _make_payload_hex(0, 1, 1, word=0x01000000)),
+            BV.TraceEvent("T", 0, None, 0x100, 2, _make_payload_hex(0, 2, 2, word=0x00000000)),
+        ]
+        tx1 = [
+            BV.TraceEvent("T", 1, None, 0x101, 0, _make_payload_hex(1, 0, 0, word=0x22)),
+            BV.TraceEvent("T", 1, None, 0x101, 1, _make_payload_hex(1, 1, 1, word=0x22)),
+            BV.TraceEvent("T", 1, None, 0x101, 2, _make_payload_hex(1, 2, 2, word=0x22)),
+        ]
+        rx0 = sorted(
+            [BV.TraceEvent("R", e.tx_ms, e.tx_ms + 1, e.can_id, e.seq, e.payload_hex) for e in tx1],
+            key=lambda ev: (ev.rx_ms, ev.tx_ms, ev.can_id, BV._payload_u64_le(ev.payload_hex, "ecu0")),
+        )
+        rx1 = sorted(
+            [BV.TraceEvent("R", e.tx_ms, e.tx_ms + 1, e.can_id, e.seq, e.payload_hex) for e in tx0],
+            key=lambda ev: (ev.rx_ms, ev.tx_ms, ev.can_id, BV._payload_u64_le(ev.payload_hex, "ecu1")),
+        )
+        summaries, _ = _synthesize_valid_traces(case, warmup_ms=0, measure_ms=10)
+        traces = {"ecu0": [*tx0, *rx0], "ecu1": [*tx1, *rx1]}
+        BV.verify_iteration_traces(case, 0, 10, summaries, traces)
+
 
 class TestBoundaryGuardsAndSummary(unittest.TestCase):
     def test_paused_or_paced_run_is_rejected(self):
@@ -327,6 +493,24 @@ class TestBoundaryGuardsAndSummary(unittest.TestCase):
         paced["timing"]["paced_steps"] = 1
         with self.assertRaises(BV.VerificationError):
             BV.validate_launcher_report(case, paced, 260, 1)
+
+        # Extra unexpected participant (e.g. NetworkSimulator) must be rejected.
+        extra = copy.deepcopy(good_report)
+        extra["participants"].append({"name": "NetworkSimulator", "exit_code": 0, "control_link": {"state": "connected", "late_messages": 0}})
+        with self.assertRaises(BV.VerificationError):
+            BV.validate_launcher_report(case, extra, 260, 1)
+
+        # Missing required keys (no silent 0 default) must be rejected.
+        for missing_key in ("paused_ms", "paced_steps"):
+            missing = copy.deepcopy(good_report)
+            del missing["timing"][missing_key]
+            with self.assertRaises(BV.VerificationError):
+                BV.validate_launcher_report(case, missing, 260, 1)
+
+        missing_late = copy.deepcopy(good_report)
+        del missing_late["participants"][0]["control_link"]["late_messages"]
+        with self.assertRaises(BV.VerificationError):
+            BV.validate_launcher_report(case, missing_late, 260, 1)
 
     def test_warmup_excluded_from_summary_and_sha_mismatch_rejected(self):
         case = BV.ALL_CASES["case_a_1ecu_1ms"]
@@ -442,6 +626,31 @@ class TestCrossPlatformProcessCpu(unittest.TestCase):
             self.assertIsNone(cpu["sys_ms"])
             self.assertIsNone(cpu["total_ms"])
             self.assertIsNone(cpu["max_rss_kb"])
+
+    def test_keyboard_interrupt_during_wait4_cleans_up_process_group(self):
+        class FakePopen:
+            def __init__(self, *args, **kwargs):
+                self.pid = 9999
+                self.returncode = None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            with (
+                mock.patch.object(BV.subprocess, "Popen", FakePopen),
+                mock.patch.object(BV.os, "name", "posix"),
+                mock.patch.object(BV.os, "wait4", side_effect=KeyboardInterrupt, create=True),
+                mock.patch.object(BV.verify_common, "stop_group") as mock_stop,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    BV.run_launcher_with_rusage(
+                        ["fake"], tdir, tdir / "out.json", tdir / "err.log"
+                    )
+            mock_stop.assert_called_once()
+
+    def test_schema_ref_cross_drive_value_error_falls_back(self):
+        with mock.patch.object(BV.os.path, "relpath", side_effect=ValueError("different mounts")):
+            ref = BV.schema_ref_for_output(Path("/other/drive/report.json"))
+        self.assertTrue(ref.endswith("schema/benchmark-report.schema.json"))
 
 
 class TestControlMetricsIntegration(unittest.TestCase):

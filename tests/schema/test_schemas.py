@@ -1967,8 +1967,179 @@ class BenchmarkReportSchema(unittest.TestCase):
             mutate(lambda d: d["cases"][0]["summary"]["launcher_tree_cpu_ms"].update(median=0.0)),
             [],
         )
+        # flags_source == "unavailable" must force null target opt/flags.
+        self.assertNotEqual(
+            mutate(lambda d: d["provenance"]["build"].update(flags_source="unavailable")),
+            [],
+        )
+        # ecu_steady_state == "available" must reject unavailable per_process entries.
+        self.assertNotEqual(
+            mutate(
+                lambda d: d["cases"][0]["iterations"][0]["process_cpu"]["ecu_steady_state"]["per_process"][0].update(
+                    status="unavailable", reason="err", user_ms=None, sys_ms=None, total_ms=None
+                )
+            ),
+            [],
+        )
+        # Phase const enforcement on warmup_iterations vs iterations.
+        self.assertNotEqual(
+            mutate(lambda d: d["cases"][0]["iterations"][0].update(phase="warmup")),
+            [],
+        )
+        self.assertNotEqual(
+            mutate(
+                lambda d: d["cases"][0]["warmup_iterations"].append(
+                    copy.deepcopy(d["cases"][0]["iterations"][0])
+                )
+            ),
+            [],
+        )
+        # Dropped CAN counters must always be 0 on verified benchmark reports.
+        self.assertNotEqual(
+            mutate(lambda d: d["cases"][0]["iterations"][0]["steady_state"]["app_messages"].update(tx_dropped=1)),
+            [],
+        )
+        self.assertNotEqual(
+            mutate(lambda d: d["cases"][0]["iterations"][0]["steady_state"]["app_messages"].update(rx_dropped=1)),
+            [],
+        )
         # Unknown properties must be refused.
         self.assertNotEqual(mutate(lambda d: d.update(extra_field=123)), [])
+
+    def test_generated_report_from_benchmark_vtime_is_valid(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("benchmark_vtime_schema_check", ROOT / "scripts" / "benchmark-vtime.py")
+        assert spec is not None and spec.loader is not None
+        bv = importlib.util.module_from_spec(spec)
+        sys.modules["benchmark_vtime_schema_check"] = bv
+        spec.loader.exec_module(bv)
+
+        case = bv.ALL_CASES["case_a_1ecu_1ms"]
+        ecu_summary = {
+            "name": "ecu0",
+            "configured_sample_period_ms": 10,
+            "effective_sample_period_ms": 10,
+            "sample_every_step_active": False,
+        }
+
+        def make_iter(phase: str, idx: int) -> dict:
+            return {
+                "index": idx,
+                "phase": phase,
+                "steady_state": {
+                    "wall_ns": 10_000_000,
+                    "wall_ms": 10.0,
+                    "window_skew_ns": 0,
+                    "virtual_to_realtime_ratio": 20.0,
+                    "completed_steps": {
+                        "controller_window_steps": 200,
+                        "ecu_window_steps_total": 200,
+                        "ecu_window_steps_by_participant": {"ecu0": 200},
+                    },
+                    "app_messages": {
+                        "tx_in_window": 20,
+                        "rx_in_window": 0,
+                        "tx_total": 25,
+                        "rx_total": 0,
+                        "tx_dropped": 0,
+                        "rx_dropped": 0,
+                    },
+                },
+                "non_steady_state": {
+                    "total_process_wall_ms": 40.0,
+                    "launcher_run_wall_ms": 12.0,
+                    "setup_and_shutdown_wall_ms": 28.0,
+                    "paused_ms": 0,
+                },
+                "process_cpu": {
+                    "ecu_steady_state": {
+                        "status": "available",
+                        "reason": None,
+                        "interval": "steady_state_window",
+                        "window_sim_ms": [50, 250],
+                        "target_processes": ["ecu0"],
+                        "excludes": ["vehicle_sil_launch"],
+                        "user_ms": 3.0,
+                        "sys_ms": 1.0,
+                        "total_ms": 4.0,
+                        "per_process": [
+                            {"name": "ecu0", "status": "available", "reason": None, "user_ms": 3.0, "sys_ms": 1.0, "total_ms": 4.0}
+                        ],
+                    },
+                    "launcher_tree_total": {
+                        "status": "unavailable",
+                        "reason": "os.wait4 not available on this platform",
+                        "interval": "full_process_lifetime",
+                        "includes_non_steady_state": True,
+                        "target_processes": ["vehicle_sil_launch", "<reaped_children>"],
+                        "user_ms": None,
+                        "sys_ms": None,
+                        "total_ms": None,
+                        "max_rss_kb": None,
+                    },
+                },
+                "control_transport_metrics": {
+                    "status": "unavailable",
+                    "unavailable_reason": "stopped_before_setup",
+                    "source": None,
+                    "counters": None,
+                },
+                "determinism": {
+                    "verified": True,
+                    "output_sha256": "a" * 64,
+                    "comm_trace_sha256": "b" * 64,
+                    "comm_events_verified": 25,
+                },
+                "environment_noise": {
+                    "waited_s": 0.0,
+                    "others_before": [],
+                    "others_after": [],
+                    "load1_before": None,
+                    "load1_after": None,
+                },
+            }
+
+        case_rep = bv.build_case_report(
+            case,
+            50,
+            200,
+            10,
+            warmup_records=[make_iter("warmup", 0)],
+            measured_records=[make_iter("measured", 0), make_iter("measured", 1)],
+            last_ecu_summaries={"ecu0": ecu_summary},
+        )
+        build_prov, _ = bv.extract_build_provenance(None, None, is_windows=False)
+        generated = {
+            "$schema": "../schema/benchmark-report.schema.json",
+            "vehicle_sil_benchmark": bv.BENCHMARK_FORMAT_VERSION,
+            "generated_at_utc": "2026-11-27T01:00:00Z",
+            "execution_backend": "silkit_coordinated_multiprocess",
+            "interpretation_contract": {
+                "local_bench_substitutable": False,
+                "process_count_equals_participant_count_assumed": False,
+                "wall_cpu_handler_summable": False,
+                "notes": list(bv.INTERPRETATION_NOTES),
+            },
+            "provenance": {
+                "repo": {"git_commit": None, "git_dirty": None, "vehicle_sil_version": "0.4.0", "launcher_features": []},
+                "build": build_prov,
+                "dependencies": {
+                    "sil_kit": {"submodule_commit": None, "tag": None, "patches": [], "static_linked": None},
+                    "control_server_built": False,
+                },
+                "host": bv._collect_host_provenance(),
+            },
+            "run_options": {
+                "profile": "smoke",
+                "warmup_iterations": 1,
+                "measured_iterations": 2,
+                "control_metrics_mode": "auto",
+                "busy_machine_wait": False,
+            },
+            "cases": [case_rep],
+        }
+        self.assertEqual(problems(BENCHMARK_REPORT, generated), [])
 
 
 if __name__ == "__main__":

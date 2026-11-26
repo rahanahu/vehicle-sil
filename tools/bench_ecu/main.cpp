@@ -74,7 +74,7 @@ struct BenchConfig
 struct CpuSample
 {
     bool available = false;
-    std::string reason;
+    const char* reason = nullptr;
     double user_ms = 0.0;
     double sys_ms = 0.0;
 };
@@ -113,6 +113,7 @@ struct BenchSummaryState
     std::int64_t rx_in_window = 0;
     std::int64_t tx_total = 0;
     std::int64_t rx_total = 0;
+    std::int64_t sub_ms_rx_timestamps = 0;
 
     std::uint64_t state_digest = 0;
     double probe_cmd_last = 0.0;
@@ -481,7 +482,9 @@ private:
         if (now_ms == cfg_.warmup_ms)
         {
             state_.steady_start_ns =
-                std::chrono::steady_clock::now().time_since_epoch().count();
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count();
             state_.cpu_start = sample_self_cpu();
             state_.window_start_step_ms = now_ms;
             state_.saw_window_start = true;
@@ -489,7 +492,9 @@ private:
         else if (now_ms == measure_end_ms_)
         {
             state_.steady_end_ns =
-                std::chrono::steady_clock::now().time_since_epoch().count();
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count();
             state_.cpu_end = sample_self_cpu();
             state_.window_end_step_ms = now_ms;
             state_.saw_window_end = true;
@@ -517,6 +522,10 @@ private:
             {
                 for (const auto& tf : step_rx_)
                 {
+                    if ((tf.time.time_since_epoch() % std::chrono::milliseconds(1)) != vehicle_sil::SimDuration::zero())
+                    {
+                        ++state_.sub_ms_rx_timestamps;
+                    }
                     const std::int64_t tx_ms =
                         std::chrono::duration_cast<std::chrono::milliseconds>(tf.time.time_since_epoch()).count();
                     const std::uint64_t p64 = payload_u64(tf.frame);
@@ -746,6 +755,7 @@ private:
     w.integer("rx_in_window", state.rx_in_window);
     w.integer("tx_total", state.tx_total);
     w.integer("rx_total", state.rx_total);
+    w.integer("sub_ms_rx_timestamps", state.sub_ms_rx_timestamps);
     w.string("state_digest_hex", hex_u64_lower(state.state_digest));
     w.real("probe_cmd_last", state.probe_cmd_last);
     w.real("probe_echo_last", state.probe_echo_last);
@@ -776,11 +786,8 @@ private:
         std::string reason = "steady-state window not completed";
         if (state.saw_window_start && state.saw_window_end)
         {
-            reason = !state.cpu_start.available ? state.cpu_start.reason : state.cpu_end.reason;
-            if (reason.empty())
-            {
-                reason = "process CPU sampling unavailable";
-            }
+            const char* raw_reason = !state.cpu_start.available ? state.cpu_start.reason : state.cpu_end.reason;
+            reason = (raw_reason != nullptr && raw_reason[0] != '\0') ? raw_reason : "process CPU sampling unavailable";
         }
         w.string("status", "unavailable");
         w.string("reason", reason);
@@ -834,9 +841,14 @@ private:
                                   static_cast<long long>(ev.tx_ms), static_cast<long long>(ev.rx_ms),
                                   static_cast<unsigned>(ev.id), static_cast<unsigned>(ev.seq), hex.c_str());
             }
-            if (n > 0)
+            if (n > 0 && static_cast<std::size_t>(n) < sizeof(line))
             {
                 buf.append(line, static_cast<std::size_t>(n));
+            }
+            else
+            {
+                error_out = "failed to format comm trace line";
+                return false;
             }
             if (buf.size() >= 60000)
             {

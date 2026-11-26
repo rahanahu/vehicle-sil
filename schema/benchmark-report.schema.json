@@ -183,7 +183,23 @@
               ],
               "description": "Compile-time defines reported by vehicle_sil_bench_ecu --bench-build-info, or null."
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "flags_source": { "const": "unavailable" } } },
+              "then": {
+                "properties": {
+                  "targets": {
+                    "properties": {
+                      "vehicle_sil_launch": { "$ref": "#/definitions/unavailable_target_build_flags" },
+                      "vehicle_sil_core": { "$ref": "#/definitions/unavailable_target_build_flags" },
+                      "vehicle_sil_bench_ecu": { "$ref": "#/definitions/unavailable_target_build_flags" }
+                    }
+                  }
+                }
+              }
+            }
+          ]
         },
         "dependencies": {
           "type": "object",
@@ -298,6 +314,17 @@
     }
   },
   "definitions": {
+    "unavailable_target_build_flags": {
+      "type": "object",
+      "description": "Enforces null optimization/codegen/sanitizer/ndebug fields when flags_source == unavailable.",
+      "properties": {
+        "optimization_flags": { "type": "null" },
+        "effective_opt_level": { "type": "null" },
+        "codegen_and_defines": { "type": "null" },
+        "sanitizers": { "type": "null" },
+        "ndebug": { "type": "null" }
+      }
+    },
     "target_build_flags": {
       "type": "object",
       "additionalProperties": false,
@@ -616,8 +643,8 @@
                 "rx_in_window": { "type": "integer", "minimum": 0, "description": "CAN RX frames whose tx_ms is in [W, W + M) (arriving in (W, W + M])." },
                 "tx_total": { "type": "integer", "minimum": 0, "description": "Total CAN TX frames in [0, W + M)." },
                 "rx_total": { "type": "integer", "minimum": 0, "description": "Total CAN RX frames in {tx_ms < W + M, rx_ms <= W + M}." },
-                "tx_dropped": { "type": "integer", "minimum": 0, "description": "Total rejected/dropped TX frames (verified 0)." },
-                "rx_dropped": { "type": "integer", "minimum": 0, "description": "Total RX/port overflow drops (verified 0)." }
+                "tx_dropped": { "type": "integer", "const": 0, "description": "Total rejected/dropped TX frames (always verified 0)." },
+                "rx_dropped": { "type": "integer", "const": 0, "description": "Total RX/port overflow drops (always verified 0)." }
               }
             }
           }
@@ -700,7 +727,14 @@
                       "reason": { "type": "null" },
                       "user_ms": { "type": "number", "minimum": 0 },
                       "sys_ms": { "type": "number", "minimum": 0 },
-                      "total_ms": { "type": "number", "minimum": 0 }
+                      "total_ms": { "type": "number", "minimum": 0 },
+                      "per_process": {
+                        "items": {
+                          "properties": {
+                            "status": { "const": "available" }
+                          }
+                        }
+                      }
                     }
                   }
                 },
@@ -962,13 +996,23 @@
         "warmup_iterations": {
           "type": "array",
           "description": "Warm-up iterations strictly excluded from summary statistics.",
-          "items": { "$ref": "#/definitions/iteration_record" }
+          "items": {
+            "allOf": [
+              { "$ref": "#/definitions/iteration_record" },
+              { "properties": { "phase": { "const": "warmup" } } }
+            ]
+          }
         },
         "iterations": {
           "type": "array",
           "minItems": 1,
           "description": "Measured iterations aggregated into summary statistics.",
-          "items": { "$ref": "#/definitions/iteration_record" }
+          "items": {
+            "allOf": [
+              { "$ref": "#/definitions/iteration_record" },
+              { "properties": { "phase": { "const": "measured" } } }
+            ]
+          }
         },
         "summary": {
           "type": "object",
