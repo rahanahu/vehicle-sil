@@ -141,15 +141,17 @@ ECU の外から Agent を使うトランスポート（`control_silkit::AgentTr
 
 ### 生の CAN（`can::RawChannel`）
 
-J1939 でないプロトコルの基盤です。`on_frame(handler)` で受信し、`send(frame)` で送信します。
+J1939 でないプロトコルの基盤です。`on_frame(handler)` で受信し、`on_transmit(handler)`（セットアップ時のみ）で送信完了・失敗を受け取り、`send(frame)` または `send(frame, token)` で送信します。`TransmitEvent`、`outstanding` の保存則、`RawChannelOptions` の容量導出の詳細は [can.md](can.md#生チャネルrawchannel) にあります。
 
 | 項目 | 仕様 |
 |---|---|
 | `send()` を呼べる所 | ステップの中だけ（それ以外は `std::logic_error`） |
-| `send()` の結果 | `RawSendStatus`（`Ok`、`QueueFull`、`InvalidFrame`） |
+| `send()` の結果 | `RawSendStatus`（`Ok`、`QueueFull`、`InvalidFrame`。同期の拒否はイベントを出さず、同じトークンで再試行できる） |
 | 送信される時点 | そのステップの最後に、`send()` を呼んだ順に、ステップの時刻で |
-| 上限（`RawChannelOptions`） | 1 ステップあたり送信 64、受信 1024 |
-| 上限を超えた分 | 数えて捨て、再試行はしない |
+| `token` と `transmit_capabilities()` | チャネル単位の不透明な `std::uint64_t`（`0` も有効）。`transmit_capabilities()`（`None` または `Correlated`）は `start()` 前の構築時から参照できる |
+| 送信通知（`on_transmit()`） | 送信ステップ `T` では決して呼ばず、`T' > T` の `process()` で `on_frame()` より先に呼ぶ（`time == T` の `flush()` 拒否を含む） |
+| 上限（`RawChannelOptions`） | 1 ステップあたり送信 64、受信 1024。加えて任意の `transmit_event_capacity`、`port_inbox_capacity`、`port_event_capacity`、`port_transmit_queue_capacity`、`port_bitrate` |
+| 上限を超えた分 | 数えて捨て、再試行はしない（`send()` が受け付けた後に `flush()` で失敗したフレームは次のステップで `TransmitEvent::Kind::Failed` を出す） |
 | 自分が送信したフレーム | 受信しない |
 
 同じ ECU が同じネットワーク名で `j1939()` と `can()` を持つと、別のコントローラーとして互いのフレームを受信します。受信するのは次のステップですが、時刻は送信したステップのものです。J1939 のネットワークは 11 ビットのフレームを無視します。ただし、`Peer` の J1939 のネットワークが利用者のポート（`j1939(name, port)`。Vector XL など）の上にあるときは、別のバスになります。生チャネルは常に SIL Kit の上にあるためです。
@@ -179,9 +181,10 @@ J1939 でないプロトコルの基盤です。`on_frame(handler)` で受信し
 
 | 項目 | 仕様 |
 |---|---|
-| 受信（`on_frame(handler)`） | ステップの最初に、受信した順に呼ぶ（実行の前に設定する） |
+| 受信（`on_frame(handler)`） | `process()` の中で `on_transmit()` ハンドラーの後に、受信した順に呼ぶ（実行の前に設定する） |
+| 送信通知（`on_transmit(handler)`） | `T' > T` の `process()` で `on_frame()` より先に呼ぶ（送信ステップ `T` では呼ばない。`transmit_capabilities()` は仮想時間で `Correlated`） |
 | 受信（`receive()`） | そのステップの分を、`on_step()` などから 1 つずつ取る |
-| 送信（`send()`） | ステップの中でだけ呼べ、フレームはそのステップの最後に送信される |
+| 送信（`send(frame)` / `send(frame, token)`） | ステップの中でだけ呼べ（`0` も有効なトークン）、フレームはそのステップの最後に送信される |
 | フレームを受信するチャネル | 同じネットワークのほかの全部のチャネル（宛先のアドレスによらない。ハブと同じ） |
 | 受信するステップ | 時刻 t のステップで送信したフレームは、受信する ECU の「t より後に始まる最初のステップ」 |
 | 同じ時刻のフレームの順 | 送信元のアドレスの順で、`Peer` と `LocalBench` で同じ順になる |
@@ -192,11 +195,11 @@ J1939 でないプロトコルの基盤です。`on_frame(handler)` で受信し
 | `Peer` | ネットワーク名を名前にした SIL Kit の Ethernet コントローラーと `eth::SilKitEthPort` |
 | `LocalBench` | その名前の `eth::VirtualEthernetBus` のエンドポイント |
 
-`Peer` のチャネルは仮想時間だけです。実時間では、することをメッセージに含む `std::logic_error` です。コントローラーは CommunicationReady で有効にします。送信の確認のキューは `send_capacity` 以上にします。
+`Peer` のチャネルは仮想時間だけです。実時間では、することをメッセージに含む `std::logic_error` です。コントローラーは CommunicationReady で有効にします。
 
-どちらの実装も、ポートの受信キューを `receive_capacity` の 2 倍にします。ネットワークから 1 ステップに受信するフレームが `receive_capacity` 以下なら、ECU を実行する順やスレッドのタイミングによらず、フレームを捨てません。
+どちらの実装も、`ChannelOptions::port_inbox_capacity`（既定は `receive_capacity` の 2 倍）、`port_event_capacity`（`0` のとき `max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)` 以上）、`port_transmit_queue_capacity`（`0` = バックエンド既定）をポートに渡します。ネットワークから 1 ステップに受信するフレームが `receive_capacity` 以下なら、ECU を実行する順やスレッドのタイミングによらず、フレームを捨てません。
 
-オプションのエラー（`eth::Channel::validate()`）は、コントローラーやネットワークを作る前に `std::invalid_argument` で拒否するので、同じ名前で呼び直せます。
+オプションのエラー（`eth::Channel::validate()`、および `Peer` では `eth::SilKitEthPort::validate()`）は、コントローラーやネットワークを作る前に `std::invalid_argument` で拒否するので、同じ名前で呼び直せます。
 
 ### バスからの切断（`ecu.connected`）
 
@@ -216,11 +219,13 @@ LIN の Master が受信する、自分のヘッダーへの応答は、ヘッ�
 
 #### CAN
 
+`detail::GatedCanPort` は `transmit_capabilities()` と 2 引数版の `send(frame, token)` を配下のポートへ転送します。
+
 | 切断している間のこと | 起きること |
 |---|---|
 | 送信 | ポートの `SendResult::Failed` になる |
 | J1939 の `Network` | `send_failures` に数えて捨てる（ためないので、再接続したときにまとめて送信されない） |
-| 生チャネル | `frames_dropped` に数える |
+| 生チャネル | `frames_dropped` に数え、トークンを漏らさないよう次のステップの `process()` で `TransmitEvent::Kind::Failed`（`send_time = T`、`time = T`）を出す |
 | J1939 のトランスポートプロトコル | 相手の応答が来ないので、タイムアウトで終わる |
 | BAM の送信側 | パケットが送信されなくても、送信し終えたことになる |
 | バスの状態（`bus_state`） | 変えない |
@@ -229,9 +234,9 @@ LIN の Master が受信する、自分のヘッダーへの応答は、ヘッ�
 
 #### イーサネット
 
-時点のルールは CAN と同じです。
+`detail::GatedEthPort` は `transmit_capabilities()` と 2 引数版の `send(frame, token)` を転送します。時点のルールは CAN と同じです。
 
-- 切断している間の送信は、ポートの `SendResult::Failed` で、チャネルは `frames_dropped` に数えて捨てます。
+- 切断している間の送信は、ポートの `SendResult::Failed` で、チャネルは `frames_dropped` に数えて捨て、トークンが漏れないよう次のステップの `process()` で `TransmitEvent::Kind::Failed`（`send_time = T`、`time = T`）を出します。
 - 捨てるのはステップの最後なので、`send()` の戻り値は `Ok` のままです。
 - 切断している間の時刻のフレームは、チャネルに渡しません。
 - 再接続したときに送信するものはありません。
@@ -415,8 +420,9 @@ peer.wait();
 LIN とイーサネットのコントローラーは、communication ready の通知で始めます。
 
 - LIN のノードは、communication ready の通知で `init()` を呼びます。
-- SIL Kit のコントローラーは作ると外せないので、LIN の名前、スケジュール、オプションを先に検査します（エンジンの検査は `LinMaster::validate()` と `LinSlave::validate()` で、コンストラクターと同じ検査です）。
-- 例外を投げた `lin_master()` と `lin_slave()` は何も残さず、同じ名前で呼び直せます。
+- SIL Kit のコントローラーは作ると外せないので、オプションを先に検査します（LIN の名前、スケジュール、オプションは `LinMaster::validate()` と `LinSlave::validate()`、生の CAN は `can::RawChannel::validate()` と `can::SilKitCanPort::validate()`〔仮想時間での `transmit_queue_capacity <= kMaxCorrelatedInFlight` を含む〕、イーサネットは `eth::Channel::validate()` と `eth::SilKitEthPort::validate()`）。`can()` は `RawChannelOptions::port_bitrate` を `SilKitCanPortOptions::bitrate`（`CommunicationReady` で `SetBaudRate()`）へ渡します。
+- 仮想時間の `SilKitCanPort` と `SilKitEthPort` は、実行時の探索や、シミュレーターの離脱・`userContext` 省略による動的ダウングレードを行わず、静的に `TransmitCapabilities::Correlated` を返します。未確認のままのフレームや非対応の確認は `tx_uncorrelated` と `outstanding > 0` で観測できます。
+- 例外を投げた `can()`、`ethernet()`、`lin_master()`、`lin_slave()` は何も残さず、同じ名前で呼び直せます。
 - Ethernet のコントローラーは communication ready の通知で有効にし（`SilKitEthPort::start()`）、失敗したら、ネットワークの名前をメッセージに含めて participant を Error にします。
 
 コントローラー名の重なりは、次のとおり拒否します。
@@ -500,7 +506,7 @@ Peer が participant、コントローラー、ポート、`Network`、LIN の�
 3. SIL Kit のポートを閉じる。
 4. Agent の待っている書き込みを `Cancelled` にする。
 
-`stop()` の後も `Network` と Agent は残るので、統計、記録、最後の値を読めます。
+`stop()` の後も `Network`、チャネル（`RawChannel`、`eth::Channel`）、Agent は残るので、統計（終了時に未確認のまま残った送信中フレームを表す `outstanding` を含む）、記録、最後の値を読めます。
 
 破棄では、続いて次の順に破棄します。
 
@@ -551,7 +557,7 @@ CHECK(events.has(j1939::EventKind::AddressChanged));
 |---|---|
 | `add_ecu(name, step)` | ECU を作り、`Ecu&` を返す |
 | `Ecu::j1939(network)` | 名前 `network` のバスにエンドポイントを追加し、`TapPort` で包んで `Network` を作る |
-| `Ecu::can(network)` | 生チャネルを作り、生チャネルもそのバスに自分のエンドポイントを持つ |
+| `Ecu::can(network)` | オプションを検査し、生チャネルを作り、そのバスに `VirtualCanBusEndpointOptions`（`port_inbox_capacity`、`port_event_capacity`、`port_transmit_queue_capacity` 付き。`port_bitrate` は `LocalBench` では未使用）で自分のエンドポイントを接続する |
 | `add_j1939(name, step, options)` | J1939 のネットワークを 1 つ持つ ECU を作る略記 |
 
 - ECU ごとに自分のホストとステップ幅を持ちます（SIL Kit で ECU ごとに participant を分けたときと同じ構成です）。
@@ -581,7 +587,7 @@ CHECK(events.has(j1939::EventKind::AddressChanged));
 
 ### 仮想のイーサネット
 
-`Ecu::ethernet(network)` は、名前 `network` の仮想のイーサネットのネットワークにエンドポイントを付けて、`eth::Channel` を作ります。ネットワークは `eth::VirtualEthernetBus` で、ECU が最初にその名前を使ったときに、既定のオプションで作ります。
+`Ecu::ethernet(network)` は、バスを作ったり名前を付けたりする前に `ChannelOptions` を検査し、名前 `network` の仮想のイーサネットのネットワークにエンドポイントごとの容量（`port_inbox_capacity`、`port_event_capacity`、`port_transmit_queue_capacity`）付きでエンドポイントを接続して `eth::Channel` を作ります。ネットワークは `eth::VirtualEthernetBus` で、ECU が最初にその名前を使ったときに、既定のオプションで作ります。
 
 - CAN や LIN のバスと同じ名前にすると、どちらの順でも、両方の種類をメッセージに含む `std::invalid_argument` です。
 - `ethernet(ecu, network)` で ECU のチャネルを、`ethernet_bus(network)` でネットワークを取得します。

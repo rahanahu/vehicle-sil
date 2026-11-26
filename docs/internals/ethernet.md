@@ -14,6 +14,7 @@ This page specifies the Ethernet frame types, ports, channels, the virtual netwo
 | [SIL Kit port (`SilKitEthPort`)](#sil-kit-port-silkitethport) | Start and close, receiving, transmitting, senders outside time synchronization, shutdown order |
 | [Use from an ECU (`Ecu::ethernet()`)](#use-from-an-ecu-ecuethernet) | What `Peer` and `LocalBench` create, `ecu.connected`, `--describe` output |
 | [Unverified values](#unverified-values) | Values not verified against the standard, and how to change them |
+| [Source compatibility and ABI](#source-compatibility-and-abi) | Additive source compatibility and binary layout / vtable changes |
 | [Test coverage](#test-coverage) | What the tests check |
 
 ## Library structure
@@ -62,8 +63,9 @@ The rules are the same as for `vehicle_sil::can::Port`.
 - A frame whose time is exactly `now` is handed over on the next call.
 - Reordering frames with the same time is the channel's job.
 - A port does not receive the frames it transmitted itself.
-- `send()` returns a synchronous result (`Accepted`, `QueueFull`, `Failed`). A frame shorter than `kHeaderBytes` (14) is `Failed`.
-- `release_events_before(now, sink)` hands over the events whose time is before `now`, in the same order. The host calls it before `release_before()` in the same step.
+- `send()` returns a synchronous result (`Accepted`, `QueueFull`, `Failed`). A frame shorter than `kHeaderBytes` (14) is `Failed`. It accepts 1-arg `send(const TimedFrame&)` and 2-arg `send(const TimedFrame&, std::uint64_t token)` (default delegates to 1-arg `send()`); `token` is opaque and scoped per port (`0` is a normal valid token, never a sentinel). `Accepted` never triggers completion in the sending step `T`.
+- `transmit_capabilities()` returns `TransmitCapabilities::None` (default) or `TransmitCapabilities::Correlated`. Backends reporting `None` never fabricate `TransmitCompleted` from `Accepted`.
+- `release_events_before(now, sink)` hands over only events with `time < now`, in the same order. Events stamped `T` are released at a later step `T' > T`. The host calls it before `release_before()` in the same step.
 
 ### Port events (`PortEvent`)
 
@@ -76,7 +78,7 @@ The kinds of event (`PortEvent`):
 | `ReceiveOverflow` | The receive queue was full and received frames were dropped. `count` is the number dropped | The earliest time among the dropped frames |
 | `EventOverflow` | The event queue was full and transmit acknowledgement events were dropped. `count` is the number dropped | The earliest time among the dropped events |
 
-`ReceiveOverflow` and `EventOverflow` do not take up event queue capacity (`OverflowCollector`). They do not push out transmit acknowledgements, and they are handed over even when the queue is full.
+`PortEvent` also carries `send_time`, `token`, and `correlated` (`bool`, default `false`) for correlated transmit acknowledgements (so `token == 0` is unambiguously distinguished from uncorrelated events). `ReceiveOverflow` and `EventOverflow` do not take up event queue capacity (`OverflowCollector`). They do not push out transmit acknowledgements, are handed over even when the queue is full, and `OverflowCollector::release_merged` emits each overflow immediately before the first queued event whose `event.time > overflow.time`.
 
 ## Channel (`Channel`)
 
@@ -88,12 +90,12 @@ A step at time `now` proceeds in this order:
 
 | Phase | What happens |
 |---|---|
-| 1. Receive | Of the frames the port handed over before `now`, those that pass the filter and the length check are sorted by time, source address and arrival order |
-| 2. Process | The handlers added with `on_frame()` are called for each frame, in the order they were added |
+| 1. Receive | Drains port events before `now` (counting overflows and queuing correlated transmit events merged with `flush()` rejections from earlier steps), then sorts received frames that pass the filter and length check by time, source address and arrival order |
+| 2. Process | Calls `on_transmit()` handlers first (after updating `transmit_completed` / `transmit_failed` and decrementing `outstanding`), then calls `on_frame()` handlers for each frame, in registration order on the driver's thread |
 | 3. Application | `receive()` returns the same frames in the same order, one at a time |
 | 4. Transmit | The frames from `send()` in this step are given to the port at time `now`, in the order of the calls |
 
-In the receive phase, port events are only counted.
+In the receive phase, `Channel` still drains and counts transmit events even when no `on_transmit()` handler is registered.
 
 Rules for the application phase:
 
@@ -103,14 +105,32 @@ Rules for the application phase:
 
 Rules for the transmit phase:
 
-- A frame the port does not accept is counted and dropped (if the queue is full, that frame and all the remaining ones; on a failure, that frame).
+- A frame the port does not accept is counted in `frames_dropped` and queues a `TransmitEvent::Kind::Failed` (`send_time = now`, `time = now`) for delivery in a later step's `process()` (if the port's queue is full, that frame and all the remaining ones; on a failure, that frame).
 - There are no retries.
 
 When you can call what:
 
-- `send()` and `receive()` can be called only inside the step (in a handler or the application). Calling them from outside is a `std::logic_error`.
+- `send()` (1-arg or 2-arg with `token`) and `receive()` can be called only inside the step (in a handler or the application). Calling them from outside is a `std::logic_error`.
 - A handler can send on another channel of the same host (a gateway). That frame is transmitted in the transmit phase of the same step.
-- `on_frame()` can be called only before the host starts.
+- `on_frame()` and `on_transmit()` can be called only before the host starts (`std::invalid_argument` for an empty handler, `std::logic_error` after start).
+
+### Transmit notifications, tokens, and `outstanding` conservation
+
+- `transmit_capabilities()` forwards the port's `TransmitCapabilities`.
+- `TransmitEvent` carries `kind` (`Completed` or `Failed`), `token`, `send_time` (originating step time `T`), and `time` (backend completion/failure time, or `T` on `VirtualEthernetBus`, SIL Kit trivial simulation, and `flush()` rejections).
+- `Accepted` (`send() == Ok`) is strictly separated from transmit completion: `on_transmit` is never invoked in step `T`, and events are delivered in `process()` at `T' > T` via `release_events_before(now)`.
+- `token` (`std::uint64_t`) is opaque and scoped per channel; `0` is a normal valid token, never a sentinel.
+- Synchronous `SendStatus::QueueFull` / `InvalidFrame` from `send()` increment `sends_rejected`, emit no `TransmitEvent`, and leave `outstanding` unchanged; the same token can be retried immediately on a later step without double completion.
+- Once `send() == Ok` on a `Correlated` backend, the token stays in `outstanding` until delivered as `Completed`/`Failed`, accounted for by `EventOverflow` (`port_event_overflows`) or `transmit_event_overflows`, or observed remaining in `outstanding` after `close()` / shutdown. Reusing a token while it is still in flight makes the two events indistinguishable. On a `Correlated` port, uncorrelated or duplicate port events (`!event.correlated`) do not increment `transmit_completed` or `transmit_failed`, preserving the `outstanding` conservation identity. On a `None` backend, `Accepted` port sends do not increment `outstanding` and never fabricate `Completed`.
+- `flush()` rejections (`time == T`) merge before port events whose `event.time > fail.time`, preserving `send()` order at equal timestamps (`time == T`) and monotonic `time` order on timed backends.
+- For a `Correlated` backend, the `outstanding` conservation identity holds at every point in time:
+
+```text
+accepted_by_channel == in_step_outgoing + frames_sent + frames_dropped
+accepted_by_channel == transmit_completed + transmit_failed
+                     + transmit_event_overflows + port_event_overflows
+                     + outstanding
+```
 
 ### Order of frames with the same time
 
@@ -130,6 +150,12 @@ In SIL Kit, the arrival order of frames that different senders transmitted at th
 | `receive_capacity` | 1024 | Frames handed over in one step (those that passed the filter). The excess is dropped and counted in `receive_overflows` |
 | `max_frame_bytes` | 1522 | The maximum length of a frame that can be sent or is handed over (without the FCS). From `kHeaderBytes` to `Frame::kCapacity` (2048) |
 | `accept` | `All` | The filter for frames handed over (`All` or `Addressed`) |
+| `transmit_event_capacity` | 0 (derived) | Channel buffer capacity for pending `TransmitEvent`s. When 0: `max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)` |
+| `port_inbox_capacity` | 0 (derived) | Port receive inbox capacity (`Channel::port_inbox_capacity()` returns `2 * receive_capacity` when 0) |
+| `port_event_capacity` | 0 (derived) | Port event queue capacity (`Channel::port_event_capacity()` returns `max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)` when 0) |
+| `port_transmit_queue_capacity` | 0 (backend default) | Maximum unacknowledged frames allowed at the port (`> 0` bounds in-flight sends) |
+
+`Channel::validate(options)` also throws `std::invalid_argument` if `port_event_capacity > 0 && port_transmit_queue_capacity > port_event_capacity`.
 
 `receive_capacity`:
 
@@ -151,7 +177,7 @@ Frames removed by the filter are counted in `frames_filtered`.
 
 ### Memory allocation
 
-Both receive queues are allocated once, at construction. Nothing is allocated inside a step. Sorting reorders an array of indices and does not move the frames, which stay in the order received. `eth.steps_do_not_allocate` checks this.
+Both receive queues and the transmit-notification buffers (`flush_failed_`, `transmit_events_`) are allocated once, at construction. Nothing is allocated inside a step. Sorting reorders an array of indices and does not move the frames, which stay in the order received. `eth.steps_do_not_allocate` checks this.
 
 One frame takes `Frame::kCapacity` bytes, so the default capacities use this much memory:
 
@@ -185,7 +211,7 @@ With a setup that receives more than `receive_capacity` frames in one step, eith
 
 ### Statistics (`ChannelStatistics`)
 
-The counters only increase.
+The counters only increase (except `outstanding`, which tracks current unacknowledged in-flight frames).
 
 | Name | What it counts |
 |---|---|
@@ -200,23 +226,28 @@ The counters only increase.
 | `frames_dropped` | Outgoing frames that `send()` took but the port did not accept |
 | `transmit_completed`, `transmit_failed`, `port_receive_overflows` | Port events |
 | `port_event_overflows` | Transmit acknowledgements that the port dropped among its events (`transmit_completed` and `transmit_failed` are lower by that much) |
+| `transmit_event_overflows` | `TransmitEvent`s dropped because the channel's `transmit_event_capacity` buffer was full |
+| `outstanding` | Currently unacknowledged in-flight frames (inspectable after `close()` / shutdown) |
 
 ## Virtual network (`VirtualEthernetBus`)
 
-`VirtualEthernetBus` is in-process Ethernet. Like SIL Kit Ethernet without the Network Simulator, it behaves as a hub. It is not thread-safe; use it from one thread (the `StepDriver` loop).
+`VirtualEthernetBus` is in-process Ethernet. Like SIL Kit Ethernet without the Network Simulator, it behaves as a hub. `Endpoint::transmit_capabilities()` returns `TransmitCapabilities::Correlated`. It is not thread-safe; use it from one thread (the `StepDriver` loop).
 
 | Situation | Behavior |
 |---|---|
-| `attach()` | Creates one endpoint (`Port`) per call |
+| `attach()` | Creates one endpoint (`Port`) per call using `VirtualEthernetBusOptions` (`inbox_capacity` 2048, `event_capacity` 1024, `transmit_queue_capacity` 0) |
 | `attach(inbox_capacity)` | Sets the receive queue capacity of that endpoint (0 is `std::invalid_argument`) |
+| `attach(VirtualEthernetEndpointOptions)` | Overrides per-endpoint `inbox_capacity`, `event_capacity`, and `transmit_queue_capacity` (`0` inherits from `VirtualEthernetBusOptions`) |
 | Transmission at time t | Every other endpoint receives the frame at time t, whatever the destination address (the sender does not receive it) |
-| Transmit acknowledgement | No event |
+| Transmit acknowledgement | Queues a correlated `PortEvent::TransmitCompleted` (`time = t`, `send_time = t`, `token`, `correlated = true`) for the sending endpoint (released at `T' > t`); if `transmit_queue_capacity > 0` and `outstanding() >= limit`, `send()` returns `QueueFull` |
+| Event queue overflow | Dropped acknowledgements are counted (`event_overflows()`) and emitted as `EventOverflow` via `OverflowCollector` |
 | A frame shorter than `min_frame_bytes` (default 60) | Padded with zeros before it is handed to the receivers (0 turns padding off) |
 | A frame with a time before what the receiver has already handed over | Rejected with `std::logic_error` (the hosts are not run in time order) |
 | Receive queue (`inbox_capacity`, default 2048) overflow | Dropped and counted; `ReceiveOverflow` is issued |
 
 - Short frames are padded with zeros so that the recording is the same as on SIL Kit.
 - `StepDriver` keeps time order.
+- `Endpoint::outstanding()` returns the number of accepted frames whose terminal event has not yet been released (or accounted for by `EventOverflow`).
 - For how to choose the receive queue capacity, see "Port receive queue capacity".
 
 ## SIL Kit port (`SilKitEthPort`)
@@ -246,16 +277,21 @@ The receive handler only puts the frame into the receive queue (`StepInbox`) wit
 
 ### Transmitting and transmit acknowledgements
 
-Transmission calls `SendFrame()` with the time of the step. Without the Network Simulator, the transmit acknowledgement comes back inside `SendFrame()`, so the port queues it as an event and hands it over in the next step (it does not call the channel on the spot).
+`SilKitEthPort::transmit_capabilities()` returns `TransmitCapabilities::Correlated`. Transmission allocates a slot from a pre-allocated FIFO free-list ring and passes a `0xA7`-marked tag in `SendFrame()`'s `userContext` (`[63:56] = 0xA7`, 24-bit generation, 32-bit slot index), guarded by a mutex released before calling `SendFrame()` (and rolled back safely if `SendFrame()` throws).
+
+Without the Network Simulator, the transmit acknowledgement comes back inside `SendFrame()`, so the port resolves `(token, send_time)` and frees the correlation slot immediately inside `on_transmit()` before pushing the correlated `PortEvent` into the event inbox (preventing slot leaks even if the event inbox overflows), and hands it over in the next step (it does not call the channel on the spot).
 
 | SIL Kit status | Event |
 |---|---|
-| `Transmitted` | `TransmitCompleted` |
-| `ControllerInactive`, `LinkDown`, `Dropped`, `InvalidFrameFormat` | `TransmitFailed` |
+| `Transmitted` | `TransmitCompleted` (`correlated = true`) |
+| `ControllerInactive`, `LinkDown`, `Dropped`, `InvalidFrameFormat` | `TransmitFailed` (`correlated = true`) |
 
+- `SilKitEthPort::validate(options)` checks `inbox_capacity > 0`, `event_capacity > 0`, and `transmit_queue_capacity <= event_capacity`.
+- When `SilKitEthPortOptions::transmit_queue_capacity > 0` and in-flight `outstanding` reaches that limit, `send()` returns `QueueFull` and increments `SilKitEthPortStatistics::send_queue_full`. `SilKitEthPortStatistics::outstanding` remains inspectable after `close()`.
+- **External `INetworkSimulator` `userContext` contract**: SIL Kit transports `userContext` across processes as 64 bits and requires simulators to echo `ack.userContext = request.userContext`. Because the full 64-bit `send_time` lives in the slot table, `SilKitEthPort` recovers the exact `send_time` and `token` regardless of simulator delay. If an external simulator drops or alters `userContext` (or disconnects mid-run without acknowledging), `SilKitEthPort` never guesses FIFO order and never fabricates completions: uncorrelated acknowledgements increment `SilKitEthPortStatistics::tx_uncorrelated` (without generating `EventOverflow`), and unacknowledged frames remain inspectable in `outstanding` (`> 0`).
 - The statistics count each kind.
 - Set `event_capacity` (default 1024) to at least the number of frames transmitted in one step (the channel's `send_capacity`).
-- Acknowledgements that overflow are dropped, counted and reported with `EventOverflow`.
+- Acknowledgements that overflow (among correlated events) are dropped, counted and reported with `EventOverflow` (`OverflowCollector`).
 
 The port pads a frame shorter than 60 bytes with zeros to 60 bytes before giving it to SIL Kit. SIL Kit on the receiving side pads short frames too, but the Network Simulator may reject short frames, so the sending side makes them uniform.
 
@@ -290,19 +326,20 @@ A channel is a `step::Member`, so it is added as is to the ECU's host (`can::Hos
 
 | Item | Rule |
 |---|---|
-| Port receive queue | Twice `receive_capacity` (`Channel::port_inbox_capacity()`; see "Port receive queue capacity") |
-| Transmit acknowledgement queue | At least `send_capacity` (never smaller than the default 1024) |
+| Port receive queue | `Channel::port_inbox_capacity(options)` (twice `receive_capacity` when `port_inbox_capacity == 0`; see "Port receive queue capacity") |
+| Port event queue | `Channel::port_event_capacity(options)` (at least `max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)` when `port_event_capacity == 0`) |
+| Port transmit queue limit | `options.port_transmit_queue_capacity` (`0` = unlimited) |
 | `start()` | In the CommunicationReady handler (`ParticipantRuntime::add_communication_ready_handler()`), after the CAN ports and before LIN `init()` |
-| `close()` | After `Peer::stop()` has stopped the steps |
-| Option check | Checked first with `Channel::validate()` (a SIL Kit controller cannot be removed once created) |
+| `close()` | After `Peer::stop()` has stopped the steps (`outstanding` remains inspectable) |
+| Option check | Checked first with `Channel::validate()` and `SilKitEthPort::validate()` (a SIL Kit controller cannot be removed once created) |
 
 ### What `LocalBench` creates
 
-`LocalBench` adds, to a `VirtualEthernetBus` per name (default options), an endpoint whose receive queue is twice `receive_capacity` (`attach(Channel::port_inbox_capacity(options))`), and creates a `GatedEthPort` and a `Channel` on it. The receive queue is per endpoint, so ECUs with different `receive_capacity` can connect to the same network. An endpoint that a test adds with `ethernet_bus(network).attach()` has the default capacity.
+`LocalBench` validates options first (before creating or naming any bus), adds to a `VirtualEthernetBus` per name (default options) an endpoint configured via `attach(VirtualEthernetEndpointOptions)` using `Channel::port_inbox_capacity(options)`, `Channel::port_event_capacity(options)`, and `options.port_transmit_queue_capacity`, and creates a `GatedEthPort` and a `Channel` on it. The capacities are per endpoint, so ECUs with different options can connect to the same network. An endpoint that a test adds with `ethernet_bus(network).attach()` has the default capacity.
 
 ### `ecu.connected`
 
-While the ECU is disconnected, `GatedEthPort` turns transmissions into `SendResult::Failed` (the channel's `frames_dropped`) and drops frames whose time falls in the disconnected period. The point at which this is decided is the same as for CAN (`BusConnection`). Port events (transmit acknowledgements, overflows) pass through.
+`GatedEthPort` forwards `transmit_capabilities()` and 2-arg `send()`. While the ECU is disconnected, `GatedEthPort` turns transmissions into `SendResult::Failed` (the channel counts `frames_dropped` and emits `TransmitEvent::Kind::Failed` with `send_time == T, time == T` in the next step's `process()` instead of leaking tokens) and drops received frames whose time falls in the disconnected period. The point at which this is decided is the same as for CAN (`BusConnection`). Port events (transmit acknowledgements, overflows) pass through.
 
 ### `--describe` output
 
@@ -310,7 +347,7 @@ While the ECU is disconnected, `GatedEthPort` turns transmissions into `SendResu
 
 ### Unverified behavior
 
-The behavior when the SIL Kit Network Simulator simulates the Ethernet network (acknowledgement times, link state) has not been verified.
+The behavior when the SIL Kit Network Simulator simulates the Ethernet network (acknowledgement times, link state, and whether Vector's simulator echoes `userContext` untouched on transmit acknowledgements) has not been verified. If an external simulator omits or alters `userContext`, `SilKitEthPort` counts `tx_uncorrelated` and leaves `outstanding > 0`.
 
 ## Unverified values
 
@@ -323,6 +360,11 @@ The following values come from general sources and from knowledge of the SIL Kit
 | The first 14 bytes (destination 6, source 6, EtherType or length 2) and the byte order of addresses | `kHeaderBytes`, `Frame::destination()`, `source()`, the shortest frame that can be sent | Cannot be changed |
 | The group bit of an address (lowest bit of the first byte) and broadcast (all 0xFF) | `MacAddress::is_multicast()`, `is_broadcast()`, `Accept::Addressed` | Not used with `Accept::All` |
 | EtherType 0x88B5 in tests and examples (a value known for local experimental use), and the locally administered addresses `02:00:00:...` and `03:00:00:...` | Tests and `examples/ethernet` only (the vehicle-sil libraries do not use them) | In the example, `--ethertype <number>` (`ethernet_example::Options::ether_type`). The addresses are constants in the example's header |
+
+## Source compatibility and ABI
+
+- **Source-compatible additions**: The 1-argument `Port::send()` and `Channel::send()` overloads remain alongside the 2-argument token overloads, custom `Port` subclasses that override only 1-argument `send()` continue to compile with `TransmitCapabilities::None`, and new fields on `PortEvent`, `ChannelOptions`, `ChannelStatistics`, `VirtualEthernetBusOptions`, `SilKitEthPortOptions`, and `SilKitEthPortStatistics` are appended at the end with default member initializers so existing aggregate initializers remain valid.
+- **ABI impact**: Adding virtual functions to `eth::Port` (`transmit_capabilities()`, 2-arg `send()`) changes vtable layout, and adding fields to `PortEvent`, `ChannelOptions`, `ChannelStatistics`, `VirtualEthernetBusOptions`, `SilKitEthPortOptions`, `SilKitEthPortStatistics`, `Channel`, and `SilKitEthPort` changes struct and class layouts. Recompile all consumers against the updated headers.
 
 ## Test coverage
 

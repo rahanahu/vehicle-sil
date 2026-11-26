@@ -10,6 +10,7 @@ This page specifies the CAN port, host, drivers, virtual bus, SIL Kit port, bus 
 | [The port contract (`Port`)](#the-port-contract-port) | Receive order, the result of `send()`, time domains |
 | [Port events (`PortEvent`)](#port-events-portevent) | Transmit results, overflows, bus state notifications, and which backend emits which |
 | [The `Steppable` contract](#the-steppable-contract) | The call order and rules to follow when you build a protocol stack |
+| [Raw channel (`RawChannel`)](#raw-channel-rawchannel) | Application-level transmit notifications, token rules, `outstanding` conservation, capacity options |
 | [The host (`Host`)](#the-host-host) | Phases of one step, failed state, `post()`, time domain |
 | [Driving in virtual time](#driving-in-virtual-time) | `StepDriver`, `bind_host()` |
 | [Driving in real time (`RealTimeDriver`)](#driving-in-real-time-realtimedriver) | When a step runs, arrival times, shutdown order |
@@ -18,6 +19,7 @@ This page specifies the CAN port, host, drivers, virtual bus, SIL Kit port, bus 
 | [SIL Kit port (`SilKitCanPort`)](#sil-kit-port-silkitcanport) | Start and close, times, transmit acknowledgements, options |
 | [Bus timing (`CanBusModel`)](#bus-timing-canbusmodel) | Transmission time, arbitration, what is not simulated |
 | [Simple CAN Network Simulator](#simple-can-network-simulator-vehicle_silcan_netsim-vehicle_sil_can_bus_simulator) | Timing and determinism, bit rate, controller modes, configuration, known limitations |
+| [Source compatibility and ABI](#source-compatibility-and-abi) | Additive source compatibility and binary layout / vtable changes |
 
 `vehicle_sil::can` and `vehicle_sil::can_silkit` are the foundation of the J1939 stack (`vehicle_sil::j1939`). They handle 11-bit and 29-bit CAN frames and can carry protocols other than J1939. The API is not stable yet.
 
@@ -45,15 +47,24 @@ All times are `SimTime`. Protocol processing has no threads of its own and does 
 
 ### Transmitting
 
+`Port` exposes its transmit-completion capability via `transmit_capabilities()` (`TransmitCapabilities`):
+
+| Value | Meaning |
+|---|---|
+| `None` (default) | The backend does not emit token-correlated per-frame transmit outcomes. |
+| `Correlated` | Every `Accepted` send produces a token-correlated `TransmitCompleted` or `TransmitFailed` event (or is accounted for by `EventOverflow` or observed remaining in `outstanding` at shutdown). |
+
+`send()` comes in two overloads (`send(const TimedFrame&)` and `send(const TimedFrame&, std::uint64_t token)`; the default 2-arg overload ignores `token` and delegates to 1-arg `send()`). `token` is an opaque caller identifier scoped per port; `0` is a normal valid token, never a sentinel.
+
 `send()` returns a synchronous result.
 
 | Result | Meaning |
 |---|---|
-| `Accepted` | The port accepted the frame. |
-| `QueueFull` | The transmit queue is full. The frame can be sent again in a later step. |
+| `Accepted` | The port accepted the frame. This is strictly separate from transmit completion and never triggers a completion event in the sending step. |
+| `QueueFull` | The transmit queue is full. The frame can be sent again in a later step (with the same token). |
 | `Failed` | The frame cannot be sent, or the backend reported an error. |
 
-When the backend learns what happened to a frame after `send()` (it was sent, or the backend dropped it), the port reports it later as an event (`PortEvent`). `release_events_before(now, sink)` passes the events whose time is before `now`, in time order, and in arrival order for equal times. The default implementation emits no events.
+When the backend learns what happened to a frame after `send()` (it was sent, or the backend dropped it), the port reports it later as an event (`PortEvent`). `release_events_before(now, sink)` passes only events whose `time < now`, in time order and in arrival order for equal times. Even when a completion or failure carries `time == T` (such as on a timing-less virtual bus or SIL Kit's trivial simulation), it is never released in step `T`; it is released at a later step `T' > T`. The default `Port` implementation emits no events, and ports with `TransmitCapabilities::None` never fabricate `TransmitCompleted` from `Accepted`.
 
 ### Threads and time domains
 
@@ -79,21 +90,23 @@ A port event reports, after the fact, what happened at the port: what became of 
 | `ReceiveOverflow` | The receive queue was full and received frames were dropped (`count` is the number dropped; it is 0 when any of the merged overflows has an unknown number, because the total is then unknown). | The earliest time among the dropped frames |
 | `BusStateChanged` | The controller's error state changed to `bus_state` (`ErrorActive`, `ErrorPassive`, `BusOff`). | The time of the change |
 | `ErrorFrame` | An error frame was seen on the bus. | The time it was seen |
+| `EventOverflow` | The event queue was full and transmit acknowledgements were dropped (`count` is the number dropped). | The earliest time among the dropped events |
 
-- A transmit event carries the CAN identifier (`id`) and, when known, the `TimedFrame::time` at which the frame was sent (`send_time`). It carries no data.
-- Frames with the same identifier are told apart by `send_time`.
+- A transmit event carries the CAN identifier (`id`), `send_time` (when known, the `TimedFrame::time` of the sending step), `token`, and `correlated`. It carries no data.
+- `correlated` (`bool`, default `false`) explicitly distinguishes correlated events (so `token == 0` is never confused with an uncorrelated event, and duplicate copies such as from `FaultAction::Duplicate` do not fire a second correlated completion).
+- `ReceiveOverflow` and `EventOverflow` are managed by `OverflowCollector`: neither takes a slot in the event queue, both are released even when the queue is full without pushing out transmit acknowledgements, and `OverflowCollector::release_merged` emits each overflow immediately before the first queued event whose `event.time > overflow.time`.
 - `ReceiveOverflow` is not emitted for each dropped frame. The frames dropped until the port next releases events are counted in one event.
-- `ReceiveOverflow` does not take a slot in the event queue, so it is released even when the queue is full and never pushes out transmit events.
 - A backend does not emit a kind it cannot know about; it reports nothing for it.
 - More kinds may be added. A `Steppable` ignores kinds it does not know.
 
 ### Events by backend
 
-| Backend | Events emitted |
-|---|---|
-| Virtual bus | `TransmitCompleted` (with timing), `ReceiveOverflow`, `TransmitFailed` from fault injection and disconnection, any injected event |
-| `SilKitCanPort` | `TransmitCompleted` and `TransmitFailed` from SIL Kit transmit acknowledgements, `BusStateChanged` from SIL Kit error state notifications (a network simulator sends them; SIL Kit's trivial simulation does not), `ReceiveOverflow` |
-| `ExternalPortAdapter` (Vector XL) | `ErrorFrame`, and `ReceiveOverflow` with an unknown count for overflows of the external port (no bus state and no transmit results) |
+| Backend | `transmit_capabilities()` | Events emitted |
+|---|---|---|
+| `VirtualCanBus` | `Correlated` | `TransmitCompleted` (both with timing at `tx.end` and without timing at `frame.time`), `TransmitFailed` (fault injection and outage), `ReceiveOverflow`, `EventOverflow`, any injected event |
+| `SilKitCanPort` (virtual time) | `Correlated` | `TransmitCompleted` and `TransmitFailed` from SIL Kit transmit acknowledgements, `EventOverflow`, `BusStateChanged` from SIL Kit error state notifications (a network simulator sends them; SIL Kit's trivial simulation does not), `ReceiveOverflow` |
+| `SilKitCanPort` (real time) | `None` | Uncorrelated `TransmitCompleted`/`TransmitFailed`, `BusStateChanged`, `ReceiveOverflow` |
+| `ExternalPortAdapter` (Vector XL) | `None` | `ErrorFrame`, and `ReceiveOverflow` with an unknown count for overflows of the external port (no bus state and no transmit results) |
 
 ### Where events are delivered
 
@@ -107,7 +120,7 @@ The J1939 stack only counts the events in `NetworkStatistics` (`frames_transmitt
 
 ### Call order
 
-Before the first step, the host calls `start(step_size)` once. In each step, it calls the following, in this order.
+Before the first step, the host calls `start(step_size)` once. When a pair is registered in `can::Host::add(Steppable&, Port&)`, the host also calls `bind_port(const Port&)` on the `Steppable` so components such as `RawChannel` can inspect `transmit_capabilities()` during setup before `start()`. In each step, it calls the following, in this order.
 
 | Order | Call | What the `Steppable` does |
 |---|---|---|
@@ -135,6 +148,65 @@ Before the first step, the host calls `start(step_size)` once. In each step, it 
 It does not include work that has no timer (frames held back after `QueueFull`, frames carried over by the per-step limit). In real time, that work is sent in the step that runs after the driver's `max_idle`.
 
 An implementation that keeps returning a past deadline after the step violates this contract (with a manual clock, the driver only runs the next step once, 1 ns later; with a wall clock, it keeps running steps).
+
+## Raw channel (`RawChannel`)
+
+`RawChannel` is a `Steppable` for applications that send and receive raw 11-bit and 29-bit CAN frames without a protocol stack. Setup (`on_frame()`, `on_transmit()`) is allowed only before `start()`; passing an empty handler throws `std::invalid_argument`, and calling after `start()` throws `std::logic_error`.
+
+### Sending, tokens, and transmit notifications
+
+- `send(frame)` and `send(frame, token)` can be called only inside a step (`begin()` through `flush()`); outside a step, they throw `std::logic_error`.
+- `token` (`std::uint64_t`) is opaque and scoped per channel; `0` is a normal valid token, never a sentinel.
+- Synchronous `RawSendStatus::QueueFull` (`send_capacity` reached in the step) and `RawSendStatus::InvalidFrame` are unaccepted: they increment `sends_rejected`, emit no `TransmitEvent`, and do not change `outstanding`. The caller may retry the same token immediately on a later step without double send or double completion.
+- Once `send()` returns `Ok` on a `TransmitCapabilities::Correlated` backend (`transmit_capabilities()` queries the bound port), the token remains in flight (`outstanding`) until it reaches a terminal outcome: delivered as `TransmitEvent::Kind::Completed` or `Failed`, accounted for by `EventOverflow` (`port_event_overflows`) or `transmit_event_overflows`, or observed remaining in `outstanding` after `close()` / shutdown. Reusing a token before its terminal outcome makes the two in-flight events indistinguishable to the caller.
+- On a `TransmitCapabilities::None` backend, `Accepted` port sends do not increment `outstanding` and do not synthesize `Completed` events.
+
+### Timestamp semantics and intra-step ordering
+
+`TransmitEvent` carries `kind` (`Completed` or `Failed`), `token`, `id`, `send_time` (the originating step time `T`), and `time`:
+
+| Source | `send_time` | `time` |
+|---|---|---|
+| Timed bus or network simulator (`VirtualCanBus` with timing, `CanBusSimulator`) | `T` | Bus/simulator completion or failure time (`tx.end` or simulator timestamp) |
+| Timing-less `VirtualCanBus` or SIL Kit trivial simulation | `T` | `T` |
+| `flush()` rejection (`ecu.connected == false`, port `QueueFull`, or port `Failed`) | `T` | `T` |
+
+- `Accepted` (`send() == Ok`) is strictly separated from transmit completion: `on_transmit` is never invoked in step `T` (neither inside `send()` nor inside `flush()`).
+- Frames accepted by `send()` in step `T` that are rejected in `flush()` increment `frames_dropped` and append `TransmitEvent{Failed, token, id, T, T}` to pre-allocated `flush_failed_` storage (capacity `send_capacity`).
+- In a strictly later step `T' > T`, `on_port_event()` collects correlated port events released by `release_events_before(T')`, and `process()` emits `flush_failed_` entries with `fail.time < now_` merged before the first port event whose `event.time > fail.time`:
+  - At equal timestamps (`time == T`, such as timing-less `VirtualCanBus` or SIL Kit trivial simulation when earlier frames are `Accepted` and later frames hit `QueueFull`), `Accepted` completions precede `QueueFull` failures, preserving exact `send()` call order.
+  - On timed buses (`tx.end > T`), `flush()` failures (`time == T`) precede timed completions (`tx.end`), preserving monotonic `TransmitEvent::time` order.
+- Within `process()` on the driver's thread, `RawChannel` updates `transmit_completed` / `transmit_failed` and decrements `outstanding` before invoking `on_transmit(event)` handlers (still draining and updating counters even when no `on_transmit` handler is registered). All `on_transmit` handlers run before `on_frame` handlers in the same `process()` call, following the same step and threading rules.
+- All buffers (`received_`, `outgoing_`, `flush_failed_`, `transmit_events_`) are allocated at construction; steps perform zero heap allocations (`can.steps_do_not_allocate`).
+
+### `outstanding` conservation and overflow accounting
+
+For a channel on a `Correlated` backend, the following conservation identity holds at all times (mid-step after `send()`, between steps, after overflows, and after `close()` / shutdown):
+
+```text
+accepted_by_channel == in_step_outgoing + frames_sent + frames_dropped
+accepted_by_channel == transmit_completed + transmit_failed
+                     + transmit_event_overflows + port_event_overflows
+                     + outstanding
+```
+
+- `EventOverflow(count)` increments `port_event_overflows += count` and decrements `outstanding` by `min(outstanding, count)`.
+- Overflow of the channel's internal `transmit_events_` buffer increments `transmit_event_overflows` and decrements `outstanding` by `1` per dropped event.
+- On a `TransmitCapabilities::None` backend, only `flush()` rejections increment `outstanding` until delivered as `Failed` in the next step's `process()`.
+
+### Capacity options (`RawChannelOptions`)
+
+| Option | Default | Meaning |
+|---|---|---|
+| `send_capacity` | `64` | Maximum frames `send()` accepts in one step (`> 0`). |
+| `receive_capacity` | `1024` | Maximum received frames kept in one step (`> 0`). |
+| `transmit_event_capacity` | `0` (derived) | Channel buffer capacity for pending `TransmitEvent`s. When `0`: `max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)`. |
+| `port_inbox_capacity` | `0` (derived) | Port receive inbox capacity (`RawChannel::port_inbox_capacity()` returns `2 * receive_capacity` when `0`). |
+| `port_event_capacity` | `0` (derived) | Port event queue capacity (`RawChannel::port_event_capacity()` returns `max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)` when `0`). |
+| `port_transmit_queue_capacity` | `0` (backend default) | Maximum unacknowledged frames allowed at the port (`> 0` bounds in-flight sends). |
+| `port_bitrate` | `0` (unset) | CAN bit rate in bit/s (`Peer` forwards this to `SilKitCanPortOptions::bitrate` for `SetBaudRate()` at `CommunicationReady`; unused on `LocalBench`). |
+
+`RawChannel::validate(options)` throws `std::invalid_argument` if `send_capacity == 0`, `receive_capacity == 0`, or `port_event_capacity > 0 && port_transmit_queue_capacity > port_event_capacity`.
 
 ## The host (`Host`)
 
@@ -253,16 +325,16 @@ If you call `stop()` from inside a step, it only tells the thread to end. A late
 
 ## Virtual bus (`VirtualCanBus`)
 
-`attach()` creates a port that stands for one CAN controller on the bus. Use a virtual bus from one thread.
+`attach()` (and `attach(VirtualCanBusEndpointOptions)`, which overrides per-endpoint `inbox_capacity`, `event_capacity`, and `transmit_queue_capacity`; `0` inherits from `VirtualCanBusOptions`) creates a port that stands for one CAN controller on the bus. `Endpoint::transmit_capabilities()` returns `TransmitCapabilities::Correlated`, and `Endpoint::outstanding()` returns the number of accepted frames whose terminal port event has not yet been released (or accounted for by `EventOverflow`). Use a virtual bus from one thread.
 
 ### With and without timing
 
 | Setting | How frames are handled |
 |---|---|
-| Without timing (default) | A frame sent at time t is received by every other port at time t (no arbitration and no transmission time). |
-| With timing (`VirtualCanBusOptions::timing`) | Frames go on the bus by the rules in "Bus timing" below. The other ports receive the frame at the end of its transmission, and the sending port receives a `TransmitCompleted` with the same time. |
+| Without timing (default) | A frame sent at time t is delivered to every other port at time t (no arbitration and no transmission time), and a correlated `TransmitCompleted` event (`time = t`, `send_time = t`, `token`, `correlated = true`) is queued for the sending port (released in a later step `T' > t`). |
+| With timing (`VirtualCanBusOptions::timing`) | Frames go on the bus by the rules in "Bus timing" below. The other ports receive the frame at the end of its transmission, and the sending port receives a correlated `TransmitCompleted` with the same time. |
 
-With timing, `send()` returns `QueueFull` when the port's transmit queue (`transmit_queue_capacity`, default 64) is full. The queue counts frames that were sent but whose transmission had not started when the bus was resolved (`Host` takes the step's received frames before it sends, so this is the state at the step's time).
+`send()` returns `QueueFull` when the port's transmit queue (`transmit_queue_capacity`, default `64` with timing, `0` = unlimited without timing unless set) is full (`outstanding_ >= limit`). With timing, the queue counts frames that were sent but whose transmission had not started when the bus was resolved (`Host` takes the step's received frames before it sends, so this is the state at the step's time); without timing, it bounds unacknowledged frames waiting for release in the next step. If the per-endpoint event queue overflows, dropped acknowledgements are counted and emitted as `PortEvent::Kind::EventOverflow` via `OverflowCollector`.
 
 A bus with timing is resolved lazily. When any port takes frames or events before `now`, the bus resolves every transmission that starts before `now`.
 
@@ -282,7 +354,7 @@ With `Endpoint::set_fault_injector(f)`, `f` returns a `FaultAction` for each fra
 |---|---|---|
 | `Deliver` | As usual. | — |
 | `Drop` | Returns `Accepted` and does not deliver the frame to the other ports on the bus. | The frame occupies the bus, then is delivered nowhere (the sending port receives `TransmitCompleted`). |
-| `Duplicate` | Delivers the frame twice with the same time. | Sends the frame twice. |
+| `Duplicate` | Delivers the frame twice with the same time (only the primary copy sets `correlated = true` with the caller's `token`; the duplicate sets `correlated = false, token = 0`, while both keep `send_time`). | Sends the frame twice. |
 | `Delay` | Delivers the frame at its time + the delay. | The frame contends for the bus from its send time + the delay. |
 | `QueueFull`, `Failed` | Returns that result and does not deliver the frame. | — |
 | `FaultAction::transmit_failed()` | Returns `Accepted`, delivers the frame nowhere and gives the sender a `TransmitFailed` at the send time (an asynchronous transmit failure). | Does not use the bus. |
@@ -307,7 +379,7 @@ With `Send`, the fault injection function is not called, and even with timing th
 
 ## Observing raw frames (`TapPort`)
 
-`TapPort(inner, listener)` wraps a port and passes everything to `inner`. It carries both 11-bit and 29-bit frames unchanged.
+`TapPort(inner, listener)` wraps a port and passes everything to `inner` (forwarding `transmit_capabilities()` and 2-arg `send(frame, token)`). It carries both 11-bit and 29-bit frames unchanged.
 
 ### What is reported, and in what order
 
@@ -316,7 +388,7 @@ The `TapPort` reports the following 3 kinds to `TapListener::on_tap()`, in the o
 | Kind | Covers | Comes with |
 |---|---|---|
 | `Received` | Frames the protocol stack takes | The frame's time |
-| `Sent` | Frames sent | The time of the sending step and the return value of `send()` |
+| `Sent` | Frames sent | The time of the sending step, the return value of `send()`, and `token` |
 | `Event` | Port events | The event's time |
 
 `Received` follows the port's release order (time order, arrival order for equal times). With the SIL Kit port, the order of same-time frames from different senders can change from run to run. To compare runs, sort by (time, CAN ID), or use the `Observer` events, which come after the reordering.
@@ -351,7 +423,7 @@ A step before `start()` is an error because SIL Kit's trivial simulation drops f
 
 ### Close (`close()`)
 
-`close()` removes the handlers, stops the controller (if it was started) and empties the receive queue. Once `close()` returns, SIL Kit no longer calls the port.
+`close()` removes the handlers, stops the controller (if it was started), clears the correlation slot table once callbacks can no longer run, and empties the receive queue. Once `close()` returns, SIL Kit no longer calls the port. `outstanding()` remains inspectable after `close()` so any unacknowledged in-flight frames at shutdown can be detected.
 
 The shutdown order:
 
@@ -376,7 +448,12 @@ The port does not pass this time on. It gives frames and events with a negative 
 
 The port sends with `SendFrame()`. SIL Kit stamps the frame with the sender's step time. SIL Kit's trivial simulation has no synchronous result, so a valid frame gets `Accepted`.
 
-The port puts the time of the sending step (`TimedFrame::time`), with a marker, into the userContext of `SendFrame()` (`encode_send_time()`: the upper 8 bits are the marker 0xA5, the lower 56 bits are ns). The simple CAN Network Simulator learns the send time from it. SIL Kit only returns the userContext to the sender with the transmit acknowledgement and does not pass it to other receivers. Only 64-bit platforms are supported.
+In virtual time (`transmit_capabilities() == TransmitCapabilities::Correlated`), the port allocates a slot from a pre-allocated FIFO free-list table (up to `kMaxCorrelatedInFlight = 16,384` concurrent in-flight correlated requests) and encodes both the send time and a 16-bit `(2-bit generation, 14-bit slot index)` tag into `SendFrame()`'s `userContext` (`0xA6` marker in bits `[63:56]`, 16-bit FIFO tag in bits `[55:40]`, and 40-bit nanosecond residue of `TimedFrame::time` in bits `[39:0]`). Legacy `encode_send_time()` (`0xA5` marker, 56-bit ns) remains supported alongside `0xA6`. SIL Kit returns `userContext` only to the sender with the transmit acknowledgement and does not pass it to other receivers. Only 64-bit platforms are supported.
+
+- The correlation table is guarded by a mutex released before calling `SendFrame()`, so synchronous trivial-simulation callbacks inside `SendFrame()` never re-enter the lock.
+- If `SendFrame()` throws, the slot is safely reclaimed if still unused.
+- Inside the transmit acknowledgement callback, the port resolves the exact 64-bit `SimTime` `send_time` and caller `token` and frees the slot immediately before pushing to the event inbox; therefore, event-inbox overflow never leaks correlation slots.
+- **External `INetworkSimulator` `userContext` contract**: SIL Kit transports `userContext` across processes as 64 bits and requires network simulators to echo `ack.userContext = request.userContext`. Because the full 64-bit `send_time` lives in the slot table, `SilKitCanPort` recovers the exact `send_time` and `token` even if a simulator delays a frame past `2^40 ns` (~18.3 minutes). If an external simulator drops or alters `userContext` (or disconnects mid-run without acknowledging), `SilKitCanPort` never guesses FIFO or CAN-ID order and never fabricates completions: uncorrelated acknowledgements in virtual time increment `SilKitCanPortStatistics::tx_uncorrelated` (without generating `EventOverflow` or touching correlated `RawChannel` counters), and unacknowledged frames remain inspectable in `outstanding` (`> 0`).
 
 ### Transmit acknowledgements and events
 
@@ -384,14 +461,15 @@ The port counts transmit acknowledgements and puts them in the event queue as `P
 
 | SIL Kit notification | `PortEvent` |
 |---|---|
-| Transmit acknowledgement `Transmitted` | `TransmitCompleted` |
-| Transmit acknowledgement `Canceled`, `TransmitQueueFull` | `TransmitFailed` |
+| Transmit acknowledgement `Transmitted` | `TransmitCompleted` (`correlated = true` in virtual time) |
+| Transmit acknowledgement `Canceled`, `TransmitQueueFull` | `TransmitFailed` (`correlated = true` in virtual time) |
 | Error state notification | `BusStateChanged` (none for `NotAvailable`) |
 | Receive queue overflow | `ReceiveOverflow` |
+| Dropped transmit acknowledgement (event inbox full) | `EventOverflow` (`OverflowCollector`, merged in `release_events_before()`) |
 
 The SIL Kit handlers do not call the protocol processing (in the trivial simulation, the transmit acknowledgement comes back inside `SendFrame()`, so calling it would re-enter). The time of a transmit acknowledgement is the time of the sending step in the trivial simulation, and the end of the transmission with a network simulator.
 
-If the event queue cannot keep room for the frames whose transmit acknowledgements have not been received yet, an error state notification is dropped and counted in `event_overflows`. This keeps transmit acknowledgements from being lost, because a lost one would use up a `transmit_queue_capacity` slot.
+If the event queue cannot keep room for the frames whose transmit acknowledgements have not been received yet, an error state notification is dropped and counted in `event_overflows`. If a burst of transmit acknowledgements overflows `event_capacity` (`transmit_queue_capacity == 0`), the dropped acknowledgements are counted in `event_overflows` and reported as `PortEvent::Kind::EventOverflow` via `OverflowCollector` (merged alongside `ReceiveOverflow` in `release_events_before()`).
 
 ### Bit rate (`SilKitCanPortOptions::bitrate`)
 
@@ -401,19 +479,21 @@ With the default 0, the port does not call `SetBaudRate()`. The SIL Kit document
 
 ### Transmit queue limit (`SilKitCanPortOptions::transmit_queue_capacity`)
 
+`SilKitCanPort::validate(options)` checks that `inbox_capacity > 0`, `event_capacity > 0`, `transmit_queue_capacity <= event_capacity`, and in virtual time (`real_time_clock == nullptr`) `transmit_queue_capacity <= kMaxCorrelatedInFlight` (`16,384`).
+
 If you set `transmit_queue_capacity` (default 0 = no limit), `send()` returns `QueueFull` when the number of frames that were sent and whose transmit acknowledgement event has not been released yet reaches that number. The protocol processing keeps the frame and sends it again in the next step.
 
 - A network simulator drops requests beyond its own transmit queue without sending them (a `TransmitQueueFull` transmit acknowledgement). With a simulator, set the limit to that queue size or less.
-- The limit cannot be larger than `event_capacity`.
+- The limit cannot be larger than `event_capacity` (nor `kMaxCorrelatedInFlight` in virtual time).
 - A frame that never gets a transmit acknowledgement (for example, one sent on a controller that has not started) does not give its slot back. Check the statistic `outstanding`.
 - In SIL Kit's trivial simulation, transmit acknowledgements are released in the next step, so the limit becomes the number of frames you can send in one step.
 
 ### Real time (`SilKitCanPortOptions::real_time_clock`)
 
-If you set `real_time_clock`, the port belongs to a participant without time synchronization, and its time domain is `RealTime`. Drive it with `RealTimeDriver`.
+If you set `real_time_clock`, the port belongs to a participant without time synchronization, and its time domain is `RealTime`. `transmit_capabilities()` returns `TransmitCapabilities::None`, and the port never fabricates `TransmitCompleted` from `Accepted`. Drive it with `RealTimeDriver`.
 
 - Instead of the SIL Kit timestamp (unusable with unsynchronized senders), the port stamps the arrival time from the clock, and it wakes the driver on each arrival.
-- The port does not put the send time in the userContext (network simulators assume virtual time).
+- The port does not put the send time or correlation tag in `userContext` (network simulators assume virtual time).
 
 ### Consistency with the virtual bus
 
@@ -478,7 +558,7 @@ SIL Kit's trivial simulation reproduces neither arbitration nor bus occupancy. T
 
 ### Timing and determinism
 
-The simulator takes part in time synchronization. At step T, it takes in the requests sent before T (by the send time that the vehicle-sil port put in the userContext) and resolves the transmissions that start in [T, T + step size). The result depends only on the send times and the step size, not on the step sizes of the other participants or on thread timing.
+The simulator takes part in time synchronization. At step T, it takes in the requests sent before T (decoding both `0xA6` 40-bit wraparound timestamps via non-negative modular unwrapping near the last step `last` and legacy `0xA5` 56-bit timestamps via `decode_send_time(user_context, reference)`, echoing `request.userContext` bit-for-bit on `Transmitted`, `Canceled`, and `TransmitQueueFull`) and resolves the transmissions that start in [T, T + step size). `0xA6` timestamps are accepted only within `[last - limit, last + limit]` (`limit = max(1 s, step size)`), preventing backward-wrapped residues at `last >= 2^39 ns` (~550 s) from sorting into earlier steps (out-of-window requests are treated as untagged at `last`). The result depends only on the send times and the step size, not on the step sizes of the other participants or on thread timing.
 
 The following cases are not deterministic.
 
@@ -571,7 +651,7 @@ vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--lo
 The simulator is designed so that swapping the executable is all it takes. Both simulators take over the simulation of the named networks under the same participant name (default `NetworkSimulator`), so the code of each peer, the configuration file and the system controller's list of required participants are expected not to change. Operation with Vector's simulator is not verified yet. Vector's simulator requires a CANoe license.
 
 - Vector's simulator simulates transmission times with stuff bits, ACK errors and error states for sends that no node receives, CAN FD, LIN, Ethernet and FlexRay. The simple simulator does none of these, so the times do not match even with the same configuration.
-- vehicle-sil ports put the send time in the userContext with either simulator, but the value means nothing to Vector's simulator.
+- vehicle-sil ports put the send time and correlation tag in `userContext` with either simulator; the value means nothing to Vector's simulator, and whether Vector's simulator echoes `userContext` untouched on transmit acknowledgements is not verified (if omitted or altered, `SilKitCanPort` counts `tx_uncorrelated` and leaves `outstanding > 0` rather than guessing).
 - Determinism and timing with Vector's simulator are not verified.
 
 ### Known limitations of the simple CAN Network Simulator
@@ -579,10 +659,15 @@ The simulator is designed so that swapping the executable is all it takes. Both 
 | Limitation | Impact and workaround |
 |---|---|
 | A transmission never starts before the first step boundary after its send time. | A lower-priority frame that started in between can go out first (the shift is at most the step size + 1 frame). |
-| The virtual bus with timing (`send()` returns `QueueFull` synchronously) and the simple simulator (an asynchronous `TransmitQueueFull` transmit acknowledgement, and the frame is not sent) handle a full transmit queue differently. | When the queue overflows, the traces of the two do not match. To avoid losing J1939 or other frames, set the port's `transmit_queue_capacity` to `--transmit-queue` or less (see "SIL Kit port" above). |
+| The virtual bus with timing (`send()` returns `QueueFull` synchronously; `RawChannel` notifies `Failed` at send step `T`) and the simple simulator (an asynchronous `TransmitQueueFull` transmit acknowledgement; `RawChannel` notifies `Failed` at simulator step `T_sim`) handle a full transmit queue differently. | When the queue overflows, the traces of the two do not match. To avoid losing frames and align failure timing (`Failed` at `T`), set `RawChannelOptions::port_transmit_queue_capacity` (or the port's `transmit_queue_capacity`) to `--transmit-queue` or less (see "SIL Kit port" above). |
 | When frames with the same ID and data come from different controllers at the same time, their order is the order in which each controller made its first request (the order the simulator received them), which is not deterministic. | The receivers receive the same content. |
 | Protocol timers that start at a send (such as J1939 T3) count from the time of the step that passed the frame to the port. | They start counting earlier than the actual transmission, by the time the frame waits for the bus (see "Transport protocol limitations" in [j1939.md](j1939.md#transport-protocol-limitations)). |
 | The Network Simulator API is an experimental SIL Kit API. | Only `libs/can_netsim/src/can_bus_simulator.cpp` uses it. When you update SIL Kit, run the tests of this simulator. |
+
+## Source compatibility and ABI
+
+- **Source-compatible additions**: The 1-argument `Port::send(frame)` and `RawChannel::send(frame)` overloads remain alongside the 2-argument token overloads, custom `Port` subclasses that override only 1-argument `send()` continue to compile with `TransmitCapabilities::None`, `0xA5` send-time encoding remains accepted alongside `0xA6`, and new fields on `PortEvent`, `TapRecord`, `*Options`, and `*Statistics` are appended at the end with default member initializers so existing aggregate initializers remain valid.
+- **ABI impact**: Adding virtual functions to `can::Port` (`transmit_capabilities()`, 2-arg `send()`) and `can::Steppable` (`bind_port()`) changes vtable layouts, and adding fields to `PortEvent`, `TapRecord`, `RawChannelOptions`, `RawChannelStatistics`, `VirtualCanBusEndpointOptions`, `RawChannel`, and `SilKitCanPort` changes struct and class layouts. Recompile all consumers against the updated headers.
 
 ## See also
 

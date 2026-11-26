@@ -10,6 +10,7 @@ CAN のポート、ホスト、ドライバー、仮想バス、SIL Kit のポ�
 | [ポートの仕様（`Port`）](#ポートの仕様port) | 受信の順序、`send()` の結果、時刻の領域 |
 | [ポートのイベント（`PortEvent`）](#ポートのイベントportevent) | 送信の結果、あふれ、バス状態の通知と、バックエンドごとの対応 |
 | [`Steppable` の仕様](#steppable-の仕様) | プロトコルスタックを作るときに守る呼び出しの順序とルール |
+| [生チャネル（`RawChannel`）](#生チャネルrawchannel) | アプリ向けの送信通知、トークンのルール、`outstanding` の保存則、容量オプション |
 | [ホスト（`Host`）](#ホストhost) | 1 ステップの段階、失敗状態、`post()`、時間の領域 |
 | [仮想時間での駆動](#仮想時間での駆動) | `StepDriver`、`bind_host()` |
 | [実時間での駆動（`RealTimeDriver`）](#実時間での駆動realtimedriver) | ステップを実行する条件、到着時刻、終了の順序 |
@@ -18,6 +19,7 @@ CAN のポート、ホスト、ドライバー、仮想バス、SIL Kit のポ�
 | [SIL Kit のポート（`SilKitCanPort`）](#sil-kit-のポートsilkitcanport) | 開始と終了、時刻、送信確認、オプション |
 | [バスのタイミング（`CanBusModel`）](#バスのタイミングcanbusmodel) | 送信時間、調停、模擬しないもの |
 | [簡易 CAN Network Simulator](#簡易-can-network-simulatorvehicle_silcan_netsimvehicle_sil_can_bus_simulator) | 時刻と決定論、ビットレート、コントローラーのモード、設定、既知の制限 |
+| [ソース互換性と ABI](#ソース互換性と-abi) | 追加によるソース互換性と、バイナリ配置・vtable の変更 |
 
 `vehicle_sil::can` と `vehicle_sil::can_silkit` は、J1939 スタック（`vehicle_sil::j1939`）の基盤です。CAN の 11 ビットと 29 ビットのフレームを扱い、J1939 以外のプロトコルも載せられます。API はまだ安定していません。
 
@@ -45,15 +47,24 @@ CAN のポート、ホスト、ドライバー、仮想バス、SIL Kit のポ�
 
 ### 送信
 
+`Port` は送信完了の通知能力を `transmit_capabilities()`（`TransmitCapabilities`）で返します。
+
+| 値 | 意味 |
+|---|---|
+| `None`（既定） | バックエンドがトークン対応のフレーム単位の送信結果を返さない。 |
+| `Correlated` | `Accepted` になった各送信が、トークンと対応付いた `TransmitCompleted` または `TransmitFailed`（あるいは `EventOverflow`、または終了時の `outstanding` 残留による検知）を生む。 |
+
+`send()` には 2 つのオーバーロード（`send(const TimedFrame&)` と `send(const TimedFrame&, std::uint64_t token)`）があり、既定の 2 引数版は `token` を無視して 1 引数版の `send()` を呼びます。`token` はポート単位でスコープされる不透明な呼び出し元識別子であり、`0` はセンチネルではなく通常の有効なトークンです。
+
 `send()` は同期の結果を返します。
 
 | 結果 | 意味 |
 |---|---|
-| `Accepted` | 受け付けた。 |
-| `QueueFull` | 送信キューが満杯で、後のステップで送信し直せる。 |
+| `Accepted` | 受け付けた。送信の完了とは厳密に区別され、送信したステップ内で完了イベントを出すことはない。 |
+| `QueueFull` | 送信キューが満杯で、後のステップで（同じトークンで）送信し直せる。 |
 | `Failed` | 送信できないフレームか、バックエンドのエラー。 |
 
-`send()` の後にフレームがどうなったか（送信された、バックエンドが捨てた）をバックエンドが知るときは、後からイベント（`PortEvent`）で通知します。`release_events_before(now, sink)` は、時刻が `now` より前のイベントを、時刻順、同じ時刻なら到着順に渡します。既定の実装はイベントを出しません。
+`send()` の後にフレームがどうなったか（送信された、バックエンドが捨てた）をバックエンドが知るときは、後からイベント（`PortEvent`）で通知します。`release_events_before(now, sink)` は、時刻が `time < now` のイベントだけを、時刻順、同じ時刻なら到着順に渡します。完了や失敗の時刻が `time == T`（タイミングなしの仮想バスや SIL Kit の簡易シミュレーションなど）であってもステップ `T` では解放されず、より後のステップ `T' > T` で解放されます。既定の `Port` 実装はイベントを出さず、`TransmitCapabilities::None` のポートは `Accepted` から `TransmitCompleted` を捏造しません。
 
 ### スレッドと時刻の領域
 
@@ -79,21 +90,23 @@ CAN のポート、ホスト、ドライバー、仮想バス、SIL Kit のポ�
 | `ReceiveOverflow` | 受信キューが満杯で受信フレームを捨てた（`count` は捨てた数。まとめた中に数の分からないあふれが 1 つでもあれば、合計が分からないので 0） | 捨てたフレームのうち最も早い時刻 |
 | `BusStateChanged` | コントローラーのエラー状態が `bus_state`（`ErrorActive`、`ErrorPassive`、`BusOff`）になった | 変わった時刻 |
 | `ErrorFrame` | バスでエラーフレームを見た | 見た時刻 |
+| `EventOverflow` | イベントキューが満杯で送信確認を捨てた（`count` は捨てた数） | 捨てたイベントのうち最も早い時刻 |
 
-- 送信のイベントは、CAN 識別子（`id`）と、分かれば送信したときの `TimedFrame::time`（`send_time`）を持ち、データは持ちません。
-- 同じ識別子のフレームは `send_time` で見分けます。
+- 送信のイベントは、CAN 識別子（`id`）、`send_time`（分かれば送信ステップの `TimedFrame::time`）、`token`、`correlated` を持ち、データは持ちません。
+- `correlated`（`bool`、既定 `false`）が対応付きイベントかどうかを明示的に区別します（これにより `token == 0` を非対応イベントと混同せず、`FaultAction::Duplicate` などの複製フレームで 2 重の完了を発火しません）。
+- `ReceiveOverflow` と `EventOverflow` は `OverflowCollector` が管理します。どちらもイベントキューの枠を消費せず、キューが満杯でも送信確認を押し出さずに解放され、`OverflowCollector::release_merged` が各あふれを `event.time > overflow.time` となる最初のキュー済みイベントの直前に差し込みます。
 - `ReceiveOverflow` は捨てたフレームごとには出さず、ポートが次にイベントを渡すまでに捨てた数を、1 つのイベントにまとめます。
-- `ReceiveOverflow` はイベントのキューの枠を使わないので、キューが満杯でも渡され、送信のイベントを押し出しません。
 - バックエンドが知り得ない種類は出しません（報告なし）。
 - 種類はこれから増えることがあり、`Steppable` は知らない種類を無視します。
 
 ### バックエンドごとのイベント
 
-| バックエンド | 出すイベント |
-|---|---|
-| 仮想バス | `TransmitCompleted`（タイミングありのとき）、`ReceiveOverflow`、故障注入と通信断の `TransmitFailed`、注入した任意のイベント |
-| `SilKitCanPort` | SIL Kit の送信確認からの `TransmitCompleted` と `TransmitFailed`、SIL Kit のエラー状態の通知からの `BusStateChanged`（ネットワークシミュレーターは出し、SIL Kit の簡易シミュレーションは出さない）、`ReceiveOverflow` |
-| `ExternalPortAdapter`（Vector XL） | `ErrorFrame` と、外部ポートのあふれを表す数の分からない `ReceiveOverflow`（バス状態と送信の結果は出さない） |
+| バックエンド | `transmit_capabilities()` | 出すイベント |
+|---|---|---|
+| `VirtualCanBus` | `Correlated` | `TransmitCompleted`（タイミングありは `tx.end`、タイミングなしは `frame.time`）、`TransmitFailed`（故障注入と通信断）、`ReceiveOverflow`、`EventOverflow`、注入した任意のイベント |
+| `SilKitCanPort`（仮想時間） | `Correlated` | SIL Kit の送信確認からの `TransmitCompleted` と `TransmitFailed`、`EventOverflow`、SIL Kit のエラー状態の通知からの `BusStateChanged`（ネットワークシミュレーターは出し、SIL Kit の簡易シミュレーションは出さない）、`ReceiveOverflow` |
+| `SilKitCanPort`（実時間） | `None` | 非対応の `TransmitCompleted` / `TransmitFailed`、`BusStateChanged`、`ReceiveOverflow` |
+| `ExternalPortAdapter`（Vector XL） | `None` | `ErrorFrame` と、外部ポートのあふれを表す数の分からない `ReceiveOverflow`（バス状態と送信の結果は出さない） |
 
 ### イベントの渡し先
 
@@ -107,7 +120,7 @@ CAN の上にプロトコルスタックを作るときの拡張点です。J193
 
 ### 呼び出しの順序
 
-最初のステップの前に、ホストは `start(step_size)` を 1 回呼びます。1 ステップでは、次の順で呼びます。
+最初のステップの前に、ホストは `start(step_size)` を 1 回呼びます。`can::Host::add(Steppable&, Port&)` で組を登録すると、`RawChannel` などが `start()` 前の構築段階で `transmit_capabilities()` を参照できるよう、`Steppable` の `bind_port(const Port&)` も呼びます。1 ステップでは、次の順で呼びます。
 
 | 順 | 呼び出し | `Steppable` がすること |
 |---|---|---|
@@ -135,6 +148,65 @@ CAN の上にプロトコルスタックを作るときの拡張点です。J193
 タイマーのない処理（`QueueFull` で残したフレーム、1 ステップの上限で繰り越したフレーム）は含めません。それらは実時間ではドライバーの `max_idle` の後のステップで送信されます。
 
 ステップの後も過去の期限を返し続ける実装は、この仕様に反します（手動の時計では次のステップを 1 ns 後に 1 回実行するだけですが、壁時計ではステップを実行し続けます）。
+
+## 生チャネル（`RawChannel`）
+
+`RawChannel` は、プロトコルスタックを持たずに CAN の 11 ビットと 29 ビットの生フレームを送受信するアプリケーション向けの `Steppable` です。セットアップ（`on_frame()`、`on_transmit()`）は `start()` の前だけ許されます。空のハンドラーを渡すと `std::invalid_argument`、`start()` の後に呼ぶと `std::logic_error` です。
+
+### 送信、トークン、送信通知
+
+- `send(frame)` と `send(frame, token)` はステップの中（`begin()` から `flush()` まで）だけで呼べます。ステップの外から呼ぶと `std::logic_error` です。
+- `token`（`std::uint64_t`）はチャネル単位でスコープされる不透明な値であり、`0` はセンチネルではなく通常の有効なトークンです。
+- 同期の `RawSendStatus::QueueFull`（そのステップの `send_capacity` 到達）と `RawSendStatus::InvalidFrame` は受け付けられなかった送信です。`sends_rejected` を増やし、`TransmitEvent` を出さず、`outstanding` も変えません。呼び出し元は後のステップで同じトークンをそのまま再試行でき、二重送信や二重完了になりません。
+- `TransmitCapabilities::Correlated` のバックエンド（`transmit_capabilities()` は結び付けられたポートを参照する）で `send()` が `Ok` を返すと、そのトークンは完了結果に至るまで送信中（`outstanding`）に留まります。完了結果は `TransmitEvent::Kind::Completed` または `Failed` としての配送、`EventOverflow`（`port_event_overflows`）または `transmit_event_overflows` による計上、あるいは `close()` / 終了後の `outstanding` 残留の観測です。完了結果の前に同じトークンを再利用すると、送信中の 2 つのイベントを呼び出し元から見分けられなくなります。
+- `TransmitCapabilities::None` のバックエンドでは、ポートが `Accepted` を返した送信は `outstanding` を増やさず、`Completed` イベントも生成しません。
+
+### 完了タイムスタンプとステップ内順序
+
+`TransmitEvent` は `kind`（`Completed` または `Failed`）、`token`、`id`、`send_time`（送信元ステップ時刻 `T`）、`time` を持ちます。
+
+| 発生元 | `send_time` | `time` |
+|---|---|---|
+| タイミングあり仮想バスまたはネットワークシミュレーター（タイミングあり `VirtualCanBus`、`CanBusSimulator`） | `T` | バスまたはシミュレーターの完了・失敗時刻（`tx.end` またはシミュレーターの時刻） |
+| タイミングなし `VirtualCanBus` または SIL Kit 簡易シミュレーション | `T` | `T` |
+| `flush()` での拒否（`ecu.connected == false`、ポートの `QueueFull`、ポートの `Failed`） | `T` | `T` |
+
+- `Accepted`（`send() == Ok`）と送信完了は厳密に分離されます。`on_transmit` がステップ `T` の中（`send()` の中や `flush()` の中）で呼ばれることはありません。
+- ステップ `T` の `send()` で受け付けられた後に `flush()` で拒否されたフレームは、`frames_dropped` を増やし、事前確保された `flush_failed_` 領域（容量 `send_capacity`）に `TransmitEvent{Failed, token, id, T, T}` を追加します。
+- より後のステップ `T' > T` で、`on_port_event()` は `release_events_before(T')` が解放した対応付きポートイベントを受け取り、`process()` は `fail.time < now_` となる `flush_failed_` の項目を `event.time > fail.time` となる最初のポートイベントの前にマージして送出します。
+  - 等しい時刻（`time == T`。タイミングなし `VirtualCanBus` や SIL Kit 簡易シミュレーションで先のフレームが `Accepted`、後のフレームが `QueueFull` になった場合など）では、`Accepted` 側の完了が `QueueFull` 側の失敗より先に並び、`send()` の呼び出し順を保ちます。
+  - タイミングありバス（`tx.end > T`）では、`flush()` の失敗（`time == T`）がタイミング付き完了（`tx.end`）より先に並び、`TransmitEvent::time` の単調順を保ちます。
+- ドライバーのスレッド上の `process()` の中では、`RawChannel` は `transmit_completed` / `transmit_failed` の更新と `outstanding` の減算を先に行ってから `on_transmit(event)` ハンドラーを呼びます（`on_transmit` ハンドラーが未登録でも取り出しと計数は行います）。同じ `process()` 呼び出しの中で、すべての `on_transmit` ハンドラーは `on_frame` ハンドラーより先に、同じステップ・スレッドのルールで実行されます。
+- すべてのバッファ（`received_`、`outgoing_`、`flush_failed_`、`transmit_events_`）は生成時に確保され、ステップ内ではヒープ確保を行いません（`can.steps_do_not_allocate`）。
+
+### `outstanding` の保存則とあふれの計上
+
+`Correlated` バックエンド上のチャネルでは、すべての時点（`send()` 直後のステップ途中、ステップ間、あふれ発生後、`close()` / 終了後）で次の保存則が成り立ちます。
+
+```text
+accepted_by_channel == in_step_outgoing + frames_sent + frames_dropped
+accepted_by_channel == transmit_completed + transmit_failed
+                     + transmit_event_overflows + port_event_overflows
+                     + outstanding
+```
+
+- `EventOverflow(count)` は `port_event_overflows += count` を増やし、`outstanding` を `min(outstanding, count)` 減らします。
+- チャネル内部の `transmit_events_` バッファのあふれは `transmit_event_overflows` を増やし、捨てたイベント 1 件につき `outstanding` を `1` 減らします。
+- `TransmitCapabilities::None` バックエンドでは、`flush()` での拒否だけが次のステップの `process()` で `Failed` として通知されるまで `outstanding` を増やします。
+
+### 容量オプション（`RawChannelOptions`）
+
+| オプション | 既定 | 意味 |
+|---|---|---|
+| `send_capacity` | `64` | 1 ステップで `send()` が受け付ける最大フレーム数（`> 0`）。 |
+| `receive_capacity` | `1024` | 1 ステップで保持する最大受信フレーム数（`> 0`）。 |
+| `transmit_event_capacity` | `0`（導出） | 未配送 `TransmitEvent` 用のチャネルバッファ容量。`0` のときは `max(1024, 2 * send_capacity, port_transmit_queue_capacity + send_capacity)`。 |
+| `port_inbox_capacity` | `0`（導出） | ポート受信キュー容量（`RawChannel::port_inbox_capacity()` は `0` のとき `2 * receive_capacity` を返す）。 |
+| `port_event_capacity` | `0`（導出） | ポートイベントキュー容量（`RawChannel::port_event_capacity()` は `0` のとき `max(1024, 2 * send_capacity, effective_transmit_event_capacity, port_transmit_queue_capacity)` を返す）。 |
+| `port_transmit_queue_capacity` | `0`（バックエンド既定） | ポートで許容する未確認送信の上限（`> 0` で送信中フレーム数を制限）。 |
+| `port_bitrate` | `0`（未設定） | CAN ビットレート（bit/s。`Peer` は `CommunicationReady` で `SetBaudRate()` するため `SilKitCanPortOptions::bitrate` へ渡す。`LocalBench` では未使用）。 |
+
+`RawChannel::validate(options)` は、`send_capacity == 0`、`receive_capacity == 0`、または `port_event_capacity > 0 && port_transmit_queue_capacity > port_event_capacity` の場合に `std::invalid_argument` を投げます。
 
 ## ホスト（`Host`）
 
@@ -253,16 +325,16 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 
 ## 仮想バス（`VirtualCanBus`）
 
-`attach()` が、バス上の 1 つの CAN コントローラーにあたるポートを作ります。仮想バスは 1 つのスレッドから使います。
+`attach()`（およびエンドポイントごとに `inbox_capacity`、`event_capacity`、`transmit_queue_capacity` を上書きする `attach(VirtualCanBusEndpointOptions)`。`0` は `VirtualCanBusOptions` を継承）が、バス上の 1 つの CAN コントローラーにあたるポートを作ります。`Endpoint::transmit_capabilities()` は `TransmitCapabilities::Correlated` を返し、`Endpoint::outstanding()` は終端のポートイベントがまだ解放（または `EventOverflow` として計上）されていない受け付け済みフレーム数を返します。仮想バスは 1 つのスレッドから使います。
 
 ### タイミングの有無
 
 | 設定 | フレームの扱い |
 |---|---|
-| タイミングなし（既定） | 時刻 t で送信したフレームを、他の全ポートが時刻 t のまま受信する（調停と送信時間はない）。 |
-| タイミングあり（`VirtualCanBusOptions::timing`） | フレームは下の「バスのタイミング」のルールでバスに出て、他のポートは送信の終わりの時刻でフレームを、送信したポートは同じ時刻の `TransmitCompleted` を受信する。 |
+| タイミングなし（既定） | 時刻 t で送信したフレームを、他の全ポートが時刻 t のまま受信し（調停と送信時間はない）、送信したポートには対応付きの `TransmitCompleted` イベント（`time = t`、`send_time = t`、`token`、`correlated = true`）が積まれる（より後のステップ `T' > t` で解放）。 |
+| タイミングあり（`VirtualCanBusOptions::timing`） | フレームは下の「バスのタイミング」のルールでバスに出て、他のポートは送信の終わりの時刻でフレームを、送信したポートは同じ時刻の対応付き `TransmitCompleted` を受信する。 |
 
-タイミングありでは、ポートごとの送信キュー（`transmit_queue_capacity`、既定 64）が満杯なら `send()` は `QueueFull` です。数えるのは、送信して、バスを決めた時点でまだ始まっていないフレームです（`Host` は送信する前に同じステップの受信を取り出すので、ステップの時刻の状態です）。
+ポートごとの送信キュー（`transmit_queue_capacity`、タイミングありの既定は `64`、タイミングなしでは指定しない限り `0` = 無制限）が満杯（`outstanding_ >= limit`）なら `send()` は `QueueFull` を返します。タイミングありで数えるのは送信してバスを決めた時点でまだ始まっていないフレーム（`Host` は送信する前に同じステップの受信を取り出すので、ステップの時刻の状態）、タイミングなしで数えるのは次ステップの解放待ちになっている未確認フレームです。エンドポイントのイベントキューがあふれた場合は、捨てた送信確認を数えて `OverflowCollector` 経由で `PortEvent::Kind::EventOverflow` を出します。
 
 タイミングありのバスは遅れて決めます。どれかのポートが `now` より前のフレームかイベントを取り出すとき、`now` より前に始まる送信をすべて決めます。
 
@@ -282,7 +354,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 |---|---|---|
 | `Deliver` | 通常どおり。 | — |
 | `Drop` | `Accepted` を返して、バスの他のポートに配送しない。 | フレームはバスを占有してからどこにも配送されない（送信したポートは `TransmitCompleted` を受信する）。 |
-| `Duplicate` | 同じ時刻で 2 回配送する。 | 2 回送信する。 |
+| `Duplicate` | 同じ時刻で 2 回配送する（最初の 1 つだけが `correlated = true` と呼び出し元の `token` を持ち、複製側は `correlated = false, token = 0` で、どちらも `send_time` は保持する）。 | 2 回送信する。 |
 | `Delay` | 時刻 + 遅れで配送する。 | 送信した時刻 + 遅れからバスを争う。 |
 | `QueueFull`、`Failed` | その結果を返して配送しない。 | — |
 | `FaultAction::transmit_failed()` | `Accepted` を返してどこにも配送せず、送信側に送信時刻の `TransmitFailed` を出す（非同期の送信失敗）。 | バスを使わない。 |
@@ -307,7 +379,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 
 ## 生フレームの観測（`TapPort`）
 
-`TapPort(inner, listener)` はポートを包み、すべてを `inner` に渡します。11 ビットと 29 ビットの両方をそのまま運びます。
+`TapPort(inner, listener)` はポートを包み、すべてを `inner` に渡します（`transmit_capabilities()` と 2 引数版の `send(frame, token)` も転送します）。11 ビットと 29 ビットの両方をそのまま運びます。
 
 ### 通知する内容と順序
 
@@ -316,7 +388,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 | 種類 | 対象 | 付く値 |
 |---|---|---|
 | `Received` | プロトコルスタックが受け取ったフレーム | フレームの時刻 |
-| `Sent` | 送信したフレーム | 送信したステップの時刻と `send()` の戻り値 |
+| `Sent` | 送信したフレーム | 送信したステップの時刻、`send()` の戻り値、`token` |
 | `Event` | ポートのイベント | イベントの時刻 |
 
 `Received` の順はポートの解放順（時刻順、同じ時刻なら到着順）で、SIL Kit のポートでは同じ時刻の別の送信側のフレームの順が実行ごとに変わりえます。実行の間で比べるときは（時刻、CAN ID）で並べ直すか、並べ替えた後の `Observer` のイベントを使います。
@@ -351,7 +423,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 
 ### 終了（`close()`）
 
-`close()` はハンドラーを外し、（始めていれば）コントローラーを止め、受信キューを空にします。`close()` から戻った後は、SIL Kit がポートを呼びません。
+`close()` はハンドラーを外し、（始めていれば）コントローラーを止め、コールバックが走らなくなった後で対応表を解放し、受信キューを空にします。`close()` から戻った後は、SIL Kit がポートを呼びません。終了時に未確認のまま残った送信中フレームを検知できるよう、`outstanding()` は `close()` 後も参照できます。
 
 終了の順序は次のとおりです。
 
@@ -376,7 +448,12 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 
 送信は `SendFrame()` です。時刻は SIL Kit が送信側のステップ時刻を付けます。SIL Kit の簡易シミュレーションには同期の結果がないので、正しいフレームは `Accepted` です。
 
-`SendFrame()` の userContext には、送信したステップの時刻（`TimedFrame::time`）を目印付きで入れます（`encode_send_time()`。上位 8 ビットが目印 0xA5、下位 56 ビットが ns）。簡易 CAN Network Simulator はこれで送信時刻を知ります。SIL Kit は userContext を送信確認で送信側に返すだけで、他の受信者には渡しません。64 ビットのプラットフォームだけを対象にします。
+仮想時間（`transmit_capabilities() == TransmitCapabilities::Correlated`）では、事前確保された FIFO 空きスロットリング（同時送信中の上限 `kMaxCorrelatedInFlight = 16,384`）からスロットを確保し、送信時刻と 16 ビットの `(2 ビット世代, 14 ビットスロット添字)` タグを `SendFrame()` の userContext に入れます（上位 `[63:56]` が目印 `0xA6`、`[55:40]` が 16 ビット FIFO タグ、`[39:0]` が `TimedFrame::time` の ns 下位 40 ビット）。従来の `encode_send_time()`（目印 `0xA5`、56 ビット ns）も `0xA6` とともに引き続き扱えます。SIL Kit は userContext を送信確認で送信側に返すだけで、他の受信者には渡しません。64 ビットのプラットフォームだけを対象にします。
+
+- 対応表のミューテックスは `SendFrame()` を呼ぶ前に解放するため、簡易シミュレーションで `SendFrame()` の中から送信確認コールバックが同期実行されても再入ロックしません。
+- `SendFrame()` が例外を投げたときは、未使用のままであればスロットを安全に回収します。
+- 送信確認のコールバック内では、正確な 64 ビット `SimTime` の `send_time` と呼び出し元の `token` を取り出し、イベントの受信箱へ積む直前にスロットを解放します。そのためイベントの受信箱があふれても対応スロットは漏れません。
+- **外部の `INetworkSimulator` の `userContext` 契約**: SIL Kit は `userContext` をプロセス間で 64 ビットそのまま運び、ネットワークシミュレーターには `ack.userContext = request.userContext` をそのまま返すことを要求します。完全な 64 ビットの `send_time` をスロット表に保持しているため、シミュレーターがフレームを `2^40 ns`（約 18.3 分）以上遅らせても、`SilKitCanPort` は正確な `send_time` と `token` を復元できます。外部シミュレーターが `userContext` を落としたり書き換えたりした場合（または実行途中で確認を返さず離脱した場合）、`SilKitCanPort` は FIFO や CAN ID 順を推測せず、完了も捏造しません。仮想時間の非対応の送信確認は `SilKitCanPortStatistics::tx_uncorrelated` に数え（`EventOverflow` や `RawChannel` の対応付きカウンタには影響させない）、未確認のままのフレームは `outstanding`（`> 0`）から観測できます。
 
 ### 送信確認とイベント
 
@@ -384,14 +461,15 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 
 | SIL Kit の通知 | `PortEvent` |
 |---|---|
-| 送信確認 `Transmitted` | `TransmitCompleted` |
-| 送信確認 `Canceled`、`TransmitQueueFull` | `TransmitFailed` |
+| 送信確認 `Transmitted` | `TransmitCompleted`（仮想時間では `correlated = true`） |
+| 送信確認 `Canceled`、`TransmitQueueFull` | `TransmitFailed`（仮想時間では `correlated = true`） |
 | エラー状態の通知 | `BusStateChanged`（`NotAvailable` は出さない） |
 | 受信キューのあふれ | `ReceiveOverflow` |
+| 捨てた送信確認（イベントキュー満杯） | `EventOverflow`（`OverflowCollector` で `release_events_before()` 時にマージ） |
 
 SIL Kit のハンドラーからプロトコル処理は呼びません（簡易シミュレーションでは送信確認が `SendFrame()` の中で返るので、呼ぶと再入になります）。送信確認の時刻は、簡易シミュレーションでは送信したステップの時刻、ネットワークシミュレーターでは送信の終わりです。
 
-エラー状態の通知は、イベントのキューに、送信確認をまだ受信していないフレームの数の空きを残せないときは、捨てて `event_overflows` に数えます（送信確認を失って `transmit_queue_capacity` の枠が減らないように）。
+イベントのキューに送信確認をまだ受信していないフレームの数の空きを残せないときは、エラー状態の通知を捨てて `event_overflows` に数えます。また、`transmit_queue_capacity == 0` のときに送信確認のバーストが `event_capacity` を超えた場合は、捨てた送信確認を `event_overflows` に数え、`OverflowCollector` 経由の `PortEvent::Kind::EventOverflow`（`release_events_before()` で `ReceiveOverflow` とともにマージ）として通知します。
 
 ### ビットレート（`SilKitCanPortOptions::bitrate`）
 
@@ -401,19 +479,21 @@ SIL Kit のハンドラーからプロトコル処理は呼びません（簡易
 
 ### 送信キューの上限（`SilKitCanPortOptions::transmit_queue_capacity`）
 
+`SilKitCanPort::validate(options)` は、`inbox_capacity > 0`、`event_capacity > 0`、`transmit_queue_capacity <= event_capacity`、および仮想時間（`real_time_clock == nullptr`）で `transmit_queue_capacity <= kMaxCorrelatedInFlight`（`16,384`）であることを検査します。
+
 `transmit_queue_capacity`（既定 0 = 上限なし）を設定すると、送信したが送信確認のイベントをまだ渡していないフレームがその数に達したとき、`send()` が `QueueFull` を返します。プロトコル処理はフレームを残して次のステップで送信し直します。
 
 - ネットワークシミュレーターは自分の送信キューを超えた要求を送信せずに捨てる（`TransmitQueueFull` の送信確認）ので、シミュレーターを使うときはその大きさ以下にします。
-- `event_capacity` より大きくはできません。
+- `event_capacity`（および仮想時間では `kMaxCorrelatedInFlight`）より大きくはできません。
 - 送信確認の来ないフレーム（開始していないコントローラーでの送信など）は枠を返さないので、統計の `outstanding` で確認します。
 - SIL Kit の簡易シミュレーションでは送信確認が次のステップで渡るので、上限は 1 ステップに送信できる数になります。
 
 ### 実時間（`SilKitCanPortOptions::real_time_clock`）
 
-`real_time_clock` を設定すると、時刻同期なしの participant のポートになり、時刻の領域は `RealTime` です。`RealTimeDriver` で駆動します。
+`real_time_clock` を設定すると、時刻同期なしの participant のポートになり、時刻の領域は `RealTime` です。`transmit_capabilities()` は `TransmitCapabilities::None` を返し、`Accepted` から `TransmitCompleted` を捏造しません。`RealTimeDriver` で駆動します。
 
 - SIL Kit のタイムスタンプ（同期なしの送信側では使えない）の代わりに、時計で到着時刻を付け、到着のたびにドライバーを起こします。
-- userContext に送信時刻は入れません（ネットワークシミュレーターは仮想時間が前提のため）。
+- userContext に送信時刻や対応タグは入れません（ネットワークシミュレーターは仮想時間が前提のため）。
 
 ### 仮想バスとの一致
 
@@ -478,7 +558,7 @@ SIL Kit の簡易シミュレーション（trivial simulation）は、調停も
 
 ### 時刻と決定論
 
-時刻同期に参加し、ステップ T で、T より前に送信された要求（vehicle-sil のポートが userContext に入れた送信時刻）を取り込み、[T, T + ステップ幅) に始まる送信を決めます。結果は送信時刻とステップ幅だけで決まり、他の participant のステップ幅やスレッドのタイミングによりません。
+時刻同期に参加し、ステップ T で、T より前に送信された要求（`decode_send_time(user_context, reference)` で、`0xA6` の 40 ビット周回タイムスタンプを直近ステップ `last` 付近で非負の剰余展開したものと、従来の `0xA5` 56 ビットタイムスタンプの両方を受け取り、`Transmitted`、`Canceled`、`TransmitQueueFull` で `request.userContext` をビット単位でそのまま返します）を取り込み、[T, T + ステップ幅) に始まる送信を決めます。`0xA6` のタイムスタンプは `[last - limit, last + limit]`（`limit = max(1 s, ステップ幅)`）の範囲だけを受け入れ、`last >= 2^39 ns`（約 550 秒）で後ろ向きに展開された剰余が過去のステップへ並ぶのを防ぎます（範囲外の要求は `last` の目印なしとして扱います）。結果は送信時刻とステップ幅だけで決まり、他の participant のステップ幅やスレッドのタイミングによりません。
 
 次の場合は、決定的ではありません。
 
@@ -571,7 +651,7 @@ vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--lo
 実行ファイルを替えるだけで済むように作っています。どちらも同じ participant 名（既定 `NetworkSimulator`）でネットワーク名の模擬を引き受けるので、各ピアのコード、設定ファイル、システムコントローラーの必須 participant の一覧は変わらない想定です。Vector のものでの動作はまだ確認していません。Vector のものは CANoe のライセンスが要ります。
 
 - Vector のものは、スタッフビットを含む送信時間、相手のいない送信の ACK エラーとエラー状態、CAN FD、LIN、Ethernet、FlexRay を模擬しますが、簡易版はどれもしないので、同じ設定でも時刻は一致しません。
-- vehicle-sil のポートはどちらのシミュレーターでも userContext に送信時刻を入れますが、Vector のものにとっては意味のない値です。
+- vehicle-sil のポートはどちらのシミュレーターでも userContext に送信時刻と対応タグを入れます。Vector のものにとっては意味のない値であり、Vector のシミュレーターが送信確認で `userContext` をそのまま返すかも確認していません（省略または変更された場合、`SilKitCanPort` は推測せず `tx_uncorrelated` を数えて `outstanding > 0` を保ちます）。
 - Vector のものでの決定論とタイミングは確認していません。
 
 ### 簡易 CAN Network Simulator の既知の制限
@@ -579,10 +659,15 @@ vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--lo
 | 制限 | 影響と対処 |
 |---|---|
 | 送信の開始は、送信した時刻の後の最初のステップの境界より前にならない。 | その間に始まった優先度の低いフレームが先に出ることがある（ずれは最大でステップ幅 + 1 フレーム）。 |
-| 送信キューがあふれたときの扱いが、タイミングありの仮想バス（`send()` が同期で `QueueFull`）と簡易版（非同期の `TransmitQueueFull` の送信確認で、フレームは送信されない）で違う。 | あふれる場面では両者のトレースが一致しないので、J1939 などのフレームを失わないために、ポートの `transmit_queue_capacity` を `--transmit-queue` 以下にする（上の「SIL Kit のポート」）。 |
+| 送信キューがあふれたときの扱いが、タイミングありの仮想バス（`send()` が同期で `QueueFull`、`RawChannel` は送信ステップ `T` で `Failed` を通知）と簡易版（非同期の `TransmitQueueFull` の送信確認、`RawChannel` はシミュレーターのステップ `T_sim` で `Failed` を通知）で違う。 | あふれる場面では両者のトレースが一致しないので、フレームを失わず失敗時刻（`T` での `Failed`）もそろえるには、`RawChannelOptions::port_transmit_queue_capacity`（またはポートの `transmit_queue_capacity`）を `--transmit-queue` 以下にする（上の「SIL Kit のポート」）。 |
 | 同じ時刻に別のコントローラーから同じ ID、データのフレームが出たときの順序は、各コントローラーが最初の要求を出した順（シミュレーターが受信した順）で、決定的ではない。 | 受信側が受信する内容は同じ。 |
 | 送信を起点とするプロトコルのタイマー（J1939 の T3 など）は、ポートに渡したステップの時刻から数える。 | バスの待ちのぶん、実際の送信より早く数え始める（[j1939.md](j1939.md) の「トランスポートプロトコル」の制限）。 |
 | Network Simulator API は SIL Kit の experimental な API である。 | 使うのは `libs/can_netsim/src/can_bus_simulator.cpp` だけで、SIL Kit を更新したら、このシミュレーターのテストを実行する。 |
+
+## ソース互換性と ABI
+
+- **追加によるソース互換性**: 1 引数版の `Port::send(frame)` と `RawChannel::send(frame)` は 2 引数版とともに残っており、1 引数版の `send()` だけをオーバーライドする独自の `Port` 派生クラスは `TransmitCapabilities::None` としてそのままコンパイルできます。また、`0xA5` 送信時刻エンコードは `0xA6` とともに引き続き受け入れられ、`PortEvent`、`TapRecord`、`*Options`、`*Statistics` の新しいフィールドはすべて既定メンバー初期化子付きで末尾に追加されているため、既存の集成体初期化も有効なままです。
+- **ABI への影響**: `can::Port`（`transmit_capabilities()`、2 引数版 `send()`）と `can::Steppable`（`bind_port()`）への仮想関数追加は vtable 配置を変え、`PortEvent`、`TapRecord`、`RawChannelOptions`、`RawChannelStatistics`、`VirtualCanBusEndpointOptions`、`RawChannel`、`SilKitCanPort` へのフィールド追加は構造体・クラスのメモリ配置を変えます。利用側は更新後のヘッダーに対して再コンパイルしてください。
 
 ## 関連するドキュメント
 
