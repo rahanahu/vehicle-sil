@@ -1,6 +1,14 @@
 ---
 name: agent-prompt-design
-description: Checklist for writing any text that another AI agent will act on. Use this skill whenever the user asks you to write, draft, rewrite, or fix instructions for a coding, research, measurement, or review agent (subagent briefs, task assignments, delegation prompts, goals for a lead or coordinator agent, handoff notes, instructions to inject into a running agent session, task rules in CLAUDE.md or AGENTS.md, or a reusable delegation template). Use it even when the user never says "prompt" (e.g. 指示書, 依頼文, 引き継ぎメモ, 差し込む文面, ゴールを書いて, エージェントに渡す/やらせたい). Also use when an agent asks for approval too often or is over-constrained. It prevents the usual failures of agent instructions, such as silently granting authority the user did not give, dropping constraints, and adding needless approval gates. Not for chatbot system prompts, image-generation prompts, general prompt-engineering advice, task lists for humans, or writing agent framework code.
+description: >-
+  Write or revise assignments for coding, research, measurement, and review agents.
+  Specify the outcome, constraints, and delegated authority so the agent can choose how to do the work.
+  Use for Swarm briefs, goals for leads or coordinators, subagent tasks, handoffs, instructions for a running session,
+  task rules in CLAUDE.md or AGENTS.md, and reusable delegation templates. Requests include
+  指示書, 依頼文, 引き継ぎメモ, 差し込む文面, ゴールを書いて, and エージェントに渡す/やらせたい.
+  Also use to revise instructions that over-constrain an agent or trigger routine approval requests.
+  Exclude general prompt-engineering advice, chatbot system prompts, image prompts, human task lists,
+  and agent framework code.
 ---
 
 # Development Agent Prompt Design
@@ -41,6 +49,7 @@ Separate these elements from the original request and existing plans:
 - Completion criteria: observable outcomes and evidence that the objective has been achieved.
 
 Do not downgrade explicit requirements to suggestions. If it is unclear whether an instruction is mandatory or merely an initial approach, keep it as a requirement and note where discretion is possible — wrongly loosening a requirement is harder to undo than wrongly keeping one.
+When the owner approves findings from a review, keep each approved outcome in scope. A suggested fix (such as splitting a module) becomes mandatory only if the owner or a binding constraint requires it. Let the agent choose a smaller fix that meets the requirement, or cite a test or other evidence if the current implementation already meets it.
 Do not invent authorization for prototyping, additional expenditure, production integration, or changes to another agent's work. If you propose a change in authority, disclose it to the user.
 
 ### When information is missing
@@ -84,17 +93,17 @@ End when the work is complete or no useful actionable work remains. Do not manuf
 
 ## 5. Assemble the prompt
 
-Use only the sections that are needed. Refer to existing rules (CLAUDE.md, AGENTS.md, ADRs, runbooks) instead of reproducing them when the recipient can read them. When a worker runs in an isolated git worktree (such as `workspace:"share"` or `"branch"`), untracked local directories excluded from Git are absent from the worktree; pass absolute paths in the main worktree whenever the worker must read them.
+Use the list below as a drafting aid. A paragraph is enough when it gives the recipient what they need to act.
+Carry forward earlier decisions and the reasons that affect the next choice. Point to the relevant section of an approved issue, review, or specification and to existing rules the recipient can read. If a source is inaccessible, include the relevant excerpt. For a worker in an isolated git worktree on the same machine, an absolute path in the main worktree can make untracked local material available.
 
 1. Role: assigned domain and responsibility.
 2. Goal: a concise statement of the desired outcome.
 3. Context and requirements: product requirements, targets, relevant references.
 4. Discretion: decisions the agent may make; investigation, delegation, and coordination it may conduct.
 5. Constraints: prohibitions, authorization boundaries, safety, quality, reproducibility.
-6. Completion criteria: outcomes, evidence, required records, reviews.
+6. Completion criteria: the evidence of success, any required records or reviews, and the authorized endpoint (for example, verified local changes, an open PR, or a merge).
 7. Escalation: decisions reserved for the owner; how to handle waiting and continued work.
 
-Length: a goal is a few lines. A full assignment is usually 20–60 lines; longer prompts tend to bury the constraints that matter.
 Language: write the prompt in the language the user asks for; otherwise match the language of the existing prompts or of the user's request.
 
 ### Output format
@@ -153,3 +162,9 @@ Fix any deficiency before returning. When revising, disclose authority or constr
 - Documentation edits conflict with another stream's PR: coordinate sequencing directly, record dependencies, and wait if necessary. Do not ask the owner to choose the sequence.
 - Measurement-only assignment: delegate measurement order, hypothesis testing, and follow-ups, but do not authorize production code changes. State explicitly whether isolated prototypes are permitted.
 - Explicitly deferred changes to the standard GUI: do not lift the hold in the name of autonomy. Escalate if lifting it is necessary and continue unrelated work.
+
+### Swarm brief for an approved release review
+
+> Address the findings under `In Scope` in the attached release review so existing clients can upgrade without changing their integrations. Preserve the public CLI and wire format. Choose how to group the fixes and update affected callers, tests, or docs as needed.
+>
+> For the reconnect finding, show that an existing client can reconnect to the same run and read its current state. Cite the check for any finding already resolved on main. Open a PR for any changes and include the verification results.
