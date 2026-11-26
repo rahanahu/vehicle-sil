@@ -582,28 +582,34 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
             extracted = vp.lower_bounds()
         self.assertEqual(extracted["extra-only"], "2.0.0")
 
-    def test_tools_prebuilt_exports_stages_control_requirements_and_renders_readme(self) -> None:
+    def _run_prebuilt_tools(self, *, windows: bool) -> tuple[Path, list[list[str]]]:
         version = package_mod.project_version()
-        top, _ = package_mod.names(version)
-        build = self.dir / "build-pkg"
-        prebuilt = self.dir / "prebuilt"
+        suffix = "win" if windows else "linux"
+        exe = ".exe" if windows else ""
+        platform = "windows-x86_64" if windows else "linux-x86_64"
+        build = self.dir / f"build-pkg-{suffix}"
+        prebuilt = self.dir / f"prebuilt-{suffix}"
         (prebuilt / "bin").mkdir(parents=True)
-        (prebuilt / "bin" / "vehicle_sil_launch").write_bytes(b"ELF-launch")
-        (prebuilt / "bin" / "vehicle_sil_ethernet_bridge").write_bytes(b"ELF-eth")
-        (prebuilt / "bin" / "vehicle_sil_socketcan_bridge").write_bytes(b"ELF-can")
+        (prebuilt / "bin" / f"vehicle_sil_launch{exe}").write_bytes(b"MZ-launch" if windows else b"ELF-launch")
+        (prebuilt / "bin" / f"vehicle_sil_ethernet_bridge{exe}").write_bytes(b"MZ-eth" if windows else b"ELF-eth")
+        if not windows:
+            (prebuilt / "bin" / "vehicle_sil_socketcan_bridge").write_bytes(b"ELF-can")
+        else:
+            (prebuilt / "licenses" / "msys2").mkdir(parents=True)
+            (prebuilt / "licenses" / "msys2" / "PACKAGES.txt").write_text("gcc-libs\n", encoding="utf-8")
         (prebuilt / "compiler.txt").write_text("GNU\n", encoding="ascii")
         for rel in package_mod.GRPC_LICENSES:
             p = prebuilt / "licenses" / "grpc" / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(f"license {rel}\n", encoding="utf-8")
 
-        web_parent = self.dir / "web-dist"
+        web_parent = self.dir / f"web-dist-{suffix}"
         web = web_parent / "browser"
         web.mkdir(parents=True)
         (web / "index.html").write_text("<app-root></app-root>\n", encoding="utf-8")
         (web_parent / "3rdpartylicenses.txt").write_text("MIT\n", encoding="utf-8")
 
-        client_dir = self.dir / "client"
+        client_dir = self.dir / f"client-{suffix}"
         client_dir.mkdir(parents=True)
         client = client_dir / "vehicle-sil-gui-client.mjs"
         client.write_text("export const createClient = () => {};\n", encoding="utf-8")
@@ -630,12 +636,15 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
                 gen_dir = Path(cmd[out_idx]) / "vehicle_sil" / "control" / "v1"
                 gen_dir.mkdir(parents=True, exist_ok=True)
                 (gen_dir / "control_pb2.py").write_text("# stub\n", encoding="utf-8")
-            elif prog == "vehicle_sil_launch" and "version" in cmd:
+            elif prog == f"vehicle_sil_launch{exe}" and "version" in cmd:
                 stdout = f'{{"vehicle_sil": "{version}", "features": ["control-server"]}}\n'
             elif prog == "readelf":
                 stdout = " 0x0000000000000001 (NEEDED) Shared library: [libc.so.6]\n"
             elif prog == "objdump":
-                stdout = "0000000000000000 DF *UND* 0000000000000000 GLIBC_2.34 main\n"
+                if windows:
+                    stdout = "        DLL Name: api-ms-win-crt-runtime-l1-1-0.dll\n"
+                else:
+                    stdout = "0000000000000000 DF *UND* 0000000000000000 GLIBC_2.34 main\n"
             else:
                 raise AssertionError(f"unexpected command in stubbed Step.run: {cmd}")
             return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
@@ -648,21 +657,21 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
             web=str(web),
             client=str(client),
             client_package=str(client_pkg),
-            out=str(self.dir / "dist"),
+            out=str(self.dir / f"dist-{suffix}"),
             jobs=1,
             cmake_arg=None,
             allow_missing_licenses=False,
             shared_runtime=False,
-            tag="test-control-reqs",
+            tag=f"test-control-reqs-{suffix}",
         )
 
         stdout = io.StringIO()
         with (
-            mock.patch.object(package_mod, "WINDOWS", False),
-            mock.patch.object(package_mod, "PLATFORM", "linux-x86_64"),
-            mock.patch.object(package_mod, "EXE", ""),
-            mock.patch.object(package_mod, "LAUNCHER", "vehicle_sil_launch"),
-            mock.patch.object(package_mod, "ETHERNET_BRIDGE", "vehicle_sil_ethernet_bridge"),
+            mock.patch.object(package_mod, "WINDOWS", windows),
+            mock.patch.object(package_mod, "PLATFORM", platform),
+            mock.patch.object(package_mod, "EXE", exe),
+            mock.patch.object(package_mod, "LAUNCHER", f"vehicle_sil_launch{exe}"),
+            mock.patch.object(package_mod, "ETHERNET_BRIDGE", f"vehicle_sil_ethernet_bridge{exe}"),
             mock.patch.object(package_mod, "LOG_DIR", self.log_dir),
             mock.patch.object(package_mod, "need", lambda tool, why: f"/usr/bin/{tool}"),
             mock.patch.object(package_mod, "check_bridge_alone", lambda s, b, v: "eth ok"),
@@ -671,9 +680,14 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
             mock.patch.object(package_mod.Step, "run", fake_run),
             contextlib.redirect_stdout(stdout),
         ):
+            top, _ = package_mod.names(version)
             rc = package_mod.tools_command(args)
 
         self.assertEqual(rc, 0, stdout.getvalue())
+        return build / "stage" / top, recorded
+
+    def test_tools_prebuilt_exports_stages_control_requirements_and_renders_readme(self) -> None:
+        stage, recorded = self._run_prebuilt_tools(windows=False)
         self.assertTrue(
             any(
                 Path(cmd[0]).name == "uv"
@@ -687,7 +701,6 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
             recorded,
         )
 
-        stage = build / "stage" / top
         gui_reqs = (stage / "python" / "requirements.txt").read_text(encoding="utf-8")
         ctl_reqs = (stage / "python" / "requirements-control.txt").read_text(encoding="utf-8")
         self.assertIn("aiohttp==3.14.5", gui_reqs)
@@ -697,13 +710,27 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
 
         readme = (stage / "README.md").read_text(encoding="utf-8")
         self.assertIn("requirements-control.txt", readme)
-        self.assertIn("PYTHONPATH=", readme)
-        self.assertIn("--no-project", readme)
-        self.assertIn("--no-build", readme)
+        self.assertIn("PYTHONPATH=<tools>/python uv run --no-project --no-build", readme)
         self.assertIn(f"--python '{package_mod.python_versions()}'", readme)
-        self.assertIn("python3 -S", readme)
+        self.assertIn("PYTHONPATH=<tools>/python python3 -S your_launcher_script.py", readme)
+        self.assertNotIn('set "PYTHONPATH=', readme)
         self.assertIn("Launch", readme)
         self.assertIn("Serve", readme)
+
+    def test_tools_prebuilt_windows_renders_cmd_python_commands(self) -> None:
+        stage, _ = self._run_prebuilt_tools(windows=True)
+        readme = (stage / "README.md").read_text(encoding="utf-8")
+        py_ver = package_mod.python_versions()
+        self.assertIn('set "PYTHONPATH=<tools>\\python"', readme)
+        self.assertIn(
+            f'uv run --no-project --no-build --managed-python --python "{py_ver}" '
+            r"--with-requirements <tools>\python\requirements-control.txt python -P your_script.py",
+            readme,
+        )
+        self.assertIn("python -S your_launcher_script.py", readme)
+        self.assertNotIn("python3 -S", readme)
+        self.assertNotIn(f"--python '{py_ver}'", readme)
+        self.assertNotIn("PYTHONPATH=<tools>/python uv run", readme)
 
     def test_verify_command_checks_control_requirements_and_stdlib_import(self) -> None:
         source = PACKAGE.read_text(encoding="utf-8")

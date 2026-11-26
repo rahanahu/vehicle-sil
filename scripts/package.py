@@ -616,6 +616,27 @@ SOCKETCAN_ROW = ("| `bin/vehicle_sil_socketcan_bridge` | the SocketCAN bridge be
                  "computer (a CAN adapter, or a virtual one such as `vcan0`); it needs no privileges and sets nothing on the "
                  "interface: `vehicle_sil_launch run --connect <network>=<interface>` starts it from here (`--interface <name>`, `--list-channels` by hand) |\n")
 
+README_PYTHON_POSIX = """The Control API client (`Control`, gRPC) from Python: put `<tools>/python` on `PYTHONPATH` and run with
+`python/requirements-control.txt`:
+
+    PYTHONPATH=<tools>/python uv run --no-project --no-build --python '{python_versions}' \\
+      --with-requirements <tools>/python/requirements-control.txt python -P your_script.py
+
+`Launch` and `Serve` use only the Python standard library and need no `requirements-control.txt`:
+
+    PYTHONPATH=<tools>/python python3 -S your_launcher_script.py"""
+
+README_PYTHON_WINDOWS = """The Control API client (`Control`, gRPC) from Python (Command Prompt; in MSYS2 bash, use `PYTHONPATH=<tools>/python`
+and `/` paths, keeping `--managed-python`):
+
+    set "PYTHONPATH=<tools>\\python"
+    uv run --no-project --no-build --managed-python --python "{python_versions}" --with-requirements <tools>\\python\\requirements-control.txt python -P your_script.py
+
+`Launch` and `Serve` use only the Python standard library and need no `requirements-control.txt`:
+
+    set "PYTHONPATH=<tools>\\python"
+    python -S your_launcher_script.py"""
+
 README = """# vehicle-sil {version} tools ({platform})
 
 Prebuilt tools of vehicle-sil {version}: the launcher and the browser GUI. Build your ECUs with the same
@@ -643,15 +664,7 @@ Put `bin` on PATH, then, next to your simulation.yaml:
     vehicle-sil-gui simulation.yaml
     vehicle-sil-gui --web <your built screen, or gui_starter> simulation.yaml
 
-The Control API client (`Control`, gRPC) from Python: put `<tools>/python` on `PYTHONPATH` and run with
-`python/requirements-control.txt` (on Windows in MSYS2, add `--managed-python`):
-
-    PYTHONPATH=<tools>/python uv run --no-project --no-build --python '{python_versions}' \
-      --with-requirements <tools>/python/requirements-control.txt python -P your_script.py
-
-`Launch` and `Serve` use only the Python standard library and need no `requirements-control.txt`:
-
-    PYTHONPATH=<tools>/python python3 -S your_launcher_script.py
+{python_usage}
 
 Documentation: https://github.com/rahanahu/vehicle-sil/tree/v{version} (README.md, docs/howto/first-ecu.md,
 docs/gui.md, docs/control-api.md, docs/ethernet-bridge.md).
@@ -880,8 +893,11 @@ def tools_command(args: argparse.Namespace) -> int:
         stage_licenses(s, build, stage / "licenses", web_licenses, bundled, args.allow_missing_licenses,
                        prebuilt=prebuilt)
         socketcan_row = "" if WINDOWS else SOCKETCAN_ROW
+        python_usage = (README_PYTHON_WINDOWS if WINDOWS else README_PYTHON_POSIX).format(
+            python_versions=python_versions(),
+        )
         (stage / "README.md").write_text(README.format(version=version, platform=PLATFORM, exe=EXE, socketcan_row=socketcan_row,
-                                                       python_versions=python_versions(),
+                                                       python_usage=python_usage,
                                                        cmd=" (`.cmd` from the Command Prompt)" if WINDOWS else ""),
                                          encoding="utf-8")
         (stage / "VERSION").write_text(version + "\n", encoding="ascii")
