@@ -32,7 +32,7 @@ needs no C++ build:
            (locked uv.lock environments only; excluded from 3.11 lowest)
 
 Then, unless --skip-lowest, one more run on 3.11 ("3.11 lowest", build/python-envs/3.11-lowest) with
-the lower bounds of pyproject.toml and gui/server/pyproject.toml instead of uv.lock: its sync step
+the lower bounds of pyproject.toml, gui/server/pyproject.toml and python/pyproject.toml instead of uv.lock: its sync step
 makes the environment with uv's lowest-direct resolution of the dev group and fails unless every
 declared "name>=version" was installed at exactly that version; then codegen, schema, control and
 gui as above. So a declared bound is always one that the tests ran with.
@@ -141,7 +141,7 @@ def normalize(name: str) -> str:
 
 
 def lower_bounds() -> dict[str, str]:
-    """{package: version} of every 'name>=version' requirement in root and gui/server pyproject.toml."""
+    """{package: version} of every 'name>=version' requirement in root, gui/server and python pyproject.toml."""
     bounds: dict[str, str] = {}
 
     def collect(items: list, source: str) -> None:
@@ -156,13 +156,14 @@ def lower_bounds() -> dict[str, str]:
     with open(ROOT / "pyproject.toml", "rb") as f:
         for items in tomllib.load(f).get("dependency-groups", {}).values():
             collect(items, "pyproject.toml")
-    gui_pyproject = ROOT / "gui" / "server" / "pyproject.toml"
-    if gui_pyproject.is_file():
-        with open(gui_pyproject, "rb") as f:
-            project = tomllib.load(f).get("project", {})
-        collect(project.get("dependencies", []), "gui/server/pyproject.toml")
-        for items in project.get("optional-dependencies", {}).values():
-            collect(items, "gui/server/pyproject.toml")
+    for rel_path in ("gui/server/pyproject.toml", "python/pyproject.toml"):
+        member_pyproject = ROOT / rel_path
+        if member_pyproject.is_file():
+            with open(member_pyproject, "rb") as f:
+                project = tomllib.load(f).get("project", {})
+            collect(project.get("dependencies", []), rel_path)
+            for items in project.get("optional-dependencies", {}).values():
+                collect(items, rel_path)
     return bounds
 
 
@@ -214,7 +215,7 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             have = got.get(package)
             resolved.append(f"{package} {have}")
             if have != bound:
-                s.note(f"error: pyproject.toml / gui/server/pyproject.toml declares {package}>={bound}, but the lowest "
+                s.note(f"error: pyproject.toml / gui/server/pyproject.toml / python/pyproject.toml declares {package}>={bound}, but the lowest "
                        f"resolution on Python {version} installed {have} (the bound has no usable release there, or "
                        f"another package needs more): the tests never run with {bound}; raise the bound to {have}")
                 ok = False
