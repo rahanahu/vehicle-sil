@@ -83,22 +83,39 @@ TEST_CASE(virtual_bus_transmit_failed_is_accepted_and_reported_later)
         CHECK_EQ(received.size(), 2u);
         CHECK_EQ(received[0].frame.id, 0x1u);
         CHECK_EQ(received[1].frame.id, 0x3u);
-        // The failure is reported at the send time, before the completions (with timing).
         const auto events = events_before(a, at(10ms));
-        CHECK_EQ(events.size(), timing ? 3u : 1u);
-        CHECK(events[0].kind == PortEvent::Kind::TransmitFailed);
-        CHECK_EQ(events[0].id, 0x2u);
-        CHECK(events[0].time == at(1ms));
-        CHECK(events[0].send_time == std::optional<SimTime>(at(1ms)));
+        CHECK_EQ(events.size(), 3u);
         if (timing)
         {
+            // With timing, the failure is reported at the send time, before the completions.
+            CHECK(events[0].kind == PortEvent::Kind::TransmitFailed);
+            CHECK_EQ(events[0].id, 0x2u);
+            CHECK(events[0].time == at(1ms));
+            CHECK(events[0].send_time == std::optional<SimTime>(at(1ms)));
+            CHECK(events[0].correlated);
             // The failed frame did not take the bus: 0x3 follows 0x1 directly.
             CHECK(events[1].kind == PortEvent::Kind::TransmitCompleted);
+            CHECK_EQ(events[1].id, 0x1u);
             CHECK(events[2].kind == PortEvent::Kind::TransmitCompleted);
+            CHECK_EQ(events[2].id, 0x3u);
             CHECK(received[1].time - received[0].time ==
                   vehicle_sil::can::frame_duration(frame(0x3), VirtualCanBusTiming{}.bitrate));
             CHECK_EQ(bus.transmissions(), 2u);
         }
+        else
+        {
+            // Without timing, all three events share the send time and stay in send order.
+            CHECK(events[0].kind == PortEvent::Kind::TransmitCompleted);
+            CHECK_EQ(events[0].id, 0x1u);
+            CHECK(events[1].kind == PortEvent::Kind::TransmitFailed);
+            CHECK_EQ(events[1].id, 0x2u);
+            CHECK(events[1].time == at(1ms));
+            CHECK(events[1].send_time == std::optional<SimTime>(at(1ms)));
+            CHECK(events[1].correlated);
+            CHECK(events[2].kind == PortEvent::Kind::TransmitCompleted);
+            CHECK_EQ(events[2].id, 0x3u);
+        }
+        CHECK_EQ(a.outstanding(), 0u);
     }
 }
 
@@ -259,5 +276,13 @@ TEST_CASE(virtual_bus_counts_events_beyond_the_event_queue)
         CHECK(a.send(TimedFrame{at(1ms), frame(0x10)}) == SendResult::Accepted);
     }
     CHECK_EQ(a.event_overflows(), 1u);
-    CHECK_EQ(events_before(a, at(2ms)).size(), 2u);
+    CHECK_EQ(a.outstanding(), 3u);
+    const auto events = events_before(a, at(2ms));
+    CHECK_EQ(events.size(), 3u);
+    CHECK(events[0].kind == PortEvent::Kind::TransmitFailed);
+    CHECK(events[1].kind == PortEvent::Kind::TransmitFailed);
+    CHECK(events[2].kind == PortEvent::Kind::EventOverflow);
+    CHECK(events[2].time == at(1ms));
+    CHECK_EQ(events[2].count, 1u);
+    CHECK_EQ(a.outstanding(), 0u);
 }

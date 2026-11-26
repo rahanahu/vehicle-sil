@@ -140,7 +140,7 @@ TEST_CASE(tap_port_reports_received_sent_and_events_in_order)
     Log log;
     std::vector<TapRecord> records;
     run_rig(&log, &records);
-    CHECK_EQ(records.size(), 5u);
+    CHECK_EQ(records.size(), 6u);
     // Step at 10 ms: the two frames sent at 5 ms (11-bit first, as they arrived), then the frame sent.
     CHECK(records[0].direction == TapRecord::Direction::Received);
     CHECK(records[0].time == at(5ms));
@@ -154,15 +154,20 @@ TEST_CASE(tap_port_reports_received_sent_and_events_in_order)
     CHECK(records[2].time == at(10ms));
     CHECK_EQ(records[2].frame.id, 0x100u);
     CHECK(records[2].result == SendResult::Accepted);
-    // Step at 20 ms: the injected bus state.
+    // Step at 20 ms: the TransmitCompleted at 10 ms, then the injected bus state at 15 ms.
     CHECK(records[3].direction == TapRecord::Direction::Event);
-    CHECK(records[3].time == at(15ms));
-    CHECK(records[3].event.kind == PortEvent::Kind::BusStateChanged);
-    CHECK(records[3].event.bus_state == BusState::ErrorPassive);
+    CHECK(records[3].time == at(10ms));
+    CHECK(records[3].event.kind == PortEvent::Kind::TransmitCompleted);
+    CHECK_EQ(records[3].event.id, 0x100u);
+    CHECK(records[3].event.correlated);
+    CHECK(records[4].direction == TapRecord::Direction::Event);
+    CHECK(records[4].time == at(15ms));
+    CHECK(records[4].event.kind == PortEvent::Kind::BusStateChanged);
+    CHECK(records[4].event.bus_state == BusState::ErrorPassive);
     // Step at 30 ms: the refused frame, with the result send() returned.
-    CHECK(records[4].direction == TapRecord::Direction::Sent);
-    CHECK_EQ(records[4].frame.id, 0x101u);
-    CHECK(records[4].result == SendResult::QueueFull);
+    CHECK(records[5].direction == TapRecord::Direction::Sent);
+    CHECK_EQ(records[5].frame.id, 0x101u);
+    CHECK(records[5].result == SendResult::QueueFull);
 }
 
 TEST_CASE(tap_port_does_not_change_what_the_stack_sees)
@@ -171,7 +176,7 @@ TEST_CASE(tap_port_does_not_change_what_the_stack_sees)
     const auto with = run_rig(&log);
     const auto without = run_rig(nullptr);
     CHECK(with == without);
-    CHECK_EQ(with.size(), 5u);
+    CHECK_EQ(with.size(), 6u);
 }
 
 TEST_CASE(tap_port_listener_must_not_use_the_port)
@@ -290,4 +295,26 @@ TEST_CASE(tap_port_forwards_the_time_domain_and_the_counts)
     CHECK(tap.send(TimedFrame{at(3ms), invalid}) == SendResult::Failed);
     CHECK_EQ(log.records.size(), 4u);
     CHECK(log.records[3].result == SendResult::Failed);
+}
+
+TEST_CASE(tap_port_forwards_transmit_capabilities_and_tokens)
+{
+    VirtualCanBus bus;
+    auto& port = bus.attach();
+    Log log;
+    TapPort tap(port, &log);
+    CHECK(tap.transmit_capabilities() == vehicle_sil::can::TransmitCapabilities::Correlated);
+    CHECK(tap.send(TimedFrame{at(1ms), frame(0x200)}, 0) == SendResult::Accepted);
+    CHECK(tap.send(TimedFrame{at(1ms), frame(0x200)}, 0xDEADBEEFull) == SendResult::Accepted);
+    CHECK_EQ(log.records.size(), 2u);
+    CHECK(log.records[0].direction == TapRecord::Direction::Sent);
+    CHECK_EQ(log.records[0].token, 0u);
+    CHECK(log.records[1].direction == TapRecord::Direction::Sent);
+    CHECK_EQ(log.records[1].token, 0xDEADBEEFull);
+
+    std::vector<PortEvent> events;
+    CHECK_EQ(tap.release_events_before(at(2ms), [&](const PortEvent& e) { events.push_back(e); }), 2u);
+    CHECK_EQ(events.size(), 2u);
+    CHECK(events[0].correlated && events[0].token == 0u);
+    CHECK(events[1].correlated && events[1].token == 0xDEADBEEFull);
 }

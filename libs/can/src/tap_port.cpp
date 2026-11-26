@@ -118,8 +118,13 @@ std::size_t TapPort::release_before(SimTime now, FrameSink sink)
 
 SendResult TapPort::send(const TimedFrame& frame)
 {
+    return send(frame, 0);
+}
+
+SendResult TapPort::send(const TimedFrame& frame, std::uint64_t token)
+{
     require_not_tapping("send()");
-    const SendResult result = inner_.send(frame);
+    const SendResult result = inner_.send(frame, token);
     if (listener_ != nullptr)
     {
         TapRecord record;
@@ -127,6 +132,7 @@ SendResult TapPort::send(const TimedFrame& frame)
         record.time = frame.time;
         record.frame = frame.frame;
         record.result = result;
+        record.token = token;
         notify(record);
     }
     return result;

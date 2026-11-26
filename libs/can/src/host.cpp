@@ -58,6 +58,7 @@ void Host::add(Steppable& steppable, Port& port)
         pairs_.pop_back();
         throw;
     }
+    steppable.bind_port(port);
 }
 
 } // namespace vehicle_sil::can

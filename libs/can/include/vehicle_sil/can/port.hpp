@@ -47,6 +47,16 @@ enum class BusState : std::uint8_t
     BusOff,
 };
 
+/// Whether a port emits token-correlated per-frame transmit outcomes.
+enum class TransmitCapabilities : std::uint8_t
+{
+    /// Backend does not emit correlated per-frame transmit outcomes.
+    None,
+    /// Every Accepted send produces a token-correlated TransmitCompleted or TransmitFailed
+    /// (or EventOverflow / shutdown outstanding).
+    Correlated,
+};
+
 /// Something that happened at the port, reported after the fact: what became of a frame this
 /// port sent, and the state of the receive inbox and of the controller.
 ///
@@ -71,6 +81,10 @@ struct PortEvent
         BusStateChanged,
         /// An error frame was seen on the bus.
         ErrorFrame,
+        /// The event queue was full and transmit acknowledgements were dropped. `time` is the
+        /// earliest time of the dropped events, `count` how many were dropped until the event
+        /// was released.
+        EventOverflow,
     };
 
     Kind kind = Kind::TransmitCompleted;
@@ -79,8 +93,10 @@ struct PortEvent
     /// TransmitCompleted, TransmitFailed: TimedFrame::time the frame was sent with, if the
     /// backend knows it (it tells frames with the same identifier apart).
     std::optional<SimTime> send_time;
-    std::uint64_t count = 0;                 ///< ReceiveOverflow: frames dropped.
+    std::uint64_t count = 0; ///< ReceiveOverflow: frames dropped. EventOverflow: transmit events dropped.
     BusState bus_state = BusState::ErrorActive; ///< BusStateChanged: the new state.
+    std::uint64_t token = 0; ///< TransmitCompleted, TransmitFailed: caller token when `correlated` is true.
+    bool correlated = false; ///< True when `token` and `send_time` identify the originating send() call.
 
     [[nodiscard]] friend bool operator==(const PortEvent&, const PortEvent&) noexcept = default;
 };
@@ -120,12 +136,27 @@ public:
 
     [[nodiscard]] virtual TimeDomain time_domain() const noexcept = 0;
 
+    /// Whether this port reports token-correlated transmit outcomes via PortEvent.
+    [[nodiscard]] virtual TransmitCapabilities transmit_capabilities() const noexcept
+    {
+        return TransmitCapabilities::None;
+    }
+
     /// Calls `sink` for every received frame with time < `now` (see above) and removes it.
     /// Returns the number of frames released.
     virtual std::size_t release_before(SimTime now, FrameSink sink) = 0;
 
     /// Hands `frame` to the backend. `frame.time` is the time of the sending step.
     virtual SendResult send(const TimedFrame& frame) = 0;
+
+    /// Hands `frame` to the backend with caller-chosen opaque `token` (0 is a valid value).
+    /// Backends that report TransmitCapabilities::Correlated echo `token` back on the resulting
+    /// TransmitCompleted / TransmitFailed PortEvent with `correlated == true`.
+    virtual SendResult send(const TimedFrame& frame, std::uint64_t token)
+    {
+        static_cast<void>(token);
+        return send(frame);
+    }
 
     /// Calls `sink` for every event with time < `now` (see above) and removes it. Returns the
     /// number of events released. The default reports no events.

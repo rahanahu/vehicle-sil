@@ -83,6 +83,7 @@ TEST_CASE(external_port_adapter_converts_the_events_of_the_external_port)
         ExternalPortAdapter adapter(external, clock);
         CHECK(external.started());
         CHECK(adapter.time_domain() == TimeDomain::RealTime);
+        CHECK(adapter.transmit_capabilities() == vehicle_sil::can::TransmitCapabilities::None);
 
         const std::vector<std::uint8_t> d{7};
         external.deliver(ExternalEventKind::Frame, vehicle_sil::unit::extended_frame(0x18FF0001, d));
@@ -107,8 +108,14 @@ TEST_CASE(external_port_adapter_converts_the_events_of_the_external_port)
         CHECK_EQ(frames[0].frame.id, 0x18FF0001u);
         CHECK(frames[0].frame.format == vehicle_sil::can::IdFormat::Extended);
 
-        // Synchronous results of transmit().
-        CHECK(adapter.send(TimedFrame{at(5ms), can_frame(0x100, 1)}) == SendResult::Accepted);
+        // Synchronous results of transmit() (2-arg Port::send token overload does not fabricate TransmitCompleted).
+        CHECK(static_cast<vehicle_sil::can::Port&>(adapter).send(TimedFrame{at(5ms), can_frame(0x100, 1)}, 77) ==
+              SendResult::Accepted);
+        {
+            std::vector<PortEvent> txEvents;
+            CHECK_EQ(adapter.release_events_before(at(10ms), [&](const PortEvent& e) { txEvents.push_back(e); }), 0u);
+            CHECK(txEvents.empty());
+        }
         external.result = TransmitResult::QueueFull;
         CHECK(adapter.send(TimedFrame{at(5ms), can_frame(0x100, 2)}) == SendResult::QueueFull);
         external.result = TransmitResult::Failed;

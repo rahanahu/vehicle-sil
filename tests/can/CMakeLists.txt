@@ -14,6 +14,13 @@ vehicle_sil_add_harness_tests(vehicle_sil_can_tests
   LINK vehicle_sil::can)
 target_include_directories(vehicle_sil_can_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Counts every allocation of the process (unit/allocation_counter.hpp): its own binary.
+vehicle_sil_add_harness_tests(vehicle_sil_can_allocation_tests
+  PREFIX can LABELS unit can TIMEOUT 60
+  SOURCES test_can_allocation.cpp
+  LINK vehicle_sil::can)
+target_include_directories(vehicle_sil_can_allocation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # The SIL Kit port of vehicle_sil::can: against a fake controller, and on real participants
 # (in-process registry), where the traces must equal the virtual bus's.
 vehicle_sil_add_harness_tests(vehicle_sil_can_silkit_tests

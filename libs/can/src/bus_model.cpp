@@ -49,8 +49,17 @@ CanBusModel::CanBusModel(CanBusModelOptions options) : bitrate_(options.bitrate)
 
 std::size_t CanBusModel::add_sender()
 {
+    return add_sender(capacity_);
+}
+
+std::size_t CanBusModel::add_sender(std::size_t queue_capacity)
+{
+    if (queue_capacity == 0)
+    {
+        throw std::invalid_argument("vehicle_sil::can::CanBusModel: the queue capacity must be > 0");
+    }
     Queue queue;
-    queue.slots.resize(capacity_);
+    queue.slots.resize(queue_capacity);
     queues_.push_back(std::move(queue));
     return queues_.size() - 1;
 }
@@ -66,13 +75,14 @@ bool CanBusModel::submit(std::size_t sender, const Frame& frame, SimTime ready, 
         throw std::invalid_argument("vehicle_sil::can::CanBusModel: invalid frame");
     }
     Queue& queue = queues_[sender];
-    if (queue.size >= capacity_)
+    const std::size_t queueCapacity = queue.slots.size();
+    if (queue.size >= queueCapacity)
     {
         return false;
     }
     // Only the queue head competes (run()), so a frame with an earlier `ready` than the frame
     // ahead of it waits for that frame anyway.
-    queue.slots[(queue.head + queue.size) % capacity_] = Pending{frame, ready, context};
+    queue.slots[(queue.head + queue.size) % queueCapacity] = Pending{frame, ready, context};
     ++queue.size;
     ++total_queued_;
     return true;
@@ -80,7 +90,7 @@ bool CanBusModel::submit(std::size_t sender, const Frame& frame, SimTime ready, 
 
 void CanBusModel::pop(Queue& queue) noexcept
 {
-    queue.head = (queue.head + 1) % capacity_;
+    queue.head = (queue.head + 1) % queue.slots.size();
     --queue.size;
     --total_queued_;
 }
@@ -158,9 +168,10 @@ std::size_t CanBusModel::clear(std::size_t sender, SinkRef<Removed> sink)
         throw std::invalid_argument("vehicle_sil::can::CanBusModel: unknown sender");
     }
     const Queue& queue = queues_[sender];
+    const std::size_t queueCapacity = queue.slots.size();
     for (std::size_t i = 0; i < queue.size; ++i)
     {
-        const Pending& pending = queue.slots[(queue.head + i) % capacity_];
+        const Pending& pending = queue.slots[(queue.head + i) % queueCapacity];
         sink(Removed{pending.frame, pending.context});
     }
     return clear(sender);

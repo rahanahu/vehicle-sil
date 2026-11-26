@@ -81,12 +81,24 @@ struct VirtualCanBusTiming
 struct VirtualCanBusOptions
 {
     /// Receive inbox of each endpoint, in frames. Sized for the most frames an endpoint can
-    /// receive in one step of its host. Also the capacity of an endpoint's event queue.
+    /// receive in one step of its host. Also the default capacity of an endpoint's event queue.
     /// Allocated once per endpoint.
     std::size_t inbox_capacity = 1024;
     /// Empty: no bus model; a frame reaches the others at its send time. Set: arbitration and
     /// transmission time (see VirtualCanBus).
     std::optional<VirtualCanBusTiming> timing = std::nullopt;
+};
+
+/// Per-endpoint capacity overrides for VirtualCanBus::attach(). Zero inherits the bus default.
+struct VirtualCanBusEndpointOptions
+{
+    /// Receive inbox capacity in frames (0: use VirtualCanBusOptions::inbox_capacity).
+    std::size_t inbox_capacity = 0;
+    /// Event queue capacity (0: use VirtualCanBusOptions::inbox_capacity).
+    std::size_t event_capacity = 0;
+    /// Maximum unacknowledged frames (0: with timing, use VirtualCanBusTiming::transmit_queue_capacity;
+    /// without timing, unlimited).
+    std::size_t transmit_queue_capacity = 0;
 };
 
 /// A CAN bus in virtual time. Each attach() creates an endpoint, a Port that stands for one CAN
@@ -140,15 +152,20 @@ public:
     {
     public:
         [[nodiscard]] TimeDomain time_domain() const noexcept override { return TimeDomain::Virtual; }
+        [[nodiscard]] TransmitCapabilities transmit_capabilities() const noexcept override
+        {
+            return TransmitCapabilities::Correlated;
+        }
         std::size_t release_before(SimTime now, FrameSink sink) override;
         /// Delivers a valid frame to every other endpoint, or with timing queues it for the bus
-        /// (Accepted). An invalid frame (is_valid() false) is not sent (Failed). With timing, a
-        /// full transmit queue gives QueueFull. A frame older than what the bus has already
-        /// handed out throws std::logic_error (see the class comment).
+        /// (Accepted). An invalid frame (is_valid() false) is not sent (Failed). A full transmit
+        /// queue gives QueueFull. A frame older than what the bus has already handed out throws
+        /// std::logic_error (see the class comment).
         SendResult send(const TimedFrame& frame) override;
-        /// With timing: a TransmitCompleted for each frame this endpoint sent, at the end of its
-        /// transmission. With or without timing: TransmitFailed for the frames that failed (fault
-        /// injection, outages), ReceiveOverflow, and the injected events.
+        SendResult send(const TimedFrame& frame, std::uint64_t token) override;
+        /// TransmitCompleted for each frame this endpoint sent (at the end of its transmission
+        /// with timing, or at the send time without timing), TransmitFailed for frames that failed
+        /// (fault injection, outages), ReceiveOverflow, EventOverflow, and injected events.
         std::size_t release_events_before(SimTime now, PortEventSink sink) override;
 
         /// Frames dropped because the inbox was full.
@@ -157,6 +174,8 @@ public:
         [[nodiscard]] std::size_t pending() const { return inbox_.size(); }
         /// With timing: frames sent and not yet transmitted.
         [[nodiscard]] std::size_t transmit_pending() const;
+        /// Accepted frames whose correlated transmit event has not been released yet.
+        [[nodiscard]] std::size_t outstanding() const noexcept { return outstanding_; }
         /// Events dropped because the event queue was full.
         [[nodiscard]] std::uint64_t event_overflows() const { return events_.overflows(); }
         /// Sets (or with an empty function removes) the fault injector for the frames this
@@ -184,7 +203,16 @@ public:
         {
             Frame frame{};
             SimTime send_time{};
+            std::uint64_t token = 0;
             bool lost = false;
+            bool correlated = false;
+        };
+        struct TxSlot
+        {
+            SimTime send_time{};
+            std::uint64_t token = 0;
+            bool lost = false;
+            bool correlated = false;
         };
         struct Outage
         {
@@ -195,23 +223,31 @@ public:
         [[nodiscard]] bool cut_off(SimTime time, OutageDirection direction) const noexcept;
         /// A frame reaches this endpoint at `time`.
         void receive_frame(SimTime time, const Frame& frame);
+        /// Queues a transmit event; records correlated drops in event_overflow_.
+        void push_transmit_event(const PortEvent& event);
+        /// A frame this endpoint sent at `time` completed (timing-less bus).
+        void transmit_completed(const TimedFrame& frame, std::uint64_t token);
         /// A frame this endpoint sent at `time` was not transmitted.
-        void transmit_failed(const TimedFrame& frame);
+        void transmit_failed(const TimedFrame& frame, std::uint64_t token);
+        std::size_t allocate_tx_slot(SimTime send_time, std::uint64_t token, bool lost, bool correlated) noexcept;
+        TxSlot release_tx_slot(std::size_t slot) noexcept;
         Endpoint(VirtualCanBus& bus, std::size_t index, std::size_t capacity, std::size_t event_capacity,
-                 std::size_t transmit_capacity)
-          : bus_(bus), index_(index), inbox_(capacity), events_(event_capacity), staged_(transmit_capacity)
-        {
-        }
+                 std::size_t staged_capacity, std::size_t transmit_capacity, std::size_t slot_capacity);
 
         VirtualCanBus& bus_;
         std::size_t index_;
         StepInbox<Frame> inbox_;
         StepInbox<PortEvent> events_;
         StepInbox<Staged> staged_; ///< with timing: sent, not yet handed to the bus model (by ready time)
+        std::size_t transmit_capacity_ = 0;
+        std::vector<TxSlot> tx_slots_;
+        std::vector<std::size_t> free_slots_;
         std::optional<SimTime> released_before_; ///< `now` of the last release_before() (frames before it are gone)
         FaultInjector injector_;
         std::vector<Outage> outages_;
         OverflowCollector overflow_;
+        OverflowCollector event_overflow_{PortEvent::Kind::EventOverflow};
+        std::size_t outstanding_ = 0;
         std::uint64_t outage_dropped_ = 0;
         std::uint64_t outage_lost_ = 0;
     };
@@ -223,6 +259,8 @@ public:
     /// Creates an endpoint. It lives as long as the bus. It receives only frames sent after
     /// it was attached.
     Endpoint& attach();
+    /// Creates an endpoint with per-endpoint capacity overrides.
+    Endpoint& attach(VirtualCanBusEndpointOptions options);
 
     [[nodiscard]] std::size_t endpoint_count() const noexcept { return endpoints_.size(); }
     /// With timing: transmissions so far. Without timing: 0.
@@ -232,7 +270,7 @@ private:
     void deliver(const Endpoint& from, const TimedFrame& frame);
     /// Throws std::logic_error if `frame` is older than what the bus has already decided.
     void check_causality(const Endpoint& from, const TimedFrame& frame) const;
-    SendResult submit(Endpoint& from, const TimedFrame& frame, const FaultAction& action);
+    SendResult submit(Endpoint& from, const TimedFrame& frame, const FaultAction& action, std::uint64_t token);
     void advance(SimTime now);
     void hand_over_before(SimTime time);
 

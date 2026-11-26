@@ -9,25 +9,38 @@
 
 namespace vehicle_sil::can {
 
-namespace {
-
-// The bus model's context of a frame: its send time and whether a fault drops it.
-std::uint64_t pack_context(SimTime send_time, bool lost) noexcept
+VirtualCanBus::Endpoint::Endpoint(VirtualCanBus& bus, std::size_t index, std::size_t capacity, std::size_t event_capacity,
+                                  std::size_t staged_capacity, std::size_t transmit_capacity, std::size_t slot_capacity)
+  : bus_(bus),
+    index_(index),
+    inbox_(capacity),
+    events_(event_capacity),
+    staged_(staged_capacity),
+    transmit_capacity_(transmit_capacity),
+    tx_slots_(slot_capacity)
 {
-    return (static_cast<std::uint64_t>(to_ns(send_time)) << 1) | (lost ? 1u : 0u);
+    free_slots_.reserve(slot_capacity);
+    for (std::size_t i = slot_capacity; i > 0; --i)
+    {
+        free_slots_.push_back(i - 1);
+    }
 }
 
-SimTime unpack_send_time(std::uint64_t context) noexcept
+std::size_t VirtualCanBus::Endpoint::allocate_tx_slot(SimTime send_time, std::uint64_t token, bool lost,
+                                                      bool correlated) noexcept
 {
-    return SimTime{} + std::chrono::nanoseconds(static_cast<std::int64_t>(context >> 1));
+    const std::size_t slot = free_slots_.back();
+    free_slots_.pop_back();
+    tx_slots_[slot] = TxSlot{send_time, token, lost, correlated};
+    return slot;
 }
 
-bool unpack_lost(std::uint64_t context) noexcept
+VirtualCanBus::Endpoint::TxSlot VirtualCanBus::Endpoint::release_tx_slot(std::size_t slot) noexcept
 {
-    return (context & 1u) != 0;
+    const TxSlot value = tx_slots_[slot];
+    free_slots_.push_back(slot);
+    return value;
 }
-
-} // namespace
 
 VirtualCanBus::VirtualCanBus(VirtualCanBusOptions options) : options_(options)
 {
@@ -49,21 +62,31 @@ VirtualCanBus::VirtualCanBus(VirtualCanBusOptions options) : options_(options)
 
 VirtualCanBus::Endpoint& VirtualCanBus::attach()
 {
+    return attach(VirtualCanBusEndpointOptions{});
+}
+
+VirtualCanBus::Endpoint& VirtualCanBus::attach(VirtualCanBusEndpointOptions options)
+{
     const std::size_t index = endpoints_.size();
-    // Without timing the transmit queue stays empty.
-    const std::size_t transmitCapacity = model_ ? model_->queue_capacity() : 1;
-    const std::size_t eventCapacity = options_.inbox_capacity;
+    const std::size_t inboxCapacity = options.inbox_capacity > 0 ? options.inbox_capacity : options_.inbox_capacity;
+    const std::size_t eventCapacity = options.event_capacity > 0 ? options.event_capacity : options_.inbox_capacity;
+    // Without timing the transmit queue stays empty (staged_ still needs capacity >= 1 for StepInbox).
+    const std::size_t transmitCapacity =
+        model_ ? (options.transmit_queue_capacity > 0 ? options.transmit_queue_capacity : model_->queue_capacity())
+               : options.transmit_queue_capacity;
+    const std::size_t stagedCapacity = model_ ? transmitCapacity : 1;
+    const std::size_t slotCapacity = model_ ? transmitCapacity : 0;
     // Endpoint's constructor is private; make_unique cannot reach it.
     endpoints_.push_back(std::unique_ptr<Endpoint>(
-        new Endpoint(*this, index, options_.inbox_capacity, eventCapacity, transmitCapacity)));
+        new Endpoint(*this, index, inboxCapacity, eventCapacity, stagedCapacity, transmitCapacity, slotCapacity)));
     if (model_)
     {
-        model_->add_sender(); // index == the endpoint's index
+        model_->add_sender(transmitCapacity); // index == the endpoint's index
     }
     return *endpoints_.back();
 }
 
-SendResult VirtualCanBus::submit(Endpoint& from, const TimedFrame& frame, const FaultAction& action)
+SendResult VirtualCanBus::submit(Endpoint& from, const TimedFrame& frame, const FaultAction& action, std::uint64_t token)
 {
     std::size_t copies = 1;
     SimTime ready = frame.time;
@@ -85,7 +108,7 @@ SendResult VirtualCanBus::submit(Endpoint& from, const TimedFrame& frame, const 
         break;
     case FaultAction::Kind::TransmitFailed:
         check_causality(from, frame);
-        from.transmit_failed(frame);
+        from.transmit_failed(frame, token);
         return SendResult::Accepted;
     case FaultAction::Kind::Deliver:
     case FaultAction::Kind::Drop:
@@ -96,15 +119,19 @@ SendResult VirtualCanBus::submit(Endpoint& from, const TimedFrame& frame, const 
     // (deciding the bus up to the step time) before it sends, so for hosts this is the queue at
     // the send time. (Not deciding here keeps a frame sent ahead of time, as tests inject them,
     // from freezing the bus up to its time.)
-    if (from.staged_.size() + model_->queued(from.index_) + copies > model_->queue_capacity())
+    if (from.staged_.size() + model_->queued(from.index_) + copies > from.transmit_capacity_)
     {
         return SendResult::QueueFull;
     }
     const bool lost = action.kind == FaultAction::Kind::Drop;
     for (std::size_t i = 0; i < copies; ++i)
     {
-        from.staged_.push(ready, Endpoint::Staged{frame.frame, frame.time, lost});
+        // Only the first copy correlates back to the caller's token; a duplicated copy stays uncorrelated
+        // so one Accepted send never produces two correlated completions for the same token.
+        const bool correlated = (i == 0);
+        from.staged_.push(ready, Endpoint::Staged{frame.frame, frame.time, correlated ? token : 0, lost, correlated});
     }
+    ++from.outstanding_;
     return SendResult::Accepted;
 }
 
@@ -112,10 +139,12 @@ void VirtualCanBus::hand_over_before(SimTime time)
 {
     for (auto& endpoint : endpoints_)
     {
-        const std::size_t index = endpoint->index_;
-        endpoint->staged_.drain_before(time, [this, index](SimTime ready, Endpoint::Staged& staged) {
+        Endpoint& ep = *endpoint;
+        const std::size_t index = ep.index_;
+        ep.staged_.drain_before(time, [this, &ep, index](SimTime ready, Endpoint::Staged& staged) {
+            const std::size_t slot = ep.allocate_tx_slot(staged.send_time, staged.token, staged.lost, staged.correlated);
             // Cannot be full: send() counts the staged frames against the same capacity.
-            static_cast<void>(model_->submit(index, staged.frame, ready, pack_context(staged.send_time, staged.lost)));
+            static_cast<void>(model_->submit(index, staged.frame, ready, static_cast<std::uint64_t>(slot)));
         });
     }
 }
@@ -128,7 +157,8 @@ void VirtualCanBus::advance(SimTime now)
     }
     const auto transmitted = [this](const CanBusModel::Transmission& tx) {
         Endpoint& from = *endpoints_[tx.sender];
-        if (!unpack_lost(tx.context))
+        const Endpoint::TxSlot slot = from.release_tx_slot(static_cast<std::size_t>(tx.context));
+        if (!slot.lost)
         {
             for (auto& endpoint : endpoints_)
             {
@@ -142,8 +172,10 @@ void VirtualCanBus::advance(SimTime now)
         event.kind = PortEvent::Kind::TransmitCompleted;
         event.time = tx.end;
         event.id = tx.frame.id;
-        event.send_time = unpack_send_time(tx.context);
-        from.events_.push(tx.end, event);
+        event.send_time = slot.send_time;
+        event.token = slot.token;
+        event.correlated = slot.correlated;
+        from.push_transmit_event(event);
     };
     const SimDuration step = options_.timing->simulator_step;
     if (step == SimDuration::zero())
@@ -244,14 +276,41 @@ void VirtualCanBus::Endpoint::receive_frame(SimTime time, const Frame& frame)
     }
 }
 
-void VirtualCanBus::Endpoint::transmit_failed(const TimedFrame& frame)
+void VirtualCanBus::Endpoint::push_transmit_event(const PortEvent& event)
 {
+    if (!events_.push(event.time, event))
+    {
+        if (event.correlated)
+        {
+            event_overflow_.note(event.time, 1);
+        }
+    }
+}
+
+void VirtualCanBus::Endpoint::transmit_completed(const TimedFrame& frame, std::uint64_t token)
+{
+    ++outstanding_;
+    PortEvent event;
+    event.kind = PortEvent::Kind::TransmitCompleted;
+    event.time = frame.time;
+    event.id = frame.frame.id;
+    event.send_time = frame.time;
+    event.token = token;
+    event.correlated = true;
+    push_transmit_event(event);
+}
+
+void VirtualCanBus::Endpoint::transmit_failed(const TimedFrame& frame, std::uint64_t token)
+{
+    ++outstanding_;
     PortEvent event;
     event.kind = PortEvent::Kind::TransmitFailed;
     event.time = frame.time;
     event.id = frame.frame.id;
     event.send_time = frame.time;
-    static_cast<void>(events_.push(event.time, event)); // a full queue counts it
+    event.token = token;
+    event.correlated = true;
+    push_transmit_event(event);
 }
 
 std::size_t VirtualCanBus::Endpoint::release_before(SimTime now, FrameSink sink)
@@ -266,6 +325,11 @@ std::size_t VirtualCanBus::Endpoint::release_before(SimTime now, FrameSink sink)
 
 SendResult VirtualCanBus::Endpoint::send(const TimedFrame& frame)
 {
+    return send(frame, 0);
+}
+
+SendResult VirtualCanBus::Endpoint::send(const TimedFrame& frame, std::uint64_t token)
+{
     if (!is_valid(frame.frame))
     {
         return SendResult::Failed;
@@ -274,13 +338,41 @@ SendResult VirtualCanBus::Endpoint::send(const TimedFrame& frame)
     {
         bus_.check_causality(*this, frame);
         ++outage_lost_;
-        transmit_failed(frame);
+        transmit_failed(frame, token);
         return SendResult::Accepted;
     }
     const FaultAction action = injector_ ? injector_(frame) : FaultAction::deliver();
     if (bus_.model_)
     {
-        return bus_.submit(*this, frame, action);
+        return bus_.submit(*this, frame, action, token);
+    }
+    switch (action.kind)
+    {
+    case FaultAction::Kind::QueueFull:
+        return SendResult::QueueFull;
+    case FaultAction::Kind::Failed:
+        return SendResult::Failed;
+    case FaultAction::Kind::Delay:
+        if (action.delay <= SimDuration::zero())
+        {
+            throw std::invalid_argument("vehicle_sil::can::VirtualCanBus: a fault delay must be > 0");
+        }
+        bus_.check_causality(*this, TimedFrame{frame.time + action.delay, frame.frame});
+        break;
+    case FaultAction::Kind::TransmitFailed:
+        bus_.check_causality(*this, frame);
+        transmit_failed(frame, token);
+        return SendResult::Accepted;
+    case FaultAction::Kind::Deliver:
+    case FaultAction::Kind::Duplicate:
+        bus_.check_causality(*this, frame);
+        break;
+    case FaultAction::Kind::Drop:
+        break;
+    }
+    if (transmit_capacity_ > 0 && outstanding_ >= transmit_capacity_)
+    {
+        return SendResult::QueueFull;
     }
     switch (action.kind)
     {
@@ -294,29 +386,40 @@ SendResult VirtualCanBus::Endpoint::send(const TimedFrame& frame)
         bus_.deliver(*this, frame);
         break;
     case FaultAction::Kind::Delay:
-        if (action.delay <= SimDuration::zero())
-        {
-            throw std::invalid_argument("vehicle_sil::can::VirtualCanBus: a fault delay must be > 0");
-        }
         bus_.deliver(*this, TimedFrame{frame.time + action.delay, frame.frame});
         break;
     case FaultAction::Kind::QueueFull:
-        return SendResult::QueueFull;
     case FaultAction::Kind::Failed:
-        return SendResult::Failed;
     case FaultAction::Kind::TransmitFailed:
-        bus_.check_causality(*this, frame);
-        transmit_failed(frame);
         break;
     }
+    transmit_completed(frame, token);
     return SendResult::Accepted;
 }
 
 std::size_t VirtualCanBus::Endpoint::release_events_before(SimTime now, PortEventSink sink)
 {
     bus_.advance(now);
-    return OverflowCollector::release_merged(overflow_.take_before(now), sink, [&](auto&& forward) {
-        return events_.drain_before(now, [&forward](SimTime, PortEvent& event) { forward(event); });
+    const auto release = [this, &sink](const PortEvent& event) {
+        if (event.correlated &&
+            (event.kind == PortEvent::Kind::TransmitCompleted || event.kind == PortEvent::Kind::TransmitFailed))
+        {
+            if (outstanding_ > 0)
+            {
+                --outstanding_;
+            }
+        }
+        else if (event.kind == PortEvent::Kind::EventOverflow)
+        {
+            const std::size_t dropped = static_cast<std::size_t>(std::min<std::uint64_t>(outstanding_, event.count));
+            outstanding_ -= dropped;
+        }
+        sink(event);
+    };
+    return OverflowCollector::release_merged(overflow_.take_before(now), release, [&](auto&& forward) {
+        return OverflowCollector::release_merged(event_overflow_.take_before(now), forward, [&](auto&& inner) {
+            return events_.drain_before(now, [&inner](SimTime, PortEvent& event) { inner(event); });
+        });
     });
 }
 

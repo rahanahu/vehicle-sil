@@ -287,7 +287,8 @@ TEST_CASE(j1939_gives_the_same_protocol_results_with_and_without_bus_timing)
         // With timing the frames arrive later than they were sent.
         CHECK(r.ecus[1]->timed_messages != base.ecus[1]->timed_messages);
     }
-    CHECK_EQ(base.ecus[0]->network.statistics().frames_transmitted, 0u); // no events without timing
+    // Without timing, every accepted frame is still reported transmitted (matching SIL Kit trivial simulation).
+    CHECK_EQ(base.ecus[0]->network.statistics().frames_transmitted, base.ecus[0]->network.statistics().frames_sent);
 }
 
 TEST_CASE(j1939_frame_times_on_the_timed_bus_do_not_depend_on_the_receivers_step_sizes)
