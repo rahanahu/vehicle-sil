@@ -2141,6 +2141,72 @@ class BenchmarkReportSchema(unittest.TestCase):
         }
         self.assertEqual(problems(BENCHMARK_REPORT, generated), [])
 
+        # Ambiguous compile_commands.json (both partial and all-targets -> unavailable with non-null warning)
+        # must also conform to schema/benchmark-report.schema.json.
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            cc_partial = [
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ -O3 -DNDEBUG -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ -O0 -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/libs/core/src/participant_runtime.cpp", "command": "/usr/bin/g++ -O3 -DNDEBUG -c pr.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/bench_ecu/main.cpp", "command": "/usr/bin/g++ -O3 -DNDEBUG -c main.cpp"},
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_partial), encoding="utf-8")
+            (bdir / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\n", encoding="utf-8")
+            partial_prov, _ = bv.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(partial_prov["flags_source"], "compile_commands.json")
+            self.assertIsNotNone(partial_prov["flags_warning"])
+            partial_report = copy.deepcopy(generated)
+            partial_report["provenance"]["build"] = partial_prov
+            self.assertEqual(problems(BENCHMARK_REPORT, partial_report), [])
+
+            cc_all_ambiguous = [
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ -O3 -DNDEBUG -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ -O0 -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/libs/core/src/participant_runtime.cpp", "command": "/usr/bin/g++ -O3 -DNDEBUG -c pr.cpp"},
+                {"directory": tmp, "file": f"{tmp}/libs/core/src/participant_runtime.cpp", "command": "/usr/bin/g++ -O0 -c pr.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/bench_ecu/main.cpp", "command": "/usr/bin/g++ -O3 -DNDEBUG -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/bench_ecu/main.cpp", "command": "/usr/bin/g++ -O0 -c main.cpp"},
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_all_ambiguous), encoding="utf-8")
+            all_amb_prov, _ = bv.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(all_amb_prov["flags_source"], "unavailable")
+            self.assertIsNotNone(all_amb_prov["flags_warning"])
+            all_amb_report = copy.deepcopy(generated)
+            all_amb_report["provenance"]["build"] = all_amb_prov
+            self.assertEqual(problems(BENCHMARK_REPORT, all_amb_report), [])
+
+            # Missing @response_file entries (both all-unreadable -> unavailable and partial -> compile_commands.json)
+            # must also conform to schema/benchmark-report.schema.json.
+            cc_all_unreadable_rsp = [
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ @debug.rsp -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ @release.rsp -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/libs/core/src/participant_runtime.cpp", "command": "/usr/bin/g++ @debug.rsp -c pr.cpp"},
+                {"directory": tmp, "file": f"{tmp}/libs/core/src/participant_runtime.cpp", "command": "/usr/bin/g++ @release.rsp -c pr.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/bench_ecu/main.cpp", "command": "/usr/bin/g++ @debug.rsp -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/bench_ecu/main.cpp", "command": "/usr/bin/g++ @release.rsp -c main.cpp"},
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_all_unreadable_rsp), encoding="utf-8")
+            all_rsp_prov, _ = bv.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(all_rsp_prov["flags_source"], "unavailable")
+            self.assertIsNotNone(all_rsp_prov["flags_warning"])
+            all_rsp_report = copy.deepcopy(generated)
+            all_rsp_report["provenance"]["build"] = all_rsp_prov
+            self.assertEqual(problems(BENCHMARK_REPORT, all_rsp_report), [])
+
+            cc_partial_unreadable_rsp = [
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ @missing.rsp -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/libs/core/src/participant_runtime.cpp", "command": "/usr/bin/g++ -O3 -DNDEBUG -c pr.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/bench_ecu/main.cpp", "command": "/usr/bin/g++ -O3 -DNDEBUG -c main.cpp"},
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_partial_unreadable_rsp), encoding="utf-8")
+            partial_rsp_prov, _ = bv.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(partial_rsp_prov["flags_source"], "compile_commands.json")
+            self.assertIsNotNone(partial_rsp_prov["flags_warning"])
+            partial_rsp_report = copy.deepcopy(generated)
+            partial_rsp_report["provenance"]["build"] = partial_rsp_prov
+            self.assertEqual(problems(BENCHMARK_REPORT, partial_rsp_report), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
