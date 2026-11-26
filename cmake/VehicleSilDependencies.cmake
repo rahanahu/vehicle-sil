@@ -51,6 +51,14 @@ function(_vehicle_sil_add_silkit)
   # only built when something depends on it (the integration tests do).
   set(SILKIT_BUILD_UTILITIES ON)
 
+  # GCC 16 emits -Wmaybe-uninitialized in SIL Kit's sources. Appending to
+  # CMAKE_CXX_FLAGS inside this function scopes the flag to SIL Kit's
+  # subdirectory only; it does not leak to vehicle-sil or user targets, and
+  # Clang does not recognize -Wmaybe-uninitialized.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    string(APPEND CMAKE_CXX_FLAGS " -Wno-maybe-uninitialized")
+  endif()
+
   _vehicle_sil_patched_source(sil-kit silkit_source)
   add_subdirectory("${silkit_source}" "${CMAKE_CURRENT_BINARY_DIR}/external/sil-kit" EXCLUDE_FROM_ALL)
   # MinGW GCC (posix/winpthreads): libstdc++'s os_defines.h defines _GTHREAD_USE_MUTEX_INIT_FUNC and
