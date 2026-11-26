@@ -32,6 +32,12 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
       <span class="mark" aria-hidden="true">{{ mark() }}</span>
       {{ outcome() }}
     </p>
+    @if (handoverBadge(); as notice) {
+      <p class="handover" role="status" data-testid="scenario-handover">
+        <span class="mark" aria-hidden="true">‖</span>
+        {{ notice }}
+      </p>
+    }
     @if (timelineHref(); as href) {
       <p class="timeline">
         <a
@@ -118,6 +124,19 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
     .outcome[data-tone='good'] {
       color: var(--mat-sys-primary);
     }
+    .handover {
+      margin: var(--app-space-1) 0 var(--app-space-2);
+      padding: var(--app-space-2) var(--app-space-3);
+      border-inline-start: 3px solid var(--mat-sys-primary);
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--mat-sys-surface-container-low);
+      color: var(--mat-sys-on-surface);
+      overflow-wrap: anywhere;
+    }
+    .handover .mark {
+      margin-inline-end: var(--app-space-1);
+      color: var(--mat-sys-primary);
+    }
     .file,
     .timeline {
       margin: 0 0 var(--app-space-2);
@@ -173,6 +192,26 @@ export class ScenarioPanel {
   readonly scenario = input.required<ScenarioView>();
   /** シナリオがまだ動いているか（ランチャーが動いていて、結果がまだ）。 */
   readonly running = input(false);
+  /** 実行が一時停止中か。 */
+  readonly paused = input(false);
+  /** ランチャーが異常終了したか。 */
+  readonly crashed = input(false);
+
+  protected readonly handoverBadge = computed(() => {
+    const s = this.scenario();
+    if (!this.running() || this.crashed() || !s.handedOver || s.status !== 'passed') {
+      return null;
+    }
+    const atMs = s.overAtMs;
+    if (this.paused()) {
+      return atMs !== null
+        ? $localize`シナリオは ${atMs}:ms: ms で完了し、手動操作のため一時停止しています。`
+        : $localize`シナリオが完了し、手動操作のため一時停止しています。`;
+    }
+    return atMs !== null
+      ? $localize`シナリオは ${atMs}:ms: ms で完了し、手動操作へ引き継ぎました。`
+      : $localize`シナリオが完了し、手動操作へ引き継ぎました。`;
+  });
 
   protected readonly tableLabel = $localize`シナリオの手順`;
 

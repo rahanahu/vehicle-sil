@@ -13,8 +13,8 @@ import pytest
 from vehicle_sil_gui import process
 from vehicle_sil_gui.allowed import Facts
 from vehicle_sil_gui.hub import Client, Hub, encode
-from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, command_line, hide_request,
-                                     request_text, serve_command, serve_run_command, speed_argument,
+from vehicle_sil_gui.launcher import (STEP_MS_MAX, InvalidRequest, Launcher, check_command, command_line,
+                                     hide_request, request_text, serve_command, serve_run_command, speed_argument,
                                      write_request_file)
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
@@ -2054,3 +2054,106 @@ def test_cli_bind_real_posix_socket_reuseaddr() -> None:
         assert fixed.getsockopt(socket_module.SOL_SOCKET, socket_module.SO_REUSEADDR) != 0
     finally:
         fixed.close()
+
+
+def test_session_ended_sim_ms_and_handover_invariants() -> None:
+    from vehicle_sil_gui.recording import Recording
+
+    # 1. Non-scenario run: ended_sim_ms comes from result.timing.sim_ms (even 0 or oversized result), never time.sim_ms
+    s = Session("1", "simulation.yaml", [], None, False, limits=Limits(object_bytes=200))
+    assert s.ended_sim_ms is None
+    feed_line(s, line("run_start", 0, run="r-1"))
+    feed_line(s, line("time", 1, sim_ms=250))
+    assert s.ended_sim_ms is None
+    big_res = {"result": "passed", "simulation": "ended", "timing": {"sim_ms": 1234}, "blob": "x" * 1000}
+    out = feed_line(s, line("result", 2, result=big_res))
+    assert "error:kept-limit" in kinds(out)
+    assert "timing" not in s.result
+    assert s.ended_sim_ms == 1234
+
+    # sim_ms == 0 and STEP_MS_MAX when simulation == "ended" are valid, while "not_started" / out-of-range / bad types yield None
+    s_zero = new_session()
+    feed_line(s_zero, line("run_start", 0, run="r-z"))
+    feed_line(s_zero, line("result", 1, result={"result": "stopped", "simulation": "ended", "timing": {"sim_ms": 0}}))
+    assert s_zero.ended_sim_ms == 0
+
+    s_max = new_session()
+    feed_line(s_max, line("run_start", 0, run="r-max"))
+    feed_line(s_max, line("result", 1, result={"result": "stopped", "simulation": "ended",
+                                                "timing": {"sim_ms": STEP_MS_MAX}}))
+    assert s_max.ended_sim_ms == STEP_MS_MAX
+
+    for bad_res in (
+        {"result": "stopped", "simulation": "not_started", "timing": {"sim_ms": 0}},
+        {"result": "stopped", "simulation": "not_started", "timing": {"sim_ms": 500}},
+        {"result": "passed", "simulation": "ended", "timing": {"sim_ms": True}},
+        {"result": "passed", "simulation": "ended", "timing": {"sim_ms": -1}},
+        {"result": "passed", "simulation": "ended", "timing": {"sim_ms": STEP_MS_MAX + 1}},
+        {"result": "passed", "simulation": "ended", "timing": {"sim_ms": 1.5}},
+        {"result": "passed", "simulation": "ended", "timing": "bad"},
+        {"result": "failed"},
+    ):
+        sx = new_session()
+        feed_line(sx, line("run_start", 0, run="r-bad"))
+        feed_line(sx, line("result", 1, result=bad_res))
+        assert sx.ended_sim_ms is None, bad_res
+
+    # Non-scenario run ignores malformed handed_over=True on state
+    s_no_sc = new_session()
+    feed_line(s_no_sc, line("run_start", 0, run="r-ns"))
+    feed_line(s_no_sc, line("state", 1, rev=1, allowed={}, handed_over=True, scenario_over_at_ms=50))
+    assert s_no_sc.scenario_handed_over is False and s_no_sc.scenario_summary() is None
+
+    # 2. Scenario run: monotonic handed_over even across oversized state and result without over_at_ms
+    sc = Session("2", "simulation.yaml", [], None, False, scenario="scenarios/a.yaml", limits=Limits(state_bytes=200))
+    assert sc.scenario_handed_over is False
+    feed_line(sc, line("run_start", 0, run="r-2"))
+    feed_line(sc, line("state", 1, rev=1, allowed={"write": {"ok": False, "reason": "scenario-running"}},
+                       handed_over=False, scenario_over_at_ms=None))
+    assert sc.scenario_handed_over is False and sc.scenario_summary()["handed_over"] is False
+
+    big_ho = {
+        "rev": 2,
+        "allowed": {"write": {"ok": True, "reason": None}},
+        "handed_over": True,
+        "scenario_over_at_ms": 500,
+        "outside": ["x" * 500],
+    }
+    ho_out = feed_line(sc, line("state", 2, **big_ho))
+    assert "error:kept-limit" in kinds(ho_out)
+    assert sc.scenario_handed_over is True
+    assert sc.scenario_status == "passed"
+    assert sc.scenario_over_at_ms == 500
+    assert sc.launcher_state["rev"] == 1  # oversized state was not saved, yet handover state was recorded
+
+    # Later state with handed_over=False or resume cannot revert handed_over, and result with null over_at_ms preserves it
+    feed_line(sc, line("state", 3, rev=3, allowed={"write": {"ok": True, "reason": None}},
+                       handed_over=False, scenario_over_at_ms=None))
+    assert sc.scenario_handed_over is True and sc.scenario_over_at_ms == 500
+    feed_line(sc, line("result", 4, result={
+        "result": "stopped", "simulation": "ended", "timing": {"sim_ms": 700},
+        "scenario": {"file": "scenarios/a.yaml", "name": "a", "status": "passed", "over_at_ms": None, "steps": []},
+    }))
+    assert sc.ended_sim_ms == 700
+    assert sc.scenario_summary()["handed_over"] is True
+    assert sc.scenario_summary()["status"] == "passed"
+    assert sc.scenario_summary()["over_at_ms"] == 500
+
+    # 3. Recording.on_operation rejects bool / out-of-range applied_at_ms; Recording.to_json hides end_ms when unavailable
+    rec = Recording()
+    for seq, bad_at in enumerate((True, False, -1, STEP_MS_MAX + 1), start=1):
+        rec.wrote(seq, [("E", "x", 1)], {"seq": seq, "done": True, "peers": {"E": {"state": "applied", "applied_at_ms": bad_at}}})
+    assert rec.entries == []
+    rec.wrote(10, [("E", "x", 1)], {"seq": 10, "done": True, "peers": {"E": {"state": "applied", "applied_at_ms": 0}}})
+    rec.wrote(11, [("E", "y", 2)], {"seq": 11, "done": True, "peers": {"E": {"state": "applied", "applied_at_ms": STEP_MS_MAX}}})
+    assert [(e[0], e[3], e[4]) for e in rec.entries] == [(0, "x", 1), (STEP_MS_MAX, "y", 2)]
+    rec_unavail = Recording(available=False, reason="scenario")
+    assert rec_unavail.to_json("1", "s.yaml", "ended", {}, 500)["end_ms"] is None
+
+    # 4. State scenario_over_at_ms ignores values > STEP_MS_MAX while accepting STEP_MS_MAX
+    sc_over = Session("3", "simulation.yaml", [], None, False, scenario="scenarios/a.yaml")
+    feed_line(sc_over, line("run_start", 0, run="r-3"))
+    feed_line(sc_over, line("state", 1, rev=1, allowed={}, handed_over=True, scenario_over_at_ms=STEP_MS_MAX + 1))
+    assert sc_over.scenario_handed_over is True and sc_over.scenario_over_at_ms is None
+    feed_line(sc_over, line("state", 2, rev=2, allowed={}, handed_over=True, scenario_over_at_ms=STEP_MS_MAX))
+    assert sc_over.scenario_over_at_ms == STEP_MS_MAX

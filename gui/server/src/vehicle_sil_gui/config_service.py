@@ -27,9 +27,9 @@ from .config_save import (check_text, check_unchanged, decide, existing_file, ne
 from .contracts import (CHECK_FIELDS, CheckFileRequest, CheckTextRequest, ConnectionsRequest, DescribeRequest, RunRequest,
                         format_validation_error, model_allowed_fields, validate_model_defer_file)
 from .descriptions import Descriptions
-from .launcher import (DESCRIPTIONS_NAME, FEATURE_RUN_STOP_AT, NO_CONNECTION, InvalidRequest, Launcher, check_command,
-                       connections_command, describe_command, hide_request, save_check_command, text_check_command,
-                       with_participant_timeouts, write_request_file)
+from .launcher import (DESCRIPTIONS_NAME, FEATURE_RUN_STOP_AT, FEATURE_SCENARIO_HANDOVER, NO_CONNECTION,
+                       InvalidRequest, Launcher, check_command, connections_command, describe_command, hide_request,
+                       save_check_command, text_check_command, with_participant_timeouts, write_request_file)
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .refusal import Refused
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
@@ -449,6 +449,23 @@ class ConfigService:
                 and FEATURE_RUN_STOP_AT not in self.launcher.features:
             raise Refused(409, "launcher-unsupported",
                           "the launcher does not support the requested run timing: install one with run-stop-at")
+        if req.after_scenario == "pause":
+            if FEATURE_SCENARIO_HANDOVER not in self.launcher.features:
+                raise Refused(409, "launcher-unsupported",
+                              "the launcher cannot hand a scenario run over to manual control: install one with "
+                              "scenario-handover")
+            if scenario is None:
+                raise Refused(400, "invalid-field",
+                              "after_scenario 'pause' needs a scenario: choose a scenario, or omit after_scenario")
+            if req.stop_at_ms is not None:
+                raise Refused(400, "invalid-field",
+                              "after_scenario 'pause' cannot be used with stop_at_ms: remove stop_at_ms, or use "
+                              "after_scenario 'stop'")
+        after_scenario = (
+            "pause" if req.after_scenario == "pause"
+            else "stop" if (req.after_scenario == "stop" and FEATURE_SCENARIO_HANDOVER in self.launcher.features)
+            else None
+        )
         speed = float(req.speed) if isinstance(req.speed, (int, float)) else req.speed
         wanted, wanted_manual = req.disable, req.manual
         if wanted or wanted_manual:
@@ -465,6 +482,7 @@ class ConfigService:
             disable, manual = [], []
         intent = {"variant": req.variant, "params": req.params or None,
                   "scenario": relative_to_config(config, scenario) if scenario is not None else None,
+                  "after_scenario": after_scenario,
                   "disable": disable or None, "enable": list(req.enable) if req.enable else None,
                   "manual": manual or None, "strict": req.strict or None, "speed": speed,
                   "start_paused": req.start_paused or None, "connect": req.connect or None,

@@ -184,6 +184,8 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
             file: view.file,
             name: view.name,
             status: view.status,
+            handed_over: view.handedOver,
+            over_at_ms: view.overAtMs,
             steps: view.steps,
             timeline_url: view.timelineUrl,
           }

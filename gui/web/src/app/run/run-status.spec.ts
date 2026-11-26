@@ -603,4 +603,82 @@ describe('RunStatus', () => {
     expect(host.starts).toBe(0);
     expect(query('blocked')?.textContent).toContain('サーバーと揃うまで');
   });
+
+  it('shows handover paused/running summary only when active and handed over, never when ended or failed', async () => {
+    const handoverState = (paused: boolean) => ({
+      seq: 2,
+      rev: 2,
+      phase: 'running',
+      paused,
+      paused_at_ms: paused ? 500 : null,
+      holding: false,
+      speed: 'max' as const,
+      pacing: paused ? 'not-paced' : 'on-time',
+      stop: { requests: 0, by: null },
+      scenario: true,
+      handed_over: true,
+      scenario_over_at_ms: 500,
+      allowed: {},
+      outside: [],
+    });
+    const scenarioSummary = (status: 'passed' | 'failed' | 'incomplete' | null = 'passed') => ({
+      file: 'scenarios/a.yaml',
+      name: 'a',
+      step_count: 1,
+      steps: [],
+      steps_omitted: 0,
+      status,
+      over_at_ms: 500,
+      timeline_url: null,
+    });
+
+    await show(
+      sessionViewFrom(
+        summary({
+          launcher_state: handoverState(true),
+          scenario: scenarioSummary('passed'),
+        }),
+      ),
+    );
+    expect(query('outcome')?.getAttribute('data-tone')).toBe('good');
+    expect(query('outcome')?.textContent).toContain('一時停止中');
+    expect(query('outcome')?.textContent).toContain('500 ms');
+
+    await show(
+      sessionViewFrom(
+        summary({
+          launcher_state: handoverState(false),
+          scenario: scenarioSummary('passed'),
+        }),
+      ),
+    );
+    expect(query('outcome')?.getAttribute('data-tone')).toBe('good');
+    expect(query('outcome')?.textContent).toContain('実行中');
+    expect(query('outcome')?.textContent).toContain('500 ms');
+
+    // Ended or crashed never uses handover summary
+    await show(
+      sessionViewFrom(
+        summary({
+          ...ENDED,
+          launcher_state: handoverState(true),
+          scenario: scenarioSummary('passed'),
+        }),
+      ),
+    );
+    expect(query('outcome')?.textContent).not.toContain('引き継ぎ');
+
+    await show(
+      sessionViewFrom(
+        summary({
+          state: 'ended',
+          launcher: { running: false, exit_code: 1, signal: null, silent_s: null },
+          launcher_state: handoverState(true),
+          scenario: scenarioSummary('passed'),
+        }),
+      ),
+    );
+    expect(query('outcome')?.textContent).toContain('異常終了');
+    expect(query('outcome')?.textContent).not.toContain('引き継ぎ');
+  });
 });

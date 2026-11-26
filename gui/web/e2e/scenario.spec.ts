@@ -4,7 +4,7 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
-import { RUN_TIMEOUT, inSync } from './support/run-page';
+import { RUN_TIMEOUT, inSync, press, stopButton } from './support/run-page';
 import {
   Target,
   openVariables,
@@ -16,7 +16,7 @@ import {
 
 const FEATURES =
   'events,stdin-commands,request,stdin-run-until,state,check-variables,speed,start-paused,manual-participants,time-commands,control-links,scenario,' +
-  'control-server,scenario-control';
+  'control-server,scenario-control,scenario-end-ms,scenario-handover';
 const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
 
 let server: GuiServer;
@@ -124,11 +124,186 @@ test('saves the writes of a run as a scenario', async ({ page }) => {
   });
   expect(write.status(), await write.text()).toBe(200);
   await expect(card.getByTestId('recording-count')).toContainText('1 件', { timeout: RUN_TIMEOUT });
-  const download = page.waitForEvent('download');
+  await expect(card.getByTestId('recording-end-ms')).toHaveCount(0);
+
+  const midRec = (await (
+    await page.request.get(new URL('api/recording', target.base).href, {
+      headers: { Authorization: `Bearer ${target.token}` },
+    })
+  ).json()) as { recording: { end_ms: number | null; yaml: string } };
+  expect(midRec.recording.end_ms).toBeNull();
+  expect(midRec.recording.yaml).not.toMatch(/^end_ms:/m);
+
+  const downloadMid = page.waitForEvent('download');
   await card.getByTestId('recording-save').click();
-  const file = await download;
-  expect(file.suggestedFilename()).toMatch(/^forever-run.+\.yaml$/);
-  const text = await readFile(await file.path(), 'utf8');
-  expect(text).toContain('vehicle_sil_scenario: 1');
-  expect(text).toContain('Engine.engine.demand: 30.0');
+  const fileMid = await downloadMid;
+  expect(fileMid.suggestedFilename()).toMatch(/^forever-run.+\.yaml$/);
+  const midText = await readFile(await fileMid.path(), 'utf8');
+  expect(midText).toContain('vehicle_sil_scenario: 1');
+  expect(midText).toContain('Engine.engine.demand: 30.0');
+  expect(midText).not.toMatch(/^end_ms:/m);
+
+  // Stop the run cleanly and verify finalized end_ms is included without dummy expect/hold_for_ms
+  await press(stopButton(page));
+  await expect(page.getByTestId('result-card')).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(card.getByTestId('recording-end-ms')).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  const sessionResp = (await (
+    await page.request.get(new URL('api/session', target.base).href, {
+      headers: { Authorization: `Bearer ${target.token}` },
+    })
+  ).json()) as { session: { result: { timing: { sim_ms: number } } } };
+  const endedSimMs = sessionResp.session.result.timing.sim_ms;
+
+  const endRec = (await (
+    await page.request.get(new URL('api/recording', target.base).href, {
+      headers: { Authorization: `Bearer ${target.token}` },
+    })
+  ).json()) as { recording: { end_ms: number | null; yaml: string } };
+  expect(endRec.recording.end_ms).toBe(endedSimMs);
+
+  const downloadEnd = page.waitForEvent('download');
+  await card.getByTestId('recording-save').click();
+  const fileEnd = await downloadEnd;
+  const endText = await readFile(await fileEnd.path(), 'utf8');
+  expect(endText).toContain(`end_ms: ${endedSimMs}`);
+  expect(endText).toContain('Engine.engine.demand: 30.0');
+  expect(endText).not.toContain('#   - expect:');
+  expect(endText).not.toContain('hold_for_ms:');
+});
+
+test('normal replay with default after_scenario completes without handover', async ({ page }) => {
+  await chooseScenario(page, 'scenarios/throttle.yaml');
+  await expect(page.getByTestId('after-scenario-stop')).toHaveClass(/mat-mdc-radio-checked/);
+  const runReqPromise = page.waitForRequest(
+    (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+  );
+  await startOnPage(page);
+  const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+  expect(runBody['after_scenario']).toBeUndefined();
+  await expect(page.getByTestId('result-card')).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('scenario-handover')).toHaveCount(0);
+  const sessionResp = (await (
+    await page.request.get(new URL('api/session', target.base).href, {
+      headers: { Authorization: `Bearer ${target.token}` },
+    })
+  ).json()) as { session: { scenario: { status: string; handed_over: boolean } } };
+  expect(sessionResp.session.scenario).toMatchObject({ status: 'passed', handed_over: false });
+});
+
+test('handover selection disables stop_at_ms, pauses at end even at speed=max, and allows manual write + step on same run', async ({
+  page,
+}) => {
+  await page.goto(`${target.base}#token=${target.token}`);
+  await inSync(page);
+  await page.getByTestId('stop-at-ms').fill('1000');
+
+  await page.getByRole('combobox', { name: '構成ファイル' }).click();
+  await page.getByRole('option', { name: 'simulation.yaml', exact: true }).click();
+  await page.getByRole('combobox', { name: 'シナリオ' }).click();
+  await page.getByRole('option', { name: 'throttle.yaml', exact: true }).click();
+  await expect(page.getByTestId('after-scenario')).toBeVisible();
+
+  const pauseCheck = page.waitForRequest(
+    (r) =>
+      r.url().endsWith('/api/check') &&
+      (r.postDataJSON() as Record<string, unknown>)['after_scenario'] === 'pause',
+  );
+  await page.getByTestId('after-scenario-pause').click();
+  await expect(page.getByTestId('stop-at-ms')).toBeDisabled();
+  await expect(page.getByTestId('stop-at-ms')).toHaveValue('');
+  const checkBody = (await pauseCheck).postDataJSON() as Record<string, unknown>;
+  expect(checkBody['after_scenario']).toBe('pause');
+  expect(checkBody['stop_at_ms']).toBeUndefined();
+
+  await page.getByTestId('config-card').getByRole('radio', { name: '最速', exact: true }).click();
+  const runReqPromise = page.waitForRequest(
+    (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+  );
+  const runResPromise = page.waitForResponse(
+    (r) => r.url().endsWith('/api/run') && r.request().method() === 'POST',
+  );
+  await startOnPage(page);
+  const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+  expect(runBody['after_scenario']).toBe('pause');
+  expect(runBody['speed']).toBe('max');
+  expect(runBody['stop_at_ms']).toBeUndefined();
+  const { run_id: runId } = (await (await runResPromise).json()) as { run_id: string };
+
+  await expect(page.getByTestId('scenario-handover')).toContainText('1000 ms', {
+    timeout: RUN_TIMEOUT,
+  });
+  await expect(page.getByTestId('outcome')).toContainText('一時停止中');
+  await expect(page.getByTestId('result-card')).toHaveCount(0);
+  await expect(page.getByTestId('sim-time')).toHaveText('1.000 s');
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('sim-time')).toHaveText('1.000 s');
+
+  // Switch to Variables page on the same run: write is unlocked after handover
+  await openVariables(page, target);
+  await expect(page.getByTestId('variables-notice')).toContainText('1000 ms', {
+    timeout: RUN_TIMEOUT,
+  });
+  const demand = widget(page, 'Engine', 'engine.demand');
+  const demandSlider = demand.getByRole('slider', { name: 'engine.demand' });
+  await expect(demandSlider).toBeEnabled();
+  await demandSlider.focus();
+  await page.keyboard.press('End');
+  await expect(demand).toContainText('受け付けました', { timeout: RUN_TIMEOUT });
+
+  // Return to Run page on the same run_id and Step
+  await page.getByTestId('nav').getByRole('link', { name: '実行' }).click();
+  await expect(page.getByTestId('scenario-handover')).toBeVisible();
+  await page.getByTestId('step-ms').fill('100');
+  await page.getByTestId('step').click();
+  await expect(page.getByTestId('sim-time')).toHaveText('1.100 s', { timeout: RUN_TIMEOUT });
+
+  const sessionResp = (await (
+    await page.request.get(new URL('api/session', target.base).href, {
+      headers: { Authorization: `Bearer ${target.token}` },
+    })
+  ).json()) as {
+    session: { id: string; result: unknown; scenario: { handed_over: boolean } };
+  };
+  expect(sessionResp.session.id).toBe(runId);
+  expect(sessionResp.session.result).toBeNull();
+  expect(sessionResp.session.scenario.handed_over).toBe(true);
+
+  // Clicking Stop on the same handed-over run clears the handover badge immediately
+  await press(stopButton(page));
+  await expect(page.getByTestId('scenario-handover')).toHaveCount(0);
+  await expect(page.getByTestId('result-card')).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('scenario-handover')).toHaveCount(0);
+});
+
+test('failed and interrupted scenarios with handover selected never count as handover', async ({
+  page,
+}) => {
+  await chooseScenario(page, 'scenarios/fails.yaml');
+  await page.getByTestId('after-scenario-pause').click();
+  await startOnPage(page);
+  await expect(page.getByTestId('scenario-outcome')).toHaveText(/シナリオは失敗しました/, {
+    timeout: RUN_TIMEOUT,
+  });
+  await expect(page.getByTestId('result-card')).toBeVisible();
+  await expect(page.getByTestId('scenario-handover')).toHaveCount(0);
+
+  // Mid-scenario stop on slow run with after_scenario: 'pause'
+  const runResp = await page.request.post(new URL('api/run', target.base).href, {
+    headers: { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin },
+    data: {
+      file: 'forever.yaml',
+      disable: [],
+      scenario: 'scenarios/throttle.yaml',
+      after_scenario: 'pause',
+      speed: 0.001,
+    },
+  });
+  expect(runResp.status()).toBe(200);
+  await expect(page.getByTestId('scenario-card')).toBeVisible({ timeout: RUN_TIMEOUT });
+  await press(stopButton(page));
+  await expect(page.getByTestId('scenario-outcome')).toHaveText(/終わる前に止まりました/, {
+    timeout: RUN_TIMEOUT,
+  });
+  await expect(page.getByTestId('scenario-handover')).toHaveCount(0);
 });

@@ -984,6 +984,24 @@
           },
           "title": "Allowed",
           "type": "object"
+        },
+        "handed_over": {
+          "default": false,
+          "title": "Handed Over",
+          "type": "boolean"
+        },
+        "scenario_over_at_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scenario Over At Ms"
         }
       },
       "required": [
@@ -2290,6 +2308,10 @@
             }
           ],
           "title": "Timeline Url"
+        },
+        "handed_over": {
+          "title": "Handed Over",
+          "type": "boolean"
         }
       },
       "required": [
@@ -2300,7 +2322,8 @@
         "over_at_ms",
         "steps",
         "steps_omitted",
-        "timeline_url"
+        "timeline_url",
+        "handed_over"
       ],
       "title": "SessionScenarioSummary",
       "type": "object"
@@ -3982,6 +4005,24 @@
           },
           "title": "Allowed",
           "type": "object"
+        },
+        "handed_over": {
+          "default": false,
+          "title": "Handed Over",
+          "type": "boolean"
+        },
+        "scenario_over_at_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scenario Over At Ms"
         }
       },
       "required": [

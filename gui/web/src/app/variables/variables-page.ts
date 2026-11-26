@@ -17,7 +17,13 @@ import { EcuVariables } from '../core/session/ecu-variables';
 import { ServerConnection } from '../core/session/server-connection';
 import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
-import { DashboardResponse, errorMessage, launcherAnswer } from '@vehicle-sil/gui-client';
+import {
+  DashboardResponse,
+  errorMessage,
+  isRunActive,
+  isScenarioHandedOver,
+  launcherAnswer,
+} from '@vehicle-sil/gui-client';
 import {
   BuiltinLookup,
   autoDashboard,
@@ -437,8 +443,27 @@ export class VariablesPage {
           };
         }
         if (this.time.paused()) {
+          if (isRunActive(session) && !session!.result && isScenarioHandedOver(session)) {
+            const overAtMs =
+              session!.scenario?.overAtMs ?? session!.launcherState?.scenario_over_at_ms ?? null;
+            return {
+              text:
+                overAtMs !== null
+                  ? $localize`シナリオは ${overAtMs}:ms: ms で完了し、手動操作のため一時停止しています。変数を書き換えて、「実行」の画面からステップ送りや再開ができます。`
+                  : $localize`シナリオが完了し、手動操作のため一時停止しています。変数を書き換えて、「実行」の画面からステップ送りや再開ができます。`,
+              english: null,
+              tone: 'info',
+            };
+          }
           return {
             text: $localize`一時停止しています。値は止まっている時刻のものです。`,
+            english: null,
+            tone: 'info',
+          };
+        }
+        if (isRunActive(session) && !session!.result && isScenarioHandedOver(session)) {
+          return {
+            text: $localize`シナリオ完了後、手動操作で実行中です。変数を書き換えられます。`,
             english: null,
             tone: 'info',
           };

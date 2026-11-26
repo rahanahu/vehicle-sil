@@ -136,6 +136,23 @@ mat-card-content {
   margin-block-start: var(--app-space-3);
 }
 
+.after-scenario {
+  display: grid;
+  gap: var(--app-space-1);
+  margin-block-start: var(--app-space-2);
+}
+
+.after-scenario-label {
+  font: var(--mat-sys-label-medium);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.after-scenario mat-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--app-space-1) var(--app-space-3);
+}
+
 .start-paused {
   display: block;
   margin-block-start: var(--app-space-2);

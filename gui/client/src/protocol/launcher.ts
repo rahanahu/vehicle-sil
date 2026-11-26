@@ -202,6 +202,8 @@ export interface CheckScenario extends FromLauncher {
   name: string | null;
   /** Number of steps. */
   steps: number;
+  /** Virtual end time from the scenario file (`end_ms`), or null if omitted. */
+  end_ms?: number | null;
 }
 
 const readCheckScenario = (value: unknown, path: string, u?: Unreadable): CheckScenario => {
@@ -210,6 +212,7 @@ const readCheckScenario = (value: unknown, path: string, u?: Unreadable): CheckS
     file: field(f, path, 'file', lenient(string, '', u)),
     name: field(f, path, 'name', soft(nullable(string), null, u)),
     steps: field(f, path, 'steps', lenient(integer, 0, u)),
+    end_ms: field(f, path, 'end_ms', soft(nullable(integer), null, u)),
   });
 };
 
@@ -220,6 +223,8 @@ export interface ScenarioResult extends FromLauncher {
   status: ScenarioStatus;
   /** The controller step at which the scenario ended (passed and failed; null otherwise). */
   over_at_ms: number | null;
+  /** Virtual end time from the scenario file (`end_ms`), or null if omitted. */
+  end_ms?: number | null;
   steps: ScenarioStep[];
 }
 
@@ -230,6 +235,7 @@ const readScenarioResult = (value: unknown, path: string, u?: Unreadable): Scena
     name: field(f, path, 'name', soft(nullable(string), null, u)),
     status: field(f, path, 'status', lenient(string, '', u)),
     over_at_ms: field(f, path, 'over_at_ms', soft(nullable(number), null, u)),
+    end_ms: field(f, path, 'end_ms', soft(nullable(integer), null, u)),
     steps: field(
       f,
       path,
@@ -1044,6 +1050,10 @@ export interface StateReport {
   stop: { requests: number; by: string | null } | null;
   /** Whether the run plays a scenario. */
   scenario: boolean | null;
+  /** Whether the scenario has passed and handed over to manual control. */
+  handed_over?: boolean;
+  /** Virtual time (ms) at which the scenario completed and handed over, or null. */
+  scenario_over_at_ms?: number | null;
   /** The operations: pause, resume, step, speed, run_until, stop, write. */
   allowed: Record<string, LauncherAllowedItem>;
   /**
@@ -1080,6 +1090,8 @@ export function readStateFields(f: Fields, path: string, u?: Unreadable): StateR
       ),
     ),
     scenario: field(f, path, 'scenario', soft(nullable(boolean), null, u)),
+    handed_over: field(f, path, 'handed_over', soft(boolean, false, u)),
+    scenario_over_at_ms: field(f, path, 'scenario_over_at_ms', soft(nullable(number), null, u)),
     allowed: field(f, path, 'allowed', lenient(record(readLauncherAllowedItem), {}, u)),
     outside: field(
       f,

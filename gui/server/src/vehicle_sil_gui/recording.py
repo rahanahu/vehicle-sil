@@ -28,6 +28,8 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from .launcher import STEP_MS_MAX
+
 FORMAT = 1  # vehicle_sil_scenario
 MAX_WRITES = 2000  # values kept per run; later ones are counted in `omitted`
 MAX_OPEN = 512  # writes waiting for their result; the oldest are given up beyond it
@@ -76,10 +78,12 @@ class Recording:
         for peer, result in peers.items():
             if peer in entry.done_peers or not isinstance(result, dict) or peer not in entry.writes:
                 continue
-            if result.get("state") == "applied" and isinstance(result.get("applied_at_ms"), int):
+            at_ms = result.get("applied_at_ms")
+            if (result.get("state") == "applied" and isinstance(at_ms, int)
+                    and not isinstance(at_ms, bool) and 0 <= at_ms <= STEP_MS_MAX):
                 entry.done_peers.add(peer)
                 for name, value in entry.writes[peer].items():
-                    self._keep(result["applied_at_ms"], peer, name, value)
+                    self._keep(at_ms, peer, name, value)
             elif operation.get("done"):
                 entry.done_peers.add(peer)
         if operation.get("done"):
@@ -93,21 +97,24 @@ class Recording:
         self.entries.append((at_ms, self._order, peer, name, value))
 
     def to_json(self, run_id: str, file: str, state: str, enums: dict[tuple[str, str], list[dict]],
-                run_ms: int | None = None) -> dict:
+                end_ms: int | None = None) -> dict:
         """What GET api/recording answers for this run. enums: the items of each enum variable, by (peer, name);
-        run_ms: the virtual time the run has reached (or ended at), when known."""
+        end_ms: the virtual time the run ended at, when finalized (None while running or if not started)."""
         text, steps, skipped = (None, 0, 0)
         reason = self.reason
+        final_end_ms = _valid_end_ms(end_ms) if self.available else None
         if self.available:
             if self.entries:
-                text, steps, skipped = scenario_yaml(self.entries, f"recorded from {file} (run {run_id})",
-                                                     enums, self.omitted, run_ms)
+                text, steps, skipped, used_end_ms = _build_scenario_yaml(
+                    self.entries, f"recorded from {file} (run {run_id})", enums, self.omitted, final_end_ms)
+                if steps > 0:
+                    final_end_ms = used_end_ms
             if steps == 0:
                 reason = ("no write made through this GUI server has been applied in this run yet: write variables "
                           "(the variables screen, or POST api/write), then save again")
         return {"run_id": str(run_id), "file": file, "state": state, "available": self.available,
                 "reason": reason if text is None else None, "writes": len(self.entries) - skipped,
-                "omitted": self.omitted + skipped, "steps": steps, "yaml": text}
+                "omitted": self.omitted + skipped, "steps": steps, "end_ms": final_end_ms, "yaml": text}
 
 
 # ------------------------------------------------------------ YAML
@@ -173,13 +180,17 @@ def value_text(value: object, items: list[dict] | None) -> str:
 MAX_LEFT_OUT_LINES = 20  # comment lines that name a write left out
 
 
-def scenario_yaml(entries: list[tuple[int, int, str, str, object]], name: str,
-                  enums: dict[tuple[str, str], list[dict]], omitted: int,
-                  run_ms: int | None = None) -> tuple[str | None, int, int]:
-    """(the scenario, its number of steps, values left out): one `set` per time a value was applied, in the order
-    of the time (the order of the writes within one time; a variable written twice at one time keeps its last
-    value). The comments at the top say what was recorded, where the scenario ends and how to run on after it,
-    and what was left out and why."""
+def _valid_end_ms(end_ms: object, last: int | None = None) -> int | None:
+    if not (isinstance(end_ms, int) and not isinstance(end_ms, bool) and 0 <= end_ms <= STEP_MS_MAX):
+        return None
+    if last is not None and end_ms < last:
+        return None
+    return end_ms
+
+
+def _build_scenario_yaml(entries: list[tuple[int, int, str, str, object]], name: str,
+                         enums: dict[tuple[str, str], list[dict]], omitted: int,
+                         end_ms: int | None = None) -> tuple[str | None, int, int, int | None]:
     by_time: dict[int, dict[str, str]] = {}
     skipped = 0
     dotted: dict[str, None] = {}  # variables left out: the participant's name has a '.'
@@ -198,21 +209,14 @@ def scenario_yaml(entries: list[tuple[int, int, str, str, object]], name: str,
         writes.pop(line_key, None)  # the last value at this time, in its place in the order
         writes[line_key] = text
     if not by_time:
-        return None, 0, skipped
+        return None, 0, skipped, None
     last = max(by_time)
+    valid_end = _valid_end_ms(end_ms, last)
     lines = ["# Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every",
              "# screen and tool that used it) that were applied, each at the time of the step it was applied at.",
              "# Not here: pauses and steps of the time, writes that were not applied (docs/gui.md)."]
-    longer = run_ms is not None and run_ms > last
-    peer = next(iter(sorted({e[2] for e in entries if "." not in e[2]})), None)
-    lines.append(f"# This scenario ends at its last step ({last} ms): the launcher stops the simulation there.")
-    if longer:
-        lines.append(f"# The recorded run went on to {run_ms} ms.")
-    lines.append("# To keep it running after the last step, add a step at the end, such as")
-    hold = run_ms - last if longer else 1000
-    if peer is not None:
-        lines.append(f"#   - expect: {{ {key(f'{peer}.ecu.connected')}: true }}")
-        lines.append(f"#     hold_for_ms: {hold}")
+    if valid_end is None:
+        lines.append(f"# No end_ms recorded: this scenario ends at its last step ({last} ms).")
     lines.append("# Add expect and wait_until steps to check what the ECUs do (docs/scenario.md).")
     if omitted:
         lines.append(f"# {omitted} more applied writes are not here: the record keeps at most {MAX_WRITES}.")
@@ -226,9 +230,23 @@ def scenario_yaml(entries: list[tuple[int, int, str, str, object]], name: str,
         name_text = quoted(name)
     except ValueError:
         name_text = '"recorded"'
-    lines += [f"vehicle_sil_scenario: {FORMAT}", f"name: {name_text}", "steps:"]
+    lines += [f"vehicle_sil_scenario: {FORMAT}", f"name: {name_text}"]
+    if valid_end is not None:
+        lines.append(f"end_ms: {valid_end}")
+    lines.append("steps:")
     for at_ms in sorted(by_time):
         lines.append(f"  - at_ms: {at_ms}")
         lines.append("    set:")
         lines += [f"      {k}: {v}" for k, v in by_time[at_ms].items()]
-    return "\n".join(lines) + "\n", len(by_time), skipped
+    return "\n".join(lines) + "\n", len(by_time), skipped, valid_end
+
+
+def scenario_yaml(entries: list[tuple[int, int, str, str, object]], name: str,
+                  enums: dict[tuple[str, str], list[dict]], omitted: int,
+                  end_ms: int | None = None) -> tuple[str | None, int, int]:
+    """(the scenario, its number of steps, values left out): one `set` per time a value was applied, in the order
+    of the time (the order of the writes within one time; a variable written twice at one time keeps its last
+    value). The comments at the top say what was recorded, whether an end time is recorded, and what was left out
+    and why."""
+    text, steps, skipped, _ = _build_scenario_yaml(entries, name, enums, omitted, end_ms)
+    return text, steps, skipped

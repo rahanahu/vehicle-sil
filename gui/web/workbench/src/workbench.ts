@@ -15,8 +15,10 @@ import {
   connect,
   createWaveforms,
   isRunActive,
+  isScenarioHandedOver,
   takeToken,
   watch,
+  type AfterScenario,
   type CheckResult,
   type Front,
   type FrontClock,
@@ -164,10 +166,15 @@ export class Workbench {
   readonly runActive = isRunActive;
   readonly variables = signal<VariablesState | null>(null);
   readonly canRecord = signal(false);
+  readonly canHandover = signal(false);
   readonly files = signal<string[]>([]);
   readonly scenarios = signal<ScenarioFile[]>([]);
   readonly selectedFile = signal('');
   readonly selectedScenario = signal('');
+  readonly afterScenario = signal<AfterScenario>('stop');
+  readonly handoverSelected = computed(() =>
+    Boolean(this.selectedScenario() && this.canHandover() && this.afterScenario() === 'pause'),
+  );
   readonly speed = signal('1');
   readonly stopAt = signal('');
   readonly activeStopAt = computed(() => {
@@ -177,6 +184,7 @@ export class Workbench {
     return stopAt === undefined ? 'Awaiting check' : (stopAt ?? 'No limit');
   });
   readonly validStopAt = computed(() => {
+    if (this.handoverSelected()) return true;
     const stop = this.stopAt();
     return stop === '' || (/^\d+$/.test(stop) && Number(stop) >= 1 && Number(stop) <= 1e12);
   });
@@ -184,6 +192,13 @@ export class Workbench {
   readonly pending = signal(false);
   readonly recordNext = signal(false);
   readonly recordedRun = signal<string | null>(null);
+  readonly recordingMeta = signal<{
+    runId: string;
+    writes: number;
+    steps: number;
+    endMs: number | null;
+    state: string;
+  } | null>(null);
   readonly notice = signal('');
   readonly check = signal<CheckResult | null>(null);
   readonly configText = signal('');
@@ -271,10 +286,45 @@ export class Workbench {
       this.pending() ||
       ['starting', 'waiting', 'running', 'paused', 'stopping'].includes(this.run()),
   );
+  readonly handedOver = computed(() => {
+    const s = this.session();
+    return (
+      !!s && isRunActive(s) && !s.result && this.run() !== 'stopping' && isScenarioHandedOver(s)
+    );
+  });
+  readonly handoverOverAtMs = computed(() =>
+    this.handedOver()
+      ? (this.session()?.scenario?.overAtMs ??
+        this.session()?.launcherState?.scenario_over_at_ms ??
+        this.clock()?.sim_ms ??
+        null)
+      : null,
+  );
+  readonly scenarioWriteLocked = computed(() => {
+    const s = this.session();
+    return (
+      !!s &&
+      isRunActive(s) &&
+      !s.result &&
+      this.run() !== 'stopping' &&
+      !this.handedOver() &&
+      (s.scenario !== null || s.launcherState?.scenario === true)
+    );
+  });
   readonly statusText = computed(() => {
     const status = this.status();
     if (!status) return 'Connecting…';
     if (status.link !== 'online') return status.link;
+    if (status.problem?.message) return status.problem.message;
+    if (this.handedOver()) {
+      const atMs = this.handoverOverAtMs();
+      if (status.run === 'paused') {
+        return atMs != null ? `Handed over — Paused at ${atMs} ms` : 'Handed over — Paused';
+      }
+      if (status.run === 'running') {
+        return atMs != null ? `Handed over (at ${atMs} ms) — Running` : 'Handed over — Running';
+      }
+    }
     const states = {
       none: 'Ready',
       starting: 'Starting…',
@@ -285,7 +335,7 @@ export class Workbench {
       ended: 'Run ended',
       crashed: 'Launcher exited',
     };
-    return status.problem?.message ?? states[status.run];
+    return states[status.run];
   });
   readonly rows = computed(() => {
     const peer = this.peer();
@@ -495,7 +545,10 @@ export class Workbench {
         watch(front.low.session.session, (value) => this.session.set(value)),
         watch(front.low.session.ready, (value) => this.sessionReady.set(value)),
         watch(front.low.variables.state, (value) => this.variables.set(value)),
-        watch(front.low.app, (value) => this.canRecord.set(value?.variables?.available === true)),
+        watch(front.low.app, (value) => {
+          this.canRecord.set(value?.variables?.available === true);
+          this.canHandover.set(value?.launcher.features.includes('scenario-handover') ?? false);
+        }),
       ];
       this.destroy.onDestroy(() => releases.forEach((release) => release()));
       const { files } = await front.configs();
@@ -548,6 +601,7 @@ export class Workbench {
   private async selectFile(file: string) {
     this.selectedFile.set(file);
     this.selectedScenario.set('');
+    this.afterScenario.set('stop');
     this.scenarios.set([]);
     this.configStamp.set(null);
     this.configText.set('');
@@ -571,17 +625,33 @@ export class Workbench {
     );
     if (revision === this.listRevision) {
       this.scenarios.set(scenarios);
-      if (!scenarios.some(({ path }) => path === this.selectedScenario()))
+      if (!scenarios.some(({ path }) => path === this.selectedScenario())) {
         this.selectedScenario.set('');
+        this.afterScenario.set('stop');
+      }
     }
+  }
+
+  selectScenario(value: string) {
+    this.selectedScenario.set(value);
+    if (!value) this.afterScenario.set('stop');
+    this.check.set(null);
+  }
+
+  selectAfterScenario(value: string) {
+    this.afterScenario.set(value === 'pause' ? 'pause' : 'stop');
+    this.check.set(null);
   }
 
   intent(): Intent {
     const scenario = this.selectedScenario();
+    const handover = this.handoverSelected();
     const speed = this.speed();
+    const stopAt = handover ? '' : this.stopAt();
     return {
       ...(scenario ? { scenario } : {}),
-      ...(this.stopAt() ? { stop_at_ms: Number(this.stopAt()) } : {}),
+      ...(handover ? { after_scenario: 'pause' as const } : {}),
+      ...(stopAt ? { stop_at_ms: Number(stopAt) } : {}),
       ...(speed ? { speed: speed === 'max' ? speed : Number(speed) } : {}),
       ...(!scenario && this.startPaused() ? { start_paused: true } : {}),
     };
@@ -592,6 +662,7 @@ export class Workbench {
     if (this.pending() || !this.controls()?.start?.ok) return;
     this.pending.set(true);
     this.recordNext.set(record);
+    this.recordingMeta.set(null);
     try {
       // The answer identifies this start even if session notifications are delayed or another
       // run starts before they arrive. RunControl adopts that same summary into the session feed.
@@ -625,6 +696,7 @@ export class Workbench {
   async assess() {
     const file = this.selectedFile();
     const scenario = this.selectedScenario();
+    const afterScenario = this.afterScenario();
     const stopAt = this.stopAt();
     const speed = this.speed();
     const paused = this.startPaused();
@@ -632,6 +704,7 @@ export class Workbench {
     if (
       file === this.selectedFile() &&
       scenario === this.selectedScenario() &&
+      afterScenario === this.afterScenario() &&
       stopAt === this.stopAt() &&
       speed === this.speed() &&
       paused === this.startPaused()
@@ -830,6 +903,13 @@ export class Workbench {
     }
     this.yamlName.set(`run-${recording.run_id}.yaml`);
     this.yaml.set(recording.yaml);
+    this.recordingMeta.set({
+      runId: recording.run_id,
+      writes: recording.writes,
+      steps: recording.steps,
+      endMs: recording.end_ms,
+      state: recording.state,
+    });
     if (recording.omitted)
       this.notice.set(`${recording.omitted} writes were omitted from the recording.`);
   }

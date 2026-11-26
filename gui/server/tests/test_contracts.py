@@ -108,6 +108,7 @@ def test_omit_only_fields_reject_null_at_runtime_and_emit_no_null_in_json_schema
         (C.RunRequest, {"file": "a.yaml", "$schema": None}),
         (C.RunRequest, {"file": "a.yaml", "stop_at_ms": None}),
         (C.RunRequest, {"file": "a.yaml", "scenario": None}),
+        (C.RunRequest, {"file": "a.yaml", "after_scenario": None}),
         (C.StopSessionRequest, {"run_id": "r1", "instance": "i1", "force": None}),
         (C.WriteRequest, {"run_id": "r1", "instance": None, "writes": {"E": {"x": 1}}}),
         (C.WriteRequest, {"run_id": "r1", "writes": {"E": {"x": 1}}, "late": None}),
@@ -517,3 +518,76 @@ def test_contracts_constants_and_request_fields_stay_in_sync() -> None:
     assert set(C.REQUEST_FIELDS) == set(C.model_allowed_fields(C.RunRequest))
     assert len(C.REQUEST_FIELDS) == len(set(C.REQUEST_FIELDS))
     assert set(C.CHECK_FIELDS) == set(C.REQUEST_FIELDS) | {"text"}
+
+
+def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
+    for ok_req in (
+        {"file": "a.yaml", "scenario": "scenarios/a.yaml", "after_scenario": "stop"},
+        {"file": "a.yaml", "scenario": "scenarios/a.yaml", "after_scenario": "pause"},
+    ):
+        req = C.RunRequest.model_validate(ok_req)
+        assert req.after_scenario == ok_req["after_scenario"]
+        chk = C.CheckFileRequest.model_validate(ok_req)
+        assert chk.after_scenario == ok_req["after_scenario"]
+
+    for bad_req in (
+        {"file": "a.yaml", "after_scenario": "hold"},
+        {"file": "a.yaml", "after_scenario": 1},
+        {"file": "a.yaml", "after_scenario": True},
+        {"file": "a.yaml", "after_scenario": None},
+    ):
+        with pytest.raises(ValidationError):
+            C.RunRequest.model_validate(bad_req)
+
+    with pytest.raises(ValidationError):
+        C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "after_scenario": "pause"})
+
+    base_rec = {
+        "run_id": "1",
+        "file": "a.yaml",
+        "state": "ended",
+        "available": True,
+        "reason": None,
+        "writes": 1,
+        "omitted": 0,
+        "steps": 1,
+        "yaml": "vehicle_sil_scenario: 1\n",
+    }
+    assert C.RecordingSummary.model_validate({**base_rec, "end_ms": 0}).end_ms == 0
+    assert C.RecordingSummary.model_validate({**base_rec, "end_ms": 1200}).end_ms == 1200
+    assert C.RecordingSummary.model_validate({**base_rec, "end_ms": C.STEP_MS_MAX}).end_ms == C.STEP_MS_MAX
+    assert C.RecordingSummary.model_validate({**base_rec, "end_ms": None}).end_ms is None
+    for bad_end in (True, -1, C.STEP_MS_MAX + 1, 12.5, "100"):
+        with pytest.raises(ValidationError):
+            C.RecordingSummary.model_validate({**base_rec, "end_ms": bad_end})
+
+    base_sc = {
+        "file": "scenarios/a.yaml",
+        "name": "a",
+        "status": "passed",
+        "step_count": 1,
+        "over_at_ms": 100,
+        "steps": [],
+        "steps_omitted": 0,
+        "timeline_url": None,
+    }
+    assert C.SessionScenarioSummary.model_validate({**base_sc, "handed_over": True}).handed_over is True
+    with pytest.raises(ValidationError):
+        C.SessionScenarioSummary.model_validate(base_sc)
+
+    st_default = C.StateEvent.model_validate({"event": "state", "seq": 1, "rev": 1, "allowed": {}})
+    assert st_default.handed_over is False and st_default.scenario_over_at_ms is None
+    st_ho = C.StateEvent.model_validate({
+        "event": "state", "seq": 2, "rev": 2, "allowed": {}, "handed_over": True, "scenario_over_at_ms": 500,
+    })
+    assert st_ho.handed_over is True and st_ho.scenario_over_at_ms == 500
+    for bad_state in (
+        {"event": "state", "seq": 1, "rev": 1, "allowed": {}, "handed_over": "yes"},
+        {"event": "state", "seq": 1, "rev": 1, "allowed": {}, "handed_over": 1},
+        {"event": "state", "seq": 1, "rev": 1, "allowed": {}, "scenario_over_at_ms": True},
+        {"event": "state", "seq": 1, "rev": 1, "allowed": {}, "scenario_over_at_ms": -1},
+        {"event": "state", "seq": 1, "rev": 1, "allowed": {}, "scenario_over_at_ms": 12.5},
+    ):
+        assert C.validate_launcher_event(bad_state) is not None
+        with pytest.raises(ValidationError):
+            C.LauncherStateSummary.model_validate(bad_state)

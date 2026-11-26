@@ -56,6 +56,7 @@ SCENARIO_STEP_EVENT = "scenario_step"
 # --timeline <file> writes what the scenario wrote and saw to that file after the run.
 FEATURE_TIMELINE = "timeline"
 FEATURE_RUN_STOP_AT = "run-stop-at"
+FEATURE_SCENARIO_HANDOVER = "scenario-handover"
 
 
 class LauncherNotFound(Exception):

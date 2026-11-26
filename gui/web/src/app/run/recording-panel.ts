@@ -37,10 +37,21 @@ import { ServerInfo } from '../core/session/server-info';
         >
           この実行の操作をシナリオとして保存
         </button>
-        <p class="hint" i18n>
-          保存したファイルを構成ファイルの隣の scenarios
-          に置くと、「シナリオ」で選んで回せます。シナリオは最後の手順の時刻で止まるので、その後も走らせたいときや、確かめる手順（expect、wait_until）は、エディターで足してください（ファイルの先頭のコメントに例があります）。一時停止やステップ送りは入りません。
-        </p>
+        @if (r.end_ms !== null) {
+          <p class="hint" data-testid="recording-end-ms" i18n>
+            記録元の終了仮想時刻（end_ms: {{ r.end_ms }} ms）まで再現します。
+          </p>
+          <p class="hint" i18n>
+            保存したファイルを構成ファイルの隣の scenarios
+            に置くと、「シナリオ」で選んで回せます。記録元の終了時刻（end_ms）まで自動で再現します。確かめる手順（expect、wait_until）を足したいときは、エディターで追記できます（ファイルの先頭のコメントに例があります）。一時停止やステップ送りは入りません。
+          </p>
+        } @else {
+          <p class="hint" i18n>
+            保存したファイルを構成ファイルの隣の scenarios
+            に置くと、「シナリオ」で選んで回せます。実行中に保存したため終了仮想時刻（end_ms）はまだ入らず、最後の手順の時刻で止まります（実行が終わってから保存すると
+            end_ms が入ります）。一時停止やステップ送りは入りません。
+          </p>
+        }
       } @else {
         <p class="hint" data-testid="recording-empty">
           @if (r.available) {
@@ -86,9 +97,10 @@ export class RecordingPanel {
   private readonly variables = inject(EcuVariables);
   private readonly document = inject(DOCUMENT);
 
-  /** 実行の番号と、ランチャーが動いているか（終わったら読み直す）。 */
+  /** 実行の番号と、ランチャーが動いているか、結果が出たか（終わったら読み直す）。 */
   readonly session = input.required<string>();
   readonly running = input(false);
+  readonly hasResult = input(false);
 
   /** この実行の、確定した操作（確定するたびに読み直す）。 */
   private readonly settled = computed(() =>
@@ -102,7 +114,12 @@ export class RecordingPanel {
   protected readonly recording = resource({
     params: () =>
       !this.auth.rejected()
-        ? { session: this.session(), running: this.running(), settled: this.settled() }
+        ? {
+            session: this.session(),
+            running: this.running(),
+            hasResult: this.hasResult(),
+            settled: this.settled(),
+          }
         : undefined,
     loader: () => this.info.recording(),
   });

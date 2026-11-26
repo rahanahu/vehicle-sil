@@ -28,8 +28,9 @@
       <label
         >Scenario
         <select
+          aria-label="Scenario"
           [disabled]="live()"
-          (change)="selectedScenario.set($any($event.target).value); check.set(null)"
+          (change)="selectScenario($any($event.target).value)"
         >
           <option value="" [selected]="!selectedScenario()">Free run</option>
           @for (scenario of scenarios(); track scenario.path) {
@@ -39,6 +40,20 @@
           }
         </select>
       </label>
+      @if (selectedScenario() && canHandover()) {
+        <label
+          >After scenario
+          <select
+            aria-label="After scenario"
+            [disabled]="live()"
+            [value]="afterScenario()"
+            (change)="selectAfterScenario($any($event.target).value)"
+          >
+            <option value="stop">Stop run</option>
+            <option value="pause">Pause for manual control</option>
+          </select>
+        </label>
+      }
     }
     <label
       >Speed
@@ -64,9 +79,11 @@
           class="run-limit"
           type="text"
           inputmode="numeric"
+          [disabled]="handoverSelected()"
           [attr.aria-invalid]="!validStopAt()"
           [attr.aria-describedby]="validStopAt() ? null : 'run-limit-error'"
-          [value]="stopAt()"
+          [value]="handoverSelected() ? '' : stopAt()"
+          [placeholder]="handoverSelected() ? 'Disabled on handover' : ''"
           (input)="stopAt.set($any($event.target).value); check.set(null)"
         />
       </label>
@@ -168,6 +185,26 @@
   @switch (tab()) {
     @case ('ECU I/O') {
       <section id="io">
+        @if (handedOver()) {
+          <p class="banner good" role="status" data-testid="handover-notice">
+            @if (paused()) {
+              Scenario passed{{
+                handoverOverAtMs() != null ? ' at ' + handoverOverAtMs() + ' ms' : ''
+              }}
+              — handed over for manual control (paused). Write inputs and use 1 step, Resume, or
+              Speed.
+            } @else {
+              Handed over from scenario{{
+                handoverOverAtMs() != null ? ' (completed at ' + handoverOverAtMs() + ' ms)' : ''
+              }}
+              — manual control active.
+            }
+          </p>
+        } @else if (scenarioWriteLocked()) {
+          <p class="banner" role="status" data-testid="scenario-write-lock">
+            Scenario running — inputs are read-only until handover or run end.
+          </p>
+        }
         <div class="tools">
           <select
             aria-label="ECU"
@@ -355,13 +392,25 @@
           (change)="action(() => openYaml(yamlFile.files?.[0] ?? null)); yamlFile.value = ''"
         />
         <button (click)="yamlFile.click()">Open YAML</button>
-        @if (recordedRun() != null && recordedRun() === session()?.id && !live()) {
+        @if (recordedRun() != null && recordedRun() === session()?.id && !pending()) {
           <button (click)="action(() => loadRecording())">Load recording</button>
         }
         @if (yamlName()) {
           <button (click)="action(() => saveYaml())">Save YAML</button>
         }
       </div>
+      @if (recordingMeta(); as meta) {
+        @if (meta.runId === recordedRun()) {
+          <p class="muted" data-testid="workbench-recording-meta">
+            Recording: {{ meta.writes }} writes in {{ meta.steps }} steps ·
+            {{
+              meta.endMs != null
+                ? 'end_ms: ' + meta.endMs + ' ms'
+                : 'mid-run: end_ms omitted until run ends'
+            }}
+          </p>
+        }
+      }
       @if (yamlName()) {
         <label class="tools"
           >Filename <input [value]="yamlName()" (input)="yamlName.set($any($event.target).value)"
@@ -382,6 +431,16 @@
         @for (finding of checked.findings; track $index) {
           <p>{{ finding.message }}</p>
         }
+      }
+      @if (runScenario(); as activeScenario) {
+        <p data-testid="workbench-scenario-status">
+          Scenario status: {{ activeScenario.status ?? 'running' }}
+          @if (activeScenario.handed_over && activeScenario.status === 'passed') {
+            · Handed over{{
+              activeScenario.over_at_ms != null ? ' at ' + activeScenario.over_at_ms + ' ms' : ''
+            }}
+          }
+        </p>
       }
       @if (runScenario()?.timeline_url; as url) {
         <vehicle-sil-timeline [attr.src]="url" lang="en" compact hide="help"></vehicle-sil-timeline>

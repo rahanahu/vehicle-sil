@@ -22,6 +22,8 @@ DEFAULT_FEATURES = (
     *REQUIRED_FEATURES,
     "timeline",
     "run-stop-at",
+    "scenario-end-ms",
+    "scenario-handover",
     "control-links",
     "control-server",
 )
@@ -100,7 +102,7 @@ _STATUS_KEYS = frozenset({
 })
 _RUN_STATE_KEYS = frozenset({
     "rev", "phase", "paused", "paused_at_ms", "holding", "speed", "pacing",
-    "stop", "scenario", "allowed", "outside",
+    "stop", "scenario", "handed_over", "scenario_over_at_ms", "allowed", "outside",
 })
 _RUN_ALLOWED_RANGE_KEYS: dict[str, tuple[tuple[str, str], bool]] = {
     "step": (("min_ms", "max_ms"), True),
@@ -174,6 +176,10 @@ def _validate_run_state(rs: object, *, envelope: bool = False) -> None:
     assert type(stop["requests"]) is int and stop["requests"] >= 0, rs
     assert stop["by"] is None or isinstance(stop["by"], str), rs
     assert isinstance(rs["scenario"], bool), rs
+    assert isinstance(rs["handed_over"], bool), rs
+    assert rs["scenario_over_at_ms"] is None or (
+        type(rs["scenario_over_at_ms"]) is int and rs["scenario_over_at_ms"] >= 0
+    ), rs
     allowed = rs["allowed"]
     assert isinstance(allowed, dict), rs
     assert set(allowed.keys()) == {"pause", "resume", "step", "speed", "run_until", "stop", "write"}, rs

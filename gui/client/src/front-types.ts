@@ -3,6 +3,7 @@
 import type { GuiClient } from './client';
 import type { RunTarget } from './session';
 import type {
+  AfterScenario,
   CheckResult,
   ConfigList,
   ConfigText,
@@ -120,6 +121,8 @@ export interface FrontScenario {
   file: string;
   name: string | null;
   status: ScenarioStatus | null;
+  handed_over: boolean;
+  over_at_ms: number | null;
   steps: readonly ScenarioStep[];
   /** Where the server serves the timeline of the run (null until the run has ended with one). */
   timeline_url: string | null;
@@ -159,6 +162,8 @@ export interface Intent {
    * the path the request file needs, which is relative to the configuration file's directory). Do not compose it.
    */
   scenario?: string;
+  /** What to do once the scenario passes (`stop`, or `pause` to hand over to manual control). */
+  after_scenario?: AfterScenario;
   variant?: string;
   params?: Record<string, string | number | boolean>;
   speed?: number | 'max';

@@ -49,6 +49,7 @@ REQUEST_FIELDS: tuple[str, ...] = (
     "$schema",
     "vehicle_sil_run_request",
     "scenario",
+    "after_scenario",
     "variant",
     "params",
     "disable",
@@ -247,6 +248,7 @@ SpeedValue = Union[
 StampStr = Annotated[StrictStr, Field(pattern=STAMP_PATTERN)]
 ParamScalar = StrictStr | StrictBool | StrictInt | FiniteFloat
 LatePolicy = Literal["reject", "apply"]
+AfterScenario = Literal["stop", "pause"]
 
 OmitStr = Annotated[StrictStr | None, OmitOnly]
 OmitNonEmptyStr = Annotated[NonEmptyStr | None, OmitOnly]
@@ -256,6 +258,7 @@ OmitPosInt = Annotated[PosInt | None, OmitOnly]
 OmitStepMs = Annotated[StepMs | None, OmitOnly]
 OmitAtMs = Annotated[AtMs | None, OmitOnly]
 OmitSpeedValue = Annotated[SpeedValue | None, OmitOnly]
+OmitAfterScenario = Annotated[AfterScenario | None, OmitOnly]
 OmitBool = Annotated[StrictBool, OmitOnly]
 
 
@@ -626,6 +629,7 @@ class RunRequest(PrepareRequest):
     schema_uri: OmitStr = Field(default=None, alias="$schema")
     vehicle_sil_run_request: Annotated[ExactLiteral1 | None, OmitOnly] = None
     scenario: OmitStr = None
+    after_scenario: OmitAfterScenario = None
     params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
     strict: OmitBool = False
     connect: Annotated[dict[NonEmptyStr, StrictStr] | None, OmitOnly] = None
@@ -995,6 +999,7 @@ class SessionScenarioSummary(ContractModel):
     steps: list[ScenarioStepSummary]
     steps_omitted: NonNegInt
     timeline_url: StrictStr | None
+    handed_over: StrictBool
 
 
 class RegistrySummary(OpenContractModel):
@@ -1040,6 +1045,8 @@ class LauncherStateSummary(OpenContractModel):
     seq: NonNegInt
     rev: CommandId
     allowed: dict[StrictStr, LauncherAllowedItem]
+    handed_over: StrictBool = False
+    scenario_over_at_ms: NonNegInt | None = None
 
 
 class ParticipantControlLink(OpenContractModel):
@@ -1196,6 +1203,7 @@ class RecordingSummary(ContractModel):
     writes: NonNegInt
     omitted: NonNegInt
     steps: NonNegInt
+    end_ms: AtMs | None
     yaml: StrictStr | None
 
 
@@ -1403,6 +1411,8 @@ class StateEvent(_LauncherEventBase):
     event: Literal["state"]
     rev: CommandId
     allowed: dict[StrictStr, Any]
+    handed_over: StrictBool = False
+    scenario_over_at_ms: NonNegInt | None = None
 
 
 class ResultEvent(_LauncherEventBase):
@@ -1467,6 +1477,8 @@ class WsStateEvent(_LauncherEventBase):
     event: Literal["state"]
     rev: CommandId
     allowed: dict[StrictStr, LauncherAllowedItem]
+    handed_over: StrictBool = False
+    scenario_over_at_ms: NonNegInt | None = None
 
 
 class WsResultEvent(_LauncherEventBase):

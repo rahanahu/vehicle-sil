@@ -287,6 +287,8 @@ class Session:
         self.scenario_steps_omitted = 0
         self.scenario_status: str | None = None
         self.scenario_over_at_ms: float | None = None
+        self.scenario_handed_over: bool = False
+        self.ended_sim_ms: int | None = None
         # Where the server serves the run's timeline file (api/timeline/<id>), once the run has ended with one.
         self.timeline_url: str | None = None
         self._staging: _Staging | None = _Staging() if self.staged else None
@@ -507,11 +509,19 @@ class Session:
                 out += self._limit("check", f"the launcher's check is larger than {self.limits.object_bytes} "
                                             "bytes: it is shown now, but not kept for a screen opened later")
         elif kind == "result":
-            self._scenario_of_result(event["result"])
+            res = event["result"]
+            self._scenario_of_result(res)
+            self.ended_sim_ms = None
+            if res.get("simulation") != "not_started":
+                timing = res.get("timing")
+                if isinstance(timing, dict):
+                    sim_ms = timing.get("sim_ms")
+                    if _is_int(sim_ms) and 0 <= sim_ms <= STEP_MS_MAX:
+                        self.ended_sim_ms = sim_ms
             if size <= self.limits.object_bytes:
-                self.result = event["result"]
+                self.result = res
             else:
-                self.result = {k: v for k, v in event["result"].items()
+                self.result = {k: v for k, v in res.items()
                                if not isinstance(v, (dict, list)) and not (isinstance(v, str) and len(v) > 1024)}
                 out += self._limit("result", f"the launcher's result is larger than {self.limits.object_bytes} "
                                              "bytes: only its short plain fields are kept for a screen opened later")
@@ -535,6 +545,12 @@ class Session:
             kept = self._small(kind, {k: v for k, v in event.items() if k != "run"}, None)
             self.time = kept if kept is not None else self.time
         elif kind == "state":
+            if self.scenario is not None and event.get("handed_over") is True:
+                self.scenario_handed_over = True
+                self.scenario_status = "passed"
+                over = event.get("scenario_over_at_ms")
+                if _is_int(over) and 0 <= over <= STEP_MS_MAX:
+                    self.scenario_over_at_ms = over
             # Only the last one is kept (the launcher writes one whenever what it accepts changes); with its seq
             # and rev, so that a screen tells a new one from the same one sent again in a later summary.
             if size <= self.limits.state_bytes:
@@ -638,7 +654,10 @@ class Session:
         if isinstance(found.get("status"), str):
             self.scenario_status = self._cut(found["status"], 100)
         over = found.get("over_at_ms")
-        self.scenario_over_at_ms = over if isinstance(over, (int, float)) and not isinstance(over, bool) else None
+        if isinstance(over, (int, float)) and not isinstance(over, bool):
+            self.scenario_over_at_ms = over
+        elif not self.scenario_handed_over:
+            self.scenario_over_at_ms = None
         if isinstance(found.get("name"), str):
             self.scenario_name = self._cut(found["name"], self.limits.message_chars)
         steps = found.get("steps")
@@ -654,7 +673,8 @@ class Session:
         return {"file": self.scenario, "name": self.scenario_name, "step_count": self.scenario_step_count,
                 "steps": [self.scenario_steps[i] for i in sorted(self.scenario_steps)],
                 "steps_omitted": self.scenario_steps_omitted, "status": self.scenario_status,
-                "over_at_ms": self.scenario_over_at_ms, "timeline_url": self.timeline_url}
+                "over_at_ms": self.scenario_over_at_ms, "timeline_url": self.timeline_url,
+                "handed_over": self.scenario_handed_over}
 
     def _keep_log(self, event: dict, size: int, stream_seq: int) -> None:
         log = self._log_of(event["source"])

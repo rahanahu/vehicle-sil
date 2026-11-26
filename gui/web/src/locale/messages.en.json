@@ -770,9 +770,17 @@
       "source": " この実行の操作をシナリオとして保存 ",
       "target": " Save this run's writes as a scenario "
     },
-    "1942270044819791758": {
-      "source": " 保存したファイルを構成ファイルの隣の scenarios に置くと、「シナリオ」で選んで回せます。シナリオは最後の手順の時刻で止まるので、その後も走らせたいときや、確かめる手順（expect、wait_until）は、エディターで足してください（ファイルの先頭のコメントに例があります）。一時停止やステップ送りは入りません。 ",
-      "target": " Put the saved file in scenarios next to the configuration file, and you can choose it under Scenario and run it. A scenario stops at the time of its last step. To keep running after that, or to add steps that check values (expect, wait_until), edit the file; the comments at its top have examples. Pauses and steps are not saved. "
+    "9151577979618316331": {
+      "source": " 記録元の終了仮想時刻（end_ms: {$INTERPOLATION} ms）まで再現します。 ",
+      "target": " Replays up to the recorded end virtual time (end_ms: {$INTERPOLATION} ms). "
+    },
+    "9066374331849188595": {
+      "source": " 保存したファイルを構成ファイルの隣の scenarios に置くと、「シナリオ」で選んで回せます。記録元の終了時刻（end_ms）まで自動で再現します。確かめる手順（expect、wait_until）を足したいときは、エディターで追記できます（ファイルの先頭のコメントに例があります）。一時停止やステップ送りは入りません。 ",
+      "target": " Put the saved file in scenarios next to the configuration file to choose it under Scenario and run it. It automatically replays up to the recorded end time (end_ms). To add steps that check values (expect, wait_until), edit the file; the comments at its top have examples. Pauses and steps are not saved. "
+    },
+    "2271003503034263037": {
+      "source": " 保存したファイルを構成ファイルの隣の scenarios に置くと、「シナリオ」で選んで回せます。実行中に保存したため終了仮想時刻（end_ms）はまだ入らず、最後の手順の時刻で止まります（実行が終わってから保存すると end_ms が入ります）。一時停止やステップ送りは入りません。 ",
+      "target": " Put the saved file in scenarios next to the configuration file to choose it under Scenario and run it. Because this was saved while the run is in progress, the end virtual time (end_ms) is not included yet and replay stops at the last step (save after the run ends to include end_ms). Pauses and steps are not saved. "
     },
     "1907072433345070030": {
       "source": "まだ保存するものがありません。変数を書いて、反映されると数えます。",
@@ -930,6 +938,26 @@
       "source": " シナリオはありません。構成ファイルの隣の {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} に .yaml を置くと選べます。 ",
       "target": " No scenarios. Put .yaml files in {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} next to the configuration file to choose them here. "
     },
+    "4346371076971379188": {
+      "source": "シナリオ終了後",
+      "target": "After scenario"
+    },
+    "2550796270436688344": {
+      "source": "停止して終了する",
+      "target": "Stop and end the run"
+    },
+    "2064805205294580648": {
+      "source": "一時停止して手動操作へ引き継ぐ",
+      "target": "Pause and hand over to manual control"
+    },
+    "3526889870580588277": {
+      "source": " このランチャーはシナリオ終了後の引き継ぎに対応していません。 ",
+      "target": " This launcher does not support handover after a scenario finishes. "
+    },
+    "5556200658692147046": {
+      "source": " シナリオが通ると、終了仮想時刻で一時停止して同じ実行のまま手動操作へ引き継ぎます。シナリオの実行中は、変数を書けません。 ",
+      "target": " When the scenario passes, the run pauses at the scenario end virtual time and hands over to manual control in the same run. While a scenario runs, you cannot write variables. "
+    },
     "5936000937981361991": {
       "source": " シナリオを最後まで進めると、ランチャーが止めて合否を出します。シナリオの実行中は、変数を書けません。 ",
       "target": " When the scenario reaches its end, the launcher stops the run and reports whether it passed. While a scenario runs, you cannot write variables. "
@@ -941,6 +969,10 @@
     "6990660249857497852": {
       "source": "停止時刻（仮想時間 ms、任意）",
       "target": "Stop at (virtual ms)"
+    },
+    "7660315499130781787": {
+      "source": "引き継ぎを選ぶと、停止時刻は使えません。",
+      "target": "Stop at cannot be used when handover is selected."
     },
     "4458056399147223793": {
       "source": "空欄なら自動停止しません。1〜1000000000000 ms。",
@@ -1226,6 +1258,22 @@
       "source": "異常終了（{$how}）",
       "target": "Ended abnormally ({$how})"
     },
+    "9220313973543270812": {
+      "source": "一時停止中（{$ms} ms でシナリオ完了・手動操作へ引き継ぎ）",
+      "target": "Paused (scenario passed at {$ms} ms; handed over to manual control)"
+    },
+    "6507131700807172043": {
+      "source": "一時停止中（シナリオ完了・手動操作へ引き継ぎ）",
+      "target": "Paused (scenario passed; handed over to manual control)"
+    },
+    "9037061055753542629": {
+      "source": "実行中（{$ms} ms で手動操作へ引き継ぎ済み）",
+      "target": "Running (handed over to manual control at {$ms} ms)"
+    },
+    "3871522258345236497": {
+      "source": "実行中（手動操作へ引き継ぎ済み）",
+      "target": "Running (handed over to manual control)"
+    },
     "1483151911201142225": {
       "source": "一時停止中",
       "target": "Paused"
@@ -1281,6 +1329,22 @@
     "2299711158826910935": {
       "source": "{VAR_PLURAL, plural, other {多すぎるので、{INTERPOLATION} 個の手順を出していません。}}",
       "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} step not shown (too many).} other {{INTERPOLATION} steps not shown (too many).}}"
+    },
+    "551928122154120594": {
+      "source": "シナリオは {$ms} ms で完了し、手動操作のため一時停止しています。",
+      "target": "The scenario passed at {$ms} ms and is paused for manual control."
+    },
+    "4824523943012976465": {
+      "source": "シナリオが完了し、手動操作のため一時停止しています。",
+      "target": "The scenario passed and is paused for manual control."
+    },
+    "3807389567699694196": {
+      "source": "シナリオは {$ms} ms で完了し、手動操作へ引き継ぎました。",
+      "target": "The scenario passed at {$ms} ms and handed over to manual control."
+    },
+    "2773350188858128938": {
+      "source": "シナリオが完了し、手動操作へ引き継ぎました。",
+      "target": "The scenario passed and handed over to manual control."
     },
     "4812059856413496987": {
       "source": "シナリオの手順",
@@ -1474,9 +1538,21 @@
       "source": "最初のステップの前で止まっています。ここで書いた値（パラメーターを含む）は、時刻 0 のステップで反映されます。再開は「実行」の画面で行います。",
       "target": "Paused before the first step. Values you write now (parameters included) are applied in the step at time 0. Resume on the Run screen."
     },
+    "424968541046504211": {
+      "source": "シナリオは {$ms} ms で完了し、手動操作のため一時停止しています。変数を書き換えて、「実行」の画面からステップ送りや再開ができます。",
+      "target": "The scenario passed at {$ms} ms and is paused for manual control. You can write variables and step or resume on the Run screen."
+    },
+    "3730838271717777323": {
+      "source": "シナリオが完了し、手動操作のため一時停止しています。変数を書き換えて、「実行」の画面からステップ送りや再開ができます。",
+      "target": "The scenario passed and is paused for manual control. You can write variables and step or resume on the Run screen."
+    },
     "1469715543654532890": {
       "source": "一時停止しています。値は止まっている時刻のものです。",
       "target": "Paused. Values are as of the paused time."
+    },
+    "2635400529240095366": {
+      "source": "シナリオ完了後、手動操作で実行中です。変数を書き換えられます。",
+      "target": "Running under manual control after the scenario passed. You can write variables."
     },
     "3148904264671010136": {
       "source": "実行は終わりました。最後に読めた値を出しています。書くことはできません。",

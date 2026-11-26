@@ -52,6 +52,7 @@ const viewport = new IntersectionObserver(
                 [disabled]="!view()?.can_write"
                 [attr.aria-disabled]="switchWaiting() || null"
                 [attr.aria-busy]="switchWaiting() || null"
+                [title]="view()?.why?.message ?? ''"
                 (click)="toggle($event)"
               />
               <span class="switch-state">{{ view()?.value == null ? '—' : lampText() }}</span>
@@ -60,6 +61,7 @@ const viewport = new IntersectionObserver(
               <select
                 [attr.aria-label]="info().name"
                 [disabled]="blocked()"
+                [title]="view()?.why?.message ?? ''"
                 (change)="send(+$any($event.target).value)"
               >
                 <option disabled [selected]="shown() == null">—</option>
@@ -80,6 +82,7 @@ const viewport = new IntersectionObserver(
                   [step]="info().step ?? (info().type === 'integer' ? 1 : 'any')"
                   [value]="shown() ?? info().min!"
                   [disabled]="blocked()"
+                  [title]="view()?.why?.message ?? ''"
                   (input)="draft.set($any($event.target).value)"
                   (change)="send($any($event.target).valueAsNumber)"
                 />

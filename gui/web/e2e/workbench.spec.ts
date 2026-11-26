@@ -21,6 +21,8 @@ const features = [
   'control-links',
   'control-server',
   'scenario',
+  'scenario-end-ms',
+  'scenario-handover',
   'timeline',
 ].join(',');
 
@@ -1041,6 +1043,17 @@ test('workbench writes an ECU input, detaches the ECU, and loads the recorded YA
     await ecu.close();
     await page.bringToFront();
 
+    // Mid-run Load recording omits end_ms and shows mid-run notice
+    await page.getByRole('button', { name: 'Scenario', exact: true }).click();
+    await page.getByRole('button', { name: 'Load recording' }).click();
+    await expect(page.getByRole('textbox', { name: 'Scenario YAML' })).toHaveValue(
+      /engine\.demand.*70/,
+    );
+    await expect(page.getByRole('textbox', { name: 'Scenario YAML' })).not.toHaveValue(/^end_ms:/m);
+    await expect(page.getByTestId('workbench-recording-meta')).toContainText(
+      'mid-run: end_ms omitted until run ends',
+    );
+
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.getByText('Run ended', { exact: false }).first()).toBeVisible({
       timeout: RUN_TIMEOUT,
@@ -1052,10 +1065,15 @@ test('workbench writes an ECU input, detaches the ECU, and loads the recorded YA
       'scenarios/throttle.yaml',
     );
     await observer.close();
-    await page.getByRole('button', { name: 'Scenario', exact: true }).click();
+    // After Stop, Load recording carries finalized end_ms
     await page.getByRole('button', { name: 'Load recording' }).click();
     await expect(page.getByRole('textbox', { name: 'Scenario YAML' })).toHaveValue(
       /engine\.demand.*70/,
+    );
+    await expect(page.getByRole('textbox', { name: 'Scenario YAML' })).toHaveValue(/end_ms: \d+/);
+    await expect(page.getByTestId('workbench-recording-meta')).toContainText(/end_ms: \d+ ms/);
+    await expect(page.getByRole('textbox', { name: 'Scenario YAML' })).not.toHaveValue(
+      /# {3}- expect:/,
     );
     // A refused next start did not create a session and must leave the previous recording available.
     await page.route(
@@ -1105,6 +1123,391 @@ test('workbench writes an ECU input, detaches the ECU, and loads the recorded YA
       timeout: RUN_TIMEOUT,
     });
     expect(errors).toEqual([]);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('workbench handover option disables Stop at (ms) and omits stop_at_ms from check and run', async ({
+  page,
+}) => {
+  test.skip(
+    process.env['VEHICLE_SIL_VERIFY_WORKBENCH'] !== '1' || test.info().project.name !== 'static',
+  );
+  const server = await launchGuiServer({
+    launcher: REPLAY_LAUNCHER,
+    root: CONFIGS,
+    config: join(CONFIGS, 'simulation.yaml'),
+    env: { REPLAY_FEATURES: features },
+    port: 0,
+    web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
+  });
+  try {
+    await page.goto(server.url);
+    await expect(page.getByRole('status').filter({ hasText: /^Ready$/ })).toBeVisible();
+    const stopInput = page.getByRole('textbox', { name: 'Stop at (ms)' });
+    await stopInput.fill('4321');
+    const scenario = page.getByRole('combobox', { name: 'Scenario', exact: true });
+    await expect(scenario.locator('option[value="scenarios/throttle.yaml"]')).toHaveCount(1);
+    await scenario.selectOption('scenarios/throttle.yaml');
+
+    const after = page.getByRole('combobox', { name: 'After scenario', exact: true });
+    await expect(after).toBeVisible();
+    await after.selectOption('pause');
+    await expect(stopInput).toBeDisabled();
+    await expect(stopInput).toHaveValue('');
+
+    const checkReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/check') && r.method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Scenario', exact: true }).click();
+    await page.getByRole('button', { name: 'Check run settings', exact: true }).click();
+    const checkBody = (await checkReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(checkBody['scenario']).toBe('scenarios/throttle.yaml');
+    expect(checkBody['after_scenario']).toBe('pause');
+    expect(checkBody['stop_at_ms']).toBeUndefined();
+
+    // Start also sends after_scenario: 'pause' and omits stop_at_ms
+    await page.getByRole('button', { name: 'ECU I/O', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Speed', exact: true }).selectOption('max');
+    const runReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Start', exact: true }).click();
+    const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(runBody['scenario']).toBe('scenarios/throttle.yaml');
+    expect(runBody['after_scenario']).toBe('pause');
+    expect(runBody['stop_at_ms']).toBeUndefined();
+    await expect(page.getByTestId('handover-notice')).toContainText('1000 ms', {
+      timeout: RUN_TIMEOUT,
+    });
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+    await expect(page.getByText('Run ended', { exact: false }).first()).toBeVisible({
+      timeout: RUN_TIMEOUT,
+    });
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+
+    // Switching back to 'stop' restores Stop at (ms) draft
+    await after.selectOption('stop');
+    await expect(stopInput).toBeEnabled();
+    await expect(stopInput).toHaveValue('4321');
+  } finally {
+    await server.stop();
+  }
+});
+
+test('workbench displays replay write lock, handover notice on pause, and hides handover on non-handover outcomes', async ({
+  page,
+}) => {
+  test.skip(
+    process.env['VEHICLE_SIL_VERIFY_WORKBENCH'] !== '1' || test.info().project.name !== 'static',
+  );
+  const server = await launchGuiServer({
+    launcher: REPLAY_LAUNCHER,
+    root: CONFIGS,
+    config: join(CONFIGS, 'forever.yaml'),
+    env: { REPLAY_FEATURES: features },
+    port: 0,
+    web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
+  });
+  try {
+    let socket: WebSocketRoute | undefined;
+    await page.routeWebSocket(/\/ws$/, (ws) => {
+      ws.connectToServer();
+      socket = ws;
+    });
+    await page.goto(server.url);
+    await expect.poll(() => Boolean(socket)).toBe(true);
+    await expect(page.getByRole('status').filter({ hasText: /^Ready$/ })).toBeVisible();
+
+    const runningSession = JSON.parse(
+      readFileSync(join(REPOSITORY, 'gui/protocol/examples/session-running.json'), 'utf8'),
+    ).response.session;
+    const endedSession = JSON.parse(
+      readFileSync(join(REPOSITORY, 'gui/protocol/examples/session-ended.json'), 'utf8'),
+    ).response.session;
+
+    const ok = { ok: true, reason: null, message: null, caution: null };
+    const refused = (reason: string, message: string) => ({
+      ok: false,
+      reason,
+      message,
+      caution: null,
+    });
+    const baseState = {
+      rev: 1,
+      seq: 1,
+      phase: 'running',
+      paused: false,
+      paused_at_ms: null,
+      holding: false,
+      speed: 'max',
+      pacing: 'on-time',
+      stop: { requests: 0, by: null },
+      scenario: true,
+      handed_over: false,
+      scenario_over_at_ms: null,
+      allowed: {
+        pause: ok,
+        resume: refused('not-paused', 'not paused'),
+        step: { ...refused('not-paused', 'not paused'), min_ms: 10, max_ms: 5000 },
+        speed: { ...ok, min: 0.1, max: 100 },
+        run_until: ok,
+        stop: ok,
+        write: refused('scenario-running', 'scenario plays'),
+      },
+      outside: [],
+    };
+    const scenarioSummary = {
+      file: 'scenarios/throttle.yaml',
+      name: 'throttle',
+      step_count: 3,
+      steps: [],
+      steps_omitted: 0,
+      status: null,
+      over_at_ms: null,
+      timeline_url: null,
+    };
+
+    socket!.send(
+      JSON.stringify({
+        type: 'session',
+        session: {
+          ...runningSession,
+          id: '50',
+          launcher_state: baseState,
+          scenario: scenarioSummary,
+        },
+      }),
+    );
+    socket!.send(
+      JSON.stringify({
+        type: 'variables',
+        run_id: '50',
+        variables: {
+          state: 'ready',
+          reason: null,
+          peers: [
+            {
+              name: 'Engine',
+              connected: true,
+              variables: [
+                {
+                  name: 'engine.demand',
+                  type: 'real',
+                  role: 'input',
+                  writable: true,
+                  unit: '%',
+                  min: 0,
+                  max: 100,
+                  step: null,
+                  description: '',
+                  enum: null,
+                },
+              ],
+            },
+          ],
+          peers_omitted: 0,
+          variables_omitted: 0,
+          operations: [],
+        },
+      }),
+    );
+
+    await expect(page.getByTestId('scenario-write-lock')).toBeVisible();
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+    await expect(
+      page.getByRole('spinbutton', { name: 'engine.demand', exact: true }),
+    ).toBeDisabled();
+
+    // Handover state arrives on the same run
+    socket!.send(
+      JSON.stringify({
+        type: 'event',
+        run_id: '50',
+        event: {
+          ...baseState,
+          event: 'state',
+          seq: 10,
+          t_ms: 1000,
+          rev: 2,
+          paused: true,
+          paused_at_ms: 1000,
+          pacing: 'not-paced',
+          handed_over: true,
+          scenario_over_at_ms: 1000,
+          allowed: {
+            ...baseState.allowed,
+            pause: refused('paused', 'paused'),
+            resume: ok,
+            step: { ...ok, min_ms: 10, max_ms: 5000 },
+            write: ok,
+          },
+        },
+      }),
+    );
+    await expect(page.getByTestId('handover-notice')).toContainText('1000 ms');
+    await expect(page.getByTestId('scenario-write-lock')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: '1 step', exact: true })).toBeEnabled();
+    await expect(
+      page.getByRole('spinbutton', { name: 'engine.demand', exact: true }),
+    ).toBeEnabled();
+
+    // Stopping state on the same handed-over run clears handover-notice immediately
+    socket!.send(
+      JSON.stringify({
+        type: 'event',
+        run_id: '50',
+        event: {
+          ...baseState,
+          event: 'state',
+          seq: 11,
+          t_ms: 1010,
+          rev: 3,
+          paused: false,
+          stop: { requests: 1, by: 'operator' },
+          handed_over: true,
+          scenario_over_at_ms: 1000,
+          allowed: {
+            ...baseState.allowed,
+            pause: refused('stopping', 'stopping'),
+            resume: refused('stopping', 'stopping'),
+            step: { ...refused('stopping', 'stopping'), min_ms: 10, max_ms: 5000 },
+            write: refused('stopping', 'stopping'),
+          },
+        },
+      }),
+    );
+    await expect(page.getByRole('status').filter({ hasText: /^Stopping…$/ })).toBeVisible();
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+    await expect(page.getByTestId('scenario-write-lock')).toHaveCount(0);
+
+    // Crashed handed-over session never shows handover-notice, even while Start is pending
+    socket!.send(
+      JSON.stringify({
+        type: 'session',
+        session: {
+          ...runningSession,
+          id: '50',
+          state: 'ended',
+          launcher: { running: false, exit_code: 1, signal: null, silent_s: null },
+          result: null,
+          launcher_state: {
+            ...baseState,
+            rev: 4,
+            paused: true,
+            handed_over: true,
+            scenario_over_at_ms: 1000,
+          },
+          scenario: { ...scenarioSummary, status: 'passed', handed_over: true },
+        },
+      }),
+    );
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+
+    // Non-handover ended outcome clears handover notice and must not flash lock while Start is pending
+    socket!.send(
+      JSON.stringify({
+        type: 'session',
+        session: {
+          ...endedSession,
+          id: '51',
+          scenario: { ...scenarioSummary, status: 'failed', handed_over: false },
+        },
+      }),
+    );
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+    await expect(page.getByTestId('scenario-write-lock')).toHaveCount(0);
+
+    let releaseStart!: () => void;
+    const holdStart = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    await page.route(
+      '**/api/run',
+      async (route) => {
+        await holdStart;
+        await route.fulfill({ status: 409, json: { error: 'cancelled' } });
+      },
+      { times: 1 },
+    );
+    try {
+      await page.getByRole('button', { name: 'Start', exact: true }).click();
+      await expect(page.getByRole('status').filter({ hasText: /^Starting…$/ })).toBeVisible();
+      await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+      await expect(page.getByTestId('scenario-write-lock')).toHaveCount(0);
+    } finally {
+      releaseStart();
+    }
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+    await expect(page.getByTestId('scenario-write-lock')).toHaveCount(0);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('workbench runs scenario handover at max speed, unlocks writes, and steps on the same run', async ({
+  page,
+}) => {
+  test.skip(
+    process.env['VEHICLE_SIL_VERIFY_WORKBENCH'] !== '1' || test.info().project.name !== 'static',
+    'run with verify-web.py --workbench',
+  );
+  test.setTimeout(120_000);
+  const server = await launchGuiServer({
+    launcher: REPLAY_LAUNCHER,
+    root: CONFIGS,
+    config: join(CONFIGS, 'simulation.yaml'),
+    env: { REPLAY_TICK_MS: '25', REPLAY_FEATURES: features, REPLAY_VARIABLES: 'more' },
+    port: 0,
+    web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
+  });
+  try {
+    await page.goto(server.url);
+    const scenario = page.getByRole('combobox', { name: 'Scenario', exact: true });
+    await expect(scenario.locator('option[value="scenarios/throttle.yaml"]')).toHaveCount(1);
+    await scenario.selectOption('scenarios/throttle.yaml');
+    await page.getByRole('combobox', { name: 'Speed', exact: true }).selectOption('max');
+    await page.getByRole('combobox', { name: 'After scenario', exact: true }).selectOption('pause');
+
+    await page.getByRole('button', { name: 'Start', exact: true }).click();
+    await expect(page.getByTestId('handover-notice')).toContainText('1000 ms', {
+      timeout: RUN_TIMEOUT,
+    });
+    await expect(page.getByText('Sim 1.000 s')).toBeVisible();
+    await page.waitForTimeout(300);
+    await expect(page.getByText('Sim 1.000 s')).toBeVisible();
+
+    const demand = page.getByRole('spinbutton', { name: 'engine.demand', exact: true });
+    await expect(demand).toBeEnabled();
+    await demand.fill('70');
+    await demand.press('Enter');
+    const row = page.locator('app-io-row').filter({ hasText: 'engine.demand' });
+    await expect(row.getByText('Write pending')).toBeVisible();
+
+    await page.getByRole('button', { name: '1 step', exact: true }).click();
+    await expect(row.getByText('Write pending')).toHaveCount(0, { timeout: RUN_TIMEOUT });
+    await expect(page.getByText('Sim 1.000 s')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+    await expect(page.getByText('Run ended', { exact: false }).first()).toBeVisible({
+      timeout: RUN_TIMEOUT,
+    });
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+
+    // Failing scenario with handover selected does NOT display handover notice
+    await scenario.selectOption('scenarios/fails.yaml');
+    await page.getByRole('combobox', { name: 'After scenario', exact: true }).selectOption('pause');
+    await page.getByRole('button', { name: 'Start', exact: true }).click();
+    await expect(page.getByText('Run ended', { exact: false }).first()).toBeVisible({
+      timeout: RUN_TIMEOUT,
+    });
+    await expect(page.getByTestId('handover-notice')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Results', exact: true }).click();
+    await expect(page.getByText('Scenario: failed', { exact: true })).toBeVisible();
   } finally {
     await server.stop();
   }
