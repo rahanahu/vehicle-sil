@@ -18,7 +18,8 @@
       "name": "speed too high",
       "status": "failed",
       "over_at_ms": 101,
-      "recorded_to_ms": 100
+      "recorded_to_ms": 100,
+      "end_ms": null
     },
     "variables": [
       {

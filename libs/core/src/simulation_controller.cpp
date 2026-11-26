@@ -394,6 +394,32 @@ void SimulationController::guard_from(std::optional<SimTime> t)
     g.wake();
 }
 
+bool SimulationController::pause_for_handover()
+{
+    if (!gate_)
+    {
+        return false;
+    }
+    if (runtime_->stop_requested() || runtime_->state() != orch::ParticipantState::Running || failed_participant())
+    {
+        return false;
+    }
+    auto& g = *gate_;
+    bool paused = false;
+    {
+        const std::lock_guard lock(g.mutex);
+        if (!runtime_->stop_requested() && runtime_->state() == orch::ParticipantState::Running && !g.model.ended())
+        {
+            paused = g.model.pause_for_handover(Gate::Wall::now());
+        }
+    }
+    if (paused)
+    {
+        g.wake();
+    }
+    return paused;
+}
+
 std::optional<SimTime> SimulationController::wait_guarded(std::chrono::milliseconds timeout)
 {
     const GuardWaitResult result = wait_guarded_result(timeout);

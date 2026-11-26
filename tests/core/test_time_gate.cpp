@@ -943,3 +943,58 @@ TEST_CASE(virtual_time_watch_wakes_promptly_on_wake_waiters)
     // With poll = scaled_timeout(10s), a missing wake would wait the full poll.
     CHECK(elapsed < scaled_timeout(2s));
 }
+
+TEST_CASE(virtual_time_controller_pause_for_handover_respects_guard_stop_and_failure)
+{
+    // Succeeds during a guarded step on a running simulation, clears pause_target, and stays
+    // paused at speed = nullopt after guard_from(nullopt) until resume().
+    {
+        GateSim sim(TimeControlOptions{.step = 10ms, .speed = std::nullopt});
+        sim.controller->guard_from(at(0ms));
+        sim.start();
+        const auto guarded = sim.controller->wait_guarded(scaled_timeout(10s));
+        CHECK(guarded.has_value());
+        sim.controller->run_until(*guarded + 100ms);
+        CHECK(sim.controller->pause_for_handover());
+        sim.controller->guard_from(std::nullopt);
+        const auto paused = sim.controller->wait_until_paused(scaled_timeout(10s));
+        CHECK(paused == guarded);
+        const TimeState state = sim.controller->time_state();
+        CHECK(state.paused);
+        CHECK(!state.pause_target.has_value());
+        std::this_thread::sleep_for(50ms);
+        CHECK_EQ(sim.controller->time_state().now.time_since_epoch().count(), guarded->time_since_epoch().count());
+        sim.controller->resume();
+        sim.controller->stop("done");
+        CHECK(sim.controller->wait_until_finished(scaled_timeout(10s)).has_value());
+        CHECK(!sim.controller->pause_for_handover()); // after stop -> false
+    }
+    // Fails after abort(), after stop_at (ended), and after peer stop request.
+    {
+        GateSim sim(TimeControlOptions{.step = 10ms, .speed = std::nullopt});
+        sim.controller->guard_from(at(0ms));
+        sim.start();
+        CHECK(sim.controller->wait_guarded(scaled_timeout(10s)).has_value());
+        sim.controller->abort();
+        CHECK(!sim.controller->pause_for_handover());
+        CHECK(sim.controller->wait_until_finished(scaled_timeout(10s)).has_value());
+    }
+    {
+        GateSim sim(TimeControlOptions{.step = 10ms, .speed = std::nullopt}, 30ms);
+        sim.controller->guard_from(at(0ms));
+        sim.start();
+        CHECK(sim.controller->wait_guarded(scaled_timeout(10s)).has_value());
+        sim.controller->guard_from(std::nullopt);
+        CHECK(sim.controller->wait_until_finished(scaled_timeout(10s)).has_value());
+        CHECK(!sim.controller->pause_for_handover());
+    }
+    {
+        GateSim sim(TimeControlOptions{.step = 10ms, .speed = std::nullopt});
+        sim.controller->guard_from(at(0ms));
+        sim.start();
+        CHECK(sim.controller->wait_guarded(scaled_timeout(10s)).has_value());
+        sim.peers[0]->runtime->request_stop("peer stop");
+        CHECK(sim.controller->wait_until_finished(scaled_timeout(10s)).has_value());
+        CHECK(!sim.controller->pause_for_handover());
+    }
+}

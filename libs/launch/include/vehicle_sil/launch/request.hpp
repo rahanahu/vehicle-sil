@@ -53,6 +53,8 @@ struct RunIntent
     std::optional<std::int64_t> stop_at_ms{};
     /// Wall-clock milliseconds of lateness before a step counts as late.
     std::optional<std::int64_t> late_tolerance_ms{};
+    /// What to do after the scenario passes: stop (default) or pause for manual handover.
+    config::AfterScenario after_scenario = config::AfterScenario::Stop;
 };
 
 /// run --control: where the run's control server listens and the files it reads, as the caller

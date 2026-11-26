@@ -83,6 +83,8 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicl
                test_launcher.LauncherTest.test_version_lists_the_control_server
                test_launcher.LauncherTest.test_control_address_says_why_there_is_none
                test_launcher.LauncherTest.test_launch_skips_what_is_no_event
+               test_launcher.LauncherTest.test_after_scenario_pause_hands_over_at_end_ms_and_unlocks_writes
+               test_launcher.LauncherTest.test_after_scenario_pause_does_not_hand_over_when_scenario_fails
              WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(control_server.launcher_scenarios PROPERTIES
       LABELS "control;control_server;python;launch;integration" TIMEOUT ${_control_launcher_timeout} ${_vehicle_sil_tsan_processors} COST 12

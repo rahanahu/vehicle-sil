@@ -34,7 +34,7 @@ namespace vehicle_sil::scenario::reader {
 // a new branch must be added here too, or the JSON Schema (schema/) and its test (tests/schema), which compare with
 // the list in the message, pass without the key. (The keys of a step are taken from kStepKeys itself.)
 
-inline const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "samples", "only", "params", "inputs", "steps"};
+inline const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "samples", "only", "params", "inputs", "end_ms", "steps"};
 inline const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",        "wave",         "dither",
                                                    "wait_until", "timeout_ms", "expect",  "within_ms",   "hold_for_ms", "undersampled"};
 inline const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "dither", "wait_until", "expect"};
@@ -454,6 +454,9 @@ private:
     /// The end of the step before, in milliseconds, if it is known before the run.
     bool end_known_ = true;
     std::int64_t end_ms_ = 0;
+    /// Earliest possible end across all steps regardless of `end_known_` (wait steps contribute
+    /// minimum length 0; subsequent `after_ms` and timed steps accumulate over it).
+    std::int64_t min_end_ms_ = 0;
     std::size_t wait_line_ = 0; ///< the first step that waits since the end was known
     /// The latest the step before can end, in milliseconds (a wait counted with its whole time).
     std::int64_t latest_ms_ = 0;

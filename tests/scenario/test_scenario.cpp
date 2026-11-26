@@ -87,7 +87,7 @@ TEST_CASE(scenario_file_errors_say_the_line_what_is_wrong_and_how_to_fix_it)
                "E 1 format-version: vehicle_sil_scenario is 2, but this vehicle_sil_launch reads format 1 only: use the "
                "vehicle-sil that the file was written for\n");
     check_text(errors("steps:\n  - set: { Body.level: 1 }\nstep: 1\n"),
-               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, samples, only, params, inputs, steps)\n"
+               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, samples, only, params, inputs, end_ms, steps)\n"
                "E 0 missing-key: the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: 1\n");
     check_text(errors(kHead + "  - sets: { Body.level: 1 }\n"),
                "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: at_ms, after_ms, set, ramp, wave, dither, wait_until, "
@@ -3059,5 +3059,231 @@ TEST_CASE(scenario_dither_writes_of_no_step_do_not_decide_a_step)
         const ScenarioRun run = world.run(s);
         check_text(text_of(run), "passed over=210\n5 passed start=0 at=200 end=200\n", ("tick " + std::to_string(tick.count())).c_str());
         check_text(written_to(world, "Body.level", 60ms), "11@0>0 29@10>10 51@20>20 49@30>30 51@40>40 49@50>50 51@60>60 ");
+    }
+}
+
+TEST_CASE(scenario_end_ms_validation_and_runtime_settlement)
+{
+    // 1. Reader validation: negative, above max, and < static_end_ms fail; valid end_ms succeeds.
+    {
+        const ScenarioRead neg = read_scenario(kHead + "  - set: { Body.level: 10 }\n", catalog());
+        CHECK(neg.scenario.has_value());
+        const ScenarioRead badNeg = read_scenario("vehicle_sil_scenario: 1\nend_ms: -1\nsteps:\n  - set: { Body.level: 10 }\n", catalog());
+        CHECK(!badNeg.scenario.has_value());
+        CHECK(!badNeg.findings.empty() && badNeg.findings[0].code == "value");
+
+        const ScenarioRead badMax = read_scenario("vehicle_sil_scenario: 1\nend_ms: 1000000000001\nsteps:\n  - set: { Body.level: 10 }\n", catalog());
+        CHECK(!badMax.scenario.has_value());
+        CHECK(!badMax.findings.empty() && badMax.findings[0].code == "value");
+
+        const ScenarioRead badEarly = read_scenario("vehicle_sil_scenario: 1\nend_ms: 40\nsteps:\n"
+                                                    "  - at_ms: 50\n    set: { Body.level: 10 }\n",
+                                                    catalog());
+        CHECK(!badEarly.scenario.has_value());
+        CHECK(!badEarly.findings.empty() && badEarly.findings[0].code == "scenario-time");
+
+        // wait_until / within_ms have unknown static end, yet static lower bound min_end_ms_ still
+        // rejects end_ms smaller than the earliest possible end across steps (including after_ms).
+        const ScenarioRead waitTooEarly = read_scenario("vehicle_sil_scenario: 1\nend_ms: 5\nsteps:\n"
+                                                        "  - at_ms: 100\n    set: { Body.level: 10 }\n"
+                                                        "  - wait_until: { Body.body.speed: { ge: 10 } }\n    timeout_ms: 200\n",
+                                                        catalog());
+        CHECK(!waitTooEarly.scenario.has_value());
+        CHECK(!waitTooEarly.findings.empty() && waitTooEarly.findings[0].code == "scenario-time");
+
+        const ScenarioRead afterWaitTooEarly = read_scenario("vehicle_sil_scenario: 1\nend_ms: 40\nsteps:\n"
+                                                             "  - at_ms: 10\n    set: { Body.level: 10 }\n"
+                                                             "  - wait_until: { Body.body.speed: { ge: 10 } }\n    timeout_ms: 200\n"
+                                                             "  - after_ms: 50\n    set: { Body.level: 20 }\n",
+                                                             catalog());
+        CHECK(!afterWaitTooEarly.scenario.has_value());
+        CHECK(!afterWaitTooEarly.findings.empty() && afterWaitTooEarly.findings[0].code == "scenario-time");
+
+        const ScenarioRead withinTooEarly = read_scenario("vehicle_sil_scenario: 1\nend_ms: 20\nsteps:\n"
+                                                          "  - at_ms: 50\n    expect: { Body.level: 0 }\n    within_ms: 100\n",
+                                                          catalog());
+        CHECK(!withinTooEarly.scenario.has_value());
+        CHECK(!withinTooEarly.findings.empty() && withinTooEarly.findings[0].code == "scenario-time");
+
+        const ScenarioRead waitExact = read_scenario("vehicle_sil_scenario: 1\nend_ms: 10\nsteps:\n"
+                                                     "  - at_ms: 10\n    set: { Body.level: 10 }\n"
+                                                     "  - wait_until: { Body.body.speed: { ge: 10 } }\n    timeout_ms: 200\n",
+                                                     catalog());
+        CHECK(waitExact.scenario.has_value() && waitExact.scenario->end_ms == std::optional<std::int64_t>(10));
+
+        const ScenarioRead withinExact = read_scenario("vehicle_sil_scenario: 1\nend_ms: 50\nsteps:\n"
+                                                       "  - at_ms: 50\n    expect: { Body.level: 0 }\n    within_ms: 100\n",
+                                                       catalog());
+        CHECK(withinExact.scenario.has_value() && withinExact.scenario->end_ms == std::optional<std::int64_t>(50));
+
+        const ScenarioRead waitOk = read_scenario("vehicle_sil_scenario: 1\nend_ms: 40\nsteps:\n"
+                                                  "  - at_ms: 10\n    set: { Body.level: 10 }\n"
+                                                  "  - wait_until: { Body.body.speed: { ge: 10 } }\n    timeout_ms: 200\n",
+                                                  catalog());
+        CHECK(waitOk.scenario.has_value() && waitOk.scenario->end_ms == std::optional<std::int64_t>(40));
+
+        const ScenarioRead expectOnly = read_scenario("vehicle_sil_scenario: 1\nend_ms: 50\nsteps:\n"
+                                                      "  - expect: { Body.level: 0 }\n",
+                                                      catalog());
+        CHECK(expectOnly.scenario.has_value() && expectOnly.scenario->end_ms == std::optional<std::int64_t>(50));
+    }
+
+    // 2. end_ms == last.at_ms settles without advancing an extra tick across all timing policies.
+    {
+        const Scenario s = read("vehicle_sil_scenario: 1\nname: exact end\nend_ms: 50\nsteps:\n"
+                                "  - at_ms: 50\n    set: { Body.level: 77 }\n");
+        CHECK(s.end_ms == std::optional<std::int64_t>(50));
+        for (const auto& [name, policy] : policies())
+        {
+            World world;
+            world.tick = 10ms;
+            world.policy = policy;
+            const ScenarioRun run = world.run(s);
+            CHECK(run.status == ScenarioStatus::Passed);
+            CHECK(run.end_ms == std::optional<std::int64_t>(50));
+            CHECK(run.over_at == std::optional<SimTime>(at(50ms)));
+            check_text(applied(world, "Body.level"), "77@50 ", name.c_str());
+        }
+    }
+
+    // 3. Misaligned ECU step > end_ms (write at 20 ms, Body step 15 ms -> applied at 30 ms):
+    // can_settle_at waits until P >= applied_step (30 ms) so it never deadlocks.
+    {
+        const Scenario s = read("vehicle_sil_scenario: 1\nend_ms: 20\nsteps:\n"
+                                "  - at_ms: 20\n    set: { Body.level: 33 }\n");
+        World world;
+        world.tick = 10ms;
+        world.ecus[0].step = 15ms;
+        const ScenarioRun run = world.run(s);
+        CHECK(run.status == ScenarioStatus::Passed);
+        CHECK(run.over_at == std::optional<SimTime>(at(30ms)));
+        check_text(applied(world, "Body.level"), "33@30 ");
+    }
+
+    // 4. end_ms > last.at_ms with dither and timeline: holds until end_ms, records samples up to
+    // end_ms, and emits no unjudged dither grid writes at t >= end_ms.
+    {
+        const Scenario s = read(kDitherHead + "end_ms: 60\n"
+                                              "inputs:\n"
+                                              "  Body.level: { dither: { square: { amplitude: 1, period_ms: 20 } } }\n"
+                                              "steps:\n"
+                                              "  - at_ms: 0\n"
+                                              "    set: { Body.level: 50 }\n"
+                                              "  - at_ms: 20\n"
+                                              "    expect: { Body.level: 51 }\n");
+        World world;
+        world.tick = 10ms;
+        TimelineRecord record(s);
+        world.record = &record;
+        const ScenarioRun run = world.run(s);
+        CHECK(run.status == ScenarioStatus::Passed);
+        CHECK(run.over_at == std::optional<SimTime>(at(60ms)));
+        CHECK(record.recorded_to() == std::optional<SimTime>(at(60ms)));
+        // Grid writes stop strictly before end_ms (last grid write is at 50 ms, NOT 60 ms).
+        check_text(written_to(world, "Body.level", 80ms), "51@0>0 49@10>10 51@20>20 49@30>30 51@40>40 49@50>50 ");
+    }
+
+    // 5. Programmatic 0-step scenario with end_ms holds until end_ms; expect-only at 0ms with
+    // end_ms holds until end_ms too.
+    {
+        Scenario zero;
+        zero.end_ms = 40;
+        World w0;
+        w0.tick = 10ms;
+        const ScenarioRun r0 = w0.run(zero);
+        CHECK(r0.status == ScenarioStatus::Passed);
+        CHECK(r0.over_at == std::optional<SimTime>(at(40ms)));
+
+        const Scenario expOnly = read("vehicle_sil_scenario: 1\nend_ms: 40\nsteps:\n"
+                                      "  - at_ms: 0\n    expect: { Body.level: 0 }\n");
+        World w1;
+        w1.tick = 10ms;
+        const ScenarioRun r1 = w1.run(expOnly);
+        CHECK(r1.status == ScenarioStatus::Passed);
+        CHECK(r1.over_at == std::optional<SimTime>(at(40ms)));
+    }
+
+    // 6. stop_at_ms < end_ms ends incomplete even if all steps ran; stop_at_ms == end_ms passes if
+    // all steps completed (with no suppressed write at stop_at_ms).
+    {
+        const Scenario s = read("vehicle_sil_scenario: 1\nend_ms: 60\nsteps:\n"
+                                "  - at_ms: 10\n    expect: { Body.level: 0 }\n");
+        World early;
+        early.tick = 10ms;
+        early.stop_at = at(40ms);
+        const ScenarioRun rEarly = early.run(s);
+        CHECK(rEarly.status == ScenarioStatus::Incomplete);
+
+        World exact;
+        exact.tick = 10ms;
+        exact.stop_at = at(60ms);
+        const ScenarioRun rExact = exact.run(s);
+        CHECK(rExact.status == ScenarioStatus::Passed);
+        CHECK(rExact.over_at == std::optional<SimTime>(at(60ms)));
+    }
+
+    // 7. Dither grid write failure after all steps have already Passed (in (last_step_at, end_ms]):
+    // fails at scenario level without mutating any Passed step or emitting a contradictory step event.
+    {
+        // 7a. Refused at once (taken_at_once): 97 +/- 5 -> 92 at 0 ms, 102 at 40 ms (out of range).
+        const Scenario s = read(kDitherHead + "end_ms: 80\n"
+                                              "inputs:\n"
+                                              "  Body.level: { dither: { square: { amplitude: 5, period_ms: 80, phase_deg: 180 } } }\n"
+                                              "steps:\n"
+                                              "  - at_ms: 0\n"
+                                              "    set: { Body.level: 97 }\n"
+                                              "  - at_ms: 0\n"
+                                              "    expect: { Body.level: 92 }\n");
+        World world;
+        world.tick = 10ms;
+        TimelineRecord record(s);
+        world.record = &record;
+        std::vector<std::pair<std::size_t, StepStatus>> events;
+        world.on_step = [&](const ScenarioStepRun& step) { events.emplace_back(step.index, step.status); };
+        const ScenarioRun run = world.run(s);
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.code == "scenario-write");
+        CHECK(run.message.find("wrote 102 at 40 ms") != std::string::npos);
+        CHECK(run.failed_at == std::optional<SimTime>(at(40ms)));
+        CHECK(run.over_at == std::optional<SimTime>(at(30ms)));
+        CHECK_EQ(run.steps.size(), std::size_t{2});
+        CHECK(run.steps[0].status == StepStatus::Passed);
+        CHECK(run.steps[1].status == StepStatus::Passed);
+        CHECK(run.steps[1].code.empty());
+        CHECK(run.steps[1].message.empty());
+        CHECK(!std::any_of(events.begin(), events.end(), [](const auto& ev) { return ev.second == StepStatus::Failed; }));
+        CHECK(record.recorded_to() == std::optional<SimTime>(at(40ms)));
+        const auto& series = record.series();
+        const auto written_it = std::find_if(series.begin(), series.end(), [](const auto& sr) { return !sr.sampled; });
+        CHECK(written_it != series.end());
+        if (written_it != series.end())
+        {
+            CHECK(std::any_of(written_it->written.begin(), written_it->written.end(),
+                              [](const auto& p) { return p.at == at(40ms) && p.refused; }));
+        }
+    }
+    {
+        // 7b. Rejected in ECU step (judge): 12 +/- 1 -> 11 at 0 ms, 13 at 40 ms (setter throws).
+        const Scenario s = read(kDitherHead + "end_ms: 80\n"
+                                              "inputs:\n"
+                                              "  Body.level: { dither: { square: { amplitude: 1, period_ms: 80, phase_deg: 180 } } }\n"
+                                              "steps:\n"
+                                              "  - at_ms: 0\n"
+                                              "    set: { Body.level: 12 }\n"
+                                              "  - at_ms: 0\n"
+                                              "    expect: { Body.level: 11 }\n");
+        World world;
+        world.tick = 10ms;
+        std::vector<std::pair<std::size_t, StepStatus>> events;
+        world.on_step = [&](const ScenarioStepRun& step) { events.emplace_back(step.index, step.status); };
+        const ScenarioRun run = world.run(s);
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.code == "scenario-write");
+        CHECK(run.message.find("wrote 13 at 40 ms") != std::string::npos);
+        CHECK(run.failed_at == std::optional<SimTime>(at(40ms)));
+        CHECK(run.over_at == std::optional<SimTime>(at(50ms)));
+        CHECK(run.steps[0].status == StepStatus::Passed);
+        CHECK(run.steps[1].status == StepStatus::Passed);
+        CHECK(!std::any_of(events.begin(), events.end(), [](const auto& ev) { return ev.second == StepStatus::Failed; }));
     }
 }

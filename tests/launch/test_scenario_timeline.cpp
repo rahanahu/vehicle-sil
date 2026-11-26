@@ -205,7 +205,7 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
     for (const SimDuration tick : {SimDuration{5ms}, SimDuration{10ms}, SimDuration{30ms}})
     {
         const std::string made = timeline_of(ahead, tick);
-        CHECK(made.find("    \"recorded_to_ms\": 15\n") != std::string::npos);
+        CHECK(made.find("    \"recorded_to_ms\": 15,\n") != std::string::npos);
         check_text(lines_of(made),
                    "  \"lines\": [\n    {\n      \"variable\": \"Body.level\",\n      \"kind\": \"set\",\n      \"line\": 3,\n"
                    "      \"step\": 1,\n      \"from_ms\": 0,\n      \"to_ms\": 0,\n      \"base\": 10,\n"
@@ -222,12 +222,12 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
     CHECK(passed.find("      \"start_ms\": 35,\n      \"at_ms\": 85,\n      \"end_ms\": 85,\n") != std::string::npos);
     check_text(part(passed, "  \"scenario\": {", "  \"variables\""),
                "  \"scenario\": {\n    \"file\": \"scenario.yaml\",\n    \"name\": null,\n    \"status\": \"passed\",\n"
-               "    \"over_at_ms\": 160,\n    \"recorded_to_ms\": 150\n  },\n");
+               "    \"over_at_ms\": 160,\n    \"recorded_to_ms\": 150,\n    \"end_ms\": null\n  },\n");
     // What is in it: the hold from 15 ms fails at once with the sample of 10 ms, so the file has
     // what was written and sampled up to 15 ms and nothing after it, though the controller (every
     // 30 ms) saw the scenario over at 30 ms, with the samples of 20 ms there.
     const std::string failed = timeline_of(fails, 30ms, door4, catalog(10ms, 4ms));
-    CHECK(failed.find("    \"over_at_ms\": 30,\n    \"recorded_to_ms\": 15\n") != std::string::npos);
+    CHECK(failed.find("    \"over_at_ms\": 30,\n    \"recorded_to_ms\": 15,\n    \"end_ms\": null\n") != std::string::npos);
     CHECK(failed.find("      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
                       "      \"columns\": [\"at_ms\", \"value\"],\n      \"samples\": null,\n      \"first_ms\": null,\n      \"last_ms\": null,\n      \"not_applied_from\": null,\n      \"points\": [\n        [0, 10]\n      ]") != std::string::npos);
     CHECK(failed.find("      \"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\",\n      \"encoding\": \"changes\",\n"
@@ -492,7 +492,8 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
                "    \"name\": null,\n"
                "    \"status\": \"failed\",\n"
                "    \"over_at_ms\": 30,\n"
-               "    \"recorded_to_ms\": 40\n"
+               "    \"recorded_to_ms\": 40,\n"
+               "    \"end_ms\": null\n"
                "  },\n"
                "        \"writes\": [\n"
                "          {\n"
@@ -530,7 +531,8 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
                "    \"name\": null,\n"
                "    \"status\": \"failed\",\n"
                "    \"over_at_ms\": 0,\n"
-               "    \"recorded_to_ms\": 0\n"
+               "    \"recorded_to_ms\": 0,\n"
+               "    \"end_ms\": null\n"
                "  },\n"
                "        \"writes\": [\n"
                "          {\n"
@@ -895,7 +897,7 @@ TEST_CASE(timeline_of_a_failed_run_has_the_steps_as_the_controllers_step_saw_the
     // The series and where they end are the same: they go to the failure, and the set for 20 ms
     // is no point of them, also where its step passed.
     const std::string same =
-        "    \"recorded_to_ms\": 10\n"
+        "    \"recorded_to_ms\": 10,\n    \"end_ms\": null\n"
         "\"index\": 1, \"status\": \"passed\", \"start_ms\": 0, \"at_ms\": 0, \"end_ms\": 0,\n"
         "\"index\": 2, \"status\": \"failed\", \"start_ms\": 10, \"at_ms\": 10, \"end_ms\": 10,\n";
     const std::string series =
@@ -996,7 +998,8 @@ TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recor
     check_text(head(refused, [](World& w) { w.stop_at = at(30ms); }),
                "    \"status\": \"incomplete\",\n"
                "    \"over_at_ms\": 30,\n"
-               "    \"recorded_to_ms\": 20\n"
+               "    \"recorded_to_ms\": 20,\n"
+               "    \"end_ms\": null\n"
                "\"last_ms\": 20,\n"
                "\"failed\": null\n"
                "\"failed\": null\n"
@@ -1006,7 +1009,8 @@ TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recor
     check_text(head(refused, [](World& w) { w.superseded = true; }),
                "    \"status\": \"incomplete\",\n"
                "    \"over_at_ms\": null,\n"
-               "    \"recorded_to_ms\": 40\n"
+               "    \"recorded_to_ms\": 40,\n"
+               "    \"end_ms\": null\n"
                "\"not_applied_from\": 1,\n"
                "\"last_ms\": 40,\n"
                "\"failed\": null\n"
@@ -1019,7 +1023,8 @@ TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recor
                     [](World& w) { w.ends_after = 300ms; }),
                "    \"status\": \"incomplete\",\n"
                "    \"over_at_ms\": null,\n"
-               "    \"recorded_to_ms\": 290\n"
+               "    \"recorded_to_ms\": 290,\n"
+               "    \"end_ms\": null\n"
                "\"last_ms\": 290,\n"
                "\"failed\": null\n"
                "\"failed\": null\n");
@@ -1036,7 +1041,7 @@ TEST_CASE(timeline_keeps_the_writes_of_the_times_before_a_motion_that_finds_no_b
                                      "    ramp: { Body.level: { to: 5, over_ms: 20 } }\n";
     const std::string made = timeline_of(text, 30ms);
     check_text(part(made, "    \"status\": ", "  },\n  \"variables\""),
-               "    \"status\": \"failed\",\n    \"over_at_ms\": 0,\n    \"recorded_to_ms\": 25\n");
+               "    \"status\": \"failed\",\n    \"over_at_ms\": 0,\n    \"recorded_to_ms\": 25,\n    \"end_ms\": null\n");
     // (Sent, not applied: the simulation ended at 0 ms.) The ramp wrote nothing.
     check_text(part(made, "  \"series\": [", "  \"lines\""),
                "  \"series\": [\n"

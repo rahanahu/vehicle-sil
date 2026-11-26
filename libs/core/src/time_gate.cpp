@@ -162,6 +162,18 @@ void TimeGate::guard_from(std::optional<SimTime> t, Wall::time_point wall)
     }
 }
 
+bool TimeGate::pause_for_handover(Wall::time_point wall)
+{
+    if (ended_ || !held_ || !guarded_)
+    {
+        return false;
+    }
+    pause_next_ = false;
+    set_paused(true, wall);
+    state_.pause_target.reset();
+    return true;
+}
+
 void TimeGate::set_paused(bool paused, Wall::time_point wall)
 {
     if (paused == state_.paused)

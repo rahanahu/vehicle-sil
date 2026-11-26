@@ -69,6 +69,9 @@ struct RunState
     std::string stopped_by{};
     /// The run plays a scenario.
     bool scenario = false;
+    /// The scenario passed and handed over to manual control at `scenario_over_at_ms`.
+    bool handed_over = false;
+    std::optional<std::int64_t> scenario_over_at_ms{};
     /// What the run takes now (runner::allowed()), each as from the entry that has the operation:
     /// pause, resume, step, run_until, speed and stop as from standard input; write as from a
     /// control server (standard input has none). In a run without a control server
@@ -197,6 +200,9 @@ public:
     {
         return time_.always_refused(entry, operation);
     }
+    /// Live ControlServer write refusal (returns reason::kScenarioRunning while scenario plays
+    /// before handover, or empty once handed over / not a scenario). Thread safe.
+    [[nodiscard]] std::optional<Decision> write_refusal() const { return time_.write_refusal(); }
     /// Whether this run is connected outside the simulation and keeps to real time
     /// (TimeCommands::set_time_lock()): once, right after the configuration has been read. Until
     /// then the time commands wait undecided; this decides them, each with its command event.

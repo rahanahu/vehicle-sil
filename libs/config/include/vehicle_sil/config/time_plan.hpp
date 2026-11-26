@@ -78,6 +78,18 @@ enum class TimePolicy
 /// "realtime" or "free"; empty for anything else.
 [[nodiscard]] std::optional<TimePolicy> time_policy_named(std::string_view name) noexcept;
 
+/// What a run does after a scenario passes (`after_scenario` in a run request).
+enum class AfterScenario
+{
+    /// Stop the simulation once the scenario finishes (the default).
+    Stop,
+    /// Pause the simulation at the controller step where the scenario passed for manual handover.
+    Pause,
+};
+[[nodiscard]] const char* to_string(AfterScenario after);
+/// "stop" or "pause"; empty for anything else.
+[[nodiscard]] std::optional<AfterScenario> after_scenario_named(std::string_view name) noexcept;
+
 /// Whether a run keeps real time, and what connects it outside the simulation (time_lock()).
 struct TimeLock
 {
@@ -112,19 +124,21 @@ struct TimeLock
                                                   const std::optional<double>& otherwise);
 
 /// What the check says about the time of a run that is connected outside (none if `lock` names
-/// nothing). `asked`, `otherwise`: as for planned_speed(); `start_paused`: run --start-paused.
+/// nothing). `asked`, `otherwise`: as for planned_speed(); `start_paused`: run --start-paused;
+/// `after_scenario`: run after_scenario.
 /// - With `lock.locked`: the error outside-real-time for an `asked` speed other than 1, and one
-///   for `start_paused`; the note outside-speed-set if no speed is asked for and `otherwise` is
-///   not 1 (the run goes at 1 instead).
+///   for `start_paused` / `after_scenario == AfterScenario::Pause`; the note outside-speed-set if
+///   no speed is asked for and `otherwise` is not 1 (the run goes at 1 instead).
 /// - Not locked (TimePolicy::Free): the note outside-not-real-time if the run's speed is not 1,
-///   and one for `start_paused`.
+///   and one for `start_paused` / `after_scenario == AfterScenario::Pause`.
 /// `origin` (RunRequest::origin; RequestOrigin{} for a request of the command line alone): the
-/// speed, the paused start and the policy that a request file gave ("speed", "start_paused",
-/// "time_policy") are named by their key and the file, not as options, and so is the way to run
-/// without a network that the file connects (`origin.connected`).
+/// speed, the paused start, the after_scenario and the policy that a request file gave ("speed",
+/// "start_paused", "after_scenario", "time_policy") are named by their key and the file, not as
+/// options, and so is the way to run without a network that the file connects (`origin.connected`).
 [[nodiscard]] std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optional<std::optional<double>>& asked,
                                                       const std::optional<double>& otherwise, bool start_paused,
-                                                      const RequestOrigin& origin);
+                                                      const RequestOrigin& origin,
+                                                      AfterScenario after_scenario = AfterScenario::Stop);
 
 /// How the simulation's time went (the result's "timing"). The pacing numbers are the time gate's
 /// (TimeControlOptions in vehicle_sil/core/simulation_controller.hpp has the definitions): they

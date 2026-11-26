@@ -741,6 +741,10 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                 add_scenario(step.code, step.text + ": " + step.message, step.line);
             }
         }
+        if (scenario.status == scenario::ScenarioStatus::Failed && !scenario.code.empty())
+        {
+            add_scenario(scenario.code, scenario.message, 0);
+        }
         for (const ScenarioNotObserved& coarse : outcome.scenario.not_observed)
         {
             // Not a step's failure: nothing was judged. Named so that it is told apart from a

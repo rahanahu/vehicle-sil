@@ -333,7 +333,12 @@ public:
     /// overdue, and a run that ends there has none). The
     /// step at or after stop_at is never held (the simulation stops there). Thread safe; does not
     /// wait. May be called before start(): the step at 0 is then held from the beginning.
+    /// Clears/sets the guard at `t` (empty clears).
     void guard_from(std::optional<SimTime> t);
+    /// Atomically pauses the time gate while held by the guard (scenario-to-manual handover).
+    /// @returns false if no time_control, stop requested, not Running, a required participant
+    /// failed, or the gate is already ended / not held / not guarded.
+    [[nodiscard]] bool pause_for_handover();
     /// Outcome of wait_guarded_result().
     struct GuardWaitResult
     {

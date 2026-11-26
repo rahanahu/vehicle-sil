@@ -1054,5 +1054,99 @@ class LauncherTest(unittest.TestCase):
             self.assertEqual(launch.wait(60)["result"], "passed")
             self.assertEqual([line.strip() for line in launch.bad_lines], [b"no json"])
 
+    def test_after_scenario_pause_hands_over_at_end_ms_and_unlocks_writes(self):
+        cfg = config("handover_pause")
+        cfg_play = SCRATCH / "handover_end_in_dir.yaml"
+        cfg_play.write_text(
+            "vehicle_sil_scenario: 1\nname: handover\nend_ms: 500\nsteps:\n"
+            "  - at_ms: 0\n    set: { Engine.engine.throttle: 45 }\n"
+            "  - at_ms: 30\n    expect: { Engine.engine.throttle: 45 }\n"
+        )
+        req = SCRATCH / "handover_pause.request.json"
+        req.write_text(json.dumps({
+            "vehicle_sil_run_request": 1,
+            "scenario": cfg_play.name,
+            "after_scenario": "pause",
+            "speed": 0.02,
+        }))
+        with Launch(LAUNCH, cfg, arguments=["--request", str(req)]) as launch:
+            with Control(launch.address) as c:
+                launch.wait_for_event("phase", phase="running")
+                wait_until(self, "scenario running before end_ms", lambda: c.sim.time().now < ms(500))
+                self.assertFalse(any(e.get("handed_over") for e in launch.events if e.get("event") == "state"))
+                with self.assertRaises(ControlError) as refused:
+                    c.write({"Engine": {"engine.throttle": 10.0}})
+                self.assertEqual(
+                    (refused.exception.code, refused.exception.reason),
+                    (grpc.StatusCode.FAILED_PRECONDITION, "scenario-running"),
+                )
+
+                # Switch to speed=max before handover and verify handover still pauses at exact end_ms.
+                c.sim.set_speed(None)
+                handover_state = launch.wait_for_event("state", handed_over=True)
+                self.assertTrue(handover_state["scenario"])
+                self.assertTrue(handover_state["handed_over"])
+                self.assertTrue(handover_state["paused"])
+                self.assertEqual(handover_state["scenario_over_at_ms"], 500)
+                self.assertEqual(handover_state["paused_at_ms"], 500)
+                self.assertTrue(handover_state["allowed"]["write"]["ok"])
+                self.assertIsNone(handover_state["allowed"]["write"].get("reason"))
+
+                t = c.sim.wait_paused(30)
+                self.assertEqual((t.now, t.paused, t.ended), (ms(500), True, False))
+                time.sleep(0.1)
+                t_held = c.sim.time()
+                self.assertEqual((t_held.now, t_held.paused, t_held.ended), (ms(500), True, False))
+                self.assertEqual(c.values("Engine").values["engine.throttle"], 45.0)
+
+                seq = c.write({"Engine": {"engine.throttle": 72.0}})
+                self.assertEqual(c.wait(seq, until="queued").target("Engine").status, "queued")
+                c.sim.step(ms(20))
+                wait_until(self, "post-handover step", lambda: c.sim.time().paused and c.sim.time().now >= ms(520))
+                self.assertEqual(c.wait(seq).target("Engine").status, "applied")
+                wait_until(self, "manual write applied", lambda: c.values("Engine").values["engine.throttle"] == 72.0)
+
+                c.sim.stop("handover done")
+            result = launch.wait()
+        self.assertEqual(result["scenario"]["status"], "passed")
+        self.assertEqual(result["scenario"]["over_at_ms"], 500)
+        self.assertEqual(result["scenario"]["end_ms"], 500)
+        self.assertEqual(result["end"], "stopped")
+        self.assertEqual(result["result"], "stopped")
+        self.assertTrue(result["ok"])
+        self.assertEqual(launch.returncode, 0)
+
+    def test_after_scenario_pause_does_not_hand_over_when_scenario_fails(self):
+        cfg = config("handover_fail")
+        play = SCRATCH / "handover_fail.scenario.yaml"
+        play.write_text(
+            "vehicle_sil_scenario: 1\nname: fail_before_handover\nsteps:\n"
+            "  - at_ms: 0\n    set: { Engine.engine.throttle: 10 }\n"
+            "  - at_ms: 200\n    expect: { Engine.engine.throttle: 99 }\n"
+        )
+        req = SCRATCH / "handover_fail.request.json"
+        req.write_text(json.dumps({
+            "vehicle_sil_run_request": 1,
+            "scenario": play.name,
+            "after_scenario": "pause",
+            "speed": 0.02,
+        }))
+        with Launch(LAUNCH, cfg, arguments=["--request", str(req)]) as launch:
+            with Control(launch.address) as c:
+                launch.wait_for_event("phase", phase="running")
+                with self.assertRaises(ControlError) as refused:
+                    c.write({"Engine": {"engine.throttle": 20.0}})
+                self.assertEqual(
+                    (refused.exception.code, refused.exception.reason),
+                    (grpc.StatusCode.FAILED_PRECONDITION, "scenario-running"),
+                )
+                c.sim.set_speed(None)
+            result = launch.wait()
+        self.assertEqual(result["result"], "failed")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["scenario"]["status"], "failed")
+        self.assertFalse(any(e.get("handed_over") for e in launch.events if e.get("event") == "state"))
+        self.assertEqual(launch.returncode, 1)
+
 if __name__ == "__main__":
     unittest.main()

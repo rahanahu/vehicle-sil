@@ -1248,3 +1248,25 @@ TEST_CASE(time_commands_apply_acceptance_contract)
     check_text(events[8], "run_until:api:refused:missing-argument", "event[8]");
     check_text(events[9], "step:api:refused:out-of-range", "event[9]");
 }
+
+TEST_CASE(control_rules_handed_over_unlocks_writes_while_keeping_scenario_flag)
+{
+    // While scenario == true and handed_over == false, ControlServer Write is refused; once
+    // handed_over == true, ControlServer Write is allowed even with scenario == true.
+    for (const ControlStage stage : {ControlStage::SettingUp, ControlStage::Attached, ControlStage::Detached})
+    {
+        for (const bool paused : {false, true})
+        {
+            ControlSituation before = situation(stage, paused, true, false, false);
+            before.handed_over = false;
+            const Decision refused = decide(before, Entry::ControlServer, Operation::Write, "write", nullptr);
+            CHECK(!refused.ok);
+            check_text(refused.reason, reason::kScenarioRunning);
+
+            ControlSituation after = before;
+            after.handed_over = true;
+            const Decision unlocked = decide(after, Entry::ControlServer, Operation::Write, "write", nullptr);
+            CHECK(unlocked.ok);
+        }
+    }
+}

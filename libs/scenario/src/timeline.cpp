@@ -232,7 +232,7 @@ std::uint64_t TimelineRecord::dropped() const noexcept
 
 void TimelineRecord::failed(std::size_t step, TimelineFailure failure)
 {
-    if (!recorded_to_ && step < failures_.size())
+    if (!recorded_to_ && (step < failures_.size() || step == kNoStep))
     {
         // The points that are not known to be applied, each by what written() named it (not by
         // its time: a variable can have several points of one time).
@@ -246,7 +246,10 @@ void TimelineRecord::failed(std::size_t step, TimelineFailure failure)
                 }
             }
         }
-        failures_[step] = std::move(failure);
+        if (step < failures_.size())
+        {
+            failures_[step] = std::move(failure);
+        }
     }
 }
 

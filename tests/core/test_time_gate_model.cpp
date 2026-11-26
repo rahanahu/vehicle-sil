@@ -624,3 +624,39 @@ TEST_CASE(time_gate_model_ended_reports_end_and_last_step)
     by_last.begin_last_step(at(0ms), w(0));
     CHECK(by_last.ended());
 }
+
+TEST_CASE(time_gate_model_pause_for_handover_holds_guarded_step_and_rejects_unguarded_or_ended)
+{
+    // Handover succeeds only on an unended, held, guarded step; clears run_until / pause_next;
+    // and keeps the gate paused at P with speed = nullopt once the guard is lifted.
+    TimeGate gate(std::nullopt, 10ms, false);
+    CHECK(!gate.pause_for_handover(w(0))); // not held or guarded yet
+    gate.guard_from(at(0ms), w(1));
+    CHECK(!gate.pause_for_handover(w(2))); // guarded, not yet held
+    CHECK(gate.begin_step(at(10ms), 10ms, w(3)));
+    gate.pause_at(at(50ms), w(4));
+    CHECK(gate.state(w(4)).pause_target == std::optional<SimTime>(at(50ms)));
+    CHECK(gate.pause_for_handover(w(5)));
+    CHECK(gate.paused());
+    CHECK(!gate.state(w(5)).pause_target.has_value());
+    CHECK(!gate.release_at().has_value());
+    gate.guard_from(std::nullopt, w(6));
+    CHECK(!gate.guarded());
+    CHECK(gate.paused());
+    CHECK(!gate.release_at().has_value());
+    gate.resume(w(7));
+    CHECK(gate.release_at().has_value());
+    gate.released(w(7));
+
+    // Not guarded -> handover returns false (use paced gate so begin_step holds).
+    TimeGate paced(1.0, 10ms, false);
+    CHECK(paced.begin_step(at(0ms), 10ms, w(8)));
+    CHECK(!paced.pause_for_handover(w(9)));
+    paced.released(w(9));
+
+    // Ended -> handover returns false even if guarded earlier.
+    gate.guard_from(at(30ms), w(10));
+    CHECK(gate.begin_step(at(30ms), 10ms, w(11)));
+    gate.end(w(12));
+    CHECK(!gate.pause_for_handover(w(13)));
+}

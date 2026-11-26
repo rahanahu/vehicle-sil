@@ -147,7 +147,7 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
 {
     check_text(errors_of("{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}"),
                "bench.json, line 3: unknown key 'conect': did you mean 'connect'? (the keys here: vehicle_sil_run_request, "
-               "variant, params, scenario, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms)\n");
+               "variant, params, scenario, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario)\n");
     // What the caller decides is not in the file.
     CHECK(errors_of(with("\"timeline\": \"t.json\"")).find("unknown key 'timeline'") != std::string::npos);
     CHECK(errors_of(with("\"file\": \"sim.yaml\"")).find("unknown key 'file'") != std::string::npos);
@@ -681,4 +681,23 @@ TEST_CASE(a_parameter_of_the_request_file_that_its_own_scenario_lacks_is_a_usage
                    "--param leve=2: the scenario has no parameter leve (did you mean level?): its parameters are level; remove "
                    "the option or correct the name");
     }
+}
+
+TEST_CASE(request_file_reads_after_scenario_and_copies_it_on_merge)
+{
+    const RequestFile pause = file_of(with("\"scenario\": \"s.yaml\", \"after_scenario\": \"pause\""));
+    CHECK(pause.intent.after_scenario == AfterScenario::Pause);
+    CHECK(pause.fields == list("scenario", "after_scenario"));
+
+    const RequestFile stop = file_of(with("\"after_scenario\": \"stop\""));
+    CHECK(stop.intent.after_scenario == AfterScenario::Stop);
+
+    CHECK(errors_of(with("\"after_scenario\": \"continue\"")).find("after_scenario must be \"stop\"") != std::string::npos);
+    CHECK(errors_of(with("\"after_scenario\": null")).find("after_scenario must be \"stop\"") != std::string::npos);
+
+    RunRequest cli;
+    cli.host.control.emplace();
+    const RunRequest merged = with_request_file(cli, pause, false);
+    CHECK(merged.intent.after_scenario == AfterScenario::Pause);
+    CHECK(merged.intent.scenario == std::optional<std::string>("s.yaml"));
 }

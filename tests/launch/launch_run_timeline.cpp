@@ -109,7 +109,7 @@ void timeline(const Options& o)
     const Captured failing = launch(o, with({"--timeline", "failed.json"}), dir);
     expect_code(failing, 1, "a failing scenario with --timeline");
     const std::string failed = read_text(dir / "failed.json");
-    require(contains(failed, "    \"status\": \"failed\",\n") && contains(failed, "    \"recorded_to_ms\": 50\n"),
+    require(contains(failed, "    \"status\": \"failed\",\n") && contains(failed, "    \"recorded_to_ms\": 50,\n"),
             "the failed scenario's timeline ends at the failure:\n" + failed);
     require(contains(failed, "      \"failed\": {\n        \"at_ms\": 50,\n        \"code\": \"scenario-failed\",\n"
                              "        \"conditions\": [\n          {\n            \"condition\": 0,\n            \"value\": 20,\n"
@@ -205,7 +205,7 @@ void timeline(const Options& o)
         const std::string whole = read_text(dir / "unstarted.json");
         expect_text(head_of("unstarted.json"),
                     "  \"scenario\": {\n    \"file\": \"s.yaml\",\n    \"name\": null,\n    \"status\": \"not_run\",\n"
-                    "    \"over_at_ms\": null,\n    \"recorded_to_ms\": null\n",
+                    "    \"over_at_ms\": null,\n    \"recorded_to_ms\": null,\n    \"end_ms\": null\n",
                     "the timeline of a run that did not start");
         require(contains(whole, "  \"series\": [],\n") && contains(whole, "      \"status\": \"not_run\",\n"),
                 "no series, and the step not run:\n" + whole);

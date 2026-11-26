@@ -46,6 +46,10 @@ public:
     void set_speed(std::optional<double> speed, Wall::time_point wall);
     /// SimulationController::guard_from() at `wall`.
     void guard_from(std::optional<SimTime> t, Wall::time_point wall);
+    /// Pauses the gate atomically while held for the guard (for scenario-to-manual handover).
+    /// @returns false if ended_, not held_, or not guarded_; otherwise clears pause_next_ and
+    /// pause_target, marks paused at `wall`, and returns true.
+    bool pause_for_handover(Wall::time_point wall);
     /// The step at now() is held for the guard: the time it began at, for wait_guarded().
     [[nodiscard]] bool guarded() const noexcept { return guarded_; }
 

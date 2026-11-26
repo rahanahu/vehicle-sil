@@ -259,6 +259,22 @@ public:
         return it == visible_.end() ? std::nullopt : std::optional<control::OperationResult>(it->second);
     }
 
+    std::optional<control::OperationResult> wait_done(std::uint64_t ticket) override
+    {
+        const auto is_done = [](const std::optional<control::OperationResult>& r) {
+            return !r || std::all_of(r->targets.begin(), r->targets.end(),
+                                     [](const control::TargetResult& t) { return control::is_final(t.status); });
+        };
+        auto r = result(ticket);
+        if (!is_done(r))
+        {
+            run_steps([this](const ModelEcu& m) { return m.next_step <= current_p_; });
+            deliver([this](SimTime t) { return t <= current_p_; });
+            r = result(ticket);
+        }
+        return r;
+    }
+
     /// Runs the scenario to its end (or `limit`).
     ScenarioRun run(const Scenario& s, SimDuration limit = 5s)
     {
@@ -295,9 +311,11 @@ public:
             }
             if (stop_at && p >= *stop_at)
             {
+                current_p_ = p;
                 e.stopped_at(p);
                 break;
             }
+            current_p_ = p;
             if (e.tick(p))
             {
                 break;
@@ -483,6 +501,7 @@ private:
     std::vector<std::pair<std::uint64_t, control::OperationResult>> unsettled_; ///< in the order written
     std::map<std::uint64_t, SimTime> times_;                                     ///< of each write
     std::vector<Produced> produced_;
+    SimTime current_p_{};
 };
 
 inline std::string time_text(const std::optional<SimTime>& t)

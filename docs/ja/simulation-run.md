@@ -678,6 +678,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `stop_at_ms` | 自動停止する仮想時刻（1～10^12 ms の整数）。省略時は自動停止なし。 | `--stop-at-ms` |
 | `late_tolerance_ms` | 実時間の遅延許容値（0～10^12 ms の整数）。既定は 10 ms。 | `--late-tolerance-ms` |
 | `strict` | `true` か `false` | `--strict` |
+| `after_scenario` | `"stop"`（既定: シナリオ終了で停止）または `"pause"`（シナリオ成功時に一時停止して手動制御へ引き継ぐ。`scenario` が必須で、`stop_at_ms` とは併用できず、`run` では `--stdin-commands` か `--control` が必要） | |
 
 ### 引数と要求ファイルを一緒に使う
 
@@ -1637,7 +1638,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `vehicle_sil`、`stage` | vehicle-sil のバージョン、`"run"`（実際の実行の記録） |
 | `file`、`variant`、`params` | 設定ファイル（引数のとおり）、機種（なければ `null`）、シナリオのパラメーターと効いた値（`check --json` の `scenario.params` と同じ形） |
 | `time_step_ms` | controller のタイムステップ（`run --json` の `timing.time_step_ms` と同じ） |
-| `scenario` | `file`、`name`、`status`、`over_at_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
+| `scenario` | `file`、`name`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
 | `variables[]` | シナリオが使う変数（最初に出た順）。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む） |
 | `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキーに、`lines`、`watch`、`failed` を足したもの |
 | `series[]` | 値の列（下） |
@@ -1843,8 +1844,8 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 | シナリオ | `recorded_to_ms` |
 |---|---|
-| 失敗した（`failed`） | 失敗した手順の `at_ms`（`stop_at_ms` で終わった実行では、止まった時刻） |
-| 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの |
+| 失敗した（`failed`） | 失敗した手順の `at_ms`（すべての手順が通った後に揺れの書き込みが失敗したときはその時刻、`stop_at_ms` で終わった実行では、止まった時刻） |
+| 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの（`end_ms` があるときは `min(end_ms, now)` まで延びます） |
 | 途中で終わった（`incomplete`） | 最後のコントローラー時刻までに観測したサンプルと送信した書き込みのうち、最も遅い時刻（どちらもなければ 0）。書き込みが断られた後で participant の失敗が実行の結果になったときは、その書き込みの時刻（`failed` はどの手順でも `null` ですが、`not_applied_from` は `null` ではありません） |
 | シナリオが始まらなかった（`not_run`。シミュレーションは始まったのにシナリオを始められなかったときは `incomplete`） | `null`（系列は空） |
 

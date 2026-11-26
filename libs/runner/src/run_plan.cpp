@@ -48,6 +48,7 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     if (check.run_timing &&
         (check.stop_at_ms != choices.stop_at_ms || check.checked_speed != choices.speed ||
          check.checked_start_paused != choices.start_paused ||
+         check.checked_after_scenario != choices.after_scenario ||
          check.run_timing->late_tolerance_ms != choices.late_tolerance_ms ||
          check.run_timing->speed != config::planned_speed(check.time_lock, choices.speed, {}) ||
          !config::valid_positive_millis(check.run_timing->time_step_ms) ||
@@ -58,6 +59,21 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     if (check.run_timing && !config::stop_on_time_step(choices.stop_at_ms, check.run_timing->time_step_ms))
     {
         throw std::invalid_argument("plan_run: checked time step does not divide stop_at_ms");
+    }
+    if (choices.after_scenario == config::AfterScenario::Pause)
+    {
+        if (scenario == nullptr || !scenario->scenario)
+        {
+            throw std::invalid_argument("plan_run: after_scenario=pause requires a valid scenario");
+        }
+        if (choices.stop_at_ms)
+        {
+            throw std::invalid_argument("plan_run: after_scenario=pause cannot be combined with stop_at_ms");
+        }
+        if (check.time_lock.locked)
+        {
+            throw std::invalid_argument("plan_run: after_scenario=pause cannot be used when time is locked (outside-real-time)");
+        }
     }
     RunPlan plan;
     plan.check = detail::with_bridges(check);
@@ -85,6 +101,7 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     plan.start_timeout_ms = choices.start_timeout_ms;
     plan.stop_timeout_ms = choices.stop_timeout_ms;
     plan.collect_control_metrics = choices.collect_control_metrics;
+    plan.after_scenario = choices.after_scenario;
     if (check.run_timing)
     {
         plan.timing = *check.run_timing;

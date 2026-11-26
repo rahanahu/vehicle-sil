@@ -260,6 +260,7 @@ struct Scenario
 {
     std::string name; ///< its "name", or ""
     ScenarioSamples samples = ScenarioSamples::EveryStep; ///< its "samples"
+    std::optional<std::int64_t> end_ms{};                 ///< optional "end_ms": virtual end time in ms
     std::vector<ScenarioParticipant> participants{};
     std::vector<ScenarioVariable> variables{};
     /// The dithers the file declares (its "inputs"), in the order of the file: each is on its
@@ -335,6 +336,7 @@ struct ScenarioRead
     /// Its "name" and the number of its steps, as far as the text could be read.
     std::string name{};
     std::size_t steps = 0;
+    std::optional<std::int64_t> end_ms{};
     /// The parameters the scenario declares ("params") or uses ("${name}"), each with the value in
     /// effect and where it comes from; in the order of "params", then of first use.
     std::vector<config::ParamValue> params{};

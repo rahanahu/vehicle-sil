@@ -137,6 +137,7 @@ ScenarioRun scenario_not_run(const Scenario& scenario)
 {
     ScenarioRun run;
     run.name = scenario.name;
+    run.end_ms = scenario.end_ms;
     run.has_dither = scenario.has_dither;
     if (run.has_dither)
     {
@@ -176,7 +177,9 @@ ScenarioEngine::~ScenarioEngine() = default;
 
 ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step,
                                TimelineRecord* record, std::optional<SimTime> stop_at) :
-  scenario_(scenario), tick_(tick), stop_at_(stop_at), port_(port), on_step_(std::move(on_step)), lines_(std::make_unique<Lines>()), record_(record)
+  scenario_(scenario), tick_(tick), stop_at_(stop_at),
+  end_ms_(scenario.end_ms ? std::optional<SimTime>(at_ms(*scenario.end_ms)) : std::nullopt), port_(port),
+  on_step_(std::move(on_step)), lines_(std::make_unique<Lines>()), record_(record)
 {
     if (tick_ <= SimDuration::zero())
     {
@@ -282,8 +285,11 @@ void ScenarioEngine::begin(const std::vector<EnginePeer>& peers)
     run_.status = ScenarioStatus::Incomplete;
     if (scenario_.steps.empty())
     {
-        finish(ScenarioStatus::Passed);
-        close_record();
+        if (!end_ms_ || *end_ms_ <= SimTime{})
+        {
+            finish(ScenarioStatus::Passed);
+            close_record();
+        }
         return;
     }
     issue();
@@ -317,6 +323,16 @@ bool ScenarioEngine::tick(SimTime p)
     {
         observe(p);
     }
+    if (!over_ && can_settle_at(p))
+    {
+        settle_at(p);
+    }
+    if (!over_ && end_ms_ && p >= *end_ms_ && done_ == run_.steps.size() && sent_.empty() && to_send_.empty() &&
+        watches_.empty() && base_.has_value() && next_ == scenario_.steps.size() &&
+        std::all_of(motions_.begin(), motions_.end(), [](const Motion& m) { return m.done; }))
+    {
+        finish(ScenarioStatus::Passed);
+    }
     if (!over_)
     {
         submit(p, p + tick_, false);
@@ -343,7 +359,16 @@ void ScenarioEngine::stopped_at(SimTime p)
     }
     if (!over_)
     {
-        finish(ScenarioStatus::Incomplete);
+        if (done_ == run_.steps.size() && (!end_ms_ || p >= *end_ms_) && sent_.empty() && to_send_.empty() &&
+            watches_.empty() && base_.has_value() && next_ == scenario_.steps.size() &&
+            std::all_of(motions_.begin(), motions_.end(), [](const Motion& m) { return m.done; }))
+        {
+            finish(ScenarioStatus::Passed);
+        }
+        else
+        {
+            finish(ScenarioStatus::Incomplete);
+        }
     }
     run_.over_at = p;
     close_record();
@@ -375,6 +400,9 @@ void ScenarioEngine::superseded()
         }
     }
     run_.over_at.reset();
+    run_.code.clear();
+    run_.message.clear();
+    run_.failed_at.reset();
     finish(ScenarioStatus::Incomplete);
     close_record();
 }
@@ -479,7 +507,7 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
         {
             on_step_(run_.steps[index]);
         }
-        if (done_ == run_.steps.size())
+        if (done_ == run_.steps.size() && (!end_ms_ || (now_ >= *end_ms_ && sent_.empty())))
         {
             finish(ScenarioStatus::Passed);
         }
@@ -625,7 +653,7 @@ void ScenarioEngine::pass(std::size_t index, SimTime at, SimTime end)
     {
         on_step_(step);
     }
-    if (done_ == run_.steps.size())
+    if (done_ == run_.steps.size() && (!end_ms_ || (now_ >= *end_ms_ && sent_.empty())))
     {
         finish(ScenarioStatus::Passed);
     }
@@ -710,17 +738,27 @@ void ScenarioEngine::close_record()
     if (run_.status != ScenarioStatus::Incomplete)
     {
         to = SimTime{};
+        bool has_step_failure = false;
         for (const ScenarioStepRun& step : run_.steps)
         {
             if (step.at && step.status == StepStatus::Failed)
             {
                 to = *step.at;
+                has_step_failure = true;
                 break;
             }
             if (step.at && step.status == StepStatus::Passed)
             {
                 to = std::max(to, *step.at);
             }
+        }
+        if (!has_step_failure && run_.status == ScenarioStatus::Failed && run_.failed_at)
+        {
+            to = std::max(to, *run_.failed_at);
+        }
+        if (run_.status == ScenarioStatus::Passed && end_ms_)
+        {
+            to = std::max(to, std::min(*end_ms_, now_));
         }
         // The samples up to it that were not looked at. Those of steps before the controller's
         // step being handled have all arrived; a later one is there in one run and not in another.
@@ -1024,7 +1062,7 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
         for (std::int64_t t = from < 0 ? 0 : (from / step + 1) * step; t <= to_ns(to_inclusive); t += step)
         {
             const SimTime at = SimTime{} + SimDuration(t);
-            if (!in_range(at)) break;
+            if (!in_range(at) || (end_ms_ && at >= *end_ms_)) break;
             grid.push_back(at);
         }
     }
@@ -1182,14 +1220,26 @@ void ScenarioEngine::fail_grid(const Write& write, const control::OperationResul
     }
     message += applied_text(failure, target.peer);
     // It is no step's write: the first step that is not decided yet fails (as when the
-    // simulation stops by itself, stopped_at()). There is one: the scenario is not over.
-    std::size_t index = 0;
-    while (index + 1 < run_.steps.size() &&
-           (run_.steps[index].status == StepStatus::Passed || run_.steps[index].status == StepStatus::Skipped))
+    // simulation stops by itself, stopped_at()).
+    const auto undecided = std::find_if(run_.steps.begin(), run_.steps.end(), [](const ScenarioStepRun& step) {
+        return step.status != StepStatus::Passed && step.status != StepStatus::Skipped;
+    });
+    if (undecided != run_.steps.end())
     {
-        ++index;
+        fail(static_cast<std::size_t>(undecided - run_.steps.begin()), write.at, "scenario-write",
+             std::move(message), std::move(failure));
+        return;
     }
-    fail(index, write.at, "scenario-write", std::move(message), std::move(failure));
+    // All steps are already Passed or Skipped (e.g. a dither grid write failed in (last_step_at, end_ms]):
+    // fail at the scenario level without overwriting a decided step or emitting a contradictory step event.
+    if (record_ != nullptr)
+    {
+        record_->failed(TimelineRecord::kNoStep, std::move(failure));
+    }
+    run_.code = "scenario-write";
+    run_.message = std::move(message);
+    run_.failed_at = write.at;
+    finish(ScenarioStatus::Failed);
 }
 
 void ScenarioEngine::place(const Write& write)
@@ -1256,6 +1306,57 @@ void ScenarioEngine::place(const Write& write)
     }
 }
 
+SimTime ScenarioEngine::applied_step(const Write& write) const
+{
+    SimTime latest = write.at;
+    for (const ScenarioWrite& w : write.writes)
+    {
+        const SimDuration step = step_of(w.variable);
+        const std::int64_t applied = (to_ns(write.at) + step.count() - 1) / step.count() * step.count();
+        latest = std::max(latest, SimTime{} + SimDuration(applied));
+    }
+    return latest;
+}
+
+bool ScenarioEngine::can_settle_at(SimTime p) const
+{
+    if (!end_ms_ || p < *end_ms_ || over_)
+    {
+        return false;
+    }
+    if (!to_send_.empty() || !watches_.empty() || !base_.has_value() || next_ != scenario_.steps.size() || sent_.empty())
+    {
+        return false;
+    }
+    if (std::any_of(motions_.begin(), motions_.end(), [](const Motion& m) { return !m.done; }))
+    {
+        return false;
+    }
+    return std::all_of(sent_.begin(), sent_.end(), [this, p](const Write& w) { return applied_step(w) <= p; });
+}
+
+void ScenarioEngine::settle_at(SimTime p)
+{
+    while (!over_ && !sent_.empty())
+    {
+        Write write = std::move(sent_.front());
+        sent_.pop_front();
+        if (write.writes.empty())
+        {
+            judge_write(write, std::nullopt, p);
+            continue;
+        }
+        const auto result = port_.wait_done(write.ticket);
+        if (result && std::any_of(result->targets.begin(), result->targets.end(),
+                                  [](const control::TargetResult& t) { return !control::is_final(t.status); }))
+        {
+            sent_.push_front(std::move(write));
+            return;
+        }
+        judge_write(write, result, p);
+    }
+}
+
 void ScenarioEngine::judge(SimTime p)
 {
     while (!over_ && !sent_.empty())
@@ -1268,71 +1369,75 @@ void ScenarioEngine::judge(SimTime p)
         }
         const Write write = std::move(*it);
         sent_.erase(it);
-        if (write.writes.empty())
+        judge_write(write, write.writes.empty() ? std::nullopt : port_.result(write.ticket), p);
+    }
+}
+
+void ScenarioEngine::judge_write(const Write& write, const std::optional<control::OperationResult>& result, SimTime p)
+{
+    if (write.writes.empty())
+    {
+        // A dither step that had nothing to write (no input of it had a value yet).
+        if (--open_writes_[write.step] == 0)
         {
-            // A dither step that had nothing to write (no input of it had a value yet).
-            if (--open_writes_[write.step] == 0)
-            {
-                pass(write.step, write.at, *run_.steps[write.step].end);
-            }
-            continue;
+            pass(write.step, write.at, *run_.steps[write.step].end);
         }
-        const auto result = port_.result(write.ticket);
-        if (!result)
+        return;
+    }
+    if (!result)
+    {
+        if (write.grid)
         {
-            if (write.grid)
-            {
-                // (Cannot happen. Said of the participant of its first write.)
-                control::TargetResult lost;
-                lost.peer = scenario_.participants[scenario_.variables[write.writes.front().variable].participant].name;
-                lost.status = control::TargetStatus::Unknown;
-                lost.reason = "the result is not known any more: this is an error of vehicle_sil_launch";
-                fail_grid(write, nullptr, lost, "did not apply");
-                return;
-            }
-            fail(write.step, write.at, "scenario-write",
-                 "the result of the write for " + ms_text(write.at) + " ms is not known any more: this is an error of "
-                                                                      "vehicle_sil_launch",
-                 failed_write(write, nullptr, {}));
+            // (Cannot happen. Said of the participant of its first write.)
+            control::TargetResult lost;
+            lost.peer = scenario_.participants[scenario_.variables[write.writes.front().variable].participant].name;
+            lost.status = control::TargetStatus::Unknown;
+            lost.reason = "the result is not known any more: this is an error of vehicle_sil_launch";
+            fail_grid(write, nullptr, lost, "did not apply");
             return;
         }
-        SimTime applied = write.at;
-        for (const control::TargetResult& target : result->targets)
+        fail(write.step, write.at, "scenario-write",
+             "the result of the write for " + ms_text(write.at) + " ms is not known any more: this is an error of "
+                                                                  "vehicle_sil_launch",
+             failed_write(write, nullptr, {}));
+        return;
+    }
+    SimTime applied = write.at;
+    for (const control::TargetResult& target : result->targets)
+    {
+        if (target.status != control::TargetStatus::Applied && write.grid)
         {
-            if (target.status != control::TargetStatus::Applied && write.grid)
-            {
-                fail_grid(write, &*result, target, "did not apply",
-                          control::is_final(target.status)
-                              ? std::string{}
-                              : "; at " + ms_text(p) + " ms the result of the ECU's step at " + ms_text(write.at) + " ms should be there");
-                return;
-            }
-            if (target.status != control::TargetStatus::Applied)
-            {
-                TimelineFailure failure = failed_write(write, &*result, target);
-                const std::string which = applied_text(failure, target.peer); // before `failure` is moved from
-                fail(write.step, write.at, "scenario-write",
-                     "the write for " + ms_text(write.at) + " ms was not applied by participant '" + target.peer + "': " +
-                         target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")") +
-                         (control::is_final(target.status)
-                              ? ""
-                              : "; at " + ms_text(p) + " ms the result of the ECU's step at or after " + ms_text(write.at) +
-                                    " ms should be there (does the ECU step as --describe says?)") +
-                         which,
-                     std::move(failure));
-                return;
-            }
-            if (target.applied_at)
-            {
-                applied = std::max(applied, *target.applied_at);
-            }
+            fail_grid(write, &*result, target, "did not apply",
+                      control::is_final(target.status)
+                          ? std::string{}
+                          : "; at " + ms_text(p) + " ms the result of the ECU's step at " + ms_text(write.at) + " ms should be there");
+            return;
         }
-        // (A dither's write of no step decides nothing: it is no step's.)
-        if (!write.grid && --open_writes_[write.step] == 0)
+        if (target.status != control::TargetStatus::Applied)
         {
-            const ScenarioStepRun& step = run_.steps[write.step];
-            pass(write.step, step.kind == StepKind::Ramp || step.kind == StepKind::Wave ? *step.end : applied, *step.end);
+            TimelineFailure failure = failed_write(write, &*result, target);
+            const std::string which = applied_text(failure, target.peer); // before `failure` is moved from
+            fail(write.step, write.at, "scenario-write",
+                 "the write for " + ms_text(write.at) + " ms was not applied by participant '" + target.peer + "': " +
+                     target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")") +
+                     (control::is_final(target.status)
+                          ? ""
+                          : "; at " + ms_text(p) + " ms the result of the ECU's step at or after " + ms_text(write.at) +
+                                " ms should be there (does the ECU step as --describe says?)") +
+                     which,
+                 std::move(failure));
+            return;
         }
+        if (target.applied_at)
+        {
+            applied = std::max(applied, *target.applied_at);
+        }
+    }
+    // (A dither's write of no step decides nothing: it is no step's.)
+    if (!write.grid && --open_writes_[write.step] == 0)
+    {
+        const ScenarioStepRun& step = run_.steps[write.step];
+        pass(write.step, step.kind == StepKind::Ramp || step.kind == StepKind::Wave ? *step.end : applied, *step.end);
     }
 }
 

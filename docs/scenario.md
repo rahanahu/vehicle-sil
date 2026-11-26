@@ -144,6 +144,7 @@ How the format grows:
 | `only` | No | The list of variants on which this scenario runs (`only: [small, medium]`). Without it, the scenario runs on every variant. See [Limiting a scenario to variants](#limiting-a-scenario-to-variants-only). |
 | `params` | No | Default values of parameters (name → value). Use a parameter by writing `${name}` where a step takes a value. See [Parameters](#parameters-params-name). |
 | `inputs` | No | Declarations per input (variable → `{ dither: <waveform> }`). Overlays a fine dither on the input from the start of the scenario. See [Overlaying a dither](#overlaying-a-dither-dither). |
+| `end_ms` | No | Optional virtual end time in milliseconds (`0` to `10^12`). When all steps pass, the scenario holds until `end_ms` before finishing. Must not be earlier than the static end of the steps. |
 | `steps` | Yes | The list of steps (at least 1). They run in order from the top. |
 
 ### Step keys
@@ -1005,6 +1006,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `skipped_steps` | Only if any | The number of steps to be skipped |
 | `unchecked_expects` | Only if any | The number of `expect`s beside steps that will not be checked |
 | `inputs`, `lines` | Always (empty arrays in a scenario without a `dither`; `null` if the scenario could not be read) | See the next table. The `scenario` of `run --json` has the same keys |
+| `end_ms` | Always | The scenario's `end_ms` (`null` if omitted) |
 
 `value` in `params` is the effective value (`true` or `false`, a number or a string). `from` is one of `scenario`, `configuration`, `variant`, `command_line` and `request_file` (`params` of the file of `--request`).
 
@@ -1029,6 +1031,7 @@ Keys about the `dither`s:
 | `unchecked_expects` | The number of `expect`s beside `ramp` and `wave` that were not checked. The key is present only if there is at least 1. |
 | `inputs[]`, `lines[]` | The dithers declared in `inputs` and the list of what the text places on the inputs (the same as in `check --json` above; known before the run). Empty in a scenario without a `dither`. |
 | `timeline` | The name of the `--timeline` file, as given in the arguments; `null` without `--timeline`. |
+| `end_ms` | The scenario's top-level `end_ms` in virtual milliseconds (`null` if omitted). |
 | `steps[]` | The result of each step (next table). |
 
 A step counted in `unchecked_expects` did run, so it is not counted in `skipped_steps`.
@@ -1077,6 +1080,7 @@ Here is the `scenario` that `run --json` gives for the failing example of [Resul
     "name": "throttle response",
     "status": "failed",
     "over_at_ms": 205,
+    "end_ms": null,
     "steps": [
       {
         "index": 1,
@@ -1188,6 +1192,8 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `timeline` | `run --scenario --timeline <file>` | `--timeline` is a usage error. |
 | `scenario-control` | `--scenario` together with `--control` | The two cannot be combined. Only builds with the Control Server have this name. |
 | `scenario-time` | Control Server clients can move time during a scenario (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) | These calls are rejected with the reason `scenario-running` (stdin commands work). Only builds with the Control Server have this name. |
+| `scenario-end-ms` | The top-level `end_ms` key in scenarios | `end_ms` is an unknown-key error. |
+| `scenario-handover` | `after_scenario: "pause"` in run requests (pausing at scenario pass for manual control) | `after_scenario` is an unknown-key error. |
 
 [simulation-events.md](simulation-events.md) lists every `features` name.
 

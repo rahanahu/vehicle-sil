@@ -70,6 +70,8 @@ struct TimeFacts
     /// before, the last speed command's. The outer empty: not known yet (no speed command, and
     /// the run has not read its configuration's speed into the controller). The inner empty: max.
     std::optional<std::optional<double>> speed{};
+    /// Virtual time (ms) at which the scenario passed and handed over to manual control; empty otherwise.
+    std::optional<std::int64_t> handed_over_at_ms{};
 };
 
 /// The time commands (pause, resume, step, run_until, speed) on their way to the simulation's time
@@ -182,6 +184,9 @@ public:
     /// runner::always_refused() for this run: whether `operation` from `entry` is refused for the
     /// whole run. The same answer whenever it is asked.
     [[nodiscard]] std::optional<Decision> always_refused(Entry entry, Operation operation) const;
+    /// Live ControlServer Operation::Write refusal under this object's mutex (reflects
+    /// ControlSituation::handed_over). Thread safe.
+    [[nodiscard]] std::optional<Decision> write_refusal() const;
     /// Whether this run is connected outside the simulation, and whether that keeps it to real time
     /// (ControlSituation::time_locked for `lock.locked`; time_free for a lock that names something
     /// and is not locked). For the run: once, right after it has read the configuration and

@@ -144,6 +144,7 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 | `only` | いいえ | このシナリオを実行する機種の名前の並びです（`only: [small, medium]`。書かなければ、どの機種でも実行します。[機種を限定する](#機種を限定するonly)）。 |
 | `params` | いいえ | パラメーターの既定の値（名前 → 値）です（手順の値の位置に `${name}` と書いて使います。[パラメーター](#パラメーターparamsname)）。 |
 | `inputs` | いいえ | 入力ごとの宣言（変数 → `{ dither: <波形> }`）です。シナリオの始めから、その入力に細かい揺れを重ねます（[細かい揺れを重ねる](#細かい揺れを重ねるdither)）。 |
+| `end_ms` | いいえ | シナリオが終わる仮想時刻（ミリ秒、`0` ～ `10^12`、省略可）。すべての手順が成功したとき、`end_ms` まで進んでから終了します。手順の静的な終了時刻より前にはできません。 |
 | `steps` | はい | 手順の並び（1 つ以上）で、上から順に進みます。 |
 
 ### 手順のキー
@@ -1005,6 +1006,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `skipped_steps` | あるときだけ | スキップする手順の数 |
 | `unchecked_expects` | あるときだけ | 確認しない横の `expect` の数 |
 | `inputs`、`lines` | いつも（`dither` のないシナリオでは空の配列。シナリオを読めなかったときは `null`） | 次の表。`run --json` の `scenario` にも同じものがあります |
+| `end_ms` | いつも | シナリオの `end_ms`（省略時は `null`） |
 
 `params` の `value` は有効な値（`true`・`false`、数、文字列）で、`from` は `scenario`、`configuration`、`variant`、`command_line`、`request_file`（`--request` のファイルの `params`）のどれかです。
 
@@ -1029,6 +1031,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `unchecked_expects` | 確認しなかった、`ramp` と `wave` の横の `expect` の数です（1 つ以上あるときだけ、このキーがあります）。 |
 | `inputs[]`、`lines[]` | `inputs` に宣言した揺れと、文面が入力に置くものの一覧です（上の `check --json` の表と同じ。実行の前にわかること）。`dither` のないシナリオでは空です。 |
 | `timeline` | `--timeline` のファイルの名前（引数のとおり）。`--timeline` がなければ `null` です。 |
+| `end_ms` | シナリオ最上位の `end_ms`（仮想ミリ秒、省略時は `null`）。 |
 | `steps[]` | 手順ごとの結果です（次の表）。 |
 
 `unchecked_expects` に数えた手順は、動いたので `skipped_steps` には入りません。
@@ -1077,6 +1080,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
     "name": "throttle response",
     "status": "failed",
     "over_at_ms": 205,
+    "end_ms": null,
     "steps": [
       {
         "index": 1,
@@ -1187,7 +1191,9 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario-points-file` | CSV ファイルの `points` | `points` の形のエラーです。 |
 | `timeline` | `run --scenario --timeline <file>` | `--timeline` は引数のエラーです。 |
 | `scenario-control` | `--scenario` と `--control` を一緒に使う | 一緒に使えません（Control Server を持つビルドだけにあります）。 |
-| `scenario-time` | シナリオの実行中に、Control Server のクライアントが時刻を動かす（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | これらの呼び出しを理由 `scenario-running` で拒否します（標準入力のコマンドは使えます。Control Server を持つビルドだけにあります）。 |
+| `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かす（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | これらの呼び出しを理由 `scenario-running` で拒否します（標準入力のコマンドは使えます。Control Server を持つビルドだけにあります）。 |
+| `scenario-end-ms` | シナリオ最上位の `end_ms` キー | `end_ms` は知らないキーのエラーです。 |
+| `scenario-handover` | 実行要求の `after_scenario: "pause"`（シナリオ成功時に一時停止して手動制御へ引き継ぐ） | `after_scenario` は知らないキーのエラーです。 |
 
 `features` の名前の全部は、[simulation-events.md](simulation-events.md) にあります。
 

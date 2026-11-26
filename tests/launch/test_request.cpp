@@ -595,3 +595,26 @@ TEST_CASE(the_check_of_a_run_is_the_check_of_its_request)
     CHECK(report.strict && report.check.strict && report.check.file == "variants.yaml" && report.check.config.has_value() &&
           report.check.config->variant == "summer");
 }
+
+TEST_CASE(validate_request_enforces_after_scenario_pause_rules)
+{
+    RunRequest r;
+    r.intent.after_scenario = AfterScenario::Pause;
+    // Missing scenario and missing stdin/control.
+    CHECK(!validate_request(r, RequestCommand::Run).empty());
+
+    r.intent.scenario = "drive.yaml";
+    // Still missing stdin/control for Run.
+    CHECK(!validate_request(r, RequestCommand::Run).empty());
+    // Accepted for Check (no control needed during check).
+    CHECK(validate_request(r, RequestCommand::Check).empty());
+    // Refused for Test even with scenario.
+    CHECK(!validate_request(r, RequestCommand::Test).empty());
+
+    r.host.stdin_commands = true;
+    CHECK(validate_request(r, RequestCommand::Run).empty());
+
+    // Refused if stop_at_ms is set.
+    r.intent.stop_at_ms = 500;
+    CHECK(!validate_request(r, RequestCommand::Run).empty());
+}

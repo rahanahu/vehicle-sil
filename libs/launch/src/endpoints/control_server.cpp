@@ -231,6 +231,24 @@ public:
         return left;
     }
 
+    std::optional<control_grpc::WriteRefusal> write_refusal() const
+    {
+        runner::TimeCommands* commands = nullptr;
+        {
+            const std::lock_guard lock(mutex_);
+            commands = commands_;
+        }
+        if (commands == nullptr)
+        {
+            return std::nullopt;
+        }
+        if (const auto refused = commands->write_refusal())
+        {
+            return control_grpc::WriteRefusal{refused->reason, refused->message};
+        }
+        return std::nullopt;
+    }
+
 private:
     static runner::Command command(const char* name) { return runner::Command::make(name); }
 
@@ -458,20 +476,18 @@ control_grpc::ServerOptions read_control_options(const ControlHost& asked)
 /// their time commands, and a client's Stop is a stop request of theirs. Not started.
 std::unique_ptr<ControlEndpoint> make_server(control_grpc::ServerOptions options, runner::RunControls& controls)
 {
-    // A run that plays a scenario: what a client writes is not in the scenario's file: with it,
-    // the same scenario would not give the same result any more. Reading changes nothing (the
+    // A run that plays a scenario: what a client writes is not in the scenario's file, so writes
+    // are refused until the scenario hands over to manual control. Reading changes nothing (the
     // hub's subscriptions are bounded and never make the simulation wait), the time operations
-    // change where the time stands still and how fast it goes, not what happens at a time (they
-    // go to the time commands, as in any run), and a stop is the run's to take as always. The
-    // rule is the controls'; the refusal is the server's, in one place before the call.
-    if (auto only = controls.always_refused(runner::Entry::ControlServer, runner::Operation::Write))
-    {
-        options.observe_only = control_grpc::ObserveOnly{std::move(only->reason), std::move(only->message),
-                                                         control_grpc::ObserveOnly::Refuses::Writes};
-    }
-    // The stop's event (and its refusal once the run is over) comes from the time commands.
+    // change where the time stands still and how fast it goes (they go to the time commands, as in
+    // any run), and a stop is the run's to take as always. The rule is the controls'; the refusal
+    // is evaluated dynamically per write RPC before it reaches the hub.
     auto time = std::make_unique<LaunchTimeControl>(
       controls.time(), [&controls] { controls.stops().request(runner::stop_source::kControlStop); });
+    if (controls.scenario())
+    {
+        options.write_refusal = [t = time.get()] { return t->write_refusal(); };
+    }
     return std::make_unique<Server>(std::move(options), std::move(time));
 }
 

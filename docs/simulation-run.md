@@ -678,6 +678,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `stop_at_ms` | Virtual stop time (an integer from 1 to 10^12 ms). Omit for no automatic stop. | `--stop-at-ms` |
 | `late_tolerance_ms` | Wall-clock lateness tolerance (an integer from 0 to 10^12 ms). Defaults to 10 ms. | `--late-tolerance-ms` |
 | `strict` | `true` or `false` | `--strict` |
+| `after_scenario` | `"stop"` (default: end when scenario finishes) or `"pause"` (pause at scenario pass for manual handover; requires `scenario`, cannot be combined with `stop_at_ms`, and `run` needs `--stdin-commands` or `--control`) | |
 
 ### Arguments together with a request file
 
@@ -1637,7 +1638,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `vehicle_sil`, `stage` | The vehicle-sil version; `"run"` (the record of an actual run) |
 | `file`, `variant`, `params` | The configuration file (as given in the arguments), the variant (`null` if none), and the scenario parameters with the values in effect (the same form as `scenario.params` of `check --json`) |
 | `time_step_ms` | The controller's time step (the same as `timing.time_step_ms` of `run --json`) |
-| `scenario` | `file`, `name`, `status` and `over_at_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
+| `scenario` | `file`, `name`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
 | `variables[]` | The variables that the scenario uses, in order of first use: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it) |
 | `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json`, plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
@@ -1843,8 +1844,8 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 
 | Scenario | `recorded_to_ms` |
 |---|---|
-| Failed (`failed`) | The `at_ms` of the failed step (in a run that ended at `stop_at_ms`, the time it stopped) |
-| Passed (`passed`) | The latest `at_ms` of the steps |
+| Failed (`failed`) | The `at_ms` of the failed step (or of the failed dither write when all steps had already passed; in a run that ended at `stop_at_ms`, the time it stopped) |
+| Passed (`passed`) | The latest `at_ms` of the steps (extended up to `min(end_ms, now)` when `end_ms` is set) |
 | Ended partway (`incomplete`) | The latest time among observed samples and writes sent through the last controller time (0 if there were none). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
 
