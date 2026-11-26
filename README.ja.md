@@ -172,7 +172,7 @@ scripts/run-gui.py                   # ブラウザを開く（開かないと�
 | 配布物 | 内容 |
 |---|---|
 | テンプレート | 上の例と同じ 2 つの ECU、設定ファイル、シナリオが入った、出発点になる ECU のプロジェクトです（[template/](template/) と同じもの）。 |
-| ビルド済みのツール | `vehicle_sil_launch`、Ethernet ブリッジ `vehicle_sil_ethernet_bridge`（Linux と Windows）、SocketCAN ブリッジ `vehicle_sil_socketcan_bridge`（Linux だけ）、ブラウザの GUI、Python のクライアントを、OS ごとに 1 つのアーカイブにまとめたものです。 |
+| ビルド済みのツール | `vehicle_sil_launch`（`--control` / Control Server 付き）、Ethernet ブリッジ `vehicle_sil_ethernet_bridge`（Linux と Windows）、SocketCAN ブリッジ `vehicle_sil_socketcan_bridge`（Linux だけ）、ブラウザの GUI、Python のクライアント（生成済み gRPC スタブ付き）を、OS ごとに 1 つのアーカイブにまとめたものです。 |
 | GUI のクライアント | 自分の画面を作るための npm のパッケージ `vehicle-sil-gui-client-<version>.tgz` です（[gui/client](gui/client/README.ja.md) を参照）。ビルド済みのツールにも同じファイルが入っていて、npm のレジストリにも `@vehicle-sil/gui-client` としてあります。 |
 | `SHA256SUMS` | ほかの配布物の SHA-256 のチェックサムです。 |
 

@@ -435,13 +435,13 @@ The Python client (`vehicle_sil_control`) is in the `python/` directory of the p
 T=tools/vehicle-sil-tools-<version>-linux-x86_64
 export PATH="$PWD/$T/bin:$PATH"   # as in step 1: the script starts vehicle_sil_launch
 PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' \
-    --with-requirements $T/python/requirements.txt python read_cooler.py
+    --with-requirements $T/python/requirements-control.txt python read_cooler.py
 ```
 
 | Argument | Meaning |
 |---|---|
 | `PYTHONPATH=$T/python` | Where the client package is. |
-| `--with-requirements` | Installs the packages at the versions pinned in `requirements.txt` (grpcio, protobuf and others). |
+| `--with-requirements` | Installs the packages at the versions pinned in `requirements-control.txt` (grpcio, protobuf and others). |
 | `--python '>=3.11,<3.15'` | Uses a Python in this range. If the computer has none, uv downloads one. |
 | `--no-project` | Ignores a `pyproject.toml` in a parent directory. |
 | `--no-build` | Uses prebuilt packages (wheels) only. |

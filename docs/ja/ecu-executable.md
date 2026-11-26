@@ -388,7 +388,7 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
 
 この接頭辞を使っている ECU は、変数の名前を替え、古い名前を使っているシナリオ、`variables` の項目、GUI の設定も合わせて直します。
 
-監視用の変数は、SIL Kit のシミュレーションに参加する ECU（`Peer`）が、ECU の宣言した変数の後に追加します（`PeerOptions::monitor`、既定で有効）。`--describe` の `variables` には含まれませんが、実行中は ECU の変数と並んで見えます。変数の一覧は [internals/control.md](internals/control.md) の「Peer の監視」にあります。
+監視用の変数は、SIL Kit のシミュレーションに参加する ECU（`Peer`）が、ECU の宣言した変数の後に追加します（`PeerOptions::monitor`、既定で有効）。`--describe` の `variables` には含まれませんが、実行中は Control API とブラウザの GUI から読み取り専用の出力として ECU の変数と並んで見えます。変数の一覧は [control-api.md](control-api.md#peer-と変数の情報peerswatch) の「Peer と変数の情報（`peers()`、`watch()`）」と [internals/control.md](internals/control.md) の「Peer の監視」にあります。
 
 重なる名前を宣言したときにエラーになる時点は、宣言のしかたと接頭辞で違います。
 

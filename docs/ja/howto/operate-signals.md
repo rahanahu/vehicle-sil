@@ -42,7 +42,7 @@
 | `vehicle_sil_launch` | `build/linux-gcc-control/tools/launch/vehicle_sil_launch` | `$T/bin/vehicle_sil_launch` |
 | 設定ファイル | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` | `simulation.yaml` |
 | 準備 | 下の「準備」の 3 行 | 不要です。 |
-| Python の実行 | `uv run python <引数>` | `PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' --with-requirements $T/python/requirements.txt python <引数>` |
+| Python の実行 | `uv run python <引数>` | `PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' --with-requirements $T/python/requirements-control.txt python <引数>` |
 | 例のスクリプト | `examples/launch_control/` | 入っていません。「最初のスクリプトを実行する」の全文をファイルに保存します。 |
 
 ## 準備

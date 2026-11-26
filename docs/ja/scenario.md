@@ -34,7 +34,7 @@
 
 controller のタイムステップ（`time_step_ms`）、`incomplete` の実行、`stop_at_ms` で終わった実行には、それぞれ例外があります。[simulation-run.md](simulation-run.md#シナリオの実行を時間の軸で記録する--timeline) の「シナリオの実行を時間の軸で記録する（`--timeline`）」を見てください。
 
-シナリオが使う変数は、`ecu_main` で作った ECU が宣言したものと、どの ECU にもある `ecu.connected` です（[ecu-executable.md](ecu-executable.md) の「変数を公開する」）。名前は `vehicle_sil_launch check --json` の `participants[].variables` でわかります。gRPC は使いません（Control Server のないビルドでも動きます）。
+シナリオが使う変数は、`ecu_main` で作った ECU が宣言したものと、どの ECU にもある `ecu.connected` です（[ecu-executable.md](ecu-executable.md) の「変数を公開する」）。名前は `vehicle_sil_launch check --json` の `participants[].variables` でわかります。実行時に追加される `peer.*` および `j1939.<net>.*` 監視変数は Control API とブラウザの GUI 専用であり、`--describe` には含まれず、シナリオからは読むことも書くこともできません（[control-api.md](control-api.md#peer-と変数の情報peerswatch) の「Peer と変数の情報（`peers()`、`watch()`）」）。gRPC は使いません（Control Server のないビルドでも動きます）。
 
 このドキュメントでは、シナリオの `steps` に書く 1 項目を「手順」と呼びます。「ステップ」は、ECU や controller が仮想時間を 1 回進める単位のことです。
 

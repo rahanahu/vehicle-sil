@@ -34,7 +34,7 @@ This holds when:
 
 The controller's time step (`time_step_ms`), an `incomplete` run and a run that ended at `stop_at_ms` have their own exceptions: see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline).
 
-A scenario can use the variables that an ECU built with `ecu_main` declares, and `ecu.connected`, which every ECU has (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). `participants[].variables` in the output of `vehicle_sil_launch check --json` lists their names. Scenarios do not use gRPC, so they also work in a build without the Control Server.
+A scenario can use the variables that an ECU built with `ecu_main` declares, and `ecu.connected`, which every ECU has (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). `participants[].variables` in the output of `vehicle_sil_launch check --json` lists their names. Runtime-added `peer.*` and `j1939.<net>.*` monitoring variables are available only through the Control API and the browser GUI (they are not included in `--describe` and can neither be read nor written in scenarios; see "Peers and variable information (`peers()`, `watch()`)" in [control-api.md](control-api.md#peers-and-variable-information-peers-watch)). Scenarios do not use gRPC, so they also work in a build without the Control Server.
 
 On this page, a "step" is one item of the scenario's `steps`. One advance of virtual time by an ECU or by the controller is an "ECU step" or a "controller step" (together, "simulation steps").
 

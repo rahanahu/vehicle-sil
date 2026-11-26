@@ -38,6 +38,8 @@ ECU が、外から読み書きする変数を宣言します。クライアン�
 
 ## ビルド
 
+ビルド済みのツールアーカイブ（`vehicle-sil-tools-*`）には、`--control`（Control Server）付きの `vehicle_sil_launch` と生成済み gRPC スタブ付きの Python クライアントが同梱されているため、ソースからビルドする場合だけビルドが必要です。
+
 ```sh
 cmake --preset linux-gcc-release -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON
 cmake --build --preset linux-gcc-release
@@ -177,6 +179,8 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 | `pause`（時刻なし）、`speed` | 進みません（`speed` は、進んだ後の速度になります）。 |
 | 停止の要求（Ctrl+C、`stop` のコマンド、標準入力の終わり、クライアントの `Stop`） | 待つのをやめ、時刻 0 のステップを 1 つ実行してから止まります。 |
 
+時刻を指定した `pause` が進むのは、このステップ 0 より前の待機からだけです。シミュレーションが始まって一時停止した後は、`pause(at=T)` は再開せずに `pause_target` を設定します（どちらの状態からでも `T` まで進めて止めるには `run_until(T)` を使います）。
+
 止まるより前（照合や、participant がそろうのを待つ間）に受け付けたコマンドも有効です。止まるのは、止まる時点で、0 で止まることになっているときだけです。
 
 | 止まるより前に受け付けたコマンド | 動作 |
@@ -209,10 +213,10 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 
 | クライアントの呼び出し | コマンドの名前 | 引数 |
 |---|---|---|
-| `Pause` | `pause` | 時刻つきなら `at_ms` |
-| `Resume` | `resume` | なし |
-| `Step` | `step` | `ms` と `at_ms`（その step の後に止まる時刻） |
-| `RunUntil` | `run_until` | `at_ms` |
+| `Pause` | `pause` | 時刻つきなら `at_ms`（`pause_target` を更新。開始後の一時停止中に呼んでも再開しません） |
+| `Resume` | `resume` | なし（予定されていた `pause_target` を消します） |
+| `Step` | `step` | `ms` と `at_ms`（その step の後に止まる時刻。一時停止中だけ有効） |
+| `RunUntil` | `run_until` | `at_ms`（一時停止中でも実行中でも `at_ms` まで進めて止めます） |
 | `SetSpeed` | `speed` | 速度 |
 | `Stop` | `stop` | なし |
 
@@ -225,7 +229,7 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 | 標準入力とクライアントが同時にコマンドを送った | どちらが先かは、受け取った順です。 |
 | 時刻の丸め | ミリ秒に切り上げ、さらに controller のタイムステップに切り上げます（イベントの値が、実際に止まる時刻です）。 |
 
-たとえば、クライアントの `step` と標準入力の `resume` が重なると、イベントの順で、止まるか進み続けるかが決まります。
+たとえば、クライアントの `step` と標準入力の `resume` が重なると、イベントの順で、止まるか進み続けるかが決まります。時刻コマンドは「後の呼び出しが勝つ」規則に従います。`resume` は予定されていた `pause_target` を消し、開始後の一時停止中に `at_ms` 付きの `pause` を呼ぶと再開せずに `pause_target` だけを更新し、`run_until` は現在が一時停止中か実行中かにかかわらず `at_ms` まで進めて一時停止します。
 
 クライアントへのレスポンスは、受け付けなければ gRPC のエラーで、メッセージはイベントの `message` と同じです。
 
@@ -430,10 +434,10 @@ gRPC の呼び出しと、Python のクライアント（`Control` のメソッ�
 | `WaitOperation` | 書き込みの結果を待ちます。 | `wait()` | `set`（`--wait`） | `viewer` |
 | `Write` | 変数に書き込みます。 | `write()` | `set` | `operator` |
 | `ForgetPeer` | 切断された Peer を消します。 | `forget_peer()` | `forget` | `operator` |
-| `Pause` | 一時停止します。 | `sim.pause()` | `pause` | `operator` |
-| `Resume` | 再開します。 | `sim.resume()` | `resume` | `operator` |
-| `Step` | 指定した時間だけ進めて止めます。 | `sim.step()` | `step` | `operator` |
-| `RunUntil` | 指定した時刻まで進めて止めます。 | `sim.run_until()` | `run-until` | `operator` |
+| `Pause` | 一時停止します（`at` で時刻指定の停止を予定。開始後の一時停止中は再開しません）。 | `sim.pause()` | `pause` | `operator` |
+| `Resume` | 再開します（予定されていた `pause_target` も消します）。 | `sim.resume()` | `resume` | `operator` |
+| `Step` | 指定した時間だけ進めて止めます（一時停止中のみ）。 | `sim.step()` | `step` | `operator` |
+| `RunUntil` | 指定した時刻まで進めて止めます（一時停止中・実行中のどちらでも可）。 | `sim.run_until()` | `run-until` | `operator` |
 | `SetSpeed` | 速度を変えます。 | `sim.set_speed()` | `speed` | `operator` |
 | `Stop` | シミュレーションを止めます。 | `sim.stop()` | `stop` | `admin` |
 
@@ -450,6 +454,8 @@ python -m vehicle_sil_control.generate          # スタブを python/vehicle_si
 | Python のバージョン | 3.11 以上です。 |
 | バージョンと依存の指定 | `python/pyproject.toml`（`dependencies = []`、`python -S` でも動作し、`gui/server` と純粋な Events v4 プロトコル定数・NDJSON コマンド構築の `protocol.py` と遅延 gRPC ヘルパー `grpc_helpers.py` を共有します）、リポジトリのルートの `pyproject.toml`（`uv sync`、または Control API のみなら `uv sync --only-group control`）と `uv.lock` です（[build.md](build.md) の「Python（uv）」）。 |
 | 標準ライブラリのみと gRPC | `Launch`、`Serve`、`RunHandle`、`LaunchError`、`ServeError`、`control_address` は標準ライブラリだけを使い（`python -S` 対応）、gRPC のモジュールを読み込みません。`Control`、`Control.for_current_run()`、`run.control()`、CLI には `grpcio`、`protobuf`、生成されたスタブが必要です（別の場所に出すときは `generate --out DIR` と `VEHICLE_SIL_CONTROL_STUBS=DIR` を使います）。 |
+| ビルド済みツールアーカイブ（`Control` / gRPC） | `<tools>/python` に生成済みスタブが含まれています。`PYTHONPATH=<tools>/python uv run --no-project --no-build --python ">=3.11,<3.14" --with-requirements <tools>/python/requirements-control.txt python <script.py>` で実行します。 |
+| ビルド済みツールアーカイブ（`Launch` / `Serve` のみ） | 追加の依存はありません。`PYTHONPATH=<tools>/python python -S <script.py>`（または Python 3.11 以上）で実行できます。 |
 | `.venv` の外・`uv sync` なしの場合 | `python -m vehicle_sil_control.generate` やスクリプトを実行する前に `export PYTHONPATH=$PWD/python` を設定し、`pip install grpcio grpcio-tools protobuf` でインストールします。 |
 | uv を使わない場合（MSYS2 UCRT64） | `export PYTHONPATH=$PWD/python` を設定し、`pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools` でインストールします。 |
 
@@ -609,6 +615,7 @@ with Control.for_current_run("127.0.0.1:8510", token=token) as c:   # the run th
 - `step()`、`run_until()`、時刻つきの `pause()` のレスポンス（`TimeState`）と、その直後の `time()` は、コマンドを受け付けた後のその時点の状態です。
 - 進んでいる途中なら、`paused` は偽で、`now` は進む前か途中の時刻です（速ければ、もう達して止まっていることもあります）。
 - `step()` の止まる時刻は、そのレスポンスにあります: 進んでいる途中なら `pause_target`、そこで止まった後なら `now`（`paused` は真）です。標準入力やほかのクライアントが同時に時間のコマンドを送ると、レスポンスはそのコマンドの後の状態のことがあります。ランチャーの `command` のイベントには、step ごとにその step の時刻（`at_ms`）があります。
+- 開始後の一時停止中に `sim.pause(at=T)` を呼ぶと、再開せずに `pause_target` だけを更新し、`sim.resume()` は予定されていた `pause_target` を消します（「後の呼び出しが勝つ」規則）。一時停止中・実行中のどちらからでも `T` まで進めて止めるには `sim.run_until(T)` を使います。
 - `TimeState.running` が偽のとき、`ended` が真なら終わっていて、偽ならまだ始まっていません。
 
 ### Peer と変数の情報（`peers()`、`watch()`）
@@ -627,6 +634,20 @@ with Control.for_current_run("127.0.0.1:8510", token=token) as c:   # the run th
 | `source` | 設定ファイルの対応表（`participants[].variables`）が適用されている変数の、実行ファイルでの名前です（適用されていなければ空）。 |
 
 - `builtin` は、Server が名前で決めます（名前が `ecu.`、`peer.`、`j1939.`、`can.`、`lin.`、`eth.` で始まれば真）。アプリケーションが `j1939.` で始まる名前の変数を宣言すると、それも真になります。
+
+`PeerOptions::monitor`（既定で有効）がオンのとき、SIL Kit の各 `Peer` は実行時に以下の読み取り専用の監視変数（`builtin: true`）を追加します。Control API とブラウザの GUI から参照でき、`--describe` やシナリオでは使えません。
+
+| 変数 | 型 / 単位 | 意味 |
+|---|---|---|
+| `peer.steps` | int | その Peer が実行したステップ数です。 |
+| `peer.speed` | float（`s/s`） | 前回の読み取りからの、実時間 1 秒あたりのシミュレーション秒数です（初回は `0`。一時停止中も含みます）。 |
+| `peer.app_time_max_us` | float（`us`） | 前回の読み取りからの、1 ステップ内のアプリケーションと LIN の処理の最長所要時間です（J1939 処理とコマンド適用を除きます）。 |
+| `j1939.<net>.bus_state` | enum | CAN コントローラーのエラー状態（`unknown`、`error_active`、`error_passive`、`bus_off`）です。 |
+| `j1939.<net>.<counter>` | int | ネットワーク統計カウンター（`frames_received`、`frames_sent`、`send_failures`、`send_queue_full`、`receive_overflows`、`held_dropped`、`address_violations`、`transport_aborts_sent`、`transport_aborts_received`、`transport_timeouts`、`transport_rejected`、`transport_bam_dropped`、`transport_bam_replaced`）です。 |
+| `j1939.<net>.node<i>.address` | int | J1939 ノード `i` の現在のアドレスです。 |
+| `j1939.<net>.node<i>.address_state` | enum | Address Claim の状態（`fixed`、`not_started`、`claiming`、`claimed`、`cannot_claim`）です。 |
+
+`--map-network` を指定した場合、`<net>` には対応付け後のシミュレーションネットワーク名が入ります（詳しくは [internals/control.md](internals/control.md) の「Peer の監視」）。
 
 対応表のある Peer では、次のものが対応の後のものになります。
 
