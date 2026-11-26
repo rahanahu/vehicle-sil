@@ -13,11 +13,16 @@
 
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/core/simulation_watch.hpp"
+#include "vehicle_sil/local/local_bench.hpp"
 #include "vehicle_sil/peer/peer.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
 #include "vehicle_sil/testkit/local_can.hpp"
+#ifdef VEHICLE_SIL_HAS_CAN_NETSIM
+#include "vehicle_sil/can_netsim/can_bus_simulator.hpp"
+#endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -1188,4 +1193,334 @@ TEST_CASE(ecu_networks_refuse_node_overrides_of_the_code_on_the_local_buses_too)
     // On SIL Kit as well.
     Simulation silkit(SilKitOptions{});
     same_text(refusal([&] { silkit.add_ecu("Engine", 10ms).j1939("CAN", own); }), "vehicle_sil::Ecu: j1939(\"CAN\")" + refused);
+}
+
+namespace {
+
+std::string format_can_tx(SimTime step, const can::TransmitEvent& ev)
+{
+    return std::to_string(vehicle_sil::to_ns(step)) + " tx " +
+           (ev.kind == can::TransmitEvent::Kind::Completed ? "ok " : "fail ") + "tok=" + std::to_string(ev.token) +
+           " id=" + std::to_string(ev.id) + " send=" + std::to_string(vehicle_sil::to_ns(ev.send_time)) +
+           " time=" + std::to_string(vehicle_sil::to_ns(ev.time));
+}
+
+std::string format_can_rx(SimTime step, const can::TimedFrame& f)
+{
+    return std::to_string(vehicle_sil::to_ns(step)) + " rx id=" + std::to_string(f.frame.id) +
+           " b0=" + std::to_string(f.frame.data[0]) + " time=" + std::to_string(vehicle_sil::to_ns(f.time));
+}
+
+/// Same-ID/same-payload burst ECU that tracks exact step boundaries without needing begin():
+/// process() runs right before on_step(now), so buffering callbacks until on_step(now) tags every
+/// callback with its exact step `now` while still checking ordering in real time during process().
+class CanTxParitySender
+{
+public:
+    explicit CanTxParitySender(Ecu& ecu, std::uint32_t port_bitrate = 0) :
+      raw(ecu.can("CAN", can::RawChannelOptions{.send_capacity = 8,
+                                                .port_transmit_queue_capacity = 3,
+                                                .port_bitrate = port_bitrate}))
+    {
+        CHECK(raw.transmit_capabilities() == can::TransmitCapabilities::Correlated);
+        raw.on_transmit([this](const can::TransmitEvent& ev) {
+            CHECK(!in_on_step_); // never inside send()/on_step()
+            CHECK(!saw_rx_since_last_step_); // on_transmit strictly before on_frame
+            step_tx_.push_back(ev);
+        });
+        raw.on_frame([this](const can::TimedFrame& f) {
+            CHECK(!in_on_step_);
+            saw_rx_since_last_step_ = true;
+            step_rx_.push_back(f);
+        });
+        ecu.on_step([this](SimTime now) {
+            in_on_step_ = true;
+            for (const auto& ev : step_tx_)
+            {
+                CHECK(now > ev.send_time);
+                log.push_back(format_can_tx(now, ev));
+                tx_events.push_back(ev);
+            }
+            for (const auto& f : step_rx_)
+            {
+                log.push_back(format_can_rx(now, f));
+            }
+            step_tx_.clear();
+            step_rx_.clear();
+            saw_rx_since_last_step_ = false;
+
+            const can::Frame burst = standard(0x200, 0xAA);
+            if (now == at(0ms))
+            {
+                // 5 identical-ID/identical-payload frames; port_transmit_queue_capacity = 3 ->
+                // tokens 0, 1, 2 accepted; tokens 3, 4 hit QueueFull in flush() -> Failed at 0ms.
+                for (std::uint64_t tok = 0; tok < 5; ++tok)
+                {
+                    CHECK(raw.send(burst, tok) == can::RawSendStatus::Ok);
+                }
+            }
+            else if (now == at(10ms))
+            {
+                // Second burst reusing token 0 plus distinct tokens while peer arbitrates.
+                const can::Frame burst2 = standard(0x300, 0xBB);
+                CHECK(raw.send(burst2, 0) == can::RawSendStatus::Ok);
+                CHECK(raw.send(burst2, 100) == can::RawSendStatus::Ok);
+                CHECK(raw.send(burst2, 200) == can::RawSendStatus::Ok);
+            }
+            in_on_step_ = false;
+        });
+    }
+
+    can::RawChannel& raw;
+    std::vector<std::string> log;
+    std::vector<can::TransmitEvent> tx_events;
+
+private:
+    std::vector<can::TransmitEvent> step_tx_;
+    std::vector<can::TimedFrame> step_rx_;
+    bool saw_rx_since_last_step_ = false;
+    bool in_on_step_ = false;
+};
+
+class CanTxParityPeer
+{
+public:
+    explicit CanTxParityPeer(Ecu& ecu) : raw(ecu.can("CAN"))
+    {
+        CHECK(raw.transmit_capabilities() == can::TransmitCapabilities::Correlated);
+        raw.on_transmit([this](const can::TransmitEvent& ev) {
+            CHECK(!in_on_step_);
+            CHECK(!saw_rx_since_last_step_);
+            step_tx_.push_back(ev);
+        });
+        raw.on_frame([this](const can::TimedFrame& f) {
+            CHECK(!in_on_step_);
+            saw_rx_since_last_step_ = true;
+            step_rx_.push_back(f);
+        });
+        ecu.on_step([this](SimTime now) {
+            in_on_step_ = true;
+            for (const auto& ev : step_tx_)
+            {
+                CHECK(now > ev.send_time);
+                log.push_back(format_can_tx(now, ev));
+            }
+            for (const auto& f : step_rx_)
+            {
+                log.push_back(format_can_rx(now, f));
+            }
+            step_tx_.clear();
+            step_rx_.clear();
+            saw_rx_since_last_step_ = false;
+
+            if (now == at(0ms))
+            {
+                CHECK(raw.send(standard(0x100, 0x11), 0) == can::RawSendStatus::Ok);
+            }
+            else if (now == at(10ms))
+            {
+                CHECK(raw.send(standard(0x100, 0x22), 42) == can::RawSendStatus::Ok);
+            }
+            in_on_step_ = false;
+        });
+    }
+
+    can::RawChannel& raw;
+    std::vector<std::string> log;
+
+private:
+    std::vector<can::TransmitEvent> step_tx_;
+    std::vector<can::TimedFrame> step_rx_;
+    bool saw_rx_since_last_step_ = false;
+    bool in_on_step_ = false;
+};
+
+struct CanParityResult
+{
+    std::vector<std::string> sender_log;
+    std::vector<std::string> peer_log;
+    std::vector<can::TransmitEvent> sender_tx;
+    can::RawChannelStatistics sender_stats;
+    can::RawChannelStatistics peer_stats;
+};
+
+} // namespace
+
+// Pair 1 (CAN): LocalBench timing-less <-> SIL Kit Trivial Simulation transmit-completion parity.
+TEST_CASE(simulation_can_tx_completion_parity_locally_and_on_silkit)
+{
+    const auto run = [](std::optional<SilKitOptions> silkit) {
+        Simulation sim(silkit);
+        auto& sender = sim.add<CanTxParitySender>("Sender", 10ms);
+        auto& peer = sim.add<CanTxParityPeer>("Peer", 10ms);
+        sim.run_for(40ms);
+        return CanParityResult{sender.log, peer.log, sender.tx_events, sender.raw.statistics(), peer.raw.statistics()};
+    };
+    const CanParityResult local = run(std::nullopt);
+    const CanParityResult silkit = run(SilKitOptions{});
+
+    // At t=0ms: tokens 0, 1, 2 accepted (Completed at 0ms), tokens 3, 4 hit QueueFull (Failed at 0ms),
+    // all delivered in step 10ms in exact send order before peer's RX frame!
+    // At t=10ms: tokens 0, 100, 200 accepted (Completed at 10ms), delivered in step 20ms.
+    CHECK_EQ(local.sender_tx.size(), 8u);
+    CHECK(local.sender_tx[0] == (can::TransmitEvent{can::TransmitEvent::Kind::Completed, 0, 0x200, at(0ms), at(0ms)}));
+    CHECK(local.sender_tx[1] == (can::TransmitEvent{can::TransmitEvent::Kind::Completed, 1, 0x200, at(0ms), at(0ms)}));
+    CHECK(local.sender_tx[2] == (can::TransmitEvent{can::TransmitEvent::Kind::Completed, 2, 0x200, at(0ms), at(0ms)}));
+    CHECK(local.sender_tx[3] == (can::TransmitEvent{can::TransmitEvent::Kind::Failed, 3, 0x200, at(0ms), at(0ms)}));
+    CHECK(local.sender_tx[4] == (can::TransmitEvent{can::TransmitEvent::Kind::Failed, 4, 0x200, at(0ms), at(0ms)}));
+    CHECK(local.sender_tx[5] == (can::TransmitEvent{can::TransmitEvent::Kind::Completed, 0, 0x300, at(10ms), at(10ms)}));
+    CHECK(local.sender_tx[6] == (can::TransmitEvent{can::TransmitEvent::Kind::Completed, 100, 0x300, at(10ms), at(10ms)}));
+    CHECK(local.sender_tx[7] == (can::TransmitEvent{can::TransmitEvent::Kind::Completed, 200, 0x300, at(10ms), at(10ms)}));
+
+    CHECK_EQ(local.sender_stats.frames_sent, 6u);
+    CHECK_EQ(local.sender_stats.frames_dropped, 2u);
+    CHECK_EQ(local.sender_stats.transmit_completed, 6u);
+    CHECK_EQ(local.sender_stats.transmit_failed, 2u);
+    CHECK_EQ(local.sender_stats.outstanding, 0u);
+    CHECK_EQ(local.peer_stats.outstanding, 0u);
+
+    CHECK(silkit.sender_tx == local.sender_tx);
+    CHECK(silkit.sender_log == local.sender_log);
+    CHECK(silkit.peer_log == local.peer_log);
+    CHECK_EQ(silkit.sender_stats.outstanding, 0u);
+    CHECK_EQ(silkit.peer_stats.outstanding, 0u);
+}
+
+// Pair 2 (CAN): timing-enabled VirtualCanBus (LocalBench) <-> SIL Kit + can_netsim (Simulation).
+TEST_CASE(simulation_can_tx_completion_parity_timed_local_bench_and_netsim)
+{
+    constexpr std::uint32_t kBitrate = 250'000;
+    constexpr std::size_t kBusQueue = 64;
+    constexpr SimDuration kSimStep = 1ms;
+
+    // Backend 1: LocalBench with timing-enabled VirtualCanBus.
+    CanParityResult local;
+    {
+        can::VirtualCanBusOptions busOptions;
+        busOptions.timing = can::VirtualCanBusTiming{kBitrate, kBusQueue, kSimStep};
+        vehicle_sil::LocalBench bench(busOptions);
+        auto& senderEcu = bench.add_ecu("Sender", 10ms);
+        auto& sender = senderEcu.emplace<CanTxParitySender>(senderEcu, kBitrate);
+        auto& peerEcu = bench.add_ecu("Peer", 10ms);
+        auto& peer = peerEcu.emplace<CanTxParityPeer>(peerEcu);
+        bench.run_for(40ms);
+        local = {sender.log, peer.log, sender.tx_events, sender.raw.statistics(), peer.raw.statistics()};
+    }
+
+    // With bus timing: at t=0ms, tokens 3 & 4 fail in flush() at time=0ms, while accepted tokens
+    // 0, 1, 2 finish transmitting at tx.end > 1ms -> out-of-order failure (3, 4 at 0ms) strictly
+    // precedes completions (0, 1, 2 at tx.end > 1ms)!
+    CHECK_EQ(local.sender_tx.size(), 8u);
+    CHECK(local.sender_tx[0] == (can::TransmitEvent{can::TransmitEvent::Kind::Failed, 3, 0x200, at(0ms), at(0ms)}));
+    CHECK(local.sender_tx[1] == (can::TransmitEvent{can::TransmitEvent::Kind::Failed, 4, 0x200, at(0ms), at(0ms)}));
+    CHECK(local.sender_tx[2].kind == can::TransmitEvent::Kind::Completed && local.sender_tx[2].token == 0 &&
+          local.sender_tx[2].send_time == at(0ms) && local.sender_tx[2].time > at(1ms));
+    CHECK(local.sender_tx[3].kind == can::TransmitEvent::Kind::Completed && local.sender_tx[3].token == 1 &&
+          local.sender_tx[3].time > local.sender_tx[2].time);
+    CHECK(local.sender_tx[4].kind == can::TransmitEvent::Kind::Completed && local.sender_tx[4].token == 2 &&
+          local.sender_tx[4].time > local.sender_tx[3].time);
+    CHECK(local.sender_tx[5].kind == can::TransmitEvent::Kind::Completed && local.sender_tx[5].token == 0 &&
+          local.sender_tx[5].send_time == at(10ms) && local.sender_tx[5].time > at(11ms));
+    CHECK(local.sender_tx[6].kind == can::TransmitEvent::Kind::Completed && local.sender_tx[6].token == 100 &&
+          local.sender_tx[6].time > local.sender_tx[5].time);
+    CHECK(local.sender_tx[7].kind == can::TransmitEvent::Kind::Completed && local.sender_tx[7].token == 200 &&
+          local.sender_tx[7].time > local.sender_tx[6].time);
+    CHECK_EQ(local.sender_stats.outstanding, 0u);
+    CHECK_EQ(local.peer_stats.outstanding, 0u);
+
+#ifdef VEHICLE_SIL_HAS_CAN_NETSIM
+    // Backend 2: Simulation on SIL Kit + CanBusSimulator.
+    // Leave CanBusSimulatorOptions::default_bitrate at its default (500'000) so parity at kBitrate (250'000)
+    // proves Ecu::can()'s RawChannelOptions::port_bitrate configures the network simulator end-to-end.
+    CanParityResult netsim;
+    {
+        Simulation sim(SilKitOptions{.other_participants = {"CanNetSim"}});
+        auto& sender = sim.add<CanTxParitySender>("Sender", 10ms, kBitrate);
+        auto& peer = sim.add<CanTxParityPeer>("Peer", 10ms);
+
+        vehicle_sil::ParticipantRuntimeOptions simOpts;
+        simOpts.participant_name = "CanNetSim";
+        simOpts.registry_uri = sim.registry_uri();
+        simOpts.lifecycle_mode = vehicle_sil::LifecycleMode::Coordinated;
+        simOpts.virtual_time = vehicle_sil::VirtualTimeOptions{kSimStep, std::nullopt, std::nullopt};
+        vehicle_sil::ParticipantRuntime simRuntime(simOpts);
+        can::CanBusSimulator simulator(simRuntime.participant(), {"CAN"},
+                                       can::CanBusSimulatorOptions{.transmit_queue_capacity = kBusQueue});
+        simRuntime.set_step_handler([&simulator](SimTime now, SimDuration step) { simulator.step(now, step); });
+
+        std::exception_ptr netSimError;
+        {
+            std::jthread simThread([&] {
+                try
+                {
+                    simRuntime.start(30s);
+                    static_cast<void>(simRuntime.wait_until_finished(scaled_timeout(60s)));
+                }
+                catch (...)
+                {
+                    netSimError = std::current_exception();
+                }
+            });
+            sim.run_for(40ms);
+        }
+        simRuntime.stop("test cleanup");
+        CHECK(!netSimError);
+        CHECK_EQ(simulator.statistics("CAN").bitrate, kBitrate);
+        netsim = {sender.log, peer.log, sender.tx_events, sender.raw.statistics(), peer.raw.statistics()};
+    }
+
+    CHECK(netsim.sender_tx == local.sender_tx);
+    CHECK(netsim.sender_log == local.sender_log);
+    CHECK(netsim.peer_log == local.peer_log);
+    CHECK_EQ(netsim.sender_stats.outstanding, 0u);
+    CHECK_EQ(netsim.peer_stats.outstanding, 0u);
+#endif
+}
+
+// Shutdown with outstanding > 0: stopping while frames are unacknowledged leaves outstanding
+// observable on both CAN RawChannel and Ethernet Channel across LocalBench and SIL Kit.
+TEST_CASE(simulation_shutdown_leaves_outstanding_observable_for_can_and_ethernet)
+{
+    for (const bool onSilKit : {false, true})
+    {
+        Simulation sim(onSilKit ? std::optional<SilKitOptions>(SilKitOptions{}) : std::nullopt);
+        Ecu& ecu = sim.add_ecu("LastStep", 10ms);
+        auto& raw = ecu.can("CAN");
+        auto& ethCh = ecu.ethernet("ETH");
+        CHECK(raw.transmit_capabilities() == can::TransmitCapabilities::Correlated);
+        CHECK(ethCh.transmit_capabilities() == vehicle_sil::eth::TransmitCapabilities::Correlated);
+        ecu.on_step([&raw, &ethCh](SimTime now) {
+            if (now == at(20ms))
+            {
+                // Final step of a 30ms run: acknowledgements are stamped 20ms and never released.
+                std::array<std::uint8_t, 60> ethBytes{};
+                ethBytes.fill(0xAA);
+                for (std::uint64_t tok = 0; tok < 3; ++tok)
+                {
+                    CHECK(raw.send(standard(0x123, static_cast<std::uint8_t>(tok)), tok) == can::RawSendStatus::Ok);
+                    CHECK(ethCh.send(ethBytes, tok) == vehicle_sil::eth::SendStatus::Ok);
+                }
+            }
+        });
+        sim.run_for(30ms);
+        CHECK_EQ(raw.statistics().frames_sent, 3u);
+        CHECK_EQ(raw.statistics().transmit_completed, 0u);
+        CHECK_EQ(raw.statistics().outstanding, 3u);
+        CHECK_EQ(ethCh.statistics().frames_sent, 3u);
+        CHECK_EQ(ethCh.statistics().transmit_completed, 0u);
+        CHECK_EQ(ethCh.statistics().outstanding, 3u);
+    }
+
+    // LocalBench pre-bus validation: invalid RawChannelOptions leaves no bus behind.
+    {
+        vehicle_sil::LocalBench bench;
+        Ecu& ecu = bench.add_ecu("Check", 10ms);
+        CHECK(throws<std::invalid_argument>([&] {
+            static_cast<void>(ecu.can("NO_BUS", can::RawChannelOptions{.port_event_capacity = 4,
+                                                                       .port_transmit_queue_capacity = 8}));
+        }));
+        CHECK(throws<std::out_of_range>([&] { static_cast<void>(bench.bus("NO_BUS")); }));
+        // The name is still free (can even be used for another bus kind).
+        static_cast<void>(ecu.ethernet("NO_BUS"));
+    }
 }

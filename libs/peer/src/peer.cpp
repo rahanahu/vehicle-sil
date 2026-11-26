@@ -549,8 +549,10 @@ j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions option
     Channel& c = add_channel(network_name);
     try
     {
-        auto* canController = runtime_->participant().CreateCanController(controller, simulation_name(network_name));
         options.port.real_time_clock = options_.virtual_time ? nullptr : clock_;
+        // Before the controller: SIL Kit cannot remove it, and a second one with its name is refused.
+        can::SilKitCanPort::validate(options.port);
+        auto* canController = runtime_->participant().CreateCanController(controller, simulation_name(network_name));
         c.silkit_port = std::make_unique<can::SilKitCanPort>(*canController, options.port);
         c.controller = std::move(controller);
         c.gate = std::make_unique<detail::GatedCanPort>(*c.silkit_port, agent_.connection());
@@ -652,17 +654,24 @@ can::RawChannel& Peer::add_can(const std::string& network, can::RawChannelOption
                                     "\" has a controller named \"" + controller +
                                     "\", the name of this raw channel's controller; rename one of the networks");
     }
+    // Before the controller: SIL Kit cannot remove it, and a second one with its name is refused.
+    can::RawChannel::validate(options);
+    can::SilKitCanPortOptions portOptions;
+    portOptions.inbox_capacity = can::RawChannel::port_inbox_capacity(options);
+    portOptions.event_capacity = can::RawChannel::port_event_capacity(options);
+    portOptions.bitrate = options.port_bitrate;
+    portOptions.transmit_queue_capacity = options.port_transmit_queue_capacity;
+    portOptions.real_time_clock = options_.virtual_time ? nullptr : clock_;
+    can::SilKitCanPort::validate(portOptions);
     auto made = std::make_unique<RawCan>();
     made->name = network;
     made->order = added_++;
-    made->channel = std::make_unique<can::RawChannel>(options); // std::invalid_argument
+    made->channel = std::make_unique<can::RawChannel>(options);
     raw_channels_.push_back(std::move(made));
     RawCan& r = *raw_channels_.back();
     try
     {
         auto* canController = runtime_->participant().CreateCanController(controller, simulation_name(network));
-        can::SilKitCanPortOptions portOptions;
-        portOptions.real_time_clock = options_.virtual_time ? nullptr : clock_;
         r.port = std::make_unique<can::SilKitCanPort>(*canController, portOptions);
         r.gate = std::make_unique<detail::GatedCanPort>(*r.port, agent_.connection());
         host_.add(*r.channel, *r.gate);
@@ -888,6 +897,11 @@ eth::Channel& Peer::add_ethernet(const std::string& network, eth::ChannelOptions
     require_ethernet_name(network);
     // Before the controller: SIL Kit cannot remove it, and a second one with its name is refused.
     eth::Channel::validate(options);
+    eth::SilKitEthPortOptions portOptions;
+    portOptions.inbox_capacity = eth::Channel::port_inbox_capacity(options);
+    portOptions.event_capacity = eth::Channel::port_event_capacity(options);
+    portOptions.transmit_queue_capacity = options.port_transmit_queue_capacity;
+    eth::SilKitEthPort::validate(portOptions);
     auto made = std::make_unique<Ethernet>();
     made->name = network;
     made->mac = options.mac;
@@ -896,11 +910,6 @@ eth::Channel& Peer::add_ethernet(const std::string& network, eth::ChannelOptions
     try
     {
         auto* controller = runtime_->participant().CreateEthernetController(network, simulation_name(network));
-        eth::SilKitEthPortOptions portOptions;
-        // Room for receive_capacity frames in every step whenever they arrive, and an
-        // acknowledgement for each frame of a step.
-        portOptions.inbox_capacity = eth::Channel::port_inbox_capacity(options);
-        portOptions.event_capacity = std::max(portOptions.event_capacity, options.send_capacity);
         e.port = std::make_unique<eth::SilKitEthPort>(*controller, portOptions);
         e.gate = std::make_unique<detail::GatedEthPort>(*e.port, agent_.connection());
         e.channel = std::make_unique<eth::Channel>(*e.gate, std::move(options));

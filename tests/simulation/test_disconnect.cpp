@@ -380,3 +380,121 @@ TEST_CASE(disconnect_j1939_on_reconnect_finds_a_node_that_took_the_address_or_no
     CHECK(run_contention(std::nullopt, j1939::OnReconnect::Nothing) == nothing);
     CHECK(run_contention(SilKitOptions{}, j1939::OnReconnect::Nothing) == nothing);
 }
+
+TEST_CASE(disconnect_reports_flush_dropped_tx_tokens_for_can_and_ethernet)
+{
+    struct Result
+    {
+        std::vector<can::TransmitEvent> can_tx;
+        std::vector<eth::TransmitEvent> eth_tx;
+        std::vector<long long> can_step_ms;
+        std::vector<long long> eth_step_ms;
+        can::RawChannelStatistics can_stats;
+        eth::ChannelStatistics eth_stats;
+    };
+    const auto run_drop = [](std::optional<SilKitOptions> silkit) {
+        Simulation sim(silkit);
+        Ecu& ecu = sim.add_ecu("Engine", 10ms);
+        auto& raw = ecu.can("RAW");
+        auto& ethernet = ecu.ethernet("ETH", {.mac = kEngineMac});
+        CHECK(raw.transmit_capabilities() == can::TransmitCapabilities::Correlated);
+        CHECK(ethernet.transmit_capabilities() == eth::TransmitCapabilities::Correlated);
+
+        std::vector<can::TransmitEvent> stepCanTx;
+        std::vector<eth::TransmitEvent> stepEthTx;
+        Result out;
+        bool inStep = false;
+        raw.on_transmit([&](const can::TransmitEvent& ev) {
+            CHECK(!inStep);
+            stepCanTx.push_back(ev);
+        });
+        ethernet.on_transmit([&](const eth::TransmitEvent& ev) {
+            CHECK(!inStep);
+            stepEthTx.push_back(ev);
+        });
+        ecu.on_step([&](SimTime now) {
+            inStep = true;
+            for (const auto& ev : stepCanTx)
+            {
+                CHECK(now > ev.send_time);
+                out.can_tx.push_back(ev);
+                out.can_step_ms.push_back(ms_of(now));
+            }
+            for (const auto& ev : stepEthTx)
+            {
+                CHECK(now > ev.send_time);
+                out.eth_tx.push_back(ev);
+                out.eth_step_ms.push_back(ms_of(now));
+            }
+            stepCanTx.clear();
+            stepEthTx.clear();
+
+            if (now == at(0ms))
+            {
+                CHECK(raw.send(can::Frame{0x100, can::IdFormat::Standard, 1, {0x11}}, 0) == can::RawSendStatus::Ok);
+                CHECK(ethernet.send(eth_frame(kEngineMac, 0x11), 0) == eth::SendStatus::Ok);
+            }
+            else if (now == at(10ms))
+            {
+                // Disconnected in step 10ms: send() succeeds, flush() drops via GatedCanPort/GatedEthPort.
+                const std::array<std::uint64_t, 3> tokens{0, 7, 42};
+                for (const std::uint64_t tok : tokens)
+                {
+                    CHECK(raw.send(can::Frame{0x100, can::IdFormat::Standard, 1, {0x22}}, tok) == can::RawSendStatus::Ok);
+                    CHECK(ethernet.send(eth_frame(kEngineMac, 0x22), tok) == eth::SendStatus::Ok);
+                }
+            }
+            else if (now == at(20ms))
+            {
+                // Reconnected in step 20ms: sends succeed and complete in step 30ms.
+                CHECK(raw.send(can::Frame{0x100, can::IdFormat::Standard, 1, {0x33}}, 99) == can::RawSendStatus::Ok);
+                CHECK(ethernet.send(eth_frame(kEngineMac, 0x33), 99) == eth::SendStatus::Ok);
+            }
+            inStep = false;
+        });
+
+        write(ecu, 1, false, 10ms);
+        write(ecu, 2, true, 20ms);
+        sim.run_for(40ms);
+        out.can_stats = raw.statistics();
+        out.eth_stats = ethernet.statistics();
+        return out;
+    };
+
+    const Result local = run_drop(std::nullopt);
+    const Result silkit = run_drop(SilKitOptions{});
+
+    const std::vector<can::TransmitEvent> expectedCan{
+        {can::TransmitEvent::Kind::Completed, 0, 0x100, at(0ms), at(0ms)},
+        {can::TransmitEvent::Kind::Failed, 0, 0x100, at(10ms), at(10ms)},
+        {can::TransmitEvent::Kind::Failed, 7, 0x100, at(10ms), at(10ms)},
+        {can::TransmitEvent::Kind::Failed, 42, 0x100, at(10ms), at(10ms)},
+        {can::TransmitEvent::Kind::Completed, 99, 0x100, at(20ms), at(20ms)},
+    };
+    const std::vector<eth::TransmitEvent> expectedEth{
+        {eth::TransmitEvent::Kind::Completed, 0, at(0ms), at(0ms)},
+        {eth::TransmitEvent::Kind::Failed, 0, at(10ms), at(10ms)},
+        {eth::TransmitEvent::Kind::Failed, 7, at(10ms), at(10ms)},
+        {eth::TransmitEvent::Kind::Failed, 42, at(10ms), at(10ms)},
+        {eth::TransmitEvent::Kind::Completed, 99, at(20ms), at(20ms)},
+    };
+    const std::vector<long long> expectedSteps{10, 20, 20, 20, 30};
+
+    for (const Result& r : {local, silkit})
+    {
+        CHECK(r.can_tx == expectedCan);
+        CHECK(r.eth_tx == expectedEth);
+        CHECK(r.can_step_ms == expectedSteps);
+        CHECK(r.eth_step_ms == expectedSteps);
+        CHECK_EQ(r.can_stats.frames_sent, 2u);
+        CHECK_EQ(r.can_stats.frames_dropped, 3u);
+        CHECK_EQ(r.can_stats.transmit_completed, 2u);
+        CHECK_EQ(r.can_stats.transmit_failed, 3u);
+        CHECK_EQ(r.can_stats.outstanding, 0u);
+        CHECK_EQ(r.eth_stats.frames_sent, 2u);
+        CHECK_EQ(r.eth_stats.frames_dropped, 3u);
+        CHECK_EQ(r.eth_stats.transmit_completed, 2u);
+        CHECK_EQ(r.eth_stats.transmit_failed, 3u);
+        CHECK_EQ(r.eth_stats.outstanding, 0u);
+    }
+}

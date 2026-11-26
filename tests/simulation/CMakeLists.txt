@@ -16,6 +16,10 @@ vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
   LINK vehicle_sil::simulation vehicle_sil::testkit vehicle_sil::control_silkit)
 # simulation_internal.hpp: the tests shorten a wait of the library.
 target_include_directories(vehicle_sil_simulation_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/simulation/src)
+if(TARGET vehicle_sil_can_netsim)
+  target_link_libraries(vehicle_sil_simulation_tests PRIVATE vehicle_sil::can_netsim)
+  target_compile_definitions(vehicle_sil_simulation_tests PRIVATE VEHICLE_SIL_HAS_CAN_NETSIM=1)
+endif()
 set_tests_properties(simulation.ecu_main_start_timeout_and_start_failure PROPERTIES ${_vehicle_sil_tsan_processors} COST 6)
 set_tests_properties(simulation.ecu_main_j1939_node_changes_the_nodes_of_the_run
                      simulation.ecu_main_map_network_renames_the_networks_of_the_run

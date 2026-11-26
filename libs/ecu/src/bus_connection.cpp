@@ -85,7 +85,12 @@ std::size_t GatedCanPort::release_before(SimTime now, can::FrameSink sink)
 
 can::SendResult GatedCanPort::send(const can::TimedFrame& frame)
 {
-    return connection_.connected() ? inner_.send(frame) : can::SendResult::Failed;
+    return send(frame, 0);
+}
+
+can::SendResult GatedCanPort::send(const can::TimedFrame& frame, std::uint64_t token)
+{
+    return connection_.connected() ? inner_.send(frame, token) : can::SendResult::Failed;
 }
 
 std::size_t GatedEthPort::release_before(SimTime now, eth::FrameSink sink)
@@ -103,7 +108,12 @@ std::size_t GatedEthPort::release_before(SimTime now, eth::FrameSink sink)
 
 eth::SendResult GatedEthPort::send(const eth::TimedFrame& frame)
 {
-    return connection_.connected() ? inner_.send(frame) : eth::SendResult::Failed;
+    return send(frame, 0);
+}
+
+eth::SendResult GatedEthPort::send(const eth::TimedFrame& frame, std::uint64_t token)
+{
+    return connection_.connected() ? inner_.send(frame, token) : eth::SendResult::Failed;
 }
 
 void GatedLinPort::send_header(SimTime now, lin::LinId id, std::uint8_t data_length, lin::LinChecksumModel checksum_model)
