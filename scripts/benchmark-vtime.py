@@ -262,11 +262,67 @@ def _strip_matching_quotes(tok: str) -> str:
     return tok
 
 
-def _split_cmd_tokens(cmd: str, windows: bool) -> list[str]:
-    tokens = shlex.split(cmd, posix=not windows)
-    if windows:
-        return [_strip_matching_quotes(t) for t in tokens]
+def _split_windows_cmd_tokens(cmd: str) -> list[str]:
+    """Split a Windows command line / response file honoring mid-token quotes and \\\" escapes."""
+    tokens: list[str] = []
+    buf: list[str] = []
+    in_quote = False
+    has_token = False
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch.isspace() and not in_quote:
+            if has_token:
+                tokens.append("".join(buf))
+                buf.clear()
+                has_token = False
+            i += 1
+            continue
+        has_token = True
+        if ch == "\\":
+            bs_start = i
+            while i < n and cmd[i] == "\\":
+                i += 1
+            bs_count = i - bs_start
+            if i < n and cmd[i] == '"':
+                buf.append("\\" * (bs_count // 2))
+                if bs_count % 2 == 1:
+                    buf.append('"')
+                else:
+                    in_quote = not in_quote
+                i += 1
+            else:
+                buf.append("\\" * bs_count)
+            continue
+        if ch == '"':
+            in_quote = not in_quote
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    if in_quote:
+        raise ValueError("No closing quotation")
+    if has_token:
+        tokens.append("".join(buf))
     return tokens
+
+
+def _split_cmd_tokens(cmd: str, windows: bool) -> list[str]:
+    if windows:
+        return _split_windows_cmd_tokens(cmd)
+    return shlex.split(cmd, posix=True)
+
+
+def _read_response_file_text(rsp_path: Path) -> str:
+    raw = rsp_path.read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = raw.decode("utf-16")
+    else:
+        text = raw.decode("utf-8-sig")
+    if "\x00" in text:
+        raise ValueError("NUL byte in response file")
+    return text
 
 
 def _expand_response_files(
@@ -288,10 +344,10 @@ def _expand_response_files(
                 rsp_path = base_dir / rsp_path
             try:
                 if rsp_path.is_file():
-                    rsp_text = rsp_path.read_text(encoding="utf-8", errors="replace")
+                    rsp_text = _read_response_file_text(rsp_path)
                     rsp_tokens = _split_cmd_tokens(rsp_text, windows)
                     nested_out, nested_unreadable = _expand_response_files(
-                        rsp_tokens, rsp_path.parent, windows, depth + 1
+                        rsp_tokens, base_dir, windows, depth + 1
                     )
                     out.extend(nested_out)
                     unreadable.extend(nested_unreadable)
@@ -345,7 +401,7 @@ def parse_flag_tokens(tokens: list[str]) -> dict[str, Any]:
     }
 
 
-def _extract_compiler_path(tokens: list[str]) -> str | None:
+def _extract_compiler_and_arg_start(tokens: list[str]) -> tuple[str | None, int]:
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -357,8 +413,13 @@ def _extract_compiler_path(tokens: list[str]) -> str | None:
             while i < len(tokens) and ("=" in tokens[i] or tokens[i].startswith("-")):
                 i += 1
             continue
-        return tok
-    return None
+        return tok, i + 1
+    return None, len(tokens)
+
+
+def _extract_compiler_path(tokens: list[str]) -> str | None:
+    compiler_path, _ = _extract_compiler_and_arg_start(tokens)
+    return compiler_path
 
 
 def _compiler_banner(compiler_path: str | None, cache: dict[str, str | None]) -> str | None:
@@ -604,9 +665,9 @@ def extract_build_provenance(
                         else:
                             cmd_str = str(entry.get("command", ""))
                             tokens = _split_cmd_tokens(cmd_str, windows)
-                        compiler_path = _extract_compiler_path(tokens)
+                        compiler_path, arg_start = _extract_compiler_and_arg_start(tokens)
                         expanded_args, unreadable_rsps = _expand_response_files(
-                            tokens[1:] if tokens else [], entry_dir, windows
+                            tokens[arg_start:], entry_dir, windows
                         )
                         for ref in unreadable_rsps:
                             if ref not in unreadable_rsps_by_target[target_name]:
@@ -747,15 +808,41 @@ def _msys_to_windows_path(raw: str) -> str:
     return f"{drive.upper()}:{rest or '/'}"
 
 
+def _cygpath_to_windows(raw: str) -> str | None:
+    cygpath = shutil.which("cygpath")
+    if not cygpath:
+        return None
+    try:
+        proc = subprocess.run(
+            [cygpath, "-w", raw],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=5,
+        )
+        if proc.returncode == 0:
+            out = proc.stdout.strip()
+            if out:
+                return out
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def _normalize_git_path(
     raw: str,
     cwd: Path,
     *,
     is_windows: bool | None = None,
 ) -> Path | PureWindowsPath:
-    """Normalize a path printed by git (handling MSYS2 /c/... drive paths on Windows)."""
+    """Normalize a path printed by git (handling MSYS2 /c/..., /tmp/..., /home/... paths on Windows)."""
     windows = (os.name == "nt") if is_windows is None else is_windows
-    text = _msys_to_windows_path(raw) if windows else raw
+    text = raw
+    if windows and raw.startswith("/") and not raw.startswith("//"):
+        converted = _cygpath_to_windows(raw)
+        text = converted if converted is not None else _msys_to_windows_path(raw)
     if windows and sys.platform != "win32":
         win_path = PureWindowsPath(text)
         if not win_path.is_absolute():
@@ -771,19 +858,50 @@ def _path_compare_key(path: Path | PureWindowsPath, *, is_windows: bool | None =
     windows = (os.name == "nt") if is_windows is None else is_windows
     if windows:
         if sys.platform == "win32":
-            return os.path.normcase(str(path.resolve()))
+            return os.path.normcase(str(Path(path).resolve()))
         return ntpath.normcase(ntpath.normpath(str(path)))
-    return str(path.resolve())
+    return str(Path(path).resolve())
 
 
-def _resolved_git_dir(cwd: Path, *, is_windows: bool | None = None) -> Path | PureWindowsPath | None:
-    raw = _git_output(["rev-parse", "--git-dir"], cwd=cwd)
+def _same_path(
+    a: Path | PureWindowsPath | None,
+    b: Path | PureWindowsPath | None,
+    *,
+    is_windows: bool | None = None,
+) -> bool:
+    if a is None or b is None:
+        return False
+    windows = (os.name == "nt") if is_windows is None else is_windows
+    if not (windows and sys.platform != "win32"):
+        try:
+            if os.path.samefile(a, b):
+                return True
+        except OSError:
+            pass
+    return _path_compare_key(a, is_windows=is_windows) == _path_compare_key(b, is_windows=is_windows)
+
+
+def _resolved_git_path(
+    cwd: Path,
+    rev_parse_flag: str,
+    *,
+    is_windows: bool | None = None,
+) -> Path | PureWindowsPath | None:
+    raw = _git_output(["rev-parse", rev_parse_flag], cwd=cwd)
     if not raw:
         return None
     try:
         return _normalize_git_path(raw, cwd, is_windows=is_windows)
     except OSError:
         return None
+
+
+def _resolved_git_dir(cwd: Path, *, is_windows: bool | None = None) -> Path | PureWindowsPath | None:
+    return _resolved_git_path(cwd, "--git-dir", is_windows=is_windows)
+
+
+def _resolved_git_common_dir(cwd: Path, *, is_windows: bool | None = None) -> Path | PureWindowsPath | None:
+    return _resolved_git_path(cwd, "--git-common-dir", is_windows=is_windows)
 
 
 def _collect_repo_and_dependency_provenance(
@@ -822,20 +940,17 @@ def _collect_repo_and_dependency_provenance(
     silkit_commit: str | None = None
     silkit_tag: str | None = None
     if (silkit_dir / ".git").exists():
-        toplevel = _git_output(["rev-parse", "--show-toplevel"], cwd=silkit_dir)
+        show_prefix = _git_output(["rev-parse", "--show-prefix"], cwd=silkit_dir)
         silkit_git_dir = _resolved_git_dir(silkit_dir)
         parent_git_dir = _resolved_git_dir(repo_root)
-        if toplevel is not None and silkit_git_dir is not None:
+        silkit_common_dir = _resolved_git_common_dir(silkit_dir)
+        parent_common_dir = _resolved_git_common_dir(repo_root)
+        if show_prefix == "" and silkit_git_dir is not None and silkit_common_dir is not None:
             try:
-                silkit_key = _path_compare_key(silkit_dir)
-                repo_key = _path_compare_key(repo_root)
-                toplevel_key = _path_compare_key(_normalize_git_path(toplevel, silkit_dir))
-                silkit_git_key = _path_compare_key(silkit_git_dir)
-                parent_git_key = _path_compare_key(parent_git_dir) if parent_git_dir is not None else None
                 is_own_repo = (
-                    silkit_key != repo_key
-                    and toplevel_key == silkit_key
-                    and silkit_git_key != parent_git_key
+                    not _same_path(silkit_dir, repo_root)
+                    and not _same_path(silkit_git_dir, parent_git_dir)
+                    and not _same_path(silkit_common_dir, parent_common_dir)
                 )
             except OSError:
                 is_own_repo = False

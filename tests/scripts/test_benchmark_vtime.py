@@ -649,16 +649,174 @@ class TestBuildFlagExtraction(unittest.TestCase):
 
             # OSError while reading an existing response file must mark it unreadable.
             (bdir / "unreadable.rsp").write_text("-O3\n", encoding="utf-8")
-            orig_read_text = Path.read_text
+            orig_read_bytes = Path.read_bytes
 
-            def failing_read_text(self_path, *args, **kwargs):
+            def failing_read_bytes(self_path, *args, **kwargs):
                 if self_path.name == "unreadable.rsp":
                     raise PermissionError("permission denied")
-                return orig_read_text(self_path, *args, **kwargs)
+                return orig_read_bytes(self_path, *args, **kwargs)
 
-            with mock.patch.object(Path, "read_text", failing_read_text):
+            with mock.patch.object(Path, "read_bytes", failing_read_bytes):
                 _, unreadable_os = BV._expand_response_files(["@unreadable.rsp"], bdir, windows=False)
             self.assertEqual(unreadable_os, ["@unreadable.rsp"])
+
+    def test_windows_mid_token_quotes_spaces_in_rsp_and_embedded_at_macros(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            rsp_dir = bdir / "dir with spaces"
+            rsp_dir.mkdir()
+            (rsp_dir / "flags.rsp").write_text('"-O3" "-DNDEBUG"\n', encoding="utf-8")
+            cc = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\launch\\main.cpp",
+                    "command": 'g++.exe @"dir with spaces/flags.rsp" -DMSG="\\"contact @admin\\"" -I"C:\\Users\\dev @work\\inc" -c main.cpp',
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\libs\\core\\src\\participant_runtime.cpp",
+                    "command": 'g++.exe -O3 -DNDEBUG -DMSG="\\"contact @admin\\"" -c participant_runtime.cpp',
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\bench_ecu\\main.cpp",
+                    "command": 'g++.exe -O3 -DNDEBUG -c main.cpp',
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                build_info, _ = BV.extract_build_provenance(bdir, {"ndebug": True}, is_windows=True)
+
+            self.assertEqual(build_info["flags_source"], "compile_commands.json")
+            self.assertEqual(build_info["targets"]["vehicle_sil_launch"]["effective_opt_level"], "-O3")
+            self.assertTrue(build_info["targets"]["vehicle_sil_launch"]["ndebug"])
+            self.assertIsNone(build_info["flags_warning"])
+
+            # Unclosed quote inside a Windows .rsp must fail closed as unreadable.
+            (bdir / "broken.rsp").write_text('"-O3 -DNDEBUG\n', encoding="utf-8")
+            _, unreadable = BV._expand_response_files(["@broken.rsp"], bdir, windows=True)
+            self.assertEqual(unreadable, ["@broken.rsp"])
+
+    def test_nested_response_file_resolves_relative_to_entry_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            sub = bdir / "CMakeFiles" / "launch.dir"
+            sub.mkdir(parents=True)
+            (sub / "outer.rsp").write_text("@CMakeFiles/launch.dir/inner.rsp\n", encoding="utf-8")
+            (sub / "inner.rsp").write_text("-O3 -DNDEBUG\n", encoding="utf-8")
+            cc = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/g++ @CMakeFiles/launch.dir/outer.rsp -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c libs/core/src/participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/bench_ecu/main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                build_info, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+
+            self.assertEqual(build_info["flags_source"], "compile_commands.json")
+            self.assertEqual(build_info["targets"]["vehicle_sil_launch"]["effective_opt_level"], "-O3")
+            self.assertTrue(build_info["targets"]["vehicle_sil_launch"]["ndebug"])
+            self.assertIsNone(build_info["flags_warning"])
+
+    def test_utf16_bom_decoded_and_bomless_utf16_or_binary_rsp_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            # UTF-16LE with BOM (standard MSVC/MSBuild format) decodes cleanly.
+            (bdir / "release_utf16.rsp").write_bytes("/O2 /DNDEBUG\n".encode("utf-16"))
+            (bdir / "debug_utf16.rsp").write_bytes("/Od\n".encode("utf-16"))
+            cc_valid = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\launch\\main.cpp",
+                    "command": "cl.exe @release_utf16.rsp -c main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\libs\\core\\src\\participant_runtime.cpp",
+                    "command": "cl.exe /O2 /DNDEBUG -c participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\bench_ecu\\main.cpp",
+                    "command": "cl.exe /O2 /DNDEBUG -c main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_valid), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="cl"):
+                info_valid, _ = BV.extract_build_provenance(bdir, None, is_windows=True)
+            self.assertEqual(info_valid["flags_source"], "compile_commands.json")
+            self.assertEqual(info_valid["targets"]["vehicle_sil_launch"]["effective_opt_level"], "/O2")
+            self.assertTrue(info_valid["targets"]["vehicle_sil_launch"]["ndebug"])
+            self.assertIsNone(info_valid["flags_warning"])
+
+            # Conflicting UTF-16LE BOM debug vs release must be flagged ambiguous (never collapsed to []).
+            cc_conflict = [
+                {"directory": tmp, "file": f"{tmp}\\tools\\launch\\main.cpp", "command": "cl.exe @debug_utf16.rsp -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}\\tools\\launch\\main.cpp", "command": "cl.exe @release_utf16.rsp -c main.cpp"},
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_conflict), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="cl"):
+                info_conflict, _ = BV.extract_build_provenance(bdir, None, is_windows=True)
+            self.assertEqual(info_conflict["flags_source"], "unavailable")
+            self.assertIn("ambiguous", info_conflict["flags_warning"] or "")
+
+            # BOM-less UTF-16LE (contains NUL bytes) and invalid binary must fail closed as unreadable.
+            (bdir / "bomless_utf16.rsp").write_bytes("/O2 /DNDEBUG\n".encode("utf-16-le"))
+            (bdir / "corrupt_bin.rsp").write_bytes(b"\x80\x81\xfe\x82")
+            cc_bad = [
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ @bomless_utf16.rsp -c main.cpp"},
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ @corrupt_bin.rsp -c main.cpp"},
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_bad), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info_bad, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_bad["flags_source"], "unavailable")
+            self.assertEqual(info_bad["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            warn_bad = info_bad["flags_warning"] or ""
+            self.assertIn("unreadable response file(s)", warn_bad)
+            self.assertIn("@bomless_utf16.rsp", warn_bad)
+            self.assertIn("@corrupt_bin.rsp", warn_bad)
+
+    def test_wrapper_prefixed_at_compiler_path_not_flagged_as_response_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            cc = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "ccache @tools/g++ -O3 -DNDEBUG -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "env CCACHE_DIR=/tmp @tools/g++ -O3 -DNDEBUG -c libs/core/src/participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/bench_ecu/main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                build_info, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+
+            self.assertEqual(build_info["flags_source"], "compile_commands.json")
+            self.assertEqual(build_info["targets"]["vehicle_sil_launch"]["effective_opt_level"], "-O3")
+            self.assertEqual(build_info["targets"]["vehicle_sil_core"]["effective_opt_level"], "-O3")
+            self.assertIsNone(build_info["flags_warning"])
 
 
 @unittest.skipUnless(shutil.which("git"), "git executable is required for dependency provenance tests")
@@ -819,6 +977,42 @@ class TestDependencyProvenance(unittest.TestCase):
             self.assertEqual(deps_info2["sil_kit"]["submodule_commit"], silkit_sha2)
             self.assertEqual(deps_info2["sil_kit"]["tag"], "v5.0.8-submod")
 
+    def test_linked_worktree_parent_rejects_degenerate_main_gitdir_and_accepts_own_submodule(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            main_repo = Path(tmp) / "main_repo"
+            main_sha = self._init_repo_with_commit(main_repo, "README.md", "v9.9.9-main")
+            wt_dir = Path(tmp) / "linked_wt"
+            self._git(main_repo, "worktree", "add", "-b", "wt-branch", wt_dir.as_posix())
+
+            # Degenerate external/sil-kit/.git pointing to parent's main .git (different --git-dir from worktree,
+            # but identical --git-common-dir) must be rejected and never leak parent's HEAD/tag.
+            silkit_dir = wt_dir / "external" / "sil-kit"
+            silkit_dir.mkdir(parents=True)
+            (silkit_dir / ".git").write_text(f"gitdir: {(main_repo / '.git').as_posix()}\n", encoding="utf-8")
+            repo_info, deps_info = BV._collect_repo_and_dependency_provenance(
+                {"vehicle_sil": "0.4.0", "features": []},
+                {},
+                root=wt_dir,
+            )
+            self.assertEqual(repo_info["git_commit"], main_sha)
+            self.assertIsNone(deps_info["sil_kit"]["submodule_commit"])
+            self.assertIsNone(deps_info["sil_kit"]["tag"])
+
+            # Replacing with a real separate-git-dir submodule inside the linked worktree succeeds.
+            (silkit_dir / ".git").unlink()
+            submod_gitdir = main_repo / ".git" / "worktrees" / "linked_wt" / "modules" / "external" / "sil-kit"
+            silkit_sha = self._init_repo_with_commit(
+                silkit_dir, "CMakeLists.txt", "v5.0.8-wt-submod", separate_git_dir=submod_gitdir
+            )
+            self.assertNotEqual(main_sha, silkit_sha)
+            _, deps_info2 = BV._collect_repo_and_dependency_provenance(
+                {"vehicle_sil": "0.4.0", "features": []},
+                {},
+                root=wt_dir,
+            )
+            self.assertEqual(deps_info2["sil_kit"]["submodule_commit"], silkit_sha)
+            self.assertEqual(deps_info2["sil_kit"]["tag"], "v5.0.8-wt-submod")
+
 
 class TestWindowsMsysGitPathNormalization(unittest.TestCase):
     @staticmethod
@@ -839,7 +1033,7 @@ class TestWindowsMsysGitPathNormalization(unittest.TestCase):
         self.assertEqual(BV._msys_to_windows_path("/usr/bin/git"), "/usr/bin/git")
         self.assertEqual(BV._msys_to_windows_path("//server/share/repo"), "//server/share/repo")
 
-    def test_normalize_git_path_converts_msys_drive_paths_when_windows(self):
+    def test_normalize_git_path_converts_msys_drive_and_cygpath_virtual_mounts_when_windows(self):
         with tempfile.TemporaryDirectory() as tmp:
             if os.name == "nt":
                 base = Path(tmp).resolve()
@@ -851,7 +1045,10 @@ class TestWindowsMsysGitPathNormalization(unittest.TestCase):
             drive_root_str = f"{base.as_posix()[0].upper()}:/"
             drive_root = Path(drive_root_str) if os.name == "nt" else PureWindowsPath(drive_root_str)
 
-            with mock.patch.object(BV.os, "name", "nt"):
+            with (
+                mock.patch.object(BV.os, "name", "nt"),
+                mock.patch.object(BV, "_cygpath_to_windows", return_value=None),
+            ):
                 self.assertEqual(
                     BV._path_compare_key(BV._normalize_git_path(msys_cwd, cwd)),
                     BV._path_compare_key(cwd),
@@ -877,33 +1074,63 @@ class TestWindowsMsysGitPathNormalization(unittest.TestCase):
                     BV._path_compare_key(base / ".git" / "modules" / "external" / "sil-kit"),
                 )
 
-    def test_collect_dependency_provenance_handles_msys_git_paths_under_mocked_nt(self):
+            # MSYS2 virtual mounts (/tmp/..., /home/...) are resolved via cygpath -w when available.
+            win_tmp_target = base / "repo" / ".git"
+            win_home_target = base / "home-repo" / ".git"
+
+            def fake_cygpath(raw: str) -> str | None:
+                if raw == "/tmp/tmp123/repo/.git":
+                    return str(win_tmp_target)
+                if raw == "/home/runner/repo/.git":
+                    return str(win_home_target)
+                return None
+
+            with (
+                mock.patch.object(BV.os, "name", "nt"),
+                mock.patch.object(BV, "_cygpath_to_windows", side_effect=fake_cygpath),
+            ):
+                self.assertEqual(
+                    BV._path_compare_key(BV._normalize_git_path("/tmp/tmp123/repo/.git", cwd)),
+                    BV._path_compare_key(win_tmp_target),
+                )
+                self.assertEqual(
+                    BV._path_compare_key(BV._normalize_git_path("/home/runner/repo/.git", cwd)),
+                    BV._path_compare_key(win_home_target),
+                )
+
+    def test_collect_dependency_provenance_handles_msys_tmp_and_drive_paths_under_mocked_nt(self):
         with tempfile.TemporaryDirectory() as tmp:
             if os.name == "nt":
                 parent = Path(tmp).resolve() / "repo"
                 silkit = parent / "external" / "sil-kit"
                 (silkit / ".git").mkdir(parents=True)
             else:
-                parent = Path("C:/Users/runneradmin/msys-test/repo")
+                parent = Path("C:/Users/runneradmin/AppData/Local/Temp/tmp999/repo")
                 silkit = parent / "external" / "sil-kit"
 
             parent_sha = "1" * 40
             silkit_sha = "2" * 40
-            msys_parent_git = self._to_msys_path(parent / ".git")
-            msys_silkit = self._to_msys_path(silkit)
-            msys_silkit_git = self._to_msys_path(parent / ".git" / "modules" / "external" / "sil-kit")
+            msys_tmp_parent_git = "/tmp/tmp999/repo/.git"
+            msys_tmp_silkit_git = "/tmp/tmp999/repo/.git/modules/external/sil-kit"
+
+            def fake_cygpath(raw: str) -> str | None:
+                if raw.lower() == msys_tmp_parent_git:
+                    return str(parent / ".git")
+                if raw.lower() == msys_tmp_silkit_git:
+                    return str(parent / ".git" / "modules" / "external" / "sil-kit")
+                return None
 
             def fake_git_output(args, cwd=None):
                 if cwd == parent:
                     if args == ["rev-parse", "HEAD"]:
                         return parent_sha
-                    if args == ["rev-parse", "--git-dir"]:
-                        return msys_parent_git
+                    if args in (["rev-parse", "--git-dir"], ["rev-parse", "--git-common-dir"]):
+                        return msys_tmp_parent_git
                 if cwd == silkit:
-                    if args == ["rev-parse", "--show-toplevel"]:
-                        return msys_silkit
-                    if args == ["rev-parse", "--git-dir"]:
-                        return msys_silkit_git
+                    if args == ["rev-parse", "--show-prefix"]:
+                        return ""
+                    if args in (["rev-parse", "--git-dir"], ["rev-parse", "--git-common-dir"]):
+                        return msys_tmp_silkit_git
                     if args == ["rev-parse", "HEAD"]:
                         return silkit_sha
                     if args == ["describe", "--tags", "--exact-match"]:
@@ -919,6 +1146,7 @@ class TestWindowsMsysGitPathNormalization(unittest.TestCase):
 
             with (
                 mock.patch.object(BV.os, "name", "nt"),
+                mock.patch.object(BV, "_cygpath_to_windows", side_effect=fake_cygpath),
                 mock.patch.object(BV, "_git_output", side_effect=fake_git_output),
                 mock.patch.object(BV.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)),
                 mock.patch.object(Path, "exists", fake_exists),
@@ -933,14 +1161,36 @@ class TestWindowsMsysGitPathNormalization(unittest.TestCase):
             self.assertEqual(deps_info["sil_kit"]["submodule_commit"], silkit_sha)
             self.assertEqual(deps_info["sil_kit"]["tag"], "v5.0.8")
 
-            # Degenerate MSYS gitdir pointing back to parent .git (even with differing case) must still be rejected.
-            def fake_git_output_parent_leak(args, cwd=None):
-                if cwd == silkit and args == ["rev-parse", "--git-dir"]:
-                    return msys_parent_git.swapcase()
+            # Non-empty --show-prefix (git climbed to parent) must be rejected.
+            def fake_git_output_climbed(args, cwd=None):
+                if cwd == silkit and args == ["rev-parse", "--show-prefix"]:
+                    return "external/sil-kit/"
                 return fake_git_output(args, cwd=cwd)
 
             with (
                 mock.patch.object(BV.os, "name", "nt"),
+                mock.patch.object(BV, "_cygpath_to_windows", side_effect=fake_cygpath),
+                mock.patch.object(BV, "_git_output", side_effect=fake_git_output_climbed),
+                mock.patch.object(BV.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)),
+                mock.patch.object(Path, "exists", fake_exists),
+            ):
+                _, deps_info_climbed = BV._collect_repo_and_dependency_provenance(
+                    {"vehicle_sil": "0.4.0", "features": []},
+                    {},
+                    root=parent,
+                )
+            self.assertIsNone(deps_info_climbed["sil_kit"]["submodule_commit"])
+            self.assertIsNone(deps_info_climbed["sil_kit"]["tag"])
+
+            # Degenerate MSYS /tmp gitdir pointing back to parent .git (even with differing case) must be rejected.
+            def fake_git_output_parent_leak(args, cwd=None):
+                if cwd == silkit and args in (["rev-parse", "--git-dir"], ["rev-parse", "--git-common-dir"]):
+                    return msys_tmp_parent_git.swapcase()
+                return fake_git_output(args, cwd=cwd)
+
+            with (
+                mock.patch.object(BV.os, "name", "nt"),
+                mock.patch.object(BV, "_cygpath_to_windows", side_effect=fake_cygpath),
                 mock.patch.object(BV, "_git_output", side_effect=fake_git_output_parent_leak),
                 mock.patch.object(BV.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)),
                 mock.patch.object(Path, "exists", fake_exists),
