@@ -716,6 +716,17 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
         self.assertNotIn('set "PYTHONPATH=', readme)
         self.assertIn("Launch", readme)
         self.assertIn("Serve", readme)
+        self.assertIn("control-metrics.schema.json", readme)
+        staged_cm = stage / "schema" / "control-metrics.schema.json"
+        self.assertTrue(staged_cm.is_file(), "control-metrics.schema.json should be staged in <tools>/schema/")
+        self.assertEqual(
+            staged_cm.read_text(encoding="utf-8"),
+            (ROOT / "schema" / "control-metrics.schema.json").read_text(encoding="utf-8"),
+        )
+        self.assertFalse(
+            (ROOT / "template" / "schema" / "control-metrics.schema.json").exists(),
+            "control-metrics.schema.json is a launcher output schema and must not be in template/schema/",
+        )
 
     def test_tools_prebuilt_windows_renders_cmd_python_commands(self) -> None:
         stage, _ = self._run_prebuilt_tools(windows=True)
@@ -735,6 +746,7 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
     def test_verify_command_checks_control_requirements_and_stdlib_import(self) -> None:
         source = PACKAGE.read_text(encoding="utf-8")
         self.assertIn('"python/requirements-control.txt"', source)
+        self.assertIn('"schema/control-metrics.schema.json"', source)
         self.assertIn('tools / "python" / "requirements-control.txt"', source)
         self.assertIn('sys.executable, "-S", "-P", "-c"', source)
         self.assertIn("from vehicle_sil_control import Serve, RunHandle, ServeError, Launch, LaunchError, control_address", source)

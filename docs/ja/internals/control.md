@@ -519,6 +519,7 @@ hello は 1 つのメッセージです（後から購読した相手には、�
 - Hub の購読者への配布は、購読者のスレッドが `Subscription::poll()` で行います。
 - コマンドの送信は、`Hub::write()` を呼んだスレッドが、その Agent のグループの発行者でそのまま発行します。
 - `HubTransport` は、participant を始める前に作ります。発行者は全部コンストラクターで作ります（SIL Kit は、受信のハンドラーが動く participant の I/O スレッドでは発行者を作れません）。
+- `HubTransport::stats()` は `handler_mutex` をロックして 11 個のカウンターすべての整合したスナップショットを返します（`0 <= max_handler_time <= handler_time`、`messages <= handler_calls`、`hellos <= handler_calls`、クローズ後の不変性）。スレッドセーフですが、Hub 側 participant の SIL Kit 受信ハンドラーや `Hub::set_values_tap()` からは呼び出さないでください。`vehicle_sil_launch run --control-metrics <file>` は、接続を閉じる直前に `stats()` を 1 回読み取って書き出します（[simulation-run.md](../simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」）。
 
 ### Hub の側の検査と上限
 

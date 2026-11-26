@@ -159,6 +159,8 @@ public:
 
     /// One entry per participant that has sent a hello, by name.
     [[nodiscard]] std::vector<LinkInfo> links() const;
+    /// Returns an internally consistent snapshot of all counters. Thread-safe; do not call from
+    /// a SIL Kit receive handler of this participant or from Hub::set_values_tap().
     [[nodiscard]] HubTransportStats stats() const;
 
 private:

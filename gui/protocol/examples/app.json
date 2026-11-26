@@ -25,7 +25,8 @@
           "describe": 1,
           "test": 1,
           "timeline": 1,
-          "connections": 1
+          "connections": 1,
+          "control_metrics": 1
         },
         "features": [
           "events",
@@ -58,6 +59,7 @@
           "serve",
           "check-file-only",
           "serve-prepare",
+          "control-metrics",
           "scenario-control",
           "scenario-time"
         ]

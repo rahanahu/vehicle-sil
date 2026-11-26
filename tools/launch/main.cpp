@@ -48,6 +48,7 @@
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/command_input.hpp"
 #include "vehicle_sil/launch/connections.hpp"
+#include "vehicle_sil/launch/control_metrics_format.hpp"
 #include "vehicle_sil/launch/error_result.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/probe.hpp"
@@ -57,6 +58,7 @@
 #include "vehicle_sil/runner/stop_requests.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/process/paths.hpp"
 #include "vehicle_sil/trace/trace.hpp"
 
 #include <algorithm>
@@ -111,7 +113,7 @@ constexpr const char* kUsage =
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
     "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]\n"
-    "                              [--speed <speed>] [--strict] [--log-dir <dir>]\n"
+    "                              [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]\n"
     "                              [--timeout-ms <ms>] [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
     "                              [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
@@ -195,6 +197,9 @@ constexpr const char* kUsage =
     "  --timeline <file>           run --scenario: write what the scenario wrote and saw over the virtual time\n"
     "                              (its steps, the written and the sampled values) to <file> as JSON\n"
     "                              (docs/simulation-run.md; schema/timeline.schema.json)\n"
+    "  --control-metrics <file>    run: write the Control Hub SIL Kit transport counters (HubTransport::stats())\n"
+    "                              to <file> as JSON at the end of the run (docs/simulation-run.md;\n"
+    "                              schema/control-metrics.schema.json)\n"
     "  --fail-fast                 test: do not run what comes after the first run that fails\n"
     "  --speed <speed>             check, run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); overrides speed in the request file\n"
@@ -993,7 +998,8 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
                  a == "--network" || a == "--time-policy" || a == "--request" || a == "--descriptions" ||
                  a == "--write-descriptions" || a == "--compare-commands" || a == "--control-credentials" ||
-                 a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
+                 a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log" ||
+                 a == "--control-metrics")
         {
             ++i;
         }
@@ -1276,7 +1282,7 @@ int check(const cli::Args& args)
     }
     for (const char* runOnly : {"log-dir", "timeout-ms", "stdin-commands", "start-paused",
                                 "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log",
-                                "timeline"})
+                                "timeline", "control-metrics"})
     {
         if (args.has(runOnly) || args.flag(runOnly))
         {
@@ -1354,7 +1360,7 @@ void read_control(const cli::Args& args, launch::RunHost& host)
     server.audit_log = args.str("control-audit-log", "");
 }
 
-int run(const cli::Args& args)
+int run(const cli::Args& args, std::string& active_control_metrics, std::optional<std::string>& active_variant)
 {
     if (args.flag("file-only"))
     {
@@ -1390,6 +1396,15 @@ int run(const cli::Args& args)
         if (host.timeline.empty())
         {
             throw cli::UsageError("--timeline needs a file to write: --timeline <file>.json");
+        }
+        require_valid(request, launch::RequestCommand::Run, asked);
+    }
+    if (args.has("control-metrics"))
+    {
+        host.control_metrics = args.str("control-metrics", "");
+        if (host.control_metrics.empty())
+        {
+            throw cli::UsageError("--control-metrics needs a file to write: --control-metrics <file>.json");
         }
         require_valid(request, launch::RequestCommand::Run, asked);
     }
@@ -1433,6 +1448,16 @@ int run(const cli::Args& args)
     // From here on the request is the whole of it: the arguments over the file of --request,
     // judged now that the fields the rules need (--stdin-commands, --control) are read.
     request = whole_request(request, launch::RequestCommand::Run, asked);
+    if (!request.host.control_metrics.empty() && args.has("request"))
+    {
+        const std::string request_file = args.str("request", "");
+        if (launch::same_file_path(process::path_from_utf8(request.host.control_metrics),
+                                   process::path_from_utf8(request_file)))
+        {
+            throw cli::UsageError("--control-metrics cannot write to the same file as --request (" + request_file +
+                                  "): choose a different output path");
+        }
+    }
     runner::RunObservers watching;
     launch::RunLent lent;
     g_end.publish(&g_stops);
@@ -1485,14 +1510,26 @@ int run(const cli::Args& args)
     // has ended (a watch, a wait), none comes any more, and its audit log is complete. The report
     // holds what is left of it, which goes after the result is written: when this function
     // returns, or below, before the process is ended at once.
+    active_control_metrics = request.host.control_metrics;
+    active_variant = request.intent.variant;
     launch::RunReport report = launch::run_file(request, watching, lent);
+    active_control_metrics.clear();
     write_stdin_notes(true); // before the result
     if (report.check.usage)
     {
         return usage_error(report.check.findings, args.flag("json"), launch::CommandKind::Run, file, nullptr, report.check.variants);
     }
-    const int code = write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
-                                   report.exit_code());
+    int code = write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
+                             report.exit_code());
+    if (!report.control_metrics_error.empty())
+    {
+        write_stderr_line("error: cannot write control metrics to " + request.host.control_metrics + ": " +
+                          report.control_metrics_error);
+        if (code == cli::kExitOk)
+        {
+            code = cli::kExitSetupFailed;
+        }
+    }
     if (report.run && report.run->close.not_closed_ms)
     {
         report.ended_control_server.reset(); // the hub stays, with the thread that was left closing
@@ -1532,6 +1569,11 @@ int serve(const cli::Args& args, launch::EventStream* events, const std::string&
     {
         throw cli::UsageError("--timeline is per-run, not for serve: give \"timeline\" in the run command "
                               "({\"command\":\"run\",\"request\":\"<file>.json\",\"timeline\":\"<file>.json\"})");
+    }
+    if (args.has("control-metrics"))
+    {
+        throw cli::UsageError("--control-metrics is for run, not for serve: use vehicle_sil_launch run "
+                              "--control-metrics <file> to record Control Hub transport metrics");
     }
     for (const char* alwaysOn : {"events", "stdin-commands"})
     {
@@ -1730,6 +1772,11 @@ int test(const cli::Args& args)
             }
         }
     }
+    if (args.has("control-metrics"))
+    {
+        throw cli::UsageError("--control-metrics is for run, not for test (which runs multiple simulations into one "
+                              "summary): run one simulation with vehicle_sil_launch run --control-metrics <file>");
+    }
     for (const char* runOnly : {"log-dir", "stdin-commands", "speed", "start-paused", "manual", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"})
     {
@@ -1916,6 +1963,8 @@ int main(int argc, char** argv)
         ignore_broken_pipes();
     }
     int code = cli::kExitSetupFailed;
+    std::string active_control_metrics;
+    std::optional<std::string> active_variant;
     try
     {
         // test takes --variant more than once, and has options of its own.
@@ -1926,7 +1975,7 @@ int main(int argc, char** argv)
                                 "participant-start-timeout-ms", "participant-stop-timeout-ms",
                                 "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
-                                "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
+                                "control-metrics", "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
                                {"json", "strict", "events", "once", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin", "file-only"},
                                {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
                    : cli::Args(arguments,
@@ -1934,7 +1983,7 @@ int main(int argc, char** argv)
                                 "participant-start-timeout-ms", "participant-stop-timeout-ms",
                                 "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
-                                "timeline", "time-policy", "request", "descriptions", "write-descriptions",
+                                "timeline", "control-metrics", "time-policy", "request", "descriptions", "write-descriptions",
                                 "compare-commands"},
                                {"json", "strict", "events", "once", "stdin-commands", "start-paused", "text-from-stdin", "file-only"},
                                {"disable", "enable", "manual", "param", "connect"});
@@ -1951,7 +2000,11 @@ int main(int argc, char** argv)
         }
         else
         {
-            code = isRun ? run(args) : isServe ? serve(args, stream, serve_instance) : isTest ? test(args) : isConnections ? connections(args) : check(args);
+            code = isRun           ? run(args, active_control_metrics, active_variant)
+                   : isServe       ? serve(args, stream, serve_instance)
+                   : isTest        ? test(args)
+                   : isConnections ? connections(args)
+                                   : check(args);
         }
     }
     catch (const cli::UsageError& e)
@@ -1972,6 +2025,22 @@ int main(int argc, char** argv)
         else if (json)
         {
             static_cast<void>(write_or_fail(launch::format_internal_error_json(command, file, e.what()), cli::kExitSetupFailed));
+        }
+        if (isRun && !active_control_metrics.empty())
+        {
+            try
+            {
+                const std::string err = launch::write_control_metrics_file(
+                    process::path_from_utf8(active_control_metrics),
+                    launch::format_control_metrics_internal_error_json(file, active_variant));
+                if (!err.empty())
+                {
+                    write_stderr_line("error: cannot write control metrics to " + active_control_metrics + ": " + err);
+                }
+            }
+            catch (...)
+            {
+            }
         }
         code = cli::kExitSetupFailed;
     }

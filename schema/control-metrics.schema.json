@@ -1,0 +1,405 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "vehicle-sil Control Hub transport metrics (vehicle_sil_launch run --control-metrics), format 1",
+  "description": "Opt-in cumulative Control Hub SIL Kit transport metrics snapshot from vehicle_sil::control_silkit::HubTransport::stats(), written atomically at the end of `vehicle_sil_launch run --control-metrics <file>`. All counters are cumulative over the entire lifetime of HubTransport (from construction to before_transport_close), not a steady-state sub-window. When HubTransport was not created before the run ended, status is \"unavailable\" and counters is null (never zero). Readers ignore unknown keys. The manual is docs/simulation-run.md of vehicle-sil.",
+  "type": "object",
+  "required": [
+    "vehicle_sil_control_metrics",
+    "vehicle_sil",
+    "file",
+    "variant",
+    "status",
+    "unavailable_reason",
+    "source",
+    "run",
+    "counters"
+  ],
+  "properties": {
+    "vehicle_sil_control_metrics": {
+      "const": 1,
+      "description": "The format version. Always 1."
+    },
+    "vehicle_sil": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The version of vehicle-sil that wrote the file."
+    },
+    "file": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The simulation configuration path as given on the command line; null if none."
+    },
+    "variant": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The resolved variant name of the configuration; null if none or not resolved."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable"
+      ],
+      "description": "Whether HubTransport::stats() was collected for this run: \"available\" iff counters is an object and unavailable_reason is null; \"unavailable\" iff counters is null and unavailable_reason names why."
+    },
+    "unavailable_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "unreadable",
+        "check_failed",
+        "stopped_before_setup",
+        "interrupted_before_setup",
+        "setup_failed",
+        "internal_error",
+        null
+      ],
+      "description": "Why transport counters were not collected when status is \"unavailable\"; null when status is \"available\"."
+    },
+    "source": {
+      "type": "object",
+      "description": "Provenance, lifetime scope, and collection point of the counters.",
+      "required": [
+        "transport",
+        "collector",
+        "scope",
+        "collection_point"
+      ],
+      "properties": {
+        "transport": {
+          "const": "silkit",
+          "description": "The Control Hub transport backend (\"silkit\")."
+        },
+        "collector": {
+          "const": "HubTransport::stats",
+          "description": "The existing counter API read for this snapshot (\"HubTransport::stats\")."
+        },
+        "scope": {
+          "const": "cumulative_hub_transport_lifetime",
+          "description": "Cumulative scope of the counters: the entire HubTransport lifetime from construction to collection_point, including start-window hellos/probes, simulation steps, pause/stop transitions, and shutdown last words."
+        },
+        "collection_point": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "before_transport_close",
+            null
+          ],
+          "description": "Where in the run lifecycle the snapshot was taken: \"before_transport_close\" (after participants ended and values tap stopped, right before closing the SIL Kit connection) when available; null when unavailable."
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "Run outcome context for interpreting the transport counters.",
+      "required": [
+        "result",
+        "end",
+        "simulation",
+        "ok",
+        "sim_ms",
+        "wall_ms",
+        "time_step_ms",
+        "interrupted_by"
+      ],
+      "properties": {
+        "result": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "passed",
+            "stopped",
+            "incomplete",
+            "failed",
+            "interrupted",
+            "check_failed",
+            "unreadable",
+            "setup_failed",
+            null
+          ],
+          "description": "The run result (same names as `run --json`), or null on an uncaught launcher exception (internal_error without a run report)."
+        },
+        "end": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "completed",
+            "stopped",
+            "interrupted",
+            "failed",
+            "setup_failed",
+            null
+          ],
+          "description": "Why the run ended (same names as `run --json`), or null if the runner did not run."
+        },
+        "simulation": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "not_started",
+            "reached_stop_at",
+            "ended",
+            "aborted",
+            "interrupted",
+            null
+          ],
+          "description": "How far the simulation got (same names as `run --json`), or null if the runner did not run."
+        },
+        "ok": {
+          "type": "boolean",
+          "description": "Whether the simulation run itself succeeded (same as `run --json`)."
+        },
+        "sim_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Virtual time reached in milliseconds; null if the simulation did not start or aborted in before_start."
+        },
+        "wall_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Wall-clock duration of the simulation in milliseconds; null if the simulation did not start or aborted in before_start."
+        },
+        "time_step_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "Controller virtual time step in milliseconds; null if the run was not planned (unreadable, check_failed, or an uncaught launcher exception)."
+        },
+        "interrupted_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name of the first stop request or signal that interrupted the run; null if none."
+        }
+      }
+    },
+    "counters": {
+      "description": "Exact cumulative snapshot of HubTransport::stats() when status is \"available\"; null when status is \"unavailable\".",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/counters"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": {
+          "const": "available"
+        },
+        "unavailable_reason": {
+          "type": "null"
+        },
+        "source": {
+          "properties": {
+            "collection_point": {
+              "const": "before_transport_close"
+            }
+          }
+        },
+        "run": {
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "passed",
+                "stopped",
+                "incomplete",
+                "failed",
+                "interrupted"
+              ]
+            },
+            "end": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "stopped",
+                "interrupted",
+                "failed"
+              ]
+            },
+            "simulation": {
+              "type": "string"
+            },
+            "time_step_ms": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "counters": {
+          "$ref": "#/definitions/counters"
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": {
+          "const": "unavailable"
+        },
+        "unavailable_reason": {
+          "type": "string",
+          "enum": [
+            "unreadable",
+            "check_failed",
+            "stopped_before_setup",
+            "interrupted_before_setup",
+            "setup_failed",
+            "internal_error"
+          ]
+        },
+        "source": {
+          "properties": {
+            "collection_point": {
+              "type": "null"
+            }
+          }
+        },
+        "counters": {
+          "type": "null"
+        }
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "run": {
+            "properties": {
+              "simulation": {
+                "enum": [
+                  "not_started",
+                  null
+                ]
+              }
+            },
+            "required": [
+              "simulation"
+            ]
+          }
+        },
+        "required": [
+          "run"
+        ]
+      },
+      "then": {
+        "properties": {
+          "run": {
+            "properties": {
+              "sim_ms": {
+                "type": "null"
+              },
+              "wall_ms": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "counters": {
+      "type": "object",
+      "description": "All 11 cumulative counters from vehicle_sil::control_silkit::HubTransport::stats().",
+      "required": [
+        "messages",
+        "bytes",
+        "handler_calls",
+        "handler_time_ns",
+        "max_handler_time_ns",
+        "hellos",
+        "last_words",
+        "late_messages",
+        "undecodable",
+        "unknown",
+        "refused_hellos"
+      ],
+      "properties": {
+        "messages": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Decoded step and submitted messages handed to Hub (excludes hellos, Ready probe replies, undecodable, and unknown-session messages)."
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total received payload bytes across all three Control Hub subscribers (hello, step, submitted), including hellos, ready replies, last words, undecodable, and unknown messages."
+        },
+        "handler_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total receive-handler invocations (on_hello, on_step, on_submitted) on the controller's SIL Kit thread while HubTransport was open."
+        },
+        "handler_time_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cumulative steady_clock nanoseconds spent inside the three Control Hub receive handlers on the controller's SIL Kit thread. Do not sum with wall-clock time or process CPU time."
+        },
+        "max_handler_time_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Longest single receive-handler invocation in steady_clock nanoseconds. Always satisfies 0 <= max_handler_time_ns <= handler_time_ns."
+        },
+        "hellos": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Accepted control agent hellos."
+        },
+        "last_words": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Agent last-word messages answered by the hub."
+        },
+        "late_messages": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Virtual-time agent step messages arriving after the controller had begun a later step."
+        },
+        "undecodable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Received messages that could not be decoded for this wire version (including version-mismatch hellos)."
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Messages for an unknown non-ended session, or samples/availability not matching the peer's schema."
+        },
+        "refused_hellos": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Hellos refused due to max_links exceeded or session collision."
+        }
+      }
+    }
+  }
+}

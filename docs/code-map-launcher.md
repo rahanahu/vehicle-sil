@@ -172,6 +172,7 @@ Public headers:
 | `EventStream`, which writes the Events v4 (`vehicle_sil_events: 4`) stream of `serve` and `serve --once` and implements `RunEventSink` | `launch/events.hpp` |
 | `parse_command()` and `CommandInput`, which read the commands of `--stdin-commands` | `launch/command_input.hpp` |
 | `format_timeline_json()`, which writes the file of `run --timeline` from the record and the scenario's result | `launch/timeline_format.hpp` |
+| `format_control_metrics_json()` and `format_control_metrics_internal_error_json()`, pure JSON formatters for `run --control-metrics` (`vehicle_sil_control_metrics: 1`) | `launch/control_metrics_format.hpp` |
 
 Implementation:
 
@@ -180,6 +181,8 @@ Implementation:
 | The overall flow of the check (`check_file()`), `evaluate_hot_eligibility()`, and pure C++20 FIPS 180-4 SHA-256 (`detail::sha256_hex()`) | `src/usecases/check.cpp`, `src/usecases/sha256.{hpp,cpp}` |
 | Looking at the computer: the file system (where an executable or a bridge is, the configuration, scenario and points files), the environment (`PATH`, `VEHICLE_SIL_LISTEN_ON_NETWORK`) and the processes run for their output. The rules get what was found as values (`executable_finding()` in `config.cpp` gets the file's status) or as functions (`ConnectTools`, `ScenarioContext::read_file`); one exception left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute | `src/probe/probe.cpp` |
 | The file of saved descriptions (`check --write-descriptions`, `--descriptions`; JSON of the launcher's own, read only by the same version) and the `DescribeSource` that takes from it | `src/probe/saved_descriptions.cpp` |
+| Atomic sibling temp-file + rename writer (`write_control_metrics_file()`, declared in `launch/probe.hpp`) for `run --control-metrics` | `src/probe/write_file.cpp` |
+| Pure JSON formatting for `run --control-metrics` | `src/format/control_metrics_format.cpp` |
 | The networks of the check's JSON as the executable described them (`write_reported_networks()`) | `src/format/reported_networks.cpp` |
 | `connections`: the bridges' lists read (`TargetReader`) and passed on with every key (`write_node()`), the lists the launcher makes, the text and the JSON. The bridges run through `run_tool()` of `src/probe/probe.cpp` (`bridge_tools()`), as their `--describe` | `src/usecases/connections.cpp` |
 | The check output | `src/format/check_format.cpp` |
@@ -245,6 +248,7 @@ What `launch_docs.integrate_ecus` (`tests/launch/integrate_ecus.cmake`) compares
 | `schema/scenario.schema.json` | Scenario |
 | `schema/run-request.schema.json` | Request file of `check --request` and `run --request` (the code that reads it: `libs/launch/src/request/request_read.cpp`) |
 | `schema/timeline.schema.json` | The file that `run --timeline` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
+| `schema/control-metrics.schema.json` | The file that `run --control-metrics` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
 | `gui/protocol/dashboard.schema.json` | Dashboard |
 
 The configuration file and scenario schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/config/src/config.cpp` and the scenario's reader (`libs/scenario/src/scenario_reader.hpp` and the files it names).
@@ -252,7 +256,7 @@ The configuration file and scenario schemas are for completion and checking in e
 | Where the copies are | Details |
 |---|---|
 | `template/schema/` | Copies of the configuration, scenario, request file and dashboard schemas |
-| `schema/` in the tools archive | The same schemas and `timeline.schema.json` (`template/get_tools.py` copies all of them to the project's `schema/`) |
+| `schema/` in the tools archive | The same schemas, `timeline.schema.json`, and `control-metrics.schema.json` (`template/get_tools.py` copies all of them to the project's `schema/`) |
 | Build directory | Copied at configure time when the examples are built (top-level `CMakeLists.txt`) |
 
 Line 1 of an example YAML file copied to the build directory points to the schema copied there.

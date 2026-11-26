@@ -662,7 +662,8 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "describe": 1,
     "test": 1,
     "timeline": 1,
-    "connections": 1
+    "connections": 1,
+    "control_metrics": 1
   },
   "features": [
     "events",
@@ -694,7 +695,8 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "run-stop-at",
     "serve",
     "check-file-only",
-    "serve-prepare"
+    "serve-prepare",
+    "control-metrics"
   ]
 }
 ```
@@ -717,10 +719,11 @@ A reader decides by whether a name is in `features`, not by comparing versions. 
 | `test` | `vehicle_sil_test` of `test --json` |
 | `timeline` | `vehicle_sil_timeline` of the file that `run --timeline` writes |
 | `connections` | `vehicle_sil_connections` of `connections --json` |
+| `control_metrics` | `vehicle_sil_control_metrics` of the file that `run --control-metrics` writes |
 
 ### Keys and values of the JSON forms
 
-These rules hold for every JSON form above (`check --json`, `run --json`, `test --json`, `connections --json`, the events, `version --json` and the `--timeline` file):
+These rules hold for every JSON form above (`check --json`, `run --json`, `test --json`, `connections --json`, the events, `version --json`, the `--timeline` file and the `--control-metrics` file):
 
 - Keys are in snake_case: `time_step_ms`, `not_applied_from`.
 - A key added after vehicle-sil 0.1.0 is always there. When it does not apply, its value is `null`. Some keys that 0.1.0 already had are written only when they apply, and their descriptions say when: for example `params`, `skipped_steps` and `unchecked_expects` of a scenario, `expect_skipped` of a step, and `variable_map` of a participant.
@@ -761,6 +764,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `serve` | `vehicle_sil_launch serve`: sequential runs in one launcher process with per-run IDs and event windows (see [Resident launcher](#resident-launcher-serve)) |
 | `check-file-only` | `check --file-only --json`: validates only the configuration text without running executables and emits `file_sha256` and `hot_eligibility` (see [JSON (`--json`)](simulation-check.md#json---json)) |
 | `serve-prepare` | `serve` commands `prepare`, `status`, `stop.force`, and inline `run.intent` (see [Resident launcher](#resident-launcher-serve)) |
+| `control-metrics` | `run --control-metrics <file>`: writes cumulative Control Hub SIL Kit transport counters to a JSON file (`vehicle_sil_control_metrics: 1`, see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](simulation-run.md#recording-control-hub-transport-metrics---control-metrics)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 | `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |

@@ -32,6 +32,7 @@ For scenario files, **validate syntax with JSON Schema, and validate against the
 | Simulation configuration YAML | [schema/simulation.schema.json](../schema/simulation.schema.json) | Simulation configuration files (`vehicle_sil_simulation: 2`) |
 | Run request JSON | [schema/run-request.schema.json](../schema/run-request.schema.json) | Launcher `--request` files and `POST /api/check` / `POST /api/run` intent fields (`vehicle_sil_run_request: 1`) |
 | Scenario timeline JSON | [schema/timeline.schema.json](../schema/timeline.schema.json) | Output of `--timeline` and `GET /api/timeline/<run_id>` |
+| Control Hub transport metrics JSON | [schema/control-metrics.schema.json](../schema/control-metrics.schema.json) | Output of `vehicle_sil_launch run --control-metrics <file>` (`vehicle_sil_control_metrics: 1`) |
 
 ## Manuals
 

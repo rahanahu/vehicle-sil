@@ -23,7 +23,9 @@ add_library(vehicle_sil_launch_lib STATIC
   src/request/request_read.cpp
   src/probe/probe.cpp
   src/probe/saved_descriptions.cpp
+  src/probe/write_file.cpp
   src/format/check_format.cpp
+  src/format/control_metrics_format.cpp
   src/format/error_result.cpp
   src/format/events.cpp
   src/format/reported_networks.cpp

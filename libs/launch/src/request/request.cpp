@@ -79,6 +79,13 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
         out.push_back(usage("--timeline writes what a scenario did over the time: give --scenario <file> too, or leave "
                             "--timeline out"));
     }
+    if (!host.control_metrics.empty() && command != RequestCommand::Run)
+    {
+        out.push_back(usage(command == RequestCommand::Check
+                                ? "--control-metrics is for run: check starts no participant"
+                                : "--control-metrics is for run, not for test (which runs multiple simulations into one "
+                                  "summary): run one simulation with vehicle_sil_launch run --control-metrics <file>"));
+    }
     if (intent.scenario && intent.start_paused)
     {
         // A pause that comes before the simulation runs makes a scenario's run stand still at 0 too

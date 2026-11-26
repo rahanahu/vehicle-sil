@@ -662,7 +662,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "describe": 1,
     "test": 1,
     "timeline": 1,
-    "connections": 1
+    "connections": 1,
+    "control_metrics": 1
   },
   "features": [
     "events",
@@ -694,7 +695,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "run-stop-at",
     "serve",
     "check-file-only",
-    "serve-prepare"
+    "serve-prepare",
+    "control-metrics"
   ]
 }
 ```
@@ -717,10 +719,11 @@ participant の `log` の終わりの側には、保証がありません。part
 | `test` | `test --json` の `vehicle_sil_test` |
 | `timeline` | `run --timeline` が書くファイルの `vehicle_sil_timeline` |
 | `connections` | `connections --json` の `vehicle_sil_connections` |
+| `control_metrics` | `run --control-metrics` が書くファイルの `vehicle_sil_control_metrics` |
 
 ### JSON の形のキーと値
 
-上のどの JSON の形（`check --json`、`run --json`、`test --json`、`connections --json`、イベント、`version --json`、`--timeline` のファイル）にも、次の決まりがあります。
+上のどの JSON の形（`check --json`、`run --json`、`test --json`、`connections --json`、イベント、`version --json`、`--timeline` のファイル、`--control-metrics` のファイル）にも、次の決まりがあります。
 
 - キーは snake_case です（`time_step_ms`、`not_applied_from`）。
 - vehicle-sil 0.1.0 の後に足したキーは、いつもあります。当てはまらないときの値は `null` です。0.1.0 にあったキーには、当てはまるときだけ書くものがあり、いつ書くかはそれぞれの説明にあります。たとえば、シナリオの `params`、`skipped_steps`、`unchecked_expects`、手順の `expect_skipped`、participant の `variable_map` です。
@@ -761,6 +764,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `serve` | `vehicle_sil_launch serve`: 1 つのランチャープロセスで Run ID とイベント窓を分離して順次実行する（[常駐ランチャー](#常駐ランチャーserve)） |
 | `check-file-only` | `check --file-only --json`: 実行ファイルを起動せず設定テキストのみ検証し、`file_sha256` と `hot_eligibility` を出力する（[JSON（`--json`）](simulation-check.md#json--json)） |
 | `serve-prepare` | `serve` の `prepare`、`status`、`stop.force`、インライン `run.intent` コマンド（[常駐ランチャー](#常駐ランチャーserve)） |
+| `control-metrics` | `run --control-metrics <file>`: Control Hub の SIL Kit トランスポートの累計カウンターを JSON ファイルに書く（`vehicle_sil_control_metrics: 1`、[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |

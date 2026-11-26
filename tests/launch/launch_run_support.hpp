@@ -714,6 +714,9 @@ void test_interrupt(const Options& o);
 // launch_run_timeline.cpp
 void timeline(const Options& o);
 
+// launch_run_control_metrics.cpp
+void control_metrics(const Options& o);
+
 // launch_run_availability.cpp
 void availability(const Options& o);
 

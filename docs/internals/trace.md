@@ -4,7 +4,7 @@
 
 The profiling trace shows where the wall-clock time of a virtual-time run goes: which participant completes each step last and what it waited for, and how long each part of a scenario write's round trip takes. These need the virtual time and the write's sequence number, which a sampling profiler does not know. For CPU hot spots, use a sampling profiler (`perf` on Linux, WPR and WPA on Windows).
 
-The trace is an internal tool for developing vehicle-sil. The file format, the record names and the output of `scripts/trace-report.py` may change with any release; do not build on them.
+The trace is an internal tool for developing vehicle-sil. The file format, the record names and the output of `scripts/trace-report.py` may change with any release; do not build on them. For a public, schema-backed, zero-perturbation summary of the Control Hub SIL Kit transport suitable for speed baselines and CI telemetry, use `vehicle_sil_launch run --control-metrics <file>` (see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](../simulation-run.md#recording-control-hub-transport-metrics---control-metrics)).
 
 | Section | Contents |
 |---|---|

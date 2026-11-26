@@ -2289,3 +2289,93 @@ TEST_CASE(a_hub_that_comes_late_gets_the_availability_the_ecu_has_now)
     real->end();
     a.end();
 }
+
+TEST_CASE(stats_snapshots_are_consistent_under_concurrent_reads_and_shutdown)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"A", "B", "C"}, 1ms);
+    TestEcu a("A", registry.uri, EcuOptions{.step = 1ms, .sample_period = 1ms});
+    TestEcu b("B", registry.uri, EcuOptions{.step = 1ms, .sample_period = 1ms});
+    TestEcu c("C", registry.uri, EcuOptions{.step = 1ms, .sample_period = 1ms});
+
+    std::atomic<bool> stop_reading{false};
+    std::atomic<std::uint64_t> reads{0};
+    std::atomic<bool> invariant_failed{false};
+    std::string failure_detail;
+    std::mutex detail_mutex;
+
+    auto record_failure = [&](const std::string& msg) {
+        if (!invariant_failed.exchange(true))
+        {
+            const std::lock_guard lock(detail_mutex);
+            failure_detail = msg;
+        }
+    };
+
+    std::thread reader([&] {
+        vehicle_sil::control_silkit::HubTransportStats prev{};
+        while (!stop_reading.load(std::memory_order_acquire))
+        {
+            const vehicle_sil::control_silkit::HubTransportStats s = side.transport->stats();
+            reads.fetch_add(1, std::memory_order_relaxed);
+            if (s.handler_time < 0ns || s.max_handler_time < 0ns)
+            {
+                record_failure("negative handler time");
+                break;
+            }
+            if (s.max_handler_time > s.handler_time)
+            {
+                record_failure("max_handler_time > handler_time");
+                break;
+            }
+            if (s.messages > s.handler_calls || s.hellos > s.handler_calls)
+            {
+                record_failure("messages or hellos exceeded handler_calls");
+                break;
+            }
+            if (s.handler_calls == 0 && (s.bytes != 0 || s.messages != 0 || s.hellos != 0 || s.last_words != 0 ||
+                                         s.handler_time != 0ns || s.max_handler_time != 0ns))
+            {
+                record_failure("non-zero counter while handler_calls == 0");
+                break;
+            }
+            if (s.messages < prev.messages || s.bytes < prev.bytes || s.handler_calls < prev.handler_calls ||
+                s.handler_time < prev.handler_time || s.max_handler_time < prev.max_handler_time ||
+                s.hellos < prev.hellos || s.last_words < prev.last_words)
+            {
+                record_failure("counter regressed across snapshots");
+                break;
+            }
+            prev = s;
+        }
+    });
+
+    start_together(*side.controller, {a.peer.get(), b.peer.get(), c.peer.get()});
+    side.wait_ready({"A", "B", "C"});
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
+    side.controller->run_until(at(100ms));
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
+    side.controller->stop("done");
+    a.end();
+    b.end();
+    c.end();
+
+    stop_reading.store(true, std::memory_order_release);
+    reader.join();
+
+    if (invariant_failed.load())
+    {
+        const std::lock_guard lock(detail_mutex);
+        std::fprintf(stderr, "concurrent stats() invariant failed: %s\n", failure_detail.c_str());
+    }
+    CHECK(!invariant_failed.load());
+    CHECK(reads.load() > 0);
+    const vehicle_sil::control_silkit::HubTransportStats final_stats = side.transport->stats();
+    CHECK(final_stats.hellos >= 3);
+    CHECK(final_stats.last_words >= 3);
+    CHECK(final_stats.messages > 0);
+    CHECK(final_stats.bytes > 0);
+    CHECK(final_stats.handler_calls >= final_stats.messages + final_stats.hellos);
+    CHECK(final_stats.handler_time >= final_stats.max_handler_time);
+    CHECK(final_stats.max_handler_time >= 0ns);
+}

@@ -1727,7 +1727,8 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "describe": 1,
     "test": 1,
     "timeline": 1,
-    "connections": 1
+    "connections": 1,
+    "control_metrics": 1
   },
   "features": [
     "events",
@@ -1759,13 +1760,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "run-stop-at",
     "serve",
     "check-file-only",
-    "serve-prepare"
+    "serve-prepare",
+    "control-metrics"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature, kScenarioTimeFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-metrics\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(event_stream_formats_prepare_and_status_replies)

@@ -91,4 +91,8 @@ private:
     bool maps_set_ = false;                   ///< the first hub() gave the hub the participants' variable maps
 };
 
+/// Snapshots HubTransport::stats() into a SIL-Kit-free ControlTransportStats value. Pure wrt
+/// Runner state (safe to run on the detached closing thread inside close_connection_within()).
+[[nodiscard]] ControlTransportStats snapshot_transport_stats(const control_silkit::HubTransport& transport);
+
 } // namespace vehicle_sil::runner::detail

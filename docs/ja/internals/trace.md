@@ -4,7 +4,7 @@
 
 プロファイリングのトレースは、仮想時間の実行で実時間がどこに使われたかを示します。各ステップを最後に終えた参加者と、それが何を待ったか、シナリオの書き込み 1 回の往復の各部分にかかった時間です。どちらも仮想時刻と書き込みの番号（seq）が要るので、サンプリングのプロファイラーでは分かりません。CPU の重い所は、サンプリングのプロファイラー（Linux は `perf`、Windows は WPR と WPA）で調べます。
 
-このトレースは vehicle-sil を開発するための内部の道具です。ファイルの形式、記録の名前、`scripts/trace-report.py` の出力は、どのリリースでも変わることがあります。これらを前提に作らないでください。
+このトレースは vehicle-sil を開発するための内部の道具です。ファイルの形式、記録の名前、`scripts/trace-report.py` の出力は、どのリリースでも変わることがあります。これらを前提に作らないでください。速度の基準測定や CI 計測に使える、スキーマ付き・実行影響ゼロの Control Hub SIL Kit トランスポート要約には `vehicle_sil_launch run --control-metrics <file>` を使ってください（[simulation-run.md](../simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」）。
 
 | 節 | 書いてあること |
 |---|---|

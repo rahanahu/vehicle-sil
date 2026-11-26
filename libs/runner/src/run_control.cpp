@@ -209,6 +209,24 @@ void RunControl::note_late_values(RunOutcome& outcome, control_silkit::HubTransp
     }
 }
 
+ControlTransportStats snapshot_transport_stats(const control_silkit::HubTransport& transport)
+{
+    const control_silkit::HubTransportStats stats = transport.stats();
+    ControlTransportStats snapshot;
+    snapshot.messages = stats.messages;
+    snapshot.bytes = stats.bytes;
+    snapshot.handler_calls = stats.handler_calls;
+    snapshot.handler_time_ns = std::max<std::int64_t>(0, static_cast<std::int64_t>(stats.handler_time.count()));
+    snapshot.max_handler_time_ns = std::max<std::int64_t>(0, static_cast<std::int64_t>(stats.max_handler_time.count()));
+    snapshot.hellos = stats.hellos;
+    snapshot.last_words = stats.last_words;
+    snapshot.late_messages = stats.late_messages;
+    snapshot.undecodable = stats.undecodable;
+    snapshot.unknown = stats.unknown;
+    snapshot.refused_hellos = stats.refused_hellos;
+    return snapshot;
+}
+
 void RunControl::note_late_maps(RunOutcome& outcome) const
 {
     const std::vector<control::PeerInfo> peers = hub_->peers();

@@ -72,6 +72,9 @@ struct RunReport
     /// which must not keep the result back. Nothing else is to be done with it. Empty: the run
     /// made no server.
     std::shared_ptr<void> ended_control_server{};
+    /// run --control-metrics: set if the metrics file could not be written at the end of the run.
+    /// Not included in format_run_json(), format_run_text(), findings, or exit_code().
+    std::string control_metrics_error{};
 
     /// The check's and the run's together.
     [[nodiscard]] std::size_t errors() const;

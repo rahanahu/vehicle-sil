@@ -71,6 +71,8 @@ struct RunChoices
     std::int64_t late_tolerance_ms = config::kDefaultLateToleranceMs;
     std::int64_t start_timeout_ms = 30000;
     std::int64_t stop_timeout_ms = 10000;
+    /// Opt-in (--control-metrics): capture HubTransport::stats() inside close_connection_within().
+    bool collect_control_metrics = false;
 };
 
 /// What the plan knows of one participant of the run beside its entry in the configuration: what
@@ -129,6 +131,7 @@ struct RunPlan
     std::optional<std::int64_t> stop_at_ms{};
     std::int64_t start_timeout_ms = 30000;
     std::int64_t stop_timeout_ms = 10000;
+    bool collect_control_metrics = false;
 
     /// The configuration of `check` (a check that passed has one).
     [[nodiscard]] const config::SimulationConfig& config() const { return *check.config; }

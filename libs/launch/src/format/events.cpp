@@ -7,6 +7,7 @@
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/connections.hpp"
+#include "vehicle_sil/launch/control_metrics_format.hpp"
 #include "vehicle_sil/launch/execution_runtime.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
@@ -88,6 +89,7 @@ std::string format_version_json(const std::vector<std::string_view>& more)
     w.integer("test", kTestFormat);
     w.integer("timeline", kTimelineFormat);
     w.integer("connections", kConnectionsFormat);
+    w.integer("control_metrics", kControlMetricsFormat);
     w.end_object();
     w.begin_array("features");
     for (const auto feature : kFeatures)
