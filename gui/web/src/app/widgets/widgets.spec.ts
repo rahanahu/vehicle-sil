@@ -498,6 +498,32 @@ describe('variable widgets', () => {
     expect(element(fixture, '[data-testid="widget-why"] [lang="en"]').textContent).toBe(
       'the launcher says no for now',
     );
+
+    // Handover unlocks the widget on the same run
+    await deliver(fixture, {
+      type: 'event',
+      run_id: '2',
+      event: {
+        ...launcherState(TAKES),
+        event: 'state',
+        seq: 10,
+        rev: 10,
+        t_ms: 500,
+        paused: true,
+        paused_at_ms: 500,
+        scenario: true,
+        handed_over: true,
+        scenario_over_at_ms: 500,
+      },
+    });
+    expect(button.getAttribute('aria-disabled')).not.toBe('true');
+    button.click();
+    const write = http.expectOne('api/write');
+    expect(write.request.body).toEqual({
+      run_id: '2',
+      writes: { Engine: { 'engine.enabled': true } },
+    });
+    write.flush({ run_id: '2', operation: 1 });
   });
 
   it('does not let anything be written when the run has ended', async () => {

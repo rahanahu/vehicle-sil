@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "run_scenario.hpp"
 
+#include "time_commands_internal.hpp"
 #include "vehicle_sil/trace/trace.hpp"
 
 #include <silkit/services/orchestration/string_utils.hpp>
@@ -101,6 +102,25 @@ public:
         }
     }
     std::optional<control::OperationResult> result(std::uint64_t ticket) override { return hub_.operation(ticket); }
+    std::optional<control::OperationResult> wait_done(std::uint64_t ticket) override
+    {
+        trace::Span traceWait("scenario.wait_done", -1, static_cast<std::int64_t>(ticket));
+        while (true)
+        {
+            if (auto res = hub_.wait_done(ticket, std::chrono::milliseconds(20)))
+            {
+                return res;
+            }
+            if (!hub_.operation(ticket))
+            {
+                return std::nullopt;
+            }
+            if (give_up && give_up())
+            {
+                return hub_.operation(ticket);
+            }
+        }
+    }
 
 private:
     control::Hub& hub_;
@@ -273,6 +293,13 @@ void RunScenario::loop(SimulationController& controller)
             drain();
             if (engine_->tick(p))
             {
+                if (ctx_.plan.after_scenario == config::AfterScenario::Pause &&
+                    engine_->run().status == scenario::ScenarioStatus::Passed &&
+                    TimeCommandsAccess::handover_from_scenario(ctx_.commands, controller, ctx_.controls.stops(), p, quit_,
+                                                               samples_))
+                {
+                    return;
+                }
                 // Over: the guard stays, so that the simulation stands at this step until the
                 // main thread has stopped it.
                 mark_over();

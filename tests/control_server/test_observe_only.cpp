@@ -475,3 +475,51 @@ TEST_CASE(control_server_sends_the_code_of_a_time_operation_that_refuses_a_call)
     CHECK(resume.reason.empty());
     CHECK_EQ(s.time.changes.load(), 1);
 }
+
+TEST_CASE(control_server_write_refusal_blocks_writes_dynamically_until_handover_clears_it)
+{
+    control::Hub hub;
+    CountingTime time;
+    auto link = std::make_shared<CountingLink>();
+    control::VariableInfo level;
+    level.name = "level";
+    level.type = control::ValueType::Real;
+    level.causality = control::Causality::Input;
+    hub.agent_connected(control::PeerHello{"Engine", "e1", {level}, 16}, link);
+    const auto gone = hub.agent_connected(control::PeerHello{"Gone", "g1", {level}, 16}, std::make_shared<CountingLink>());
+    hub.agent_disconnected(gone);
+
+    std::atomic<bool> refuse{true};
+    control_grpc::ServerOptions o;
+    o.external_hub = &hub;
+    o.time = &time;
+    o.monitor_period = 0ms;
+    o.write_refusal = [&refuse]() -> std::optional<control_grpc::WriteRefusal> {
+        if (!refuse.load(std::memory_order_acquire))
+        {
+            return std::nullopt;
+        }
+        return control_grpc::WriteRefusal{"scenario-running", "scenario active"};
+    };
+    control_grpc::ControlServer server(std::move(o));
+    auto channel = grpc::CreateChannel("127.0.0.1:" + std::to_string(server.port()), grpc::InsecureChannelCredentials());
+    const auto table = calls();
+
+    // While refuse == true: Write and ForgetPeer fail with FAILED_PRECONDITION + reason; time operations pass.
+    for (const char* method : {"Write", "ForgetPeer"})
+    {
+        const Answer a = table.at(method)(*channel, nullptr);
+        CHECK(a.status.error_code() == grpc::StatusCode::FAILED_PRECONDITION);
+        CHECK(a.reason == "scenario-running");
+    }
+    CHECK(table.at("Pause")(*channel, nullptr).status.ok());
+    CHECK_EQ(link->sent.load(), 0);
+    CHECK_EQ(hub.peers().size(), std::size_t{2});
+
+    // Clear write_refusal (simulating handover): Write and ForgetPeer succeed without restarting server.
+    refuse.store(false, std::memory_order_release);
+    CHECK(table.at("Write")(*channel, nullptr).status.ok());
+    CHECK(table.at("ForgetPeer")(*channel, nullptr).status.ok());
+    CHECK_EQ(link->sent.load(), 1);
+    CHECK_EQ(hub.peers().size(), std::size_t{1});
+}

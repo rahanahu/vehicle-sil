@@ -84,6 +84,8 @@ describe('<vsil-timeline>', () => {
     file: 'scenarios/a.yaml',
     name: 'a',
     status: 'passed' as const,
+    handed_over: false,
+    over_at_ms: null,
     steps: [],
     timeline_url,
   });

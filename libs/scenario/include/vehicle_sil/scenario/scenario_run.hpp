@@ -72,7 +72,8 @@ enum class ScenarioStatus
     Passed,     ///< every step passed or was skipped (ScenarioRun::skipped() says how many)
     /// A step failed (the first one in virtual time; ScenarioRun::steps says which), or the run
     /// refused to begin the scenario (no step was run; the run's finding says why, e.g.
-    /// "scenario-not-observed").
+    /// "scenario-not-observed"), or a dither grid write failed after all steps passed before end_ms
+    /// (ScenarioRun::code / ScenarioRun::message).
     Failed,
     Incomplete, ///< the simulation ended for another reason before the last step was decided
 };
@@ -85,9 +86,15 @@ struct ScenarioRun
     std::string name;
     ScenarioStatus status = ScenarioStatus::NotRun;
     std::vector<ScenarioStepRun> steps{};
+    std::optional<std::int64_t> end_ms{};
     /// Passed and Failed: the step of the launcher's controller at which the scenario was over
     /// (the simulation stands there until it is stopped).
     std::optional<SimTime> over_at{};
+    /// Failed without a failed step (e.g. a dither grid write after all steps passed before end_ms):
+    /// the finding code, message, and write time.
+    std::string code{};
+    std::string message{};
+    std::optional<SimTime> failed_at{};
     /// Scenario::has_dither, and then what the scenario's "inputs" declare
     /// (scenario_inputs_text()) and Scenario::lines: what the text puts on the inputs, known
     /// before the run. Empty without a dither.
@@ -121,6 +128,9 @@ public:
     virtual void settle() = 0;
     /// Where the writes of `ticket` stand now; empty if that is not known any more.
     virtual std::optional<control::OperationResult> result(std::uint64_t ticket) = 0;
+    /// Waits until every target of `ticket` reaches a final status (or the run is ending) and
+    /// returns the result; empty if that is not known any more.
+    virtual std::optional<control::OperationResult> wait_done(std::uint64_t ticket) = 0;
 };
 
 /// A scenario participant as the run found it when the simulation started.
@@ -380,7 +390,11 @@ private:
                    const std::string& did_not, const std::string& hint = {});
     /// The step of the variable's ECU (the controller's, if that is not known).
     [[nodiscard]] SimDuration step_of(std::size_t variable) const;
+    [[nodiscard]] SimTime applied_step(const Write& write) const;
+    [[nodiscard]] bool can_settle_at(SimTime p) const;
+    void settle_at(SimTime p);
     void judge(SimTime p);
+    void judge_write(const Write& write, const std::optional<control::OperationResult>& result, SimTime p);
     void observe(SimTime p, bool final_boundary = false);
     void evaluate(Watch& watch, SimTime t);
     void close(Watch& watch, SimTime t);
@@ -418,6 +432,7 @@ private:
     const Scenario& scenario_;
     SimDuration tick_;
     std::optional<SimTime> stop_at_;
+    std::optional<SimTime> end_ms_;
     ScenarioPort& port_;
     OnStep on_step_;
     ScenarioRun run_;

@@ -239,6 +239,8 @@ export interface ScenarioView {
   stepsOmitted: number;
   /** Result of the scenario (passed, failed, incomplete, not_run). null until there is a result. */
   status: ScenarioStatus | null;
+  /** Whether the scenario passed and handed over to manual control. */
+  handedOver: boolean;
   /** Virtual time at which the scenario ended. */
   overAtMs: number | null;
   /**
@@ -248,15 +250,22 @@ export interface ScenarioView {
   timelineUrl: string | null;
 }
 
-function scenarioView(summary: SummaryScenario): ScenarioView {
+function scenarioView(
+  summary: SummaryScenario,
+  launcherState: StateReport | null = null,
+): ScenarioView {
+  const rawHandedOver = summary.handed_over === true || launcherState?.handed_over === true;
+  const handedOver = rawHandedOver && (summary.status === null || summary.status === 'passed');
   return {
     file: summary.file,
     name: summary.name,
     stepCount: summary.step_count,
     steps: summary.steps,
     stepsOmitted: summary.steps_omitted,
-    status: summary.status,
-    overAtMs: summary.over_at_ms,
+    status: handedOver ? (summary.status ?? 'passed') : summary.status,
+    handedOver,
+    overAtMs:
+      summary.over_at_ms ?? (handedOver ? (launcherState?.scenario_over_at_ms ?? null) : null),
     timelineUrl: summary.timeline_url,
   };
 }
@@ -399,6 +408,36 @@ export function isHolding(session: SessionView | null): boolean {
   return isRunActive(session) && session!.launcherState?.holding === true;
 }
 
+/** Whether the run's scenario has passed and handed over to manual control. */
+export function isScenarioHandedOver(
+  session: SessionView | SessionSummary | null | undefined,
+): boolean {
+  if (!session?.scenario) return false;
+  const scenario = session.scenario as {
+    handedOver?: boolean;
+    handed_over?: boolean;
+    status?: ScenarioStatus | null;
+  };
+  if (scenario.status !== null && scenario.status !== undefined && scenario.status !== 'passed') {
+    return false;
+  }
+  const launcher = 'launcherState' in session ? session.launcherState : session.launcher_state;
+  return (scenario.handedOver ?? scenario.handed_over) === true || launcher?.handed_over === true;
+}
+
+/** Whether the run's scenario is still actively executing (not handed over and no verdict yet). */
+export function isScenarioRunning(
+  session: SessionView | SessionSummary | null | undefined,
+): boolean {
+  return (
+    isRunActive(session) &&
+    session!.result === null &&
+    session!.scenario !== null &&
+    !isScenarioHandedOver(session) &&
+    session!.scenario.status === null
+  );
+}
+
 export function runOutcome(session: SessionView): RunOutcome {
   if (isRunActive(session)) {
     if (session.result) return 'finishing';
@@ -532,13 +571,29 @@ export function applySummary(session: SessionView, summary: SessionSummary): Ses
     ...participants,
     ...session.participants.filter((p) => !participants.some((current) => current.name === p.name)),
   ];
+  const launcherState = newerState(session.launcherState, summary.launcher_state ?? null);
+  const rawHandedOver =
+    summary.scenario?.handed_over === true ||
+    launcherState?.handed_over === true ||
+    session.scenario?.handedOver === true;
+  const effectiveStatus =
+    result?.scenario?.status ?? summary.scenario?.status ?? session.scenario?.status ?? null;
+  const handedOver = rawHandedOver && (effectiveStatus === null || effectiveStatus === 'passed');
   let scenario = summary.scenario
     ? {
-        ...scenarioView(summary.scenario),
+        ...scenarioView(summary.scenario, launcherState),
+        handedOver,
+        status: handedOver ? (summary.scenario.status ?? 'passed') : summary.scenario.status,
+        overAtMs:
+          summary.scenario.over_at_ms ??
+          (handedOver
+            ? (launcherState?.scenario_over_at_ms ?? session.scenario?.overAtMs ?? null)
+            : null),
         timelineUrl: summary.scenario.timeline_url ?? session.scenario?.timelineUrl ?? null,
       }
     : session.scenario;
   if (scenario && result?.scenario) {
+    const resultHandedOver = handedOver && result.scenario.status === 'passed';
     scenario = {
       ...scenario,
       name: result.scenario.name ?? scenario.name,
@@ -546,7 +601,8 @@ export function applySummary(session: SessionView, summary: SessionSummary): Ses
       steps: result.scenario.steps,
       stepsOmitted: 0,
       status: result.scenario.status,
-      overAtMs: result.scenario.over_at_ms,
+      handedOver: resultHandedOver,
+      overAtMs: result.scenario.over_at_ms ?? (resultHandedOver ? scenario.overAtMs : null),
     };
   }
   const problems = summary.problems.slice(0, MAX_PROBLEMS);
@@ -573,7 +629,7 @@ export function applySummary(session: SessionView, summary: SessionSummary): Ses
     lastCommand: summary.last_command
       ? commandView(summary.last_command, summary.last_command.seq ?? -1)
       : session.lastCommand,
-    launcherState: newerState(session.launcherState, summary.launcher_state ?? null),
+    launcherState,
     findings: summary.findings.slice(0, MAX_FINDINGS),
     result,
     check,
@@ -802,9 +858,41 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       return { ...next, simMs: event.sim_ms, timeOmittedFields: [], time: timeView(event) };
     case 'command':
       return { ...next, lastCommand: commandView(event, event.seq) };
-    case 'state':
-      return { ...next, launcherState: newerState(next.launcherState, event) };
-    case 'result':
+    case 'state': {
+      const launcherState = newerState(next.launcherState, event);
+      const handedOver = launcherState?.handed_over === true;
+      if (!next.scenario || !handedOver) return { ...next, launcherState };
+      const status = next.scenario.status;
+      if (status !== null && status !== 'passed') return { ...next, launcherState };
+      return {
+        ...next,
+        launcherState,
+        scenario: {
+          ...next.scenario,
+          handedOver: true,
+          status: 'passed',
+          overAtMs: next.scenario.overAtMs ?? launcherState.scenario_over_at_ms ?? null,
+        },
+      };
+    }
+    case 'result': {
+      const scenario =
+        next.scenario && event.result.scenario
+          ? (() => {
+              const handedOver =
+                event.result.scenario.status === 'passed' ? next.scenario.handedOver : false;
+              return {
+                ...next.scenario,
+                name: event.result.scenario.name,
+                stepCount: next.scenario.stepCount ?? event.result.scenario.steps.length,
+                steps: event.result.scenario.steps,
+                status: event.result.scenario.status,
+                handedOver,
+                overAtMs:
+                  event.result.scenario.over_at_ms ?? (handedOver ? next.scenario.overAtMs : null),
+              };
+            })()
+          : next.scenario;
       return {
         ...next,
         result: event.result,
@@ -812,18 +900,9 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         phaseRank: phaseIndex('ended'),
         check: next.check ?? event.result.check,
         participants: mergeResult(next.participants, event.result),
-        scenario:
-          next.scenario && event.result.scenario
-            ? {
-                ...next.scenario,
-                name: event.result.scenario.name,
-                stepCount: next.scenario.stepCount ?? event.result.scenario.steps.length,
-                steps: event.result.scenario.steps,
-                status: event.result.scenario.status,
-                overAtMs: event.result.scenario.over_at_ms,
-              }
-            : next.scenario,
+        scenario,
       };
+    }
     default:
       return next;
   }

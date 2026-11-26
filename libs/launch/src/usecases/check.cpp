@@ -276,6 +276,7 @@ namespace {
         scenario::ScenarioRead read = scenario::read_scenario(text, scenario::scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.steps = read.steps;
+        check.end_ms = read.end_ms;
         check.scenario = std::move(read.scenario);
         check.params = std::move(read.params);
         check.only = std::move(read.only);
@@ -467,7 +468,8 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         // The file and the request decide it: before any executable is asked.
         report.time_lock = config::time_lock(*report.config, connect, intent.time_policy);
         const std::vector<config::Finding> time = config::time_lock_findings(
-            report.time_lock, requested_speed, default_speed, intent.start_paused, request.origin);
+            report.time_lock, requested_speed, default_speed, intent.start_paused, request.origin,
+            intent.after_scenario);
         report.findings.insert(report.findings.end(), time.begin(), time.end());
         if (on_time_lock)
         {
@@ -669,6 +671,7 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     report.stop_timeout_ms = host.stop_timeout_ms;
     report.checked_speed = intent.speed;
     report.checked_start_paused = intent.start_paused;
+    report.checked_after_scenario = intent.after_scenario;
     if (auto f = config::detail::stop_not_on_step(intent.stop_at_ms, report.run_timing->time_step_ms))
     {
         report.findings.push_back(std::move(*f));

@@ -99,6 +99,11 @@
     "strict": {
       "type": "boolean",
       "description": "true: fail on warnings too (--strict). false is as if the key was not written: --strict still counts."
+    },
+    "after_scenario": {
+      "enum": ["stop", "pause"],
+      "default": "stop",
+      "description": "What to do after the scenario passes: \"stop\" (the default) ends the run, \"pause\" pauses the simulation at the scenario end time for manual handover (requires scenario, cannot be combined with stop_at_ms, and needs --stdin-commands or --control)."
     }
   }
 }

@@ -329,3 +329,56 @@ TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begin
     // Without a scenario: none in the outcome.
     CHECK(!planned_outcome(plan_run(checked({10000}).report, nullptr, "dir", choices, limits)).scenario.result);
 }
+
+TEST_CASE(plan_run_validates_after_scenario_pause_contract)
+{
+    Given no_scenario = checked({10000});
+    RunChoices pause;
+    pause.after_scenario = AfterScenario::Pause;
+    {
+        bool thrown = false;
+        try
+        {
+            static_cast<void>(plan_run(no_scenario.report, nullptr, "dir", pause));
+        }
+        catch (const std::invalid_argument&)
+        {
+            thrown = true;
+        }
+        CHECK(thrown);
+    }
+
+    Given with = with_scenario(checked({10000}));
+    pause.stop_at_ms = 500;
+    {
+        bool thrown = false;
+        try
+        {
+            static_cast<void>(plan_run(with.report, with.scenario_check(), "dir", pause));
+        }
+        catch (const std::invalid_argument&)
+        {
+            thrown = true;
+        }
+        CHECK(thrown);
+    }
+
+    pause.stop_at_ms.reset();
+    const RunPlan ok = plan_run(with.report, with.scenario_check(), "dir", pause);
+    CHECK(ok.after_scenario == AfterScenario::Pause);
+
+    Given locked = with_scenario(checked({10000}));
+    locked.report.time_lock.locked = true;
+    {
+        bool thrown = false;
+        try
+        {
+            static_cast<void>(plan_run(locked.report, locked.scenario_check(), "dir", pause));
+        }
+        catch (const std::invalid_argument&)
+        {
+            thrown = true;
+        }
+        CHECK(thrown);
+    }
+}

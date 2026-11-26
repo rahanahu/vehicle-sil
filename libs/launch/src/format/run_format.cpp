@@ -717,6 +717,14 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
     w.real("over_at_ms", scenario.over_at ? std::optional<double>(static_cast<double>(to_ns(*scenario.over_at)) /
                                                                   static_cast<double>(config::detail::kNanosPerMilli))
                                           : std::nullopt);
+    if (scenario.end_ms)
+    {
+        w.integer("end_ms", *scenario.end_ms);
+    }
+    else
+    {
+        w.null("end_ms");
+    }
     if (scenario.skipped() > 0)
     {
         // Only then: a result without skipped steps is as it was before them.

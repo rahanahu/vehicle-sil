@@ -24,6 +24,7 @@ import {
   RunTarget,
   SessionView,
   isRunActive,
+  isScenarioHandedOver,
   phaseIndex,
   severityRank,
 } from '@vehicle-sil/gui-client';
@@ -210,6 +211,17 @@ export class RunStatus {
    * 始めた実行が参加を待つ間は `waiting` で、paused と言わない。
    */
   private readonly paused = computed(() => this.session()?.launcherState?.paused === true);
+  private readonly handedOver = computed(() => {
+    const s = this.session();
+    return isRunActive(s) && !s!.result && isScenarioHandedOver(s);
+  });
+  private readonly handoverAtMs = computed(() =>
+    this.handedOver()
+      ? (this.session()?.scenario?.overAtMs ??
+        this.session()?.launcherState?.scenario_over_at_ms ??
+        null)
+      : null,
+  );
   /**
    * 実時間への遅れ（実行中で、許容を超えて遅れた刻みがあるとき。色だけでなく文で）。途中で最速に変えても、それまでの
    * 遅れは出したまま。結果が出たら、結果のカードが言う。
@@ -327,6 +339,27 @@ export class RunStatus {
       }
     }
     // 始まって動いている（参加を待つ、実行、一時停止。ランチャーが自分で止めている間も）
+    if (this.handedOver()) {
+      const atMs = this.handoverAtMs();
+      if (this.paused()) {
+        return {
+          tone: 'good',
+          mark: '‖',
+          text:
+            atMs !== null
+              ? $localize`一時停止中（${atMs}:ms: ms でシナリオ完了・手動操作へ引き継ぎ）`
+              : $localize`一時停止中（シナリオ完了・手動操作へ引き継ぎ）`,
+        };
+      }
+      return {
+        tone: 'good',
+        mark: '●',
+        text:
+          atMs !== null
+            ? $localize`実行中（${atMs}:ms: ms で手動操作へ引き継ぎ済み）`
+            : $localize`実行中（手動操作へ引き継ぎ済み）`,
+      };
+    }
     return this.paused()
       ? { tone: 'active', mark: '‖', text: $localize`一時停止中` }
       : { tone: 'active', mark: '●', text: $localize`実行中` };

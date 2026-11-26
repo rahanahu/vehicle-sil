@@ -457,4 +457,141 @@ describe('raw of the launcher objects', () => {
       ),
     ).toThrow(ProtocolError);
   });
+
+  it('reads handed_over, scenario_over_at_ms, and scenario end_ms with fallback for older launchers', () => {
+    const state = readLauncherEvent(
+      {
+        event: 'state',
+        seq: 5,
+        t_ms: 500,
+        rev: 3,
+        phase: 'running',
+        paused: true,
+        paused_at_ms: 500,
+        holding: false,
+        speed: 1,
+        pacing: 'not-paced',
+        stop: { requests: 0, by: null },
+        scenario: true,
+        handed_over: true,
+        scenario_over_at_ms: 500,
+        allowed: {},
+        outside: [],
+      },
+      'event',
+      true,
+    );
+    expect(state).toMatchObject({
+      event: 'state',
+      handed_over: true,
+      scenario_over_at_ms: 500,
+    });
+    expect(state?.unreadable).toBeUndefined();
+
+    const legacyState = readLauncherEvent(
+      {
+        event: 'state',
+        seq: 6,
+        t_ms: 600,
+        rev: 4,
+        phase: 'running',
+        paused: false,
+        paused_at_ms: null,
+        holding: false,
+        speed: 1,
+        pacing: 'on-time',
+        stop: null,
+        scenario: false,
+        allowed: {},
+      },
+      'event',
+      true,
+    );
+    expect(legacyState).toMatchObject({
+      event: 'state',
+      handed_over: false,
+      scenario_over_at_ms: null,
+    });
+    expect(legacyState?.unreadable).toBeUndefined();
+
+    const badState = readLauncherEvent(
+      {
+        event: 'state',
+        seq: 7,
+        t_ms: 700,
+        rev: 5,
+        phase: 'running',
+        paused: false,
+        paused_at_ms: null,
+        holding: false,
+        speed: 1,
+        pacing: 'on-time',
+        stop: null,
+        scenario: true,
+        handed_over: 'yes',
+        scenario_over_at_ms: 'bad',
+        allowed: {},
+      },
+      'event',
+      true,
+    );
+    expect(badState).toMatchObject({
+      handed_over: false,
+      scenario_over_at_ms: null,
+      unreadable: ['state.handed_over', 'state.scenario_over_at_ms'],
+    });
+
+    const uCheck = new Unreadable('check');
+    const checkWithEndMs = readCheckResult(
+      {
+        vehicle_sil_check: 1,
+        file: 'sim.yaml',
+        result: 'passed',
+        errors: 0,
+        warnings: 0,
+        notes: 0,
+        stop_at_ms: null,
+        participants: [],
+        networks: [],
+        findings: [],
+        scenario: { file: 'scenarios/a.yaml', name: 'a', steps: 2, end_ms: 1500 },
+      },
+      'check',
+      uCheck,
+    );
+    expect(checkWithEndMs.scenario?.end_ms).toBe(1500);
+    expect(uCheck.parts).toEqual([]);
+
+    const uResult = new Unreadable('result');
+    const resultWithEndMs = readRunResult(
+      {
+        vehicle_sil_run: 2,
+        result: 'passed',
+        end: 'completed',
+        ok: true,
+        message: 'ok',
+        errors: 0,
+        warnings: 0,
+        notes: 0,
+        simulation: 'ended',
+        interrupted_by: null,
+        timing: null,
+        participants: [],
+        findings: [],
+        check: null,
+        scenario: {
+          file: 'scenarios/a.yaml',
+          name: 'a',
+          status: 'passed',
+          over_at_ms: 1500,
+          end_ms: 1500,
+          steps: [],
+        },
+      },
+      'result',
+      uResult,
+    );
+    expect(resultWithEndMs.scenario?.end_ms).toBe(1500);
+    expect(uResult.parts).toEqual([]);
+  });
 });

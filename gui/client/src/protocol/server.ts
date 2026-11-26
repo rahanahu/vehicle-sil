@@ -236,6 +236,9 @@ export const readConfigList = (value: unknown): ConfigList => {
   };
 };
 
+/** What the launcher does once a scenario passes. */
+export type AfterScenario = 'stop' | 'pause';
+
 /**
  * Body of POST api/check: `file` (this server's field) and the keys of the request file that the launcher reads
  * (`schema/run-request.schema.json`), with the same names and value forms. A key that is not wanted is left out: there
@@ -254,6 +257,8 @@ export interface CheckRequest {
   manual?: string[];
   /** The scenario (`path` from `GET api/scenarios`; only one in the list for that configuration file). */
   scenario?: string;
+  /** What to do after the scenario passes (`stop`, or `pause` to hand over to manual control). */
+  after_scenario?: AfterScenario;
   /** The variant of the configuration file. */
   variant?: string;
   /** Values of the scenario's parameters (name to value); used only when a scenario runs. */
@@ -391,6 +396,8 @@ export interface Recording {
   omitted: number;
   /** Number of steps (`set`) in the YAML. */
   steps: number;
+  /** Finalized end virtual time (ms) of the run once ended, or null while running / unavailable. */
+  end_ms: number | null;
   /** Scenario YAML. null while no write has been applied yet. */
   yaml: string | null;
 }
@@ -406,9 +413,10 @@ export const readRecording = (value: unknown): Recording | null => {
     state: field(r, path, 'state', string),
     available: field(r, path, 'available', boolean),
     reason: field(r, path, 'reason', nullable(string)),
-    writes: field(r, path, 'writes', integer),
-    omitted: field(r, path, 'omitted', integer),
-    steps: field(r, path, 'steps', integer),
+    writes: field(r, path, 'writes', nonNegativeInteger),
+    omitted: field(r, path, 'omitted', nonNegativeInteger),
+    steps: field(r, path, 'steps', nonNegativeInteger),
+    end_ms: field(r, path, 'end_ms', optional(nullable(nonNegativeInteger), null)),
     yaml: field(r, path, 'yaml', nullable(string)),
   };
 };
@@ -721,6 +729,8 @@ export interface SummaryScenario {
   /** status of the result (null until there is a result). */
   status: ScenarioStatus | null;
   over_at_ms: number | null;
+  /** Whether the scenario passed and handed over to manual control. */
+  handed_over?: boolean;
   /**
    * Where the server serves the run's timeline file (`api/timeline/<session id>`, relative to the server's URL; needs
    * the token): set at the end of a run whose launcher wrote one, else null.
@@ -743,6 +753,9 @@ const readSummaryScenario = (value: unknown, path: string, u: Unreadable): Summa
     steps_omitted: field(f, path, 'steps_omitted', soft(integer, 0, u)),
     status: field(f, path, 'status', soft(nullable(string), null, u)),
     over_at_ms: field(f, path, 'over_at_ms', soft(nullable(number), null, u)),
+    ...(f['handed_over'] === undefined
+      ? {}
+      : { handed_over: field(f, path, 'handed_over', soft(boolean, false, u)) }),
     timeline_url: field(f, path, 'timeline_url', soft(nullable(string), null, u)),
   };
 };

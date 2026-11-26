@@ -49,7 +49,7 @@
 
 ### シナリオを付けた実行（`--scenario`）
 
-`--scenario <file>` を付けると、照合でシナリオも確認し、始まった後はシナリオの手順を進めて、シナリオが終わった所でシミュレーションを止めます（[scenario.md](scenario.md)）。
+`--scenario <file>` を付けると、照合でシナリオも確認し、始まった後はシナリオの手順を進めます。既定（`after_scenario: "stop"`）では、シナリオが終わった所でシミュレーションを止めます（[scenario.md](scenario.md)）。
 
 | 項目 | `--scenario` を付けたとき |
 |---|---|
@@ -57,8 +57,15 @@
 | パラメーター（`${name}`）の値 | 設定ファイルの `params`、機種の `params`、`--param <名前>=<値>` で替えられます。 |
 | その機種にない変数（`absent: true`）を使う手順 | 飛ばして、結果に表示します。 |
 | 機種が無効にした participant の変数を使う手順 | 同じく飛ばして、結果に表示します。 |
+| シナリオ成功後の動作（`after_scenario`） | 既定は `"stop"` です（通常の CLI `run --scenario` も含みます）。`--request` ファイルや `serve` のインライン `intent` で `"after_scenario": "pause"` を指定すると、止めずに終了時刻の controller ステップでアトミックに一時停止します。 |
 
 飛ばした手順の `at_ms` は null です。確認する手順が全部飛ぶと、照合の警告 `scenario-nothing-checked` です（[scenario.md](scenario.md) の「機種とパラメーター」）。
+
+`"after_scenario": "pause"`（feature `scenario-handover`）を指定したときの動作と規則:
+
+- シナリオが成功し（`end_ms` の指定時はそこにも達し）、停止要求や中断と競合しなかった場合、ランチャーはその controller のステップ（`over_at_ms`）でシミュレーションをアトミックに一時停止し、同じ Run と全 ECU の状態を保ったまま、`state` イベントで `handed_over: true` と `scenario_over_at_ms` を通知します。`--speed max` でも `step`、`run_until`、`resume` が来るまで一時停止を保ちます。`--control` がある場合は、`handed_over` が `true` になったときだけ `Write` と `ForgetPeer` が使えるようになります（[control-api.md](control-api.md#シナリオの実行中) の「シナリオの実行中」）。
+- シナリオが失敗した、`incomplete` で終わった、`stop_at_ms` に達した、または同時に停止要求が来た場合は、引き継ぎは起きません（`handed_over` は `false` のまま、書き込みは拒否され、実行は通常どおり終わります）。
+- 検証ルール: `"after_scenario": "pause"` にはシナリオが必須であり、`stop_at_ms`（`--stop-at-ms`）と併用できず、`test` では拒否され、`run` では `--stdin-commands` か `--control` が必須です。また、外につながる実行では `--time-policy realtime` で `outside-real-time` により拒否され、`--time-policy free` では注記 `outside-not-real-time` を出します。
 
 ## 中断する条件とタイムアウト
 
@@ -359,9 +366,9 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 外につながる相手は仮想時間を待たないので、こういう実行は、既定で実時間を保ちます。`--time-policy` で選びます。
 
-| `--time-policy` | 実行の速さ | 1 以外の `--speed`、`--start-paused` |
+| `--time-policy` | 実行の速さ | 1 以外の `--speed`、`--start-paused`、`after_scenario: "pause"` |
 |---|---|---|
-| `realtime`（既定） | 1 です。既定の最速から変更するときは、注記 `outside-speed-set` が知らせます。 | 照合のエラー `outside-real-time` です。何も起動しません（`--start-paused` は `--control` か `--stdin-commands` と一緒に使います。単独では、この照合より先に使い方の誤りで、終了コードは 4 です）。 |
+| `realtime`（既定） | 1 です。既定の最速から変更するときは、注記 `outside-speed-set` が知らせます。 | 照合のエラー `outside-real-time` です。何も起動しません（`--start-paused` は `--control` か `--stdin-commands` と一緒に使います。単独では、この照合より先に使い方の誤りで、終了コードは 4 です。`run` の `after_scenario: "pause"` も同様です）。 |
 | `free` | ほかの実行と同じです。`--speed`、なければ実行要求の `speed`、それもなければ最速です。 | 受け付けます。注記 `outside-not-real-time` が、実時間でないことを知らせます。 |
 
 - 外につながっていない実行では、`--time-policy` は何もしません。
@@ -651,8 +658,8 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 
 - 欄ごとに、引数がファイルより優先されます（[引数と要求ファイルを一緒に使う](#引数と要求ファイルを一緒に使う)）。
 - ランチャーが読むのは、`--request` で指定したファイルだけです。設定ファイルの隣、作業ディレクトリ、ホームディレクトリ、環境変数から探すことはありません。
-- `check --request` は、`run --request` と同じ要求を照合します（[時間のロック](#外につながる実行の時間--time-policy)に関わる速さと `start_paused` も含みます）。先に照合してから実行します。`run` だけが見る規則が 1 つあります。`start_paused` には `--stdin-commands` か `--control` が要る、という規則です（どちらも `run` だけの引数のため）。
-- `test` は `stop_at_ms` と `late_tolerance_ms` を含む要求ファイルを受け付けます。それ以外の実行条件を指定すると使い方の誤りになります。停止時刻は各ケースに適用します。
+- `check --request` は、`run --request` と同じ要求を照合します（[時間のロック](#外につながる実行の時間--time-policy)に関わる速さ、`start_paused`、`after_scenario` と、`after_scenario: "pause"` に `scenario` があり `stop_at_ms` がないことも含みます）。先に照合してから実行します。`run` だけが見る規則が 1 つあります。`start_paused` と `after_scenario: "pause"` には `--stdin-commands` か `--control` が要る、という規則です（どちらも `run` だけの引数のため）。
+- `test` は `stop_at_ms` と `late_tolerance_ms` を含む要求ファイルを受け付けます。それ以外の実行条件（`after_scenario: "pause"` を含む）を指定すると使い方の誤りになります。停止時刻は各ケースに適用します。
 - ファイルは JSON で書きます。ランチャーはそれより緩い書き方を読めることがありますが、約束しません。スキーマと、このファイルを読むほかのツールは、JSON だけを受けます。
 - ファイルの間違い（知らないキー、2 回書いたキー、型の違う値、`null`、別の版）は、ファイル名と行を示す使い方の誤り（終了コード 4）で、照合も起動もしません。指定しないキーは書きません。
 - JSON Schema は [schema/run-request.schema.json](../../schema/run-request.schema.json) です。`"$schema"` にそのパスを書いたファイルは、エディターが補完と検査をします。
@@ -678,6 +685,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `stop_at_ms` | 自動停止する仮想時刻（1～10^12 ms の整数）。省略時は自動停止なし。 | `--stop-at-ms` |
 | `late_tolerance_ms` | 実時間の遅延許容値（0～10^12 ms の整数）。既定は 10 ms。 | `--late-tolerance-ms` |
 | `strict` | `true` か `false` | `--strict` |
+| `after_scenario` | `"stop"`（既定: シナリオ終了で停止）または `"pause"`（シナリオ成功時に一時停止して手動制御へ引き継ぐ。`scenario` が必須で、`stop_at_ms` とは併用できず、`run` では `--stdin-commands` か `--control` が必要） | |
 
 ### 引数と要求ファイルを一緒に使う
 
@@ -691,7 +699,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `params` | 名前ごとです。`--param <name>=<value>` は、そのパラメーターのファイルの値を置き換えます。ほかは残り、照合の JSON の `from` は `request_file` です。 |
 | `disable`、`enable`、`manual` | ファイルの名前と引数の名前を合わせます。同じ名前で食い違うとき（ファイルの `disable` と `--enable`、ファイルの `enable` や `manual` と `--disable`、ファイルの `disable` と `--manual`）は、引数が勝ちます。 |
 
-ファイルの `scenario` と、`params` のパラメーターを外す引数はありません（`--scenario` と `--param` は置き換えるだけです）。それらのない実行には、それらを書いていない要求ファイルを使います。
+ファイルの `scenario` と、`params` のパラメーターを外す引数はありません（`--scenario` と `--param` は置き換えるだけです）。それらのない実行には、それらを書いていない要求ファイルを使います。`after_scenario` にはコマンドライン引数がありません。通常の CLI `run --scenario` では既定で `"stop"` になり、`--request` ファイル（または `serve` のインライン `intent`）に `"after_scenario": "pause"` を書いたときだけ手動引き継ぎになります。
 
 要求ファイルが引数と違うところ:
 
@@ -1196,7 +1204,7 @@ passed: 0 errors, 1 warning, 1 note
 | `"interrupted"` | 止める要求（Ctrl+C、`stop` コマンドなど）で止めた（どの種類かは `end`） |
 | `"not_started"` | 始まらなかった |
 
-`--scenario` を付けた実行で、`"ended"` がどちらの意味かを見分けるには、`scenario.status` を見ます。`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。`--timeline` を付けた実行では、`scenario.timeline` に、時間の軸のファイルの名前（引数のとおり）があります。付けなければ `null` です（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)）。
+`--scenario` を付けた実行で、`"ended"` がどちらの意味かを見分けるには、`scenario.status` を見ます。`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です（`after_scenario: "pause"` で引き継いだ後は、`scenario.status` はすでに `"passed"` になっているため、後から participant が終了させたときは `"passed"`、停止コマンドで止めたときは `incomplete`（終了コード 5）ではなく `"stopped"`（終了コード 0）になります）。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。`--timeline` を付けた実行では、`scenario.timeline` に、時間の軸のファイルの名前（引数のとおり）があります。付けなければ `null` です（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)）。
 
 `participants[]` のキー:
 
@@ -1637,7 +1645,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `vehicle_sil`、`stage` | vehicle-sil のバージョン、`"run"`（実際の実行の記録） |
 | `file`、`variant`、`params` | 設定ファイル（引数のとおり）、機種（なければ `null`）、シナリオのパラメーターと効いた値（`check --json` の `scenario.params` と同じ形） |
 | `time_step_ms` | controller のタイムステップ（`run --json` の `timing.time_step_ms` と同じ） |
-| `scenario` | `file`、`name`、`status`、`over_at_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
+| `scenario` | `file`、`name`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
 | `variables[]` | シナリオが使う変数（最初に出た順）。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む） |
 | `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキーに、`lines`、`watch`、`failed` を足したもの |
 | `series[]` | 値の列（下） |
@@ -1843,8 +1851,8 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 | シナリオ | `recorded_to_ms` |
 |---|---|
-| 失敗した（`failed`） | 失敗した手順の `at_ms`（`stop_at_ms` で終わった実行では、止まった時刻） |
-| 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの |
+| 失敗した（`failed`） | 失敗した手順の `at_ms`（すべての手順が通った後に揺れの書き込みが失敗したときはその時刻、`stop_at_ms` で終わった実行では、止まった時刻） |
+| 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの（`end_ms` があるときは `min(end_ms, now)` まで延びます。`after_scenario: "pause"` では引き継ぎ時点で記録を閉じ、引き継ぎ後の手動操作は記録しません） |
 | 途中で終わった（`incomplete`） | 最後のコントローラー時刻までに観測したサンプルと送信した書き込みのうち、最も遅い時刻（どちらもなければ 0）。書き込みが断られた後で participant の失敗が実行の結果になったときは、その書き込みの時刻（`failed` はどの手順でも `null` ですが、`not_applied_from` は `null` ではありません） |
 | シナリオが始まらなかった（`not_run`。シミュレーションは始まったのにシナリオを始められなかったときは `incomplete`） | `null`（系列は空） |
 

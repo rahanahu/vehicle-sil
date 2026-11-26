@@ -345,6 +345,8 @@ scripts/run-gui.py --workbench
 
 The top **Network** menu selects a simulation configuration and calls `POST api/prepare` to use Hot Start when eligible (see "[Hot Start and Cold Start](#hot-start-and-cold-start)"). Each **Start** performs a single check before running, and Workbench views identify runs by configuration file and status rather than numeric run IDs. **Network Designer** edits its buses and ECU channel mappings. The top **Scenario** menu lists runnable YAML files in the server's `scenarios/` directory next to that configuration. **Free run** and **Record & start** have no automatic stop when **Stop at (ms)** is blank. A supplied limit applies to both Check and Start.
 
+When a recorded run is started with **Record & start**, **Load recording** on the **Scenario** tab loads the recorded scenario YAML both mid-run (where `end_ms` is omitted so replay stops at the last `set` step) and after the run ends (where `end_ms` is finalized from the recorded run's end virtual time). When a scenario is selected and the launcher supports `scenario-handover`, **After scenario** lets you choose **Stop run** (default) or **Pause for manual control**; selecting **Pause for manual control** disables and omits **Stop at (ms)**. After a passed handover, **ECU I/O** unlocks on the same run so you can write inputs and continue with **1 step**, **Resume**, or **Speed**.
+
 In **Settings → Scenario folder**, choose a local directory for opening and saving YAML from the **Scenario** tab. If the browser offers read-only folder access, **Save YAML** downloads the file. To run a local file on the server, put it in the selected network's server-side `scenarios/` directory and refresh the run list.
 
 ## Stopping and exiting
@@ -463,17 +465,19 @@ Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU vari
 |---|---|
 | Location | The list shows the `.yaml` and `.yml` files in `scenarios` next to the configuration file (for `simulation.yaml`, `scenarios/` in the same directory). |
 | Check | When you select a scenario, the check also covers it (`check --scenario`). Scenario errors appear as findings with the scenario file and line. |
-| Run | When you start with a scenario selected, the launcher runs the scenario from time 0 to its end, then stops the simulation. |
-| Result | The **Scenario** card shows the overall result and a table of the scenario steps (line, step, state, the virtual time at which the result was decided, the reason for a failure), and **How it ended** in the **Result** card is **The scenario ended**. |
-| Variables | While a scenario runs, variables cannot be written (so that the scenario result does not change; the server also rejects writes with `scenario-running`). |
+| After scenario | Choose **Stop and end the run** (default: stops the simulation when the scenario finishes) or, when the launcher supports `scenario-handover`, **Pause and hand over to manual control** (pauses at the scenario's end virtual time on the same run without restarting ECUs). Selecting handover disables and clears **Stop at (virtual ms)**. |
+| Run | With **Stop and end the run**, the launcher runs the scenario from time 0 to its end, then stops the simulation. With **Pause and hand over to manual control**, if the scenario passes, the run pauses at the end virtual time (even at **Fastest** speed) until you **Step** or **Resume**. |
+| Result | When the run ends, the **Scenario** card shows the overall result and a table of the scenario steps (line, step, state, the virtual time at which the result was decided, the reason for a failure), and **How it ended** in the **Result** card is **The scenario ended**. |
+| Variables | While a scenario runs, variables cannot be written (so that the scenario result does not change; the server also rejects writes with `scenario-running`). After a passed handover, normal writing and time controls (**Step**, **Resume**, **Speed**) unlock on the same run. |
 | Timeline | After the run, the **Timeline** link of the **Scenario** card opens the run's timeline as a chart (see "[Timeline of a scenario run](#timeline-of-a-scenario-run)"). |
 
 - Scenario files elsewhere cannot be selected (see "[Security](#security)").
 - The step table advances with the launcher's `scenario_step` events. When the result arrives, it shows every step, including those that did not run. A screen opened during the run shows the same table.
-- A scenario cannot start paused (**Start paused** is disabled).
+- A scenario cannot start paused (**Start paused** is disabled), and **Pause and hand over to manual control** cannot be combined with **Stop at (virtual ms)**.
 - Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin; a Control Server client's time calls get the same answers.
-- If the launcher has a Control Server (`control-server` in `features`), the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without a Control Server, no run has variables, a scenario run included, and the Variables screen shows the reason as for any run.
-- The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `front.scenarios({ file })` (`client.low.scenarios(file)` is the one-shot call under it), `scenario` of `check` and `run.start`, and `scenario` of the session copy.
+- Handover happens only when the scenario completes with `passed`. A failed scenario, an early **Stop**, a `stop_at_ms` limit, or an incomplete/crashed run never hands over to manual control: writes remain locked and no handover badge appears.
+- If the launcher has a Control Server (`control-server` in `features`), the Variables screen shows the values (writing widgets are disabled during replay and show "Cannot write while a scenario runs (view only)", then unlock after a passed handover). With a launcher without a Control Server, no run has variables, a scenario run included, and the Variables screen shows the reason as for any run.
+- The server API is `GET api/scenarios?file=<configuration file>` and `scenario` and `after_scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `front.scenarios({ file })` (`client.low.scenarios(file)` is the one-shot call under it), `scenario` and `after_scenario` of `check` and `run.start`, `scenario` (`FrontScenario` with `handed_over` and `over_at_ms`) of the front door, and `isScenarioHandedOver` / `isScenarioRunning`.
 
 ### Timeline of a scenario run
 
@@ -498,14 +502,10 @@ In a run without a scenario that can read and write variables, the **Save as a s
 # Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every
 # screen and tool that used it) that were applied, each at the time of the step it was applied at.
 # Not here: pauses and steps of the time, writes that were not applied (docs/gui.md).
-# This scenario ends at its last step (350 ms): the launcher stops the simulation there.
-# The recorded run went on to 1000 ms.
-# To keep it running after the last step, add a step at the end, such as
-#   - expect: { Engine.ecu.connected: true }
-#     hold_for_ms: 650
 # Add expect and wait_until steps to check what the ECUs do (docs/scenario.md).
 vehicle_sil_scenario: 1
 name: "recorded from simulation.yaml (run 3)"
+end_ms: 1000
 steps:
   - at_ms: 0
     set:
@@ -523,11 +523,11 @@ steps:
 | Limit | Up to 2000 values are recorded per run. |
 
 - Writes from other screens (other people) that have the same GUI server open, and writes from tools that use `api/write` (such as `examples/gui_client/variables.mjs` in the repository), are included too. They are not separated by screen or by person.
-- The launcher stops the simulation when the scenario's last step is done. So a saved file, when run, stops at the time of the last `set` (even if the recorded run went on longer). To keep it running after that, add an `expect` step with `hold_for_ms` at the end, as in the example in the comments at the top of the file (the comments also give the time the recorded run reached).
+- **Mid-run vs. post-run save (`end_ms`)**: if you save while the run is still running (or if the run ended without a finalized `timing.sim_ms`, such as a crash or `not_started`), `end_ms` is omitted from the YAML and a comment notes that replay ends at the last `set` step. Once the run ends and the launcher reports `timing.sim_ms`, saving includes the finalized top-level `end_ms`, so replaying the saved file without edits continues up to the recorded run's end virtual time even if the last `set` occurred earlier. No dummy writes or always-true `expect` steps are generated.
 - Put the saved file in `scenarios/`, and it passes the check as is and can be run from **Scenario** (ECUs have different step times, so the same writes may become separate steps per ECU).
-- Add checking steps in an editor.
+- Add checking steps (`expect`, `wait_until`) in an editor, or run with **Pause and hand over to manual control** to continue manually on the same run after replay finishes.
 - Variables of a participant whose name contains `.` cannot be addressed in a scenario (everything up to the first `.` is the participant name), so they are left out. The card shows how many were left out, and the comments at the top of the file say why.
-- The server API is `GET api/recording` (returns `run_id` along with the recorded scenario YAML; see "Recording actions (`api/recording`)" in [gui/protocol/README.md](../gui/protocol/README.md#recording-actions-apirecording)); in the library, `client.recording()`.
+- The server API is `GET api/recording` (returns `run_id`, `end_ms`, and the recorded scenario YAML; see "Recording actions (`api/recording`)" in [gui/protocol/README.md](../gui/protocol/README.md#recording-actions-apirecording)); in the library, `client.recording()`.
 
 ## ECU variables
 

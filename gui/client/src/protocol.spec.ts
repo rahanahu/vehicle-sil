@@ -1207,4 +1207,84 @@ describe('generated OpenAPI 3.1 and WebSocket JSON Schemas align with client bui
     exampleTypes.add('runtime');
     expect([...exampleTypes].sort()).toEqual(schemaTypes);
   });
+
+  it('reads Recording.end_ms and SummaryScenario.handed_over cleanly', () => {
+    const baseRecording = {
+      run_id: '1',
+      file: 'sim.yaml',
+      state: 'ended',
+      available: true,
+      reason: null,
+      writes: 1,
+      omitted: 0,
+      steps: 1,
+      yaml: 'vehicle_sil_scenario: 1\nend_ms: 1200\n',
+    };
+    expect(readRecording({ recording: { ...baseRecording, end_ms: 1200 } })?.end_ms).toBe(1200);
+    expect(readRecording({ recording: { ...baseRecording, end_ms: null } })?.end_ms).toBeNull();
+    expect(readRecording({ recording: baseRecording })?.end_ms).toBeNull();
+    expect(() => readRecording({ recording: { ...baseRecording, end_ms: 12.5 } })).toThrow(
+      ProtocolError,
+    );
+    expect(() => readRecording({ recording: { ...baseRecording, end_ms: -1 } })).toThrow(
+      ProtocolError,
+    );
+    expect(() => readRecording({ recording: { ...baseRecording, writes: -1 } })).toThrow(
+      ProtocolError,
+    );
+
+    const runningSummary = {
+      id: '1',
+      state: 'running',
+      launcher: { running: true, exit_code: null, signal: null, silent_s: null },
+      stop: 'none',
+      file: 'sim.yaml',
+      disable: [],
+      manual: [],
+      speed: 1,
+      start_paused: false,
+      phase: 'running',
+      last_seq: 1,
+      last_t_ms: 10,
+      time: null,
+      last_command: null,
+      launcher_state: null,
+      allowed: null,
+      check: null,
+      participants: [],
+      findings: [],
+      result: null,
+      log: {},
+      problems: [],
+      problems_omitted: 0,
+      scenario: {
+        file: 'scenarios/a.yaml',
+        name: 'a',
+        step_count: 1,
+        steps: [],
+        steps_omitted: 0,
+        status: 'passed',
+        over_at_ms: 500,
+        timeline_url: null,
+      },
+    };
+    const withoutHandedOver = readSessionResponse({ session: runningSummary });
+    expect(withoutHandedOver?.scenario?.handed_over).toBeUndefined();
+    expect(withoutHandedOver?.unreadable).toEqual([]);
+
+    const withHandedOver = readSessionResponse({
+      session: { ...runningSummary, scenario: { ...runningSummary.scenario, handed_over: true } },
+    });
+    expect(withHandedOver?.scenario?.handed_over).toBe(true);
+    expect(withHandedOver?.unreadable).toEqual([]);
+
+    const badHandedOver = readSessionResponse({
+      session: {
+        ...runningSummary,
+        scenario: { ...runningSummary.scenario, handed_over: 'yes' },
+      },
+    });
+    expect(badHandedOver?.scenario?.handed_over).toBe(false);
+    expect(badHandedOver?.unreadable).toContain('scenario.handed_over');
+  });
 });

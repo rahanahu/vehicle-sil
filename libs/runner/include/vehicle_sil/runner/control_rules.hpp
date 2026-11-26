@@ -72,6 +72,8 @@ struct ControlSituation
     /// what moves the time away from real time has a caution (Allowed::caution). Fixed for the
     /// run once given; never with time_locked.
     bool time_free = false;
+    /// The scenario passed and handed over to manual control: control-server writes unlock.
+    bool handed_over = false;
 };
 
 /// The codes of the refusals (lower case with hyphens), for a program to tell them apart without

@@ -118,15 +118,20 @@ The run ID is not a credential: anyone who may call `Ping` can read it. It only 
 
 ### While a scenario runs
 
-In a scenario run (`--scenario`), a client can read, wait, move time and stop. It cannot write variables.
+In a scenario run (`--scenario`), a client can read, wait, move time and stop. While the scenario is replaying (including up to `end_ms`), it cannot write variables. With `"after_scenario": "pause"` in the run request (launcher feature `scenario-handover`), a scenario that passes hands over to manual control on the same Run while paused, unlocking writes.
 
-| Call | During a scenario |
-|---|---|
-| Read and wait calls, `Stop` | Work as usual. |
-| Write calls (`Write`, `ForgetPeer`) | Rejected with `FAILED_PRECONDITION`. |
-| Calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) | Work as in a run without a scenario (launcher feature `scenario-time`). They do not change the result of the scenario. |
+| Call | During scenario replay | After `after_scenario: "pause"` handover |
+|---|---|---|
+| Read and wait calls, `Stop` | Work as usual. | Work as usual. |
+| Write calls (`Write`, `ForgetPeer`) | Rejected with `FAILED_PRECONDITION` (`vehicle-sil-reason`: `scenario-running`). | Unlocked on the same Run (`handed_over: true` in `state`), and work as in a run without a scenario. |
+| Calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) | Work as in a run without a scenario (launcher feature `scenario-time`). They do not change the result of the scenario. | Work as usual from the paused handover step (`Step`, `RunUntil`, `Resume` advance from that virtual time). |
 
-`vehicle-sil-reason` in the trailing metadata (value `scenario-running`) identifies the rejection of a write. For the table of calls and the guarantees, see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control).
+`vehicle-sil-reason` in the trailing metadata (value `scenario-running`) identifies the rejection of a write before handover. For the table of calls and the guarantees, see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control).
+
+Handover rules:
+
+- When `"after_scenario": "pause"` is requested and the scenario passes without a concurrent stop or abort, the launcher atomically pauses the simulation at the scenario's end controller step (`over_at_ms`), keeps the same Run (`PingReply.run` / `RunHandle`) and ECU state, emits `state` with `handed_over: true` and `scenario_over_at_ms`, and unlocks `Write` and `ForgetPeer` while the run stays open. Even at `speed: "max"`, time remains paused at that step until `Step`, `RunUntil`, or `Resume`.
+- When `"after_scenario": "stop"` (the default) is used, or when the scenario fails (`scenario-failed`, `scenario-timeout`, `scenario-write`, `scenario-not-observed`), ends `incomplete` (`stop_at_ms`, `Stop`, `stop`, interrupt, `--timeout-ms`, participant failure), or races with a stop request, handover does **not** occur: `handed_over` remains `false`, `Write` and `ForgetPeer` stay refused with `scenario-running`, and the run ends.
 
 The scenario writes as the client `scenario`: its operations have `client` `scenario` (`Operation.client` in `Watch`, `GetOperation` and `WaitOperation`). This name is fixed. A watch that does not need the scenario's own operations (there can be one in every step) names it in `WatchRequest.operation_clients_excluded`: the operations of the clients in that list are not sent at all, and `Update.dropped` does not count them. An empty list sends every operation. The initial updates of a watch have no operations. A name matches `Operation.client` exactly: a gRPC client's `client` is `<name>@<the address of its connection>` and changes with each connection, so only a fixed name is useful in the list, and `scenario` is the only fixed name now. The GUI server's watch leaves out `scenario`. The Python client's `Control.watch()` has no argument for the list, so a Python watch receives the scenario's operations too.
 
@@ -758,7 +763,7 @@ A failed call returns a gRPC status code. In Python, it raises the exception `Co
 | Status code | Returned when |
 |---|---|
 | `INVALID_ARGUMENT` | An argument is wrong (a speed out of range, a step of 0 or less, more than 1024 names for `snapshot()`). |
-| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time), or it is for another run than the server's (`run-changed`) or names no run where the server requires one (`run-required`). The Python client also raises it for a server of another vehicle-sil release. |
+| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario before handover, a pause or another speed in a run that is connected outside and keeps real time), or it is for another run than the server's (`run-changed`) or names no run where the server requires one (`run-required`). The Python client also raises it for a server of another vehicle-sil release. |
 | `UNAUTHENTICATED` / `PERMISSION_DENIED` | Missing/invalid bearer token (`UNAUTHENTICATED`) or insufficient role (`PERMISSION_DENIED`) when `--control-credentials` is enabled. |
 | `CANCELLED` | The server closed while the call was waiting (`WaitPaused`; it can also get `FAILED_PRECONDITION`). |
 | `DEADLINE_EXCEEDED` | The call's wall-clock deadline expired (for example `Control.watch(..., timeout=...)` or a slow RPC). |
@@ -766,7 +771,7 @@ A failed call returns a gRPC status code. In Python, it raises the exception `Co
 | `UNIMPLEMENTED` | The address answers gRPC but is not a vehicle-sil Control Server (it has no such call). |
 | `UNAVAILABLE` / `NOT_FOUND` | The server is unreachable or a peer keeps restarting during `values()` / `snapshot()` (`UNAVAILABLE`); `peer(name)` found no peer of that name (`NOT_FOUND`). |
 
-Writes during a scenario have the `reason` `scenario-running`.
+Writes during a scenario (before an `after_scenario: "pause"` handover) have the `reason` `scenario-running`.
 
 | Python exception or warning | Raised when |
 |---|---|

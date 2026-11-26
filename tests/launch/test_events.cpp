@@ -697,9 +697,9 @@ TEST_CASE(a_state_event_has_the_state_and_what_is_allowed_with_the_ranges)
     const std::vector<std::string> lines = sink.lines();
     CHECK_EQ(lines.size(), std::size_t{3});
     check_text(lines.at(0),
-               R"({"event":"state","seq":0,"t_ms":7,"rev":1,"phase":"checking","paused":false,"paused_at_ms":null,"holding":false,"speed":null,"pacing":"not-paced","stop":{"requests":0,"by":null},"scenario":false,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":null},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet","caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1e-06,"max":1e+06},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":true,"reason":null,"message":null,"caution":null}},"outside":[]})");
+               R"({"event":"state","seq":0,"t_ms":7,"rev":1,"phase":"checking","paused":false,"paused_at_ms":null,"holding":false,"speed":null,"pacing":"not-paced","stop":{"requests":0,"by":null},"scenario":false,"handed_over":false,"scenario_over_at_ms":null,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":null},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet","caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1e-06,"max":1e+06},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":true,"reason":null,"message":null,"caution":null}},"outside":[]})");
     check_text(lines.at(1),
-               R"({"event":"state","seq":1,"t_ms":7,"rev":2,"phase":"running","paused":true,"paused_at_ms":120,"holding":true,"speed":0.5,"pacing":"late","stop":{"requests":2,"by":"SIGINT"},"scenario":true,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":{"code":"some-code","message":"a caution"}},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":true,"reason":null,"message":null,"caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1,"max":1},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":false,"reason":"scenario-running","message":"why \"not\"","caution":null}},"outside":[]})");
+               R"({"event":"state","seq":1,"t_ms":7,"rev":2,"phase":"running","paused":true,"paused_at_ms":120,"holding":true,"speed":0.5,"pacing":"late","stop":{"requests":2,"by":"SIGINT"},"scenario":true,"handed_over":false,"scenario_over_at_ms":null,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":{"code":"some-code","message":"a caution"}},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":true,"reason":null,"message":null,"caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1,"max":1},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":false,"reason":"scenario-running","message":"why \"not\"","caution":null}},"outside":[]})");
     CHECK(lines.at(2).find(R"("rev":3,"phase":"running","paused":true,"paused_at_ms":120,"holding":true,"speed":"max","pacing":"on-time",)") !=
           std::string::npos);
 }
@@ -1761,13 +1761,15 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "serve",
     "check-file-only",
     "serve-prepare",
-    "control-metrics"
+    "control-metrics",
+    "scenario-end-ms",
+    "scenario-handover"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature, kScenarioTimeFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-metrics\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-metrics\",\n    \"scenario-end-ms\",\n    \"scenario-handover\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(event_stream_formats_prepare_and_status_replies)

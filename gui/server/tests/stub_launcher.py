@@ -23,9 +23,9 @@ from vehicle_sil_gui import __version__  # noqa: E402
 DEFAULT_FEATURES = [
     "events", "stdin-commands", "request", "check-variables", "speed", "start-paused",
     "time-commands", "stdin-run-until", "state", "control-links", "scenario",
-    "manual-participants", "timeline", "run-stop-at", "connections", "connect",
-    "check-text", "compare-commands", "serve", "check-file-only", "serve-prepare",
-    "control-metrics",
+    "manual-participants", "timeline", "run-stop-at", "scenario-end-ms", "scenario-handover",
+    "connections", "connect", "check-text", "compare-commands", "serve", "check-file-only",
+    "serve-prepare", "control-metrics",
 ]
 
 def _peer_variables(name: str) -> list[dict]:
@@ -268,6 +268,33 @@ def inspect_config(
             "hot_eligibility": {"eligible": True, "reason": None, "message": None},
         }, fault
 
+    after_scenario = req.get("after_scenario")
+    if after_scenario is not None and after_scenario not in ("stop", "pause"):
+        return 2, {
+            "vehicle_sil_check": 1, "vehicle_sil": _version(), "file": cfg_path,
+            "result": "usage", "strict": False, "errors": 1, "warnings": 0, "notes": 0,
+            "participants": [], "networks": [], "findings": [{
+                "severity": "error", "code": "usage", "file": req_path or cfg_path, "line": 1,
+                "participant": None, "network": None,
+                "message": "after_scenario must be 'stop' or 'pause'",
+            }],
+            "file_sha256": sha,
+            "hot_eligibility": {"eligible": True, "reason": None, "message": None},
+        }, fault
+    if after_scenario == "pause" and not file_only and (not scenario or stop_at_ms is not None):
+        msg = "after_scenario 'pause' needs --scenario" if not scenario else "after_scenario 'pause' cannot be used with stop_at_ms"
+        return 2, {
+            "vehicle_sil_check": 1, "vehicle_sil": _version(), "file": cfg_path,
+            "result": "usage", "strict": False, "errors": 1, "warnings": 0, "notes": 0,
+            "participants": [], "networks": [], "findings": [{
+                "severity": "error", "code": "usage", "file": req_path or cfg_path, "line": 1,
+                "participant": None, "network": None,
+                "message": msg,
+            }],
+            "file_sha256": sha,
+            "hot_eligibility": {"eligible": True, "reason": None, "message": None},
+        }, fault
+
     # Build participants
     participants: list[dict] = []
     for pname in known_names:
@@ -405,7 +432,7 @@ def inspect_config(
         doc["time_lock"] = {"locked": False, "because": []}
     if scenario:
         sname = "impossible speed" if "fails" in scenario else "throttle up"
-        doc["scenario"] = {"file": scenario, "name": sname, "steps": 3, "inputs": [], "lines": []}
+        doc["scenario"] = {"file": scenario, "name": sname, "steps": 3, "inputs": [], "lines": [], "end_ms": None}
     return exit_code, doc, fault
 
 
@@ -467,6 +494,7 @@ def _allowed_map(
     scenario: bool = False,
     has_control: bool = True,
     outside_locked: bool = False,
+    handed_over: bool = False,
 ) -> dict:
     if not running:
         nr = {"ok": False, "reason": "not-running", "message": "the simulation is not running", "caution": None}
@@ -480,7 +508,7 @@ def _allowed_map(
     }
     ok_step = {"ok": True, "reason": None, "message": None, "caution": None, "min_ms": 1, "max_ms": 1000000000000}
     already_paused = {"ok": False, "reason": "already-paused", "message": "the simulation is already paused", "caution": None}
-    if scenario:
+    if scenario and not handed_over:
         wr = {
             "ok": False, "reason": "scenario-running",
             "message": "this run plays a scenario: variables cannot be written while it runs",
@@ -711,6 +739,7 @@ def _serve_main(argv: list[str]) -> int:
                 "rev": state_rev, "phase": "checking", "paused": start_paused, "paused_at_ms": None,
                 "holding": False, "speed": speed, "pacing": "not-paced" if speed == "max" else "on-time",
                 "stop": {"requests": 0, "by": None}, "scenario": has_scenario,
+                "handed_over": False, "scenario_over_at_ms": None,
                 "allowed": _allowed_map(start_paused, False, has_scenario, want_control), "outside": [],
             }
             _emit(next_ev("status", id=None, **status_payload(cur_run_state)))
@@ -1014,6 +1043,8 @@ def _execute_run(
     holding = start_paused and want_control
     stop_reqs = 0
     paused_ms_total = 0
+    handed_over = False
+    scenario_over_at_ms: int | None = None
 
     def emit_state(phase_name: str) -> None:
         nonlocal state_rev
@@ -1041,12 +1072,15 @@ def _execute_run(
             pacing="not-paced" if speed == "max" else "on-time",
             stop={"requests": stop_reqs, "by": "stop command" if stop_reqs else None},
             scenario=has_scenario,
+            handed_over=handed_over,
+            scenario_over_at_ms=scenario_over_at_ms,
             allowed=_allowed_map(
                 paused,
                 phase_name in ("waiting", "running"),
                 has_scenario,
                 want_control,
                 outside_locked=outside_locked,
+                handed_over=handed_over,
             ),
             outside=outside_rows,
         ))
@@ -1107,7 +1141,7 @@ def _execute_run(
                     "errors": 0, "warnings": 0, "notes": 0, "check": chk_doc,
                     "participants": _result_participants(started_parts), "findings": [],
                     "timing": {"speed": speed, "time_step_ms": time_step_ms, "wall_ms": 100, "paused_ms": 50,
-                               "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0},
+                               "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "sim_ms": sim_ms},
                 }))
                 return 0 if once else None
             if holding and cname == "pause":
@@ -1353,6 +1387,7 @@ def _execute_run(
                     "status": "failed" if is_fail_sc else "passed",
                     "over_at_ms": 101 if is_fail_sc else 1000,
                     "recorded_to_ms": 100 if is_fail_sc else 1000,
+                    "end_ms": None,
                 },
                 "variables": [
                     {"name": "Engine.engine.demand", "participant": "Engine", "type": "real", "causality": "input",
@@ -1406,6 +1441,7 @@ def _execute_run(
                         ctrl_server.stop()
                     sc_res: dict = {
                         "file": scenario, "name": sc_title, "status": "incomplete",
+                        "over_at_ms": None, "end_ms": None,
                         "timeline": timeline_file,
                         "steps": [
                             {"index": 1, "status": "passed"}, {"index": 2, "status": "incomplete"}, {"index": 3, "status": "not_run"},
@@ -1448,6 +1484,7 @@ def _execute_run(
                 ctrl_server.stop()
             sc_res = {
                 "file": scenario, "name": sc_title, "status": "failed",
+                "over_at_ms": 500, "end_ms": None,
                 "timeline": timeline_file,
                 "steps": [
                     {"index": 1, "status": "passed"},
@@ -1469,7 +1506,19 @@ def _execute_run(
             _emit(next_ev("scenario_step", run=run_id, index=3, status="running", at_ms=1000, name="step 3"))
             _emit(next_ev("scenario_step", run=run_id, index=3, status="passed", at_ms=1000, name="step 3"))
             sim_ms = 1000
-            stop_at_ms = 1000
+            if req_dict.get("after_scenario") == "pause":
+                handed_over = True
+                scenario_over_at_ms = sim_ms
+                paused = True
+                stop_at_ms = None
+                if ctrl_server is not None:
+                    ctrl_server.refuse_writes = None
+                ctrl_step_to(sim_ms, is_paused=True)
+                _emit(next_ev("time", run=run_id, sim_ms=sim_ms, actual_speed=None,
+                              late_steps=0, max_late_ms=0, slipped_ms=0, late_ms=0))
+                emit_state("running")
+            else:
+                stop_at_ms = 1000
 
     # Interactive / finite simulation loop
     ignoring_first_stop = False
@@ -1577,7 +1626,7 @@ def _execute_run(
             if ctrl_server is not None:
                 ctrl_server.set_time(sim_ms, False, running=False, ended=True)
                 ctrl_server.stop()
-            _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
+            res_stop: dict = {
                 "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                 "result": "stopped", "end": "stopped", "ok": True, "simulation": "ended",
                 "interrupted_by": "stop command", "message": "stopped by command",
@@ -1590,8 +1639,19 @@ def _execute_run(
                     "late_steps": 1 if fault == "late" else 0,
                     "max_late_ms": 200 if fault == "late" else 0,
                     "slipped_ms": 200 if fault == "late" else 0,
+                    "sim_ms": sim_ms,
                 },
-            }))
+            }
+            if has_scenario:
+                res_stop["scenario"] = {
+                    "file": scenario, "name": "throttle up",
+                    "status": "passed" if handed_over else "incomplete",
+                    "over_at_ms": scenario_over_at_ms if handed_over else None,
+                    "end_ms": None,
+                    "timeline": timeline_file,
+                    "steps": [{"index": 1, "status": "passed"}, {"index": 2, "status": "passed"}, {"index": 3, "status": "passed"}],
+                }
+            _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result=res_stop))
             return 0 if once else None
         elif cname == "pause":
             if paused:
@@ -1692,12 +1752,14 @@ def _execute_run(
         "check": chk_doc, "participants": _result_participants(started_parts), "findings": end_findings,
         "timing": {
             "speed": speed, "time_step_ms": time_step_ms, "wall_ms": 1000,
-            "paused_ms": paused_ms_total, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0,
+            "paused_ms": paused_ms_total, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "sim_ms": sim_ms,
         },
     }
     if has_scenario:
         sc_pass: dict = {
             "file": scenario, "name": "throttle up", "status": "passed",
+            "over_at_ms": scenario_over_at_ms if handed_over else sim_ms,
+            "end_ms": None,
             "timeline": timeline_file,
             "steps": [{"index": 1, "status": "passed"}, {"index": 2, "status": "passed"}, {"index": 3, "status": "passed"}],
         }

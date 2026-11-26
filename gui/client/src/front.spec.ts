@@ -2544,4 +2544,249 @@ describe('the front door', () => {
       expect(capturedId).toBe('42');
     });
   });
+
+  describe('scenario handover', () => {
+    it('forwards after_scenario on run.start and check, unlocks writes on handover state, and keeps non-handover false', async () => {
+      const rig = await open();
+      const scenarioSummary = {
+        file: 'scenarios/a.yaml',
+        name: 'a',
+        step_count: 1,
+        steps: [],
+        steps_omitted: 0,
+        status: null,
+        over_at_ms: null,
+        timeline_url: null,
+      };
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 4,
+          version: '0.1.0',
+          instance: 'x',
+          session: null,
+          allowed: serverAllowed(1, startOk, notRunning),
+          replay: null,
+        },
+        { type: 'synced', run_id: null, last_seq: null },
+      );
+
+      const checkPromise = rig.front.check(
+        { scenario: 'scenarios/a.yaml', after_scenario: 'pause' },
+        { file: 'sim.yaml' },
+      );
+      const checkReq = rig.http.expectOne('api/check');
+      expect(checkReq.request.body).toEqual({
+        file: 'sim.yaml',
+        disable: [],
+        scenario: 'scenarios/a.yaml',
+        after_scenario: 'pause',
+      });
+      checkReq.flush({
+        check: {
+          vehicle_sil_check: 1,
+          file: 'sim.yaml',
+          result: 'passed',
+          errors: 0,
+          warnings: 0,
+          notes: 0,
+          stop_at_ms: null,
+          participants: [],
+          networks: [],
+          findings: [],
+          scenario: { file: 'scenarios/a.yaml', name: 'a', steps: 1, end_ms: 500 },
+        },
+      });
+      await checkPromise;
+
+      const startPromise = rig.front.run.start(
+        { scenario: 'scenarios/a.yaml', after_scenario: 'pause', speed: 'max' },
+        { file: 'sim.yaml' },
+      );
+      const runReq = rig.http.expectOne('api/run');
+      expect(runReq.request.body).toEqual({
+        file: 'sim.yaml',
+        disable: [],
+        scenario: 'scenarios/a.yaml',
+        after_scenario: 'pause',
+        speed: 'max',
+      });
+      runReq.flush({ instance: 'x', run_id: '1' });
+      await startPromise;
+
+      // Deliver session running with scenario-running write refusal
+      await rig.deliver(
+        {
+          type: 'session',
+          session: summary({
+            speed: 'max',
+            last_seq: 0,
+            last_t_ms: 10,
+            sim_ms: 100,
+            launcher_state: stateEvent(
+              1,
+              { seq: 0, scenario: true, handed_over: false, scenario_over_at_ms: null },
+              { write: refusal('scenario-running', 'scenario is running') },
+            ),
+            scenario: scenarioSummary,
+          }),
+        },
+        { type: 'synced', run_id: '1', last_seq: 0 },
+        {
+          type: 'variables',
+          run_id: '1',
+          variables: {
+            state: 'ready',
+            reason: null,
+            peers: [
+              {
+                name: 'Engine',
+                connected: true,
+                variables: [
+                  {
+                    name: 'engine.offset',
+                    type: 'real',
+                    role: 'input',
+                    writable: true,
+                    unit: 'rpm',
+                    min: null,
+                    max: null,
+                    step: null,
+                    description: '',
+                    enum: null,
+                  },
+                ],
+              },
+            ],
+            peers_omitted: 0,
+            variables_omitted: 0,
+            operations: [],
+          },
+        },
+      );
+
+      const variable = rig.front.variable({ peer: 'Engine', name: 'engine.offset' });
+      expect(variable.get()).toMatchObject({
+        can_write: false,
+        why: { code: 'scenario-running' },
+      });
+      expect(rig.front.scenario.get()?.handed_over).toBe(false);
+
+      // Handover state arrives
+      await rig.deliver(
+        event(
+          stateEvent(
+            2,
+            {
+              paused: true,
+              paused_at_ms: 500,
+              pacing: 'not-paced',
+              scenario: true,
+              handed_over: true,
+              scenario_over_at_ms: 500,
+            },
+            {
+              pause: refusal('paused', 'already paused'),
+              resume: ok,
+              step: { ...ok, min_ms: 10, max_ms: 5000 },
+              run_until: ok,
+              speed: { ...ok, min: 0.5, max: 100, fastest: true },
+              stop: ok,
+              write: ok,
+            },
+          ),
+        ),
+      );
+
+      expect(rig.front.status.get()).toMatchObject({ run: 'paused', result: null });
+      expect(rig.front.clock.get().sim_ms).toBe(500);
+      expect(rig.front.scenario.get()).toMatchObject({
+        status: 'passed',
+        handed_over: true,
+        over_at_ms: 500,
+      });
+      expect(rig.front.controls.get().pause.reason?.code).toBe('paused');
+      expect(rig.front.controls.get().resume.ok).toBe(true);
+      expect(rig.front.controls.get().step.ok).toBe(true);
+      expect(rig.front.controls.get().run_until.ok).toBe(true);
+      expect(rig.front.controls.get().speed.ok).toBe(true);
+      expect(rig.front.controls.get().stop.ok).toBe(true);
+      expect(variable.get()).toMatchObject({ can_write: true, why: null, block: null });
+
+      // Manual write + step succeed on the same run
+      const writePromise = variable.write(25);
+      const writeReq = rig.http.expectOne('api/write');
+      expect(writeReq.request.body).toEqual({
+        run_id: '1',
+        writes: { Engine: { 'engine.offset': 25 } },
+      });
+      writeReq.flush({ run_id: '1', operation: 1 });
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 1,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 500, late: false, reason: null } },
+      });
+      await writePromise;
+
+      const stepPromise = rig.front.time.step(100);
+      const stepReq = rig.http.expectOne('api/time');
+      const stepBody = stepReq.request.body as { id: number };
+      expect(stepBody).toMatchObject({
+        run_id: '1',
+        command: 'step',
+        ms: 100,
+      });
+      stepReq.flush({ instance: 'x', run_id: '1', id: stepBody.id });
+      await rig.deliver(
+        event(commandEvent(20, 'step', stepBody.id, { ms: 100, at_ms: 600 })),
+        event(
+          stateEvent(
+            3,
+            {
+              paused: true,
+              paused_at_ms: 600,
+              pacing: 'not-paced',
+              scenario: true,
+              handed_over: true,
+              scenario_over_at_ms: 500,
+            },
+            {
+              pause: refusal('paused', 'already paused'),
+              resume: ok,
+              step: { ...ok, min_ms: 10, max_ms: 5000 },
+              write: ok,
+            },
+          ),
+        ),
+      );
+      await stepPromise;
+      expect(rig.front.clock.get().sim_ms).toBe(600);
+
+      // Stale session summary after live handover must not clear front.scenario.handed_over
+      await rig.deliver({
+        type: 'session',
+        session: summary({
+          speed: 'max',
+          last_seq: 21,
+          last_t_ms: 20,
+          sim_ms: 600,
+          launcher_state: stateEvent(
+            1,
+            { seq: 0, scenario: true, handed_over: false, scenario_over_at_ms: null },
+            { write: refusal('scenario-running', 'scenario is running') },
+          ),
+          scenario: { ...scenarioSummary, handed_over: false },
+        }),
+      });
+      expect(rig.front.scenario.get()).toMatchObject({
+        status: 'passed',
+        handed_over: true,
+        over_at_ms: 500,
+      });
+      expect(variable.get()).toMatchObject({ can_write: true, why: null, block: null });
+    });
+  });
 });

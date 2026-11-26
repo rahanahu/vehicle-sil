@@ -118,15 +118,20 @@ vehicle_sil_launch run --stdin-commands --start-paused --control 0 simulation.ya
 
 ### シナリオの実行中
 
-シナリオの実行（`--scenario`）では、クライアントは、読む、待つ、時刻を動かす、止めることができます。変数は書けません。
+シナリオの実行（`--scenario`）では、クライアントは、読む、待つ、時刻を動かす、止めることができます。シナリオの再生中（`end_ms` までを含む）は変数を書けません。実行要求に `"after_scenario": "pause"` を指定した場合（ランチャーの feature `scenario-handover`）は、シナリオが成功すると同じ Run のまま一時停止して手動制御へ引き継ぎ、書き込みが解放されます。
 
-| 呼び出し | シナリオの実行中 |
-|---|---|
-| 読む・待つ呼び出し、`Stop` | いつもどおりです。 |
-| 書く呼び出し（`Write`、`ForgetPeer`） | `FAILED_PRECONDITION` で拒否します。 |
-| 時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | シナリオのない実行と同じように使えます（ランチャーの feature `scenario-time`）。シナリオの結果は変わりません。 |
+| 呼び出し | シナリオの再生中 | `after_scenario: "pause"` の引き継ぎ後 |
+|---|---|---|
+| 読む・待つ呼び出し、`Stop` | いつもどおりです。 | いつもどおりです。 |
+| 書く呼び出し（`Write`、`ForgetPeer`） | `FAILED_PRECONDITION`（`vehicle-sil-reason` は `scenario-running`）で拒否します。 | 同じ Run のまま解放され（`state` の `handed_over: true`）、シナリオのない実行と同じく使えます。 |
+| 時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | シナリオのない実行と同じように使えます（ランチャーの feature `scenario-time`）。シナリオの結果は変わりません。 | 引き継いだ一時停止位置からいつもどおり使えます（`Step`、`RunUntil`、`Resume` でその仮想時刻から進みます）。 |
 
-書き込みの拒否は、trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。呼び出しごとの表と保証は [scenario.md](scenario.md) の「実行中に変数を見る」にあります。
+引き継ぎ前の書き込みの拒否は、trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。呼び出しごとの表と保証は [scenario.md](scenario.md) の「実行中に変数を見る」にあります。
+
+引き継ぎの規則:
+
+- `"after_scenario": "pause"` を指定して、停止要求や中断と競合せずにシナリオが成功すると、ランチャーはシナリオ終了の controller ステップ（`over_at_ms`）でアトミックに一時停止し、同じ Run（`PingReply.run` / `RunHandle`）と ECU の状態を保ったまま、`state` イベントで `handed_over: true` と `scenario_over_at_ms` を通知し、Run が開いている間 `Write` と `ForgetPeer` を解放します。`speed: "max"` でも `Step`、`RunUntil`、`Resume` までその位置で一時停止し続けます。
+- `"after_scenario": "stop"`（既定）のときや、シナリオが失敗（`scenario-failed`、`scenario-timeout`、`scenario-write`、`scenario-not-observed`）、`incomplete`（`stop_at_ms`、`Stop`、`stop`、中断、`--timeout-ms`、participant の失敗）、または停止要求との競合で終わったときは、引き継ぎは起きません（`handed_over` は `false` のまま、`Write` と `ForgetPeer` は `scenario-running` で拒否され続け、Run は終了します）。
 
 シナリオは、クライアント `scenario` として書き込みます。その操作の `client` は `scenario` です（`Watch`、`GetOperation`、`WaitOperation` の `Operation.client`）。この名前は変わりません。シナリオ自身の操作（ステップごとに 1 件になりうる）が要らない watch は、`WatchRequest.operation_clients_excluded` にこの名前を入れます。この一覧のクライアントの操作は送られず、`Update.dropped` にも数えられません。空の一覧なら、操作は全部送られます。watch の初めの更新には、操作は入りません。名前は `Operation.client` と完全に一致したものだけが当たります。gRPC のクライアントの `client` は `<名前>@<接続のアドレス>` で、接続ごとに変わるので、一覧に入れて役に立つのは固定の名前だけです。いまの固定の名前は `scenario` だけです。GUI サーバーの watch は `scenario` を除きます。Python のクライアントの `Control.watch()` には一覧の引数がないので、Python の watch にはシナリオの操作も届きます。
 
@@ -758,7 +763,7 @@ python -m vehicle_sil_control stop
 | 状態コード | 返るとき |
 |---|---|
 | `INVALID_ARGUMENT` | 引数のエラーです（範囲の外の速度、0 以下のステップ、`snapshot()` の名前が 1024 個を超える）。 |
-| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）か、サーバーと別の実行宛ての呼び出し（`run-changed`）や、実行が必須のサーバーへの実行を名乗らない呼び出し（`run-required`）です。Python のクライアントは、別の vehicle-sil のリリースのサーバーにも出します。 |
+| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、引き継ぎ前のシナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）か、サーバーと別の実行宛ての呼び出し（`run-changed`）や、実行が必須のサーバーへの実行を名乗らない呼び出し（`run-required`）です。Python のクライアントは、別の vehicle-sil のリリースのサーバーにも出します。 |
 | `UNAUTHENTICATED` / `PERMISSION_DENIED` | `--control-credentials` が有効なときに、Bearer トークンが欠落・不正（`UNAUTHENTICATED`）またはロールが不足（`PERMISSION_DENIED`）しています。 |
 | `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
 | `DEADLINE_EXCEEDED` | 呼び出しの実時間期限が切れました（`Control.watch(..., timeout=...)` や応答遅延など）。 |
@@ -766,7 +771,7 @@ python -m vehicle_sil_control stop
 | `UNIMPLEMENTED` | そのアドレスは gRPC に答えますが、vehicle-sil の Control Server ではありません（その呼び出しがない）。 |
 | `UNAVAILABLE` / `NOT_FOUND` | サーバーへ接続できないか、`values()` / `snapshot()` 中に Peer が再起動し続けているとき（`UNAVAILABLE`）、または `peer(name)` で指定した名前の Peer がないとき（`NOT_FOUND`）。 |
 
-シナリオの実行中の書き込みは、`reason` が `scenario-running` です。
+シナリオの実行中（`after_scenario: "pause"` で引き継ぐ前）の書き込みは、`reason` が `scenario-running` です。
 
 | Python の例外と警告 | 出るとき |
 |---|---|

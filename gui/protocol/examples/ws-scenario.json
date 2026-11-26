@@ -151,7 +151,8 @@
           "steps_omitted": 0,
           "status": null,
           "over_at_ms": null,
-          "timeline_url": null
+          "timeline_url": null,
+          "handed_over": false
         }
       }
     },
@@ -226,6 +227,8 @@
           "by": null
         },
         "scenario": true,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -591,6 +594,8 @@
           "by": null
         },
         "scenario": true,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -685,6 +690,8 @@
           "by": null
         },
         "scenario": true,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -868,6 +875,8 @@
           "by": null
         },
         "scenario": true,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -1044,6 +1053,8 @@
           "by": null
         },
         "scenario": true,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -1284,6 +1295,8 @@
           "by": null
         },
         "scenario": true,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": false,
@@ -1468,6 +1481,8 @@
           "by": null
         },
         "scenario": true,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": false,
@@ -2400,6 +2415,8 @@
             "by": null
           },
           "scenario": true,
+          "handed_over": false,
+          "scenario_over_at_ms": null,
           "allowed": {
             "pause": {
               "ok": false,
@@ -2997,7 +3014,8 @@
           "steps_omitted": 0,
           "status": "failed",
           "over_at_ms": 101,
-          "timeline_url": "api/timeline/1"
+          "timeline_url": "api/timeline/1",
+          "handed_over": false
         }
       }
     }

@@ -127,6 +127,30 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
         out.push_back(usage(paused + " needs --stdin-commands or --control: without commands nothing could make the "
                                      "simulation go on (resume, step)"));
     }
+    if (intent.after_scenario == config::AfterScenario::Pause)
+    {
+        const std::string after = origin.named("after_scenario", "after_scenario", "after_scenario");
+        if (!intent.scenario)
+        {
+            out.push_back(usage(after + " \"pause\" requires a scenario: give --scenario <file> or \"scenario\" in the "
+                                        "request, or use \"stop\""));
+        }
+        if (intent.stop_at_ms)
+        {
+            const std::string stopAt = origin.named("stop_at_ms", "--stop-at-ms", "stop_at_ms");
+            out.push_back(usage(after + " \"pause\" cannot be used with " + stopAt +
+                                ": a paused handover keeps the run open instead of stopping at a stop time"));
+        }
+        if (command == RequestCommand::Test)
+        {
+            out.push_back(usage("test does not accept " + after + " \"pause\": test runs scenarios to completion"));
+        }
+        if (command == RequestCommand::Run && !host.stdin_commands && !host.control)
+        {
+            out.push_back(usage(after + " \"pause\" needs --stdin-commands or --control: without commands nothing "
+                                        "could resume or step the paused simulation"));
+        }
+    }
     return out;
 }
 
@@ -200,6 +224,12 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
     {
         intent.late_tolerance_ms = written.late_tolerance_ms;
         origin.fields.emplace_back("late_tolerance_ms");
+    }
+    if (given.after_scenario == config::AfterScenario::Stop && wrote("after_scenario") &&
+        written.after_scenario != config::AfterScenario::Stop)
+    {
+        intent.after_scenario = written.after_scenario;
+        origin.fields.emplace_back("after_scenario");
     }
     bool params = false;
     for (const config::ParamValue& param : written.params)

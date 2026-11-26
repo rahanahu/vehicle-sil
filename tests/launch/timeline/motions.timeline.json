@@ -1,6 +1,6 @@
 {
   "vehicle_sil_timeline": 1,
-  "vehicle_sil": "0.1.0",
+  "vehicle_sil": "0.4.0",
   "stage": "run",
   "file": "simulation.yaml",
   "variant": null,
@@ -11,7 +11,8 @@
     "name": "set, ramp and waves, with an expect beside",
     "status": "passed",
     "over_at_ms": 350,
-    "recorded_to_ms": 340
+    "recorded_to_ms": 340,
+    "end_ms": null
   },
   "variables": [
     {

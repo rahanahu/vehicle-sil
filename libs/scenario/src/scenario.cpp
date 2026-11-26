@@ -116,6 +116,7 @@ void Reader::read()
     ryml::id_type onlyNode = ryml::NONE;
     ryml::id_type stepsNode = ryml::NONE;
     ryml::id_type inputsNode = ryml::NONE;
+    ryml::id_type endMsNode = ryml::NONE;
     std::map<std::string, std::size_t> seen;
     for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
     {
@@ -190,6 +191,12 @@ void Reader::read()
         {
             inputsNode = child;
         }
+        else if (key == "end_ms")
+        {
+            endMsNode = child;
+            scenario_.end_ms = millis(child, "end_ms", 0, "the virtual time when the scenario ends in milliseconds");
+            out_.end_ms = scenario_.end_ms;
+        }
         else
         {
             unknown_key(child, key, "", kTopKeys);
@@ -217,6 +224,13 @@ void Reader::read()
             }
             declared_ = dithers_.size(); // (the steps' dithers come after those of "inputs")
             read_steps(stepsNode);
+            if (scenario_.end_ms && *scenario_.end_ms < min_end_ms_)
+            {
+                error("scenario-time", doc_.line(endMsNode),
+                      "end_ms is " + std::to_string(*scenario_.end_ms) + ", before " +
+                          (end_known_ ? "the end of the last step (" : "the earliest possible end of the steps (") +
+                          std::to_string(min_end_ms_) + " ms): raise end_ms or shorten the steps");
+            }
             check_dithers();
             check_given_params();
             check_something_is_checked();
@@ -786,7 +800,8 @@ void Reader::read_step(ryml::id_type node)
             skipped_checks_.push_back(line);
         }
     }
-    // The latest this step can end: the times must stay within what a time can hold.
+    // The latest and earliest times this step can end.
+    min_end_ms_ = (time ? *time : min_end_ms_ + step.after_ms) + length;
     latest_ms_ = (time ? *time : latest_ms_ + step.after_ms) + length + step.within_ms.value_or(0);
     if (latest_ms_ > config::kMaxMillis && !too_long_)
     {

@@ -113,6 +113,24 @@ std::optional<TimePolicy> time_policy_named(std::string_view name) noexcept
     return std::nullopt;
 }
 
+const char* to_string(AfterScenario after)
+{
+    return after == AfterScenario::Pause ? "pause" : "stop";
+}
+
+std::optional<AfterScenario> after_scenario_named(std::string_view name) noexcept
+{
+    if (name == "stop")
+    {
+        return AfterScenario::Stop;
+    }
+    if (name == "pause")
+    {
+        return AfterScenario::Pause;
+    }
+    return std::nullopt;
+}
+
 std::vector<std::string> TimeLock::because() const
 {
     std::vector<std::string> out = connected;
@@ -241,7 +259,7 @@ std::string run_not_connected(const TimeLock& lock, const RequestOrigin& origin)
 
 std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optional<std::optional<double>>& asked,
                                         const std::optional<double>& otherwise, bool start_paused,
-                                        const RequestOrigin& origin)
+                                        const RequestOrigin& origin, AfterScenario after_scenario)
 {
     std::vector<Finding> out;
     if (lock.connected.empty() && lock.bridges.empty())
@@ -258,6 +276,7 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
     // As the user wrote them: an option, or a key of the request file.
     const std::string speed = origin.named("speed", "--speed", "speed");
     const std::string paused = origin.named("start_paused", "--start-paused", "start_paused");
+    const std::string afterPaused = origin.named("after_scenario", "after_scenario \"pause\"", "after_scenario \"pause\"");
     const std::string policy = origin.named("time_policy", "--time-policy free", "time_policy free");
     if (lock.locked)
     {
@@ -286,6 +305,14 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
             out.push_back(Finding{Severity::Error, "outside-real-time",
                                   what + ", which does not stand still: " + paused +
                                       " is refused. To stop the simulation and look at it, " +
+                                      run_not_connected(lock, origin) + ", or " + freely,
+                                  0, "", ""});
+        }
+        if (after_scenario == AfterScenario::Pause)
+        {
+            out.push_back(Finding{Severity::Error, "outside-real-time",
+                                  what + ", which does not stand still: " + afterPaused +
+                                      " is refused. To pause the simulation after the scenario, " +
                                       run_not_connected(lock, origin) + ", or " + freely,
                                   0, "", ""});
         }
@@ -318,6 +345,15 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
                                   " makes the simulation wait before its first step: " + kFreeCarries +
                                   ", so frames from outside pile up while the simulation stands still. To run in "
                                   "real time, leave " + policy + " and " + paused + " out",
+                              0, "", ""});
+    }
+    if (after_scenario == AfterScenario::Pause)
+    {
+        out.push_back(Finding{Severity::Note, "outside-not-real-time",
+                              what + ", which does not stand still, and with " + policy + " " + afterPaused +
+                                  " makes the simulation pause after the scenario: " + kFreeCarries +
+                                  ", so frames from outside pile up while the simulation stands still. To run in "
+                                  "real time, leave " + policy + " and " + afterPaused + " out",
                               0, "", ""});
     }
     return out;

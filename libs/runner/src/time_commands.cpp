@@ -20,6 +20,8 @@
 #include "time_commands_internal.hpp"
 
 #include "vehicle_sil/config/config.hpp"
+#include "vehicle_sil/runner/detail/run_samples.hpp"
+#include "vehicle_sil/runner/stop_requests.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
 
@@ -53,7 +55,7 @@ struct TimeCommands::State
         }
     };
 
-    std::mutex mutex;
+    mutable std::mutex mutex;
     /// hold_before_start(): a command released the hold, wake_hold(), or detach().
     std::condition_variable cv;
     std::shared_ptr<WaitSignal> wait_signal = std::make_shared<WaitSignal>();
@@ -68,6 +70,9 @@ struct TimeCommands::State
     bool detached = false;
     /// The run plays a scenario (fixed).
     bool scenario = false;
+    /// The scenario passed and handed over to manual control.
+    bool handed_over = false;
+    std::optional<std::int64_t> handed_over_at_ms{};
     /// set_time_lock() was called: the two below are the run's for good.
     bool lock_given = false;
     bool time_locked = false;
@@ -107,7 +112,7 @@ template <typename S> ControlSituation situation_of(const S& s)
     const ControlStage stage = s.detached ? ControlStage::Detached
                                : s.controller == nullptr ? ControlStage::SettingUp
                                                          : ControlStage::Attached;
-    return ControlSituation{stage, s.paused, s.scenario, s.time_locked, s.time_free};
+    return ControlSituation{stage, s.paused, s.scenario, s.time_locked, s.time_free, s.handed_over};
 }
 
 /// The facts of `s` now. Under its mutex; reads the gate unless `pre_read` supplies a snapshot
@@ -117,6 +122,7 @@ template <typename S> TimeFacts facts_of(S& s, const TimeState* pre_read = nullp
     TimeFacts f;
     f.situation = situation_of(s);
     f.holding = s.holding;
+    f.handed_over_at_ms = s.handed_over_at_ms;
     if (s.controller != nullptr)
     {
         const TimeState t = pre_read != nullptr ? *pre_read : s.controller->time_state();
@@ -415,6 +421,37 @@ void detail::TimeCommandsAccess::look_with_gate(
     f(gate, facts_of(s, s.controller == &controller ? &gate : nullptr));
 }
 
+bool detail::TimeCommandsAccess::handover_from_scenario(
+    TimeCommands& commands, SimulationController& controller, const StopRequests& stops, SimTime at,
+    const std::atomic<bool>& quit, RunSamples& samples)
+{
+    TimeCommands::State& s = *commands.state_;
+    {
+        const std::lock_guard lock(s.mutex);
+        if (s.detached || s.controller != &controller || s.time_locked || stops.count() > 0 || quit.load())
+        {
+            return false;
+        }
+        if (!controller.pause_for_handover())
+        {
+            return false;
+        }
+        if (stops.count() > 0 || quit.load())
+        {
+            return false;
+        }
+        s.paused = true;
+        s.released = true;
+        s.handed_over = true;
+        s.handed_over_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(at.time_since_epoch()).count();
+        tell(s);
+        samples.scenario_ends();
+        controller.guard_from(std::nullopt);
+    }
+    s.wait_signal->notify();
+    return true;
+}
+
 void TimeCommands::set_on_change(OnChange on_change)
 {
     State& s = *state_;
@@ -553,6 +590,18 @@ std::optional<Decision> TimeCommands::always_refused(Entry entry, Operation oper
 {
     // Fixed since the constructor: no lock.
     return runner::always_refused(state_->scenario, entry, operation);
+}
+
+std::optional<Decision> TimeCommands::write_refusal() const
+{
+    const State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    const Decision d = decide(situation_of(s), Entry::ControlServer, Operation::Write, "write", nullptr);
+    if (d.ok)
+    {
+        return std::nullopt;
+    }
+    return d;
 }
 
 void TimeCommands::set_time_lock(const config::TimeLock& lock)

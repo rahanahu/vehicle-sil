@@ -209,6 +209,20 @@ public:
                 context->AddTrailingMetadata(kRefusalReasonKey, only.reason);
                 return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "cannot " + std::string(rule->what) + ": " + only.message);
             }
+            if (rule->effect == Effect::Write && options_.write_refusal)
+            {
+                if (const auto refusal = options_.write_refusal())
+                {
+                    audit(call, std::string(rule->what), "refused (" + refusal->reason + ")");
+                    if (!refusal->reason.empty() &&
+                        refusal->reason.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") == std::string::npos)
+                    {
+                        context->AddTrailingMetadata(kRefusalReasonKey, refusal->reason);
+                    }
+                    return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                                        "cannot " + std::string(rule->what) + ": " + refusal->message);
+                }
+            }
             return body(call);
         }
         const std::string what = rule != nullptr ? std::string(rule->what) : "call " + std::string(method);

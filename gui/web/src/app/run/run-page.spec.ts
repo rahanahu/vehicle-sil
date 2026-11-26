@@ -831,6 +831,350 @@ describe('RunPage', () => {
     expect(text(fixture, 'result-card')).toContain('connect-lost');
     expect(text(fixture, 'result-card')).toContain(lost.message);
   });
+
+  it('controls after_scenario handover option, omits stop_at_ms on pause, and disables handover when unsupported', async () => {
+    const appWithHandover = () => {
+      const base = response('app') as { launcher: { version: { features: string[] } } };
+      return {
+        ...base,
+        launcher: {
+          ...base.launcher,
+          version: {
+            ...base.launcher.version,
+            features: [...new Set([...base.launcher.version.features, 'scenario-handover'])],
+          },
+        },
+      };
+    };
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithHandover());
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    await advance(BATCH_MS);
+    TestBed.tick();
+    (await checkRequest()).flush(response('check-passed'));
+    await settle();
+
+    // No after-scenario selector when no scenario is chosen
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="after-scenario"]'),
+    ).toBeNull();
+
+    // Enter invalid stopAt first ('0') and select a scenario
+    const stopInput = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    stopInput.value = '0';
+    stopInput.dispatchEvent(new Event('input'));
+    stopInput.dispatchEvent(new Event('blur'));
+    TestBed.tick();
+    expect(disabled(button(fixture, 'start'))).toBe(true);
+
+    const page = fixture.componentInstance as unknown as {
+      selectScenario(s: string | null): void;
+      selectAfterScenario(v: 'stop' | 'pause'): void;
+    };
+    const firstScenario = (response('scenarios') as { scenarios: { path: string }[] }).scenarios[0]
+      .path;
+    page.selectScenario(firstScenario);
+    TestBed.tick();
+    (await checkRequest()).flush(response('check-passed'));
+    await settle();
+
+    // Default is 'stop', which keeps stop_at_ms validation active and omits after_scenario
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="after-scenario"]'),
+    ).not.toBeNull();
+    expect(disabled(button(fixture, 'start'))).toBe(true);
+
+    // Fix stopAt to '1003', verify it sends stop_at_ms when 'stop' is chosen
+    stopInput.value = '1003';
+    stopInput.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    const stopCheck = await checkRequest();
+    expect(stopCheck.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: [],
+      manual: [],
+      scenario: firstScenario,
+      speed: 1,
+      stop_at_ms: 1003,
+    });
+    stopCheck.flush(response('check-passed'));
+    await settle();
+
+    // Switch to 'pause' (handover): stop-at-ms becomes disabled/cleared, stop_at_ms omitted everywhere
+    const pauseRadio = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="after-scenario-pause"] input[type="radio"]',
+    )!;
+    pauseRadio.click();
+    TestBed.tick();
+    expect(stopInput.disabled).toBe(true);
+    expect(stopInput.value).toBe('');
+    expect(pageIntent.get()).toMatchObject({
+      scenario: firstScenario,
+      after_scenario: 'pause',
+    });
+    expect(pageIntent.get().stop_at_ms).toBeUndefined();
+    const pauseCheck = await checkRequest();
+    expect(pauseCheck.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: [],
+      manual: [],
+      scenario: firstScenario,
+      after_scenario: 'pause',
+      speed: 1,
+    });
+    expect((pauseCheck.request.body as Record<string, unknown>)['stop_at_ms']).toBeUndefined();
+    pauseCheck.flush(response('check-passed'));
+    await advance(1);
+    await settle();
+    expect(disabled(button(fixture, 'start'))).toBe(false);
+
+    button(fixture, 'start').click();
+    const runReq = http.expectOne('api/run');
+    expect(runReq.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: [],
+      manual: [],
+      scenario: firstScenario,
+      after_scenario: 'pause',
+      speed: 1,
+    });
+    runReq.flush(response('run'));
+
+    // Unsupported launcher disables 'pause' radio and shows hint
+    TestBed.resetTestingModule();
+    sessionStorage.setItem('vehicle-sil-gui-token', 'secret');
+    fake = new FakeWebSockets();
+    await TestBed.configureTestingModule({
+      imports: [RunPage],
+      providers: [
+        provideHttpClient(withInterceptors([authInterceptor])),
+        provideHttpClientTesting(),
+        { provide: SOCKET_FACTORY, useValue: fake.factory },
+        { provide: ACTION_GUARD, useValue: 0 },
+      ],
+    }).compileComponents();
+    http = TestBed.inject(HttpTestingController);
+    const appWithoutHandover = () => {
+      const base = response('app') as { launcher: { version: { features: string[] } } };
+      return {
+        ...base,
+        launcher: {
+          ...base.launcher,
+          version: {
+            ...base.launcher.version,
+            features: base.launcher.version.features.filter((f) => f !== 'scenario-handover'),
+          },
+        },
+      };
+    };
+    const unsupportedFixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithoutHandover());
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    await advance(BATCH_MS);
+    TestBed.tick();
+    (await checkRequest()).flush(response('check-passed'));
+    await settle();
+    const unsupportedPage = unsupportedFixture.componentInstance as unknown as {
+      selectScenario(s: string | null): void;
+    };
+    unsupportedPage.selectScenario(firstScenario);
+    TestBed.tick();
+    (await checkRequest()).flush(response('check-passed'));
+    await settle();
+    const unsupportedPauseRadio = (
+      unsupportedFixture.nativeElement as HTMLElement
+    ).querySelector<HTMLInputElement>('[data-testid="after-scenario-pause"] input[type="radio"]')!;
+    expect(unsupportedPauseRadio.disabled).toBe(true);
+    expect(text(unsupportedFixture, 'handover-unsupported')).toContain('対応していません');
+  });
+
+  it('keeps time controls and shows handover badge when handed over, and hides it on non-handover outcomes', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await settle();
+
+    const ok = { ok: true, reason: null, message: null, caution: null };
+    const scenarioSummary = {
+      file: 'scenarios/a.yaml',
+      name: 'a',
+      step_count: 1,
+      steps: [],
+      steps_omitted: 0,
+      status: null,
+      over_at_ms: null,
+      timeline_url: null,
+    };
+    const baseSession = (
+      (server('ws-pass')[3] ?? (server('ws-pass')[2] as unknown)) as {
+        session: Record<string, unknown>;
+      }
+    ).session;
+    const runningHandoverSummary = {
+      ...baseSession,
+      id: '9',
+      file: 'bad-lines.yaml',
+      state: 'running',
+      phase: 'running',
+      result: null,
+      launcher: { running: true, exit_code: null, signal: null, silent_s: null },
+      scenario: scenarioSummary,
+      launcher_state: {
+        seq: 5,
+        rev: 5,
+        phase: 'running',
+        paused: true,
+        paused_at_ms: 500,
+        holding: false,
+        speed: 'max',
+        pacing: 'not-paced',
+        stop: { requests: 0, by: null },
+        scenario: true,
+        handed_over: true,
+        scenario_over_at_ms: 500,
+        allowed: {
+          pause: { ok: false, reason: 'paused', message: 'already paused', caution: null },
+          resume: ok,
+          step: { ...ok, min_ms: 10, max_ms: 5000 },
+          speed: { ...ok, min: 0.1, max: 100 },
+          run_until: ok,
+          stop: ok,
+          write: ok,
+        },
+        outside: [],
+      },
+    };
+    fake.last().send({ type: 'session', stream_seq: 10, session: runningHandoverSummary });
+    fake.last().send({ type: 'synced', stream_seq: 11, run_id: '9', last_seq: 5 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    expect(text(fixture, 'scenario-handover')).toContain('500 ms');
+    expect(text(fixture, 'outcome')).toContain('一時停止中');
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="time-card"]'),
+    ).not.toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="result-card"]'),
+    ).toBeNull();
+
+    // Crashed session never shows handover badge
+    fake.last().send({
+      type: 'session',
+      stream_seq: 12,
+      session: {
+        ...runningHandoverSummary,
+        state: 'ended',
+        launcher: { running: false, exit_code: 1, signal: null, silent_s: null },
+      },
+    });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    await advance(CHECK_DELAY_MS);
+    for (const request of http.match('api/check')) request.flush(response('check-passed'));
+    answerScenarios();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="scenario-handover"]'),
+    ).toBeNull();
+  });
+
+  it('preserves carried afterScenario pause and keeps stopAt disabled/omitted across language switch when selected file differs from session file', async () => {
+    const firstScenario = (response('scenarios') as { scenarios: { path: string }[] }).scenarios[0]
+      .path;
+    sessionStorage.setItem(
+      'vehicle-sil-gui-carry',
+      JSON.stringify({
+        run: {
+          session: '1',
+          chosen: 'forever.yaml',
+          file: 'forever.yaml',
+          disable: [],
+          manual: [],
+          speed: 1,
+          stopAt: 'abc',
+          stopAtEdited: true,
+          stopSession: null,
+          scenario: firstScenario,
+          afterScenario: 'pause',
+          logSource: '',
+        },
+      }),
+    );
+    const appBase = response('app') as { launcher: { version: { features: string[] } } };
+    const appWithHandover = {
+      ...appBase,
+      launcher: {
+        ...appBase.launcher,
+        version: {
+          ...appBase.launcher.version,
+          features: [...new Set([...appBase.launcher.version.features, 'scenario-handover'])],
+        },
+      },
+    };
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithHandover);
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    // ws-pass[3] has session id '1' and file 'simulation.yaml' (!== 'forever.yaml')
+    const endedSummary = structuredClone(server('ws-pass')[3]) as {
+      session: {
+        state: string;
+        ended_at: string;
+        launcher: { running: boolean };
+        allowed: { start: { ok: boolean; reason: string | null; message: string | null } };
+      };
+    };
+    endedSummary.session.state = 'ended';
+    endedSummary.session.ended_at = '2026-01-01T00:00:01Z';
+    endedSummary.session.launcher.running = false;
+    endedSummary.session.allowed.start = { ok: true, reason: null, message: null };
+    fake.last().send(endedSummary);
+    fake.last().send({ type: 'synced', stream_seq: 99, run_id: '1', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+
+    const checkReq = await checkRequest();
+    expect(checkReq.request.body).toEqual({
+      file: 'forever.yaml',
+      disable: [],
+      manual: [],
+      scenario: firstScenario,
+      after_scenario: 'pause',
+      speed: 1,
+    });
+    expect((checkReq.request.body as Record<string, unknown>)['stop_at_ms']).toBeUndefined();
+    checkReq.flush(response('check-passed'));
+    await advance(1);
+    await settle();
+
+    const pauseRadio = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="after-scenario-pause"] input[type="radio"]',
+    )!;
+    const stopInput = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="stop-at-ms"]',
+    )!;
+    expect(pauseRadio.checked).toBe(true);
+    expect(stopInput.disabled).toBe(true);
+    expect(stopInput.value).toBe('');
+    expect(text(fixture, 'blocked')).toBe('');
+    expect(disabled(button(fixture, 'start'))).toBe(false);
+    expect(pageIntent.get()).toMatchObject({
+      scenario: firstScenario,
+      after_scenario: 'pause',
+    });
+    expect(pageIntent.get().stop_at_ms).toBeUndefined();
+  });
 });
 
 describe('readRunChoices', () => {
@@ -847,6 +1191,10 @@ describe('readRunChoices', () => {
     expect(readRunChoices(choices)).toEqual(choices);
     expect(readRunChoices({ ...choices, session: null, chosen: null, speed: 2.5 })).not.toBeNull();
     expect(readRunChoices({ ...choices, startPaused: true })?.startPaused).toBe(true);
+    expect(readRunChoices({ ...choices, afterScenario: 'pause' })?.afterScenario).toBe('pause');
+    expect(readRunChoices({ ...choices, scenario: 'scenarios/a.yaml' })?.scenario).toBe(
+      'scenarios/a.yaml',
+    );
   });
 
   it('carries nothing when the shape is wrong', () => {
@@ -855,6 +1203,8 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, speed: 'fast' })).toBeNull();
     expect(readRunChoices({ ...choices, logSource: undefined })).toBeNull();
     expect(readRunChoices({ ...choices, startPaused: 'yes' })).toBeNull();
+    expect(readRunChoices({ ...choices, afterScenario: 'resume' })).toBeNull();
+    expect(readRunChoices({ ...choices, scenario: 123 })).toBeNull();
     expect(readRunChoices({ ...choices, manual: ['A', 1] })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: true })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: 'yes' })).toBeNull();

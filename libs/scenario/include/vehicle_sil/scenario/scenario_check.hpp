@@ -10,6 +10,7 @@
 #include "vehicle_sil/scenario/scenario.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -24,6 +25,7 @@ struct ScenarioCheck
     /// Its "name" and the number of its steps, as far as it could be read.
     std::string name{};
     std::size_t steps = 0;
+    std::optional<std::int64_t> end_ms{};
     /// Set if the configuration could be read and the scenario has no error: it can run.
     std::optional<Scenario> scenario{};
     /// ScenarioRead::params, only, skipped and unchecked_expects.

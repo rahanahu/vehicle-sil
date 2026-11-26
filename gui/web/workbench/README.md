@@ -36,10 +36,8 @@ Open the complete URL printed by the command. See the
   on each launch to keep the origin. Without Web Locks the current screen still
   works, but it does not advance the saved selection for the next server restart.
   History belongs to one server instance and run; it is not reused after a restart.
-- Stop a recorded run, open **Scenario** and select **Load recording** to
-  review or save the YAML. Recording exports the existing server format:
-  applied writes and their virtual times, with the observed run length in its
-  comments. Replay ends at the last step in the saved YAML.
+- Select **Load recording** on **Scenario** either while a recorded run is active or after stopping it to review or save the YAML. Mid-run recordings omit `end_ms` so replay stops at the last `set` step; recordings loaded after the run ends include the finalized top-level `end_ms` from the run's end virtual time, so unedited replay runs up to that end time without dummy steps.
+- To run a scenario, select a YAML file from the top **Scenario** menu (from the server's `scenarios/` directory next to the selected configuration). When the launcher supports handover, **After scenario** chooses **Stop run** (default) or **Pause for manual control**. Selecting **Pause for manual control** disables and omits **Stop at (ms)**. While the scenario replays, **ECU I/O** inputs are read-only; if the scenario passes with handover, the same run pauses at the scenario end time (staying paused even at **Fastest**), **ECU I/O** unlocks, and you can write inputs and continue with **1 step**, **Resume**, or **Speed**. Failed, stopped, or incomplete runs never hand over.
 - Choose a local folder in **Settings** when the browser supports directory
   access. **Scenario** can open and save YAML in that folder. A normal file
   picker and download are also available. To execute a file, put it in the

@@ -153,6 +153,13 @@ struct ObserveOnly
     Refuses refuses = Refuses::Changes;
 };
 
+/// A dynamic write refusal returned by ServerOptions::write_refusal for Effect::Write RPCs.
+struct WriteRefusal
+{
+    std::string reason;
+    std::string message;
+};
+
 struct ServerOptions
 {
     /// gRPC address to listen on; port 0 picks a free port (see ControlServer::port()).
@@ -187,6 +194,9 @@ struct ServerOptions
     /// `time`, with a line in the audit log. The calls that read or wait are served as always, and
     /// so is Stop (a simulation can always be ended).
     std::optional<ObserveOnly> observe_only{};
+    /// Optional dynamic refusal checked for Effect::Write RPCs (Write, ForgetPeer) before reaching
+    /// the hub. Evaluated under the caller's own synchronization; empty permits the write.
+    std::function<std::optional<WriteRefusal>()> write_refusal{};
     /// The ID of the run the server belongs to: an opaque string of printable ASCII without spaces,
     /// at most 128 bytes (std::invalid_argument otherwise); empty: none. Ping reports it
     /// (PingReply.run). Every other call that carries the metadata kRunKey with another value (or

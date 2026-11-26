@@ -45,7 +45,7 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
 | `finding` | 実行の指摘が決まったとき | 結果の `findings[]` の 1 つと同じキー |
 | `scenario_step` | `--scenario` の手順が始まったとき、決まったとき | 結果の `scenario.steps[]` の 1 つと同じキー |
 | `time` | 仮想時間が進んだとき、別の時刻で一時停止したとき、遅れているとき | `sim_ms`、`actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
-| `state` | 実行の状態か、受け付ける操作が変わったとき | `rev`、`phase`、`paused`、`paused_at_ms`、`holding`、`speed`、`pacing`、`stop`、`scenario`、`allowed`、`outside` |
+| `state` | 実行の状態か、受け付ける操作が変わったとき | `rev`、`phase`、`paused`、`paused_at_ms`、`holding`、`speed`、`pacing`、`stop`、`scenario`、`handed_over`、`scenario_over_at_ms`、`allowed`、`outside` |
 | `command` | コマンドを受けたとき | `command`、`source`、`accepted`、`message`、`reason`、`ms`、`at_ms`、`id` |
 | `heartbeat` | 1 秒のあいだ何も書かなかったとき | なし（3 つのキーだけ） |
 | `result` | 最後の行 | `result` |
@@ -163,6 +163,8 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
 | `pacing` | 指定の速度を保てているか: `"not-paced"`、`"on-time"`、`"late"`（下の表） |
 | `stop` | 停止の要求: `requests` は 0、1（順に止めている）、2（参加者を待たない）。`by` は最初に求めたもの（結果の `interrupted_by` の値。なければ `null`） |
 | `scenario` | シナリオを再生する実行か（`--scenario`） |
+| `handed_over` | シナリオが成功して手動制御へ引き継いだか（`after_scenario: "pause"`） |
+| `scenario_over_at_ms` | シナリオが引き継いだ仮想時刻（ミリ秒。引き継ぎ前や引き継ぎなしでは `null`） |
 | `allowed` | 操作ごとに、いま受け付けるか（下の表） |
 | `outside` | 実物のバスにつないだネットワーク（`--connect`）ごとに 1 つの要素です（ブリッジの順）。`--connect` がなければ空の配列です（下記） |
 
@@ -213,7 +215,7 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
 
 `ok` は「受け付けるか」の答えで、「何かが変わるか」ではありません。一時停止中も `pause` は `ok` です（受け付けて、何もしません）。`paused` が `false` でも `step` が `ok` のことがあります: `pause` を受け付けた直後でシミュレーションが止まるまでの間と、ステップを進めている間です。
 
-`pause`、`resume`、`step`、`run_until`、`speed`、`stop` は、標準入力のコマンドとして答えます。`write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、`write` を送る口がないので、実行の間ずっと、`ok` が `false`、理由は `no-control-server` です。クライアントの時間の呼び出しへの答えは、シナリオの間も、標準入力のコマンドへの答えと同じです。シナリオを理由に断るのは `write` だけです（`scenario-running`）。
+`pause`、`resume`、`step`、`run_until`、`speed`、`stop` は、標準入力のコマンドとして答えます。`write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、`write` を送る口がないので、実行の間ずっと、`ok` が `false`、理由は `no-control-server` です。クライアントの時間の呼び出しへの答えは、シナリオの間も、標準入力のコマンドへの答えと同じです。`write` はシナリオの実行中は拒否され（`scenario-running`）、`after_scenario: "pause"` でシナリオが成功して引き継いだとき（`handed_over: true`）だけ許可（`ok: true`）になります。
 
 シミュレーションの外につながっていて実時間を保つ実行（`--time-policy realtime`、既定）では、`pause`、`step`、`run_until` は、理由 `outside-real-time` で `ok` が `false` になります。`speed` は `min` と `max` が 1 になります（受け付けるのは速さ 1 だけです）。`--time-policy free` では、`ok` は `true` で、`caution` に `outside-not-real-time` が付きます。実行を外につないでいるものは、`check` イベントの `time_lock.because` にあります。
 
@@ -245,6 +247,8 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
   "pacing": "on-time",
   "stop": { "requests": 0, "by": null },
   "scenario": false,
+  "handed_over": false,
+  "scenario_over_at_ms": null,
   "allowed": {
     "pause": { "ok": true, "reason": null, "message": null, "caution": null },
     "resume": { "ok": true, "reason": null, "message": null, "caution": null },
@@ -267,7 +271,7 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
 | `not-set-up` | ランチャーがまだシミュレーションを準備していません（`step`、`run_until`、時刻つきの `pause`）。ランチャーが構成ファイルを読む前に、256 個を超えるコマンドが届いたときも、これです（[時間のコマンドを受け付ける条件](#時間のコマンドを受け付ける条件)） |
 | `not-paused` | 一時停止していないときの `step` |
 | `not-running` | シミュレーションが終わった、または始まりませんでした |
-| `scenario-running` | シナリオを再生する実行です。クライアントは変数を書けません（時間は、標準入力と同じく動かせます） |
+| `scenario-running` | シナリオを再生する実行です。`after_scenario: "pause"` で引き継ぎに成功する（`handed_over: true`）まで、クライアントは変数を書けません（時間は、標準入力と同じく動かせます） |
 | `no-control-server` | `state` の `allowed` にだけ出ます。Control Server のない実行（`--control` なし）で、Control Server のクライアントだけが送れる操作（`write`）です |
 | `outside-real-time` | 実行がシミュレーションの外につながっていて（`--connect`、または有効な `role: bridge` の participant）、実時間を保ちます（`--time-policy realtime`、既定）。`pause`、`step`、`run_until`、1 以外の `speed` は断ります。`resume`、`speed` 1、`stop` は受け付けます。時間を動かすには、`--time-policy free` で実行を始めます（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」） |
 | `out-of-range` | 引数が範囲の外です（クライアントの速度、ステップ、時刻） |
@@ -529,7 +533,7 @@ participant の `log` の終わりの側には、保証がありません。part
 {"event":"hello","seq":0,"t_ms":<t_ms>,"vehicle_sil_events":4,"vehicle_sil":"<version>","pid":<pid>,"file":"simulation.yaml","arguments":["serve","--once","simulation.yaml"],"launcher":"<launcher>"}
 {"event":"status","seq":1,"t_ms":<t_ms>,"id":null,"instance":"<launcher>","status_rev":0,"launcher_state":"unprepared","config":"simulation.yaml","eligibility":{"eligible":false,"reason":null,"message":null},"launcher_allowed":{"prepare":{"ok":true,"reason":null,"message":null,"caution":null},"run":{"ok":true,"reason":null,"message":null,"caution":null}},"active_run_id":null,"last_run_id":null,"run_state":null}
 {"event":"run_start","seq":2,"t_ms":<t_ms>,"run":"<launcher>-1","id":null}
-{"event":"status","seq":3,"t_ms":<t_ms>,"id":null,"instance":"<launcher>","status_rev":1,"launcher_state":"running","config":"simulation.yaml","eligibility":{"eligible":false,"reason":null,"message":null},"launcher_allowed":{"prepare":{"ok":false,"reason":"busy","message":"a run or prepare is under way (<launcher>-1): wait for it to finish (nothing is queued)","caution":null},"run":{"ok":false,"reason":"busy","message":"a run or prepare is under way (<launcher>-1): wait for it to finish (nothing is queued)","caution":null}},"active_run_id":"<launcher>-1","last_run_id":null,"run_state":{"rev":0,"phase":"checking","paused":false,"paused_at_ms":null,"holding":false,"speed":null,"pacing":"not-paced","stop":{"requests":0,"by":null},"scenario":false,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":null},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet: step works once the simulation stands still","caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1e-06,"max":1e+06},"run_until":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet: run_until at a time works once the participants have been started","caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":false,"reason":"no-control-server","message":"this run has no control server, and only a control server's client can write a variable","caution":null}},"outside":[]}}
+{"event":"status","seq":3,"t_ms":<t_ms>,"id":null,"instance":"<launcher>","status_rev":1,"launcher_state":"running","config":"simulation.yaml","eligibility":{"eligible":false,"reason":null,"message":null},"launcher_allowed":{"prepare":{"ok":false,"reason":"busy","message":"a run or prepare is under way (<launcher>-1): wait for it to finish (nothing is queued)","caution":null},"run":{"ok":false,"reason":"busy","message":"a run or prepare is under way (<launcher>-1): wait for it to finish (nothing is queued)","caution":null}},"active_run_id":"<launcher>-1","last_run_id":null,"run_state":{"rev":0,"phase":"checking","paused":false,"paused_at_ms":null,"holding":false,"speed":null,"pacing":"not-paced","stop":{"requests":0,"by":null},"scenario":false,"handed_over":false,"scenario_over_at_ms":null,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":null},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet: step works once the simulation stands still","caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1e-06,"max":1e+06},"run_until":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet: run_until at a time works once the participants have been started","caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":false,"reason":"no-control-server","message":"this run has no control server, and only a control server's client can write a variable","caution":null}},"outside":[]}}
 {"event":"phase","seq":4,"t_ms":<t_ms>,"run":"<launcher>-1","phase":"checking"}
 {"event":"check","seq":5,"t_ms":<t_ms>,"run":"<launcher>-1","check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"time_step_ms":10,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"commands":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"manual":false,"role":"ecu","step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}],"mac":null}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"network_map":null,"j1939_nodes":null,"control":{"transport":"silkit","wire_version":2,"wire_revision":1}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"manual":false,"role":"ecu","step_ms":5,"status":"disabled","reported":null,"variables":null,"network_map":null,"j1939_nodes":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"],"outside":null}],"time_lock":{"locked":false,"because":[]},"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; if it talks only to equipment outside, connect it outside to run it (external says what passes)","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}],"file_sha256":"ac4f0ee1fb9346d58d80d2b8a994c4b95b6e8194ecffdb41a06f3acf204d7f1b","hot_eligibility":{"eligible":true,"reason":null,"message":null}}}
 {"event":"participant","seq":6,"t_ms":<t_ms>,"run":"<launcher>-1","name":"Dashboard","state":"disabled"}
@@ -696,7 +700,9 @@ participant の `log` の終わりの側には、保証がありません。part
     "serve",
     "check-file-only",
     "serve-prepare",
-    "control-metrics"
+    "control-metrics",
+    "scenario-end-ms",
+    "scenario-handover"
   ]
 }
 ```
@@ -765,6 +771,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | `check-file-only` | `check --file-only --json`: 実行ファイルを起動せず設定テキストのみ検証し、`file_sha256` と `hot_eligibility` を出力する（[JSON（`--json`）](simulation-check.md#json--json)） |
 | `serve-prepare` | `serve` の `prepare`、`status`、`stop.force`、インライン `run.intent` コマンド（[常駐ランチャー](#常駐ランチャーserve)） |
 | `control-metrics` | `run --control-metrics <file>`: Control Hub の SIL Kit トランスポートの累計カウンターを JSON ファイルに書く（`vehicle_sil_control_metrics: 1`、[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」） |
+| `scenario-end-ms` | シナリオのトップレベル `end_ms` キーとシナリオ JSON 出力の `end_ms`（[scenario.md](scenario.md)） |
+| `scenario-handover` | 実行要求の `after_scenario: "pause"`：シナリオ成功時に一時停止して手動制御へ引き継ぎ、書き込みを動的に許可する（`state` の `handed_over` と `scenario_over_at_ms`） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |
@@ -793,6 +801,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | `request` | `--request`、指摘 `connect-network-unused` と `request-params-unused`、照合と結果の JSON でパラメーターの `from` が `request_file` になること |
 | `scenario-samples` | シナリオの `samples`、実行ファイルに渡す `--sample-every-step`、指摘 `scenario-samples-*` と `scenario-not-observed` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
+| `scenario-end-ms` | シナリオファイルの最上位 `end_ms`、および `check --json`・`run --json`・`--timeline` の `end_ms` |
+| `scenario-handover` | 実行要求の `after_scenario`（`"stop"` \| `"pause"`）、`state` イベントの `handed_over` と `scenario_over_at_ms`、引き継ぎ時の動的な書き込み解放 |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは書けません。書く呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します。`scenario-time` のあるビルドでは、時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）を、シナリオの実行中も、標準入力の同じコマンドと同じように受け付けます。シナリオの結果は変わりません。`scenario-control` だけのビルドは、これらも同じ理由で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。
 
@@ -833,7 +843,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 - `prepare`: 束縛中の `<file>` を `--file-only` 相当で検証し（任意の `"variant"`、`"disable"`、`"enable"`、`"manual"` 配列を指定可能。`"config"` は拒否）、`status`、`metadata`、`file_sha256`、`findings` を含む `prepare` イベントを返します。実行中や終了処理中は `"busy"`、`"launcher-ending"`、`"contaminated"` で拒否（`accepted: false`）します。
 - `status`: 現在のランチャーおよび実行中 Run の状態（待機中の `run_state` は `null`）を `status` イベントで返します。
-- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）と `"intent"`（64 KiB の行上限以内のインライン実行要求 JSON オブジェクト。`"vehicle_sil_run_request"` は任意）は排他です。`"timeline"`（タイムライン JSON の出力先パス）と `"id"` は任意です。実行中または検証中は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
+- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）と `"intent"`（64 KiB の行上限以内のインライン実行要求 JSON オブジェクト。`"vehicle_sil_run_request"` は任意で、`"after_scenario"` などを含む各フィールドを指定可能）は排他です。`"timeline"`（タイムライン JSON の出力先パス）と `"id"` は任意です。実行中または検証中は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
 - `stop`、`pause`、`resume`、`step`、`run_until`、`speed`: 複数回実行の `serve` では `"run": "<Run ID>"` が必須です（欄がなければ `"run-required"`、現在の実行と異なれば `"run-changed"` と `"asked_run"` で拒否）。`serve --once` では `"run"` を省略できます。`stop` では任意の真偽値 `"force"` で冪等な通常停止（`false`、停止要求 1 回）か即時強制停止（`true`、2 回へ引き上げ）を指定します。ランチャー直下のコマンド（`run`、`prepare`、`status`）は `"run"` を省略するか妥当な文字列であれば無視します。
 - 標準入力の閉鎖（EOF）はランチャー終了を意味します（待機中なら終了コード 0、実行中ならその実行を止めて終了コード 130）。
 

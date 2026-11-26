@@ -10,6 +10,8 @@ import {
   isLauncherAlive,
   isLauncherFinishing,
   isRunActive,
+  isScenarioHandedOver,
+  isScenarioRunning,
   isSessionRunning,
   runOutcome,
   sessionFromSummary,
@@ -1229,5 +1231,284 @@ describe('addProblem', () => {
     );
     expect(isLauncherAlive(legacyRunning)).toBe(true);
     expect(isRunActive(legacyRunning)).toBe(true);
+  });
+
+  it('tracks scenario handover across state, result, and summary, and excludes non-handover outcomes', () => {
+    const scenarioSummary = {
+      file: 'scenarios/a.yaml',
+      name: 'a',
+      step_count: 2,
+      steps: [],
+      steps_omitted: 0,
+      status: null,
+      over_at_ms: null,
+      timeline_url: null,
+    };
+    const stateBase = {
+      event: 'state',
+      rev: 1,
+      phase: 'running',
+      paused: false,
+      paused_at_ms: null,
+      holding: false,
+      speed: 1,
+      pacing: 'on-time',
+      stop: { requests: 0, by: null },
+      scenario: true,
+      handed_over: false,
+      scenario_over_at_ms: null,
+      allowed: {
+        write: { ok: false, reason: 'scenario-running', message: 'playing' },
+      },
+      outside: [],
+    };
+    let session = sessionFromSummary(summary({ scenario: scenarioSummary }));
+    session = applyEvents(session, eventsFrom(1, [stateBase]));
+    expect(session.scenario?.handedOver).toBe(false);
+    expect(isScenarioRunning(session)).toBe(true);
+    expect(isScenarioHandedOver(session)).toBe(false);
+    expect(isRunActive(session)).toBe(true);
+
+    // Handover state arrives
+    session = applyEvents(
+      session,
+      eventsFrom(2, [
+        {
+          ...stateBase,
+          rev: 2,
+          paused: true,
+          paused_at_ms: 500,
+          pacing: 'not-paced',
+          handed_over: true,
+          scenario_over_at_ms: 500,
+          allowed: { write: { ok: true, reason: null, message: null } },
+        },
+      ]),
+    );
+    expect(session.scenario).toMatchObject({
+      handedOver: true,
+      status: 'passed',
+      overAtMs: 500,
+    });
+    expect(isScenarioRunning(session)).toBe(false);
+    expect(isScenarioHandedOver(session)).toBe(true);
+    expect(isRunActive(session)).toBe(true);
+
+    // Post-handover result preserves handedOver: true
+    session = applyEvents(
+      session,
+      eventsFrom(3, [
+        {
+          event: 'result',
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'stopped',
+            ok: true,
+            message: 'stopped',
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+            simulation: 'ended',
+            interrupted_by: 'operator',
+            timing: { sim_ms: 600 },
+            participants: [],
+            findings: [],
+            check: null,
+            scenario: {
+              file: 'scenarios/a.yaml',
+              name: 'a',
+              status: 'passed',
+              over_at_ms: 500,
+              end_ms: 500,
+              steps: [],
+            },
+          },
+        },
+      ]),
+    );
+    expect(session.scenario?.handedOver).toBe(true);
+    expect(isScenarioHandedOver(session)).toBe(true);
+
+    // Reconnect from summary derives handedOver from scenario.handed_over ?? launcher_state.handed_over
+    const reconnectedFromLauncher = sessionFromSummary(
+      summary({
+        scenario: scenarioSummary,
+        launcher_state: {
+          rev: 2,
+          seq: 2,
+          phase: 'running',
+          paused: true,
+          paused_at_ms: 500,
+          holding: false,
+          speed: 1,
+          pacing: 'not-paced',
+          stop: { requests: 0, by: null },
+          scenario: true,
+          handed_over: true,
+          scenario_over_at_ms: 500,
+          allowed: {},
+        },
+      }),
+    );
+    expect(reconnectedFromLauncher.scenario).toMatchObject({
+      handedOver: true,
+      status: 'passed',
+      overAtMs: 500,
+    });
+
+    // Non-handover outcomes keep handedOver === false
+    for (const outcomeStatus of ['passed', 'failed', 'incomplete', 'not_run'] as const) {
+      const nonHandover = sessionFromSummary(
+        summary({
+          state: 'ended',
+          launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+          scenario: {
+            ...scenarioSummary,
+            status: outcomeStatus,
+            over_at_ms: 400,
+            handed_over: false,
+          },
+        }),
+      );
+      expect(nonHandover.scenario?.handedOver).toBe(false);
+      expect(isScenarioHandedOver(nonHandover)).toBe(false);
+      expect(isScenarioRunning(nonHandover)).toBe(false);
+    }
+
+    // Crashed session (no result, launcher not running) never counts as handed over
+    const crashed = sessionFromSummary(
+      summary({
+        state: 'ended',
+        launcher: { running: false, exit_code: 1, signal: null, silent_s: null },
+        scenario: scenarioSummary,
+      }),
+    );
+    expect(crashed.scenario?.handedOver).toBe(false);
+    expect(isScenarioHandedOver(crashed)).toBe(false);
+    expect(isScenarioRunning(crashed)).toBe(false);
+  });
+
+  it('preserves handover when scenario.handed_over is false alongside launcher_state.handed_over true or stale summary, and clears overAtMs on non-passed result', () => {
+    const scenarioSummary = {
+      file: 'scenarios/a.yaml',
+      name: 'a',
+      step_count: 2,
+      steps: [],
+      steps_omitted: 0,
+      status: null,
+      over_at_ms: null,
+      timeline_url: null,
+      handed_over: false,
+    };
+    const launcherHandedOver = {
+      rev: 2,
+      seq: 2,
+      phase: 'running',
+      paused: true,
+      paused_at_ms: 500,
+      holding: false,
+      speed: 'max' as const,
+      pacing: 'not-paced',
+      stop: { requests: 0, by: null },
+      scenario: true,
+      handed_over: true,
+      scenario_over_at_ms: 500,
+      allowed: { write: { ok: true, reason: null, message: null, caution: null } },
+      outside: [],
+    };
+    const fromSummary = sessionFromSummary(
+      summary({ scenario: scenarioSummary, launcher_state: launcherHandedOver }),
+    );
+    expect(fromSummary.scenario).toMatchObject({
+      handedOver: true,
+      status: 'passed',
+      overAtMs: 500,
+    });
+    expect(isScenarioHandedOver(fromSummary)).toBe(true);
+    expect(isScenarioRunning(fromSummary)).toBe(false);
+
+    // Live handover state followed by stale session summary (older rev, handed_over: false)
+    let live = sessionFromSummary(summary({ scenario: scenarioSummary }));
+    live = applyEvents(
+      live,
+      eventsFrom(1, [
+        {
+          event: 'state',
+          rev: 2,
+          phase: 'running',
+          paused: true,
+          paused_at_ms: 500,
+          holding: false,
+          speed: 'max',
+          pacing: 'not-paced',
+          stop: { requests: 0, by: null },
+          scenario: true,
+          handed_over: true,
+          scenario_over_at_ms: 500,
+          allowed: { write: { ok: true, reason: null, message: null } },
+          outside: [],
+        },
+      ]),
+    );
+    const afterStaleSummary = applySummary(
+      live,
+      summary({
+        scenario: scenarioSummary,
+        launcher_state: {
+          ...launcherHandedOver,
+          rev: 1,
+          handed_over: false,
+          scenario_over_at_ms: null,
+        },
+      }),
+    );
+    expect(afterStaleSummary.scenario).toMatchObject({
+      handedOver: true,
+      status: 'passed',
+      overAtMs: 500,
+    });
+    expect(isScenarioHandedOver(afterStaleSummary)).toBe(true);
+    expect(isScenarioRunning(afterStaleSummary)).toBe(false);
+
+    // Post-handover incomplete result with over_at_ms: null clears overAtMs and handedOver
+    const incompleteResult = applyEvents(
+      afterStaleSummary,
+      eventsFrom(2, [
+        {
+          event: 'result',
+          result: {
+            vehicle_sil_run: 2,
+            result: 'incomplete',
+            end: 'stopped',
+            ok: false,
+            message: 'crashed',
+            errors: 1,
+            warnings: 0,
+            notes: 0,
+            simulation: 'ended',
+            interrupted_by: null,
+            timing: { sim_ms: 600 },
+            participants: [],
+            findings: [],
+            check: null,
+            scenario: {
+              file: 'scenarios/a.yaml',
+              name: 'a',
+              status: 'incomplete',
+              over_at_ms: null,
+              end_ms: null,
+              steps: [],
+            },
+          },
+        },
+      ]),
+    );
+    expect(incompleteResult.scenario).toMatchObject({
+      status: 'incomplete',
+      handedOver: false,
+      overAtMs: null,
+    });
+    expect(isScenarioHandedOver(incompleteResult)).toBe(false);
   });
 });

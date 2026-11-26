@@ -12,8 +12,10 @@
 #include "run_pacing.hpp"
 #include "time_commands_internal.hpp"
 
+#include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 
+#include "vehicle_sil/runner/detail/run_samples.hpp"
 #include "vehicle_sil/runner/run_controls.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
@@ -521,4 +523,130 @@ TEST_CASE(run_controls_raise_to_and_stop_wake_ignore_duplicate_levels)
     CHECK(dup2.accepted);
     CHECK_EQ(wakes.load(), 2);
     CHECK_EQ(controls.state().stop_requests, stop_level::kForce);
+}
+
+TEST_CASE(handover_from_scenario_atomically_pauses_unlocks_writes_and_fails_on_stop_or_detach)
+{
+    using namespace vehicle_sil;
+    using vehicle_sil::runner::detail::attach_controller;
+    using vehicle_sil::runner::detail::RunSamples;
+    using vehicle_sil::runner::detail::TimeCommandsAccess;
+    using vehicle_sil::runner::detail::TrafficPlan;
+    using vehicle_sil::test::scaled_timeout;
+    using vehicle_sil::unit::coordinated_options;
+    using vehicle_sil::unit::InProcessRegistry;
+    using vehicle_sil::unit::start_together;
+
+    // 1. Atomic success: pauses guarded controller at P, sets handed_over + scenario_over_at_ms,
+    // unlocks write_refusal(), clears guard, and calls samples.scenario_ends().
+    {
+        InProcessRegistry registry;
+        SimulationControllerOptions options;
+        options.registry_uri = registry.uri;
+        options.required_participants = {"Member"};
+        options.time_control = TimeControlOptions{.step = 10ms, .speed = std::nullopt};
+        SimulationController controller(options);
+        auto peer = std::make_unique<ParticipantRuntime>(
+            coordinated_options("Member", registry.uri, VirtualTimeOptions{10ms, std::nullopt}));
+        peer->set_step_handler([](SimTime, SimDuration) {});
+
+        StopRequests stops;
+        std::vector<RunState> states;
+        RunControls::Observers obs;
+        obs.on_state = [&](const RunState& s) { states.push_back(s); };
+        RunControls controls(stops, /*start_paused=*/false, std::move(obs), /*scenario=*/true);
+        controls.set_control_server(true);
+        controls.set_time_lock({});
+        controls.set_phase(Phase::Running);
+        attach_controller(controls.time(), controller, 10, std::nullopt);
+        controller.guard_from(SimTime{});
+        start_together(controller, {peer.get()}, 30s);
+
+        const auto guarded = controller.wait_guarded(scaled_timeout(10s));
+        CHECK(guarded.has_value());
+        CHECK(controls.write_refusal().has_value());
+        CHECK(controls.write_refusal()->reason == vehicle_sil::runner::reason::kScenarioRunning);
+        CHECK(!controls.state().handed_over);
+        CHECK(!controls.state().scenario_over_at_ms.has_value());
+
+        RunSamples samples({"Member"}, TrafficPlan{});
+        samples.scenario_begins({"inc"});
+        const std::atomic<bool> quit{false};
+        CHECK(TimeCommandsAccess::handover_from_scenario(controls.time(), controller, stops, *guarded, quit, samples));
+
+        CHECK(!controls.write_refusal().has_value());
+        const RunState st = controls.state();
+        CHECK(st.scenario);
+        CHECK(st.handed_over);
+        CHECK(st.paused);
+        CHECK(st.allowed.write.ok);
+        const std::int64_t at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(guarded->time_since_epoch()).count();
+        CHECK(st.scenario_over_at_ms == std::optional<std::int64_t>(at_ms));
+        CHECK(st.paused_at_ms == std::optional<std::int64_t>(at_ms));
+        CHECK(controller.wait_until_paused(scaled_timeout(10s)) == guarded);
+        CHECK(!states.empty() && states.back().handed_over && states.back().paused);
+
+        controls.time().detach();
+        controller.stop("done");
+        peer->stop("done");
+    }
+
+    // 2. Refuses safely when stops > 0, quit == true, or detached == true (state stays untouched).
+    {
+        InProcessRegistry registry;
+        SimulationControllerOptions options;
+        options.registry_uri = registry.uri;
+        options.required_participants = {"Member"};
+        options.time_control = TimeControlOptions{.step = 10ms, .speed = std::nullopt};
+        SimulationController controller(options);
+        auto peer = std::make_unique<ParticipantRuntime>(
+            coordinated_options("Member", registry.uri, VirtualTimeOptions{10ms, std::nullopt}));
+        peer->set_step_handler([](SimTime, SimDuration) {});
+        controller.guard_from(SimTime{});
+        start_together(controller, {peer.get()}, 30s);
+        const auto guarded = controller.wait_guarded(scaled_timeout(10s));
+        CHECK(guarded.has_value());
+
+        StopRequests stops;
+        RunControls controls(stops, false, {}, true);
+        controls.set_time_lock({});
+        attach_controller(controls.time(), controller, 10, std::nullopt);
+        RunSamples samples({"Member"}, TrafficPlan{});
+
+        // quit == true
+        const std::atomic<bool> quit_true{true};
+        CHECK(!TimeCommandsAccess::handover_from_scenario(controls.time(), controller, stops, *guarded, quit_true, samples));
+        CHECK(!controls.state().handed_over);
+
+        // stops > 0
+        const std::atomic<bool> quit_false{false};
+        stops.request(vehicle_sil::runner::stop_source::kStopCommand);
+        CHECK(!TimeCommandsAccess::handover_from_scenario(controls.time(), controller, stops, *guarded, quit_false, samples));
+        CHECK(!controls.state().handed_over);
+
+        // detached
+        StopRequests clean_stops;
+        RunControls detached_controls(clean_stops, false, {}, true);
+        detached_controls.set_time_lock({});
+        attach_controller(detached_controls.time(), controller, 10, std::nullopt);
+        detached_controls.time().detach();
+        CHECK(!TimeCommandsAccess::handover_from_scenario(detached_controls.time(), controller, clean_stops, *guarded,
+                                                          quit_false, samples));
+        CHECK(!detached_controls.state().handed_over);
+
+        // time_locked (defense-in-depth)
+        RunControls locked_controls(clean_stops, false, {}, true);
+        locked_controls.set_time_lock(vehicle_sil::config::TimeLock{true, {}, {"Gateway"}});
+        attach_controller(locked_controls.time(), controller, 10, std::nullopt);
+        CHECK(!TimeCommandsAccess::handover_from_scenario(locked_controls.time(), controller, clean_stops, *guarded,
+                                                          quit_false, samples));
+        CHECK(!locked_controls.state().handed_over);
+        CHECK(locked_controls.write_refusal().has_value());
+        CHECK(locked_controls.write_refusal()->reason == vehicle_sil::runner::reason::kScenarioRunning);
+        locked_controls.time().detach();
+
+        controls.time().detach();
+        controller.stop("done");
+        peer->stop("done");
+    }
 }

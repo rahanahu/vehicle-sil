@@ -791,7 +791,7 @@ void request(const Options& o)
     write_file(o.work_dir / "bench" / "wrong.json", "{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}\n");
     const std::string unknown = wrong + ", line 3: unknown key 'conect': did you mean 'connect'? (the keys here: "
                                         "vehicle_sil_run_request, variant, params, scenario, disable, enable, manual, connect, "
-                                        "time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms)";
+                                        "time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario)";
     expect_usage({"check", "--request", wrong, config}, unknown);
     expect_usage({"run", "--json", "--request", wrong, config}, unknown);
     {

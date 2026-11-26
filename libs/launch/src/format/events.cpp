@@ -967,6 +967,15 @@ void write_run_state_members(Writer& w, const runner::RunState& state)
     optional_text(w, "by", state.stopped_by);
     w.end_object();
     w.boolean("scenario", state.scenario);
+    w.boolean("handed_over", state.handed_over);
+    if (state.scenario_over_at_ms)
+    {
+        w.integer("scenario_over_at_ms", *state.scenario_over_at_ms);
+    }
+    else
+    {
+        w.null("scenario_over_at_ms");
+    }
     w.begin_object("allowed");
     write_allowed(w, "pause", state.allowed.pause);
     write_allowed(w, "resume", state.allowed.resume);

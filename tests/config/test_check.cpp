@@ -2086,6 +2086,23 @@ TEST_CASE(time_lock_findings_refuse_another_speed_and_a_paused_start_with_the_lo
     check_text(codes(time_lock_findings(locked, asked_speed(2.0), 1.0, true, RequestOrigin{})), "E outside-real-time\nE outside-real-time\n");
     check_text(codes(time_lock_findings(locked, kNoSpeedAsked, max, true, RequestOrigin{})), "N outside-speed-set\nE outside-real-time\n");
     check_text(codes(time_lock_findings(free, asked_speed(2.0), 1.0, true, RequestOrigin{})), "N outside-not-real-time\nN outside-not-real-time\n");
+
+    // after_scenario: "pause", alone and with a speed or RequestOrigin.
+    check_text(codes(time_lock_findings(nothing, kNoSpeedAsked, 1.0, false, RequestOrigin{}, AfterScenario::Pause)), "");
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 1.0, false, RequestOrigin{}, AfterScenario::Pause)), "E outside-real-time\n");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 1.0, false, RequestOrigin{}, AfterScenario::Pause)), "N outside-not-real-time\n");
+    check_text(codes(time_lock_findings(locked, asked_speed(2.0), 1.0, false, RequestOrigin{}, AfterScenario::Pause)),
+               "E outside-real-time\nE outside-real-time\n");
+    check_text(codes(time_lock_findings(free, asked_speed(2.0), 1.0, false, RequestOrigin{}, AfterScenario::Pause)),
+               "N outside-not-real-time\nN outside-not-real-time\n");
+    RequestOrigin from_file;
+    from_file.file = "bench.json";
+    from_file.fields = {"after_scenario", "time_policy"};
+    CHECK(lines(time_lock_findings(locked, kNoSpeedAsked, 1.0, false, from_file, AfterScenario::Pause))
+              .find("after_scenario \"pause\" in bench.json is refused") != std::string::npos);
+    CHECK(lines(time_lock_findings(free, kNoSpeedAsked, 1.0, false, from_file, AfterScenario::Pause))
+              .find("time_policy free in bench.json after_scenario \"pause\" in bench.json makes the simulation pause after the scenario") !=
+          std::string::npos);
 }
 
 TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)

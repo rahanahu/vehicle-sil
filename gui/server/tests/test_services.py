@@ -230,3 +230,160 @@ def test_run_manager_and_ws_gateway_operate_independently(tmp_path: Path) -> Non
         await configs.cleanup()
 
     asyncio.run(main())
+
+
+def test_config_service_validates_and_forwards_after_scenario(tmp_path: Path) -> None:
+    root = _simple_root(tmp_path)
+    (root / "scenarios").mkdir()
+    (root / "scenarios" / "a.yaml").write_text("vehicle_sil_scenario: 1\nsteps: []\n", encoding="utf-8")
+
+    async def main() -> None:
+        cfg_file = ConfigService(root, FakeLauncher()).resolve("simple.yaml")
+
+        # 1. Valid after_scenario="pause" and "stop" with scenario-handover feature
+        svc = ConfigService(root, FakeLauncher())
+        intent, _, _ = await svc.build_intent(
+            cfg_file,
+            RunRequest(file="simple.yaml", scenario="scenarios/a.yaml", after_scenario="pause"),
+            "scenarios/a.yaml",
+        )
+        assert intent["after_scenario"] == "pause"
+
+        intent_stop, _, _ = await svc.build_intent(
+            cfg_file,
+            RunRequest(file="simple.yaml", scenario="scenarios/a.yaml", after_scenario="stop"),
+            "scenarios/a.yaml",
+        )
+        assert intent_stop["after_scenario"] == "stop"
+
+        # Omitted after_scenario stays omitted from intent
+        intent_omitted, _, _ = await svc.build_intent(
+            cfg_file,
+            RunRequest(file="simple.yaml", scenario="scenarios/a.yaml"),
+            "scenarios/a.yaml",
+        )
+        assert "after_scenario" not in intent_omitted
+
+        # 2. Missing scenario -> 400 invalid-field
+        with pytest.raises(Refused) as exc_no_sc:
+            await svc.build_intent(cfg_file, RunRequest(file="simple.yaml", after_scenario="pause"), None)
+        assert (exc_no_sc.value.status, exc_no_sc.value.code) == (400, "invalid-field")
+
+        # 3. Combined with stop_at_ms -> 400 invalid-field
+        with pytest.raises(Refused) as exc_stop_at:
+            await svc.build_intent(
+                cfg_file,
+                RunRequest(file="simple.yaml", scenario="scenarios/a.yaml", after_scenario="pause", stop_at_ms=500),
+                "scenarios/a.yaml",
+            )
+        assert (exc_stop_at.value.status, exc_stop_at.value.code) == (400, "invalid-field")
+
+        # 4. Launcher without scenario-handover -> 409 launcher-unsupported for pause, omitted for stop
+        no_ho_features = [f for f in FakeLauncher().features if f != "scenario-handover"]
+        svc_old = ConfigService(root, FakeLauncher(features=no_ho_features))
+        with pytest.raises(Refused) as exc_unsup:
+            await svc_old.build_intent(
+                cfg_file,
+                RunRequest(file="simple.yaml", scenario="scenarios/a.yaml", after_scenario="pause"),
+                "scenarios/a.yaml",
+            )
+        assert (exc_unsup.value.status, exc_unsup.value.code) == (409, "launcher-unsupported")
+
+        old_stop_intent, _, _ = await svc_old.build_intent(
+            cfg_file,
+            RunRequest(file="simple.yaml", scenario="scenarios/a.yaml", after_scenario="stop"),
+            "scenarios/a.yaml",
+        )
+        assert "after_scenario" not in old_stop_intent
+
+    asyncio.run(main())
+
+
+def test_run_manager_write_variables_honors_handover_and_prestate_refusals(tmp_path: Path) -> None:
+    from vehicle_sil_gui.session import Limits as SessionLimits
+    from vehicle_sil_gui.source import PeerInfo
+
+    class _StubSource:
+        def start(self, sink) -> None:
+            sink.on_peers([PeerInfo("Engine", "1", True, [{
+                "name": "engine.demand", "type": "real", "role": "input", "writable": True,
+                "unit": "%", "min": 0.0, "max": 100.0, "step": None, "description": "", "enum": None,
+                "availability": None,
+            }])], [])
+            sink.on_synced()
+
+        async def write(self, writes, at_ns, late, timeout):
+            return 1
+
+        async def close(self) -> None:
+            return
+
+    root = _simple_root(tmp_path)
+    (root / "scenarios").mkdir()
+    (root / "scenarios" / "a.yaml").write_text("vehicle_sil_scenario: 1\nsteps: []\n", encoding="utf-8")
+
+    async def fake_check(argv: list[str], request: Path, descriptions: Path | None = None,
+                         text: bytes | None = None) -> tuple[int, dict]:
+        return 0, default_check_result("simple.yaml")
+
+    async def main() -> None:
+        launcher = FakeLauncher()
+        configs = ConfigService(root, launcher, check_runner=fake_check)
+        runtime = FakeRuntime()
+        stub_src = _StubSource()
+        runs = RunManager(
+            instance="inst-1", launcher=launcher, configs=configs, runtime=runtime,
+            variables=True, source=lambda _addr, _tok: stub_src,
+        )
+        ws = WsGateway(runs, auth=False)
+        runs.bind_hub(ws.hub, ws.wake_watches)
+        try:
+            req = RunRequest(file="simple.yaml", scenario="scenarios/a.yaml", after_scenario="pause")
+            started = await runs.start_run(req, {"file": "simple.yaml", "scenario": "scenarios/a.yaml",
+                                                 "after_scenario": "pause"})
+            run = runs.current
+            assert run is not None
+            run.session.limits = SessionLimits(state_bytes=120)
+            # Connect stub control variables directly
+            run.variables.connect(stub_src)
+
+            # 1. Before first state event (launcher_state is None): refused as scenario-running
+            with pytest.raises(Refused) as exc_pre:
+                await runs.write_variables({"run_id": started["run_id"], "writes": {"Engine": {"engine.demand": 10}}})
+            assert (exc_pre.value.status, exc_pre.value.code) == (409, "scenario-running")
+
+            # 2. During replay (launcher_state says scenario-running): refused
+            run.session.feed_event({
+                "event": "state", "seq": 1, "rev": 1, "handed_over": False, "scenario_over_at_ms": None,
+                "allowed": {"write": {"ok": False, "reason": "scenario-running", "message": "scenario running"}},
+            }, 80)
+            with pytest.raises(Refused) as exc_rep:
+                await runs.write_variables({"run_id": started["run_id"], "writes": {"Engine": {"engine.demand": 10}}})
+            assert (exc_rep.value.status, exc_rep.value.code) == (409, "scenario-running")
+
+            # 3. Oversized handover state (> state_bytes) leaves launcher_state stale, yet unlocks writes
+            run.session.feed_event({
+                "event": "state", "seq": 2, "rev": 2, "handed_over": True, "scenario_over_at_ms": 500,
+                "allowed": {"write": {"ok": True, "reason": None, "message": None}},
+                "outside": ["x" * 400],
+            }, 600)
+            assert run.session.scenario_handed_over is True
+            assert run.session.launcher_state["rev"] == 1
+            wrote = await runs.write_variables({"run_id": started["run_id"], "writes": {"Engine": {"engine.demand": 25}}})
+            assert wrote == {"run_id": started["run_id"], "operation": 1}
+
+            # 4. After normal state with not-running, still refused as not-running even when handed_over is True
+            run.session.feed_event({
+                "event": "state", "seq": 3, "rev": 3, "handed_over": True, "scenario_over_at_ms": 500,
+                "allowed": {"write": {"ok": False, "reason": "not-running", "message": "not running"}},
+            }, 80)
+            with pytest.raises(Refused) as exc_nr:
+                await runs.write_variables({"run_id": started["run_id"], "writes": {"Engine": {"engine.demand": 10}}})
+            assert (exc_nr.value.status, exc_nr.value.code) == (409, "not-running")
+        finally:
+            await runs.shutdown_runtime()
+            await ws.shutdown()
+            await runs.cleanup_timelines()
+            await configs.cleanup()
+
+    asyncio.run(main())

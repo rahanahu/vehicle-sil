@@ -77,6 +77,7 @@ runner::RunChoices run_choices(const RunRequest& request)
     choices.start_timeout_ms = request.host.start_timeout_ms;
     choices.stop_timeout_ms = request.host.stop_timeout_ms;
     choices.collect_control_metrics = !request.host.control_metrics.empty();
+    choices.after_scenario = request.intent.after_scenario;
     return choices;
 }
 

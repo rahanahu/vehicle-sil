@@ -895,6 +895,14 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             w.null("inputs");
             w.null("lines");
         }
+        if (scenario->end_ms)
+        {
+            w.integer("end_ms", *scenario->end_ms);
+        }
+        else
+        {
+            w.null("end_ms");
+        }
         w.end_object();
     }
     w.end_object();

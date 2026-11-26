@@ -100,7 +100,8 @@ def test_the_listing_and_a_check_with_a_scenario(gui) -> None:
         assert (status, body["error"]["code"]) == (400, "outside-root")
         status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": PASS})
         assert status == 200 and body["scenario"] == PASS
-        assert body["check"]["scenario"] == {"file": PASS, "name": "throttle up", "steps": 3, "inputs": [], "lines": []}
+        assert body["check"]["scenario"] == {"file": PASS, "name": "throttle up", "steps": 3, "inputs": [], "lines": [],
+                                             "end_ms": None}
         status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": "simulation.yaml"})
         assert (status, body["error"]["code"]) == (400, "scenario-not-listed")
         assert "GET api/scenarios?file=simulation.yaml" in body["error"]["message"]
@@ -129,7 +130,7 @@ def test_a_run_with_a_scenario_keeps_its_steps_in_the_summary(gui, scenario: str
         assert any(is_step("running", 1)(m) for m in got)
         _, body = await c.get("api/session")
         s = body["session"]["scenario"]
-        assert (s["status"], s["step_count"], s["steps_omitted"]) == (outcome, 3, 0)
+        assert (s["status"], s["step_count"], s["steps_omitted"], s["handed_over"]) == (outcome, 3, 0, False)
         assert [step["status"] for step in s["steps"]] == \
             (["passed"] * 3 if outcome == "passed" else ["passed", "failed", "not_run"])
         assert body["session"]["result"]["simulation"] == "ended" and body["session"]["result"]["result"] == outcome
@@ -230,18 +231,22 @@ def test_the_applied_writes_come_back_as_a_scenario(tmp_path: Path, control_env:
             await ws.until(lambda m: m["type"] == "operation" and m["seq"] == refused and m["done"])
             _, body = await c.get("api/recording")
             r = body["recording"]
-            assert (r["available"], r["writes"], r["omitted"], r["steps"]) == (True, 4, 0, 2), r
+            assert (r["available"], r["writes"], r["omitted"], r["steps"], r["end_ms"]) == (True, 4, 0, 2, None), r
             scenario = yaml.safe_load(r["yaml"])
             assert scenario == {"vehicle_sil_scenario": 1, "name": f"recorded from forever.yaml (run {run_id})",
                                 "steps": [{"at_ms": 0, "set": {"Engine.engine.mode": "on", "Engine.engine.demand": 30.0,
                                                                 "Dashboard.ecu.connected": False}},
                                           {"at_ms": applied, "set": {"Engine.engine.demand": 62.5}}]}
             assert '"on"' in r["yaml"]  # an enum's name is quoted: `on` alone would be a bool in YAML 1.1
+            assert "expect:" not in r["yaml"] and "hold_for_ms:" not in r["yaml"]
             await c.post("api/stop-session", {"run_id": run_id, "instance": started["instance"], "force": False})
-            await ws.until(is_ended)
+            got = await ws.until(is_ended)
+            end_sim_ms = got[-1]["session"]["result"]["timing"]["sim_ms"]
             _, body = await c.get("api/recording")  # the run that ended last
-            # The same steps; only the comment of how far the run went has moved on (to where it stopped)
-            assert body["recording"]["state"] == "ended" and yaml.safe_load(body["recording"]["yaml"]) == scenario
+            r_end = body["recording"]
+            assert r_end["state"] == "ended" and r_end["end_ms"] == end_sim_ms
+            assert yaml.safe_load(r_end["yaml"]) == {**scenario, "end_ms": end_sim_ms}
+            assert "expect:" not in r_end["yaml"] and "hold_for_ms:" not in r_end["yaml"]
         run_async(talk, gui)
 
 
@@ -280,11 +285,43 @@ def test_the_yaml_is_safe_for_any_name_and_value() -> None:
     # A participant whose name has a '.' cannot be named in a scenario: left out, and said
     text, steps, skipped = scenario_yaml([(0, 1, "Bench.1", "x", 1), (0, 2, "E", "mode", 1)], "n", enums, 0, 40)
     data = yaml.safe_load(text)
-    assert (steps, skipped, data["steps"]) == (1, 1, [{"at_ms": 0, "set": {"E.mode": "on"}}])
+    assert (steps, skipped, data["steps"], data["end_ms"]) == (1, 1, [{"at_ms": 0, "set": {"E.mode": "on"}}], 40)
     assert "# Left out: 1 variables of participants whose name has a '.'" in text and "#   Bench.1.x" in text
-    # Where it ends, how far the run went, and how to keep it running
-    assert "ends at its last step (0 ms)" in text and "went on to 40 ms" in text
-    assert "#   - expect: { E.ecu.connected: true }\n#     hold_for_ms: 40\n" in text
+    assert "end_ms: 40\n" in text and "expect:" not in text and "hold_for_ms:" not in text
+    # Mid-run (end_ms=None) omits end_ms, while end_ms==last (0) emits end_ms: 0
+    mid_text, _, _ = scenario_yaml([(0, 1, "E", "mode", 1)], "n", enums, 0, None)
+    assert "# No end_ms recorded: this scenario ends at its last step (0 ms)." in mid_text
+    assert "end_ms" not in yaml.safe_load(mid_text)
+    zero_text, _, _ = scenario_yaml([(0, 1, "E", "mode", 1)], "n", enums, 0, 0)
+    assert yaml.safe_load(zero_text)["end_ms"] == 0
+
+    # Invalid end_ms (< last, < 0, > STEP_MS_MAX, bool) is omitted in scenario_yaml and returned as None in Recording.to_json
+    from vehicle_sil_gui.launcher import STEP_MS_MAX
+    for bad_end in (200, -1, STEP_MS_MAX + 1, True):
+        bad_text, bad_steps, _ = scenario_yaml([(350, 1, "Engine", "engine.throttle", 12.5)], "n", {}, 0, bad_end)
+        assert bad_steps == 1
+        assert "# No end_ms recorded: this scenario ends at its last step (350 ms)." in bad_text
+        assert "end_ms" not in yaml.safe_load(bad_text)
+        rec_bad = Recording()
+        rec_bad.wrote(1, [("Engine", "engine.throttle", 12.5)],
+                      {"seq": 1, "done": True, "peers": {"Engine": {"state": "applied", "applied_at_ms": 350}}})
+        out_bad = rec_bad.to_json("1", "s.yaml", "ended", {}, bad_end)
+        assert out_bad["end_ms"] is None
+        assert "end_ms" not in yaml.safe_load(out_bad["yaml"])
+
+    # Skipped entries (e.g., dotted participant) do not constrain end_ms; empty/all-skipped keeps valid end_ms only
+    rec_dotted = Recording()
+    rec_dotted.wrote(1, [("E", "x", 1), ("Bad.Peer", "y", 2)], {
+        "seq": 1, "done": True,
+        "peers": {
+            "E": {"state": "applied", "applied_at_ms": 100},
+            "Bad.Peer": {"state": "applied", "applied_at_ms": 500},
+        },
+    })
+    out_dotted = rec_dotted.to_json("1", "s.yaml", "ended", {}, 200)
+    assert out_dotted["end_ms"] == 200 and yaml.safe_load(out_dotted["yaml"])["end_ms"] == 200
+    assert Recording().to_json("1", "s.yaml", "ended", {}, 500)["end_ms"] == 500
+    assert Recording().to_json("1", "s.yaml", "ended", {}, STEP_MS_MAX + 1)["end_ms"] is None
 
 
 def test_the_example_of_the_docs_is_what_the_server_writes() -> None:
@@ -317,3 +354,154 @@ def test_the_record_is_bounded_and_waits_for_late_results() -> None:
     out = r.to_json(1, "s.yaml", "running", {})
     assert out["writes"] == recording.MAX_WRITES and out["omitted"] == 2
     assert "# 2 more applied writes are not here: the record keeps at most 2000." in out["yaml"]
+
+
+def test_recording_large_result_preserves_end_ms_and_not_started_omits_it(tmp_path: Path, control_env: dict) -> None:
+    (tmp_path / "big").mkdir()
+    (tmp_path / "ns").mkdir()
+    # 1. Large result (> Limits.object_bytes) still preserves result.timing.sim_ms as recording end_ms
+    with gui_server(tmp_path / "big", env={**control_env, "REPLAY_FAULT": "large-result"}) as gui:
+        async def talk_big(c: Client) -> None:
+            ws = await c.ws()
+            await ws.until(is_synced)
+            status, started = await c.post("api/run", {"file": "simulation.yaml", "start_paused": True, "stop_at_ms": 200})
+            assert status == 200, started
+            run_id = started["run_id"]
+            await ws.until(is_variables("ready"))
+            status, w = await c.post("api/write", {"run_id": run_id, "writes": {"Engine": {"engine.demand": 25}}})
+            assert status == 200, w
+            await c.post("api/time", {"command": "resume"})
+            got = await ws.until(is_ended)
+            assert any(m["type"] == "error" and m["code"] == "kept-limit" for m in got)
+            _, rec = await c.get("api/recording")
+            r = rec["recording"]
+            assert r["state"] == "ended" and r["end_ms"] == 200, r
+            assert yaml.safe_load(r["yaml"])["end_ms"] == 200
+        run_async(talk_big, gui)
+
+    # 2. Run stopped while simulation == "not_started" (waiting for manual participant) leaves end_ms None
+    with gui_server(tmp_path / "ns", env=control_env) as gui:
+        async def talk_ns(c: Client) -> None:
+            ws = await c.ws()
+            await ws.until(is_synced)
+            status, started = await c.post("api/run", {"file": "simulation.yaml", "manual": ["Engine"]})
+            assert status == 200, started
+            if not any(m["type"] == "event" and m["event"]["event"] == "phase"
+                       and m["event"]["phase"] == "waiting" for m in ws.received):
+                await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "phase"
+                               and m["event"]["phase"] == "waiting")
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
+            got = await ws.until(is_ended)
+            assert got[-1]["session"]["result"]["simulation"] == "not_started"
+            _, rec = await c.get("api/recording")
+            assert rec["recording"]["end_ms"] is None
+        run_async(talk_ns, gui)
+
+
+def test_after_scenario_validation_and_handover_lifecycle(tmp_path: Path, control_env: dict) -> None:
+    (tmp_path / "old").mkdir()
+    (tmp_path / "ho").mkdir()
+    # 1. Validation against launcher without scenario-handover feature
+    old_features = ",".join(f for f in CONTROL_FEATURES.split(",") if f != "scenario-handover")
+    with gui_server(tmp_path / "old", env={**control_env, "REPLAY_FEATURES": old_features}) as gui_old:
+        async def talk_old(c: Client) -> None:
+            st, body = await c.post("api/run", {"file": "simulation.yaml", "scenario": PASS, "after_scenario": "pause"})
+            assert (st, body["error"]["code"]) == (409, "launcher-unsupported"), body
+            st2, body2 = await c.post("api/check", {"file": "simulation.yaml", "scenario": PASS, "after_scenario": "pause"})
+            assert (st2, body2["error"]["code"]) == (409, "launcher-unsupported"), body2
+        run_async(talk_old, gui_old)
+
+    # 2. Handover lifecycle + request validation + negative invariants
+    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES}
+    with gui_server(tmp_path / "ho", env=env) as gui:
+        async def talk(c: Client) -> None:
+            # Invalid combinations rejected before starting
+            for endpoint in ("api/run", "api/check"):
+                for bad_body in (
+                    {"file": "simulation.yaml", "after_scenario": "pause"},
+                    {"file": "simulation.yaml", "scenario": PASS, "after_scenario": "pause", "stop_at_ms": 500},
+                    {"file": "simulation.yaml", "scenario": PASS, "after_scenario": "hold"},
+                    {"file": "simulation.yaml", "scenario": PASS, "after_scenario": None},
+                ):
+                    st, body = await c.post(endpoint, bad_body)
+                    assert (st, body["error"]["code"]) == (400, "invalid-field"), (endpoint, bad_body, st, body)
+            st_txt, body_txt = await c.post("api/check", {"file": "simulation.yaml", "text": "x", "after_scenario": "pause"})
+            assert (st_txt, body_txt["error"]["code"]) == (400, "invalid-field"), body_txt
+
+            ws = await c.ws()
+            await ws.until(is_synced)
+
+            # A. Handover run with speed="max"
+            st, started = await c.post("api/run", {
+                "file": "simulation.yaml", "scenario": PASS, "after_scenario": "pause", "speed": "max",
+            })
+            assert st == 200, started
+            sid, inst = started["run_id"], started["instance"]
+            await ws.until(is_variables("ready"))
+            ho_pred = lambda m: (
+                m["type"] == "event" and m["event"]["event"] == "state" and m["event"].get("handed_over") is True
+            )
+            if not any(ho_pred(m) for m in ws.received):
+                await ws.until(ho_pred)
+            ho_state = next(m["event"] for m in reversed(ws.received) if ho_pred(m))
+            assert ho_state["paused"] is True and ho_state["paused_at_ms"] == 1000
+            assert ho_state["scenario"] is True and ho_state["scenario_over_at_ms"] == 1000
+            assert ho_state["allowed"]["write"]["ok"] is True
+
+            _, sess_body = await c.get("api/session")
+            sc = sess_body["session"]["scenario"]
+            assert sc["handed_over"] is True and sc["status"] == "passed" and sc["over_at_ms"] == 1000
+
+            # Holds at speed="max" without advancing
+            await asyncio.sleep(0.25)
+            _, sess_held = await c.get("api/session")
+            assert sess_held["session"]["time"]["sim_ms"] == 1000
+            assert sess_held["session"]["launcher_state"]["paused"] is True
+
+            # Manual write + step while handed over
+            before_step = len(ws.received)
+            st_w, w_body = await c.post("api/write", {"run_id": sid, "writes": {"Engine": {"engine.demand": 75}}})
+            assert st_w == 200, w_body
+            queued_pred = lambda m: m["type"] == "operation" and m["seq"] == w_body["operation"] and m["state"] == "queued"
+            if not any(queued_pred(m) for m in ws.received[before_step:]):
+                await ws.until(queued_pred)
+            st_step, _ = await c.post("api/time", {"command": "step", "ms": 100})
+            assert st_step == 200
+            done_pred = lambda m: m["type"] == "operation" and m["seq"] == w_body["operation"] and m["done"]
+            if not any(done_pred(m) for m in ws.received[before_step:]):
+                await ws.until(done_pred)
+            step_time_pred = lambda m: m["type"] == "event" and m["event"]["event"] == "time" and m["event"]["sim_ms"] == 1100
+            if not any(step_time_pred(m) for m in ws.received[before_step:]):
+                await ws.until(step_time_pred)
+
+            await c.post("api/stop-session", {"run_id": sid, "instance": inst, "force": False})
+            got_end = await ws.until(is_ended)
+            end_sc = got_end[-1]["session"]["scenario"]
+            assert end_sc["handed_over"] is True and end_sc["status"] == "passed"
+
+            # B. Negative cases: normal stop, failed scenario, incomplete stop all keep handed_over False
+            for run_body, stop_early, expected_status in (
+                ({"file": "simulation.yaml", "scenario": PASS, "after_scenario": "stop"}, False, "passed"),
+                ({"file": "simulation.yaml", "scenario": FAIL, "after_scenario": "pause"}, False, "failed"),
+                ({"file": "forever.yaml", "scenario": PASS, "after_scenario": "pause", "speed": 0.001}, True, "incomplete"),
+            ):
+                before_len = len(ws.received)
+                st_n, s_n = await c.post("api/run", run_body)
+                assert st_n == 200, s_n
+                if stop_early:
+                    step2 = lambda m: (
+                        m["type"] == "event" and m["event"]["event"] == "scenario_step" and m["event"]["index"] == 2
+                    )
+                    if not any(step2(m) for m in ws.received[before_len:]):
+                        await ws.until(step2)
+                    await c.post("api/stop-session", {"run_id": s_n["run_id"], "instance": s_n["instance"], "force": False})
+                if not any(is_ended(m) for m in ws.received[before_len:]):
+                    await ws.until(is_ended)
+                neg_events = ws.received[before_len:]
+                assert not any(m["type"] == "event" and m["event"]["event"] == "state"
+                               and m["event"].get("handed_over") is True for m in neg_events)
+                _, neg_sess = await c.get("api/session")
+                assert neg_sess["session"]["scenario"]["status"] == expected_status
+                assert neg_sess["session"]["scenario"]["handed_over"] is False
+            await ws.close()
+        run_async(talk, gui)

@@ -18,7 +18,7 @@ namespace {
 
 const std::vector<std::string> kKeys{"vehicle_sil_run_request", "variant", "params",      "scenario",     "disable", "enable",
                                      "manual",                  "connect", "time_policy", "speed",        "start_paused",
-                                     "strict",                  "stop_at_ms", "late_tolerance_ms"};
+                                     "strict",                  "stop_at_ms", "late_tolerance_ms", "after_scenario"};
 
 class Reader : private config::detail::YamlReader
 {
@@ -156,6 +156,22 @@ public:
                 else
                 {
                     intent.late_tolerance_ms = value;
+                }
+            }
+            else if (key == "after_scenario")
+            {
+                const std::optional<config::AfterScenario> after =
+                    quoted(child) ? config::after_scenario_named(config::detail::to_string(tree_.val(child))) : std::nullopt;
+                if (after)
+                {
+                    intent.after_scenario = *after;
+                }
+                else
+                {
+                    error("value", doc_.line(child),
+                          "after_scenario must be \"stop\" (end the run when the scenario finishes; the default) or "
+                          "\"pause\" (pause the run for manual control when the scenario passes), not " +
+                              shown_value(child));
                 }
             }
             if (findings_.size() == before)

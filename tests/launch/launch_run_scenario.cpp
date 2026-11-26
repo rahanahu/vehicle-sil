@@ -57,7 +57,7 @@ void scenario(const Options& o)
     const std::string out = lf(json.standard_output);
     const std::string scenario = scenario_json(out);
     require(contains(scenario, "  \"scenario\": {\n    \"file\": \"scenarios/throttle_step.yaml\",\n    \"name\": \"throttle step\",\n"
-                               "    \"status\": \"passed\",\n    \"over_at_ms\": 705,\n    \"steps\": [\n") &&
+                               "    \"status\": \"passed\",\n    \"over_at_ms\": 705,\n    \"end_ms\": null,\n    \"steps\": [\n") &&
                 contains(scenario, "      {\n        \"index\": 2,\n        \"line\": 10,\n        \"kind\": \"wait_until\",\n"
                                    "        \"text\": \"wait_until Engine.engine.speed ge 1700 (timeout 500 ms)\",\n"
                                    "        \"status\": \"passed\",\n        \"start_ms\": 0,\n        \"at_ms\": 330,\n"
@@ -898,5 +898,119 @@ void scenario_failures(const Options& o)
             require(contains(run.standard_error, "error: --control needs a vehicle_sil_launch built with the control server"),
                     run.standard_error);
         }
+    }
+    {
+        // end_ms holds the scenario cleanly, and request after_scenario: "pause" with --stdin-commands
+        // hands over at end_ms and waits paused until stdin sends stop.
+        const fs::path dir = scenario_ecus(o, "",
+                                           "vehicle_sil_scenario: 1\nname: handover stdin\nend_ms: 40\nsteps:\n"
+                                           "  - at_ms: 0\n    set: { Body.level: 25 }\n"
+                                           "  - at_ms: 30\n    expect: { Body.level: 25 }\n");
+        write_file(dir / "handover.request.json",
+                   "{\"vehicle_sil_run_request\": 1, \"scenario\": \"s.yaml\", \"after_scenario\": \"pause\"}");
+        Live live(o, dir, {"serve", "--once", "--request", "handover.request.json", "sim.yaml"});
+        const std::string state = live.wait_for({"\"event\":\"state\"", "\"handed_over\":true", "\"scenario_over_at_ms\":40"});
+        require(contains(state, "\"paused\":true"), "handover state paused:\n" + state);
+        live.write("{\"command\":\"stop\"}\n");
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 0, "handover via stdin-commands stopped by stdin: " + code_text(status));
+        const std::string& result = lines.back();
+        require(contains(result, "\"result\":\"stopped\",\"end\":\"stopped\",\"ok\":true,") &&
+                    contains(result, "\"scenario\":{\"file\":\"s.yaml\",\"name\":\"handover stdin\",\"status\":\"passed\","
+                                     "\"over_at_ms\":40,\"end_ms\":40,"),
+                "result event reports scenario passed at 40 ms and run stopped:\n" + result);
+        log("CHECK end_ms and after_scenario: pause handover via stdin-commands -> ok");
+    }
+    {
+        // Dither grid write failing in (last_step_at, end_ms] after all steps already passed:
+        // fails at scenario level without mutating a Passed step or emitting a contradictory event.
+        const fs::path dir = scenario_ecus(o, "",
+                                           "vehicle_sil_scenario: 1\n"
+                                           "end_ms: 80\n"
+                                           "inputs:\n"
+                                           "  Body.level: { dither: { square: { amplitude: 5, period_ms: 80, phase_deg: 180 } } }\n"
+                                           "steps:\n"
+                                           "  - at_ms: 0\n    set: { Body.level: 97 }\n"
+                                           "  - at_ms: 0\n    expect: { Body.level: 92 }\n");
+        const Captured events = launch(o, {"serve", "--once", "--scenario", "s.yaml", "sim.yaml"}, dir);
+        expect_code(events, 1, "serve --once dither grid failure after all steps passed");
+        std::vector<std::string> step_events;
+        std::istringstream in(lf(events.standard_output));
+        std::string last_line;
+        for (std::string line; std::getline(in, line);)
+        {
+            if (contains(line, "\"event\":\"scenario_step\""))
+            {
+                step_events.push_back(line);
+                require(!contains(line, "\"status\":\"failed\""),
+                        "no scenario_step event may be failed when all steps passed:\n" + line);
+            }
+            if (!line.empty())
+            {
+                last_line = line;
+            }
+        }
+        require(std::any_of(step_events.begin(), step_events.end(),
+                            [](const std::string& l) { return contains(l, "\"index\":2") && contains(l, "\"status\":\"passed\""); }),
+                "step 2 emitted passed:\n" + events.standard_output);
+        require(contains(last_line, "\"result\":\"failed\"") && contains(last_line, "\"code\":\"scenario-write\"") &&
+                    contains(last_line, "\"status\":\"failed\",\"over_at_ms\":") &&
+                    !contains(last_line, "\"status\":\"failed\",\"start_ms\":"),
+                "result event reports scenario-level failure without mutating steps:\n" + last_line);
+
+        const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json", "--timeline", "tl.json"}, dir);
+        expect_code(run, 1, "run --json --timeline dither grid failure after all steps passed");
+        const std::string sc_json = scenario_json(lf(run.standard_output));
+        require(contains(sc_json, "\"status\": \"failed\"") && !contains(sc_json, "\"status\": \"failed\",\n        \"start_ms\""),
+                "run --json keeps all steps passed:\n" + sc_json);
+        require(contains(run.standard_output, "\"code\": \"scenario-write\"") &&
+                    contains(run.standard_output, "wrote 102 at 40 ms"),
+                "run --json emits scenario-write finding:\n" + run.standard_output);
+        const std::string tl = lf(read_text(dir / "tl.json"));
+        require(contains(tl, "\"status\": \"failed\"") && contains(tl, "\"recorded_to_ms\": 40,") &&
+                    contains(tl, "\"not_applied_from\": 4,") && contains(tl, "\"code\": \"scenario-write\"") &&
+                    !contains(tl, "\"status\": \"failed\",\n      \"start_ms\""),
+                "timeline.json keeps steps passed and records refused write at 40 ms:\n" + tl);
+        log("CHECK dither grid failure after all steps passed -> ok");
+    }
+    {
+        // after_scenario: "pause" with a time-locked bridge is refused (outside-real-time);
+        // with time_policy: "free" it emits outside-not-real-time note.
+        const fs::path dir = scenario_dir(
+            o,
+            "vehicle_sil_simulation: 2\n"
+            "networks: []\n"
+            "participants:\n"
+            "  - name: Body\n"
+            "    command: [" + ecu(o) + "]\n"
+            "  - name: Gateway\n"
+            "    role: bridge\n"
+            "    describe: false\n"
+            "    required: false\n"
+            "    command: [" + helper(o) + "]\n",
+            {{"Body", "scenario-variables"}});
+        write_file(dir / "s.yaml", "vehicle_sil_scenario: 1\nend_ms: 40\nsteps:\n  - at_ms: 0\n    set: { Body.level: 10 }\n");
+        write_file(dir / "rt.request.json",
+                   "{\"vehicle_sil_run_request\": 1, \"scenario\": \"s.yaml\", \"after_scenario\": \"pause\"}");
+        write_file(dir / "free.request.json",
+                   "{\"vehicle_sil_run_request\": 1, \"scenario\": \"s.yaml\", \"after_scenario\": \"pause\", "
+                   "\"time_policy\": \"free\"}");
+
+        const Captured chk_rt = launch(o, {"check", "sim.yaml", "--json", "--request", "rt.request.json"}, dir);
+        expect_code(chk_rt, 1, "check with bridge + after_scenario: pause");
+        require(contains(chk_rt.standard_output, "\"code\": \"outside-real-time\""),
+                "check refuses after_scenario pause under time lock:\n" + chk_rt.standard_output);
+
+        const Captured run_rt = launch(o, {"run", "sim.yaml", "--json", "--request", "rt.request.json", "--stdin-commands"}, dir);
+        expect_code(run_rt, 1, "run with bridge + after_scenario: pause");
+        require(contains(run_rt.standard_output, "\"result\": \"check_failed\"") &&
+                    contains(run_rt.standard_output, "\"code\": \"outside-real-time\""),
+                "run refuses after_scenario pause under time lock:\n" + run_rt.standard_output);
+
+        const Captured chk_free = launch(o, {"check", "sim.yaml", "--json", "--request", "free.request.json"}, dir);
+        expect_code(chk_free, 0, "check with bridge + time_policy: free + after_scenario: pause");
+        require(contains(chk_free.standard_output, "\"code\": \"outside-not-real-time\""),
+                "check emits outside-not-real-time note under free time_policy:\n" + chk_free.standard_output);
+        log("CHECK after_scenario: pause respects time_lock -> ok");
     }
 }

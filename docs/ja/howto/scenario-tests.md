@@ -726,6 +726,38 @@ line  step                                                             result  a
 | 切断している間に ECU の中で動き続けるもの | [internals/execution.md](../internals/execution.md) の「バスからの切断（`ecu.connected`）」 |
 | 切断したときと戻したときの J1939 の動作 | [j1939-guide.md](../j1939-guide.md) の「ECU をバスから切断する（`ecu.connected`）」 |
 
+## 終了時刻までの再現と手動操作への引き継ぎ
+
+最後の `set` や確認の後もしばらくシミュレーションを進めたい場合（たとえば対話実行から記録したシナリオで、最後の `Engine.engine.throttle` 書き込みに対する `Dashboard` などの下流 ECU の応答まで再現したい場合）は、ダミーの `set` や常に真の `expect` を足す代わりに、最上位に `end_ms` を書きます。
+
+```yaml
+vehicle_sil_scenario: 1
+name: throttle replay
+end_ms: 1500
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - at_ms: 400
+    set: { Engine.engine.throttle: 20 }
+```
+
+- `vehicle_sil_launch run simulation.yaml --scenario replay.yaml` を実行すると、`end_ms`（1500 ms）まで仮想時間を進めてから終了します。`end_ms` のないシナリオは、従来どおり手順が完了した時点で終了します（[scenario.md](../scenario.md) の「終了時刻（`end_ms`）」）。
+- これらの初期操作を再現した後、**同じ Run** のまま（ECU の内部状態と仮想時刻を保って）手動テストを続けたいときは、`"after_scenario": "pause"` を書いた要求ファイルを `--control`（または `--stdin-commands`）と一緒に渡します。
+
+```json
+{
+  "vehicle_sil_run_request": 1,
+  "scenario": "replay.yaml",
+  "after_scenario": "pause"
+}
+```
+
+```sh
+vehicle_sil_launch run simulation.yaml --request replay.request.json --control 0
+```
+
+シナリオの再生中は Control API クライアントからの書き込みは拒否されます（`scenario-running`）。すべての手順が成功して `end_ms` に達すると、ランチャーは `1500 ms` で一時停止し（`state` の `handed_over: true`）、同じ Run で書き込みを解放するため、[信号を外から操作する](operate-signals.md) と同様に値を書き込んで `step` や `resume` ができます。失敗、`incomplete`、または既定の `"after_scenario": "stop"` では書き込みは解放されず、そのまま終了します（[simulation-run.md](../simulation-run.md) の「シナリオを付けた実行（`--scenario`）」と [control-api.md](../control-api.md) の「シナリオの実行中」）。
+
 ## 注意点
 
 シナリオが見る値は、ECU のサンプルです。シナリオつきの実行では、シナリオが値を読む ECU は、ECU のステップごとにサンプルを送信します。次の表の上の 2 つは、`samples: as_sent` を書いたシナリオだけで起きます。このシナリオは、それぞれの ECU が `sample_period`（既定は仮想時間の 10 ms）ごとに送信するサンプルを使います（[scenario.md](../scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。
@@ -737,7 +769,7 @@ line  step                                                             result  a
 | 最初のステップの前に、実行が `scenario-not-observed` で失敗する | シナリオが値を読む ECU が、ステップより粗い頻度で値を送信しています。その実行ファイルが `--sample-every-step` を受け取らないか、受け取ると言って従っていません（自分で control agent を作る実行ファイル）。どちらかは、指摘の文にあります。 | 実行ファイルをこの vehicle-sil で作り直すか、ステップごとに値を送信するようにします（`sample_period` を 0）。できなければ、シナリオの最上位に `samples: as_sent` を書きます。 |
 | 待つ手順の次の `after_ms` が、表の `at` から数えた時刻とずれる | 待つ手順が終わる時刻は、条件が成り立ったサンプルの時刻（`at`）の少し後です。 | 時刻に余裕を持たせます。決め方は、[scenario.md](../scenario.md) の「時刻」にあります。 |
 | `--scenario cannot be used with --start-paused`（終了コード 4） | シナリオは、時刻 0 の値を自分で書き込んで実行します。 | `--start-paused` を外します。 |
-| `--control` で接続したクライアントが、シナリオの実行中に値を書き込めない | シナリオの実行中、クライアントは書き込めません。シナリオのファイルにない書き込みは、結果を変えるからです。読む、待つ、一時停止する、ステップで進める、止めることはできます（一時停止とステップ実行は、結果を変えません）。 | 値を変えながら確認するときは、[信号を外から操作する](operate-signals.md) の方法を使います。 |
+| `--control` で接続したクライアントが、シナリオの実行中に値を書き込めない | シナリオの実行中、クライアントは書き込めません。シナリオのファイルにない書き込みは、結果を変えるからです。読む、待つ、一時停止する、ステップで進める、止めることはできます（一時停止とステップ実行は、結果を変えません）。 | 再生成功後に書き込むには `--request` ファイルで `"after_scenario": "pause"` を使います。最初から対話的に書き込むときは、[信号を外から操作する](operate-signals.md) の方法を使います。 |
 | ある participant の変数を、シナリオで使えない | 無効にした participant、`describe: false` の participant、実時間で動く participant の変数は使えません。 | [scenario.md](../scenario.md) の「一緒に使えない引数と制限」を確認します。 |
 
 サンプルのルールは、[scenario.md](../scenario.md) の「値の見え方」にあります。
@@ -752,6 +784,8 @@ line  step                                                             result  a
 | `scenario-wave` | 手順 `wave` |
 | `scenario-motion-expect` | `ramp` と `wave` の横の `expect` |
 | `scenario-points-file` | CSV ファイルの `points` |
+| `scenario-end-ms` | 最上位の `end_ms` |
+| `scenario-handover` | `"after_scenario": "pause"` による手動引き継ぎ |
 
 ## 次に読むもの
 

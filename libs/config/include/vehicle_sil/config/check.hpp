@@ -386,6 +386,7 @@ struct CheckReport
     /// The intent judged with run_timing (the outer empty speed means no speed was asked).
     std::optional<std::optional<double>> checked_speed{};
     bool checked_start_paused = false;
+    AfterScenario checked_after_scenario = AfterScenario::Stop;
 
     [[nodiscard]] std::size_t errors() const;
     [[nodiscard]] std::size_t warnings() const;

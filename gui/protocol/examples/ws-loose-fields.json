@@ -215,6 +215,8 @@
           "by": null
         },
         "scenario": false,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -573,6 +575,8 @@
           "by": null
         },
         "scenario": false,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -667,6 +671,8 @@
           "by": null
         },
         "scenario": false,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -849,6 +855,8 @@
           "by": null
         },
         "scenario": false,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -1017,6 +1025,8 @@
           "by": null
         },
         "scenario": false,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": true,
@@ -1192,6 +1202,8 @@
           "by": null
         },
         "scenario": false,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": false,
@@ -1286,6 +1298,8 @@
           "by": null
         },
         "scenario": false,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": false,
@@ -1458,6 +1472,8 @@
           "by": null
         },
         "scenario": false,
+        "handed_over": false,
+        "scenario_over_at_ms": null,
         "allowed": {
           "pause": {
             "ok": false,
@@ -2312,6 +2328,8 @@
             "by": null
           },
           "scenario": false,
+          "handed_over": false,
+          "scenario_over_at_ms": null,
           "allowed": {
             "pause": {
               "ok": false,

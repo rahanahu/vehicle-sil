@@ -569,6 +569,10 @@ TestReport test_file(const TestOptions& options)
         report.findings = std::move(errors);
         return report;
     };
+    if (auto errors = validate_request(options.request, RequestCommand::Test); !errors.empty())
+    {
+        return refuse(std::move(errors));
+    }
 
     // The file alone, without a variant: what it defines. For a file with variants this is the
     // usage error of a check without --variant, which lists them.

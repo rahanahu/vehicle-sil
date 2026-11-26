@@ -191,9 +191,42 @@
                 <code>{{ scenarios.value().directory }}</code> に .yaml を置くと選べます。
               </p>
             } @else if (chosenScenario() !== null) {
-              <p class="hint" i18n>
-                シナリオを最後まで進めると、ランチャーが止めて合否を出します。シナリオの実行中は、変数を書けません。
-              </p>
+              <div class="after-scenario">
+                <span id="after-scenario-label" class="after-scenario-label" i18n
+                  >シナリオ終了後</span
+                >
+                <mat-radio-group
+                  aria-labelledby="after-scenario-label"
+                  data-testid="after-scenario"
+                  [value]="afterScenario()"
+                  (change)="selectAfterScenario($event.value)"
+                >
+                  <mat-radio-button [value]="'stop'" data-testid="after-scenario-stop" i18n
+                    >停止して終了する</mat-radio-button
+                  >
+                  <mat-radio-button
+                    [value]="'pause'"
+                    data-testid="after-scenario-pause"
+                    [disabled]="!handoverSupported()"
+                    i18n
+                    >一時停止して手動操作へ引き継ぐ</mat-radio-button
+                  >
+                </mat-radio-group>
+                @if (!handoverSupported()) {
+                  <p class="hint" data-testid="handover-unsupported" i18n>
+                    このランチャーはシナリオ終了後の引き継ぎに対応していません。
+                  </p>
+                }
+              </div>
+              @if (pauseAfterScenario()) {
+                <p class="hint" data-testid="scenario-handover-hint" i18n>
+                  シナリオが通ると、終了仮想時刻で一時停止して同じ実行のまま手動操作へ引き継ぎます。シナリオの実行中は、変数を書けません。
+                </p>
+              } @else {
+                <p class="hint" i18n>
+                  シナリオを最後まで進めると、ランチャーが止めて合否を出します。シナリオの実行中は、変数を書けません。
+                </p>
+              }
             }
           } @else if (scenarios.error(); as error) {
             <p class="error" role="alert">
@@ -221,17 +254,23 @@
               type="text"
               inputmode="numeric"
               data-testid="stop-at-ms"
-              [value]="stopAt()"
-              [disabled]="running() || !run.ready()"
-              [attr.aria-invalid]="stopAtTouched() && stopAtInvalid()"
-              [aria-describedby]="stopAtTouched() && stopAtInvalid() ? 'stop-at-error' : ''"
+              [value]="pauseAfterScenario() ? '' : stopAt()"
+              [disabled]="running() || !run.ready() || pauseAfterScenario()"
+              [attr.aria-invalid]="!pauseAfterScenario() && stopAtTouched() && stopAtInvalid()"
+              [aria-describedby]="
+                !pauseAfterScenario() && stopAtTouched() && stopAtInvalid() ? 'stop-at-error' : ''
+              "
               #stopAtInput
               (input)="stopAtEdited.set(true); stopAt.set(stopAtInput.value)"
               (blur)="stopAtTouched.set(true)"
             />
-            <mat-hint i18n>空欄なら自動停止しません。1〜1000000000000 ms。</mat-hint>
+            @if (pauseAfterScenario()) {
+              <mat-hint i18n>引き継ぎを選ぶと、停止時刻は使えません。</mat-hint>
+            } @else {
+              <mat-hint i18n>空欄なら自動停止しません。1〜1000000000000 ms。</mat-hint>
+            }
           </mat-form-field>
-          @if (stopAtTouched() && stopAtInvalid()) {
+          @if (!pauseAfterScenario() && stopAtTouched() && stopAtInvalid()) {
             <p id="stop-at-error" class="error" role="status" i18n>
               停止時刻は 1 から 1000000000000 までの整数にしてください。
             </p>
@@ -373,6 +412,8 @@
               <app-scenario-panel
                 [scenario]="scenario"
                 [running]="runActive(session) && !session.result"
+                [paused]="status.run === 'paused'"
+                [crashed]="status.run === 'crashed'"
               />
             </mat-card-content>
           </mat-card>
@@ -382,7 +423,11 @@
               <mat-card-title><h2 i18n>操作をシナリオに</h2></mat-card-title>
             </mat-card-header>
             <mat-card-content>
-              <app-recording-panel [session]="session.id" [running]="runActive(session)" />
+              <app-recording-panel
+                [session]="session.id"
+                [running]="runActive(session)"
+                [hasResult]="!!session.result"
+              />
             </mat-card-content>
           </mat-card>
         }

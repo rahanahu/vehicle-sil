@@ -134,7 +134,8 @@ struct Rule
 constexpr std::array<Rule, 10> kRules{{
     {reason::kScenarioRunning,
      [](const Query& q) {
-         return q.entry == Entry::ControlServer && q.situation.scenario && q.is(Operation::Write);
+         return q.entry == Entry::ControlServer && q.situation.scenario && !q.situation.handed_over &&
+                q.is(Operation::Write);
      },
      [](const Query&) {
          return std::string(

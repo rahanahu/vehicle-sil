@@ -386,10 +386,8 @@ class RunManager:
             return {"recording": None}
         enums = {(peer, name): entry["enum"] for peer, p in run.variables.peers.items()
                  for name, entry in p.index.items() if entry.get("enum")}
-        sim_ms = (run.session.time or {}).get("sim_ms")  # how far the run has gone (its last time event)
-        run_ms = sim_ms if isinstance(sim_ms, int) and not isinstance(sim_ms, bool) else None
         return {"recording": run.recording.to_json(run.session.id, run.session.file,
-                                                   run.session.state, enums, run_ms)}
+                                                   run.session.state, enums, run.session.ended_sim_ms)}
 
     async def get_timeline_file(self, run_id: str) -> tuple[Path, str]:
         path = await asyncio.to_thread(self.timelines.file_of, run_id) if run_id else None
@@ -784,7 +782,10 @@ class RunManager:
                                                   f"running is {run.session.id}: nothing was written; look at "
                                                   "the variables of this run before writing to it")
         said = self._launcher_refuses(run, "write")
-        if said is None and run.session.launcher_state is None and run.session.scenario is not None:
+        if said is not None and said[0] == "scenario-running" and run.session.scenario_handed_over:
+            said = None
+        if said is None and run.session.launcher_state is None and run.session.scenario is not None \
+                and not run.session.scenario_handed_over:
             said = ("scenario-running", f"the run {run.session.id} plays the scenario {run.session.scenario}: "
                                         "variables cannot be written while it runs (the scenario must give the "
                                         "same result every time); read them, or start a run without a scenario "

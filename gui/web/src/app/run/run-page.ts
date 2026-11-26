@@ -15,8 +15,10 @@ import { MatCardModule } from '@angular/material/card';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
+import { MatRadioModule } from '@angular/material/radio';
 import { MatSelectModule } from '@angular/material/select';
 import {
+  AfterScenario,
   CheckResult,
   Intent,
   Speed,
@@ -78,6 +80,10 @@ interface RunChoices {
   stopAt?: string;
   stopAtEdited?: boolean;
   stopSession?: string | null;
+  /** 選んだシナリオ（古い持ち越しにはない）。 */
+  scenario?: string | null;
+  /** シナリオ終了後の動作（古い持ち越しにはない）。 */
+  afterScenario?: AfterScenario;
   /** 止めた状態で始めるか（古い持ち越しにはない）。 */
   startPaused?: boolean;
   logSource: string;
@@ -98,6 +104,12 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !v['disable'].every(isText) ||
     !(v['manual'] === undefined || (Array.isArray(v['manual']) && v['manual'].every(isText))) ||
     !speedOk ||
+    !(v['scenario'] === undefined || v['scenario'] === null || isText(v['scenario'])) ||
+    !(
+      v['afterScenario'] === undefined ||
+      v['afterScenario'] === 'stop' ||
+      v['afterScenario'] === 'pause'
+    ) ||
     !(v['startPaused'] === undefined || typeof v['startPaused'] === 'boolean') ||
     !(v['stopAt'] === undefined || typeof v['stopAt'] === 'string') ||
     !(v['stopAtEdited'] === undefined || typeof v['stopAtEdited'] === 'boolean') ||
@@ -146,6 +158,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     MatCheckboxModule,
     MatFormFieldModule,
     MatInputModule,
+    MatRadioModule,
     MatSelectModule,
     CheckPanel,
     FindingsList,
@@ -443,10 +456,16 @@ export class RunPage {
     () => {
       const file = this.selected();
       const session = this.session();
+      const carried = this.carriedFor(session?.id ?? null);
       return {
         file,
         id: session?.id ?? null,
-        scenario: session && session.file === file ? (session.scenario?.file ?? null) : null,
+        scenario:
+          carried && carried.file === file && carried.scenario !== undefined
+            ? carried.scenario
+            : session && session.file === file
+              ? (session.scenario?.file ?? null)
+              : null,
       };
     },
     { equal: (a, b) => a.file === b.file && a.id === b.id },
@@ -461,6 +480,49 @@ export class RunPage {
     if (choice === null || !this.scenarios.hasValue()) return null;
     return this.scenarios.value().scenarios.some((s) => s.path === choice) ? choice : null;
   });
+  /** ランチャーがシナリオ終了後の手動操作への引き継ぎに対応しているか。 */
+  protected readonly handoverSupported = computed(
+    () => this.app.hasValue() && this.app.value().launcher.features.includes('scenario-handover'),
+  );
+  private readonly afterScenarioSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const id = session?.id ?? null;
+      const scenario = this.scenarioChoice();
+      const carried = this.carriedFor(id);
+      return {
+        file,
+        id,
+        scenario,
+        value:
+          scenario !== null &&
+          carried &&
+          carried.file === file &&
+          (carried.afterScenario === 'stop' || carried.afterScenario === 'pause')
+            ? carried.afterScenario
+            : ('stop' as AfterScenario),
+      };
+    },
+    {
+      equal: (a, b) =>
+        a.file === b.file && a.id === b.id && a.scenario === b.scenario && a.value === b.value,
+    },
+  );
+  protected readonly afterScenario = linkedSignal<
+    { file: string | null; id: string | null; scenario: string | null; value: AfterScenario },
+    AfterScenario
+  >({
+    source: this.afterScenarioSource,
+    computation: ({ value }) => value,
+  });
+  /** シナリオ終了後に一時停止して手動操作へ引き継ぐ設定か。 */
+  protected readonly pauseAfterScenario = computed(
+    () =>
+      this.chosenScenario() !== null &&
+      this.handoverSupported() &&
+      this.afterScenario() === 'pause',
+  );
 
   /**
    * 次の実行で外につなぐ先（部品 <vsil-connect> が選ぶ。最初は空 = つながない）。同じページの間は実行の後も残り
@@ -492,16 +554,21 @@ export class RunPage {
   private readonly intent = computed<Intent>(
     () => {
       const scenario = this.chosenScenario();
+      const pauseAfter =
+        scenario !== null && this.handoverSupported() && this.afterScenario() === 'pause';
       const speed = this.speed();
       const paused = scenario === null && this.startPaused();
       const connect = this.connectToSend();
-      const stopAt = this.stopAt().trim();
+      const stopAt = pauseAfter ? '' : this.stopAt().trim();
       return {
         disable: [...this.disabled()].sort(),
         manual: this.manualToSend(),
         ...(scenario !== null ? { scenario } : {}),
+        ...(pauseAfter ? { after_scenario: 'pause' as const } : {}),
         ...(speed !== null ? { speed } : {}),
-        ...(!this.stopAtInvalid() && stopAt !== '' ? { stop_at_ms: Number(stopAt) } : {}),
+        ...(!pauseAfter && !this.stopAtInvalid() && stopAt !== ''
+          ? { stop_at_ms: Number(stopAt) }
+          : {}),
         ...(paused ? { start_paused: true } : {}),
         ...(connect !== null ? { connect } : {}),
       };
@@ -575,7 +642,7 @@ export class RunPage {
     if (this.speedInvalid()) {
       return [$localize`速度の倍率が範囲の外です。`];
     }
-    if (this.stopAtInvalid())
+    if (!this.pauseAfterScenario() && this.stopAtInvalid())
       return [$localize`停止時刻は 1 から 1000000000000 までの整数にしてください。`];
     // 選んだシナリオを送れないうちは始めない（シナリオなしの実行が始まらないように）
     const scenario = this.scenarioChoice();
@@ -716,6 +783,8 @@ export class RunPage {
         stopAt: this.stopAt(),
         stopAtEdited: this.stopAtEdited(),
         stopSession: this.session()?.file === this.selected() ? (this.session()?.id ?? null) : null,
+        scenario: this.scenarioChoice(),
+        afterScenario: this.afterScenario(),
         startPaused: this.startPaused(),
         logSource: this.logSource(),
       }),
@@ -726,8 +795,9 @@ export class RunPage {
     // 戻り、それを書く
     const own = computed(
       () => {
-        const { disable, manual, scenario, speed, start_paused, stop_at_ms } = this.intent();
-        return { disable, manual, scenario, speed, start_paused, stop_at_ms };
+        const { disable, manual, scenario, after_scenario, speed, start_paused, stop_at_ms } =
+          this.intent();
+        return { disable, manual, scenario, after_scenario, speed, start_paused, stop_at_ms };
       },
       { equal: sameIntent },
     );
@@ -739,6 +809,7 @@ export class RunPage {
         disable: undefined,
         manual: undefined,
         scenario: undefined,
+        after_scenario: undefined,
         speed: undefined,
         start_paused: undefined,
         stop_at_ms: undefined,
@@ -772,6 +843,11 @@ export class RunPage {
 
   protected selectScenario(scenario: string | null): void {
     this.scenarioChoice.set(scenario);
+    if (scenario === null) this.afterScenario.set('stop');
+  }
+
+  protected selectAfterScenario(value: AfterScenario): void {
+    this.afterScenario.set(value);
   }
 
   /** この実行の操作をシナリオとして保存できるか（変数を読み書きできる実行で、シナリオの実行でない）。 */

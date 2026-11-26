@@ -108,6 +108,8 @@ export {
   isLauncherAlive,
   isLauncherFinishing,
   isRunActive,
+  isScenarioHandedOver,
+  isScenarioRunning,
   isSessionRunning,
   launcherAnswer,
   phaseIndex,
@@ -153,6 +155,7 @@ export {
   severityRank,
 } from './protocol';
 export type {
+  AfterScenario,
   AppInfo,
   AuthMessage,
   CheckNetwork,

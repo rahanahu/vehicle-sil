@@ -520,6 +520,9 @@ SCENARIO_SAMPLES = [
     ("JSON with a dither",
      '{"vehicle_sil_scenario": 1, "inputs": {"Engine.engine.throttle": {"dither": {"triangle": {"amplitude": 2, "period_ms": 40}}}}, '
      '"steps": [{"set": {"Engine.engine.throttle": 50}}, {"dither": {"Engine.engine.throttle": "none"}}]}', "valid"),
+    ("end_ms 0 and positive", "vehicle_sil_scenario: 1\nend_ms: 500\nsteps:\n" + SET, "valid"),
+    ("end_ms negative", "vehicle_sil_scenario: 1\nend_ms: -1\nsteps: []\n", "invalid"),
+    ("end_ms as a float", "vehicle_sil_scenario: 1\nend_ms: 1.5\nsteps: []\n", "invalid"),
     ("a dither with a length", S + "  - dither: { Engine.engine.throttle: { triangle: { amplitude: 1, period_ms: 100 }, for_ms: 500 } }\n",
      "invalid"),
     ("a dither with a middle", S + "  - dither: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, around: 50 } }\n",
@@ -993,6 +996,10 @@ REQUEST_SAMPLES = [
     ("speed null", "{" + R + ', "speed": null}', "invalid"),
     ("start_paused as a text", "{" + R + ', "start_paused": "true"}', "invalid"),
     ("strict as a number", "{" + R + ', "strict": 1}', "invalid"),
+    ("after_scenario stop", "{" + R + ', "after_scenario": "stop"}', "valid"),
+    ("after_scenario pause", "{" + R + ', "scenario": "scenarios/brake.yaml", "after_scenario": "pause"}', "valid"),
+    ("after_scenario invalid", "{" + R + ', "after_scenario": "continue"}', "invalid"),
+    ("after_scenario null", "{" + R + ', "after_scenario": null}', "invalid"),
 ]
 
 

@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from conftest import Client, gui_server, is_ended, is_synced, is_variables, run_async
 from real_configs import examples_dir, usable, write
 from vehicle_sil_gui import __version__
@@ -270,7 +272,8 @@ def test_the_recorded_writes_pass_the_launchers_check_and_play_back(tmp_path: Pa
             _, body = await c.get("api/recording")
             r = body["recording"]
             # Each ECU applies at its own step (Engine 10 ms, Dashboard 5 ms): one set per time
-            assert r["available"] and r["writes"] == 3 and r["steps"] in (2, 3), r
+            assert r["available"] and r["writes"] == 3 and r["steps"] in (2, 3) and r["end_ms"] == 200, r
+            assert yaml.safe_load(r["yaml"])["end_ms"] == 200
             (configs / "scenarios" / "recorded.yaml").write_text(r["yaml"], encoding="utf-8")
             status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": "scenarios/recorded.yaml"})
             assert status == 200 and body["check"]["result"] == "passed", body["check"]["findings"]
@@ -716,3 +719,251 @@ def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_pa
             await test_server.close()
 
     asyncio.run(run())
+
+
+def test_real_recording_mid_run_post_run_end_ms_and_replay_parity(tmp_path: Path) -> None:
+    """Real launcher + ecu_main: mid-run save omits end_ms, post-run save records authoritative end_ms,
+    and unedited replay reaches the recorded end_ms and Dashboard value."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        async def talk(c: Client) -> None:
+            ws = await c.ws()
+            await ws.until(is_synced)
+            status, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
+            assert status == 200, started
+            sid, inst = started["run_id"], started["instance"]
+            await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
+                           and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
+            await ws.send({"type": "watch", "id": 1, "variables": [
+                THROTTLE, SPEED, {"peer": "Dashboard", "name": "dashboard.engine_speed"},
+            ], "period_ms": 20})
+            await ws.until(is_values(1, paused=True, sim_ms=0))
+
+            # Write at 0 ms, step 100 ms
+            before = len(ws.received)
+            st_w, w = await c.post("api/write", {"run_id": sid, "writes": {"Engine": {"engine.throttle": 50}}})
+            assert st_w == 200, w
+            await c.post("api/time", {"command": "step", "ms": 100})
+            while not (
+                any(m["type"] == "operation" and m["seq"] == w["operation"] and m["done"] for m in ws.received[before:])
+                and any(is_values(1, paused=True, sim_ms=100)(m) for m in ws.received[before:])
+            ):
+                await ws.until(lambda m: True)
+
+            # Mid-run save: applied write kept, end_ms omitted, no dummy writes or expect
+            _, mid_rec = await c.get("api/recording")
+            mr = mid_rec["recording"]
+            assert mr["state"] == "running" and mr["end_ms"] is None and mr["writes"] == 1, mr
+            mid_doc = yaml.safe_load(mr["yaml"])
+            assert "end_ms" not in mid_doc
+            assert "expect:" not in mr["yaml"] and "hold_for_ms:" not in mr["yaml"]
+
+            # Advance 400 ms more to 500 ms without any further writes
+            await c.post("api/time", {"command": "step", "ms": 400})
+            vals_500 = (await ws.until(is_values(1, paused=True, sim_ms=500)))[-1]
+            rec_dash_speed = vals_500["peers"]["Dashboard"]["values"]["dashboard.engine_speed"]
+            assert rec_dash_speed > 0
+
+            await c.post("api/stop-session", {"run_id": sid, "instance": inst})
+            await ws.until(is_ended)
+
+            # Post-run save: authoritative end_ms == 500
+            _, end_rec = await c.get("api/recording")
+            er = end_rec["recording"]
+            assert er["state"] == "ended" and er["end_ms"] == 500, er
+            end_doc = yaml.safe_load(er["yaml"])
+            assert end_doc["end_ms"] == 500
+            assert "expect:" not in er["yaml"] and "hold_for_ms:" not in er["yaml"]
+
+            # Replay the saved YAML without editing: reaches end_ms 500 and matching Dashboard value
+            (configs / "scenarios" / "recorded_end.yaml").write_text(er["yaml"], encoding="utf-8")
+            before_replay = len(ws.received)
+            st_r, started_r = await c.post("api/run", {
+                "file": "simulation.yaml", "scenario": "scenarios/recorded_end.yaml", "speed": 0.5,
+            })
+            assert st_r == 200, started_r
+            ready_pred = lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready"
+            if not any(ready_pred(m) for m in ws.received[before_replay:]):
+                await ws.until(lambda m: m in ws.received[before_replay:] and ready_pred(m))
+            await ws.send({"type": "watch", "id": 2, "variables": [
+                {"peer": "Dashboard", "name": "dashboard.engine_speed"},
+            ], "period_ms": 20})
+            if not any(is_ended(m) for m in ws.received[before_replay:]):
+                await ws.until(lambda m: m in ws.received[before_replay:] and is_ended(m))
+            got_replay = ws.received[before_replay:]
+            end_sess = next(m["session"] for m in reversed(got_replay) if is_ended(m))
+            assert end_sess["result"]["timing"]["sim_ms"] == 500
+            assert end_sess["scenario"]["status"] == "passed"
+            assert end_sess["scenario"]["handed_over"] is False
+            dash_samples = [
+                m["peers"]["Dashboard"]["values"]["dashboard.engine_speed"]
+                for m in ws.received[before_replay:]
+                if m["type"] == "values" and m["id"] == 2 and "Dashboard" in m["peers"]
+            ]
+            assert dash_samples and max(dash_samples) == rec_dash_speed
+            await ws.close()
+        run_async(talk, gui)
+
+
+def test_real_scenario_handover_holds_at_max_speed_and_unlocks_writes(tmp_path: Path) -> None:
+    """Real launcher + ecu_main: after_scenario='pause' hands over at end_ms, holds at speed='max',
+    keeps replay writes refused, and unlocks manual write + Step on the same Run."""
+    import asyncio
+
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    (configs / "scenarios" / "handover.yaml").write_text(
+        "vehicle_sil_scenario: 1\nname: handover\nend_ms: 400\nsteps:\n"
+        "  - at_ms: 0\n    set: { Engine.engine.throttle: 50 }\n"
+        "  - after_ms: 200\n    expect: { Engine.engine.speed: { ge: 1000 } }\n",
+        encoding="utf-8",
+    )
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        async def talk(c: Client) -> None:
+            ws = await c.ws()
+            await ws.until(is_synced)
+            st, started = await c.post("api/run", {
+                "file": "simulation.yaml",
+                "scenario": "scenarios/handover.yaml",
+                "after_scenario": "pause",
+                "speed": "max",
+            })
+            assert st == 200, started
+            sid, inst = started["run_id"], started["instance"]
+            await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
+                           and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
+            await ws.send({"type": "watch", "id": 1, "variables": [
+                THROTTLE, SPEED, {"peer": "Dashboard", "name": "dashboard.engine_speed"},
+            ], "period_ms": 20})
+
+            ho_pred = lambda m: (
+                m["type"] == "event" and m["event"]["event"] == "state" and m["event"].get("handed_over") is True
+            )
+            if not any(ho_pred(m) for m in ws.received):
+                await ws.until(ho_pred)
+            ho_state = next(m["event"] for m in reversed(ws.received) if ho_pred(m))
+            assert ho_state["paused"] is True and ho_state["paused_at_ms"] == 400
+            assert ho_state["scenario"] is True and ho_state["scenario_over_at_ms"] == 400
+            assert ho_state["allowed"]["write"]["ok"] is True
+
+            _, sess_ho = await c.get("api/session")
+            assert sess_ho["session"]["scenario"]["handed_over"] is True
+            assert sess_ho["session"]["scenario"]["status"] == "passed"
+            assert sess_ho["session"]["scenario"]["over_at_ms"] == 400
+
+            # Even at speed="max", virtual time holds at 400 ms until Step/Resume
+            await asyncio.sleep(0.3)
+            _, sess_held = await c.get("api/session")
+            assert sess_held["session"]["time"]["sim_ms"] == 400
+            assert sess_held["session"]["launcher_state"]["paused"] is True
+            assert not any(
+                m["type"] == "event" and m["event"]["event"] == "time" and m["event"]["sim_ms"] > 400
+                for m in ws.received
+            )
+
+            # Manual write while paused & handed over, followed by Step on the same Run
+            before_step = len(ws.received)
+            st_w, w = await c.post("api/write", {"run_id": sid, "writes": {"Engine": {"engine.throttle": 0.0}}})
+            assert st_w == 200, w
+            await ws.until(lambda m: m in ws.received[before_step:] and is_operation(w["operation"], "queued")(m))
+            st_step, _ = await c.post("api/time", {"command": "step", "ms": 100})
+            assert st_step == 200
+            while not (
+                any(m["type"] == "operation" and m["seq"] == w["operation"] and m["state"] == "applied"
+                    for m in ws.received[before_step:])
+                and any(is_values(1, paused=True, sim_ms=500)(m) for m in ws.received[before_step:])
+            ):
+                await ws.until(lambda m: True)
+
+            vals_500 = next(m for m in ws.received[before_step:] if is_values(1, paused=True, sim_ms=500)(m))
+            assert vals_500["peers"]["Engine"]["values"]["engine.throttle"] == 0.0
+            assert vals_500["peers"]["Engine"]["values"]["engine.speed"] < 1800
+
+            await c.post("api/stop-session", {"run_id": sid, "instance": inst})
+            got_end = await ws.until(is_ended)
+            assert got_end[-1]["session"]["scenario"]["handed_over"] is True
+            assert got_end[-1]["session"]["scenario"]["status"] == "passed"
+            await ws.close()
+        run_async(talk, gui)
+
+
+def test_real_scenario_negative_cases_never_hand_over(tmp_path: Path) -> None:
+    """Real launcher: validation rejects invalid after_scenario combinations; normal stop, stop_at_ms,
+    incomplete stop, failed scenario, and participant crash never set handed_over=True."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    (configs / "scenarios" / "short_end.yaml").write_text(
+        "vehicle_sil_scenario: 1\nname: short\nend_ms: 150\nsteps:\n"
+        "  - at_ms: 0\n    set: { Engine.engine.throttle: 40 }\n",
+        encoding="utf-8",
+    )
+    (configs / "crash.yaml").write_text(
+        (configs / "simulation.yaml").read_text(encoding="utf-8")
+        + f"  - name: Crasher\n    command: ['{sys.executable}', '-c', 'import time; time.sleep(0.15); raise SystemExit(2)']\n"
+        + "    describe: false\n",
+        encoding="utf-8",
+    )
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        async def talk(c: Client) -> None:
+            # 1. Invalid handover request combinations
+            for bad in (
+                {"file": "simulation.yaml", "after_scenario": "pause"},
+                {"file": "simulation.yaml", "scenario": "scenarios/short_end.yaml",
+                 "after_scenario": "pause", "stop_at_ms": 100},
+            ):
+                st, body = await c.post("api/run", bad)
+                assert (st, body["error"]["code"]) == (400, "invalid-field"), (bad, st, body)
+
+            ws = await c.ws()
+            await ws.until(is_synced)
+
+            # 2. Normal stop (after_scenario="stop"), stop_at_ms cutoff, failed scenario, participant crash
+            for body, expected_res in (
+                ({"file": "simulation.yaml", "scenario": "scenarios/short_end.yaml", "after_scenario": "stop"},
+                 "passed"),
+                ({"file": "simulation.yaml", "scenario": "scenarios/short_end.yaml",
+                  "after_scenario": "stop", "stop_at_ms": 50}, "incomplete"),
+                ({"file": "simulation.yaml", "scenario": "scenarios/fails.yaml", "after_scenario": "pause"},
+                 "failed"),
+                ({"file": "crash.yaml", "scenario": "scenarios/short_end.yaml", "after_scenario": "pause"},
+                 "failed"),
+            ):
+                before = len(ws.received)
+                st, started = await c.post("api/run", body)
+                assert st == 200, (body, started)
+                if not any(is_ended(m) for m in ws.received[before:]):
+                    await ws.until(is_ended)
+                run_msgs = ws.received[before:]
+                end_msg = next(m for m in reversed(run_msgs) if is_ended(m))
+                assert not any(
+                    m["type"] == "event" and m["event"]["event"] == "state" and m["event"].get("handed_over") is True
+                    for m in run_msgs
+                ), body
+                assert end_msg["session"]["result"]["result"] == expected_res
+                assert end_msg["session"]["scenario"]["handed_over"] is False
+
+            # 3. Incomplete user stop mid-scenario (plus write refusal during replay)
+            before = len(ws.received)
+            st, started = await c.post("api/run", {
+                "file": "simulation.yaml",
+                "scenario": "scenarios/throttle_step.yaml",
+                "after_scenario": "pause",
+                "speed": 0.01,
+            })
+            assert st == 200, started
+            step2 = lambda m: m["type"] == "event" and m["event"]["event"] == "scenario_step" and m["event"]["index"] == 2
+            if not any(step2(m) for m in ws.received[before:]):
+                await ws.until(step2)
+            st_w, w_err = await c.post("api/write", {
+                "run_id": started["run_id"], "writes": {"Engine": {"engine.throttle": 0}},
+            })
+            assert (st_w, w_err["error"]["code"]) == (409, "scenario-running"), (st_w, w_err)
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"]})
+            if not any(is_ended(m) for m in ws.received[before:]):
+                await ws.until(is_ended)
+            end_inc = next(m for m in reversed(ws.received[before:]) if is_ended(m))
+            assert end_inc["session"]["scenario"]["status"] == "incomplete"
+            assert end_inc["session"]["scenario"]["handed_over"] is False
+            await ws.close()
+        run_async(talk, gui)
