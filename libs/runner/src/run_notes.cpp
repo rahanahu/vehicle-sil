@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "run_notes.hpp"
 
+#include "time_commands_internal.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -78,79 +80,72 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note)
     {
         return;
     }
-    const TimeState s = controller.time_state();
-    const auto wall = std::chrono::steady_clock::now();
-    const std::int64_t now = sim_ms(controller, s);
-    const bool paused = noted_standing(s, note);
-    const std::int64_t ms =
-        note == TimeNote::Start
-            ? 0
-            : std::max(last_time_ms_, now);
-    // The actual speed over about the last second while it ran at one speed.
-    if (paused || paused != last_paused_ || s.speed != last_speed_)
-    {
-        samples_.clear();
-    }
-    if (!paused)
-    {
-        samples_.emplace_back(wall, ms);
-        while (samples_.size() > 2 && wall - samples_[1].first >= std::chrono::seconds(1))
+    // The time event and the state of the same look share one TimeState snapshot under
+    // TimeCommands' mutex (as set_phase() does for phase + state): a concurrent gate transition
+    // cannot make state report paused_at_ms before time reports that sim_ms, and a concurrent
+    // command cannot slip between the look's time event and its state. At the end (TimeNote::Last),
+    // TimeCommands::detach() tells the final state instead.
+    RunControlsAccess::look_time(ctx_.controls, controller, note != TimeNote::Last, [&](const TimeState& s) {
+        const auto wall = std::chrono::steady_clock::now();
+        const std::int64_t now = sim_ms(controller, s);
+        const bool paused = noted_standing(s, note);
+        const std::int64_t ms =
+            note == TimeNote::Start
+                ? 0
+                : std::max(last_time_ms_, now);
+        // The actual speed over about the last second while it ran at one speed.
+        if (paused || paused != last_paused_ || s.speed != last_speed_)
         {
-            samples_.pop_front();
+            samples_.clear();
         }
-    }
-    std::optional<double> actual;
-    if (samples_.size() >= 2 && samples_.back().first - samples_.front().first >= std::chrono::milliseconds(200))
-    {
-        const double seconds = std::chrono::duration<double>(samples_.back().first - samples_.front().first).count();
-        actual = std::round(static_cast<double>(samples_.back().second - samples_.front().second) / 1000.0 / seconds * 1000.0) / 1000.0;
-    }
-    last_paused_ = paused;
-    last_speed_ = s.speed;
-    // Standing still at another time than the last one written (a step has ended, a pause has taken
-    // effect) is written at once: the time it stands at is exact. That it stands still or goes on,
-    // and the speed, are the state's to say (publish() below).
-    const bool changed = note == TimeNote::Start || (paused && ms != last_time_ms_);
-    // A simulation that does not move although its real time has come (a stall) is news too,
-    // while it lasts: the time stays, the lateness grows.
-    const std::int64_t late = ceil_ms(s.current_lateness);
-    // The state after the time event of the same look (history first); not at the end, where the
-    // time commands' detach tells it.
-    ctx_.controls.set_pacing(
-        pacing_.look(wall, !paused && s.speed.has_value(), late > ctx_.plan.timing.late_tolerance_ms, s.late_steps));
-    struct Publish
-    {
-        RunControls* controls;
-        ~Publish()
+        if (!paused)
         {
-            if (controls != nullptr)
+            samples_.emplace_back(wall, ms);
+            while (samples_.size() > 2 && wall - samples_[1].first >= std::chrono::seconds(1))
             {
-                controls->publish();
+                samples_.pop_front();
             }
         }
-    } const publish{note == TimeNote::Last ? nullptr : &ctx_.controls};
-    const bool stalled = late > ctx_.plan.timing.late_tolerance_ms && late != last_late_ms_;
-    // Only that it moved, or is late: not while other events wait for a slow reader (they
-    // would pile up).
-    const bool moved = (ms > last_time_ms_ || stalled || s.late_steps != last_late_steps_) &&
-                       (note == TimeNote::Last ||
-                        (wall - last_time_wall_ >= kTimeInterval && ctx_.events->waiting_events() == 0));
-    if (!changed && !moved)
-    {
-        return;
-    }
-    TimeEvent e;
-    e.sim_ms = ms;
-    e.actual_speed = actual;
-    e.late_steps = s.late_steps;
-    e.max_late_ms = ceil_ms(s.max_lateness);
-    e.slipped_ms = ceil_ms(s.slipped);
-    e.late_ms = late;
-    ctx_.events->time(e);
-    last_late_ms_ = late;
-    last_late_steps_ = s.late_steps;
-    last_time_ms_ = ms;
-    last_time_wall_ = wall;
+        std::optional<double> actual;
+        if (samples_.size() >= 2 && samples_.back().first - samples_.front().first >= std::chrono::milliseconds(200))
+        {
+            const double seconds = std::chrono::duration<double>(samples_.back().first - samples_.front().first).count();
+            actual = std::round(static_cast<double>(samples_.back().second - samples_.front().second) / 1000.0 / seconds * 1000.0) / 1000.0;
+        }
+        last_paused_ = paused;
+        last_speed_ = s.speed;
+        // Standing still at another time than the last one written (a step has ended, a pause has taken
+        // effect) is written at once: the time it stands at is exact. That it stands still or goes on,
+        // and the speed, are the state's to say (published right after this callback under the same lock).
+        const bool changed = note == TimeNote::Start || (paused && ms != last_time_ms_);
+        // A simulation that does not move although its real time has come (a stall) is news too,
+        // while it lasts: the time stays, the lateness grows.
+        const std::int64_t late = ceil_ms(s.current_lateness);
+        ctx_.controls.set_pacing(
+            pacing_.look(wall, !paused && s.speed.has_value(), late > ctx_.plan.timing.late_tolerance_ms, s.late_steps));
+        const bool stalled = late > ctx_.plan.timing.late_tolerance_ms && late != last_late_ms_;
+        // Only that it moved, or is late: not while other events wait for a slow reader (they
+        // would pile up).
+        const bool moved = (ms > last_time_ms_ || stalled || s.late_steps != last_late_steps_) &&
+                           (note == TimeNote::Last ||
+                            (wall - last_time_wall_ >= kTimeInterval && ctx_.events->waiting_events() == 0));
+        if (!changed && !moved)
+        {
+            return;
+        }
+        TimeEvent e;
+        e.sim_ms = ms;
+        e.actual_speed = actual;
+        e.late_steps = s.late_steps;
+        e.max_late_ms = ceil_ms(s.max_lateness);
+        e.slipped_ms = ceil_ms(s.slipped);
+        e.late_ms = late;
+        ctx_.events->time(e);
+        last_late_ms_ = late;
+        last_late_steps_ = s.late_steps;
+        last_time_ms_ = ms;
+        last_time_wall_ = wall;
+    });
 }
 
 } // namespace vehicle_sil::runner::detail

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/runner/run_controls.hpp"
 
+#include "time_commands_internal.hpp"
+
 #include <algorithm>
 #include <utility>
 
@@ -166,6 +168,29 @@ void RunControls::publish()
     if (wake_hold)
     {
         time_.wake_hold();
+    }
+}
+
+void detail::RunControlsAccess::look_time(RunControls& controls, SimulationController& controller, bool publish_state,
+                                          const std::function<void(const TimeState& gate)>& emit_time)
+{
+    bool wake_hold = false;
+    TimeCommandsAccess::look_with_gate(controls.time_, controller, [&](const TimeState& gate, const TimeFacts& facts) {
+        emit_time(gate);
+        if (publish_state)
+        {
+            const int stop_count = controls.stops_.count();
+            if (facts.holding && stop_count > controls.notified_hold_stops_)
+            {
+                controls.notified_hold_stops_ = stop_count;
+                wake_hold = true;
+            }
+            controls.tell(facts);
+        }
+    });
+    if (wake_hold)
+    {
+        controls.time_.wake_hold();
     }
 }
 

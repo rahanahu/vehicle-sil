@@ -65,7 +65,7 @@ enum class ParticipantState
 ///
 /// Threads: every thread of the run calls it (run.cpp lists them: the main thread, the start
 /// window's, the scenario's, each participant's reader thread), some of them under RunOutput's
-/// mutex. So an implementation keeps itself, and no member waits: not for a reader of what it
+/// or TimeCommands' mutex. So an implementation keeps itself, and no member waits: not for a reader of what it
 /// writes, and not for a lock of the run (it takes none of them and calls nothing of the run
 /// back). The order of the calls is the order of what is told.
 ///
