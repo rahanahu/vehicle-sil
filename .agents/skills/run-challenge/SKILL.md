@@ -55,9 +55,11 @@ process at a time. Apply any stricter project resource limits. A soft budget mea
 report and return at the next safe stopping point, not abandon processes or delete
 evidence.
 
-Allow the Challenger to select a more important hypothesis from the original
-requirements. Keep unrelated architectural expansion outside the assignment.
-Do not prescribe every experiment; give the worker room to choose its method.
+Frame each claim so the Challenger can tell which observed outcomes would
+violate it. If the change rejects an invalid input or blocks an unsafe operation,
+include what callers must still be able to do. Name concrete conditions when
+the contract depends on them. Let the Challenger choose where and how to try to
+break the claim, or pursue a more consequential claim within the requirements.
 
 Allocate an isolated workspace and evidence destination. Keep heavy probes out
 of shared source/build directories. Reuse existing verification where it answers
@@ -119,8 +121,12 @@ automatically accepting either the implementer's or Challenger's verdict.
 Assign product fixes and durable regression tests to the implementer. Preserve a
 useful reproducer before disposing of scratch resources.
 
-Recheck the reported failure condition and affected behavior after a fix. Compare
-the final snapshot with the reviewed one: changes to the relevant code, callers,
+For a fix recheck, ask the Challenger to verify the known failure against the
+fixed snapshot. Supply the reproducer or code-path evidence and the expected
+outcome. If a material question remains beyond that regression, state the
+observable promise in doubt and leave the choice of new cases to the Challenger.
+
+Compare the final snapshot with the reviewed one: changes to the relevant code, callers,
 contracts, or test/gate behavior invalidate the affected evidence; unrelated
 changes do not require restarting the entire review. You may reuse the same
 Challenger for a prompt fix-and-recheck cycle on the same change unit; prefer
