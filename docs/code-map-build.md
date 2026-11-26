@@ -100,7 +100,7 @@ Where to change:
 - `pyproject.toml`, `python/pyproject.toml`, `gui/server/pyproject.toml` (`uv lock` then writes the PEP 440 form, `0.2.0rc1`, in `uv.lock`)
 - `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`
 - `template/get_tools.py`
-- `GIT_TAG` in `template/CMakeLists.txt`
+- `GIT_TAG` in `template/CMakeLists.txt` and `VEHICLE_SIL_GIT_TAG` in `examples/fetchcontent_consumer/CMakeLists.txt`
 - The version in `template/README.md` and `template/README.ja.md`
 - The heading `## [<version>] - Unreleased` in `CHANGELOG.md`
 

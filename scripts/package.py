@@ -14,8 +14,10 @@ Commands:
                          vehicle_sil_socketcan_bridge)
               compiler   the build was made with GCC (MinGW-w64 included): the archive this repository hands out is
                          not made with another compiler (anyone may build so for themselves)
-              python     python/requirements.txt (uv export of the GUI server with gRPC, pinned with hashes from uv.lock)
-                         and the gRPC stubs of the Control API (uv run ... python -m vehicle_sil_control.generate)
+              python     python/requirements.txt (uv export of the GUI server with gRPC, pinned with hashes from uv.lock),
+                         python/requirements-control.txt (uv export of vehicle-sil-control[grpc], control-only, pinned
+                         with hashes from uv.lock), and the gRPC stubs of the Control API (uv run ... python -m
+                         vehicle_sil_control.generate)
               stage      bin/ (the launcher, the Ethernet bridge vehicle_sil_ethernet_bridge, on Linux the SocketCAN
                          bridge vehicle_sil_socketcan_bridge, the libraries they need, vehicle-sil-gui), python/ (vehicle_sil_gui with the
                          built screen, the timeline page of gui/timeline and the client library with the parts, vehicle_sil_control with the stubs), client/ (the bundled client library, the parts and
@@ -39,8 +41,10 @@ Commands:
             against this working tree (FETCHCONTENT_SOURCE_DIR_VEHICLE_SIL: no network for vehicle-sil), runs check,
             run and run --scenario with the archive's launcher, runs check --connect on the template with an
             Ethernet network added (the launcher finds the bridge next to it in bin/ and runs its --describe; no
-            adapter is opened), runs examples/launch_control/write_before_start.py with the archive's Python client
-            against `run --control` (gRPC: the client's release check, write before the start, step, read back), and
+            adapter is opened), checks stdlib-only `Launch`/`Serve` import (`python -S`) from the archive's `python/`,
+            runs examples/launch_control/write_before_start.py with the archive's Python client and control-only
+            `python/requirements-control.txt` against `run --control` (gRPC: the client's release check, write before
+            the start, step, read back), and
             starts the archive's vehicle-sil-gui (its Python packages: uv run, which may download them; on Windows both the .cmd and the
             sh entry) and asks it: the launcher usable, the variables available, the built screen, the timeline
             page (timeline/) and the client files (vsil/), both without the token, a check of simulation.yaml; then starts it with --web gui_starter (the archive's starter screen) and gets its page
@@ -55,7 +59,8 @@ Commands:
             gui/server/pyproject.toml, uv.lock (when present, PEP 440 form),
             gui/server/src/vehicle_sil_gui/__init__.py (__version__), python/vehicle_sil_control/__init__.py
             (__version__), template/get_tools.py (VERSION), the versions that template/README*.md name,
-            template/CMakeLists.txt (GIT_TAG v<version>), CHANGELOG.md (a heading "## [<version>] - Unreleased" or
+            template/CMakeLists.txt (GIT_TAG v<version>), examples/fetchcontent_consumer/CMakeLists.txt
+            (VEHICLE_SIL_GIT_TAG "v<version>"), CHANGELOG.md (a heading "## [<version>] - Unreleased" or
             "## [<version>] - YYYY-MM-DD"). --expect v<version> also checks a tag, and that the heading has the
             release date. --check checks read-only (default); --sync updates the derived files and uv.lock (via
             uv lock --offline) from CMakeLists.txt without modifying CHANGELOG.md (--dry-run previews).
@@ -302,6 +307,7 @@ def version_problems(version: str, release: bool = False) -> list[str]:
         ("template/get_tools.py", r'(?m)^VERSION = "([^"]*)"', '{}'),
         ("gui/server/src/vehicle_sil_gui/__init__.py", r'(?m)^__version__ = "([^"]*)"', '{}'),
         ("template/CMakeLists.txt", r"GIT_TAG\s+(\S+)", 'v{}'),
+        ("examples/fetchcontent_consumer/CMakeLists.txt", r'set\(VEHICLE_SIL_GIT_TAG\s+"([^"]*)"', 'v{}'),
     ]
     problems = []
     for name, pattern, form in checks:
@@ -334,6 +340,7 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
         ("gui/server/src/vehicle_sil_gui/__init__.py", r'(?m)^(__version__ = )"[^"]*"', '"{}"'),
         ("template/get_tools.py", r'(?m)^(VERSION = )"[^"]*"', '"{}"'),
         ("template/CMakeLists.txt", r"(GIT_TAG\s+)\S+", "v{}"),
+        ("examples/fetchcontent_consumer/CMakeLists.txt", r'(set\(VEHICLE_SIL_GIT_TAG\s+)"[^"]*"', '"v{}"'),
     ]
     updates: list[tuple[str, str]] = []
     errors: list[str] = []
@@ -609,6 +616,27 @@ SOCKETCAN_ROW = ("| `bin/vehicle_sil_socketcan_bridge` | the SocketCAN bridge be
                  "computer (a CAN adapter, or a virtual one such as `vcan0`); it needs no privileges and sets nothing on the "
                  "interface: `vehicle_sil_launch run --connect <network>=<interface>` starts it from here (`--interface <name>`, `--list-channels` by hand) |\n")
 
+README_PYTHON_POSIX = """The Control API client (`Control`, gRPC) from Python: put `<tools>/python` on `PYTHONPATH` and run with
+`python/requirements-control.txt`:
+
+    PYTHONPATH=<tools>/python uv run --no-project --no-build --python '{python_versions}' \\
+      --with-requirements <tools>/python/requirements-control.txt python -P your_script.py
+
+`Launch` and `Serve` use only the Python standard library and need no `requirements-control.txt`:
+
+    PYTHONPATH=<tools>/python python3 -S your_launcher_script.py"""
+
+README_PYTHON_WINDOWS = """The Control API client (`Control`, gRPC) from Python (Command Prompt; in MSYS2 bash, use `PYTHONPATH=<tools>/python`
+and `/` paths, keeping `--managed-python`):
+
+    set "PYTHONPATH=<tools>\\python"
+    uv run --no-project --no-build --managed-python --python "{python_versions}" --with-requirements <tools>\\python\\requirements-control.txt python -P your_script.py
+
+`Launch` and `Serve` use only the Python standard library and need no `requirements-control.txt`:
+
+    set "PYTHONPATH=<tools>\\python"
+    python -S your_launcher_script.py"""
+
 README = """# vehicle-sil {version} tools ({platform})
 
 Prebuilt tools of vehicle-sil {version}: the launcher and the browser GUI. Build your ECUs with the same
@@ -619,7 +647,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 | `bin/vehicle_sil_launch{exe}` | checks and runs a simulation configuration (`check`, `run`, `run --scenario`, `run --control`, `test`; `serve` keeps one launcher for several runs) |
 | `bin/vehicle_sil_ethernet_bridge{exe}` | the Ethernet bridge between a SIL Kit Ethernet network and a network interface of this computer: `vehicle_sil_launch run --connect <network>=<interface>` starts it from here. Its `npcap` (Windows) and `pcap` (Linux) backends need Npcap or libpcap installed, which this archive does not contain; `packet` and `tap` (Linux) need nothing. The Vector XL CAN bridge is not in this archive: build it with the Vector XL Driver Library and put it next to `vehicle_sil_launch` or in a directory on PATH |
 {socketcan_row}| `bin/vehicle-sil-gui`{cmd} | the browser GUI's server, with the launcher above (needs Python 3.11+; with uv, `uv run` installs its packages) |
-| `python/` | the GUI server (`vehicle_sil_gui`, with the built screen, the timeline page and the client files) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins their packages with hashes |
+| `python/` | the GUI server (`vehicle_sil_gui`, with the built screen, the timeline page and the client files) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins the GUI server and client packages with hashes, and `requirements-control.txt` pins only the Control API gRPC client packages (`Launch` and `Serve` need no packages) |
 | `client/vehicle-sil-gui-client.mjs` | the GUI client library as one ES module (for a screen without a build: import it with a relative path, or load it from `vsil/vehicle-sil-gui-client.mjs` of the GUI server) |
 | `client/vehicle-sil-gui-elements.mjs` | the parts (`<vsil-run-controls>` and the others) as one ES module; it imports `./vehicle-sil-gui-client.mjs`, so keep the two files together (the GUI server serves both under `vsil/`) |
 | `client/vehicle-sil-gui-client-{version}.tgz` | the same library as an npm package with its types: `npm install <this file>`, then `import ... from '@vehicle-sil/gui-client'` |
@@ -636,8 +664,7 @@ Put `bin` on PATH, then, next to your simulation.yaml:
     vehicle-sil-gui simulation.yaml
     vehicle-sil-gui --web <your built screen, or gui_starter> simulation.yaml
 
-The Control API client from Python: put `python` on PYTHONPATH and use a Python with the packages of
-`python/requirements.txt` (for example `uv run --with-requirements python/requirements.txt python your_script.py`).
+{python_usage}
 
 Documentation: https://github.com/rahanahu/vehicle-sil/tree/v{version} (README.md, docs/howto/first-ecu.md,
 docs/gui.md, docs/control-api.md, docs/ethernet-bridge.md).
@@ -783,13 +810,21 @@ def tools_command(args: argparse.Namespace) -> int:
             "# The Python packages of the GUI server (vehicle_sil_gui) and of the Control API client\n"
             "# (vehicle_sil_control), pinned with hashes: uv run --with-requirements requirements.txt ...\n"
             "# or python -m pip install --require-hashes -r requirements.txt\n" + requirements, encoding="utf-8")
+        control_requirements = s.run(export + ["--package", "vehicle-sil-control", "--extra", "grpc"],
+                                     cwd=ROOT, capture=True).stdout
+        (python_dir / "requirements-control.txt").write_text(
+            "# The Python packages of the Control API client (vehicle_sil_control.Control, gRPC only),\n"
+            "# pinned with hashes: uv run --no-project --no-build --with-requirements requirements-control.txt ...\n"
+            "# or python -m pip install --require-hashes -r requirements-control.txt\n"
+            "# Launch and Serve use only the Python standard library and need no packages (`python -S`).\n"
+            + control_requirements, encoding="utf-8")
         generator = s.run(export + ["--only-group", "control"], cwd=ROOT, capture=True).stdout
         (build / "generator-requirements.txt").write_text(generator, encoding="utf-8")
         env = dict(os.environ, PYTHONPATH=str(ROOT / "python"))
         s.run(["uv", "run", "--quiet", "--no-project", "--no-build", *UV_MANAGED, "--python", python_versions(),
                "--with-requirements", build / "generator-requirements.txt", "python", "-P", "-m", "vehicle_sil_control.generate",
                "--out", python_dir / "_generated"], cwd=build, env=env)
-        s.notes.append(f"{requirements.count('==')} packages pinned")
+        s.notes.append(f"{requirements.count('==')} GUI packages, {control_requirements.count('==')} control packages pinned")
 
     def stage_step(s: Step) -> None:
         shutil.rmtree(stage_root, ignore_errors=True)
@@ -834,6 +869,7 @@ def tools_command(args: argparse.Namespace) -> int:
         copy_tree(ROOT / "python" / "vehicle_sil_control", py / "vehicle_sil_control")
         shutil.copytree(python_dir / "_generated", py / "vehicle_sil_control" / "_generated")
         shutil.copy2(python_dir / "requirements.txt", py / "requirements.txt")
+        shutil.copy2(python_dir / "requirements-control.txt", py / "requirements-control.txt")
         (stage / "client").mkdir()
         shutil.copy2(client, stage / "client" / "vehicle-sil-gui-client.mjs")
         shutil.copy2(bundles[1], stage / "client" / CLIENT_BUNDLES[1])
@@ -857,7 +893,11 @@ def tools_command(args: argparse.Namespace) -> int:
         stage_licenses(s, build, stage / "licenses", web_licenses, bundled, args.allow_missing_licenses,
                        prebuilt=prebuilt)
         socketcan_row = "" if WINDOWS else SOCKETCAN_ROW
+        python_usage = (README_PYTHON_WINDOWS if WINDOWS else README_PYTHON_POSIX).format(
+            python_versions=python_versions(),
+        )
         (stage / "README.md").write_text(README.format(version=version, platform=PLATFORM, exe=EXE, socketcan_row=socketcan_row,
+                                                       python_usage=python_usage,
                                                        cmd=" (`.cmd` from the Command Prompt)" if WINDOWS else ""),
                                          encoding="utf-8")
         (stage / "VERSION").write_text(version + "\n", encoding="ascii")
@@ -1239,7 +1279,8 @@ def verify_command(args: argparse.Namespace) -> int:
         s.run([sys.executable, "-I", project / "get_tools.py", "--archive", archive, "--sha256", sha256_of(archive)],
               cwd=project)
         for path in ["VERSION", "LICENSE", "THIRD_PARTY_NOTICES.md", f"bin/{LAUNCHER}", f"bin/{ETHERNET_BRIDGE}",
-                     "bin/vehicle-sil-gui", "python/requirements.txt", "python/vehicle_sil_gui/web/index.html",
+                     "bin/vehicle-sil-gui", "python/requirements.txt", "python/requirements-control.txt",
+                     "python/vehicle_sil_gui/web/index.html",
                      *(f"python/vehicle_sil_gui/timeline/{name}" for name in TIMELINE_PAGE),
                      *(f"python/vehicle_sil_gui/client/{name}" for name in CLIENT_BUNDLES),
                      "python/vehicle_sil_control/_generated/vehicle_sil/control/v1/control_pb2.py",
@@ -1305,14 +1346,30 @@ def verify_command(args: argparse.Namespace) -> int:
         s.notes.append(f"check --connect ETH=...: {ETHERNET_BRIDGE} found next to the launcher, its --describe passed")
 
     def control(s: Step) -> None:
-        # The launcher's control server through gRPC, with the archive's Python client: its release check, one write
-        # before the start, a step, a read (examples/launch_control/write_before_start.py on the template's ECUs).
+        # Launch/Serve need only the Python standard library (`python -S`, no third-party packages).
         env = dict(os.environ, PYTHONPATH=str(tools / "python"))
+        s.run([sys.executable, "-S", "-P", "-c",
+               "import pathlib, sys, vehicle_sil_control as c; "
+               "from vehicle_sil_control import Serve, RunHandle, ServeError, Launch, LaunchError, control_address; "
+               "want = pathlib.Path(sys.argv[1]).resolve(); "
+               "got = pathlib.Path(c.__file__).resolve(); "
+               "assert want in got.parents, f'imported {got}, not under {want}'; "
+               "print('stdlib-only ok', c.__version__)",
+               tools / "python"],
+              cwd=project, env=env, timeout=60)
+        # Control-only requirements must not pull GUI-only packages.
+        control_reqs = (tools / "python" / "requirements-control.txt").read_text(encoding="utf-8")
+        for gui_only in ("aiohttp", "pydantic", "pyyaml"):
+            if re.search(rf"(?mi)^{gui_only}==", control_reqs):
+                raise StepFailed(f"python/requirements-control.txt includes GUI-only package {gui_only}")
+        # The launcher's control server through gRPC, with the archive's Python client and control-only requirements:
+        # its release check, one write before the start, a step, a read
+        # (examples/launch_control/write_before_start.py on the template's ECUs).
         s.run(["uv", "run", "--quiet", "--no-project", "--no-build", *UV_MANAGED, "--python", python_versions(),
-               "--with-requirements", tools / "python" / "requirements.txt", "python", "-P",
+               "--with-requirements", tools / "python" / "requirements-control.txt", "python", "-P",
                ROOT / "examples" / "launch_control" / "write_before_start.py", "--launch", launch, "simulation.yaml"],
               cwd=project, env=env, timeout=600)
-        s.notes.append("run --control: written before the start, stepped, read back")
+        s.notes.append("stdlib-only python -S ok; run --control (requirements-control.txt): written before the start, stepped, read back")
 
     def gui(s: Step) -> None:
         verify_gui(s, tools, project, [str(tools / "bin" / "vehicle-sil-gui.cmd")] if WINDOWS else

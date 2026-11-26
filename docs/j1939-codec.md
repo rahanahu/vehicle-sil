@@ -295,6 +295,8 @@ The values in the table follow widely used practice and have not been checked ag
 
 A signal's `special_values` replaces the inherited profile entirely (it does not add to it). Even to change one value of a standard signal, write the values you want to keep along with it.
 
+For 2-bit signals, the built-in `j1939` profile keeps `2` as `error` and `3` as `not_available` by default so that standard 2-bit status signals never treat error or not-available patterns as ordinary values. For 2-bit command signals (such as TSC1 or XBR), override that rule on the signal itself: write `indicators: none` when all values `0..3` are valid command states, or write `not_available: 3` on the signal when `3` means "don't care / take no action" (this replaces the inherited 2-bit rule so `0..2` stay ordinary values).
+
 Here is one entry of a message's `signals`:
 
 ```yaml
@@ -504,7 +506,7 @@ You can write a type of the same form in C++ without the generator. The type mus
 Nothing has been verified against the text of the standard yet. The built-in `j1939` profile follows widely used practice. These points are not verified:
 
 - The ranges for 8, 16 and 32 bits, and the distinction between `parameter_specific` (0xFB…) and `reserved` (0xFC–0xFD…).
-- The 2-bit ranges (2 is Error, 3 is Not Available), and whether command signals use the same ones.
+- The 2-bit ranges (2 is Error, 3 is Not Available), kept as the built-in `j1939` default for 2-bit status signal safety; 2-bit command signals (such as TSC1 or XBR) can override them per signal with `indicators: none` or `not_available: 3` (see "[Standard J1939 versus Proprietary B](#standard-j1939-versus-proprietary-b)").
 - Special values for the lengths that have no rule (1 bit, 3–7 bits, 24 bits, 64 bits) and for signed signals.
 - The values sent: the first value of the range for Error (0xFE00 and so on), all bits set to 1 for Not Available.
 - The default fill value for unused bits and bytes (0xFF).

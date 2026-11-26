@@ -10,6 +10,10 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = []
 
+[project.optional-dependencies]
+# The Control API gRPC client (`Control`): lazy-imported so `Launch`/`Serve` stay stdlib-only (`python -S`).
+grpc = ["grpcio>=1.85.0", "protobuf>=7.35.1"]
+
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14"]
 build-backend = "uv_build"

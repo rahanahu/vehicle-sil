@@ -58,6 +58,8 @@ SIL Kit のパッチ（`patches/sil-kit/`）は、クローンした時点では
 
 ### Linux
 
+WSL では、`/mnt/c` のようなマウントされた Windows ドライブではなく、WSL の Linux ファイルシステム上（たとえば `~/` 配下）にクローンしてビルドしてください（9p ファイルシステムではビルドが非常に遅くなります）。
+
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
 cd vehicle-sil
@@ -178,7 +180,7 @@ include(FetchContent)
 FetchContent_Declare(
   vehicle_sil
   GIT_REPOSITORY https://github.com/rahanahu/vehicle-sil.git
-  GIT_TAG <固定するコミットハッシュ>)
+  GIT_TAG <固定するリリースタグまたはコミットハッシュ>)   # v0.4.0 のようなリリースタグか完全なコミットハッシュを指定する
 
 FetchContent_MakeAvailable(vehicle_sil)
 

@@ -379,6 +379,7 @@ def test_prerelease(tmp: Path) -> None:
     places = ["pyproject.toml", "gui/server/pyproject.toml", "python/pyproject.toml",
               "gui/server/src/vehicle_sil_gui/__init__.py",
               "python/vehicle_sil_control/__init__.py", "template/get_tools.py", "template/CMakeLists.txt",
+              "examples/fetchcontent_consumer/CMakeLists.txt",
               "template/README.md", "template/README.ja.md"]
     copy = tmp / "copy"
     for name in ["CMakeLists.txt", "CHANGELOG.md", *places]:

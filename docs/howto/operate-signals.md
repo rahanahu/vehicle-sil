@@ -42,7 +42,7 @@ With the template project and the prebuilt tools, use the right-hand column of t
 | `vehicle_sil_launch` | `build/linux-gcc-control/tools/launch/vehicle_sil_launch` | `$T/bin/vehicle_sil_launch` |
 | Configuration file | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` | `simulation.yaml` |
 | Setup | The 3 lines in "Setup" below | Not needed. |
-| Running Python | `uv run python <arguments>` | `PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' --with-requirements $T/python/requirements.txt python <arguments>` |
+| Running Python | `uv run python <arguments>` | `PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' --with-requirements $T/python/requirements-control.txt python <arguments>` |
 | Example scripts | `examples/launch_control/` | Not included. Save the full text in "Run the first script" to a file. |
 
 ## Setup

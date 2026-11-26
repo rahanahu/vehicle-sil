@@ -234,6 +234,7 @@ class PackageVersionSyncTest(unittest.TestCase):
         "gui/server/src/vehicle_sil_gui/__init__.py",
         "template/get_tools.py",
         "template/CMakeLists.txt",
+        "examples/fetchcontent_consumer/CMakeLists.txt",
         "template/README.md",
         "template/README.ja.md",
     )
@@ -310,6 +311,7 @@ class PackageVersionSyncTest(unittest.TestCase):
         self.assertEqual(rc, 0, err.getvalue())
         self.assertIn("9.8.7-rc.1", out.getvalue())
         self.assertIn("would update pyproject.toml", out.getvalue())
+        self.assertIn("would update examples/fetchcontent_consumer/CMakeLists.txt", out.getvalue())
         self.assertIn("would update template/README.ja.md", out.getvalue())
         self.assertIn("would update uv.lock (via uv lock --offline)", out.getvalue())
         self.assertIn("warning: CHANGELOG.md", err.getvalue())
@@ -353,6 +355,10 @@ class PackageVersionSyncTest(unittest.TestCase):
 
                 non_changelog = [p for p in package_mod.version_problems(expected_ver) if not p.startswith("CHANGELOG.md")]
                 self.assertEqual(non_changelog, [])
+                self.assertIn(
+                    f'set(VEHICLE_SIL_GIT_TAG "v{expected_ver}"',
+                    (tree / "examples" / "fetchcontent_consumer" / "CMakeLists.txt").read_text(encoding="utf-8"),
+                )
 
                 # Second run is a no-op and does not re-run uv lock.
                 out2, err2 = io.StringIO(), io.StringIO()
@@ -512,6 +518,227 @@ class PackageVersionSyncTest(unittest.TestCase):
         source = PACKAGE.read_text(encoding="utf-8")
         self.assertIn('stage / "protocol" / rel', source)
         self.assertIn('f"protocol/{rel}" for rel in PROTOCOL_SPECS', source)
+
+
+class ControlOnlyRequirementsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.log_dir = self.dir / "logs"
+        self.addCleanup(self.tmp.cleanup)
+
+    def _load_verify_python_module(self):
+        script = ROOT / "scripts" / "verify-python.py"
+        spec = importlib.util.spec_from_file_location("vehicle_sil_test_verify_python", script)
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(script.parent))
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.path.remove(str(script.parent))
+        return module
+
+    def test_python_pyproject_keeps_zero_dependencies_and_declares_grpc_extra(self) -> None:
+        import tomllib
+
+        data = tomllib.loads((ROOT / "python" / "pyproject.toml").read_text(encoding="utf-8"))
+        project = data["project"]
+        self.assertEqual(project["dependencies"], [])
+        grpc_extra = project["optional-dependencies"]["grpc"]
+        self.assertTrue(any(dep.startswith("grpcio>=") for dep in grpc_extra), grpc_extra)
+        self.assertTrue(any(dep.startswith("protobuf>=") for dep in grpc_extra), grpc_extra)
+
+    def test_verify_python_lower_bounds_includes_python_optional_dependencies(self) -> None:
+        vp = self._load_verify_python_module()
+        bounds = vp.lower_bounds()
+        self.assertIn("grpcio", bounds)
+        self.assertIn("protobuf", bounds)
+
+        # Conflicting lower bound in python/pyproject.toml is caught by lower_bounds().
+        fake_root = self.dir / "repo"
+        (fake_root / "python").mkdir(parents=True)
+        (fake_root / "pyproject.toml").write_text(
+            '[dependency-groups]\ncontrol = ["grpcio>=1.85.0", "protobuf>=7.35.1"]\n',
+            encoding="utf-8",
+        )
+        (fake_root / "python" / "pyproject.toml").write_text(
+            '[project]\nname = "vehicle-sil-control"\ndependencies = []\n'
+            '[project.optional-dependencies]\ngrpc = ["grpcio>=1.84.0", "protobuf>=7.35.1"]\n',
+            encoding="utf-8",
+        )
+        with mock.patch.object(vp, "ROOT", fake_root):
+            with self.assertRaises(ValueError) as ctx:
+                vp.lower_bounds()
+        self.assertIn("conflicting lower bounds for grpcio", str(ctx.exception))
+        self.assertIn("python/pyproject.toml", str(ctx.exception))
+
+        # A package declared only in python/pyproject.toml optional-dependencies is extracted.
+        (fake_root / "python" / "pyproject.toml").write_text(
+            '[project]\nname = "vehicle-sil-control"\ndependencies = []\n'
+            '[project.optional-dependencies]\ngrpc = ["grpcio>=1.85.0", "protobuf>=7.35.1", "extra-only>=2.0.0"]\n',
+            encoding="utf-8",
+        )
+        with mock.patch.object(vp, "ROOT", fake_root):
+            extracted = vp.lower_bounds()
+        self.assertEqual(extracted["extra-only"], "2.0.0")
+
+    def _run_prebuilt_tools(self, *, windows: bool) -> tuple[Path, list[list[str]]]:
+        version = package_mod.project_version()
+        suffix = "win" if windows else "linux"
+        exe = ".exe" if windows else ""
+        platform = "windows-x86_64" if windows else "linux-x86_64"
+        build = self.dir / f"build-pkg-{suffix}"
+        prebuilt = self.dir / f"prebuilt-{suffix}"
+        (prebuilt / "bin").mkdir(parents=True)
+        (prebuilt / "bin" / f"vehicle_sil_launch{exe}").write_bytes(b"MZ-launch" if windows else b"ELF-launch")
+        (prebuilt / "bin" / f"vehicle_sil_ethernet_bridge{exe}").write_bytes(b"MZ-eth" if windows else b"ELF-eth")
+        if not windows:
+            (prebuilt / "bin" / "vehicle_sil_socketcan_bridge").write_bytes(b"ELF-can")
+        else:
+            (prebuilt / "licenses" / "msys2").mkdir(parents=True)
+            (prebuilt / "licenses" / "msys2" / "PACKAGES.txt").write_text("gcc-libs\n", encoding="utf-8")
+        (prebuilt / "compiler.txt").write_text("GNU\n", encoding="ascii")
+        for rel in package_mod.GRPC_LICENSES:
+            p = prebuilt / "licenses" / "grpc" / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"license {rel}\n", encoding="utf-8")
+
+        web_parent = self.dir / f"web-dist-{suffix}"
+        web = web_parent / "browser"
+        web.mkdir(parents=True)
+        (web / "index.html").write_text("<app-root></app-root>\n", encoding="utf-8")
+        (web_parent / "3rdpartylicenses.txt").write_text("MIT\n", encoding="utf-8")
+
+        client_dir = self.dir / f"client-{suffix}"
+        client_dir.mkdir(parents=True)
+        client = client_dir / "vehicle-sil-gui-client.mjs"
+        client.write_text("export const createClient = () => {};\n", encoding="utf-8")
+        (client_dir / "vehicle-sil-gui-elements.mjs").write_text("export {};\n", encoding="utf-8")
+        client_pkg = client_dir / f"vehicle-sil-gui-client-{version}.tgz"
+        client_pkg.write_bytes(b"tgz")
+
+        recorded: list[list[str]] = []
+
+        def fake_run(step_self, command, cwd=None, env=None, check=True, capture=False, timeout=None):
+            cmd = [str(c) for c in command]
+            recorded.append(cmd)
+            prog = Path(cmd[0]).name
+            stdout = ""
+            if prog == "uv" and len(cmd) >= 2 and cmd[1] == "export":
+                if "--package" in cmd and "vehicle-sil-control" in cmd:
+                    stdout = "grpcio==1.85.1 \\\n    --hash=sha256:aaa\nprotobuf==7.36.2 \\\n    --hash=sha256:bbb\n"
+                elif "--package" in cmd and "vehicle-sil-gui" in cmd:
+                    stdout = "aiohttp==3.14.5 \\\n    --hash=sha256:ccc\ngrpcio==1.85.1 \\\n    --hash=sha256:aaa\n"
+                else:
+                    stdout = "grpcio-tools==1.85.1 \\\n    --hash=sha256:ddd\n"
+            elif prog == "uv" and len(cmd) >= 2 and cmd[1] == "run":
+                out_idx = cmd.index("--out") + 1
+                gen_dir = Path(cmd[out_idx]) / "vehicle_sil" / "control" / "v1"
+                gen_dir.mkdir(parents=True, exist_ok=True)
+                (gen_dir / "control_pb2.py").write_text("# stub\n", encoding="utf-8")
+            elif prog == f"vehicle_sil_launch{exe}" and "version" in cmd:
+                stdout = f'{{"vehicle_sil": "{version}", "features": ["control-server"]}}\n'
+            elif prog == "readelf":
+                stdout = " 0x0000000000000001 (NEEDED) Shared library: [libc.so.6]\n"
+            elif prog == "objdump":
+                if windows:
+                    stdout = "        DLL Name: api-ms-win-crt-runtime-l1-1-0.dll\n"
+                else:
+                    stdout = "0000000000000000 DF *UND* 0000000000000000 GLIBC_2.34 main\n"
+            else:
+                raise AssertionError(f"unexpected command in stubbed Step.run: {cmd}")
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+        args = argparse.Namespace(
+            build_dir=str(build),
+            no_build=False,
+            build_only=None,
+            prebuilt=str(prebuilt),
+            web=str(web),
+            client=str(client),
+            client_package=str(client_pkg),
+            out=str(self.dir / f"dist-{suffix}"),
+            jobs=1,
+            cmake_arg=None,
+            allow_missing_licenses=False,
+            shared_runtime=False,
+            tag=f"test-control-reqs-{suffix}",
+        )
+
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(package_mod, "WINDOWS", windows),
+            mock.patch.object(package_mod, "PLATFORM", platform),
+            mock.patch.object(package_mod, "EXE", exe),
+            mock.patch.object(package_mod, "LAUNCHER", f"vehicle_sil_launch{exe}"),
+            mock.patch.object(package_mod, "ETHERNET_BRIDGE", f"vehicle_sil_ethernet_bridge{exe}"),
+            mock.patch.object(package_mod, "LOG_DIR", self.log_dir),
+            mock.patch.object(package_mod, "need", lambda tool, why: f"/usr/bin/{tool}"),
+            mock.patch.object(package_mod, "check_bridge_alone", lambda s, b, v: "eth ok"),
+            mock.patch.object(package_mod, "check_socketcan_bridge_alone", lambda s, b, v: "can ok"),
+            mock.patch.object(package_mod, "stage_licenses", lambda *a, **kw: None),
+            mock.patch.object(package_mod.Step, "run", fake_run),
+            contextlib.redirect_stdout(stdout),
+        ):
+            top, _ = package_mod.names(version)
+            rc = package_mod.tools_command(args)
+
+        self.assertEqual(rc, 0, stdout.getvalue())
+        return build / "stage" / top, recorded
+
+    def test_tools_prebuilt_exports_stages_control_requirements_and_renders_readme(self) -> None:
+        stage, recorded = self._run_prebuilt_tools(windows=False)
+        self.assertTrue(
+            any(
+                Path(cmd[0]).name == "uv"
+                and "export" in cmd
+                and "--package" in cmd
+                and "vehicle-sil-control" in cmd
+                and "--extra" in cmd
+                and "grpc" in cmd
+                for cmd in recorded
+            ),
+            recorded,
+        )
+
+        gui_reqs = (stage / "python" / "requirements.txt").read_text(encoding="utf-8")
+        ctl_reqs = (stage / "python" / "requirements-control.txt").read_text(encoding="utf-8")
+        self.assertIn("aiohttp==3.14.5", gui_reqs)
+        self.assertIn("grpcio==1.85.1", ctl_reqs)
+        self.assertIn("protobuf==7.36.2", ctl_reqs)
+        self.assertNotIn("aiohttp", ctl_reqs)
+
+        readme = (stage / "README.md").read_text(encoding="utf-8")
+        self.assertIn("requirements-control.txt", readme)
+        self.assertIn("PYTHONPATH=<tools>/python uv run --no-project --no-build", readme)
+        self.assertIn(f"--python '{package_mod.python_versions()}'", readme)
+        self.assertIn("PYTHONPATH=<tools>/python python3 -S your_launcher_script.py", readme)
+        self.assertNotIn('set "PYTHONPATH=', readme)
+        self.assertIn("Launch", readme)
+        self.assertIn("Serve", readme)
+
+    def test_tools_prebuilt_windows_renders_cmd_python_commands(self) -> None:
+        stage, _ = self._run_prebuilt_tools(windows=True)
+        readme = (stage / "README.md").read_text(encoding="utf-8")
+        py_ver = package_mod.python_versions()
+        self.assertIn('set "PYTHONPATH=<tools>\\python"', readme)
+        self.assertIn(
+            f'uv run --no-project --no-build --managed-python --python "{py_ver}" '
+            r"--with-requirements <tools>\python\requirements-control.txt python -P your_script.py",
+            readme,
+        )
+        self.assertIn("python -S your_launcher_script.py", readme)
+        self.assertNotIn("python3 -S", readme)
+        self.assertNotIn(f"--python '{py_ver}'", readme)
+        self.assertNotIn("PYTHONPATH=<tools>/python uv run", readme)
+
+    def test_verify_command_checks_control_requirements_and_stdlib_import(self) -> None:
+        source = PACKAGE.read_text(encoding="utf-8")
+        self.assertIn('"python/requirements-control.txt"', source)
+        self.assertIn('tools / "python" / "requirements-control.txt"', source)
+        self.assertIn('sys.executable, "-S", "-P", "-c"', source)
+        self.assertIn("from vehicle_sil_control import Serve, RunHandle, ServeError, Launch, LaunchError, control_address", source)
+        self.assertIn('for gui_only in ("aiohttp", "pydantic", "pyyaml"):', source)
 
 
 if __name__ == "__main__":

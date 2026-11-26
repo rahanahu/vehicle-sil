@@ -1248,6 +1248,19 @@ name = "vehicle-sil-control"
 version = "0.4.0"
 source = { editable = "python" }
 
+[package.optional-dependencies]
+grpc = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.85.0" },
+    { name = "protobuf", marker = "extra == 'grpc'", specifier = ">=7.35.1" },
+]
+provides-extras = ["grpc"]
+
 [[package]]
 name = "vehicle-sil-dev"
 version = "0.4.0"

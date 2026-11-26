@@ -279,13 +279,18 @@ class _Simulation:
         return _time(self._c._call(self._c._stub.GetTime, pb.GetTimeRequest()))
 
     def pause(self, at: Optional[int] = None) -> TimeState:
+        """Pause immediately (`at=None`) or schedule a pause at `at` ns (replaces any earlier
+        `pause_target`). Does not resume from a normal post-start pause (only `--start-paused`
+        before step 0 advances when `at > 0`); use `run_until(at)` to advance to `at` and pause."""
         request = pb.PauseRequest() if at is None else pb.PauseRequest(at_ns=at)
         return _time(self._c._call(self._c._stub.Pause, request))
 
     def resume(self) -> TimeState:
+        """Resume the simulation and clear any planned `pause_target` (last call wins)."""
         return _time(self._c._call(self._c._stub.Resume, pb.ResumeRequest()))
 
     def run_until(self, at: int) -> TimeState:
+        """Advance to `at` ns (resuming if paused before `at`) and pause there."""
         return _time(self._c._call(self._c._stub.RunUntil, pb.RunUntilRequest(at_ns=at)))
 
     def step(self, duration: int) -> TimeState:

@@ -100,7 +100,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 - `pyproject.toml`、`python/pyproject.toml`、`gui/server/pyproject.toml`（`uv lock` は、`uv.lock` に PEP 440 の形 `0.2.0rc1` で書きます）
 - `python/vehicle_sil_control/__init__.py` と `gui/server/src/vehicle_sil_gui/__init__.py` の `__version__`
 - `template/get_tools.py`
-- `template/CMakeLists.txt` の `GIT_TAG`
+- `template/CMakeLists.txt` の `GIT_TAG` と `examples/fetchcontent_consumer/CMakeLists.txt` の `VEHICLE_SIL_GIT_TAG`
 - `template/README.md` と `template/README.ja.md` のバージョン
 - `CHANGELOG.md` の見出し `## [<version>] - Unreleased`
 

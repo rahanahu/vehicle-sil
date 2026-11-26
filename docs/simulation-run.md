@@ -2082,20 +2082,20 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
 - `{"command":"prepare"}` re-validates the bound `<file>` (`--file-only` semantics, optional `"variant"`, `"disable"`, `"enable"`, `"manual"` arrays) and replies with `prepare`; `{"command":"status"}` replies with `status`.
 - With `--log-dir <dir>`, each run writes its participant logs under `<dir>/<run ID>/`.
 - With `--control-credentials <file>`, the credentials file is read again before each run so callers can rotate tokens per run.
-- Only one run is executed at a time. A `run` or `prepare` command received before the launcher finishes and emits `idle` is refused (`busy`); nothing is queued.
+- Only one run is executed at a time. A `run` or `prepare` command received before the launcher finishes and emits `result` (returning `status.launcher_state` to `ready` or `unprepared`) is refused (`busy`); nothing is queued.
 - A run that fails, times out or is stopped is never retried automatically.
 
 ### Restrictions of `serve`
 
-- **Fixed registry address (`registry_uri` or `manual` participants)**: `serve` refuses any run whose configuration fixes the SIL Kit registry address (an explicit `registry_uri`, or a `manual` participant waiting on the default port 8500) before describing or starting any participant. The run ends with a `usage` result explaining the reason and the launcher returns to `idle`. A late participant from an earlier run could otherwise join the next run under the same name, because the run ID does not cover SIL Kit participant joins. Use `vehicle_sil_launch run` for such configurations.
+- **Fixed registry address (`registry_uri` or `manual` participants)**: `serve` refuses any run whose configuration fixes the SIL Kit registry address (an explicit `registry_uri`, or a `manual` participant waiting on the default port 8500) before describing or starting any participant. The run ends with a `usage` `result` explaining the reason and the launcher returns to `ready` (or `unprepared`) in `status`. A late participant from an earlier run could otherwise join the next run under the same name, because the run ID does not cover SIL Kit participant joins. Use `vehicle_sil_launch run` for such configurations.
 - **Profiling trace (`VEHICLE_SIL_TRACE`)**: `serve` refuses to start when `VEHICLE_SIL_TRACE` is set (exit code 4, with a usage `result` event), because per-run trace rings stay in the resident process. Use `vehicle_sil_launch run` to trace a single run.
 
 ### Stopping and exit codes of `serve`
 
-- A targeted stdin `stop` (`{"command":"stop","run":"<run ID>"}`) or a Control API `Stop` with a matching run ID stops only the current run. When the run closes cleanly, the launcher emits `idle` and accepts the next `run`.
+- A targeted stdin `stop` (`{"command":"stop","run":"<run ID>"}`) or a Control API `Stop` with a matching run ID stops only the current run. When the run closes cleanly, the launcher emits `result` (returning `status.launcher_state` to `ready` or `unprepared`) and accepts the next `run`.
 - An optional `"force"` boolean on stdin `stop` selects idempotent graceful stop (`false`, does not escalate on repeat) or immediate force stop (`true`, cuts close wait); omitting `"force"` preserves escalating `1 -> 2` behavior.
 - While a run is already closing its own SIL Kit connection, a single late `stop` for that run does not cut the close wait short; only a second `stop` (`force: true` or escalated bare `stop`) or a launcher termination request does.
-- `SIGINT`, `SIGTERM`, `SIGHUP` (Windows: `CTRL_C_EVENT`, `CTRL_BREAK_EVENT`, `CTRL_CLOSE_EVENT`), stdin EOF, or closed stdout ends the launcher. If a run is active, it is stopped and its `result` sets `"launcher_ends": true`, with no `idle` after it.
+- `SIGINT`, `SIGTERM`, `SIGHUP` (Windows: `CTRL_C_EVENT`, `CTRL_BREAK_EVENT`, `CTRL_CLOSE_EVENT`), stdin EOF, or closed stdout ends the launcher. If a run is active, it is stopped and its `result` sets `"launcher_ends": true`, without returning to `ready`.
 - If a run cannot close its own SIL Kit connection within the limit (`connection-not-closed`) or throws an internal error, the launcher sets `"launcher_ends": true` on that run's `result` and exits immediately with code 6 so the caller can start a fresh launcher for the next run.
 
 | Exit code | Meaning |

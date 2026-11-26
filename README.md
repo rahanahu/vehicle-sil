@@ -172,7 +172,7 @@ With this approach you do not build the repository. The [releases page](https://
 | Release asset | Contents |
 |---|---|
 | Template | A starting-point ECU project with the same 2 ECUs as the example above, configuration files and a scenario (the same as [template/](template/)). |
-| Prebuilt tools | `vehicle_sil_launch`, the Ethernet bridge `vehicle_sil_ethernet_bridge` (Linux and Windows), the SocketCAN bridge `vehicle_sil_socketcan_bridge` (Linux only), the browser GUI and the Python client, in one archive per OS. |
+| Prebuilt tools | `vehicle_sil_launch` (with `--control` / Control Server), the Ethernet bridge `vehicle_sil_ethernet_bridge` (Linux and Windows), the SocketCAN bridge `vehicle_sil_socketcan_bridge` (Linux only), the browser GUI and the Python client (with pre-generated gRPC stubs), in one archive per OS. |
 | GUI client | The npm package `vehicle-sil-gui-client-<version>.tgz` for your own screen (see [gui/client](gui/client/README.md)). The prebuilt tools contain the same file, and the npm registry has it as `@vehicle-sil/gui-client`. |
 | `SHA256SUMS` | The SHA-256 checksums of the other assets. |
 

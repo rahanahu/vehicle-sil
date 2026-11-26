@@ -388,7 +388,7 @@ Only the start of the name counts: `engine.j1939.speed` is an ordinary name. `sp
 
 To fix an ECU that uses one of these prefixes, rename the variable, and the scenarios, `variables` entries and GUI settings that use the old name.
 
-An ECU that joins a SIL Kit simulation (`Peer`) adds the monitoring variables after the variables that the ECU declared (`PeerOptions::monitor`, enabled by default). They are not in `variables` of `--describe`, but during a run they appear next to the ECU's variables. For the list of variables, see "Peer monitoring" in [internals/control.md](internals/control.md#peer-monitoring).
+An ECU that joins a SIL Kit simulation (`Peer`) adds the monitoring variables after the variables that the ECU declared (`PeerOptions::monitor`, enabled by default). They are not in `variables` of `--describe`, but during a run they appear next to the ECU's variables as read-only outputs in the Control API and the browser GUI. For the list of variables, see "Peers and variable information (`peers()`, `watch()`)" in [control-api.md](control-api.md#peers-and-variable-information-peers-watch) and "Peer monitoring" in [internals/control.md](internals/control.md#peer-monitoring).
 
 When a colliding name causes an error depends on how it is declared and on the prefix.
 

@@ -306,6 +306,7 @@ vehicle-sil-gui [options] [<configuration file>]
 - パッケージをソースからビルドはしません。
 - uv がないときは、Python 3.11 以上の仮想環境に `python -m pip install --require-hashes -r <tools>/python/requirements.txt` でインストールし、その Python を環境変数 `VEHICLE_SIL_PYTHON` で指定します。足りなければ、そのことを表示して終了コード 2 で終わります。
 - GUI サーバーの Python は、カレントディレクトリのモジュールを読み込みません（`python -P`）。
+- `bin/vehicle-sil-gui` は `uv run` 経由でサーバーを起動するため、自動化から停止するときは `uv` の PID だけに `SIGKILL` を送る（子プロセスの Python が残ります）のではなく、`SIGTERM` を送るかプロセスグループにシグナルを送ってください（POSIX は `killpg`、Windows は `taskkill /T`）。
 
 ### リポジトリから起動する
 
@@ -343,7 +344,7 @@ npm --prefix gui/web/workbench run build
 scripts/run-gui.py --workbench
 ~~~
 
-上部の **Network** でシミュレーション構成を選ぶと、対応構成では `POST api/prepare` で常駐ランチャーを事前準備します（非対応構成では実行単位の Cold 起動へ自動で切り替わります）。開始時は単一のチェックで判定し、Workbench 画面では数値の Run ID ではなく構成ファイルと状態で実行を示します。**Network Designer** では、その構成のバスと ECU チャネルの接続先を編集できます。上部の **Scenario** には、構成ファイルと同じ階層にあるサーバー側の `scenarios/` から実行できる YAML が並びます。**Free run** と **Record & start** は、**Stop at (ms)** を空欄にすると、仮想時間で自動停止しません。時刻を入力すると、Check と再生に同じ設定が適用されます。
+上部の **Network** でシミュレーション構成を選ぶと、対応構成では `POST api/prepare` で常駐ランチャーを事前準備します（非対応構成では実行単位の Cold 起動へ自動で切り替わります）。Hot 起動で実行をまたいで常駐するのは `vehicle_sil_launch serve` のプロセスだけで、各実行では毎回新しい ECU プロセス、SIL Kit registry / controller、シミュレーション状態が仮想時刻 0 から作り直されます（[simulation-run.md](simulation-run.md#1-つのランチャーで順に実行するvehicle_sil_launch-serve) の「1 つのランチャーで順に実行する（`vehicle_sil_launch serve`）」）。設定が `registry_uri` を固定している場合、participant に `manual: true` がある場合、実行時に手動の participant を指定した場合（GUI/API の `manual`、CLI の `--manual` に相当）、`VEHICLE_SIL_TRACE` が設定されている場合、または常駐ランチャーが失敗した場合は、自動で Cold 起動（`serve --once`）へ切り替わります。開始時は単一のチェックで判定し、Workbench 画面では数値の Run ID ではなく構成ファイルと状態で実行を示します。**Network Designer** では、その構成のバスと ECU チャネルの接続先を編集できます。上部の **Scenario** には、構成ファイルと同じ階層にあるサーバー側の `scenarios/` から実行できる YAML が並びます。**Free run** と **Record & start** は、**Stop at (ms)** を空欄にすると、仮想時間で自動停止しません。時刻を入力すると、Check と再生に同じ設定が適用されます。
 
 **Settings → Scenario folder** では、**Scenario** タブで YAML を開いたり保存したりするローカルフォルダを選びます。ブラウザーが読み取り専用でフォルダを開く場合、**Save YAML** はファイルをダウンロードします。ローカルの YAML をサーバーで実行するには、選択中の Network のサーバー側 `scenarios/` に置き、実行リストを更新します。
 
@@ -361,6 +362,7 @@ scripts/run-gui.py --workbench
 - サーバーの終了では、ランチャーの入力を閉じて終了を待ちます。`--stop-timeout` を指定してその時間内に止まらなければ、ランチャーのプロセスグループに SIGTERM（Windows は Ctrl+Break）を送り、5 秒後にグループを強制終了します（Windows は `taskkill /T /F`）。2 回目のシグナルは最初の待機と、その後の 5 秒の待機をどちらも打ち切ります。タイムアウトを指定せず、ランチャーが終了できない場合は、2 回目のシグナルで強制停止できます。
 - サーバーが止められるのは、ランチャーと、ランチャーと同じプロセスグループにいるものまでです。participant の後始末はランチャーの役目です（ランチャーは participant を別のプロセスグループで起動します）。
 - ランチャーが終わっても、ランチャーが起動したプロセスが出力を開いたままのときは、2 秒待ってから実行を終わりにし、画面に通知します。そのプロセスは残っているかもしれません。
+- 自動化から `uv run` 経由で `bin/vehicle-sil-gui` を動かしているときは、`uv` の PID だけに `SIGKILL` を送るのではなく、`SIGTERM` を送るかプロセスグループ（POSIX は `killpg`、Windows は `taskkill /T`）を終了させてください。
 
 ## セキュリティ
 
@@ -447,6 +449,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | `POST api/run` の `speed`、`start_paused` | ランチャーの `--speed`、`--start-paused`（成功時は `{instance, run_id}` の Ack を返し、照合失敗時は前の実行画面を消さずに同期で `422 check-failed` を返します） |
 | `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "pause"}` または `"resume"` | 一時停止、再開（`{run_id, command}` の Ack を返す） |
 | `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "step", "ms": <ms>}` | ステップ実行（一時停止している間だけ。ランチャーがステップ幅の倍数に切り上げ、`{run_id, command}` の Ack を返す） |
+| `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "run_until", "at_ms": <ms>}` | `at_ms` まで進めて一時停止（一時停止中・実行中のどちらでも可。`{run_id, command}` の Ack を返す） |
 | `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "speed", "value": <number or "max">}` | 速度の変更（一時停止はそのまま。`{run_id, command}` の Ack を返す） |
 | `POST api/stop-session` `{"force": <bool>, "run_id": "<run_id>", "instance": "<instance>"}` | 指定した実行の停止（`{instance, run_id}` の Ack を返す。非ターゲットの `POST api/stop` は廃止） |
 | `POST api/prepare` `{"file": ...}` | 常駐ランチャーの準備（`{instance}` の Ack を返す） |
@@ -536,7 +539,7 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 | 開始 | ランチャーが Control Server を持てば、GUI サーバーはランチャー（`serve --once`。常駐するランチャーなら `serve`）を `--control 0 --control-credentials <file>` 付きで起動し、ランチャーのイベント `control_server` が通知したアドレスへ接続します。 |
 | 状態 | 変数の機能の状態（`off`、`connecting`、`ready`、`failed`、`ended`）と理由は、要約の `variables` と `variables` の通知で届きます。 |
 | 一覧 | participant ごとの変数（名前、型、役割、単位、範囲、刻み幅、説明、列挙の項目、書き込めるか）です。 |
-| 値 | 画面が変数を選んで watch すると、選んだ間隔（20 ms 以上）で最後の値が `stream_seq` の外の遅延 `values` フレーム（`{id, watch_id, run_id}`）として届きます。 |
+| 値 | 画面が変数を選んで watch すると、選んだ間隔（20 ms 以上）で最後の値が `stream_seq` の外の遅延 `values` フレーム（`{id, watch_id, run_id, sim_ms, paused, peers}`）として届きます。 |
 | 書き込み | `POST api/write` に、書き込み先の `run_id`（と任意の `instance`）を付けて送り、`{run_id, operation}` を受け取ります。 |
 | 終了の後 | 状態は `ended` になり、最後に読めた値が残ります（次の実行を開始するまで）。 |
 
@@ -557,7 +560,7 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 | 動く例 | リポジトリの `examples/gui_client/variables.mjs` |
 | Angular のラッパー | `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`） |
 
-`EcuVariables` が持つのは、`session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、コンポーネントが破棄されると自動で終了する `watch()`、自動で終了する `open()`、`write()` です。
+`EcuVariables` が持つのは、`session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、コンポーネントが破棄されると自動で終了する `watch()`、呼び出し側が明示的に `close()` を呼んで終了する `open()`（自動では破棄されません）、`write()` です。
 
 ## サンプルの画面
 

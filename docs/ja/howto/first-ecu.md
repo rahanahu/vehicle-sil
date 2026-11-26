@@ -435,13 +435,13 @@ Python のクライアント（`vehicle_sil_control`）は、ビルド済みの�
 T=tools/vehicle-sil-tools-<version>-linux-x86_64
 export PATH="$PWD/$T/bin:$PATH"   # 手順 1 と同じ。スクリプトが vehicle_sil_launch を起動する
 PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' \
-    --with-requirements $T/python/requirements.txt python read_cooler.py
+    --with-requirements $T/python/requirements-control.txt python read_cooler.py
 ```
 
 | 引数 | 意味 |
 |---|---|
 | `PYTHONPATH=$T/python` | クライアントのパッケージの場所です。 |
-| `--with-requirements` | `requirements.txt` に固定したバージョンのパッケージ（grpcio、protobuf など）をインストールします。 |
+| `--with-requirements` | `requirements-control.txt` に固定したバージョンのパッケージ（grpcio、protobuf など）をインストールします。 |
 | `--python '>=3.11,<3.15'` | この範囲の Python を使い、PC になければ uv がダウンロードします。 |
 | `--no-project` | 上のディレクトリに `pyproject.toml` があっても読みません。 |
 | `--no-build` | ビルド済みのパッケージ（wheel）だけを使います。 |

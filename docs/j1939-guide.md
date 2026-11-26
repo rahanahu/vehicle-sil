@@ -272,7 +272,7 @@ You can change the period, the destination and the priority later:
 - To answer a new request from the same peer, change the period instead of re-creating the part (`examples/pid_stream`).
 - To send in the step of the call, use `node.send()` instead of `trigger()`.
 
-The node's address state decides when sending starts and stops. The sender sends nothing until the node can send (this includes the wait after the Address Claim, 250 ms by default). As soon as the node can send, it sends once and then starts counting the period. It stops when the node loses its address, and resumes when the node claims an address again.
+The node's address state decides when sending starts and stops. The sender sends nothing until the node can send (for arbitrary-address-capable nodes, or addresses `128..247`, this includes the wait after the Address Claim, 250 ms by default; non-arbitrary-address-capable nodes with addresses `0..127` or `248..253` are exempt from the wait and send immediately). As soon as the node can send, it sends once and then starts counting the period. It stops when the node loses its address, and resumes when the node claims an address again.
 
 While broadcasts are stopped by DM13 (another node's DM13, or the node's own `BroadcastSuppression::suspend()`), the behavior depends on the destination:
 
@@ -294,9 +294,9 @@ Messages of 9 bytes or more go over the transport protocol: BAM to the global ad
 | `t3` | 1250 ms | T3: how long a sender waits for the receiver's CTS or EndOfMsgACK |
 | `t4` | 1050 ms | T4: how long a sender waits after a CTS that holds the connection |
 | `max_retransmit_requests` | 2 | Retransmission requests per window; when one more is needed, the receiver aborts |
-| `address_claim_wait` | 250 ms | How long a node holds what it sends after its Address Claimed |
+| `address_claim_wait` | 250 ms | How long a node holds what it sends after its Address Claimed (exempt when `!arbitrary_address_capable()` and the address is `0..127` or `248..253`; arbitrary-address-capable nodes always wait) |
 
-This project has not checked these defaults against the standard, which is why they can be set. Change them when the ECUs you simulate or connect to use other values: `Ecu::j1939(network, NetworkOptions{.timing = {...}})` (for `Peer`, `J1939ChannelOptions::network.timing`). A time of 0 or less makes the `Network` constructor throw `std::invalid_argument`. A `Listener` on the same `Network` uses the same times (see "Listen-only participants" below). The details are in "Transport protocol timers" in [internals/j1939.md](internals/j1939.md#transport-protocol-timers).
+This project has not checked these defaults against the standard, which is why they can be set. Change them when the ECUs you simulate or connect to use other values: `Ecu::j1939(network, NetworkOptions{.timing = {...}})` (for `Peer`, `J1939ChannelOptions::network.timing`). A time of 0 or less makes the `Network` constructor throw `std::invalid_argument`. A `Listener` on the same `Network` uses the same times (see "Listen-only participants" below). The details (including the wait exemption) are in "Waiting after a claim" and "Transport protocol timers" in [internals/j1939.md](internals/j1939.md#transport-protocol-timers).
 
 ## Respond to a Request
 

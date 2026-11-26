@@ -166,8 +166,12 @@ constexpr const char* kUsage =
     "                              take effect at 0)\n"
     "  --control <address>         run: serve the Control API (gRPC) for clients: the ECUs' variables and the\n"
     "                              time; <port> (on 127.0.0.1; 0: any free port), <host>:<port> or unix:<path>;\n"
+#ifndef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     "                              the event control_server and a line say where (only in a build with\n"
     "                              VEHICLE_SIL_BUILD_CONTROL_SERVER=ON)\n"
+#else
+    "                              the event control_server and a line say where\n"
+#endif
     "  --control-credentials <file> run --control: tokens and roles, one per line: <role> <name> <token>\n"
     "                              (every call then needs a token; never put a token on the command line)\n"
     "  --control-tls-cert <file>   run --control: PEM certificate chain of the server (with --control-tls-key: TLS)\n"

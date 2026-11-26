@@ -38,6 +38,8 @@ An ECU declares the variables that can be read and written from outside. Clients
 
 ## Build
 
+The prebuilt release tools archive (`vehicle-sil-tools-*`) already includes `vehicle_sil_launch` with `--control` (the Control Server) and the Python client with pre-generated gRPC stubs; you only need to build when compiling from source.
+
 ```sh
 cmake --preset linux-gcc-release -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON
 cmake --build --preset linux-gcc-release
@@ -177,6 +179,8 @@ What the commands accepted while stopped do:
 | `pause` (without a time), `speed` | The simulation does not advance. `speed` sets the speed for when it does. |
 | A stop request (Ctrl+C, the `stop` command, the end of stdin, `Stop` from a client) | The launcher stops waiting, runs one step at time 0, then stops. |
 
+Note that `pause` with a time advances only from this pre-start hold before step 0; once the simulation has started and is paused, `pause(at=T)` sets `pause_target` without resuming (use `run_until(T)` to advance to `T` and pause from either state).
+
 Commands accepted before the stop (during the check, or while waiting for the participants to join) also take effect. The simulation stops only if, at the moment it would stop, it is still due to stop at 0.
 
 | Command accepted before the stop | Effect |
@@ -209,10 +213,10 @@ The launcher accepts time commands from stdin (`--stdin-commands`) and from clie
 
 | Client call | Command name | Argument |
 |---|---|---|
-| `Pause` | `pause` | `at_ms`, for a pause at a time |
-| `Resume` | `resume` | None |
-| `Step` | `step` | `ms`, and `at_ms` (the time at which the simulation stops after the step) |
-| `RunUntil` | `run_until` | `at_ms` |
+| `Pause` | `pause` | `at_ms`, for a pause at a time (updates `pause_target`; does not resume if already paused after start) |
+| `Resume` | `resume` | None (clears any planned `pause_target`) |
+| `Step` | `step` | `ms`, and `at_ms` (the time at which the simulation stops after the step; only while paused) |
+| `RunUntil` | `run_until` | `at_ms` (advances to `at_ms` and pauses, whether currently paused or running) |
 | `SetSpeed` | `speed` | The speed |
 | `Stop` | `stop` | None |
 
@@ -225,7 +229,7 @@ The launcher accepts time commands from stdin (`--stdin-commands`) and from clie
 | Stdin and a client send commands at the same time | The order of receipt decides which comes first. |
 | Rounding of times | Up to whole milliseconds, then up to the controller's time step. The value in the event is the time at which the simulation actually stops. |
 
-For example, if a `step` from a client and a `resume` from stdin overlap, the order of the events decides whether the simulation stops or keeps running.
+For example, if a `step` from a client and a `resume` from stdin overlap, the order of the events decides whether the simulation stops or keeps running. Time commands follow a "last call wins" rule: `resume` clears any planned `pause_target`, `pause` with `at_ms` while already paused after start updates `pause_target` without resuming, and `run_until` advances to `at_ms` and pauses whether the simulation is currently paused or running.
 
 If the launcher does not accept a command, the client gets a gRPC error whose message is the same as `message` of the event.
 
@@ -430,10 +434,10 @@ The gRPC calls, the matching methods of the Python client (methods of `Control`;
 | `WaitOperation` | Waits for the result of a write. | `wait()` | `set` (`--wait`) | `viewer` |
 | `Write` | Writes variables. | `write()` | `set` | `operator` |
 | `ForgetPeer` | Removes a disconnected peer. | `forget_peer()` | `forget` | `operator` |
-| `Pause` | Pauses. | `sim.pause()` | `pause` | `operator` |
-| `Resume` | Resumes. | `sim.resume()` | `resume` | `operator` |
-| `Step` | Advances by the given time and stops. | `sim.step()` | `step` | `operator` |
-| `RunUntil` | Advances to the given time and stops. | `sim.run_until()` | `run-until` | `operator` |
+| `Pause` | Pauses (or schedules a pause at `at`; does not resume if already paused after start). | `sim.pause()` | `pause` | `operator` |
+| `Resume` | Resumes (and clears any planned `pause_target`). | `sim.resume()` | `resume` | `operator` |
+| `Step` | Advances by the given time and stops (only while paused). | `sim.step()` | `step` | `operator` |
+| `RunUntil` | Advances to the given time and stops (whether currently paused or running). | `sim.run_until()` | `run-until` | `operator` |
 | `SetSpeed` | Changes the speed. | `sim.set_speed()` | `speed` | `operator` |
 | `Stop` | Stops the simulation. | `sim.stop()` | `stop` | `admin` |
 
@@ -450,6 +454,8 @@ python -m vehicle_sil_control.generate          # generates the stubs in python/
 | Python version | 3.11 or later. |
 | Versions and dependencies | `python/pyproject.toml` (`dependencies = []`, `python -S` safe; shares pure Events v4 protocol constants and NDJSON command builders `protocol.py` and lazy gRPC helpers `grpc_helpers.py` with `gui/server`), `pyproject.toml` at the repository root (`uv sync`, or `uv sync --only-group control` for Control API packages only) and `uv.lock` (see "Python (uv)" in [build.md](build.md#python-uv)). |
 | Standard library only vs gRPC | `Launch`, `Serve`, `RunHandle`, `LaunchError`, `ServeError` and `control_address` use only the standard library (`python -S` safe) and import no gRPC modules. `Control`, `Control.for_current_run()`, `run.control()` and the CLI require `grpcio`, `protobuf` and generated stubs (`generate --out DIR` writes elsewhere; set `VEHICLE_SIL_CONTROL_STUBS=DIR` to load them). |
+| Prebuilt tools archive (`Control` / gRPC) | Pre-generated stubs are already included under `<tools>/python`. Run with `PYTHONPATH=<tools>/python uv run --no-project --no-build --python ">=3.11,<3.15" --with-requirements <tools>/python/requirements-control.txt python <script.py>`. |
+| Prebuilt tools archive (`Launch` / `Serve` only) | Zero extra dependencies: run with `PYTHONPATH=<tools>/python python -S <script.py>` (or any Python 3.11+). |
 | Outside `.venv` or without `uv sync` | Set `export PYTHONPATH=$PWD/python` before running `python -m vehicle_sil_control.generate` or your scripts, and install `pip install grpcio grpcio-tools protobuf`. |
 | Without uv (MSYS2 UCRT64) | Set `export PYTHONPATH=$PWD/python` and install with `pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools`. |
 
@@ -609,6 +615,7 @@ Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. M
 - The response (`TimeState`) of `step()`, `run_until()` and `pause()` with a time, and `time()` right after it, give the state at that moment, after the command was accepted.
 - While the simulation is advancing, `paused` is false and `now` is the time before or during the advance. If the simulation is fast, it may already have reached the time and stopped.
 - Where a `step()` ends is in its response: `pause_target` while the simulation is advancing, and `now` once it has stopped there (`paused` is true). If stdin or another client sends a time command at the same moment, the response may already show that command's effect; the launcher's `command` event of each step has the time of that step (`at_ms`).
+- Calling `sim.pause(at=T)` while already paused after start updates `pause_target` without resuming, and `sim.resume()` clears any planned `pause_target` ("last call wins"). Use `sim.run_until(T)` to advance to `T` and pause whether currently paused or running.
 - When `TimeState.running` is false, `ended` is true if the simulation has ended, and false if it has not started yet.
 
 ### Peers and variable information (`peers()`, `watch()`)
@@ -627,6 +634,20 @@ Use the `vehicle_sil_control` of the same vehicle-sil release as the launcher. M
 | `source` | For a variable to which the variable map of the configuration file (`participants[].variables`) applies, its name in the executable. Empty if no mapping applies. |
 
 - The server decides `builtin` by the name: true if the name starts with `ecu.`, `peer.`, `j1939.`, `can.`, `lin.` or `eth.`. If the application declares a variable whose name starts with `j1939.`, that variable is true as well.
+
+With `PeerOptions::monitor` (enabled by default), each SIL Kit `Peer` adds the read-only monitoring variables below at runtime (`builtin: true`). They are available via the Control API and the browser GUI, not in `--describe` or scenarios:
+
+| Variable | Type / Unit | Meaning |
+|---|---|---|
+| `peer.steps` | int | Steps run by the peer. |
+| `peer.speed` | float (`s/s`) | Simulation seconds per wall-clock second since the previous sample (`0` at the first sample; includes paused time). |
+| `peer.app_time_max_us` | float (`us`) | Longest application and LIN stage of a step since the previous sample (excludes J1939 handling and applying commands). |
+| `j1939.<net>.bus_state` | enum | CAN controller error state (`unknown`, `error_active`, `error_passive`, `bus_off`). |
+| `j1939.<net>.<counter>` | int | Network statistics counters: `frames_received`, `frames_sent`, `send_failures`, `send_queue_full`, `receive_overflows`, `held_dropped`, `address_violations`, `transport_aborts_sent`, `transport_aborts_received`, `transport_timeouts`, `transport_rejected`, `transport_bam_dropped`, `transport_bam_replaced`. |
+| `j1939.<net>.node<i>.address` | int | Current address of J1939 node `i`. |
+| `j1939.<net>.node<i>.address_state` | enum | Address claim state (`fixed`, `not_started`, `claiming`, `claimed`, `cannot_claim`). |
+
+`<net>` uses the mapped simulation network name if `--map-network` is set (see "Peer monitoring" in [internals/control.md](internals/control.md#peer-monitoring) for details).
 
 For a peer with a variable map, these are after mapping:
 
