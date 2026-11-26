@@ -1,145 +1,144 @@
 ---
 name: run-challenge
 description: >-
-  Coordinate a focused independent Challenger and handle its findings. Use when
-  planning or reviewing work that changes concurrency, object lifetime, shutdown,
-  public contracts, test detection, CI quality gates, or claimed behavior-preserving
-  performance, and before costly architecture commitments. Also use for an explicit
-  request to challenge assumptions or seek counterexamples. This is a Coordinator
-  workflow, not a worker's self-review or a recursive challenger launcher.
+  Coordinate an empirical-first independent Challenger and gate work on its
+  verdict. Use when planning or reviewing changes to concurrency, object lifetime,
+  shutdown, state machines, parsers, public contracts, test detection, CI quality
+  gates, or claimed behavior-preserving performance, and before costly architecture
+  commitments. Skip when the host already runs its own built-in Challenger workflow
+  (such as Antigravity /teamwork). Coordinator-only; never invoke recursively.
 ---
 
 # Run Challenge
 
-Use the host's existing delegation and handoff mechanisms. Keep the Challenger's
-reasoning instructions in its agent profile; use this skill to select, dispatch,
-and close the work. Preserve the project's existing review and CI requirements.
+Use the host's delegation and handoff mechanisms. Keep the Challenger's adversarial
+methodology in `.github/agents/challenger.agent.md`; use this skill to screen,
+dispatch, gate, and close the loop while preserving the project's review and CI
+requirements.
 
-## 1. Screen the change
+## 1. Screen the change and respect host precedence
 
-Apply this workflow only while coordinating the work. An implementer, reviewer,
-or Challenger should return relevant concerns to its Coordinator instead of
-launching this workflow recursively.
+- **Defer to built-in host Challengers:** If the host orchestration environment
+  already runs its own dedicated adversarial Challenger workflow and verdict
+  protocol (for example, Antigravity `/teamwork` with `teamwork_challenger`),
+  **do not apply this skill, `dispatch-template.md`, or `challenger.agent.md`**.
+  Let the host's native Challenger workflow operate unmodified.
+- **Coordinator-only:** Apply this workflow only while coordinating work in hosts
+  without a built-in Challenger workflow (such as `/swarm`, standard subagent
+  sessions, Codex, Copilot, Claude Code, or Gemini CLI). Implementers, reviewers,
+  and Challengers return concerns to their Coordinator instead of invoking this
+  skill recursively.
 
-Inspect the actual requirements and change. Identify important claims whose
-failure would affect correctness, observability, reliability, or maintenance.
-Use an independent challenge when a material claim or uncertainty warrants it,
-or when explicitly requested. Skip cosmetic and otherwise low-risk changes
-without creating a new approval step; record a short reason in existing task
-notes when useful.
+Inspect the requirements and actual diff. Launch an independent challenge when a
+failure could affect correctness, concurrency/lifetime safety, wire or API
+contracts, observability, test/gate integrity, or performance claims, or when
+explicitly requested. Skip cosmetic or trivial changes without adding an approval
+round.
 
-For an expensive design decision, challenge the requirements and tradeoffs before
-implementation. For implementation verification, freeze an identifiable snapshot
-and launch the Challenger in parallel with the primary reviewer as soon as core
-implementation is ready, without waiting for unrelated follow-up test or doc
-commits. For an integration branch whose individual steps were already challenged,
-narrow the scope to glue code, integration wiring, and test harnesses added or
-changed during integration. Do not automatically require both phases for every
-change.
+- **Implementation challenge (default):** Freeze an identifiable commit snapshot
+  and launch the Challenger(s) in parallel with the primary reviewer as soon as
+  core implementation builds and passes smoke checks, without waiting for
+  unrelated polish.
+- **Pre-implementation design challenge (selective):** Use before committing to an
+  expensive cross-layer contract or concurrency design; keep it focused on
+  lock/shutdown ordering, boundary edge cases, and simpler alternatives rather
+  than substituting it for post-implementation empirical probing.
+- **Integration challenge:** When individual PRs or slices were already challenged,
+  narrow integration checks to cross-slice glue, rebase interactions, and shared
+  harnesses.
 
-## 2. Prepare a bounded brief
+## 2. Prepare a sharp, empirical brief
 
-Read [the dispatch template](references/dispatch-template.md) only when dispatching.
+Read [the dispatch template](references/dispatch-template.md) when dispatching.
 
-Provide the original requirements, exact subject and evidence locations,
-candidate claims, existing verification, and a concrete budget. Supply applicable
-repository-instruction paths because a worker may not inherit them. Share factual
-test results and reproduction information; do not frame the task as confirming
-someone else's approval or finding a predetermined number of defects.
+Provide the original requirements, exact commit/worktree and build/virtualenv
+paths (so the Challenger can execute probes immediately against real compiled
+binaries, Python environments, or bundled web code without redundant setup),
+candidate claims, reviewer-owned suites, and resource boundaries. Supply
+repository-instruction paths (`AGENTS.md`, relevant `docs/`) because fresh workers
+do not inherit them.
 
-By default, start one Challenger per substantive change unit with a focused
-assignment covering one to three important claims; multiple Challengers are
-allowed when distinct independent perspectives are useful. If no project budget
-exists, use a soft 15-minute initial budget and at most one heavy build/test
-process at a time. Apply any stricter project resource limits. A soft budget means
-report and return at the next safe stopping point, not abandon processes or delete
-evidence.
-
-Frame each claim so the Challenger can tell which observed outcomes would
-violate it. If the change rejects an invalid input or blocks an unsafe operation,
-include what callers must still be able to do. Name concrete conditions when
-the contract depends on them. Let the Challenger choose where and how to try to
-break the claim, or pursue a more consequential claim within the requirements.
-
-Allocate an isolated workspace and evidence destination. Keep heavy probes out
-of shared source/build directories. Reuse existing verification where it answers
-the question, and identify the primary reviewer's work to avoid needless repeats.
-Leave mechanical removal checklists (such as repository-wide `rg` sweeps) to the
-primary reviewer so the Challenger stays focused on adversarial counterexamples
-for concurrency, lifetime, boundaries, and contracts.
+- **Single vs orthogonal parallel Challengers:** Launch one Challenger for a
+  focused single-surface change. When a change spans distinct failure surfaces
+  (for example, C++ concurrency/lifetime + Python/GUI/Web state, or schema/parser
+  parity + subprocess orchestration), launch **two Challengers in parallel with
+  disjoint attack surfaces** so each writes deep executable probes instead of
+  skimming the whole diff.
+- **Frame observable consumer promises:** State what callers or users must observe
+  and under what conditions — including what must keep working when rejecting
+  invalid input or leaving a new option off. Do not frame the author's chosen
+  internal mechanism as the expected answer, and do not prescribe every probe;
+  leave room for the Challenger to design adversarial experiments and pursue
+  higher-impact failure modes within scope.
+- **Resource & contention hygiene (no arbitrary time caps):** Do not impose uniform
+  short time caps that encourage skipping empirical execution. Instead, state
+  concrete contention rules: keep the reviewed worktree strictly read-only, stage
+  all probes/caches in `/tmp` (`chmod 700`) or an isolated worktree, run at most
+  one heavy C++ build at a time, and name any full suite (`verify-gui.py`,
+  `verify-web.py`, `verify.py`) already owned by the primary reviewer so parallel
+  workers do not collide on ports, browsers, or `scripts/busy_machine.py`. Leave
+  mechanical repository-wide `rg` checklists to the primary reviewer.
 
 ## 3. Delegate independently
 
-Resolve the installed `challenger` agent and launch a fresh independent worker
-without inherited implementation history for each substantive change unit, using
-the current host's documented delegation mechanism (in a Swarm, spawn a new worker
-via `add` rather than forking implementation context).
+Launch a fresh worker with **zero inherited implementation history**:
 
-If the host accepts role prompts rather than registered agent names, read the
-installed `challenger.agent.md` profile and pass its complete instructions to a
-fresh worker along with the brief. Record which mechanism was used. Do not invent
-Swarm commands, tool names, or supported configuration fields.
+- **Registered `challenger` subagent:** When `invoke_subagent` exposes `challenger`,
+  invoke a fresh instance with the filled brief.
+- **Swarm (`swarm{action:"add"}`) or role-prompt hosts:** Because Swarm workers do
+  not take a subagent `TypeName`, spawn a fresh worker (`name: "challenger-..."`,
+  never `fork` from the implementer) and include the complete instructions from
+  `.github/agents/challenger.agent.md` followed by the task brief. Use
+  `workspace: "inherit"` when probing read-only against an existing worktree/build
+  from `/tmp`, or `workspace: "share"` when the Challenger needs its own worktree
+  for isolated C++ mutant/ASan/TSan builds.
 
-Select the model according to the difficulty of the change and the project's
-model policy; do not choose a higher-tier model solely because the role is
-Challenger or Reviewer. Give the worker the context it needs without inheriting
-the implementation conversation.
+Follow the project's model policy (such as `.agents/rules/swarm.md` in Swarm)
+according to task risk and complexity. If independent delegation is unavailable,
+record the assurance gap explicitly — never label a Coordinator's or implementer's
+self-check as an independent Challenger pass.
 
-If independent delegation or the agent profile is unavailable, report the
-integration gap and affected assurance to the Coordinator's task record. Do not
-label a Coordinator's self-review as an independent challenge or mark the check
-complete. Continue other authorized work while applying existing acceptance policy.
+## 4. Gate on the verdict
 
-## 4. Assess the report
+Verify that the report pins the reviewed commit, confirms worktree cleanliness,
+includes executable probe commands/outputs (unless pre-implementation or genuinely
+non-executable), and separates blocking defects, open contract decisions, and
+non-blocking notes:
 
-Confirm that the report identifies its snapshot, evidence, established findings,
-and unchallenged areas. Assess any reported mismatch that needs a contract decision
-against the original requirements and user-facing documentation. Record the
-disposition even when the behavior matches existing code. Treat the result as
-input to the existing decision process:
-
-| Result | Coordinator action |
+| Verdict | Coordinator action |
 | --- | --- |
-| `FINDINGS` | Check the requirement, evidence, consequence, and severity. Send established issues to the implementer with the reproducer or reasoning. Apply existing acceptance policy; a minor finding does not automatically block all work. |
-| `NO_FINDINGS_IN_CHECKED_SCOPE` | Record the covered scope and limits. Combine this evidence with the primary review and CI. Do not generalize it into a proof of safety. |
-| `INCOMPLETE` | Identify the missing evidence and its materiality. Choose a bounded follow-up, an explicit risk disposition allowed by existing policy, or the required escalation. Do not silently convert it to a pass. |
+| `REJECT` | Check each reproducer or line-anchored proof and its user-visible impact. Block merge/completion until established in-scope defects and contract violations are fixed and re-verified (or refuted by concrete discriminating execution evidence). Keep out-of-scope pre-existing notes separate so they do not force unplanned scope expansion. |
+| `APPROVE` | Record the verified commit, empirical probes executed, and unchallenged exclusions. Combine with primary review and CI; do not extrapolate beyond the tested snapshot and scope. |
+| `INCOMPLETE` | Identify the unverified claim, blocked probe, or open contract decision. Run a bounded follow-up, resolve the missing prerequisite/contract question, or escalate under project policy. Never silently treat `INCOMPLETE` as `APPROVE`. |
 
-For every result, handle material unresolved gaps using the `INCOMPLETE` procedure.
-Fixing an established issue does not resolve a separate unverified requirement.
+Assess any flagged **Open contract decision** against the original requirements and
+user-facing documentation, and record the disposition even when current code
+already behaves that way. Separate subject failures from broken fixtures or
+parallel-workload interference. When implementer and Challenger disagree, settle
+the question with a small discriminating executable probe rather than opinion or
+vote counting.
 
-Separate a subject failure from a broken fixture, missing dependency, or resource
-interference. A concrete, complete code-path argument under stated assumptions can
-establish a finding without executing a reproducer; a vague possibility is an
-unresolved hypothesis, not an established defect.
-
-For disagreement, seek the smallest discriminating evidence within a stated
-budget. Do not settle by counting approvals, invoking endless reviewers, or
-automatically accepting either the implementer's or Challenger's verdict.
+If an implementation Challenger returns `APPROVE` based only on static code reading
+when runnable artifacts were available, treat the check as `INCOMPLETE` and require
+empirical probing of the high-risk claims.
 
 ## 5. Close the loop
 
-Assign product fixes and durable regression tests to the implementer. Preserve a
-useful reproducer before disposing of scratch resources.
-
-For a fix recheck, ask the Challenger to verify the known failure against the
-fixed snapshot. Supply the reproducer or code-path evidence and the expected
-outcome. If a material question remains beyond that regression, state the
-observable promise in doubt and leave the choice of new cases to the Challenger.
-
-Compare the final snapshot with the reviewed one: changes to the relevant code, callers,
-contracts, or test/gate behavior invalidate the affected evidence; unrelated
-changes do not require restarting the entire review. You may reuse the same
-Challenger for a prompt fix-and-recheck cycle on the same change unit; prefer
-starting a fresh Challenger after a long idle wait or when moving to a different
-change unit (strict cache-TTL tracking or fixed-interval rotation is unnecessary).
-
-Extend the budget or launch an additional Challenger when a distinct independent
-perspective or separate material question warrants it. Stop once the evidence is
-sufficient under existing policy, and terminate the Challenger worker (e.g.,
-`kill` in a Swarm) once verification and any needed recheck for its change unit
-are complete.
-
-Record the snapshot, hypotheses checked, result, findings/disposition, important
-gaps, and evidence locations in the existing handoff. State the actual challenge
-status when declaring the parent task complete. This workflow grants no new merge,
-publishing, or external messaging authority.
+1. **Fix & regression test:** Assign confirmed defects to the implementer along
+   with the Challenger's minimal reproducer, and fold durable reproducers into the
+   test suite where appropriate.
+2. **Fix recheck:** Re-verify against the fixed commit snapshot. Supply the
+   original failure reproducer/evidence and expected outcome, state any remaining
+   observable promise in doubt, and leave the choice of additional adversarial
+   probes open to the Challenger. Changes to touched code, callers, contracts, or
+   gates invalidate prior evidence on those paths; unrelated doc/comment edits do
+   not require re-running unaffected probes.
+3. **Lifecycle cleanup:** You may message the same Challenger worker for an
+   immediate fix-and-recheck cycle on the same unit, or spawn a fresh Challenger
+   when moving to a new unit or after substantial redesign. Terminate temporary
+   Challenger workers (`swarm{action:"kill"}` in Swarm) once the unit and any
+   rechecks achieve `APPROVE`.
+4. **Handoff record:** Record the verified commit, Challenger surfaces/claims,
+   verdict, resolved findings or contract decisions, and remaining exclusions in
+   the task handoff. This workflow grants no new merge, publishing, or external
+   messaging authority.
