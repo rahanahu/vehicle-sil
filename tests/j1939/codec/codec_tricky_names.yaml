@@ -20,3 +20,7 @@ messages:
         start_bit: 0
         length: 64
         values: {big: 0xF000000000000000, small: 1}
+  - name: NonEnumMemberName
+    proprietary_b: 0x22
+    signals:
+      - {name: enumerator_names, start_bit: 0, length: 8}

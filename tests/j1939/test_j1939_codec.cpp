@@ -646,4 +646,10 @@ TEST_CASE(names_that_clash_with_the_generated_code_still_work)
                   names::Pgn::Signals::array::enumerator_names[0].value == 0xF000000000000000ull);
     static_assert(names::Pgn::Signals::array::enumerator_names[1].name == "small" &&
                   names::Pgn::Signals::array::enumerator_names[1].value == 1ull);
+    names::NonEnumMemberName ne;
+    CHECK(ne.enumerator_names.set(42.0));
+    const auto decoded_ne = names::NonEnumMemberName::decode(ne.bytes());
+    CHECK(decoded_ne.has_value());
+    CHECK(decoded_ne->enumerator_names.value() == std::optional<double>(42.0));
+    static_assert(decltype(ne.enumerator_names)::name == "enumerator_names");
 }
