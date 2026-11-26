@@ -142,11 +142,11 @@ The `currentTarget()` method returns the current `{run_id, instance}` pair, or `
 
 ### Time
 
-| Kind     | Name                                                                                                 |
-| -------- | ---------------------------------------------------------------------------------------------------- |
-| Type     | `ClientTime` (`state`, `answerTimeoutMs`, `pause`, `resume`, `step`, `runUntil`, `setSpeed`, `send`) |
-| Type     | `TimeState`, `TimeFailure`, `Lateness`, `SendResult`, `NotSentReason`                                |
-| Constant | `ANSWER_TIMEOUT_MS`                                                                                  |
+| Kind     | Name                                                                                                  |
+| -------- | ----------------------------------------------------------------------------------------------------- |
+| Type     | `ClientTime` (`state`, `answerTimeoutMs`, `pause`, `resume`, `step`, `runUntil?`, `setSpeed`, `send`) |
+| Type     | `TimeState`, `TimeFailure`, `Lateness`, `SendResult`, `NotSentReason`                                 |
+| Constant | `ANSWER_TIMEOUT_MS`                                                                                   |
 
 Both `front.time` and `client.time` send commands with the known run ID and server instance. If the run is replaced, the server rejects the command before sending it to a launcher. Older servers that do not accept these fields reject the request.
 
@@ -156,7 +156,7 @@ A screen can pass the `RunTarget` it captured when rendering a control to `front
 
 | Kind     | Name                                                                                                                                                                  |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Type     | `ClientVariables` (`state`, `operations`, `watchProblem`, `watch`, `write`, `bind`)                                                                                   |
+| Type     | `ClientVariables` (`state`, `operations`, `watchProblem`, `watch`, `write`, `bind`, `isStale?`)                                                                       |
 | Type     | `VariableWatch` (`values`, `value`, `history`, `close`)                                                                                                               |
 | Type     | `VariablesState`, `VariablesStatus`, `VariablePeer`, `VariableInfo`, `VariableRef`, `VariableValue`, `WatchOptions`, `WatchValues`, `VariableReading`, `HistoryPoint` |
 | Type     | `WriteOptions`, `OperationView`, `OperationPeer`, `WatchProblem`                                                                                                      |
@@ -742,12 +742,12 @@ Switch on `condition.kind`.
 
 The `status` of `unavailable` is one of: not running, this run has no variables, connecting, cannot connect. The values of `why` for `stale`:
 
-| `why`          | Meaning                                                  |
-| -------------- | -------------------------------------------------------- |
-| `connection`   | The connection between the client and the server dropped |
-| `reconnecting` | The server is reconnecting to the launcher               |
-| `peer`         | The ECU is disconnected                                  |
-| `reading`      | Reading values keeps failing                             |
+| `why`          | Meaning                                                                                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connection`   | The connection between the client and the server dropped, or a cached reading after reconnecting to the same run is still awaiting its first post-reconnect `values` sample |
+| `reconnecting` | The server is reconnecting to the launcher                                                                                                                                  |
+| `peer`         | The ECU is disconnected                                                                                                                                                     |
+| `reading`      | Reading values keeps failing                                                                                                                                                |
 
 ### Why a write is blocked (`block`)
 

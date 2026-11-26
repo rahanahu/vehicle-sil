@@ -274,6 +274,11 @@ export interface ClientVariables {
    * recreating a bind). Call close() when done with it.
    */
   bind(ref: VariableRef, options?: BindOptions): VariableBinding;
+  /**
+   * Whether the cached value for `ref` was kept across a reconnect and is still awaiting its first post-reconnect
+   * `values` sample.
+   */
+  isStale?(ref: VariableRef): boolean;
 }
 
 /** Default time to wait for the result of a write (ms). */
@@ -595,6 +600,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private readonly handles = new Set<Handle>();
   private readonly buckets = new Map<number, Bucket>();
   private readonly readings = new Map<string, VariableReading>();
+  /** Cached keys kept across a reconnect until a post-reconnect `values` sample arrives. */
+  private readonly awaitingRefresh = new Set<string>();
   private readonly histories = new Map<string, History>();
   private readonly pending = new Set<Pending>();
   /** Variables someone watches (null: a watch observes all). */
@@ -638,6 +645,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   /** Messages sent right after connecting (after authentication): all current subscriptions. */
   resume(): unknown[] {
     this.syncQueued = false;
+    for (const key of this.readings.keys()) this.awaitingRefresh.add(key);
     const messages: unknown[] = [];
     for (const [periodMs, wanted] of this.wanted()) {
       const bucket = this.bucket(periodMs);
@@ -866,6 +874,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     // Clear every observable part before notifying any subscriber. A subscriber can synchronously
     // fetch the new run, so it must never observe or revive the previous run's values or schema.
     this.readings.clear();
+    this.awaitingRefresh.clear();
     this.histories.clear();
     this.historyReserved = 0;
     const initial = { ...NO_VARIABLES, session };
@@ -912,6 +921,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         const key = keyOf(peer, name);
         // Do not keep variables nobody watches (values arriving right after a stop, extras of an "all" subscription)
         if (this.watched !== null && !this.watched.has(key)) continue;
+        const refreshed = this.awaitingRefresh.delete(key);
         const before = this.readings.get(key);
         if (
           before &&
@@ -920,6 +930,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           before.paused === paused &&
           Object.is(before.value, value)
         ) {
+          if (refreshed) touched.add(key);
           continue;
         }
         this.readings.set(key, { value, sampleMs, simMs, paused });
@@ -1212,6 +1223,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     };
   }
 
+  isStale(ref: VariableRef): boolean {
+    return this.awaitingRefresh.has(keyOf(ref.peer, ref.name));
+  }
+
   /**
    * Turns a requested interval into the longest of WATCH_PERIODS_MS that is not longer, kept within the server's range
    * (lower and upper limit).
@@ -1252,7 +1267,12 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       }
     }
     if (all) return;
-    for (const key of this.readings.keys()) if (!seen.has(key)) this.readings.delete(key);
+    for (const key of this.readings.keys()) {
+      if (!seen.has(key)) {
+        this.readings.delete(key);
+        this.awaitingRefresh.delete(key);
+      }
+    }
   }
 
   /**

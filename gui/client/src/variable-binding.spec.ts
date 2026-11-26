@@ -870,18 +870,114 @@ describe('client.variables.bind', () => {
       demand.write(40);
       expect(requests()).toEqual([]);
 
-      // synced flips ready to true and unblocks the binding
+      // synced flips ready to true and unblocks writes, while keeping the cached value stale until refreshed
       expect(blocks.every((b) => b === 'disconnected')).toBe(true);
       await deliver(synced());
       expect(client.session.ready.get()).toBe(true);
       expect(demand.state.get().block).toBeNull();
-      expect(demand.state.get().condition.kind).toBe('live');
+      expect(demand.state.get().condition).toMatchObject({
+        kind: 'stale',
+        why: 'connection',
+        reading: { value: 25 },
+      });
       expect(blocks.at(-1)).toBeNull();
 
       demand.write(40);
       expect(requests().map((r) => r.request.body)).toEqual([
         { run_id: '1', writes: { Engine: { 'engine.demand': 40 } } },
       ]);
+
+      // First post-reconnect values sample clears stale
+      await deliver(values(200, false, { 'engine.demand': 30 }));
+      expect(demand.state.get().condition).toMatchObject({
+        kind: 'live',
+        reading: { value: 30, sampleMs: 200 },
+      });
+      demand.close();
+    });
+
+    it('keeps cached values stale until a post-reconnect values sample arrives, even if paused with identical values', async () => {
+      const demand = client.variables.bind(ref('engine.demand'), { history: 10 });
+      const frontDemand = front.variable('Engine.engine.demand');
+      const frontStates: { stale: boolean; canWrite: boolean; kind: string }[] = [];
+      const stopFront = frontDemand.subscribe((v) =>
+        frontStates.push({ stale: v.stale, canWrite: v.can_write, kind: v.condition.kind }),
+      );
+
+      await deliver(
+        hello('ready', 1, { launcher_state: { ...runningState, paused: true, paused_at_ms: 100 } }),
+        synced(1),
+        values(100, true, { 'engine.demand': 25 }),
+      );
+      expect(demand.state.get().condition).toMatchObject({
+        kind: 'paused',
+        reading: { value: 25 },
+      });
+      expect(frontDemand.get()).toMatchObject({ stale: false, can_write: true });
+      expect(demand.history()).toEqual([{ sampleMs: 100, value: 25 }]);
+
+      socket().fail();
+      expect(demand.state.get().condition).toMatchObject({ kind: 'stale', why: 'connection' });
+      expect(frontDemand.get()).toMatchObject({ stale: true, can_write: false });
+
+      await vi.advanceTimersByTimeAsync(500);
+      socket().open();
+      // Batch 1: hello + synced for the same paused run (no values yet)
+      await deliver(
+        hello('ready', 1, { launcher_state: { ...runningState, paused: true, paused_at_ms: 100 } }),
+        synced(1),
+      );
+      expect(client.session.ready.get()).toBe(true);
+      expect(demand.state.get().block).toBeNull();
+      expect(demand.state.get().condition).toMatchObject({
+        kind: 'stale',
+        why: 'connection',
+        reading: { value: 25, sampleMs: 100, paused: true },
+      });
+      expect(frontDemand.get()).toMatchObject({ stale: true, can_write: true, value: 25 });
+
+      const refreshedConditions: string[] = [];
+      const stopBind = demand.state.subscribe((s) => refreshedConditions.push(s.condition.kind));
+
+      // Batch 2: post-reconnect values sample identical to the pre-disconnect paused reading
+      await deliver(values(100, true, { 'engine.demand': 25 }));
+      expect(refreshedConditions).toEqual(['paused']);
+      expect(demand.state.get().condition).toMatchObject({
+        kind: 'paused',
+        reading: { value: 25, sampleMs: 100, paused: true },
+      });
+      expect(frontDemand.get()).toMatchObject({ stale: false, can_write: true, value: 25 });
+      expect(frontStates.at(-1)).toEqual({ stale: false, canWrite: true, kind: 'paused' });
+      expect(demand.history()).toEqual([{ sampleMs: 100, value: 25 }]);
+      stopBind();
+      stopFront();
+      demand.close();
+    });
+
+    it('reports ended rather than stale when a same-run reconnect arrives after the run ended', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello('ready', 1), synced(1), values(100, false, { 'engine.demand': 25 }));
+      expect(demand.state.get().condition.kind).toBe('live');
+
+      socket().fail();
+      expect(demand.state.get().condition).toMatchObject({ kind: 'stale', why: 'connection' });
+
+      await vi.advanceTimersByTimeAsync(500);
+      socket().open();
+      await deliver(
+        hello('ended', 1, {
+          state: 'ended',
+          phase: 'ended',
+          launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
+          launcher_state: { ...runningState, phase: 'ended' },
+        }),
+        synced(1),
+      );
+      expect(client.session.ready.get()).toBe(true);
+      expect(demand.state.get().condition).toMatchObject({
+        kind: 'ended',
+        reading: { value: 25 },
+      });
       demand.close();
     });
 

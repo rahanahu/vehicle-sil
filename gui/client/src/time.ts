@@ -90,7 +90,7 @@ export interface ClientTime {
   /**
    * Advances virtual time until atMs and pauses there (the launcher rounds up to a multiple of the time step).
    */
-  runUntil(atMs: number): SendResult;
+  runUntil?(atMs: number): SendResult;
   /** Changes the speed (a pause stays in effect). */
   setSpeed(value: number | 'max'): SendResult;
   /**

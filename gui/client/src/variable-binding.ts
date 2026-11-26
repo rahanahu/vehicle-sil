@@ -145,6 +145,7 @@ export interface BindingSources {
       writes: Record<string, Record<string, number | boolean | string>>,
       options?: WriteOptions,
     ): Promise<OperationView>;
+    isStale?(ref: VariableRef): boolean;
   };
   readonly connection: Readable<ConnectionState>;
   /** Optional session sync readiness (`session.ready`). Falls back to `connection === 'open'` when omitted. */
@@ -516,6 +517,7 @@ class Binding implements VariableBinding {
       peerConnected: binder.peerConnected(ref.peer),
       // A reason while still ready means reading values keeps failing (the value is the last one read)
       readFailing: variables.status === 'ready' && variables.reason !== null,
+      awaitingRefresh: sources.variables.isStale?.(ref) ?? false,
     });
     const pending = binder.pending(ref);
     const block = this.blockOf(info, reading, pending);

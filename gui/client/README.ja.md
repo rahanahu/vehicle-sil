@@ -142,11 +142,11 @@ editor.setVisible(true);
 
 ### 時間
 
-| 種類 | 名前                                                                                                  |
-| ---- | ----------------------------------------------------------------------------------------------------- |
-| 型   | `ClientTime`（`state`、`answerTimeoutMs`、`pause`、`resume`、`step`、`runUntil`、`setSpeed`、`send`） |
-| 型   | `TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`                                 |
-| 定数 | `ANSWER_TIMEOUT_MS`                                                                                   |
+| 種類 | 名前                                                                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------ |
+| 型   | `ClientTime`（`state`、`answerTimeoutMs`、`pause`、`resume`、`step`、`runUntil?`、`setSpeed`、`send`） |
+| 型   | `TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`                                  |
+| 定数 | `ANSWER_TIMEOUT_MS`                                                                                    |
 
 `front.time` と `client.time` は、把握している実行 ID とサーバーの識別子をコマンドに付けます。実行が切り替わった場合、サーバーはランチャーに送る前にコマンドを拒否します。この指定に対応していないサーバーはリクエストを拒否します。
 
@@ -156,7 +156,7 @@ editor.setVisible(true);
 
 | 種類   | 名前                                                                                                                                                                  |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 型     | `ClientVariables`（`state`、`operations`、`watchProblem`、`watch`、`write`、`bind`）                                                                                  |
+| 型     | `ClientVariables`（`state`、`operations`、`watchProblem`、`watch`、`write`、`bind`、`isStale?`）                                                                      |
 | 型     | `VariableWatch`（`values`、`value`、`history`、`close`）                                                                                                              |
 | 型     | `VariablesState`、`VariablesStatus`、`VariablePeer`、`VariableInfo`、`VariableRef`、`VariableValue`、`WatchOptions`、`WatchValues`、`VariableReading`、`HistoryPoint` |
 | 型     | `WriteOptions`、`OperationView`、`OperationPeer`、`WatchProblem`                                                                                                      |
@@ -744,12 +744,12 @@ throttle.close();
 
 `unavailable` の `status` は、実行していない、この実行に変数はない、接続している途中、接続できない、のどれかです。`stale` の `why` は次のとおりです。
 
-| `why`          | 意味                                     |
-| -------------- | ---------------------------------------- |
-| `connection`   | クライアントとサーバーの接続が切断された |
-| `reconnecting` | サーバーがランチャーに再接続している     |
-| `peer`         | ECU が切断された                         |
-| `reading`      | 値の読み取りが失敗し続けている           |
+| `why`          | 意味                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `connection`   | クライアントとサーバーの接続が切断された、または同じ実行への再接続後、キャッシュされた値に最初の `values` サンプルがまだ届いていない |
+| `reconnecting` | サーバーがランチャーに再接続している                                                                                                 |
+| `peer`         | ECU が切断された                                                                                                                     |
+| `reading`      | 値の読み取りが失敗し続けている                                                                                                       |
 
 ### 書けない理由（`block`）
 

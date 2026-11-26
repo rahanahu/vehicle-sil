@@ -45,6 +45,11 @@ export interface ConditionInput {
    * last ones read.
    */
   readFailing?: boolean;
+  /**
+   * The cached value was kept across a reconnect to the same run and has not yet been refreshed by a post-reconnect
+   * `values` sample.
+   */
+  awaitingRefresh?: boolean;
 }
 
 /** Decides the state of the value. */
@@ -64,6 +69,7 @@ export function valueCondition(input: ConditionInput): ValueCondition {
   if (!input.connected) return { kind: 'stale', reading, why: 'connection' };
   if (status === 'ended') return { kind: 'ended', reading };
   if (status !== 'ready') return { kind: 'stale', reading, why: 'reconnecting' };
+  if (input.awaitingRefresh) return { kind: 'stale', reading, why: 'connection' };
   if (!input.peerConnected) return { kind: 'stale', reading, why: 'peer' };
   if (input.readFailing) return { kind: 'stale', reading, why: 'reading' };
   return reading.paused ? { kind: 'paused', reading } : { kind: 'live', reading };
