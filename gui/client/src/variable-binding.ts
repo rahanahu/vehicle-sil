@@ -147,6 +147,8 @@ export interface BindingSources {
     ): Promise<OperationView>;
   };
   readonly connection: Readable<ConnectionState>;
+  /** Optional session sync readiness (`session.ready`). Falls back to `connection === 'open'` when omitted. */
+  readonly ready?: Readable<boolean>;
   readonly connectionEpoch: () => number;
   readonly session: Readable<SessionView | null>;
   readonly onError: ErrorSink;
@@ -235,9 +237,9 @@ export class VariableBinder {
     return this.connectedPeers.has(peer);
   }
 
-  /** Whether the connection between the client and the GUI server is open. */
+  /** Whether the connection between the client and the GUI server is open and synced. */
   connected(): boolean {
-    return this.sources.connection.get() === 'open';
+    return this.sources.ready ? this.sources.ready.get() : this.sources.connection.get() === 'open';
   }
 
   /**
@@ -484,6 +486,7 @@ class Binding implements VariableBinding {
       sources.session.subscribe(refresh),
       binder.onChange(ref, refresh),
     );
+    if (sources.ready) this.stops.push(sources.ready.subscribe(refresh));
     this.state = {
       // Built from the current state on every read (never returns a stale status, even if another subscriber was called
       // first)

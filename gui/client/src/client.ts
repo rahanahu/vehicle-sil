@@ -268,6 +268,7 @@ export function buildClient(options: ClientOptions): ClientParts {
   const binder = new VariableBinder({
     variables,
     connection: connection.state,
+    ready: session.ready,
     connectionEpoch: () => connection.batchEpoch(),
     session: session.session,
     onError,

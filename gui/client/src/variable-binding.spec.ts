@@ -1,12 +1,18 @@
 import { GuiClient } from './client';
 import { createFront, createVariableEditor, createWaveforms, type Front } from './index';
-import { BATCH_MS } from './connection';
+import { BATCH_MS, ConnectionState } from './connection';
 import { isHolding } from './session-state';
 import { FakeHttp, FakeRequest } from './testing/fake-http';
 import { FakeWebSockets } from './testing/fake-web-socket';
 import { httpExamples } from './testing/protocol-examples';
-import { BoundVariable, DROPPED_MESSAGE, VariableBinding } from './variable-binding';
-import { VariableRef } from './variables';
+import {
+  BoundVariable,
+  DROPPED_MESSAGE,
+  VariableBinder,
+  VariableBinding,
+} from './variable-binding';
+import { Writable } from './values';
+import { VariableRef, VariablesState } from './variables';
 
 // client.variables.bind: the value state of one variable, whether it can be written and why not, watching only while
 // visible, and binds of the same variable sharing the write status. The write status transitions themselves are tested
@@ -93,6 +99,12 @@ const hello = (state = 'ready', id: string | number = '1', session: object = {})
   replay: null,
 });
 
+const synced = (id: string | number = '1') => ({
+  type: 'synced',
+  run_id: String(id),
+  last_seq: null,
+});
+
 const values = (
   sampleMs: number,
   paused: boolean,
@@ -177,7 +189,7 @@ describe('client.variables.bind', () => {
   };
 
   it('preserves selected histories when signals change and clears them for another run', async () => {
-    await deliver(hello());
+    await deliver(hello(), synced());
     const waves = createWaveforms(client, { history: 3 });
     const demand = ref('engine.demand');
     const speed = ref('engine.speed');
@@ -193,7 +205,7 @@ describe('client.variables.bind', () => {
     const unsubscribe = client.session.session.subscribe((session) => {
       if (session?.id === '2') expect(waves.series.get()[0].points).toEqual([]);
     });
-    await deliver(hello('ready', 2));
+    await deliver(hello('ready', 2), synced(2));
     unsubscribe();
     expect(waves.series.get()[0].points).toEqual([]);
     waves.close();
@@ -202,7 +214,7 @@ describe('client.variables.bind', () => {
   });
 
   it('waits for Boolean readback, rejects invalid edits, and forgets waits from earlier runs', async () => {
-    await deliver(hello(), { type: 'synced', run_id: '1', last_seq: null });
+    await deliver(hello(), synced());
     const editor = createVariableEditor(front, ref('engine.enabled'));
     editor.setVisible(true);
     await deliver(values(10, false, { 'engine.enabled': false }));
@@ -220,19 +232,19 @@ describe('client.variables.bind', () => {
     socket().open();
     expect(editor.write(false)).toBe(false);
     http.expectNone('api/write');
-    await deliver(hello(), { type: 'synced', run_id: '1', last_seq: null });
+    await deliver(hello(), synced());
     expect(editor.write(false)).toBe(true);
     http.expectOne('api/write').flush({ run_id: '1', operation: 5 });
     await deliver(operation(5, 'applied', true));
     expect(editor.state.get().waiting).toBe(true);
-    await deliver(hello('ready', 2));
+    await deliver(hello('ready', 2), synced(2));
     expect(editor.state.get().waiting).toBe(false);
     editor.close();
     expect(editor.write(true)).toBe(false);
   });
 
   it('cancels the edit if a sending subscriber closes the connection', async () => {
-    await deliver(hello(), { type: 'synced', run_id: '1', last_seq: null });
+    await deliver(hello(), synced());
     const editor = createVariableEditor(front, ref('engine.demand'));
     editor.setVisible(true);
     const unsubscribe = editor.state.subscribe((state) => {
@@ -254,7 +266,7 @@ describe('client.variables.bind', () => {
     const speed = client.variables.bind(ref('engine.speed'));
     const state = () => speed.state.get();
     expect(state().condition).toEqual({ kind: 'unavailable', status: 'unknown' });
-    await deliver(hello());
+    await deliver(hello(), synced());
     expect(state().condition).toEqual({ kind: 'waiting' });
     expect(state().info).toMatchObject({ name: 'engine.speed', unit: 'rpm' });
     expect(state().ref).toEqual(ref('engine.speed'));
@@ -311,7 +323,7 @@ describe('client.variables.bind', () => {
     it('is active without the field (an older server) and for a value it does not know', async () => {
       const demand = client.variables.bind(ref('engine.demand'));
       expect(demand.state.get().availability).toBe('unknown');
-      await deliver(hello(), told({}));
+      await deliver(hello(), synced(), told({}));
       expect(demand.state.get().availability).toBe('active');
       await deliver({
         type: 'variables',
@@ -325,16 +337,19 @@ describe('client.variables.bind', () => {
     it('is replaced by the summary and, per participant, by the notification', async () => {
       const demand = client.variables.bind(ref('engine.demand'));
       const speed = client.variables.bind(ref('engine.speed'));
-      await deliver({
-        ...hello(),
-        session: {
-          ...hello().session,
-          variables: withAvailability({
-            'engine.demand': 'unknown',
-            'engine.speed': 'unknown',
-          }),
+      await deliver(
+        {
+          ...hello(),
+          session: {
+            ...hello().session,
+            variables: withAvailability({
+              'engine.demand': 'unknown',
+              'engine.speed': 'unknown',
+            }),
+          },
         },
-      });
+        synced(),
+      );
       expect([demand, speed].map((b) => b.state.get().availability)).toEqual([
         'unknown',
         'unknown',
@@ -365,7 +380,7 @@ describe('client.variables.bind', () => {
 
     it('stays what the ECU said when the connection or the ECU is lost', async () => {
       const demand = client.variables.bind(ref('engine.demand'));
-      await deliver(hello(), told({ Engine: { 'engine.demand': 'inactive' } }));
+      await deliver(hello(), synced(), told({ Engine: { 'engine.demand': 'inactive' } }));
       // The ECU left the Control Server: the summary keeps the state
       const gone = withAvailability({ 'engine.demand': 'inactive' });
       gone.peers[0].connected = false;
@@ -379,7 +394,7 @@ describe('client.variables.bind', () => {
 
     it("goes back to unknown when another run starts, then follows that run's summary", async () => {
       const demand = client.variables.bind(ref('engine.demand'));
-      await deliver(hello(), told({ Engine: { 'engine.demand': 'inactive' } }));
+      await deliver(hello(), synced(), told({ Engine: { 'engine.demand': 'inactive' } }));
       expect(demand.state.get().availability).toBe('inactive');
       await deliver({ type: 'session', session: { ...hello().session, id: '2' } });
       expect(demand.state.get().availability).toBe('unknown');
@@ -393,7 +408,7 @@ describe('client.variables.bind', () => {
     });
 
     it('leaves the list of variables as it is (a notification replaces only the states)', async () => {
-      await deliver(hello());
+      await deliver(hello(), synced());
       const peers = client.variables.state.get().peers;
       const first = peers[0]!.variables;
       await deliver(told({ Engine: { 'engine.demand': 'inactive' } }));
@@ -405,7 +420,7 @@ describe('client.variables.bind', () => {
 
     it('does not change whether the variable can be written, or what it says of the value', async () => {
       const demand = client.variables.bind(ref('engine.demand'));
-      await deliver(hello(), values(100, false, { 'engine.demand': 30 }));
+      await deliver(hello(), synced(), values(100, false, { 'engine.demand': 30 }));
       const before = demand.state.get();
       expect(before.block).toBeNull();
       await deliver(told({ Engine: { 'engine.demand': 'inactive' } }));
@@ -419,7 +434,7 @@ describe('client.variables.bind', () => {
 
   it('says that a variable is not in this run', async () => {
     const nothing = client.variables.bind(ref('engine.nothing'));
-    await deliver(hello());
+    await deliver(hello(), synced());
     expect(nothing.state.get()).toMatchObject({
       info: undefined,
       condition: { kind: 'missing' },
@@ -433,7 +448,7 @@ describe('client.variables.bind', () => {
   });
 
   it('watches only while it is visible, and stops when it is closed', async () => {
-    await deliver(hello());
+    await deliver(hello(), synced());
     const speed = client.variables.bind(ref('engine.speed'), { visible: false });
     await deliver(values(100, false, { 'engine.speed': 800 }));
     expect(watches()).toEqual([]);
@@ -459,7 +474,7 @@ describe('client.variables.bind', () => {
   });
 
   it('keeps the history it was asked for', async () => {
-    await deliver(hello());
+    await deliver(hello(), synced());
     const graph = client.variables.bind(ref('engine.speed'), { history: 10, periodMs: 50 });
     const plain = client.variables.bind(ref('engine.speed'));
     await deliver();
@@ -490,8 +505,8 @@ describe('client.variables.bind', () => {
   it('says why a variable cannot be written, and does not write then', async () => {
     const enabled = client.variables.bind(ref('engine.enabled'));
     const block = () => enabled.state.get().block;
-    expect(block()).toBe('not-ready');
-    await deliver(hello());
+    expect(block()).toBe('disconnected');
+    await deliver(hello(), synced());
     expect(block()).toBeNull();
     await deliver(changed('ready', false));
     expect(block()).toBe('peer-disconnected');
@@ -513,10 +528,11 @@ describe('client.variables.bind', () => {
 
   it('lets a parameter be written only before the first step of a run that started paused', async () => {
     const mode = client.variables.bind(ref('engine.mode'));
-    await deliver(hello());
+    await deliver(hello(), synced());
     expect(mode.state.get().block).toBe('parameter');
     await deliver(
       hello('ready', 2, { start_paused: true, phase: 'waiting', launcher_state: holdingState }),
+      synced(2),
     );
     expect(isHolding(client.session.session.get())).toBe(true);
     expect(mode.state.get().block).toBeNull();
@@ -559,6 +575,7 @@ describe('client.variables.bind', () => {
           caution: null,
         }),
       }),
+      synced(1),
     );
     expect(enabled.state.get()).toMatchObject({
       block: 'launcher',
@@ -576,6 +593,7 @@ describe('client.variables.bind', () => {
           seq: 6,
         },
       }),
+      synced(1),
     );
     expect(client.session.session.get()?.scenario).not.toBeNull();
     expect(enabled.state.get()).toMatchObject({ block: null, launcherReason: null });
@@ -597,6 +615,7 @@ describe('client.variables.bind', () => {
           seq: 7,
         },
       }),
+      synced(1),
     );
     expect(speed.state.get()).toMatchObject({ block: 'read-only', launcherReason: null });
     speed.close();
@@ -605,7 +624,7 @@ describe('client.variables.bind', () => {
 
   it('does not write until the launcher has said that it takes writes', async () => {
     const enabled = client.variables.bind(ref('engine.enabled'));
-    await deliver(hello('ready', 1, { launcher_state: null }));
+    await deliver(hello('ready', 1, { launcher_state: null }), synced(1));
     expect(enabled.state.get()).toMatchObject({
       block: 'launcher',
       launcherReason: {
@@ -624,7 +643,7 @@ describe('client.variables.bind', () => {
 
   it("has the launcher's answer before the variables can be ready (a scenario run)", async () => {
     const enabled = client.variables.bind(ref('engine.enabled'));
-    await deliver(hello('connecting', 1, { launcher_state: null }));
+    await deliver(hello('connecting', 1, { launcher_state: null }), synced(1));
     await deliver(
       launcherEvent(1, {
         ...runningState,
@@ -649,7 +668,7 @@ describe('client.variables.bind', () => {
 
   it('does not send a value kept back once the launcher stops taking writes', async () => {
     const enabled = client.variables.bind(ref('engine.enabled'));
-    await deliver(hello());
+    await deliver(hello(), synced());
     enabled.write(true);
     enabled.write(false); // kept back while the first write is on its way
     const [request] = requests();
@@ -677,7 +696,7 @@ describe('client.variables.bind', () => {
   it("shows the server's refusal of a write during a scenario as its code", async () => {
     const example = (await httpExamples()).find((e) => e.name === 'error-scenario-running');
     const enabled = client.variables.bind(ref('engine.enabled'));
-    await deliver(hello());
+    await deliver(hello(), synced());
     enabled.write(true);
     const [request] = requests();
     expect(example?.status).toBe(409);
@@ -691,7 +710,7 @@ describe('client.variables.bind', () => {
   });
 
   it('does not let a part that needs a value or a range write without it', async () => {
-    await deliver(hello());
+    await deliver(hello(), synced());
     const slider = client.variables.bind(ref('engine.demand'), {
       needsRange: true,
       needsValue: true,
@@ -715,7 +734,7 @@ describe('client.variables.bind', () => {
   });
 
   it('keeps one write state per variable: shared by two bindings and kept when one is made again', async () => {
-    await deliver(hello());
+    await deliver(hello(), synced());
     const first = client.variables.bind(ref('engine.enabled'));
     const second = client.variables.bind(ref('engine.enabled'));
     const seen: BoundVariable[] = [];
@@ -746,7 +765,7 @@ describe('client.variables.bind', () => {
   });
 
   it('forgets the writes of a run when the next one starts', async () => {
-    await deliver(hello());
+    await deliver(hello(), synced());
     const enabled = client.variables.bind(ref('engine.enabled'));
     enabled.write(true);
     requests()[0].flush({ run_id: '1', operation: 4 });
@@ -754,7 +773,7 @@ describe('client.variables.bind', () => {
       writeStatus: { kind: 'queued', seq: 4 },
       pending: true,
     });
-    await deliver(hello('ready', 2), values(0, false, { 'engine.enabled': false }, 2));
+    await deliver(hello('ready', 2), synced(2), values(0, false, { 'engine.enabled': false }, 2));
     expect(enabled.state.get()).toMatchObject({
       writeStatus: { kind: 'idle' },
       pending: null,
@@ -764,7 +783,7 @@ describe('client.variables.bind', () => {
   });
 
   it('does not send a value kept back once the variable cannot be written, and says so', async () => {
-    await deliver(hello());
+    await deliver(hello(), synced());
     const enabled = client.variables.bind(ref('engine.enabled'));
     enabled.write(true);
     enabled.write(false); // While waiting for the previous write: only held
@@ -794,8 +813,9 @@ describe('client.variables.bind', () => {
     enabled = client.variables.bind(ref('engine.enabled'), { visible: false });
     const seen: BoundVariable[] = [];
     enabled.state.subscribe((state) => seen.push(state));
-    await deliver(hello());
-    expect(seen.map((s) => s.block)).toEqual([null]);
+    await deliver(hello(), synced());
+    expect(seen.map((s) => s.block)).toEqual(['disconnected', null]);
+    const beforeLog = seen.length;
     // A change unrelated to variables (a log line) does not notify
     await deliver({
       type: 'event',
@@ -803,18 +823,180 @@ describe('client.variables.bind', () => {
       event: { event: 'log', seq: 0, t_ms: 5, source: 'Engine', line: 'x' },
     });
     expect(client.session.session.get()?.logs).toHaveLength(1);
-    expect(seen).toHaveLength(1);
+    expect(seen).toHaveLength(beforeLog);
     socket().fail();
     expect(inside.at(-1)).toBe('disconnected');
-    expect(seen.map((s) => s.block)).toEqual([null, 'disconnected']);
+    expect(seen.map((s) => s.block)).toEqual(['disconnected', null, 'disconnected']);
+    const afterFail = seen.length;
     enabled.close();
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
-    await deliver(hello());
+    await deliver(hello(), synced());
     // After close, no notifications and no writes
-    expect(seen).toHaveLength(2);
+    expect(seen).toHaveLength(afterFail);
     enabled.write(true);
     enabled.reject('no');
     expect(requests()).toEqual([]);
+  });
+
+  describe('reconnect sync order', () => {
+    it('stays blocked and stale after socket open and hello until synced arrives', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello(), synced(), values(100, false, { 'engine.demand': 25 }));
+      expect(demand.state.get().block).toBeNull();
+      expect(demand.state.get().condition.kind).toBe('live');
+
+      const blocks: (string | null)[] = [];
+      demand.state.subscribe((s) => blocks.push(s.block));
+
+      socket().fail();
+      expect(demand.state.get().block).toBe('disconnected');
+      expect(demand.state.get().condition).toMatchObject({ kind: 'stale', why: 'connection' });
+
+      await vi.advanceTimersByTimeAsync(500);
+      socket().open();
+      // Open socket alone is not synced yet: must remain disconnected and stale
+      expect(client.connection.state.get()).toBe('open');
+      expect(client.session.ready.get()).toBe(false);
+      expect(demand.state.get().block).toBe('disconnected');
+      expect(demand.state.get().condition).toMatchObject({ kind: 'stale', why: 'connection' });
+      demand.write(40);
+      expect(requests()).toEqual([]);
+
+      // hello without synced yet still keeps the binding blocked
+      await deliver(hello());
+      expect(client.session.ready.get()).toBe(false);
+      expect(demand.state.get().block).toBe('disconnected');
+      demand.write(40);
+      expect(requests()).toEqual([]);
+
+      // synced flips ready to true and unblocks the binding
+      expect(blocks.every((b) => b === 'disconnected')).toBe(true);
+      await deliver(synced());
+      expect(client.session.ready.get()).toBe(true);
+      expect(demand.state.get().block).toBeNull();
+      expect(demand.state.get().condition.kind).toBe('live');
+      expect(blocks.at(-1)).toBeNull();
+
+      demand.write(40);
+      expect(requests().map((r) => r.request.body)).toEqual([
+        { run_id: '1', writes: { Engine: { 'engine.demand': 40 } } },
+      ]);
+      demand.close();
+    });
+
+    it('updates VariablesFeed before notifying session/ready so immediate post-reconnect writes target the new run', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello('ready', 1), synced(1), values(100, false, { 'engine.demand': 10 }));
+      expect(client.variables.state.get().session).toBe('1');
+
+      socket().fail();
+      await vi.advanceTimersByTimeAsync(500);
+      socket().open();
+
+      const observedOnSession: {
+        sessionId: string | null;
+        varSession: string | null;
+        ready: boolean;
+      }[] = [];
+      const observedOnReady: {
+        sessionId: string | null;
+        varSession: string | null;
+        block: string | null;
+      }[] = [];
+      const stopSession = client.session.session.subscribe((s) => {
+        observedOnSession.push({
+          sessionId: s?.id ?? null,
+          varSession: client.variables.state.get().session,
+          ready: client.session.ready.get(),
+        });
+      });
+      const stopReady = client.session.ready.subscribe((isReady) => {
+        if (!isReady) return;
+        observedOnReady.push({
+          sessionId: client.session.session.get()?.id ?? null,
+          varSession: client.variables.state.get().session,
+          block: demand.state.get().block,
+        });
+        // Immediate write inside the ready notification must target run 2, not stale run 1
+        demand.write(75);
+      });
+
+      await deliver(hello('ready', 2), synced(2));
+      stopSession();
+      stopReady();
+
+      expect(observedOnSession).toEqual([{ sessionId: '2', varSession: '2', ready: false }]);
+      expect(observedOnReady).toEqual([{ sessionId: '2', varSession: '2', block: null }]);
+      expect(requests().map((r) => r.request.body)).toEqual([
+        { run_id: '2', writes: { Engine: { 'engine.demand': 75 } } },
+      ]);
+      demand.close();
+    });
+
+    it('never emits a writable state during a resync or unsynced hello', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello('ready', 1), synced(1));
+      expect(demand.state.get().block).toBeNull();
+
+      const blocks: (string | null)[] = [];
+      demand.state.subscribe((s) => blocks.push(s.block));
+
+      // Sending hello for run 2 without synced drops ready to false before VariablesFeed notifies
+      await deliver(hello('ready', 2));
+      expect(blocks.length).toBeGreaterThan(0);
+      expect(blocks.every((b) => b === 'disconnected')).toBe(true);
+      expect(demand.state.get().block).toBe('disconnected');
+
+      await deliver(synced(2));
+      expect(blocks.at(-1)).toBeNull();
+      demand.close();
+    });
+
+    it('falls back to connection === open when BindingSources.ready is omitted', () => {
+      const conn = new Writable<ConnectionState>('connecting');
+      const varsState = new Writable<VariablesState>({
+        session: '1',
+        status: 'ready',
+        reason: null,
+        peers: [
+          {
+            name: 'Engine',
+            connected: true,
+            variables: SCHEMA.map((v) => ({
+              ...v,
+              role: v.role as 'input' | 'output' | 'parameter',
+            })),
+          },
+        ],
+        availability: new Map(),
+        peersOmitted: 0,
+        variablesOmitted: 0,
+      });
+      const session = new Writable(null);
+      const binder = new VariableBinder({
+        variables: {
+          state: varsState,
+          watch: () => ({
+            values: new Writable({}),
+            value: () => undefined,
+            history: () => [],
+            close: () => undefined,
+          }),
+          write: () => Promise.reject(new Error('unused')),
+        },
+        connection: conn,
+        connectionEpoch: () => 0,
+        session,
+        onError: (e) => {
+          throw e;
+        },
+      });
+      expect(binder.connected()).toBe(false);
+      conn.set('open');
+      expect(binder.connected()).toBe(true);
+      conn.set('closed');
+      expect(binder.connected()).toBe(false);
+    });
   });
 });
