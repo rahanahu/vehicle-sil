@@ -126,7 +126,7 @@ editor.setVisible(true);
 
 `ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`、`save`。それぞれ `ok`、理由のコード `reason`、文 `message`。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。`launcherAnswer(launcherState, name)` は、1 つの操作（`write`、`pause` など）について、それが言うことを読みます: `reason`（受けるなら `null`）と `caution`。まだ言っていないランチャー（`state` がまだない、その操作の項目がない）は、受けないものとします（`unsupported`）。正面の口の `controls` と `variables.bind` は、これでランチャーを読みます。
 
-順序付きの通知（`session`、`event`、`allowed`、`runtime`、`variables`、`availability`、`operation`、`error`、`dropped`、`synced`）は、`(instance, run_id, stream_seq)` で順序付けられた単一の WebSocket ストリームで届きます。HTTP の変更操作（`api/run`、`api/stop-session`、`api/prepare`、`api/time`、`api/write`）は受領応答だけを返し、状態の更新は WebSocket ストリームで届きます。
+順序付きの通知（`session`、`event`、`allowed`、`runtime`、`variables`、`availability`、`operation`、`error`、`synced`）は、`(instance, run_id, stream_seq)` で順序付けられた単一の WebSocket ストリームで届きます。HTTP の変更操作（`api/run`、`api/stop-session`、`api/prepare`、`api/time`、`api/write`）は受領応答だけを返し、状態の更新は WebSocket ストリームで届きます。
 
 `currentTarget()` は現在の `{run_id, instance}` を返し、不明なら `null` を返します。`currentInstance()` は実行がなくても直近に認証したサーバーのインスタンスを返し、切断中も保持します。同じインスタンスと実行への再接続では `{instance, run_id, after_stream_seq}` を送ってそのカーソル以後のログイベントだけを再送してもらい、サーバーのインスタンスが変わったときは新しい `hello` から取り直します。
 
@@ -594,6 +594,9 @@ watch.close();
 | 真       | 止まっている時刻 `simMs` の値（その時刻より前に始まったステップの値は入っている） |
 | 偽       | 動いている途中の最後の値                                                          |
 
+- `watch.values` は、見ている変数の読み取り値が変わるたびに通知します（値自体が変わらなくても `simMs` や `paused` が更新されたときを含みます）。`peers: {}` のフレーム（`start_paused` でステップ 0 の前など）では `watch.values` は通知しません。
+- 最初のサンプルより前に一時停止や仮想時間の状態を知るには `isHolding(session)` や `front.clock` を使い、`peers: {}` を含む生の `ValuesMessage` フレームを受け取るには `client.session.onMessages` を購読します。
+
 **購読**:
 
 - 同じ変数を見る watch がいくつあっても、サーバーへの購読は変数ごとに 1 つです。変数は、頼まれた中でいちばん短い間隔の購読に入ります（間隔は 20、50、100、200、500 ms … の段に丸めます）。
@@ -619,7 +622,7 @@ watch.close();
 
 ### 値を書き込む（`write`）
 
-`write(writes, options)` は、呼んだ時点の実行（`client.variables.state` の `session`）に向けて送ります（本文の `session`）。
+`write(writes, options)` は、呼んだ時点の実行（`client.variables.state` の `session`）に向けて送ります（本文の `run_id`）。
 
 - サーバーは、その実行がもう動いていなければ拒否します（`session-changed`）。そのため、実行が替わる間に送った書き込みが、次の実行に書かれることはありません。
 - 実行がまだわからないときは、送らずに `refused`（`not-running`）で拒否します。
@@ -814,15 +817,15 @@ throttle.close();
 
 ## ライフサイクル
 
-| 呼び出し                                       | すること                                                              |
-| ---------------------------------------------- | --------------------------------------------------------------------- |
-| `createClient()`                               | 作るだけで、接続しない                                                |
-| `connect()`                                    | WebSocket で接続する（トークンがないときは何もしない）                |
-| 接続している間の `connect()`                   | 何もしない（再接続を待っている間も）                                  |
-| `close()`                                      | 切断し、再接続しない（片づけるものは下）                              |
-| `close()` の後の `connect()`                   | また接続し、残っている watch を購読し直す                             |
-| `close()` の後の HTTP のリクエスト             | 使える（`loadApp()`、`run.start()` などは、接続していなくても送れる） |
-| 拒否された・バージョンが違った後の `connect()` | 何もしない（`session.rejected`、`session.incompatible` は戻らない）   |
+| 呼び出し                                       | すること                                                                                                                                |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `createClient()`                               | 作るだけで、接続しない                                                                                                                  |
+| `connect()`                                    | WebSocket で接続する（トークンがないときは `token: ''` を送る。`--no-auth` 用で、認証が有効なサーバーでは `unauthorized` で拒否される） |
+| 接続している間の `connect()`                   | 何もしない（再接続を待っている間も）                                                                                                    |
+| `close()`                                      | 切断し、再接続しない（片づけるものは下）                                                                                                |
+| `close()` の後の `connect()`                   | また接続し、残っている watch を購読し直す                                                                                               |
+| `close()` の後の HTTP のリクエスト             | 使える（`loadApp()`、`run.start()` などは、接続していなくても送れる）                                                                   |
+| 拒否された・バージョンが違った後の `connect()` | 何もしない（`session.rejected`、`session.incompatible` は戻らない）                                                                     |
 
 - `close()` は、待っているタイマーを止め、時間のコマンドのレスポンスを待つのをやめ、結果を待っている書き込みを `WriteError`（`closed`）で reject します。まとめている途中の通知は捨てます。変数の watch は残ります。
 - `close()` の後に `connect()` すると、セッションのコピーは残っていて、持っている分の続きから受け直します。

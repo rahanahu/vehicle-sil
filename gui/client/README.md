@@ -126,7 +126,7 @@ In the browser, call `takeToken(window)`. It reads `#token=` from the URL, remov
 
 `ClientSession.allowed` is what the GUI server accepts now (`start`, `stop`, `force` and `save`, each with `ok`, a `reason` code and a `message`; `null` until the server says). `SessionView.launcherState` is the launcher's last `state` event (where the run stands and what it accepts; the larger `rev` wins; `null` until one arrives). `launcherAnswer(launcherState, name)` reads what it says of one operation (`write`, `pause`, ...): `reason` (`null` when the launcher accepts it) and `caution`. A launcher that has not said (no `state` yet, or no entry for the operation) does not accept it (`unsupported`). The front door's `controls` and `variables.bind` read the launcher with it.
 
-Ordered notifications (`session`, `event`, `allowed`, `runtime`, `variables`, `availability`, `operation`, `error`, `dropped`, `synced`) arrive over the single WebSocket stream ordered by `(instance, run_id, stream_seq)`. HTTP mutation endpoints (`api/run`, `api/stop-session`, `api/prepare`, `api/time`, `api/write`) return lightweight acknowledgements while state updates arrive on the WebSocket stream.
+Ordered notifications (`session`, `event`, `allowed`, `runtime`, `variables`, `availability`, `operation`, `error`, `synced`) arrive over the single WebSocket stream ordered by `(instance, run_id, stream_seq)`. HTTP mutation endpoints (`api/run`, `api/stop-session`, `api/prepare`, `api/time`, `api/write`) return lightweight acknowledgements while state updates arrive on the WebSocket stream.
 
 The `currentTarget()` method returns the current `{run_id, instance}` pair, or `null` when it is unknown. `currentInstance()` returns the last authenticated server instance even if no run exists, and retains it while disconnected. On reconnect to the same instance and run, the client sends `{instance, run_id, after_stream_seq}` so the server resends only log events after that cursor; when the server instance changes, it starts fresh from the new `hello`.
 
@@ -592,6 +592,9 @@ watch.close();
 | True     | The value at the paused time `simMs` (it includes the values of every step that started before that time) |
 | False    | The last value while the simulation runs                                                                  |
 
+- `watch.values` notifies whenever any watched variable's reading changes (including `simMs` or `paused` updates when the value itself did not change). Frames with `peers: {}` (such as a `start_paused` run before step 0) do not emit on `watch.values`.
+- For pause or simulation-time state before the first sample, use `isHolding(session)` or `front.clock`; for raw `ValuesMessage` frames (including `peers: {}`), subscribe to `client.session.onMessages`.
+
 **Subscriptions**:
 
 - However many watches look at a variable, the server has one subscription per variable. A variable joins the subscription with the shortest period requested (periods are rounded to one of 20, 50, 100, 200, 500 ms …).
@@ -617,7 +620,7 @@ watch.close();
 
 ### Write values (`write`)
 
-`write(writes, options)` sends the writes to the run that was current when you called it (`session` in `client.variables.state`, sent as `session` in the body).
+`write(writes, options)` sends the writes to the run that was current when you called it (`session` in `client.variables.state`, sent as `run_id` in the body).
 
 - The server rejects the writes if that run is no longer running (`session-changed`). A write sent while one run ends and the next starts is therefore never written to the next run.
 - If the run is not known yet, the library does not send and rejects with `refused` (`not-running`).
@@ -812,15 +815,15 @@ If you create it with `{ history: 600 }`, `history()` returns the points, oldest
 
 ## Lifecycle
 
-| Call                                                | What it does                                                                  |
-| --------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `createClient()`                                    | Only creates the client; does not connect                                     |
-| `connect()`                                         | Connects over WebSocket (does nothing without a token)                        |
-| `connect()` while connected                         | Does nothing (also while waiting to reconnect)                                |
-| `close()`                                           | Disconnects and does not reconnect (what it cleans up is below)               |
-| `connect()` after `close()`                         | Connects again and subscribes the remaining watches again                     |
-| HTTP requests after `close()`                       | Work (`loadApp()`, `run.start()` and others can be sent without a connection) |
-| `connect()` after a rejection or a version mismatch | Does nothing (`session.rejected` and `session.incompatible` do not reset)     |
+| Call                                                | What it does                                                                                                                          |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `createClient()`                                    | Only creates the client; does not connect                                                                                             |
+| `connect()`                                         | Connects over WebSocket (without a token, sends `token: ''` for `--no-auth`, or is rejected with `unauthorized` when auth is enabled) |
+| `connect()` while connected                         | Does nothing (also while waiting to reconnect)                                                                                        |
+| `close()`                                           | Disconnects and does not reconnect (what it cleans up is below)                                                                       |
+| `connect()` after `close()`                         | Connects again and subscribes the remaining watches again                                                                             |
+| HTTP requests after `close()`                       | Work (`loadApp()`, `run.start()` and others can be sent without a connection)                                                         |
+| `connect()` after a rejection or a version mismatch | Does nothing (`session.rejected` and `session.incompatible` do not reset)                                                             |
 
 - `close()` stops pending timers, stops waiting for responses to time commands, and rejects writes waiting for results with a `WriteError` (`closed`). Notifications in a batch being collected are discarded. Variable watches remain.
 - After `close()` and `connect()`, the session copy is still there, and the library receives again from where its copy ends.
