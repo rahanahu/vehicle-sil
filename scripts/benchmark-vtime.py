@@ -24,6 +24,7 @@ import datetime
 import hashlib
 import json
 import math
+import ntpath
 import os
 import platform
 import re
@@ -34,7 +35,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -273,26 +274,33 @@ def _expand_response_files(
     base_dir: Path | None,
     windows: bool,
     depth: int = 0,
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     if depth >= 4:
-        return tokens
+        unreadable = [tok for tok in tokens if tok.startswith("@") and len(tok) > 1]
+        return list(tokens), unreadable
     out: list[str] = []
+    unreadable: list[str] = []
     for tok in tokens:
         if tok.startswith("@") and len(tok) > 1:
             rsp_str = _strip_matching_quotes(tok[1:])
             rsp_path = Path(rsp_str)
             if not rsp_path.is_absolute() and base_dir is not None:
                 rsp_path = base_dir / rsp_path
-            if rsp_path.is_file():
-                try:
+            try:
+                if rsp_path.is_file():
                     rsp_text = rsp_path.read_text(encoding="utf-8", errors="replace")
                     rsp_tokens = _split_cmd_tokens(rsp_text, windows)
-                    out.extend(_expand_response_files(rsp_tokens, rsp_path.parent, windows, depth + 1))
+                    nested_out, nested_unreadable = _expand_response_files(
+                        rsp_tokens, rsp_path.parent, windows, depth + 1
+                    )
+                    out.extend(nested_out)
+                    unreadable.extend(nested_unreadable)
                     continue
-                except OSError:
-                    pass
+            except (OSError, ValueError):
+                pass
+            unreadable.append(tok)
         out.append(tok)
-    return out
+    return out, unreadable
 
 
 def parse_flag_tokens(tokens: list[str]) -> dict[str, Any]:
@@ -445,12 +453,21 @@ def _compute_flags_warning(
     launcher_path: Path | None = None,
     bench_ecu_path: Path | None = None,
     ambiguous_targets: list[str] | None = None,
+    unreadable_rsp_targets: dict[str, list[str]] | None = None,
 ) -> str | None:
     warnings: list[str] = []
     ambiguous_list = list(ambiguous_targets) if ambiguous_targets else []
     ambiguous_set = set(ambiguous_list)
     if ambiguous_list:
         warnings.append(f"ambiguous compile_commands.json entries for {', '.join(ambiguous_list)}")
+    unreadable_rsp_map = dict(unreadable_rsp_targets) if unreadable_rsp_targets else {}
+    unreadable_rsp_set = set(unreadable_rsp_map)
+    if unreadable_rsp_map:
+        details = ", ".join(
+            f"{name} ({', '.join(refs)})" if refs else name
+            for name, refs in unreadable_rsp_map.items()
+        )
+        warnings.append(f"unreadable response file(s) in compile_commands.json for {details}")
     if build_dir is not None:
         if launcher_path is not None and not _is_path_within(launcher_path, build_dir):
             warnings.append(f"--launcher ({launcher_path}) resolves outside build_dir ({build_dir})")
@@ -468,7 +485,9 @@ def _compute_flags_warning(
             missing_tus = [
                 name
                 for name, info in targets.items()
-                if info["optimization_flags"] is None and name not in ambiguous_set
+                if info["optimization_flags"] is None
+                and name not in ambiguous_set
+                and name not in unreadable_rsp_set
             ]
             if missing_tus:
                 warnings.append(f"missing target TU(s) in compile_commands.json: {', '.join(missing_tus)}")
@@ -556,6 +575,7 @@ def extract_build_provenance(
     targets: dict[str, dict[str, Any]] = {name: _empty_target_flags() for name in TARGET_TU_SUFFIXES}
     flags_source = "unavailable"
     ambiguous_targets: list[str] = []
+    unreadable_rsp_targets: dict[str, list[str]] = {}
 
     cc_path = (build_dir / "compile_commands.json") if build_dir is not None else None
     if cc_path is not None and cc_path.is_file():
@@ -565,6 +585,9 @@ def extract_build_provenance(
             entries = None
         if isinstance(entries, list):
             matched_entries: dict[str, list[tuple[str | None, dict[str, Any]]]] = {
+                name: [] for name in TARGET_TU_SUFFIXES
+            }
+            unreadable_rsps_by_target: dict[str, list[str]] = {
                 name: [] for name in TARGET_TU_SUFFIXES
             }
             for entry in entries:
@@ -581,9 +604,14 @@ def extract_build_provenance(
                         else:
                             cmd_str = str(entry.get("command", ""))
                             tokens = _split_cmd_tokens(cmd_str, windows)
-                        tokens = _expand_response_files(tokens, entry_dir, windows)
                         compiler_path = _extract_compiler_path(tokens)
-                        parsed = parse_flag_tokens(tokens[1:] if tokens else [])
+                        expanded_args, unreadable_rsps = _expand_response_files(
+                            tokens[1:] if tokens else [], entry_dir, windows
+                        )
+                        for ref in unreadable_rsps:
+                            if ref not in unreadable_rsps_by_target[target_name]:
+                                unreadable_rsps_by_target[target_name].append(ref)
+                        parsed = parse_flag_tokens(expanded_args)
                         entry_flags = {
                             "compiler_id": compiler_id_cmake,
                             "compiler_version": compiler_ver_cmake,
@@ -596,8 +624,15 @@ def extract_build_provenance(
                 target_matches = matched_entries[target_name]
                 if not target_matches:
                     continue
+                target_unreadable = unreadable_rsps_by_target[target_name]
                 first = target_matches[0]
-                if all(match == first for match in target_matches[1:]):
+                all_equal = all(match == first for match in target_matches[1:])
+                if target_unreadable:
+                    unreadable_rsp_targets[target_name] = target_unreadable
+                    if not all_equal:
+                        ambiguous_targets.append(target_name)
+                    continue
+                if all_equal:
                     targets[target_name] = first[1]
                     unambiguous_any = True
                 else:
@@ -606,7 +641,13 @@ def extract_build_provenance(
                 flags_source = "compile_commands.json"
 
     is_multi_config = bool(cache_vals.get("CMAKE_CONFIGURATION_TYPES", "").strip()) and cmake_build_type is None
-    if flags_source == "unavailable" and not ambiguous_targets and cache_vals and not is_multi_config:
+    if (
+        flags_source == "unavailable"
+        and not ambiguous_targets
+        and not unreadable_rsp_targets
+        and cache_vals
+        and not is_multi_config
+    ):
         flags_source = "cmake_cache"
         base_flags = cache_vals.get("CMAKE_CXX_FLAGS", "")
         type_key = f"CMAKE_CXX_FLAGS_{cmake_build_type.upper()}" if cmake_build_type else ""
@@ -642,6 +683,7 @@ def extract_build_provenance(
         launcher_path=launcher_path,
         bench_ecu_path=bench_ecu_path,
         ambiguous_targets=ambiguous_targets,
+        unreadable_rsp_targets=unreadable_rsp_targets,
     )
     return (
         {
@@ -694,15 +736,52 @@ def _git_output(args: list[str], cwd: Path | None = None) -> str | None:
     return None
 
 
-def _resolved_git_dir(cwd: Path) -> Path | None:
+_MSYS_DRIVE_PATH_RE = re.compile(r"^/([A-Za-z])(/.*|$)")
+
+
+def _msys_to_windows_path(raw: str) -> str:
+    m = _MSYS_DRIVE_PATH_RE.match(raw)
+    if not m:
+        return raw
+    drive, rest = m.group(1), m.group(2)
+    return f"{drive.upper()}:{rest or '/'}"
+
+
+def _normalize_git_path(
+    raw: str,
+    cwd: Path,
+    *,
+    is_windows: bool | None = None,
+) -> Path | PureWindowsPath:
+    """Normalize a path printed by git (handling MSYS2 /c/... drive paths on Windows)."""
+    windows = (os.name == "nt") if is_windows is None else is_windows
+    text = _msys_to_windows_path(raw) if windows else raw
+    if windows and sys.platform != "win32":
+        win_path = PureWindowsPath(text)
+        if not win_path.is_absolute():
+            win_path = PureWindowsPath(str(cwd)) / win_path
+        return PureWindowsPath(ntpath.normpath(str(win_path)))
+    path = Path(text)
+    if not path.is_absolute():
+        path = cwd / path
+    return path.resolve()
+
+
+def _path_compare_key(path: Path | PureWindowsPath, *, is_windows: bool | None = None) -> str:
+    windows = (os.name == "nt") if is_windows is None else is_windows
+    if windows:
+        if sys.platform == "win32":
+            return os.path.normcase(str(path.resolve()))
+        return ntpath.normcase(ntpath.normpath(str(path)))
+    return str(path.resolve())
+
+
+def _resolved_git_dir(cwd: Path, *, is_windows: bool | None = None) -> Path | PureWindowsPath | None:
     raw = _git_output(["rev-parse", "--git-dir"], cwd=cwd)
     if not raw:
         return None
-    git_dir = Path(raw)
-    if not git_dir.is_absolute():
-        git_dir = cwd / git_dir
     try:
-        return git_dir.resolve()
+        return _normalize_git_path(raw, cwd, is_windows=is_windows)
     except OSError:
         return None
 
@@ -748,12 +827,15 @@ def _collect_repo_and_dependency_provenance(
         parent_git_dir = _resolved_git_dir(repo_root)
         if toplevel is not None and silkit_git_dir is not None:
             try:
-                silkit_resolved = silkit_dir.resolve()
-                repo_resolved = repo_root.resolve()
+                silkit_key = _path_compare_key(silkit_dir)
+                repo_key = _path_compare_key(repo_root)
+                toplevel_key = _path_compare_key(_normalize_git_path(toplevel, silkit_dir))
+                silkit_git_key = _path_compare_key(silkit_git_dir)
+                parent_git_key = _path_compare_key(parent_git_dir) if parent_git_dir is not None else None
                 is_own_repo = (
-                    silkit_resolved != repo_resolved
-                    and Path(toplevel).resolve() == silkit_resolved
-                    and silkit_git_dir != parent_git_dir
+                    silkit_key != repo_key
+                    and toplevel_key == silkit_key
+                    and silkit_git_key != parent_git_key
                 )
             except OSError:
                 is_own_repo = False
