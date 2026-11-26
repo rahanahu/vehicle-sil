@@ -108,6 +108,11 @@ public:
         member(key);
         out_ += std::to_string(value);
     }
+    void unsigned_integer(std::string_view key, std::uint64_t value)
+    {
+        member(key);
+        out_ += std::to_string(value);
+    }
     void boolean(std::string_view key, bool value)
     {
         member(key);

@@ -12,6 +12,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_config_executables.cpp
     test_connect_tool.cpp
     test_connections.cpp
+    test_control_metrics.cpp
     test_events.cpp
     test_execution_runtime.cpp
     test_request.cpp
@@ -89,7 +90,7 @@ set(_launch_silkit_prefixes silkit/ vehicle_sil/control_silkit/ vehicle_sil/can_
                             vehicle_sil/core/tick_scheduler vehicle_sil/core/real_time_pacer)
 set(_launch_probe_headers vehicle_sil/launch/probe)
 set(_launch_output_headers vehicle_sil/launch/events vehicle_sil/launch/run_sink vehicle_sil/launch/timeline_format
-                           vehicle_sil/launch/error_result)
+                           vehicle_sil/launch/control_metrics_format vehicle_sil/launch/error_result)
 set(_launch_endpoint_headers vehicle_sil/launch/command_input)
 set(_launch_usecase_headers vehicle_sil/launch/run. vehicle_sil/launch/serve. vehicle_sil/launch/execution_runtime.
                             vehicle_sil/launch/connections vehicle_sil/launch/test vehicle_sil/launch/checked)
@@ -116,14 +117,14 @@ _launch_part_test(probe_boundary probe "probe.hpp"
     vehicle_sil/runner/ ${_launch_silkit_prefixes}
     ${_launch_output_headers} ${_launch_endpoint_headers} ${_launch_usecase_headers}
     usecases/ format/ endpoints/)
-_launch_part_test(format_boundary format "run_sink.hpp;timeline_format.hpp;error_result.hpp"
+_launch_part_test(format_boundary format "run_sink.hpp;timeline_format.hpp;control_metrics_format.hpp;error_result.hpp"
     ${_launch_silkit_prefixes} vehicle_sil/control_grpc/ ${_launch_probe_headers} ${_launch_endpoint_headers}
     probe/ endpoints/ usecases/)
 # usecases/ has no limit on the other parts, but it reaches no SIL Kit header: the SIL Kit parts of a run are
 # behind the runner.
 _launch_part_test(usecases_boundary usecases "run.hpp;serve.hpp;execution_runtime.hpp;test.hpp;connections.hpp;checked.hpp" ${_launch_silkit_prefixes})
 _launch_part_test(endpoints_boundary endpoints "command_input.hpp"
-    ${_launch_silkit_prefixes} ${_launch_probe_headers} vehicle_sil/launch/timeline_format probe/ format/)
+    ${_launch_silkit_prefixes} ${_launch_probe_headers} vehicle_sil/launch/timeline_format vehicle_sil/launch/control_metrics_format probe/ format/)
 # Every header and source of libs/launch includes no SIL Kit header, directly or indirectly, and of
 # core's headers only those of vehicle_sil::sim_base.
 add_test(NAME launch.no_silkit_boundary
@@ -247,6 +248,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   add_executable(vehicle_sil_launch_run_launcher
     launch_run_availability.cpp
     launch_run_connect.cpp
+    launch_run_control_metrics.cpp
     launch_run_events.cpp
     launch_run_launcher.cpp
     launch_run_manual.cpp
@@ -281,6 +283,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       busy_port
       check
       control
+      control_metrics
       crash
       disabled
       docs
@@ -467,6 +470,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       launch_run.scenario_samples
       launch_run.scenario_wave
       launch_run.timeline
+      launch_run.control_metrics
       launch_run.connect_time_locked
       launch_run.connect_speed
       launch_run.connect_roundtrip

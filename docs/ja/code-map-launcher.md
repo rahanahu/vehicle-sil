@@ -172,6 +172,7 @@
 | `EventStream`（`serve` と `serve --once` の Events v4（`vehicle_sil_events: 4`）ストリームを書き、`RunEventSink` を実装します） | `launch/events.hpp` |
 | `parse_command()` と `CommandInput`（`--stdin-commands` のコマンドを読む） | `launch/command_input.hpp` |
 | 記録とシナリオの結果から `run --timeline` のファイルを作る `format_timeline_json()` | `launch/timeline_format.hpp` |
+| `run --control-metrics`（`vehicle_sil_control_metrics: 1`）向けの純粋な JSON フォーマッター（`format_control_metrics_json()`、`format_control_metrics_internal_error_json()`） | `launch/control_metrics_format.hpp` |
 
 実装:
 
@@ -180,6 +181,8 @@
 | 照合の全体の流れ（`check_file()`）、`evaluate_hot_eligibility()`、純粋 C++20 FIPS 180-4 SHA-256（`detail::sha256_hex()`） | `src/usecases/check.cpp`、`src/usecases/sha256.{hpp,cpp}` |
 | コンピューターを調べる: ファイルシステム（実行ファイルやブリッジの場所、設定ファイル、シナリオ、点のファイル）、環境変数（`PATH`、`VEHICLE_SIL_LISTEN_ON_NETWORK`）、出力を読むために動かすプロセス。ルールは調べた結果を値（`config.cpp` の `executable_finding()` はファイルの状態を受け取る）か関数（`ConnectTools`、`ScenarioContext::read_file`）で受け取る。例外が 1 つ残る: `connect.cpp` の `bridge_working_directory()` は相対のディレクトリを絶対にする | `src/probe/probe.cpp` |
 | 保存した説明のファイル（`check --write-descriptions`、`--descriptions`。ランチャー独自の JSON で、同じ版だけが読む）と、それから取る `DescribeSource` | `src/probe/saved_descriptions.cpp` |
+| `run --control-metrics` 向けの一時ファイル + リネームによるアトミック書き込み（`write_control_metrics_file()`、宣言は `launch/probe.hpp`） | `src/probe/write_file.cpp` |
+| `run --control-metrics` の純粋な JSON 出力 | `src/format/control_metrics_format.cpp` |
 | check の JSON に、実行ファイルが申告したとおりのネットワークを書く（`write_reported_networks()`） | `src/format/reported_networks.cpp` |
 | `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/probe/probe.cpp` の `run_tool()`（`bridge_tools()`）で起こします | `src/usecases/connections.cpp` |
 | 照合の出力 | `src/format/check_format.cpp` |
@@ -245,6 +248,7 @@
 | `schema/scenario.schema.json` | シナリオ |
 | `schema/run-request.schema.json` | `check --request` と `run --request` の要求ファイル（読むコードは `libs/launch/src/request/request_read.cpp`） |
 | `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
+| `schema/control-metrics.schema.json` | `run --control-metrics` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `gui/protocol/dashboard.schema.json` | ダッシュボード |
 
 設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/config/src/config.cpp` と、シナリオの読み手（`libs/scenario/src/scenario_reader.hpp` と、そこに挙げたファイル）です。
@@ -252,7 +256,7 @@
 | コピーの場所 | 内容 |
 |---|---|
 | `template/schema/` | 設定ファイル、シナリオ、要求ファイル、ダッシュボードのスキーマのコピー |
-| ツールのアーカイブの `schema/` | 同じスキーマと `timeline.schema.json`（`template/get_tools.py` が、全部をプロジェクトの `schema/` にコピーする） |
+| ツールのアーカイブの `schema/` | 同じスキーマと `timeline.schema.json`、`control-metrics.schema.json`（`template/get_tools.py` が、全部をプロジェクトの `schema/` にコピーする） |
 | ビルドのディレクトリ | 例をビルドするとき、configure のときにコピーする（最上位の `CMakeLists.txt`） |
 
 ビルドのディレクトリにコピーされた例の YAML の 1 行目は、そこにコピーされたスキーマを指します。

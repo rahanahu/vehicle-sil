@@ -278,13 +278,33 @@ struct OutcomeEnd
     bool stopped_by_scenario = false;
 };
 
-/// What the launcher's end of the control agents dropped in the run (HubTransportStats): hellos it
-/// did not take, messages it could not decode, and messages that fit no agent it knows or no schema.
+/// Snapshot of the launcher's Control Hub SIL Kit transport counters (HubTransport::stats()),
+/// taken once right before the transport closes. Cumulative over the transport's lifetime.
+struct ControlTransportStats
+{
+    std::uint64_t messages = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t handler_calls = 0;
+    std::int64_t handler_time_ns = 0;
+    std::int64_t max_handler_time_ns = 0;
+    std::uint64_t hellos = 0;
+    std::uint64_t last_words = 0;
+    std::uint64_t late_messages = 0;
+    std::uint64_t undecodable = 0;
+    std::uint64_t unknown = 0;
+    std::uint64_t refused_hellos = 0;
+};
+
+/// What the launcher's end of the control agents saw and dropped in the run (HubTransportStats):
+/// hellos it did not take, messages it could not decode, messages that fit no agent it knows or
+/// no schema, and the cumulative transport snapshot taken before the transport closed.
 struct OutcomeControl
 {
     std::uint64_t refused_hellos = 0;
     std::uint64_t undecodable = 0;
     std::uint64_t unknown = 0;
+    /// Empty if the run ended before HubTransport was created and prepared.
+    std::optional<ControlTransportStats> transport_stats{};
 };
 
 /// A participant whose values the scenario reads and that sends them less often than its step,

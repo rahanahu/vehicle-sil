@@ -166,6 +166,11 @@ struct SavedDescriptions
 [[nodiscard]] std::string write_saved_descriptions(const std::filesystem::path& file,
                                                    const std::vector<SavedDescription>& entries);
 
+/// Atomically writes `text` (UTF-8 JSON with LF line endings) to `path` via a sibling temporary
+/// file and rename, creating missing parent directories first. Rejects empty or directory paths
+/// without creating a temporary file. "" on success, else a diagnostic reason.
+[[nodiscard]] std::string write_control_metrics_file(const std::filesystem::path& path, std::string_view text);
+
 /// The DescribeSource that starts no process: the output of the entry of `saved` with the
 /// participant's name and command whose executable has the same stamp now (executable_stamp());
 /// nothing if there is none.

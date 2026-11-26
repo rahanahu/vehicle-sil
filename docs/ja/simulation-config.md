@@ -891,7 +891,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
-                       [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
@@ -933,6 +933,7 @@ vehicle_sil_launch version [--json]
 | `--variant <name>` | | 設定ファイルの機種を選びます（[機種](#機種variants--variant)）。 |
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
 | `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ | シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
+| `--control-metrics <file>` | `run` だけ | 実行の終わりに、Control Hub の SIL Kit トランスポートの累計カウンター（`HubTransport::stats()`）を JSON のファイルに書きます。`--control` は要りません（[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」）。 |
 | `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |
 | `--fail-fast` | `test` だけ | 最初に失敗した組の後は実行しません。 |
 | `--speed <speed>` | `check`、`run` | Run の速度（数値か `max`）。 |
@@ -977,6 +978,7 @@ vehicle_sil_launch version [--json]
 | `--param` | 繰り返せます（同じ名前は 1 回だけ）。 |
 | `--param` | `test` では、その名前のパラメーターがあるシナリオにだけ反映されます（どのシナリオにもなければ引数のエラー）。 |
 | `--timeline` | 開けなければ、何も起動せずに終了コード 3 です。 |
+| `--control-metrics` | `run` の終わりにアトミックに書きます（親ディレクトリがなければ作ります）。書き込みに失敗しても標準出力と `run --json` は変えず標準エラーに理由を出し、実行が非 0 ならその終了コードを保ち、0 なら 3 にします。 |
 | `--scenarios` | ディレクトリ（直下の `.yaml`、`.yml`、`.json` を名前の順に）か、ファイル（書いた順に）です。 |
 | `--scenarios` | 後ろにいくつでも並べられ、繰り返せます。 |
 | `--scenarios` | 設定ファイルは、`--scenarios` より前か、`--` の後に書きます。 |

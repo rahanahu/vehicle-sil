@@ -25,6 +25,7 @@ DEFAULT_FEATURES = [
     "time-commands", "stdin-run-until", "state", "control-links", "scenario",
     "manual-participants", "timeline", "run-stop-at", "connections", "connect",
     "check-text", "compare-commands", "serve", "check-file-only", "serve-prepare",
+    "control-metrics",
 ]
 
 def _peer_variables(name: str) -> list[dict]:
@@ -1720,7 +1721,7 @@ def main(argv: list[str] | None = None) -> int:
             "features": _features(),
             "formats": {
                 "check": 1, "run": 2, "events": 4, "describe": 1,
-                "test": 1, "timeline": 1, "connections": 1,
+                "test": 1, "timeline": 1, "connections": 1, "control_metrics": 1,
             },
         })
         return 0

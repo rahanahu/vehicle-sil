@@ -60,6 +60,7 @@ SIMULATION = json.loads((SCHEMA_DIR / "simulation.schema.json").read_text(encodi
 SCENARIO = json.loads((SCHEMA_DIR / "scenario.schema.json").read_text(encoding="utf-8"))
 TIMELINE = json.loads((SCHEMA_DIR / "timeline.schema.json").read_text(encoding="utf-8"))
 RUN_REQUEST = json.loads((SCHEMA_DIR / "run-request.schema.json").read_text(encoding="utf-8"))
+CONTROL_METRICS = json.loads((SCHEMA_DIR / "control-metrics.schema.json").read_text(encoding="utf-8"))
 TIMELINE_REFERENCES = ROOT / "tests" / "launch" / "timeline"
 TIMELINE_PAGE_FIXTURES = ROOT / "gui" / "timeline" / "tests" / "fixtures"
 MODELINE = re.compile(r"^# yaml-language-server: \$schema=(\S+)$")
@@ -778,7 +779,7 @@ class SchemaFiles(unittest.TestCase):
     maxDiff = None
 
     def test_the_schemas_are_json_schemas(self):
-        for schema in (SIMULATION, SCENARIO, TIMELINE, RUN_REQUEST):
+        for schema in (SIMULATION, SCENARIO, TIMELINE, RUN_REQUEST, CONTROL_METRICS):
             jsonschema.Draft7Validator.check_schema(schema)
             self.assertEqual(schema["$schema"], "http://json-schema.org/draft-07/schema#")
 
@@ -1305,6 +1306,251 @@ class TimelineOfARun(unittest.TestCase):
         throttle = next(s for s in data["series"] if s["source"] == "written")
         self.assertEqual(throttle["columns"], ["at_ms", "value", "base"])
         self.assertTrue(all(len(point) == 3 for point in throttle["points"]))
+
+
+class ControlMetricsSchema(unittest.TestCase):
+    maxDiff = None
+
+    @staticmethod
+    def _sample_available() -> dict:
+        return {
+            "vehicle_sil_control_metrics": 1,
+            "vehicle_sil": "0.4.0",
+            "file": "simulation.yaml",
+            "variant": None,
+            "status": "available",
+            "unavailable_reason": None,
+            "source": {
+                "transport": "silkit",
+                "collector": "HubTransport::stats",
+                "scope": "cumulative_hub_transport_lifetime",
+                "collection_point": "before_transport_close",
+            },
+            "run": {
+                "result": "passed",
+                "end": "completed",
+                "simulation": "reached_stop_at",
+                "ok": True,
+                "sim_ms": 1000,
+                "wall_ms": 42,
+                "time_step_ms": 1,
+                "interrupted_by": None,
+            },
+            "counters": {
+                "messages": 5000,
+                "bytes": 412340,
+                "handler_calls": 5015,
+                "handler_time_ns": 18423900,
+                "max_handler_time_ns": 148200,
+                "hellos": 5,
+                "last_words": 5,
+                "late_messages": 0,
+                "undecodable": 0,
+                "unknown": 0,
+                "refused_hellos": 0,
+            },
+        }
+
+    @staticmethod
+    def _sample_unavailable(reason: str = "setup_failed", *, result: str | None = "setup_failed",
+                            end: str | None = "setup_failed", simulation: str | None = "not_started",
+                            ok: bool = False, time_step_ms: int | None = 10,
+                            interrupted_by: str | None = None) -> dict:
+        return {
+            "vehicle_sil_control_metrics": 1,
+            "vehicle_sil": "0.4.0",
+            "file": "simulation.yaml",
+            "variant": None,
+            "status": "unavailable",
+            "unavailable_reason": reason,
+            "source": {
+                "transport": "silkit",
+                "collector": "HubTransport::stats",
+                "scope": "cumulative_hub_transport_lifetime",
+                "collection_point": None,
+            },
+            "run": {
+                "result": result,
+                "end": end,
+                "simulation": simulation,
+                "ok": ok,
+                "sim_ms": None,
+                "wall_ms": None,
+                "time_step_ms": time_step_ms,
+                "interrupted_by": interrupted_by,
+            },
+            "counters": None,
+        }
+
+    def test_every_key_is_described_and_required(self):
+        for where, node in (
+            ("", CONTROL_METRICS),
+            ("source.", CONTROL_METRICS["properties"]["source"]),
+            ("run.", CONTROL_METRICS["properties"]["run"]),
+            ("counters.", CONTROL_METRICS["definitions"]["counters"]),
+        ):
+            props = node["properties"]
+            for key, value in props.items():
+                self.assertTrue(value.get("description"), f"control-metrics.schema.json: {where}{key} has no description")
+            optional = set(props) - set(node.get("required", []))
+            self.assertEqual(optional, set(), f"control-metrics.schema.json: {where or 'top'} does not require {sorted(optional)}")
+
+    def test_valid_available_and_unavailable_variants(self):
+        self.assertEqual(problems(CONTROL_METRICS, self._sample_available()), [])
+
+        not_started = self._sample_available()
+        not_started["run"].update(result="failed", end="failed", simulation="not_started", ok=False, sim_ms=None, wall_ms=None)
+        self.assertEqual(problems(CONTROL_METRICS, not_started), [])
+
+        unavailable_cases = [
+            self._sample_unavailable("unreadable", result="unreadable", end=None, simulation=None, time_step_ms=None),
+            self._sample_unavailable("check_failed", result="check_failed", end=None, simulation=None, time_step_ms=None),
+            self._sample_unavailable("stopped_before_setup", result="stopped", end="stopped", ok=True, interrupted_by="stop command"),
+            self._sample_unavailable("interrupted_before_setup", result="interrupted", end="interrupted", interrupted_by="SIGINT"),
+            self._sample_unavailable("setup_failed"),
+            self._sample_unavailable("internal_error", result=None, end=None, simulation=None, time_step_ms=None),
+        ]
+        for sample in unavailable_cases:
+            self.assertEqual(problems(CONTROL_METRICS, sample), [],
+                             f"valid unavailable variant rejected: {sample['unavailable_reason']}")
+
+    def test_invalid_samples_are_rejected(self):
+        def check_invalid(sample: dict, what: str):
+            self.assertNotEqual(problems(CONTROL_METRICS, sample), [], f"schema accepted invalid sample: {what}")
+
+        bad_ver = self._sample_available()
+        bad_ver["vehicle_sil_control_metrics"] = 2
+        check_invalid(bad_ver, "wrong format version")
+
+        neg_counter = self._sample_available()
+        neg_counter["counters"]["handler_time_ns"] = -1
+        check_invalid(neg_counter, "negative handler_time_ns")
+
+        neg_messages = self._sample_available()
+        neg_messages["counters"]["messages"] = -1
+        check_invalid(neg_messages, "negative messages")
+
+        avail_null_counters = self._sample_available()
+        avail_null_counters["counters"] = None
+        check_invalid(avail_null_counters, "available with null counters")
+
+        avail_with_reason = self._sample_available()
+        avail_with_reason["unavailable_reason"] = "setup_failed"
+        check_invalid(avail_with_reason, "available with non-null unavailable_reason")
+
+        avail_null_point = self._sample_available()
+        avail_null_point["source"]["collection_point"] = None
+        check_invalid(avail_null_point, "available with null collection_point")
+
+        avail_null_result = self._sample_available()
+        avail_null_result["run"]["result"] = None
+        check_invalid(avail_null_result, "available with null run.result")
+
+        avail_null_end = self._sample_available()
+        avail_null_end["run"]["end"] = None
+        check_invalid(avail_null_end, "available with null run.end")
+
+        avail_null_sim = self._sample_available()
+        avail_null_sim["run"]["simulation"] = None
+        check_invalid(avail_null_sim, "available with null run.simulation")
+
+        avail_pre_result = self._sample_available()
+        avail_pre_result["run"]["result"] = "setup_failed"
+        check_invalid(avail_pre_result, "available with pre-transport run.result")
+
+        avail_pre_end = self._sample_available()
+        avail_pre_end["run"]["end"] = "setup_failed"
+        check_invalid(avail_pre_end, "available with pre-transport run.end")
+
+        avail_not_started_sim_ms = self._sample_available()
+        avail_not_started_sim_ms["run"].update(result="failed", end="failed", simulation="not_started", ok=False, sim_ms=0, wall_ms=None)
+        check_invalid(avail_not_started_sim_ms, "available + not_started with non-null sim_ms")
+
+        avail_not_started_wall_ms = self._sample_available()
+        avail_not_started_wall_ms["run"].update(result="failed", end="failed", simulation="not_started", ok=False, sim_ms=None, wall_ms=0)
+        check_invalid(avail_not_started_wall_ms, "available + not_started with non-null wall_ms")
+
+        unavail_zero_counters = self._sample_unavailable("setup_failed")
+        unavail_zero_counters["counters"] = {k: 0 for k in self._sample_available()["counters"]}
+        check_invalid(unavail_zero_counters, "unavailable with zero-filled counters")
+
+        unavail_null_reason = self._sample_unavailable("setup_failed")
+        unavail_null_reason["unavailable_reason"] = None
+        check_invalid(unavail_null_reason, "unavailable with null unavailable_reason")
+
+        unavail_with_point = self._sample_unavailable("setup_failed")
+        unavail_with_point["source"]["collection_point"] = "before_transport_close"
+        check_invalid(unavail_with_point, "unavailable with before_transport_close collection_point")
+
+        unavail_with_sim_ms = self._sample_unavailable("setup_failed")
+        unavail_with_sim_ms["run"]["sim_ms"] = 0
+        check_invalid(unavail_with_sim_ms, "unavailable with non-null sim_ms")
+
+        unavail_with_wall_ms = self._sample_unavailable("setup_failed")
+        unavail_with_wall_ms["run"]["wall_ms"] = 0
+        check_invalid(unavail_with_wall_ms, "unavailable with non-null wall_ms")
+
+        zero_step = self._sample_available()
+        zero_step["run"]["time_step_ms"] = 0
+        check_invalid(zero_step, "time_step_ms == 0")
+
+        missing_counter = self._sample_available()
+        missing_counter["counters"].pop("max_handler_time_ns")
+        check_invalid(missing_counter, "missing counter field")
+
+        # Forward compatibility: unknown keys are allowed.
+        extra = self._sample_available()
+        extra["extra_future_key"] = True
+        extra["counters"]["future_counter"] = 1
+        self.assertEqual(problems(CONTROL_METRICS, extra), [])
+
+    def test_doc_examples_are_valid(self):
+        block_re = re.compile(r"```json\n(.*?)\n```", re.DOTALL)
+        for rel in ("docs/simulation-run.md", "docs/ja/simulation-run.md"):
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            blocks = [m.group(1) for m in block_re.finditer(text) if '"vehicle_sil_control_metrics"' in m.group(1)]
+            self.assertGreaterEqual(len(blocks), 1, f"{rel} has no vehicle_sil_control_metrics JSON example")
+            for block in blocks:
+                data = json.loads(block)
+                self.assertEqual(problems(CONTROL_METRICS, data), [],
+                                 f"documented control-metrics JSON example in {rel} failed schema validation")
+
+
+@needs_launcher
+class ControlMetricsOfARun(unittest.TestCase):
+    maxDiff = None
+
+    def test_live_available_and_unavailable_reports_are_valid(self):
+        example = Path(EXAMPLE_DIR)
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-control-metrics-") as directory:
+            ok_out = Path(directory) / "ok.metrics.json"
+            proc = subprocess.run([LAUNCH, "run", "simulation.yaml", "--stop-at-ms", "100",
+                                   "--control-metrics", str(ok_out)], cwd=example, capture_output=True, text=True,
+                                  encoding="utf-8", stdin=subprocess.DEVNULL, timeout=120)
+            self.assertEqual(proc.returncode, 0, f"run --control-metrics failed:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
+            data = json.loads(ok_out.read_text(encoding="utf-8"))
+            self.assertEqual(problems(CONTROL_METRICS, data), [],
+                             "live available control-metrics output failed schema/control-metrics.schema.json")
+            self.assertEqual(data["status"], "available")
+            self.assertIsNone(data["unavailable_reason"])
+            c = data["counters"]
+            self.assertGreater(c["messages"], 0)
+            self.assertGreater(c["bytes"], 0)
+            self.assertGreaterEqual(c["handler_calls"], c["messages"])
+            self.assertGreaterEqual(c["handler_time_ns"], c["max_handler_time_ns"])
+            self.assertGreaterEqual(c["max_handler_time_ns"], 0)
+
+            bad_out = Path(directory) / "unreadable.metrics.json"
+            proc_bad = subprocess.run([LAUNCH, "run", "does_not_exist.yaml", "--control-metrics", str(bad_out)],
+                                      cwd=example, capture_output=True, text=True, encoding="utf-8",
+                                      stdin=subprocess.DEVNULL, timeout=60)
+            self.assertEqual(proc_bad.returncode, 3)
+            bad_data = json.loads(bad_out.read_text(encoding="utf-8"))
+            self.assertEqual(problems(CONTROL_METRICS, bad_data), [],
+                             "live unavailable control-metrics output failed schema/control-metrics.schema.json")
+            self.assertEqual(bad_data["status"], "unavailable")
+            self.assertEqual(bad_data["unavailable_reason"], "unreadable")
+            self.assertIsNone(bad_data["counters"])
 
 
 @needs_launcher

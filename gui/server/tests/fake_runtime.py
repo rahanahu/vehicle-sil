@@ -38,7 +38,7 @@ class FakeLauncher(Launcher):
             "vehicle_sil_launch": 1,
             "vehicle_sil": __version__,
             "formats": {"check": 1, "run": 2, "events": 4, "describe": 1, "test": 1,
-                        "timeline": 1, "connections": 1},
+                        "timeline": 1, "connections": 1, "control_metrics": 1},
             "features": list(features),
         }
 
@@ -83,6 +83,7 @@ _VERSION_FORMATS = {
     "test": 1,
     "timeline": 1,
     "connections": 1,
+    "control_metrics": 1,
 }
 
 _LAUNCHER_STATES = frozenset({

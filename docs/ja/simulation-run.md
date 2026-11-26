@@ -20,6 +20,7 @@
 | `run --json` のキー | [JSON](#jsonrun---json) |
 | シナリオが書いた値と見た値を JSON のファイルに記録する | [`--timeline`](#シナリオの実行を時間の軸で記録する--timeline) |
 | そのファイルを図で見る、シナリオが失敗した理由を見る | [時間の軸のファイルを見る](#時間の軸のファイルを見る) |
+| Control Hub トランスポートの累計カウンターを JSON のファイルに記録する | [`--control-metrics`](#control-hub-トランスポートのメトリクスを記録する--control-metrics) |
 | 全部の機種で、シナリオをまとめて実行する | [`test`](#シナリオをまとめて実行するvehicle_sil_launch-test) |
 | 1 つのランチャープロセスで順に実行を繰り返す | [`serve`](#1-つのランチャーで順に実行するvehicle_sil_launch-serve) |
 
@@ -1118,7 +1119,7 @@ passed: 0 errors, 1 warning, 1 note
 | 1 | 実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど） | `"failed"` |
 | 3 | 設定ファイルを読めない（ファイルがない、文法のエラー、知らない形式のバージョンなど） | `"unreadable"` |
 | 3 | registry や controller を用意できない（指摘 `setup`） | `"setup_failed"` |
-| 3 | 結果を標準出力に書けない、`vehicle_sil_launch` 自身の想定外の失敗 | |
+| 3 | 結果を標準出力に書けない、成功または停止で終わった実行で `--control-metrics` のファイルを書けない、または `vehicle_sil_launch` 自身の想定外の失敗 | |
 | 4 | 引数のエラー | `"usage"` |
 | 5 | コマンドで、シナリオが終わる前（または始まる前）に止め、ほかに問題がなかった。シナリオの判定はない | `"incomplete"` |
 | 130 | 中断された。シグナル（Ctrl+C、Ctrl+Break、SIGTERM）か、ランチャーを起動したプログラムがいなくなった（標準入力の終わり、閉じた標準出力） | `"interrupted"` |
@@ -1132,7 +1133,7 @@ passed: 0 errors, 1 warning, 1 note
 | キー | 値 |
 |---|---|
 | `end` | 実行が終わった理由（下の表）。何も起動しなかったときは `null` |
-| `ok` | 終了コードが 0 のときだけ `true` |
+| `ok` | シミュレーション実行の結果自体が成功（`"passed"` または `"stopped"`、終了コード 0）のときに `true`。成功・停止した実行で `--control-metrics` の書き込みに失敗した場合、`run --json` の出力は変えず（`ok` は `true` のまま）、終了コードだけ 3 になります |
 | `message` | 結果を人に伝える英語の 1 行。実行を止めたものは種類で書きます（`by a stop request`、`by a signal`、`because its input closed`、`because its output closed`。正確な名前は `interrupted_by`）。失敗のときは失敗を先に書き（`The run failed (it was stopped by a stop request): …`）、最初のエラーの文の全体が続くので、長くなることがあります。強制終了した participant は、エラーのない行の終わりに名前を書きます |
 
 | `end` | 終わった理由 | `result` |
@@ -1873,6 +1874,105 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 - **`dropped_from_ms` から `dropped_before_ms` の手前までは、値が欠けています。** 描く道具は、この区間をまたいで点をつながないでください。`written` の系列では、`set` の点がこの区間の中や前に残ります（その時刻に送った値としては正しい）が、その点から `dropped_before_ms` までの間の `ramp` と `wave` の値はありません。
 - 点を捨てた実行では、標準エラーの行が `[vehicle_sil_launch] timeline: <file> (without <N> older points, dropped at its limits: limits.dropped in the file)` になり、結果に注記 `timeline-limit`（捨てた点の数）が入ります。ファイルを開かなくても、欠けたことがわかります。
+
+## Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）
+
+`vehicle_sil_launch run` に `--control-metrics <file>` を付けると、実行の終わりに Control Hub の SIL Kit トランスポートのカウンター（`vehicle_sil::control_silkit::HubTransport::stats()`）のスナップショットを、UTF-8 JSON（どの OS でも LF 改行）として `<file>` に書きます。`vehicle_sil_launch version --json` の `features` に `control-metrics` があり（`formats.control_metrics` が `1` であれば）使えます。
+
+```sh
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000 --control-metrics build/metrics.json
+```
+
+- `--control-metrics` はオプトインで、`run` だけで使えます（`check`、`test`、`serve` では終了コード 4 で拒否します）。
+- `--control` も `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` も**不要**です。Control Hub の SIL Kit トランスポートはすべての `vehicle_sil_launch run` で動きます。
+- 書き込みが成功したとき、仮想時間の進行、シナリオの判定、標準出力、`run --json`、既定の標準エラー、終了コードのいずれも変えません。
+- スナップショットは、すべての participant が終わり値のタップを止めた直後、ランチャーの SIL Kit 接続を閉じる直前（`before_transport_close`）に 1 回だけ読みます。ステップごとのメッセージや I/O は増えません。
+
+### 形式とカウンターの意味
+
+形式は `schema/control-metrics.schema.json`（JSON Schema Draft-07）にあります。記載されたキーは常に存在し（当てはまらないときは `null`）、読み手は未知のキーを無視します。
+
+```json
+{
+  "vehicle_sil_control_metrics": 1,
+  "vehicle_sil": "0.4.0",
+  "file": "simulation.yaml",
+  "variant": null,
+  "status": "available",
+  "unavailable_reason": null,
+  "source": {
+    "transport": "silkit",
+    "collector": "HubTransport::stats",
+    "scope": "cumulative_hub_transport_lifetime",
+    "collection_point": "before_transport_close"
+  },
+  "run": {
+    "result": "passed",
+    "end": "completed",
+    "simulation": "reached_stop_at",
+    "ok": true,
+    "sim_ms": 1000,
+    "wall_ms": 42,
+    "time_step_ms": 1,
+    "interrupted_by": null
+  },
+  "counters": {
+    "messages": 5000,
+    "bytes": 412340,
+    "handler_calls": 5015,
+    "handler_time_ns": 18423900,
+    "max_handler_time_ns": 148200,
+    "hellos": 5,
+    "last_words": 5,
+    "late_messages": 0,
+    "undecodable": 0,
+    "unknown": 0,
+    "refused_hellos": 0
+  }
+}
+```
+
+| キー | 型 | 意味 |
+|---|---|---|
+| `vehicle_sil_control_metrics` | 整数（`1`） | 形式のバージョン。 |
+| `vehicle_sil` | 文字列 | ランチャーのバージョン（`vehicle_sil::version()`）。 |
+| `file`、`variant` | 文字列 \| `null` | コマンドラインで指定した設定ファイルパスと、解決された機種名。 |
+| `status` | `"available"` \| `"unavailable"` | `HubTransport::stats()` を取得できたとき `"available"`（`counters` はオブジェクト、`unavailable_reason` は `null`）。`"unavailable"` のとき `counters` は常に `null`（0 では埋めません）。 |
+| `unavailable_reason` | 文字列 \| `null` | `"available"` のとき `null`。それ以外は `"unreadable"`、`"check_failed"`、`"stopped_before_setup"`、`"interrupted_before_setup"`、`"setup_failed"`、`"internal_error"` のいずれか。 |
+| `source` | オブジェクト | 出どころ（`transport: "silkit"`、`collector: "HubTransport::stats"`、`scope: "cumulative_hub_transport_lifetime"`、`collection_point: "before_transport_close"` または `null`）。 |
+| `run` | オブジェクト | 実行結果の文脈（`result`、`end`、`simulation`、`ok`、`sim_ms`、`wall_ms`、`time_step_ms`、`interrupted_by`）。開始前終了や `before_start` の中断では `sim_ms`・`wall_ms` は `null`、実行計画前では `time_step_ms` も `null`、`internal_error` では `result` も `null`。 |
+| `counters` | オブジェクト \| `null` | `"available"` のとき `HubTransport::stats()` のスナップショット、`"unavailable"` のとき `null`。 |
+
+カウンターはすべて **`HubTransport` の全生存期間にわたる累計**（生成から `before_transport_close` まで。開始ウィンドウの hello/probe、シミュレーションの各ステップ、一時停止・停止の遷移、終了時の last word を含む）です。定常状態の区間だけを切り出した値ではありません。
+
+| `counters` のキー | 単位 | 意味 |
+|---|---|---|
+| `messages` | 回数 | 復号して `Hub` に渡した `step`・`submitted` メッセージ数（hello、Ready 応答、復号不能、未知セッションを除く）。 |
+| `bytes` | バイト | 3 つの Control Hub 購読者（`hello`、`step`、`submitted`）が受信したペイロードの合計バイト数。 |
+| `handler_calls` | 回数 | `HubTransport` が開いている間に controller の SIL Kit スレッドで呼ばれた受信ハンドラー（`on_hello`、`on_step`、`on_submitted`）の合計回数（`>= messages`、`>= hellos`）。 |
+| `handler_time_ns` | ナノ秒（`steady_clock`） | controller の SIL Kit スレッド上で 3 つの受信ハンドラー内にいた累計時間。壁時計時間やプロセス CPU 時間と合算しないでください。 |
+| `max_handler_time_ns` | ナノ秒（`steady_clock`） | 1 回の受信ハンドラー呼び出しの最長所要時間（`0 <= max_handler_time_ns <= handler_time_ns`）。 |
+| `hellos` | 回数 | 受け付けた制御エージェントの hello 数。 |
+| `last_words` | 回数 | Hub が応答したエージェントの last word 数。 |
+| `late_messages` | 回数 | controller が後のステップを始めた後に届いた仮想時間エージェントのステップメッセージ数。 |
+| `undecodable` | 回数 | このワイヤーバージョンとして復号できなかった受信メッセージ数（バージョン不一致の hello を含む）。 |
+| `unknown` | 回数 | 未知（終了済みでない）セッションのメッセージ、またはスキーマに合わないサンプル・利用可否メッセージの数。 |
+| `refused_hellos` | 回数 | 拒否した hello 数（`max_links` 超過またはセッション衝突）。 |
+
+### アトミック書き込みとエラー処理
+
+- 親ディレクトリがなければ自動で作ります。同じディレクトリの一時ファイル（`<file>.writing-<nonce>`）に書き出してから `<file>` へアトミックにリネームするため、既存のファイルが途中で切れたり壊れたりしません。
+- 空パス、末尾スラッシュのディレクトリパス、既存のディレクトリは一時ファイルを作らずに拒否します。
+- コマンドラインの使い方の誤り（終了コード 4）ではファイルを書きません。
+- 実行の終わりにメトリクスファイルの書き込みが失敗した場合:
+  - 標準エラーに `error: cannot write control metrics to <file>: <reason>` を 1 行書きます。
+  - 標準出力と `run --json` は変えません（`ok` はシミュレーション実行の結果のままです）。
+  - 実行自体がすでに非 0 の終了コード（たとえば `1`、`3`、`5`、`130`）だった場合、その終了コードをそのまま保ちます。
+  - 実行が成功していた場合（終了コード `0`、`"passed"` または `"stopped"`）、終了コード `3` で終了します。
+
+### `VEHICLE_SIL_TRACE` との関係
+
+`--control-metrics` は、1 回の実行の Control Hub SIL Kit トランスポートの要約を、スキーマ付きの公開形式かつ実行への影響ゼロで書き出すため、速度の基準測定や CI ベンチマークに使えます。ランチャーと全 ECU プロセスをまたぐステップ単位のクリティカルパス解析には、内部のプロファイリングトレース（`VEHICLE_SIL_TRACE`、[internals/trace.md](internals/trace.md)）を使ってください。両方は併用できますが、トレース有効時の `handler_time_ns` には受信ハンドラー内のトレース記録の費用が含まれます。
 
 ## シナリオをまとめて実行する（`vehicle_sil_launch test`）
 

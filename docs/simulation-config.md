@@ -893,7 +893,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
-                       [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
@@ -935,6 +935,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--variant <name>` | | Selects a variant of the configuration file (see [Variants](#variants-variants---variant)). |
 | `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
 | `--timeline <file>` | `run` only, and only with `--scenario` | Writes the values that the scenario wrote and saw to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
+| `--control-metrics <file>` | `run` only | Writes the cumulative Control Hub SIL Kit transport counters (`HubTransport::stats()`) to a JSON file at the end of the run; does not require `--control` (see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](simulation-run.md#recording-control-hub-transport-metrics---control-metrics)). |
 | `--scenarios <dir or files>` | `test` only | The scenarios to run. |
 | `--fail-fast` | `test` only | Runs nothing after the first run that fails. |
 | `--speed <speed>` | `check`, `run` | Run speed (a number or `max`). |
@@ -979,6 +980,7 @@ Notes on individual options:
 | `--param` | Can be repeated (each name once). |
 | `--param` | In `test`, applies only to the scenarios that have a parameter of that name (if no scenario has it, a usage error). |
 | `--timeline` | If the file cannot be opened, nothing is started and the exit code is 3. |
+| `--control-metrics` | Written atomically at the end of `run` (missing parent directories are created). If writing fails, stderr prints the error, stdout/`run --json` stay unchanged, a non-zero run exit code is preserved, and exit code 0 becomes 3. |
 | `--scenarios` | A directory (the `.yaml`, `.yml` and `.json` files directly in it, in name order) or files (in the order written). |
 | `--scenarios` | Takes any number of paths after it, and can be repeated. |
 | `--scenarios` | Write the configuration file before `--scenarios` or after `--`. |

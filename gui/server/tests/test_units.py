@@ -1743,7 +1743,7 @@ def test_events_v4_validators_reject_contract_drift() -> None:
     valid_version = {
         "vehicle_sil_launch": 1,
         "vehicle_sil": "0.4.0-rc.1",
-        "formats": {"check": 1, "run": 2, "events": 4, "describe": 1, "test": 1, "timeline": 1, "connections": 1},
+        "formats": {"check": 1, "run": 2, "events": 4, "describe": 1, "test": 1, "timeline": 1, "connections": 1, "control_metrics": 1},
         "features": ["events", "serve"],
     }
     validate_version_json(valid_version)

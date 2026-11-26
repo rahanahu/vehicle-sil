@@ -9,7 +9,6 @@
 #include <silkit/services/pubsub/all.hpp>
 
 #include <algorithm>
-#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <map>
@@ -96,10 +95,10 @@ struct HubTransport::State
     std::size_t max_links = 256;
     std::shared_ptr<Sender> sender = std::make_shared<Sender>();
 
-    // Held by a receive handler while it runs, so that the destructor waits for it. Before
-    // `mutex` in the lock order; the hub is called with it held (and never calls back into a
-    // handler).
-    std::mutex handler_mutex;
+    // Held by a receive handler while it runs, so that the destructor waits for it, and by
+    // stats() for a consistent snapshot of all counters. Before `mutex` in the lock order; the
+    // hub is called with it held (and never calls back into a handler).
+    mutable std::mutex handler_mutex;
     bool closed = false; ///< guarded by handler_mutex and mutex (written with both)
 
     // The directory. Never held while the hub or SIL Kit is called.
@@ -133,29 +132,40 @@ struct HubTransport::State
     wire::StepMessage step;
     wire::SubmittedMessage submitted;
 
-    std::atomic<std::uint64_t> n_hellos{0}, n_messages{0}, n_bytes{0}, n_undecodable{0}, n_unknown{0}, n_late{0}, n_calls{0},
-        n_refused{0}, n_last_words{0};
-    std::atomic<std::int64_t> handler_ns{0}, max_handler_ns{0};
+    // Guarded by handler_mutex.
+    std::uint64_t n_hellos = 0, n_messages = 0, n_bytes = 0, n_undecodable = 0, n_unknown = 0, n_late = 0, n_calls = 0,
+                  n_refused = 0, n_last_words = 0;
+    std::int64_t handler_ns = 0, max_handler_ns = 0;
 
     /// Times a receive handler and holds handler_mutex for it.
     struct Handling
     {
         State& s;
         std::unique_lock<std::mutex> lock;
-        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-        explicit Handling(State& state, std::size_t bytes) : s(state), lock(state.handler_mutex)
+        bool active = false;
+        std::chrono::steady_clock::time_point begin{};
+        explicit Handling(State& state, std::size_t bytes) : s(state), lock(state.handler_mutex), active(!state.closed)
         {
-            s.n_bytes.fetch_add(bytes, std::memory_order_relaxed);
+            if (active)
+            {
+                begin = std::chrono::steady_clock::now();
+                s.n_bytes += bytes;
+            }
         }
         ~Handling()
         {
-            const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - begin).count();
-            s.n_calls.fetch_add(1, std::memory_order_relaxed);
-            s.handler_ns.fetch_add(ns, std::memory_order_relaxed);
-            // Only the handlers write it, one at a time.
-            if (ns > s.max_handler_ns.load(std::memory_order_relaxed))
+            if (!active)
             {
-                s.max_handler_ns.store(ns, std::memory_order_relaxed);
+                return;
+            }
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - begin).count();
+            const std::int64_t ns = elapsed > 0 ? static_cast<std::int64_t>(elapsed) : 0;
+            ++s.n_calls;
+            s.handler_ns += ns;
+            if (ns > s.max_handler_ns)
+            {
+                s.max_handler_ns = ns;
             }
         }
     };
@@ -170,7 +180,7 @@ struct HubTransport::State
         const auto it = ended.find(session);
         if (it == ended.end())
         {
-            n_unknown.fetch_add(1, std::memory_order_relaxed);
+            ++n_unknown;
             return nullptr;
         }
         return it->second;
@@ -225,7 +235,7 @@ struct HubTransport::State
         wire::encode_session(wire::Kind::LastWordReceived, session, sender->bytes);
         // Counted first: whoever receives the answer may look at the count at once (this does
         // not rely on when SIL Kit writes what is published from one of its handlers).
-        n_last_words.fetch_add(1, std::memory_order_relaxed);
+        ++n_last_words;
         (to != nullptr ? to : sender->every)->Publish(detail::span_of(sender->bytes));
     }
 
@@ -238,14 +248,14 @@ struct HubTransport::State
         }
         if (const wire::Error error = wire::decode_hello(span_of(event), hello))
         {
-            n_undecodable.fetch_add(1, std::memory_order_relaxed);
+            ++n_undecodable;
             if (error.code == wire::ErrorCode::VersionMismatch && !hello.participant.empty())
             {
                 {
                     const std::lock_guard lock(mutex);
                     if (names.find(hello.participant) == names.end() && names.size() >= max_links)
                     {
-                        n_refused.fetch_add(1, std::memory_order_relaxed);
+                        ++n_refused;
                         return;
                     }
                     // A connected agent of this name stays what it is: this hello is another's.
@@ -270,7 +280,7 @@ struct HubTransport::State
                 {
                     // Another participant with the session number of a connected one: it cannot
                     // be told apart from it, so it is not taken.
-                    n_refused.fetch_add(1, std::memory_order_relaxed);
+                    ++n_refused;
                 }
                 return; // else: the same hello again
             }
@@ -281,7 +291,7 @@ struct HubTransport::State
             // A bound on what a run remembers: participants beyond it are not taken.
             if (names.find(hello.participant) == names.end() && names.size() >= max_links)
             {
-                n_refused.fetch_add(1, std::memory_order_relaxed);
+                ++n_refused;
                 return;
             }
         }
@@ -315,7 +325,7 @@ struct HubTransport::State
         }
         catch (const std::exception&)
         {
-            n_undecodable.fetch_add(1, std::memory_order_relaxed);
+            ++n_undecodable;
             return;
         }
         {
@@ -339,7 +349,7 @@ struct HubTransport::State
             // incarnation's commands; its connection is only taken off the hub's books.
             hub->agent_disconnected(replaced->connection);
         }
-        n_hellos.fetch_add(1, std::memory_order_relaxed);
+        ++n_hellos;
         changed.notify_all();
         // The participant's lifecycle state is not looked at here: what is known of it may be the
         // state of an earlier process of the same name (one that failed and was started anew).
@@ -360,7 +370,7 @@ struct HubTransport::State
         }
         if (wire::decode_step(span_of(event), step))
         {
-            n_undecodable.fetch_add(1, std::memory_order_relaxed);
+            ++n_undecodable;
             return;
         }
         traceStep.set_vt(to_ns(step.time));
@@ -374,7 +384,7 @@ struct HubTransport::State
             }
             return;
         }
-        n_messages.fetch_add(1, std::memory_order_relaxed);
+        ++n_messages;
         // Until it has answered: with the first message, then with every eighth.
         if (!link->info.ready && link->unanswered++ % 8 == 0)
         {
@@ -385,7 +395,7 @@ struct HubTransport::State
         // handlers and the steps of this participant run on one thread, so now() is exact here.
         if (synchronised && link->info.virtual_time && !step.final && step.time < runtime->now())
         {
-            n_late.fetch_add(1, std::memory_order_relaxed);
+            ++n_late;
             const std::lock_guard lock(mutex);
             ++link->info.late_messages;
             names[link->info.participant].late_messages = link->info.late_messages;
@@ -426,7 +436,7 @@ struct HubTransport::State
         }
         if (!fits)
         {
-            n_unknown.fetch_add(1, std::memory_order_relaxed);
+            ++n_unknown;
             link.assembling = false;
             return;
         }
@@ -440,7 +450,7 @@ struct HubTransport::State
         }
         else if (!link.assembling || part.sequence != link.partial.sequence || part.first != link.partial.values.size())
         {
-            n_unknown.fetch_add(1, std::memory_order_relaxed);
+            ++n_unknown;
             link.assembling = false;
             return;
         }
@@ -460,7 +470,7 @@ struct HubTransport::State
     {
         if (part.total != link.info.variables)
         {
-            n_unknown.fetch_add(1, std::memory_order_relaxed);
+            ++n_unknown;
             link.assembling_states = false;
             return;
         }
@@ -473,7 +483,7 @@ struct HubTransport::State
         }
         else if (!link.assembling_states || part.version != link.partial_states_version || part.first != link.partial_states.size())
         {
-            n_unknown.fetch_add(1, std::memory_order_relaxed);
+            ++n_unknown;
             link.assembling_states = false;
             return;
         }
@@ -520,7 +530,7 @@ struct HubTransport::State
         }
         if (wire::decode_submitted(span_of(event), submitted))
         {
-            n_undecodable.fetch_add(1, std::memory_order_relaxed);
+            ++n_undecodable;
             return;
         }
         const auto link = find(submitted.session);
@@ -529,7 +539,7 @@ struct HubTransport::State
             count_unknown(submitted.session);
             return;
         }
-        n_messages.fetch_add(1, std::memory_order_relaxed);
+        ++n_messages;
         traceAnswer.set_arg(submitted.seq);
         trace::flow_in("answer", trace::answer_flow(submitted.seq, submitted.session));
         hub->agent_submitted(link->connection, submitted.seq, submitted.result);
@@ -768,18 +778,19 @@ std::vector<LinkInfo> HubTransport::links() const
 HubTransportStats HubTransport::stats() const
 {
     const auto& s = *state_;
+    const std::lock_guard lock(s.handler_mutex);
     HubTransportStats out;
-    out.hellos = s.n_hellos.load(std::memory_order_relaxed);
-    out.messages = s.n_messages.load(std::memory_order_relaxed);
-    out.bytes = s.n_bytes.load(std::memory_order_relaxed);
-    out.undecodable = s.n_undecodable.load(std::memory_order_relaxed);
-    out.unknown = s.n_unknown.load(std::memory_order_relaxed);
-    out.late_messages = s.n_late.load(std::memory_order_relaxed);
-    out.refused_hellos = s.n_refused.load(std::memory_order_relaxed);
-    out.last_words = s.n_last_words.load(std::memory_order_relaxed);
-    out.handler_calls = s.n_calls.load(std::memory_order_relaxed);
-    out.handler_time = std::chrono::nanoseconds(s.handler_ns.load(std::memory_order_relaxed));
-    out.max_handler_time = std::chrono::nanoseconds(s.max_handler_ns.load(std::memory_order_relaxed));
+    out.hellos = s.n_hellos;
+    out.messages = s.n_messages;
+    out.bytes = s.n_bytes;
+    out.undecodable = s.n_undecodable;
+    out.unknown = s.n_unknown;
+    out.late_messages = s.n_late;
+    out.refused_hellos = s.n_refused;
+    out.last_words = s.n_last_words;
+    out.handler_calls = s.n_calls;
+    out.handler_time = std::chrono::nanoseconds(s.handler_ns);
+    out.max_handler_time = std::chrono::nanoseconds(s.max_handler_ns);
     return out;
 }
 

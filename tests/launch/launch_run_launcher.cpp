@@ -63,6 +63,7 @@ int main(int argc, char** argv)
             {"connect_time_changed", connect_time_changed},
             {"connect_time_locked", connect_time_locked},
             {"control", control},
+            {"control_metrics", control_metrics},
             {"crash", crash},
             {"disabled", disabled},
             {"docs", docs},

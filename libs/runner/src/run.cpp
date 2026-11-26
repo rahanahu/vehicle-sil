@@ -440,6 +440,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
     // word did not arrive within its wait) is settled here. No sample is taken any more: the
     // tap goes before the transport does (a run that did not get to its watch still has it).
     samples_.untap();
+    control_.note_transport_stats(outcome_, *connection->transport);
     // From here on the connection is the closing thread's: nothing of it is named after this.
     close_connection(std::move(connection));
     return outcome_;

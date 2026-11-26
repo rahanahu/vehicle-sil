@@ -147,6 +147,17 @@ TEST_CASE(a_timeline_needs_a_scenario)
     CHECK(messages(r).empty());
 }
 
+TEST_CASE(control_metrics_is_for_run_only)
+{
+    RunRequest r;
+    r.host.control_metrics = "metrics.json";
+    CHECK(messages(r, RequestCommand::Run).empty());
+    CHECK(messages(r, RequestCommand::Check) == list("--control-metrics is for run: check starts no participant"));
+    CHECK(messages(r, RequestCommand::Test) ==
+          list("--control-metrics is for run, not for test (which runs multiple simulations into one summary): run one "
+               "simulation with vehicle_sil_launch run --control-metrics <file>"));
+}
+
 TEST_CASE(a_scenario_and_a_start_paused_are_refused_with_or_without_commands)
 {
     RunRequest r;

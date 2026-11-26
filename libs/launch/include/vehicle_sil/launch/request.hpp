@@ -89,6 +89,9 @@ struct RunHost
     std::filesystem::path log_dir{};
     /// The file of the scenario's timeline as the user gave it; empty: none.
     std::string timeline{};
+    /// run --control-metrics: the JSON file that receives the Control Hub SIL Kit transport
+    /// counters (HubTransport::stats()) at the end of the run; empty: none.
+    std::string control_metrics{};
     /// The longest the simulation may run (wall clock), from 1 to config::kMaxMillis ms; empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
     std::int64_t start_timeout_ms = 30000;

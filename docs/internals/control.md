@@ -519,6 +519,7 @@ A hello is always a single message, because a subscriber that joins later receiv
 - Delivery to the Hub's subscribers happens on the subscriber's thread, in `Subscription::poll()`.
 - The thread that called `Hub::write()` publishes the commands itself, on the publisher of the Agent's group.
 - Create `HubTransport` before starting the participant. It makes all its publishers in its constructor: SIL Kit cannot make a publisher on the participant's I/O thread, where the receive handlers run.
+- `HubTransport::stats()` acquires `handler_mutex` to return an internally consistent snapshot of all 11 counters (`0 <= max_handler_time <= handler_time`, `messages <= handler_calls`, `hellos <= handler_calls`, and post-close stability). It is thread-safe, but must not be called from a SIL Kit receive handler of the hub's participant or from `Hub::set_values_tap()`. `vehicle_sil_launch run --control-metrics <file>` snapshots `stats()` once right before closing the connection (see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](../simulation-run.md#recording-control-hub-transport-metrics---control-metrics)).
 
 ### Hub-side checks and limits
 

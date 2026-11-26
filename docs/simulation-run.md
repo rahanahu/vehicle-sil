@@ -20,6 +20,7 @@ This reference describes what `vehicle_sil_launch run <file>` does and in which 
 | Keys of `run --json` | [JSON](#json-run---json) |
 | Recording what a scenario wrote and saw in a JSON file | [`--timeline`](#recording-a-scenario-run-on-a-timeline---timeline) |
 | Seeing that file as a chart, and why a scenario failed | [Viewing a timeline file](#viewing-a-timeline-file) |
+| Recording cumulative Control Hub transport counters in a JSON file | [`--control-metrics`](#recording-control-hub-transport-metrics---control-metrics) |
 | Running several scenarios on every variant | [`test`](#running-several-scenarios-vehicle_sil_launch-test) |
 | Keeping one launcher process for sequential runs | [`serve`](#running-sequentially-in-one-launcher-vehicle_sil_launch-serve) |
 
@@ -1118,7 +1119,7 @@ These are the exit codes of `run`. For the full table that includes `check` and 
 | 1 | Run errors (a participant failed, the participants did not all join, a participant did not end when stopped, and so on) | `"failed"` |
 | 3 | The configuration file cannot be read (missing file, syntax error, unknown format version, and so on) | `"unreadable"` |
 | 3 | The registry or the controller cannot be set up (finding `setup`) | `"setup_failed"` |
-| 3 | The result cannot be written to stdout, or an unexpected failure of `vehicle_sil_launch` itself | |
+| 3 | The result cannot be written to stdout, `--control-metrics` cannot be written on an otherwise passing/stopped run, or an unexpected failure of `vehicle_sil_launch` itself | |
 | 4 | Usage error | `"usage"` |
 | 5 | A command stopped the run before its scenario's end (or before the scenario began), and nothing else was wrong: the scenario has no verdict | `"incomplete"` |
 | 130 | Interrupted: a signal (Ctrl+C, Ctrl+Break, SIGTERM), or the program that ran the launcher went away (end of stdin, closed stdout) | `"interrupted"` |
@@ -1132,7 +1133,7 @@ The result says three things about the end, in the JSON of `run --json` and in t
 | Key | Value |
 |---|---|
 | `end` | Why the run ended (the table below). `null` if nothing was started |
-| `ok` | `true` exactly when the exit code is 0 |
+| `ok` | `true` when the simulation result itself succeeded (`"passed"` or `"stopped"`, exit code 0). On a passing or stopped run whose `--control-metrics` file fails to write, `run --json` is unchanged (`ok` stays `true`) while the process exits with 3 |
 | `message` | One English line for a person that says what the result is. It names what stopped the run by its kind (`by a stop request`, `by a signal`, `because its input closed`, `because its output closed`; the exact name is `interrupted_by`). A failure comes first (`The run failed (it was stopped by a stop request): …`), and the line then ends with the whole message of the first error, which can be long. Participants ended by force are named at the end of a line that has no error |
 
 | `end` | Why the run ended | `result` |
@@ -1873,6 +1874,105 @@ When a series has too many points, **the older points are dropped and the newer 
 
 - **Values are missing from `dropped_from_ms` up to `dropped_before_ms`.** A tool that draws the file must not join points across this interval. In a `written` series, `set` points remain in and before this interval (they are correct as the values sent at that time), but the `ramp` and `wave` values between such a point and `dropped_before_ms` are missing.
 - In a run that dropped points, the stderr line is `[vehicle_sil_launch] timeline: <file> (without <N> older points, dropped at its limits: limits.dropped in the file)`, and the result has the note `timeline-limit` (with the number of dropped points). You can tell that points are missing without opening the file.
+
+## Recording Control Hub transport metrics (`--control-metrics`)
+
+With `--control-metrics <file>`, `vehicle_sil_launch run` writes a snapshot of the Control Hub's SIL Kit transport counters (`vehicle_sil::control_silkit::HubTransport::stats()`) to `<file>` as UTF-8 JSON (LF line endings on every OS) at the end of the run. The launcher supports it if `features` of `vehicle_sil_launch version --json` contains `control-metrics` (and `formats.control_metrics` is `1`).
+
+```sh
+vehicle_sil_launch run simulation.yaml --stop-at-ms 1000 --control-metrics build/metrics.json
+```
+
+- `--control-metrics` is opt-in and works on `run` only (`check`, `test` and `serve` reject it with exit code 4).
+- It does **not** require `--control` and does **not** require `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`: the Control Hub SIL Kit transport runs on every `vehicle_sil_launch run`.
+- It does not change virtual-time progression, scenario outcomes, stdout, `run --json`, default stderr, or exit codes when writing succeeds.
+- The snapshot is read once after all participants have ended and the values tap has stopped, right before closing the launcher's SIL Kit connection (`before_transport_close`). Zero per-step messages or per-step I/O are added.
+
+### Format and counter semantics
+
+The format is defined by `schema/control-metrics.schema.json` (JSON Schema Draft-07). Every documented key is always present (`null` when not applicable); readers ignore unknown keys.
+
+```json
+{
+  "vehicle_sil_control_metrics": 1,
+  "vehicle_sil": "0.4.0",
+  "file": "simulation.yaml",
+  "variant": null,
+  "status": "available",
+  "unavailable_reason": null,
+  "source": {
+    "transport": "silkit",
+    "collector": "HubTransport::stats",
+    "scope": "cumulative_hub_transport_lifetime",
+    "collection_point": "before_transport_close"
+  },
+  "run": {
+    "result": "passed",
+    "end": "completed",
+    "simulation": "reached_stop_at",
+    "ok": true,
+    "sim_ms": 1000,
+    "wall_ms": 42,
+    "time_step_ms": 1,
+    "interrupted_by": null
+  },
+  "counters": {
+    "messages": 5000,
+    "bytes": 412340,
+    "handler_calls": 5015,
+    "handler_time_ns": 18423900,
+    "max_handler_time_ns": 148200,
+    "hellos": 5,
+    "last_words": 5,
+    "late_messages": 0,
+    "undecodable": 0,
+    "unknown": 0,
+    "refused_hellos": 0
+  }
+}
+```
+
+| Key | Type | Meaning |
+|---|---|---|
+| `vehicle_sil_control_metrics` | integer (`1`) | Format version. |
+| `vehicle_sil` | string | Launcher version (`vehicle_sil::version()`). |
+| `file`, `variant` | string \| `null` | Configuration path as given on the command line and resolved variant name. |
+| `status` | `"available"` \| `"unavailable"` | `"available"` iff `HubTransport::stats()` was collected (`counters` is an object and `unavailable_reason` is `null`). When `"unavailable"`, `counters` is `null` (never zero). |
+| `unavailable_reason` | string \| `null` | `null` when `"available"`; otherwise `"unreadable"`, `"check_failed"`, `"stopped_before_setup"`, `"interrupted_before_setup"`, `"setup_failed"`, or `"internal_error"`. |
+| `source` | object | Provenance (`transport: "silkit"`, `collector: "HubTransport::stats"`, `scope: "cumulative_hub_transport_lifetime"`, `collection_point: "before_transport_close"` or `null`). |
+| `run` | object | Outcome context (`result`, `end`, `simulation`, `ok`, `sim_ms`, `wall_ms`, `time_step_ms`, `interrupted_by`). `sim_ms` and `wall_ms` are `null` when the simulation did not start or aborted in `before_start`; `time_step_ms` is `null` when no run was planned; `result` is `null` on `internal_error`. |
+| `counters` | object \| `null` | Exact snapshot of `HubTransport::stats()` when `"available"`, or `null` when `"unavailable"`. |
+
+All counters are **cumulative over the entire lifetime of `HubTransport`** (from construction to `before_transport_close`, including start-window hellos/probes, simulation steps, pause/stop transitions, and shutdown last words). They do not isolate a steady-state sub-window.
+
+| Key of `counters` | Unit | Meaning |
+|---|---|---|
+| `messages` | count | Decoded `step` and `submitted` messages handed to `Hub` (excludes hellos, Ready probe replies, undecodable, and unknown-session messages). |
+| `bytes` | bytes | Total received payload bytes across all three Control Hub subscribers (`hello`, `step`, `submitted`). |
+| `handler_calls` | count | Total receive-handler invocations (`on_hello`, `on_step`, `on_submitted`) on the controller's SIL Kit thread while `HubTransport` was open (`>= messages`, `>= hellos`). |
+| `handler_time_ns` | nanoseconds (`steady_clock`) | Cumulative time spent inside the three Control Hub receive handlers on the controller's SIL Kit thread. Do not sum with wall-clock time or process CPU time. |
+| `max_handler_time_ns` | nanoseconds (`steady_clock`) | Longest single receive-handler invocation (`0 <= max_handler_time_ns <= handler_time_ns`). |
+| `hellos` | count | Accepted control agent hellos. |
+| `last_words` | count | Agent last-word messages answered by the hub. |
+| `late_messages` | count | Virtual-time agent step messages arriving after the controller had begun a later step. |
+| `undecodable` | count | Received messages that could not be decoded for this wire version (including version-mismatch hellos). |
+| `unknown` | count | Messages for an unknown non-ended session, or samples/availability not matching the peer's schema. |
+| `refused_hellos` | count | Hellos refused (`max_links` exceeded or session collision). |
+
+### Atomic write and error handling
+
+- Missing parent directories are created automatically. The file is written to a sibling temporary file (`<file>.writing-<nonce>`) and atomically renamed over `<file>`, so a pre-existing file is never left truncated or partially written.
+- Empty paths, trailing-slash directory paths, and existing directories are rejected without creating a temporary file.
+- No file is written on CLI usage errors (exit code 4).
+- If writing the metrics file fails at the end of a run:
+  - `vehicle_sil_launch` writes `error: cannot write control metrics to <file>: <reason>` to stderr.
+  - Stdout and `run --json` remain unchanged (`ok` still reflects the simulation result).
+  - If the run itself already had a non-zero exit code (for example `1`, `3`, `5`, or `130`), that exit code is preserved.
+  - If the run succeeded (exit code `0`, `"passed"` or `"stopped"`), the process exits with `3`.
+
+### Relationship to `VEHICLE_SIL_TRACE`
+
+`--control-metrics` writes a public, schema-backed, zero-perturbation summary of the Control Hub SIL Kit transport for one run and is safe to use in speed baselines and CI benchmarks. For per-step critical-path breakdowns across the launcher and all ECU processes, use the internal profiling trace (`VEHICLE_SIL_TRACE`, see [internals/trace.md](internals/trace.md)). The two can be used together, though `handler_time_ns` then includes trace span recording inside receive handlers.
 
 ## Running several scenarios (`vehicle_sil_launch test`)
 

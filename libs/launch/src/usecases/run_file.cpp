@@ -10,6 +10,8 @@
 
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 #include "vehicle_sil/runner/detail/runner.hpp"
+#include "vehicle_sil/launch/control_metrics_format.hpp"
+#include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/run_sink.hpp"
 #include "vehicle_sil/launch/timeline_format.hpp"
 
@@ -224,12 +226,21 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // --describe: the time commands that came until then wait for it, and are decided there.
     report.check = check_file(request, check, [&controls](const config::TimeLock& lock) { controls.set_time_lock(lock); });
     event([&report](RunEventSink& e) { e.check(report.check); });
+    const auto maybe_write_control_metrics = [&request, &report]() {
+        if (request.host.control_metrics.empty() || report.check.usage)
+        {
+            return;
+        }
+        report.control_metrics_error = write_control_metrics_file(
+            process::path_from_utf8(request.host.control_metrics), format_control_metrics_json(report));
+    };
     if (!report.check.passed())
     {
         // Nothing starts: the run ends as every run does. The phase `ended` refuses the time
         // commands from here on, also those that still wait for a lock that never came (the
         // configuration could not be read), each with its command event.
         controls.set_phase(runner::Phase::Ended);
+        maybe_write_control_metrics();
         return report;
     }
     // The participants that will not start, before anything starts, in the file's order.
@@ -298,6 +309,7 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     }
     runner.publish_findings(true);
     controls.set_phase(runner::Phase::Ended);
+    maybe_write_control_metrics();
     return report;
 }
 

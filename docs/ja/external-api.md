@@ -32,6 +32,7 @@ GUI サーバー API の全スキーマ（`openapi.yaml` と `schemas/*.schema.j
 | シミュレーション構成 YAML | [schema/simulation.schema.json](../../schema/simulation.schema.json) | シミュレーション構成ファイル（`vehicle_sil_simulation: 2`） |
 | 実行要求 JSON | [schema/run-request.schema.json](../../schema/run-request.schema.json) | ランチャーの `--request` ファイルおよび `POST /api/check` / `POST /api/run` の intent フィールド（`vehicle_sil_run_request: 1`） |
 | シナリオタイムライン JSON | [schema/timeline.schema.json](../../schema/timeline.schema.json) | `--timeline` および `GET /api/timeline/<run_id>` の出力 |
+| Control Hub トランスポートメトリクス JSON | [schema/control-metrics.schema.json](../../schema/control-metrics.schema.json) | `vehicle_sil_launch run --control-metrics <file>` の出力（`vehicle_sil_control_metrics: 1`） |
 
 ## マニュアル
 
