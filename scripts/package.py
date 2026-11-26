@@ -573,7 +573,7 @@ if [ -n "$uv_python" ]; then
   exit 2
 fi
 python=${VEHICLE_SIL_PYTHON:-python3}
-if ! "$python" -P -c 'import aiohttp, yaml' 2>/dev/null; then
+if ! "$python" -P -c 'import aiohttp, pydantic, yaml' 2>/dev/null; then
   echo "vehicle-sil-gui: uv is not installed, and $python (VEHICLE_SIL_PYTHON) is not a Python 3.11+ that has the" \
        "GUI server's packages. Install uv (https://docs.astral.sh/uv/), or install the packages into a virtual" \
        "environment with  python3 -m venv <dir> && <dir>/bin/python -m pip install --require-hashes -r" \
@@ -597,7 +597,7 @@ uv run --quiet --no-project --no-build --managed-python --python "@PYTHON@" --wi
 exit /b %ERRORLEVEL%
 :no_uv
 if not defined VEHICLE_SIL_PYTHON set "VEHICLE_SIL_PYTHON=python"
-"%VEHICLE_SIL_PYTHON%" -P -c "import aiohttp, yaml" 2>nul || goto no_packages
+"%VEHICLE_SIL_PYTHON%" -P -c "import aiohttp, pydantic, yaml" 2>nul || goto no_packages
 "%VEHICLE_SIL_PYTHON%" -P -m vehicle_sil_gui %*
 exit /b %ERRORLEVEL%
 :no_packages

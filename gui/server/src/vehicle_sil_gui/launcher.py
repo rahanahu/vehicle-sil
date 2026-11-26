@@ -20,6 +20,9 @@ from vehicle_sil_control.protocol import (
     NO_CONNECTION,
     REQUEST_FIELDS,
     REQUEST_VERSION_KEY,
+    SPEED_MAX,
+    SPEED_MIN,
+    STEP_MS_MAX,
     TEXT_FIELDS,
     TIME_COMMANDS,
     InvalidRequest,
@@ -60,13 +63,8 @@ ENV_VARIABLE = "VEHICLE_SIL_LAUNCH"
 REQUIRED_FEATURES = ("events", "stdin-commands", "request", "time-commands", "stdin-run-until", "state",
                      "speed", "start-paused", "scenario", "manual-participants")
 VERSION_TIMEOUT_S = 10
-# The words of vehicle_sil_launch that this server uses, in one place ("Running at a set speed (`speed`)" in docs/simulation-run.md,
-# and docs/simulation-events.md): the range of a speed (the same for speed and the speed command), the most milliseconds
-# one step command may ask for, the time commands, and the features that say which of them a launcher has. The
-# launcher's tests (launch.the_gui_takes_the_launchers_limits) compare the numbers with its own.
-SPEED_MIN = 0.000001
-SPEED_MAX = 1000000.0
-STEP_MS_MAX = 10 ** 12
+# Shared numeric bounds (SPEED_MIN, SPEED_MAX, STEP_MS_MAX) are imported from vehicle_sil_control.protocol
+# and compared against C++ launcher constants by tests/launch/test_shared_values.cpp.
 # The control links (the launcher's side of the ECUs' variables): the event that says, once per started participant
 # before the simulation runs, where its link stands ({"name", "state", "variables" | "version"}). The states
 # (connected, no_hello, version_mismatch, not_offered, none) are passed on as they are: the server does not read

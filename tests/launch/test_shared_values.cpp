@@ -126,12 +126,15 @@ void same(double actual, double expected, const std::string& where, const std::s
 TEST_CASE(the_gui_takes_the_launchers_limits)
 {
     const auto max_millis = static_cast<double>(config::kMaxMillis);
-    // The GUI server checks what it passes to the launcher (launcher.py) and tells the pages
-    // (api/app's limits).
-    const std::string launcher = "gui/server/src/vehicle_sil_gui/launcher.py";
-    same(value_in(launcher, "\nSPEED_MIN =", "\n#"), config::kMinSpeed, launcher + " SPEED_MIN", "launch::kMinSpeed");
-    same(value_in(launcher, "\nSPEED_MAX =", "\n#"), config::kMaxSpeed, launcher + " SPEED_MAX", "launch::kMaxSpeed");
-    same(value_in(launcher, "\nSTEP_MS_MAX =", "\n#"), max_millis, launcher + " STEP_MS_MAX", "launch::kMaxMillis");
+    // The GUI server checks what it passes to the launcher (vehicle_sil_control/protocol.py, re-exported by
+    // launcher.py) and tells the pages (api/app's limits).
+    const std::string control_protocol = "python/vehicle_sil_control/protocol.py";
+    same(value_in(control_protocol, "\nSPEED_MIN: float =", "\n#"), config::kMinSpeed,
+         control_protocol + " SPEED_MIN", "launch::kMinSpeed");
+    same(value_in(control_protocol, "\nSPEED_MAX: float =", "\n#"), config::kMaxSpeed,
+         control_protocol + " SPEED_MAX", "launch::kMaxSpeed");
+    same(value_in(control_protocol, "\nSTEP_MS_MAX: int =", "\n#"), max_millis,
+         control_protocol + " STEP_MS_MAX", "launch::kMaxMillis");
     const std::string variables = "gui/server/src/vehicle_sil_gui/variables.py";
     same(value_in(variables, "\nAT_MS_MAX =", "\n#"), max_millis, variables + " AT_MS_MAX", "launch::kMaxMillis");
     // The client's values before the server's answer, and those it takes from an older server.

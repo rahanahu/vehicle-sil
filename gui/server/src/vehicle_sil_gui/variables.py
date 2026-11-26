@@ -38,6 +38,9 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from pydantic import ValidationError
+
+from .contracts import WatchPayload, WritePayload, format_validation_error
 from .source import (AVAILABILITY, LATE_POLICIES, OperationInfo, PeerInfo, Sample, SnapshotInfo, Source, SourceError,
                      TimeInfo)
 
@@ -49,7 +52,6 @@ AT_MS_MAX = 10 ** 12  # the latest time a write may name (as a step command's mi
 TYPES = ("bool", "integer", "real", "enum")
 ROLES = ("input", "output", "parameter")
 FINAL = frozenset({"applied", "late", "rejected", "cancelled", "invalid", "busy", "unknown"})
-WRITE_KEYS = ("run_id", "instance", "writes", "at_ms", "late")
 FORGOTTEN_OPEN = 100_000  # numbers kept of open operations that were forgotten (they get their end with the run)
 STANDING_READ_S = 0.25  # while it stands still with every value read, the watched peers are read this often
 READ_FAILURES = 3  # reads in a row that gave nothing, before the summary says so (state ready, with a reason)
@@ -156,30 +158,23 @@ class Watch:
 def check_watch(message: dict, limits: Limits) -> tuple[int, list[tuple[str, str]] | None, float]:
     """A `watch` message of a screen: (id, the variables or None for all, the period in seconds). Rejected
     (invalid-watch) with what to send instead."""
-    def bad(what: str) -> Rejected:
-        return Rejected(400, "invalid-watch", what + ': send {"type":"watch","id":1,"variables":"all","period_ms":100}',
-                        {"id": id if _is_count(id) else None})
-
-    id = message.get("id")
-    if not _is_count(id):
-        raise bad("a watch needs id, a whole number from 0 to 2^53 that names it on this connection")
-    period = message.get("period_ms", limits.period_ms_min)
-    if isinstance(period, bool) or not isinstance(period, int) or \
-            not limits.period_ms_min <= period <= limits.period_ms_max:
-        raise bad(f"period_ms must be a whole number of milliseconds from {limits.period_ms_min} to "
-                  f"{limits.period_ms_max}")
-    variables = message.get("variables")
-    if variables == "all":
-        return id, None, period / 1000
-    if not isinstance(variables, list) or not all(
-            isinstance(v, dict) and isinstance(v.get("peer"), str) and isinstance(v.get("name"), str)
-            for v in variables):
-        raise bad('variables must be "all" or a list of {"peer": <name>, "name": <name>}')
-    if len(variables) > limits.watch_variables:
-        raise bad(f"a watch names at most {limits.watch_variables} variables (this one {len(variables)}): watch "
-                  '"all", or use more watches')
-    wanted = list(dict.fromkeys((v["peer"], v["name"]) for v in variables))
-    return id, wanted, period / 1000
+    raw_id = message.get("id") if isinstance(message, dict) else None
+    payload = {k: v for k, v in message.items() if k != "type"} if isinstance(message, dict) else message
+    try:
+        watch = WatchPayload.model_validate(payload, context={"limits": limits})
+    except ValidationError as exc:
+        _, reason = format_validation_error(exc)
+        raise Rejected(
+            400,
+            "invalid-watch",
+            reason + ': send {"type":"watch","id":1,"variables":"all","period_ms":100}',
+            {"id": raw_id if _is_count(raw_id) else None},
+        ) from None
+    period = limits.period_ms_min if watch.period_ms is None else watch.period_ms
+    if watch.variables == "all":
+        return watch.id, None, period / 1000
+    wanted = list(dict.fromkeys((v.peer, v.name) for v in watch.variables))
+    return watch.id, wanted, period / 1000
 
 
 def _is_count(value: object) -> bool:
@@ -825,26 +820,13 @@ class Variables:
     def check_write(self, body: dict) -> tuple[list[tuple[str, str, object]], int | None, str]:
         """The body of POST api/write as what the source is given: (the writes, at in ns or None, late).
         Rejected with what is wrong and what to send."""
-        extra = sorted(k for k in body if k not in WRITE_KEYS)
-        if extra:
-            raise Rejected(400, "invalid-field", f"a write takes no {', '.join(map(repr, extra[:5]))}: send "
-                                                 '{"writes": {"<peer>": {"<variable>": <value>}}}')
-        writes = body.get("writes")
-        if not isinstance(writes, dict) or not writes or not all(isinstance(v, dict) and v for v in writes.values()):
-            raise Rejected(400, "invalid-field", 'writes must be {"<peer>": {"<variable>": <value>}} with at least '
-                                                 "one variable for each peer named")
-        count = sum(len(v) for v in writes.values())
-        if count > self.limits.writes_per_request:
-            raise Rejected(400, "invalid-field", f"one request writes at most {self.limits.writes_per_request} "
-                                                 f"variables (this one {count}): send more requests")
-        at_ms = body.get("at_ms")
-        if at_ms is not None and (isinstance(at_ms, bool) or not isinstance(at_ms, int) or not 0 <= at_ms <= AT_MS_MAX):
-            raise Rejected(400, "invalid-field", f"at_ms must be a whole number of milliseconds of virtual time "
-                                                 f"from 0 to {AT_MS_MAX}, or left out (the next step)")
-        late = body.get("late", "reject")
-        if late not in LATE_POLICIES:
-            raise Rejected(400, "invalid-field", 'late must be "reject" (a write that comes after its time is not '
-                                                 'made) or "apply" (it is made at the next step)')
+        payload = {k: v for k, v in body.items() if k not in ("run_id", "instance")} if isinstance(body, dict) else body
+        try:
+            req = WritePayload.model_validate(payload, context={"limits": self.limits})
+        except ValidationError as exc:
+            _, message = format_validation_error(exc)
+            raise Rejected(400, "invalid-field", message) from None
+        writes, at_ms, late = req.writes, req.at_ms, req.late
         if self.state != READY or self.source is None:
             why = {OFF: "this run has no variables", CONNECTING: "the variables are not read yet: wait for the "
                    "state ready", ENDED: "the run has ended"}.get(self.state, "the variables cannot be reached")
