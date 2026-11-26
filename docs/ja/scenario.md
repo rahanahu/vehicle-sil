@@ -164,12 +164,26 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 | `at_ms` | どれでも | 手順の時刻です（仮想時間、ミリ秒、0 以上）。 |
 | `after_ms` | どれでも | 手順の時刻を、前の手順が終わった時刻からのミリ秒（0 以上）で書きます。 |
 | `timeout_ms: <ms>` | `wait_until`（必須） | この間に条件が成り立たなければ、失敗です。 |
-| `within_ms: <ms>` | `expect` | この間に 1 度でも成り立てば成功で、成り立った時点で次の手順へ進みます。 |
+| `within_ms: <ms>` | `expect` | 手順の時刻 `T` から `[T, T + within_ms]` の間に 1 度でも成り立てば成功で、成り立った時点で次の手順へ進みます。 |
 | `hold_for_ms: <ms>` | `expect` | この間ずっと成り立つことを確認します。 |
 | `expect: { <変数>: <条件>, ... }` | `ramp`、`wave` | 動かしている間ずっと（手順の時刻から終わりまで）、条件が成り立つことを確認します。 |
 | `undersampled: ok` | `wave`、`dither` | その手順の波形が ECU のステップより細かくても、照合で指摘しません。 |
 
 `at_ms` も `after_ms` もない手順は、`after_ms: 0` と同じです。
+
+`within_ms` の区間は、その手順の時刻 `T` を起点とする `[T, T + within_ms]` です。`at_ms` のない連続した手順は前の手順の終了時刻（`after_ms: 0`）から始まるため、待ち区間は同じ `T` を起点にせず直列に積み上がります。
+
+```yaml
+steps:
+  - at_ms: 100
+    set: { Engine.engine.throttle: 50 }
+  - expect: { Engine.engine.speed: { ge: 1700 } }
+    within_ms: 500
+  - expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }
+    within_ms: 200
+```
+
+この例では、2 つ目の手順は `T = 100 ms` から `[100, 600]` を待ちます。330 ms で成り立って 340 ms に終わると（[時刻](#時刻)）、3 つ目の手順は `T = 340 ms` から `[340, 540]` を待ちます。
 
 ### 変数と値
 

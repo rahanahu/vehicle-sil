@@ -119,6 +119,12 @@ The category tells you where to start.
 | Testing | Tools for tests and examples. |
 | — | Executables, generated code and the CAN bridge have no category. |
 
+API stability follows three tiers while the project is at 0.x:
+
+- **User-facing**: Public ECU and simulation APIs (`vehicle_sil::Ecu`, `vehicle_sil::Simulation`, `vehicle_sil::j1939`, `vehicle_sil::spy`, `vehicle_sil::control`, etc.). Breaking changes can still occur across 0.x minor versions (`vehicle_sil::spy` is newer and still settling).
+- **Foundation**: Lower-level building blocks (`vehicle_sil::local`, `vehicle_sil::peer`, `vehicle_sil::core`, `vehicle_sil::can`, `vehicle_sil::lin`, `vehicle_sil::eth`, `vehicle_sil::step`, etc.). They can be used directly (such as `LocalBench`), but change whenever the user-facing layer needs it.
+- **Testing and internal**: `vehicle_sil::testkit` is for tests and examples, and internal libraries (`vehicle_sil::launch`, `vehicle_sil::runner`, `vehicle_sil::config`, `vehicle_sil::scenario`, `vehicle_sil::process`, etc.) are not public APIs and may change without notice.
+
 For what each target links (the dependency direction), follow the area-specific dependency diagrams from [code-map.md](code-map.md#find-by-kind-of-information).
 
 | Target | Category | Description | Main types and features | Details |

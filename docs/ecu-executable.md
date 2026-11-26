@@ -615,6 +615,9 @@ vehicle_sil_sim_controller --registry-uri silkit://localhost:8500 --required Eng
 
 In `--required`, list the name of each ECU (`name` in `--describe`).
 
+> [!NOTE]
+> `vehicle_sil_sim_controller` and `sil-kit-registry` are not included in the prebuilt tools archive. In a build of this repository they are under `build/<preset>/tools/sim_controller/` and `build/<preset>/<CMAKE_BUILD_TYPE>/` (with tests enabled, or build target `sil-kit-registry`); in a FetchContent project such as `template/`, build those targets explicitly (`--target vehicle_sil_sim_controller sil-kit-registry`).
+
 ## See also
 
 | To find | See |

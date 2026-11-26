@@ -58,7 +58,7 @@ A fresh clone does not have the SIL Kit patches (`patches/sil-kit/`) applied. `c
 
 ### Linux
 
-On WSL, clone and build on the WSL Linux filesystem (for example under `~/`) rather than a mounted Windows drive such as `/mnt/c` (the 9p filesystem is much slower for builds).
+On WSL, clone and build on the WSL Linux filesystem (for example under `~/`) rather than a mounted Windows drive such as `/mnt/c` (the 9p filesystem is much slower for builds), and do not share one working tree or `node_modules` between Windows and WSL.
 
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git

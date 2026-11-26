@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 from vehicle_sil_control import Control, Launch, ms
 
-# Starts "vehicle_sil_launch run simulation.yaml" with its control server, paused before the first step.
+# Starts "vehicle_sil_launch serve --once simulation.yaml" with its control server, paused before the first step.
 with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch:
     with Control(launch.address) as c:
         c.sim.wait_paused()                                   # every ECU stands still at 0 ms

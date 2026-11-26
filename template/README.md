@@ -22,6 +22,8 @@ pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake min
 
 On Windows, the GUI runs on a Python that uv downloads. The GUI packages cannot be installed into the Python of MSYS2.
 
+On WSL, place the project on the WSL Linux filesystem (such as under `~/`) rather than `/mnt/<drive>` (9p builds are much slower), and do not share one working tree or `node_modules` between Windows and WSL.
+
 Run every command in the directory where you extracted the template (the one that contains `simulation.yaml`). Use the `vehicle_sil_launch` and `vehicle-sil-gui` that you add to `PATH` in step 2.
 
 ## Overview
