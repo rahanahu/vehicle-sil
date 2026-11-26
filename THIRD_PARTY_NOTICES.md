@@ -42,7 +42,8 @@ by `scripts/package.py tools`) contain, besides vehicle-sil itself (MIT,
 | The browser GUI's screen: Angular, Angular CDK and Material, RxJS, tslib | `python/vehicle_sil_gui/web/` | MIT, Apache-2.0 (RxJS), 0BSD (tslib) | `licenses/web/3rdpartylicenses.txt` (written by the screen's build) |
 
 Not in the archives: the Python packages of the GUI server and of the Control
-API client (aiohttp and its dependencies, PyYAML, grpcio, protobuf).
+API client (aiohttp and its dependencies, Pydantic and its dependencies,
+PyYAML, grpcio, protobuf).
 `python/requirements.txt` pins them with hashes, and uv or pip installs them
 from PyPI. The gRPC stubs in `python/vehicle_sil_control/_generated` are
 generated from vehicle-sil's own `proto/` files.

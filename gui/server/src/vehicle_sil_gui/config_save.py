@@ -13,19 +13,24 @@ import errno
 import hashlib
 import json
 import os
-import re
 import secrets
 import stat
 from pathlib import Path
 
+from pydantic import ValidationError
+
+from .contracts import (
+    ConfigSaveRequest,
+    format_validation_error,
+    model_allowed_fields,
+    validate_model_defer_file,
+)
 from .dashboard import SUFFIX as DASHBOARD_SUFFIX
 from .launcher import InvalidRequest
 from .paths import MARKER, MARKER_BYTES, MAX_DEPTH, SUFFIXES, ConfigFile, ConfigRoot, PathRejected
 from .refusal import Refused
 from .scenarios import DIRECTORY as SCENARIO_DIRECTORY
 
-SAVE_FIELDS = ("file", "text", "stamp")
-STAMP = re.compile(r"[0-9a-f]{64}")
 # The file that is written before it replaces the configuration file, in the same directory: its name starts with '.'
 # and does not end with .yaml or .yml, so the listing of the configuration files never shows it.
 TEMP_PREFIX = ".vehicle-sil-gui-save-"
@@ -40,31 +45,19 @@ def stamp_of(data: bytes) -> str:
 def save_request(body: dict, max_text: int) -> tuple[object, bytes, str | None]:
     """(file, the text as UTF-8 bytes, stamp) of a body of POST api/config; stamp None: a new file. The file is not
     checked here (ConfigRoot does it). Raises InvalidRequest (invalid-field) or Refused (413 text-too-large)."""
-    unknown = sorted(k for k in body if k not in SAVE_FIELDS)
-    if unknown:
-        raise InvalidRequest("invalid-field", f"api/config takes no {', '.join(repr(k) for k in unknown)}: the fields "
-                                              f"it takes are {', '.join(SAVE_FIELDS)}")
-    text = body.get("text")
-    if not isinstance(text, str):
-        raise InvalidRequest("invalid-field", "text must be the text to save (a string): the whole content of the "
-                                              "configuration file")
-    if "stamp" not in body:
-        raise InvalidRequest("invalid-field", "stamp is missing: send the stamp that GET api/config gave for the "
-                                              "file, or null to create a new file")
-    stamp = body["stamp"]
-    if stamp is not None and not (isinstance(stamp, str) and STAMP.fullmatch(stamp)):
-        raise InvalidRequest("invalid-field", "stamp must be the stamp that GET api/config gave for the file (64 "
-                                              "lowercase hexadecimal digits), or null to create a new file")
     try:
-        data = text.encode("utf-8")
-    except UnicodeEncodeError:
-        raise InvalidRequest("invalid-field", "text is not valid Unicode (it has a lone surrogate such as "
-                                              "\\ud800): send the text as UTF-8") from None
+        req, raw_file = validate_model_defer_file(ConfigSaveRequest, body)
+    except ValidationError as exc:
+        code, message = format_validation_error(
+            exc, endpoint="api/config", allowed_fields=model_allowed_fields(ConfigSaveRequest),
+        )
+        raise InvalidRequest(code, message) from None
+    data = req.text.encode("utf-8")
     if len(data) > max_text:
         raise Refused(413, "text-too-large",
                           f"text is {len(data)} bytes as UTF-8, more than the {max_text} (1 MiB) that the GUI server "
                           "saves: edit the file in a text editor")
-    return body.get("file"), data, stamp
+    return raw_file, data, req.stamp
 
 
 def new_file(root: ConfigRoot, relative: object) -> ConfigFile:

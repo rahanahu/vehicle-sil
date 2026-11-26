@@ -93,9 +93,9 @@ PyYAML reads YAML 1.1. How the generator reads it:
 
 A configure result in which Python or PyYAML was not found is not kept in the cache. After you install them, reconfigure; the configure step then finds them.
 
-### aiohttp and PyYAML (browser GUI server)
+### aiohttp, Pydantic and PyYAML (browser GUI server)
 
-The GUI server (`gui/server`, distribution name `vehicle-sil-gui`, [gui.md](gui.md)) depends on aiohttp and PyYAML (for reading dashboard files). aiohttp provides an HTTP server, WebSocket and the client that the tests use in one package. It runs on the default asyncio event loop on Windows (ProactorEventLoop, which can run child processes), and has wheels for Windows (3.11 and later). It needs no C++ build.
+The GUI server (`gui/server`, distribution name `vehicle-sil-gui`, [gui.md](gui.md)) depends on aiohttp, Pydantic (for request, WebSocket, and launcher event contract models), and PyYAML (for reading dashboard files). aiohttp provides an HTTP server, WebSocket and the client that the tests use in one package. It runs on the default asyncio event loop on Windows (ProactorEventLoop, which can run child processes), and both aiohttp and Pydantic (including `pydantic-core`) have prebuilt wheels for Linux and Windows (Python 3.11 and later). Neither needs a C++ build.
 
 The GUI server uses grpcio and protobuf only to read and write ECU variables, as a client of the launcher's Control Server (the optional dependency `vehicle-sil-gui[variables]`, which the `gui` group installs). Without them, the GUI server still runs, but variables are unavailable and it says why. The optional dependency alone is not enough: the stubs are needed too. The GUI server assumes that you run it in the repository after `uv sync`, or use the prebuilt tools, which bundle the stubs; the Python package does not contain them. It generates the gRPC stubs from `proto/` with grpcio-tools (the `control` group) at every start, or uses the stubs that `python -m vehicle_sil_control.generate` created, or those in the directory that `VEHICLE_SIL_CONTROL_STUBS` names.
 
@@ -106,6 +106,8 @@ The GUI server uses grpcio and protobuf only to read and write ECU variables, as
 | aiohappyeyeballs | PSF-2.0 |
 | attrs | MIT |
 | idna | BSD-3-Clause |
+| pydantic, pydantic-core, annotated-types and typing-inspection | MIT |
+| typing-extensions | PSF-2.0 |
 
 The vehicle-sil repository does not contain these libraries; uv installs them.
 

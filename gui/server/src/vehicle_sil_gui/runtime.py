@@ -9,7 +9,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
 import logging
-import math
 import os
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,6 +16,7 @@ from typing import Any, Protocol
 from vehicle_sil_control.protocol import EVENTS_FORMAT
 
 from . import control, process
+from .contracts import parse_strict_json
 from .launcher import (
     Launcher,
     command_line,
@@ -30,18 +30,6 @@ from .launcher import (
 from .refusal import Refused
 
 log = logging.getLogger("vehicle_sil_gui")
-
-
-def _no_constant(name: str) -> Any:
-    raise ValueError(f"{name} is not JSON")
-
-
-def _finite(text: str) -> float:
-    """A JSON number with a fraction or an exponent: 1e999 is valid JSON, but not a number JSON can carry on."""
-    value = float(text)
-    if not math.isfinite(value):
-        raise ValueError(f"{text} is not a finite number")
-    return value
 
 STDERR_MAX_LINE = 64 * 1024
 DEFAULT_MAX_LINE = 16 * 1024 * 1024
@@ -661,8 +649,8 @@ class ServeRuntime:
             tail = err.decode("utf-8", "replace").strip().splitlines()[-10:]
             raise Refused(502, "launcher-output", f"check --file-only --json exited with code {code}", tail)
         try:
-            doc = json.loads(out, parse_constant=_no_constant, parse_float=_finite)
-        except (ValueError, RecursionError):
+            doc = parse_strict_json(out)
+        except ValueError:
             doc = None
         if not isinstance(doc, dict):
             tail = err.decode("utf-8", "replace").strip().splitlines()[-10:]
@@ -1371,8 +1359,8 @@ class ServeRuntime:
             return
         size = len(line.encode("utf-8", "surrogatepass"))
         try:
-            ev = json.loads(line, parse_constant=_no_constant, parse_float=_finite)
-        except (ValueError, RecursionError):
+            ev = parse_strict_json(line)
+        except ValueError:
             if current is not None:
                 current.enqueue(("stdout", line))
             return

@@ -93,9 +93,9 @@ PyYAML は YAML 1.1 で読みます。生成器の読み方は次のとおりで
 
 Python や PyYAML が見つからなかった configure の結果はキャッシュに残りません。インストールしたあとで configure し直せば見つけます。
 
-### aiohttp と PyYAML（ブラウザの GUI のサーバー）
+### aiohttp、Pydantic、PyYAML（ブラウザの GUI のサーバー）
 
-GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp と PyYAML（ダッシュボードのファイルの読み込み）に依存します。aiohttp は、HTTP のサーバー、WebSocket、テストで使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動き、Windows（3.11 以降）の wheel があります。C++ のビルドは使いません。
+GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp、Pydantic（リクエスト、WebSocket、ランチャーイベントの契約モデル）、PyYAML（ダッシュボードのファイルの読み込み）に依存します。aiohttp は、HTTP のサーバー、WebSocket、テストで使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動きます。aiohttp と Pydantic（`pydantic-core` を含む）はいずれも Linux と Windows（Python 3.11 以降）のビルド済み wheel があり、C++ のビルドは使いません。
 
 ECU の変数を読み書きするときだけ、ランチャーの Control Server のクライアントとして grpcio と protobuf を使います（任意の依存 `vehicle-sil-gui[variables]`。`gui` のグループがインストールします）。なくても GUI サーバーは動き、変数だけが使えないと理由を表示します。この任意の依存だけでは足りず、スタブが必要です（リポジトリの中で `uv sync` して動かすか、スタブを同梱したビルド済みのツールを使うのが前提。スタブは Python のパッケージには入っていません）。gRPC のスタブは、起動のたびに `proto/` から grpcio-tools（`control` のグループ）で作るか、`python -m vehicle_sil_control.generate` が作ったもの、`VEHICLE_SIL_CONTROL_STUBS` のディレクトリのものを使います。
 
@@ -106,6 +106,8 @@ ECU の変数を読み書きするときだけ、ランチャーの Control Serv
 | aiohappyeyeballs | PSF-2.0 |
 | attrs | MIT |
 | idna | BSD-3-Clause |
+| pydantic、pydantic-core、annotated-types、typing-inspection | MIT |
+| typing-extensions | PSF-2.0 |
 
 これらは vehicle-sil のリポジトリには含めず、uv がインストールします。
 

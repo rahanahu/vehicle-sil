@@ -24,17 +24,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiohttp import WSCloseCode, WSMsgType, web
+from pydantic import ValidationError
 
 from . import __version__, control, dashboard, process
 from .allowed import Facts, RunFacts, allowed as allowed_of, allowed_save, allowed_start, project_run_facts
+from .contracts import (CHECK_FIELDS, PROTOCOL, CheckFileRequest, CheckTextRequest, ConnectionsRequest, DescribeRequest,
+                        PrepareRequest, RunRequest, StopSessionRequest,
+                        error_payload, format_validation_error, model_allowed_fields, parse_json_object,
+                        parse_time_command_request, validate_model_defer_file)
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (CONNECTIONS_FIELDS, DESCRIBE_FIELDS, DESCRIPTIONS_NAME,
-                       NO_CONNECTION, REQUEST_FIELDS,
-                       FEATURE_RUN_STOP_AT, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, TEXT_FIELDS,
+from .launcher import (DESCRIPTIONS_NAME, NO_CONNECTION, REQUEST_FIELDS,
+                       FEATURE_RUN_STOP_AT, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX,
                        InvalidRequest, Launcher,
-                       check_command, check_connect, check_disable, check_enable, check_fields, check_manual,
-                       check_network, check_params, check_run_millis, check_speed, check_strict, check_name_list, check_time_command, check_time_policy,
-                       check_variant, connections_command, describe_command, hide_request,
+                       check_command, check_disable, check_manual,
+                       connections_command, describe_command, hide_request,
                        hide_request_in_event, save_check_command, text_check_command,
                        with_participant_timeouts, write_request_file)
 from . import client_files
@@ -53,7 +56,6 @@ from .timelines import (KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path,
                         written_whole)
 from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables, Watch, check_watch
 
-PROTOCOL = 4  # vehicle_sil_gui: the version of the shapes in gui/protocol
 MAX_BODY = 64 * 1024
 # The text of a configuration file: `text` of api/check and of POST api/config (as UTF-8), the file of GET api/config
 MAX_TEXT = 1024 * 1024
@@ -134,7 +136,7 @@ def network_names(result: dict) -> list[str]:
 
 
 def error(status: int, code: str, message: str, detail: object = None) -> web.Response:
-    return web.json_response({"error": {"code": code, "message": message, "detail": detail}}, status=status)
+    return web.json_response(error_payload(code, message, detail), status=status)
 
 
 def same_secret(given: str, token: str) -> bool:
@@ -592,13 +594,34 @@ class GuiServer:
         """The JSON object of the body; one larger than max_size bytes is refused (413 too-large)."""
         if empty_ok and not request.body_exists:
             return {}
+        raw = await request.clone(client_max_size=max_size).read()
         try:
-            body = await request.clone(client_max_size=max_size).json()
-        except (ValueError, UnicodeDecodeError, RecursionError):
-            raise InvalidRequest("invalid-json", "the body is not JSON") from None
-        if not isinstance(body, dict):
-            raise InvalidRequest("invalid-json", "the body must be a JSON object")
-        return body
+            return parse_json_object(raw, allow_non_finite=True)
+        except ValueError as e:
+            raise InvalidRequest("invalid-json", str(e)) from None
+
+    @staticmethod
+    def _validate(model: type[T], body: dict, *, endpoint: str,
+                  allowed_fields: tuple[str, ...] | None = None,
+                  defer_file: bool = False, extra_with_text: bool = False) -> T:
+        fields = allowed_fields if allowed_fields is not None else model_allowed_fields(model)  # type: ignore[arg-type]
+        try:
+            if defer_file:
+                return validate_model_defer_file(model, body)[0]  # type: ignore[arg-type,return-value]
+            return model.model_validate(body)  # type: ignore[attr-defined]
+        except ValidationError as exc:
+            code, message = format_validation_error(
+                exc, endpoint=endpoint, allowed_fields=fields, extra_with_text=extra_with_text,
+            )
+            raise InvalidRequest(code, message) from None
+
+    async def _body_model(self, request: web.Request, model: type[T], *, endpoint: str,
+                          empty_ok: bool = False, max_size: int = MAX_BODY,
+                          allowed_fields: tuple[str, ...] | None = None,
+                          defer_file: bool = False) -> tuple[T, dict]:
+        body = await self._body(request, empty_ok=empty_ok, max_size=max_size)
+        return self._validate(model, body, endpoint=endpoint, allowed_fields=allowed_fields,
+                              defer_file=defer_file), body
 
     def _not_closing(self) -> None:
         if self._closing:
@@ -860,52 +883,39 @@ class GuiServer:
             self._client_warned = True
             log.warning("%s", message)
 
-    def _scenario(self, config: ConfigFile, body: dict) -> str | None:
+    def _scenario(self, config: ConfigFile, wanted: object) -> str | None:
         """The scenario of a check or run request as the listing has it (root-relative; None: none)."""
-        return resolve_scenario(self.root, config, body.get("scenario"))
+        return resolve_scenario(self.root, config, wanted)
 
-    async def _intent(self, config: ConfigFile, body: dict,
+    async def _intent(self, config: ConfigFile, req: RunRequest,
                       scenario: str | None, *,
                       known_participants: list[str] | None = None,
                       fetch_names: bool = True) -> tuple[dict, list[str], list[str]]:
-        """The request file's keys of a check or run request: (intent, disable, manual). The shapes are checked
-        here; what the values mean for the file (is there such a variant, can these be used together) is the
-        launcher's to say. For api/check, unknown disable/manual names are checked against the launcher's known
-        participants; for api/run, C++ metadata (or cached check names) validates them without spawning a full pre-check."""
-        variant = check_variant(body.get("variant"))
-        params = check_params(body.get("params"))
-        enable = check_enable(body.get("enable"))
-        strict = check_strict(body.get("strict"))
-        speed = check_speed(body.get("speed"))
-        start_paused = body.get("start_paused", False)
-        if not isinstance(start_paused, bool):
-            raise InvalidRequest("invalid-field", "start_paused must be true or false")
-        stop_at_ms = check_run_millis(body, "stop_at_ms", 1)
-        late_tolerance_ms = check_run_millis(body, "late_tolerance_ms", 0)
-        if (stop_at_ms is not None or late_tolerance_ms is not None) and FEATURE_RUN_STOP_AT not in self.launcher.features:
+        """The request file's keys of a check or run request: (intent, disable, manual). Field shapes are validated
+        by `RunRequest`; dynamic feature support (`run-stop-at`) and known participants are checked here."""
+        if (req.stop_at_ms is not None or req.late_tolerance_ms is not None) and FEATURE_RUN_STOP_AT not in self.launcher.features:
             raise Refused(409, "launcher-unsupported",
                           "the launcher does not support the requested run timing: install one with run-stop-at")
-        connect = check_connect(body.get("connect"))
-        time_policy = check_time_policy(body.get("time_policy"))
-        wanted, wanted_manual = body.get("disable"), body.get("manual")
+        speed = float(req.speed) if isinstance(req.speed, (int, float)) else req.speed
+        wanted, wanted_manual = req.disable, req.manual
         if wanted or wanted_manual:
             if fetch_names:
-                known = await self.participant_names(config.relative, variant)
+                known = await self.participant_names(config.relative, req.variant)
                 disable, manual = check_disable(wanted, known), check_manual(wanted_manual, known)
             elif known_participants is not None:
                 disable = check_disable(wanted, known_participants)
                 manual = check_manual(wanted_manual, known_participants)
             else:
-                disable = check_name_list("disable", wanted)
-                manual = check_name_list("manual", wanted_manual)
+                disable, manual = list(wanted or ()), list(wanted_manual or ())
         else:
             disable, manual = [], []
-        intent = {"variant": variant, "params": params or None,
+        intent = {"variant": req.variant, "params": req.params or None,
                   "scenario": relative_to_config(config, scenario) if scenario is not None else None,
-                  "disable": disable or None, "enable": enable or None, "manual": manual or None,
-                  "strict": strict or None, "speed": speed, "start_paused": start_paused or None,
-                  "connect": connect or None, "time_policy": time_policy, "stop_at_ms": stop_at_ms,
-                  "late_tolerance_ms": late_tolerance_ms}
+                  "disable": disable or None, "enable": list(req.enable) if req.enable else None,
+                  "manual": manual or None, "strict": req.strict or None, "speed": speed,
+                  "start_paused": req.start_paused or None, "connect": req.connect or None,
+                  "time_policy": req.time_policy, "stop_at_ms": req.stop_at_ms,
+                  "late_tolerance_ms": req.late_tolerance_ms}
         return {k: v for k, v in intent.items() if v is not None}, disable, manual
 
     def _check_targets(
@@ -969,11 +979,12 @@ class GuiServer:
             body = await self._body(request, max_size=MAX_TEXT_BODY)
             if "text" in body:
                 return await self._check_text(body)
-            check_fields("api/check", body, (*REQUEST_FIELDS, "text"))
+            req = self._validate(CheckFileRequest, body, endpoint="api/check",
+                                 allowed_fields=CHECK_FIELDS, defer_file=True)
             config = self.root.resolve(body.get("file"))
             await self._usable()
-            scenario = self._scenario(config, body)
-            intent, disable, manual = await self._intent(config, body, scenario)
+            scenario = self._scenario(config, body.get("scenario"))
+            intent, disable, manual = await self._intent(config, req, scenario)
             code, result = await self._in_check_queue(lambda: self._check_and_guard(config.relative, intent))
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
@@ -985,30 +996,16 @@ class GuiServer:
         directory), which starts no process: the launcher takes each executable's --describe output from the
         descriptions that the check of the saved file wrote. The names and the targets that the server keeps of the
         file (participant_names, _check_targets) are of the saved file: this check neither reads nor changes them."""
-        others = sorted(k for k in body if k not in TEXT_FIELDS)
-        if others:
-            raise InvalidRequest("invalid-field", f"api/check takes no {', '.join(repr(k) for k in others)} together "
-                                                  "with text: a check of unsaved text checks the configuration only; "
-                                                  f"the fields it takes with text are {', '.join(TEXT_FIELDS)}")
-        check_fields("api/check", body, TEXT_FIELDS)
+        req = self._validate(CheckTextRequest, body, endpoint="api/check", defer_file=True, extra_with_text=True)
         config = await self._configuration(body.get("file"))
-        text = body["text"]
-        if not isinstance(text, str):
-            raise InvalidRequest("invalid-field", "text must be the text of the configuration file (a string), or "
-                                                  "left out to check the saved file")
-        try:
-            data = text.encode("utf-8")
-        except UnicodeEncodeError:
-            raise InvalidRequest("invalid-field", "text is not valid Unicode (it has a lone surrogate such as "
-                                                  "\\ud800): send the text as UTF-8") from None
+        data = req.text.encode("utf-8")
         if len(data) > MAX_TEXT:
             raise Refused(413, "text-too-large",
                           f"text is {len(data)} bytes as UTF-8, more than the {MAX_TEXT} (1 MiB) that the GUI server "
                           "checks: save the file and check it without text")
-        variant, strict = check_variant(body.get("variant")), check_strict(body.get("strict"))
         await self._usable()
-        intent = {"variant": variant} if variant else {}
-        if strict:
+        intent = {"variant": req.variant} if req.variant else {}
+        if req.strict:
             intent["strict"] = True
         code, result = await self._in_check_queue(lambda: self._text_check_locked(config.relative, intent, data))
         return web.json_response({"file": config.relative, "disable": [], "manual": [], "scenario": None,
@@ -1019,15 +1016,13 @@ class GuiServer:
         the next checks of its text (api/check with text)."""
         try:
             self._not_closing()
-            body = await self._body(request)
-            check_fields("api/describe", body, DESCRIBE_FIELDS)
+            req, body = await self._body_model(request, DescribeRequest, endpoint="api/describe", defer_file=True)
             config = await self._configuration(body.get("file"))
-            variant = check_variant(body.get("variant"))
             await self._usable()
-            code, result = await self._in_check_queue(lambda: self._describe_locked(config.relative, variant))
+            code, result = await self._in_check_queue(lambda: self._describe_locked(config.relative, req.variant))
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
-        return web.json_response({"file": config.relative, "variant": variant, "exit_code": code,
+        return web.json_response({"file": config.relative, "variant": req.variant, "exit_code": code,
                                   "check": result})
 
     async def post_connections(self, request: web.Request) -> web.Response:
@@ -1035,9 +1030,8 @@ class GuiServer:
         queue of the checks. The targets that it lists as usable are the ones that a check or a run may name."""
         try:
             self._not_closing()
-            body = await self._body(request)
-            check_fields("api/connections", body, CONNECTIONS_FIELDS)
-            network = check_network(body.get("network"))
+            req, body = await self._body_model(request, ConnectionsRequest, endpoint="api/connections", defer_file=True)
+            network = req.network
             config = self.root.resolve(body.get("file"))
             await self._usable()
             # Asking for a new list ends the last one at once: no run starts with it while this one waits or runs
@@ -1064,21 +1058,16 @@ class GuiServer:
             start = allowed_start(self.facts(), self._run_facts().running)
             if start["reason"] in ("already-running", "starting"):
                 raise Refused(409, "already-running", "a simulation is running: stop it before preparing another")
-            body = await self._body(request)
-            check_fields("api/prepare", body, ("file", "variant", "disable", "enable", "manual"))
+            req, body = await self._body_model(request, PrepareRequest, endpoint="api/prepare", defer_file=True)
             config = self.root.resolve(body.get("file"))
-            variant = check_variant(body.get("variant"))
-            disable = tuple(check_name_list("disable", body.get("disable")))
-            enable = tuple(check_name_list("enable", body.get("enable")))
-            manual = tuple(check_name_list("manual", body.get("manual")))
             await self._usable()
             why_not = await self._no_variables()
             await self.runtime.prepare(
                 config.relative,
-                variant=variant,
-                disable=disable,
-                enable=enable,
-                manual=manual,
+                variant=req.variant,
+                disable=tuple(req.disable or ()),
+                enable=tuple(req.enable or ()),
+                manual=tuple(req.manual or ()),
                 want_control=why_not is None,
             )
         except (PathRejected, InvalidRequest, Refused) as e:
@@ -1092,8 +1081,8 @@ class GuiServer:
     async def post_run(self, request: web.Request) -> web.Response:
         try:
             self._not_closing()
-            body = await self._body(request)
-            check_fields("api/run", body, REQUEST_FIELDS)
+            req, body = await self._body_model(request, RunRequest, endpoint="api/run",
+                                               allowed_fields=REQUEST_FIELDS, defer_file=True)
             self._not_closing()
             # The rules of a start are `allowed_start`'s (the same as the `allowed.start` the screens see).
             start = allowed_start(self.facts(), self._run_facts().running)
@@ -1114,7 +1103,7 @@ class GuiServer:
             self._starting = False
 
         try:
-            return await self._start(body, finish_starting)
+            return await self._start(req, body, finish_starting)
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
         finally:
@@ -1125,22 +1114,21 @@ class GuiServer:
             if self._starts_in_flight == 0:
                 self._started.set()
 
-    async def _start(self, body: dict, finish_starting: Callable[[], None]) -> web.Response:
-        resolved = await self._resolve_run_intent(body)
+    async def _start(self, req: RunRequest, body: dict, finish_starting: Callable[[], None]) -> web.Response:
+        resolved = await self._resolve_run_intent(req, body)
         run, sink = await self._launch_run(resolved)
         if run.session.staged:
             await self._await_staged_check(run, sink, resolved)
         return await self._commit_run(run, sink, finish_starting)
 
-    async def _resolve_run_intent(self, body: dict) -> _ResolvedRun:
+    async def _resolve_run_intent(self, req: RunRequest, body: dict) -> _ResolvedRun:
         config = self.root.resolve(body.get("file"))
         await self._usable()
-        scenario = self._scenario(config, body)
-        variant = check_variant(body.get("variant"))
-        raw_disable = check_name_list("disable", body.get("disable"))
-        raw_manual = check_name_list("manual", body.get("manual"))
-        raw_enable = check_enable(body.get("enable"))
-        raw_connect = check_connect(body.get("connect"))
+        scenario = self._scenario(config, body.get("scenario"))
+        raw_disable = list(req.disable or ())
+        raw_manual = list(req.manual or ())
+        raw_enable = list(req.enable or ())
+        raw_connect = req.connect or {}
         has_external_connect = any(target != NO_CONNECTION for target in raw_connect.values())
         need_metadata = bool(raw_disable or raw_manual or has_external_connect)
         want_control_hint = (
@@ -1151,7 +1139,7 @@ class GuiServer:
         checked_stamp = self._stamp(config.relative)
         inspection = await self.runtime.inspect_config(
             config.relative,
-            variant=variant,
+            variant=req.variant,
             disable=tuple(raw_disable),
             enable=tuple(raw_enable),
             manual=tuple(raw_manual),
@@ -1162,13 +1150,13 @@ class GuiServer:
         known_networks = inspection.networks
         checked_sha256 = inspection.file_sha256
         if (raw_disable or raw_manual) and known_participants is None:
-            cached_names = self._names.get((config.relative, variant))
+            cached_names = self._names.get((config.relative, req.variant))
             if cached_names and cached_names[0] == checked_stamp:
                 known_participants = cached_names[1]
             else:
                 base = await self.runtime.inspect_config(
                     config.relative,
-                    variant=variant,
+                    variant=req.variant,
                     want_control=want_control_hint,
                     need_metadata=True,
                     allow_prepare_on_resident=False,
@@ -1179,11 +1167,11 @@ class GuiServer:
                 if checked_sha256 is None:
                     checked_sha256 = base.file_sha256
         if known_networks is None:
-            cached_nets = self._networks.get((config.relative, variant))
+            cached_nets = self._networks.get((config.relative, req.variant))
             if cached_nets and cached_nets[0] == checked_stamp:
                 known_networks = cached_nets[1]
         intent, disable, manual = await self._intent(
-            config, body, scenario, known_participants=known_participants, fetch_names=False,
+            config, req, scenario, known_participants=known_participants, fetch_names=False,
         )
         return _ResolvedRun(
             config, scenario, intent, disable, manual, inspection.hot,
@@ -1384,29 +1372,20 @@ class GuiServer:
     async def post_stop_session(self, request: web.Request) -> web.Response:
         """Stop one identified run, never a run that replaced it."""
         try:
-            body = await self._body(request, empty_ok=True)
-            check_fields("api/stop-session", body, ("force", "run_id", "instance"))
+            req, _ = await self._body_model(request, StopSessionRequest, endpoint="api/stop-session", empty_ok=True)
         except InvalidRequest as e:
             return self._refusal(e)
-        force = body.get("force", False)
-        if not isinstance(force, bool):
-            return error(400, "invalid-field", "force must be true or false")
-        target = body.get("run_id")
-        if not isinstance(target, str) or not target:
-            return error(400, "invalid-field", "run_id must be a non-empty string")
-        if not isinstance(body.get("instance"), str) or not body["instance"]:
-            return error(400, "invalid-field", "instance must be the server instance from the run or session answer")
         # Check before writing to a launcher: a delayed request must
         # never stop a different run, including one which is still starting.
         if (
-            body["instance"] != self.instance
+            req.instance != self.instance
             or self._starting
             or self.current is None
-            or self.current.session.id != target
+            or self.current.session.id != req.run_id
         ):
             return error(409, "session-changed", "the run has changed: no stop was sent")
         run = self.current
-        if not self._closing and self._write_stop(run, force):  # decided, recorded and written before any await
+        if not self._closing and self._write_stop(run, req.force):  # decided, recorded and written before any await
             await run.handle.drain(STDIN_DRAIN_S)
         return web.json_response({"instance": self.instance, "run_id": run.session.id})
 
@@ -1416,18 +1395,12 @@ class GuiServer:
         that stands still must not hold this request)."""
         try:
             self._not_closing()
-            body = await self._body(request)
-            targeted = "run_id" in body or "instance" in body
-            run_id = body.pop("run_id", None)
-            instance = body.pop("instance", None)
-            if targeted:
-                if not isinstance(run_id, str) or not run_id:
-                    raise InvalidRequest("invalid-field", "run_id must be a non-empty string")
-                if not isinstance(instance, str) or not instance:
-                    raise InvalidRequest("invalid-field", "instance must be the server instance from the run or session answer")
-            command = check_time_command(body)
+            command, run_id, instance = parse_time_command_request(await self._body(request))
         except (InvalidRequest, Refused) as e:
             return self._refusal(e)
+        except ValueError as exc:
+            return error(400, "invalid-field", str(exc))
+        targeted = run_id is not None
         run = self.current
         # Compare the target after reading the request and before writing anything to the launcher.
         if targeted and (instance != self.instance or self._starting or run is None or run_id != run.session.id):

@@ -25,12 +25,14 @@ needs no C++ build:
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and the examples of examples/launch_control with
            --help
+  gui      imports the GUI server dependencies and runs gui/server/tests/test_contracts.py (fast
+           contracts and protocol-parity smoke check; excludes full server and OpenAPI drift tests)
 
 Then, unless --skip-lowest, one more run on 3.11 ("3.11 lowest", build/python-envs/3.11-lowest) with
-the lower bounds of pyproject.toml instead of uv.lock: its sync step makes the environment with uv's
-lowest-direct resolution of the dev group and fails unless every declared "name>=version" was
-installed at exactly that version; then codegen, schema and control as above. So a declared bound is
-always one that the tests ran with.
+the lower bounds of pyproject.toml and gui/server/pyproject.toml instead of uv.lock: its sync step
+makes the environment with uv's lowest-direct resolution of the dev group and fails unless every
+declared "name>=version" was installed at exactly that version; then codegen, schema, control and
+gui as above. So a declared bound is always one that the tests ran with.
 
 The full output of every step goes to build/logs/<tag>-py<version>[-lowest]-<step>.log. The summary
 names the failed step, the first lines of its output and the log file.
@@ -58,8 +60,8 @@ ROOT = verify_common.ROOT
 LOG_DIR = verify_common.LOG_DIR
 ENV_DIR = ROOT / "build" / "python-envs"
 LOWEST = "3.11"
-ALL_STEPS = ("syntax", "codegen", "knowledge", "template", "schema", "scripts", "control")
-LOWEST_STEPS = ("codegen", "schema", "control")
+ALL_STEPS = ("syntax", "codegen", "knowledge", "template", "schema", "scripts", "control", "gui")
+LOWEST_STEPS = ("codegen", "schema", "control", "gui")
 OUTPUT_LINES = 15
 LINE_CHARS = 400
 
@@ -136,15 +138,28 @@ def normalize(name: str) -> str:
 
 
 def lower_bounds() -> dict[str, str]:
-    """{package: version} of every 'name>=version' requirement in pyproject.toml's dependency groups."""
-    with open(ROOT / "pyproject.toml", "rb") as f:
-        groups = tomllib.load(f).get("dependency-groups", {})
-    bounds = {}
-    for items in groups.values():
+    """{package: version} of every 'name>=version' requirement in root and gui/server pyproject.toml."""
+    bounds: dict[str, str] = {}
+
+    def collect(items: list, source: str) -> None:
         for item in items:
             m = re.fullmatch(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*>=\s*([^\s,;]+)\s*", item) if isinstance(item, str) else None
             if m:
-                bounds[normalize(m.group(1))] = m.group(2)
+                pkg, ver = normalize(m.group(1)), m.group(2)
+                if pkg in bounds and bounds[pkg] != ver:
+                    raise ValueError(f"conflicting lower bounds for {pkg}: {bounds[pkg]} vs {ver} ({source})")
+                bounds[pkg] = ver
+
+    with open(ROOT / "pyproject.toml", "rb") as f:
+        for items in tomllib.load(f).get("dependency-groups", {}).values():
+            collect(items, "pyproject.toml")
+    gui_pyproject = ROOT / "gui" / "server" / "pyproject.toml"
+    if gui_pyproject.is_file():
+        with open(gui_pyproject, "rb") as f:
+            project = tomllib.load(f).get("project", {})
+        collect(project.get("dependencies", []), "gui/server/pyproject.toml")
+        for items in project.get("optional-dependencies", {}).values():
+            collect(items, "gui/server/pyproject.toml")
     return bounds
 
 
@@ -185,16 +200,20 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
                 and s.run([uv, "pip", "install", "--python", python, "--resolution", "lowest-direct",
                            "--group", "dev"])):
             return False
-        bounds = lower_bounds()
+        try:
+            bounds = lower_bounds()
+        except ValueError as exc:
+            s.note(f"error: {exc}")
+            return False
         got = installed_versions(python, env)
         ok = True
         for package, bound in sorted(bounds.items()):
             have = got.get(package)
             resolved.append(f"{package} {have}")
             if have != bound:
-                s.note(f"error: pyproject.toml declares {package}>={bound}, but the lowest resolution on Python "
-                       f"{version} installed {have} (the bound has no usable release there, or another package "
-                       f"needs more): the tests never run with {bound}; raise the bound to {have}")
+                s.note(f"error: pyproject.toml / gui/server/pyproject.toml declares {package}>={bound}, but the lowest "
+                       f"resolution on Python {version} installed {have} (the bound has no usable release there, or "
+                       f"another package needs more): the tests never run with {bound}; raise the bound to {have}")
                 ok = False
         s.note("lower bounds installed: " + ", ".join(resolved))
         return ok
@@ -255,6 +274,15 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             s.run([python, "examples/launch_control/serve_runs.py", "--help"]),
         ])
 
+    def gui(s: Step) -> bool:
+        return all([
+            s.run([python, "-c",
+                   "import aiohttp, pydantic, yaml; "
+                   "import vehicle_sil_gui.contracts, vehicle_sil_gui.server; "
+                   "print('gui imports ok', pydantic.__version__)"]),
+            s.run([python, "-m", "pytest", "gui/server/tests/test_contracts.py", "-q"]),
+        ])
+
     step_map = {
         "syntax": syntax,
         "codegen": codegen,
@@ -263,6 +291,7 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
         "schema": schema,
         "scripts": scripts,
         "control": control,
+        "gui": gui,
     }
     wanted = list(ALL_STEPS) if selected is None else selected
     if lowest:  # the syntax, the template's script and the scripts do not depend on the packages

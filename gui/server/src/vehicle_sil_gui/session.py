@@ -24,6 +24,7 @@ from itertools import islice
 from typing import Any, Literal
 
 from .allowed import Facts, allowed as allowed_of, project_run_facts
+from .contracts import validate_launcher_event
 from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT, STEP_MS_MAX
 
 SHARED_LOG = "*"  # the source key of the log shared by the sources after Limits.log_sources
@@ -100,72 +101,6 @@ def _is_count(value: object) -> bool:
 
 def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _str_or_none(value: object) -> bool:
-    return value is None or isinstance(value, str)
-
-
-def _int_or_none(value: object) -> bool:
-    return value is None or _is_int(value)
-
-
-def _shape_problem(event: dict) -> str | None:
-    """What is wrong with a known event's fields (None: nothing, or an unknown event). Only what the server and
-    the screen read is checked; other fields pass as they are."""
-    kind = event["event"]
-    if kind == "run_start":
-        return None if isinstance(event.get("run"), str) and bool(event.get("run")) else "run is not a string"
-    if kind == "phase":
-        return None if isinstance(event.get("phase"), str) else "phase is not a string"
-    if kind == "check":
-        check = event.get("check")
-        if not isinstance(check, dict):
-            return "check is not an object"
-        participants = check.get("participants", [])
-        if not isinstance(participants, list) or not all(
-                isinstance(p, dict) and isinstance(p.get("name"), str) for p in participants):
-            return "check.participants is not a list of objects with a name"
-        return None
-    if kind == "registry":
-        return None if _str_or_none(event.get("uri")) else "uri is not a string"
-    if kind == "participant":
-        if not isinstance(event.get("name"), str) or not isinstance(event.get("state"), str):
-            return "name or state is not a string"
-        if not (_int_or_none(event.get("pid")) and _int_or_none(event.get("exit_code"))):
-            return "pid or exit_code is not an integer"
-        return None
-    if kind == "log":
-        return None if isinstance(event.get("source"), str) and isinstance(event.get("line"), str) \
-            else "source or line is not a string"
-    if kind == "finding":
-        return None if isinstance(event.get("severity"), str) and isinstance(event.get("message"), str) \
-            else "severity or message is not a string"
-    if kind == "time":
-        return None if _is_int(event.get("sim_ms")) else "sim_ms is not an integer"
-    if kind == "log_dropped":
-        sources = event.get("sources")
-        if not _is_count(event.get("count")) or not isinstance(sources, dict) or \
-                not all(isinstance(s, str) and _is_count(n) for s, n in sources.items()):
-            return "count or sources is not a count, or an object of counts"
-        return None
-    if kind == "command":
-        if not (_str_or_none(event.get("command")) and isinstance(event.get("accepted"), bool)):
-            return "command is not a string, or accepted is not true or false"
-        return None if event.get("id") is None or _is_count(event["id"]) else "id is not null or an integer from 0 to 2^53"
-    if kind == "state":
-        return None if _is_count(event.get("rev")) and isinstance(event.get("allowed"), dict) \
-            else "rev is not an integer from 0 to 2^53, or allowed is not an object"
-    if kind == "result":
-        return None if isinstance(event.get("result"), dict) else "result is not an object"
-    if kind == CONTROL_EVENT:
-        return None if isinstance(event.get("name"), str) and isinstance(event.get("state"), str) \
-            else "name or state is not a string"
-    if kind == SCENARIO_STEP_EVENT:
-        index = event.get("index")
-        return None if _is_int(index) and index >= 1 and isinstance(event.get("status"), str) \
-            else "index is not a whole number from 1, or status is not a string"
-    return None
 
 
 class _DroppedSeqs:
@@ -528,7 +463,7 @@ class Session:
         if wrong is None:
             if st is None and "t_ms" in event:
                 self.last_t_ms = event["t_ms"]
-            wrong = _shape_problem(event)
+            wrong = validate_launcher_event(event)
         if wrong is not None:
             return self.problem("bad-event", f"the launcher wrote a '{kind}' event whose {wrong}: it is "
                                              "ignored (not shown); the launcher and this GUI may not match",
