@@ -28,8 +28,8 @@ from .contracts import (CHECK_FIELDS, CheckFileRequest, CheckTextRequest, Connec
                         format_validation_error, model_allowed_fields, validate_model_defer_file)
 from .descriptions import Descriptions
 from .launcher import (DESCRIPTIONS_NAME, FEATURE_RUN_STOP_AT, NO_CONNECTION, InvalidRequest, Launcher, check_command,
-                       check_disable, check_manual, connections_command, describe_command, hide_request,
-                       save_check_command, text_check_command, with_participant_timeouts, write_request_file)
+                       connections_command, describe_command, hide_request, save_check_command, text_check_command,
+                       with_participant_timeouts, write_request_file)
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .refusal import Refused
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
@@ -133,6 +133,21 @@ def make_request_file(intent: dict) -> Path:
         raise Refused(500, "request-file", f"the file that carries the request to the launcher could not be "
                                            f"made in the temporary directory ({e}): free space there, or set "
                                            "TMPDIR to a directory that this user can write") from None
+
+
+def _check_known_participants(names: list[str] | None, known: list[str]) -> list[str]:
+    """Ensures validated participant names exist in `known`; raises Refused (400 unknown-participant) otherwise."""
+    if not names:
+        return []
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise Refused(
+            400,
+            "unknown-participant",
+            f"no participant named {', '.join(repr(n) for n in unknown)} in this file: the "
+            f"participants are {', '.join(known) or 'none'}",
+        )
+    return list(names)
 
 
 def _noop() -> None:
@@ -437,17 +452,15 @@ class ConfigService:
         speed = float(req.speed) if isinstance(req.speed, (int, float)) else req.speed
         wanted, wanted_manual = req.disable, req.manual
         if wanted or wanted_manual:
-            try:
-                if fetch_names:
-                    known = await self.participant_names(config.relative, req.variant)
-                    disable, manual = check_disable(wanted, known), check_manual(wanted_manual, known)
-                elif known_participants is not None:
-                    disable = check_disable(wanted, known_participants)
-                    manual = check_manual(wanted_manual, known_participants)
-                else:
-                    disable, manual = list(wanted or ()), list(wanted_manual or ())
-            except InvalidRequest as e:
-                raise refusal_of(e) from None
+            if fetch_names:
+                known = await self.participant_names(config.relative, req.variant)
+                disable = _check_known_participants(wanted, known)
+                manual = _check_known_participants(wanted_manual, known)
+            elif known_participants is not None:
+                disable = _check_known_participants(wanted, known_participants)
+                manual = _check_known_participants(wanted_manual, known_participants)
+            else:
+                disable, manual = list(wanted or ()), list(wanted_manual or ())
         else:
             disable, manual = [], []
         intent = {"variant": req.variant, "params": req.params or None,

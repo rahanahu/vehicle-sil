@@ -1,4 +1,4 @@
-"""Deterministic pre-handoff resource cleanup tests for GuiServer._start()."""
+"""Deterministic pre-handoff resource cleanup tests for RunManager._start()."""
 
 from __future__ import annotations
 

@@ -40,8 +40,16 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from .contracts import WatchPayload, WritePayload, format_validation_error
-from .source import (AVAILABILITY, LATE_POLICIES, OperationInfo, PeerInfo, Sample, SnapshotInfo, Source, SourceError,
+from .contracts import (
+    DEFAULT_PERIOD_MS_MAX,
+    DEFAULT_PERIOD_MS_MIN,
+    DEFAULT_WATCH_VARIABLES,
+    DEFAULT_WRITES_PER_REQUEST,
+    WatchPayload,
+    WritePayload,
+    format_validation_error,
+)
+from .source import (AVAILABILITY, OperationInfo, PeerInfo, Sample, SnapshotInfo, Source, SourceError,
                      TimeInfo)
 
 OFF, CONNECTING, READY, FAILED, ENDED = "off", "connecting", "ready", "failed", "ended"
@@ -71,10 +79,10 @@ class Limits:
     operations: int = 256  # kept for the server's own use (results that were dropped, the end of the run)
     operations_in_summary: int = 32  # the last ones, for a screen opened later (the open ones are all in it)
     watches: int = 16  # of one connection
-    watch_variables: int = 2000  # named in one watch ("all" is not counted)
-    period_ms_min: int = 20
-    period_ms_max: int = 60_000
-    writes_per_request: int = 256
+    watch_variables: int = DEFAULT_WATCH_VARIABLES  # named in one watch ("all" is not counted)
+    period_ms_min: int = DEFAULT_PERIOD_MS_MIN
+    period_ms_max: int = DEFAULT_PERIOD_MS_MAX
+    writes_per_request: int = DEFAULT_WRITES_PER_REQUEST
     writes_waiting: int = 32  # api/write requests waiting for the one that is being sent
     write_timeout_s: float = 5.0  # for the source to take a write (and for a request to wait for its turn)
     read_timeout_s: float = 2.0  # one read of the time and the values, or of an operation

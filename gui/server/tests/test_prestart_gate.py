@@ -296,7 +296,7 @@ def test_heavy_prestart_logs_bound_memory_and_preserve_check_diagnostics_and_end
             }
 
             # Reconnect at vars_sseq sees the prestart drop (at-least-once); at first_flushed_sseq gets no duplicate.
-            at_vars = server.snapshot(run_id, vars_sseq)
+            at_vars = server.ws.snapshot(run_id, vars_sseq)
             assert any(
                 m.get("type") == "dropped"
                 and "stream_seq" not in m
@@ -305,10 +305,10 @@ def test_heavy_prestart_logs_bound_memory_and_preserve_check_diagnostics_and_end
                 and m["at_least"] == []
                 for m in at_vars
             )
-            at_first = server.snapshot(run_id, first_event["stream_seq"])
+            at_first = server.ws.snapshot(run_id, first_event["stream_seq"])
             assert not any(m.get("type") == "dropped" for m in at_first)
             last_sseq = max(m["stream_seq"] for m in sock.received if "stream_seq" in m)
-            fresh = server.snapshot(run_id, None)
+            fresh = server.ws.snapshot(run_id, None)
             assert any(
                 m.get("type") == "dropped"
                 and "stream_seq" not in m
@@ -317,7 +317,7 @@ def test_heavy_prestart_logs_bound_memory_and_preserve_check_diagnostics_and_end
                 and m["at_least"] == []
                 for m in fresh
             )
-            caught_up = server.snapshot(run_id, last_sseq)
+            caught_up = server.ws.snapshot(run_id, last_sseq)
             assert not any(m.get("type") == "dropped" for m in caught_up)
 
             await sock.close()
@@ -519,9 +519,9 @@ def test_zero_flushed_event_prestart_drop_watermark(tmp_path: Path) -> None:
             no_result = next(m for m in sock.received if m.get("type") == "error" and m["code"] == "no-result")
             assert no_result["stream_seq"] == vars_sseq + 1
 
-            at_vars = server.snapshot(run_id, vars_sseq)
+            at_vars = server.ws.snapshot(run_id, vars_sseq)
             assert any(m.get("type") == "dropped" and m["log"] == {"Engine": 1} for m in at_vars)
-            at_post = server.snapshot(run_id, vars_sseq + 1)
+            at_post = server.ws.snapshot(run_id, vars_sseq + 1)
             assert not any(m.get("type") == "dropped" for m in at_post)
 
             await sock.close()
@@ -535,7 +535,7 @@ def test_zero_flushed_event_prestart_drop_watermark(tmp_path: Path) -> None:
 
 def test_zero_flushed_frame_commit_without_finish_clamps_prestart_seq_to_stream_head(tmp_path: Path) -> None:
     """When zero stamped frames follow `variables` (no finish/no-result either), prestart_seq must clamp
-    to S_vars <= server._stream_seq so reconnecting at synced.stream_seq does not replay `dropped`."""
+    to S_vars <= server.runs.stream_seq so reconnecting at synced.stream_seq does not replay `dropped`."""
     root = _simple_config(tmp_path)
     limits = Limits(log_lines_per_source=5, log_line_bytes=120, problems=0)
 
@@ -562,17 +562,17 @@ def test_zero_flushed_frame_commit_without_finish_clamps_prestart_seq_to_stream_
             assert server.runs.current.session._logs["Engine"].prestart_seq <= head
 
             # Fresh client sees dropped once and synced at server head.
-            fresh = server.snapshot(run_id, None)
+            fresh = server.ws.snapshot(run_id, None)
             assert sum(1 for m in fresh if m.get("type") == "dropped") == 1
             synced_seq = fresh[-1]["stream_seq"]
             assert synced_seq == head
 
             # Reconnecting at server head (synced.stream_seq) must NOT replay dropped again.
-            at_head = server.snapshot(run_id, synced_seq)
+            at_head = server.ws.snapshot(run_id, synced_seq)
             assert not any(m.get("type") == "dropped" for m in at_head)
 
             # Reconnecting before S_vars (e.g. at S_sess = head - 1) still catches up with dropped.
-            before_vars = server.snapshot(run_id, head - 1)
+            before_vars = server.ws.snapshot(run_id, head - 1)
             assert any(m.get("type") == "dropped" and m["log"] == {"Engine": 1} for m in before_vars)
 
             await runtime.runs[0].finish(returncode=0)

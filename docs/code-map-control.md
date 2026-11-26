@@ -78,7 +78,7 @@ If a Python with grpcio and grpcio-tools is available, the following tests are r
 | `ControlServer` | `control_grpc/server.hpp` |
 | Python SDK package (`dependencies = []`, `python -S` safe) | `python/pyproject.toml` |
 | Python client | `python/vehicle_sil_control/client.py` |
-| Pure Events v4 protocol validation and command builders (shared with `gui/server`) | `python/vehicle_sil_control/protocol.py` |
+| Pure Events v4 protocol constants, request-file serialization, and NDJSON command builders (shared with `gui/server`) | `python/vehicle_sil_control/protocol.py` |
 | Lazy gRPC stub discovery, metadata, redaction, error and proto conversion helpers (shared with `gui/server`) | `python/vehicle_sil_control/grpc_helpers.py` |
 | 1-run helper over `vehicle_sil_launch serve --once` (`Launch`) | `python/vehicle_sil_control/launcher.py` |
 | Helper for the resident or single-run launcher (`Serve`, `RunHandle`) | `python/vehicle_sil_control/serve.py` |

@@ -338,7 +338,7 @@
 更新するコードとファイル:
 
 - `schema/run-request.schema.json` と、そのコピー `template/schema/run-request.schema.json`（`schema.files_and_launcher` がキーをランチャーと突き合わせます）
-- Python SDK と GUI サーバーが受けて書く欄（`python/vehicle_sil_control/protocol.py` の `INTENT_FIELDS` と `request_text()`。`gui/server/src/vehicle_sil_gui/launcher.py` が再公開します。[GUI の地図](code-map-gui.md#ランチャーへの要求と接続先)）
+- GUI サーバーが検証して要求ファイルにする欄（`gui/server/src/vehicle_sil_gui/contracts.py` の `REQUEST_FIELDS`、`RunRequest`、`CheckTextRequest`、`gui/server/src/vehicle_sil_gui/config_service.py` の `ConfigService.build_intent()`、および `python/vehicle_sil_control/protocol.py` の `request_text()`。[GUI の地図](code-map-gui.md#ランチャーへの要求と接続先)）
 
 更新するドキュメント:
 

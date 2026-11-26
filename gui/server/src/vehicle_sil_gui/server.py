@@ -19,17 +19,17 @@ from aiohttp import web
 from pydantic import ValidationError
 
 from . import client_files
-from .config_service import CHECK_TIMEOUT_S, MAX_BODY, MAX_TEXT, MAX_TEXT_BODY, CheckRunner, ConfigService
+from .config_service import CHECK_TIMEOUT_S, MAX_BODY, MAX_TEXT_BODY, CheckRunner, ConfigService
 from .contracts import (AppResponse, CheckRequest, CheckResponse, ConfigGetResponse, ConfigSaveRequest,
                         ConfigSaveResponse, ConfigsResponse, ConnectionsRequest, ConnectionsResponse,
-                        DashboardResponse, DescribeRequest, DescribeResponse, PROTOCOL, PrepareRequest,
+                        DashboardResponse, DescribeRequest, DescribeResponse, PrepareRequest,
                         PrepareResponse, REQUEST_FIELDS, RecordingResponse, RunRequest, RunResponse,
                         ScenariosResponse, SessionResponse, StopSessionRequest, StopSessionResponse,
                         TimeCommandAck, TimeCommandRequest, WriteRequest, WriteResponse,
                         error_payload, format_validation_error, model_allowed_fields, parse_json_object,
                         validate_model_defer_file)
 from .refusal import Refused
-from .run_manager import END_BUDGET_S, RUNNER_SHUTDOWN_S, Limits, RunManager, SILENT_AFTER_S, VariableLimits
+from .run_manager import Limits, RunManager, SILENT_AFTER_S, VariableLimits
 from .static import MAX_FILE_BYTES, NOT_BUILT, StaticFiles, TooLarge
 from .timelines import PAGE_FILES, find_page_dir, read_page_file
 from .ws_gateway import WsGateway, same_secret
@@ -128,23 +128,56 @@ API_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("POST", "/api/prepare", "post_prepare", "prepareRun",
               "Warm up the persistent runtime for a configuration when eligible",
               tags=("runs",), request_model=PrepareRequest, response_model=PrepareResponse,
-              error_statuses=(400, 401, 403, 404, 409, 413, 415, 502, 503, 504)),
+              error_statuses=(400, 401, 403, 404, 409, 413, 415, 502, 503, 504),
+              description=(
+                  "Inspects the configuration and warms up the persistent `serve` runtime when eligible. "
+                  "Returns HTTP 200 `{instance}` once preparation finishes; runtime status transitions are broadcast "
+                  "on `/ws` as `runtime` messages."
+              )),
     RouteSpec("POST", "/api/run", "post_run", "startRun",
               "Check and start a simulation run",
               tags=("runs",), request_model=RunRequest, response_model=RunResponse,
-              error_statuses=(400, 401, 403, 404, 409, 413, 415, 422, 500, 502, 503, 504)),
+              error_statuses=(400, 401, 403, 404, 409, 413, 415, 422, 500, 502, 503, 504),
+              description=(
+                  "Checks the configuration and starts a simulation run. HTTP 200 returns `{instance, run_id}` as soon "
+                  "as the run is handed off; lifecycle, logs, variables, and the final result arrive asynchronously on "
+                  "`/ws` (see `schemas/ws-server.schema.json`)."
+              )),
     RouteSpec("POST", "/api/stop-session", "post_stop_session", "stopSession",
               "Request a graceful or forced stop of an identified run",
               tags=("runs",), request_model=StopSessionRequest, response_model=StopSessionResponse,
-              error_statuses=(400, 401, 403, 409, 413, 415)),
+              error_statuses=(400, 401, 403, 409, 413, 415),
+              description=(
+                  "Requests a graceful (`force: false`, default) or forced (`force: true`) stop of the identified run. "
+                  "Requires both `run_id` and `instance` (mismatches return `409 session-changed`). Idempotent: returns "
+                  "HTTP 200 `{instance, run_id}` even when the targeted run has already ended."
+              )),
     RouteSpec("POST", "/api/time", "post_time", "sendTimeCommand",
               "Send a time command to the running simulation",
               tags=("control",), request_model=TimeCommandRequest, response_model=TimeCommandAck,
-              error_statuses=(400, 401, 403, 409, 413, 415, 503)),
+              error_statuses=(400, 401, 403, 409, 413, 415, 503),
+              description=(
+                  "Validates the command and writes one NDJSON line to the launcher's standard input, returning HTTP 200 "
+                  "as soon as the command is forwarded. HTTP 200 acknowledges forwarding only; whether the launcher "
+                  "accepted or refused the command arrives asynchronously on `/ws` as an `event` message with "
+                  "`event.event == \"command\"` (correlated by the optional numeric `id`; see "
+                  "`schemas/ws-command-event.schema.json`).\n\n"
+                  "Targeting: Protocol v4 preserves omitting both `run_id` and `instance` unchanged for compatibility "
+                  "(targeting whichever run is current). However, new clients, AI agents, and CI automation should "
+                  "always send both `instance` and `run_id` so the server refuses with `409 session-changed` if another "
+                  "run has started or the server restarted. Sending only one of `run_id` or `instance` returns "
+                  "`400 invalid-field`."
+              )),
     RouteSpec("POST", "/api/write", "post_write", "writeVariables",
               "Write ECU variables in the running simulation",
               tags=("control",), request_model=WriteRequest, response_model=WriteResponse,
-              error_statuses=(400, 401, 403, 409, 413, 415, 502, 503, 504)),
+              error_statuses=(400, 401, 403, 409, 413, 415, 502, 503, 504),
+              description=(
+                  "Validates variable names, writability, and value bounds against the active run's schema and forwards "
+                  "the write to the launcher Control Server. HTTP 200 `{run_id, operation}` acknowledges submission only; "
+                  "the asynchronous execution outcome arrives on `/ws` as `operation` messages. Returns `502 write-failed` "
+                  "when the Control Server write RPC fails."
+              )),
     RouteSpec("GET", "/api/session", "get_session", "getSession",
               "Get the current run summary, server availability, and runtime status",
               tags=("runs",), response_model=SessionResponse, error_statuses=(401, 403)),
@@ -162,8 +195,12 @@ API_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("GET", "/api/timeline/{run_id}", "get_timeline", "getTimeline",
               "Read the recorded timeline JSON file of a completed scenario run",
               tags=("artifacts",), path_params=("run_id",), response_model=None,
-              error_statuses=(401, 403, 404)),
+              error_statuses=(401, 403, 404),
+              description=(
+                  "Streams the recorded scenario timeline JSON file for a completed scenario run (`schema/timeline.schema.json`)."
+              )),
 )
+_ROUTE_MAX_BODY: dict[str, int] = {spec.handler: spec.max_body for spec in API_ROUTES}
 
 
 def route_specs() -> tuple[RouteSpec, ...]:
@@ -263,9 +300,6 @@ class GuiServer:
             self.origins.add(options.dev_origin)
             self.hosts.add(options.dev_origin.split("://", 1)[1])
 
-    def snapshot(self, run_id: str | None, after_stream_seq: int | None) -> list[dict]:
-        return self.ws.snapshot(run_id, after_stream_seq)
-
     async def shutdown(self) -> None:
         """Orchestrates bounded shutdown across RunManager, ConfigService, and WsGateway in strict phase order."""
         if not self.runs.begin_shutdown():
@@ -286,8 +320,9 @@ class GuiServer:
     # ------------------------------------------------------------ aiohttp application & middleware
 
     def app(self) -> web.Application:
-        # MAX_BODY for every body (see _body), except api/check and POST api/config (MAX_TEXT_BODY)
-        app = web.Application(client_max_size=MAX_TEXT_BODY, middlewares=[self._headers, self._guard])
+        # MAX_BODY for every body (see _body), except routes whose RouteSpec declares a larger max_body
+        app = web.Application(client_max_size=max(spec.max_body for spec in API_ROUTES),
+                              middlewares=[self._headers, self._guard])
         for spec in API_ROUTES:
             bound = getattr(self, spec.handler)
             if spec.method == "GET":
@@ -356,7 +391,7 @@ class GuiServer:
         scheme, _, given = value.partition(" ")
         return scheme.lower() == "bearer" and same_secret(given.strip(), self.o.token)
 
-    async def _body(self, request: web.Request, empty_ok: bool = False, max_size: int = MAX_BODY) -> dict:
+    async def _body(self, request: web.Request, *, max_size: int, empty_ok: bool = False) -> dict:
         if empty_ok and not request.body_exists:
             return {}
         raw = await request.clone(client_max_size=max_size).read()
@@ -379,10 +414,10 @@ class GuiServer:
             raise Refused(400, code, message) from None
 
     async def _body_model(self, request: web.Request, model: type[T], *, endpoint: str,
-                          empty_ok: bool = False, max_size: int = MAX_BODY,
+                          max_size: int, empty_ok: bool = False,
                           allowed_fields: tuple[str, ...] | None = None,
                           defer_file: bool = False) -> tuple[T, dict]:
-        body = await self._body(request, empty_ok=empty_ok, max_size=max_size)
+        body = await self._body(request, max_size=max_size, empty_ok=empty_ok)
         return self._validate(model, body, endpoint=endpoint, allowed_fields=allowed_fields,
                               defer_file=defer_file), body
 
@@ -399,47 +434,52 @@ class GuiServer:
 
     async def post_config(self, request: web.Request) -> web.Response:
         self.configs.check_save_allowed()
-        body = await self._body(request, max_size=MAX_TEXT_BODY)
+        body = await self._body(request, max_size=_ROUTE_MAX_BODY["post_config"])
         return web.json_response(await self.configs.save_config(body))
 
     async def post_check(self, request: web.Request) -> web.Response:
         self.runs.not_closing()
-        body = await self._body(request, max_size=MAX_TEXT_BODY)
+        body = await self._body(request, max_size=_ROUTE_MAX_BODY["post_check"])
         return web.json_response(await self.configs.check(body))
 
     async def post_describe(self, request: web.Request) -> web.Response:
         self.runs.not_closing()
-        req, body = await self._body_model(request, DescribeRequest, endpoint="api/describe", defer_file=True)
+        req, body = await self._body_model(request, DescribeRequest, endpoint="api/describe",
+                                           max_size=_ROUTE_MAX_BODY["post_describe"], defer_file=True)
         return web.json_response(await self.configs.describe(req, body.get("file")))
 
     async def post_connections(self, request: web.Request) -> web.Response:
         self.runs.not_closing()
-        req, body = await self._body_model(request, ConnectionsRequest, endpoint="api/connections", defer_file=True)
+        req, body = await self._body_model(request, ConnectionsRequest, endpoint="api/connections",
+                                           max_size=_ROUTE_MAX_BODY["post_connections"], defer_file=True)
         return web.json_response(await self.configs.connections(req, body.get("file")))
 
     async def post_prepare(self, request: web.Request) -> web.Response:
         async with self.runs.prepare_guard():
-            req, body = await self._body_model(request, PrepareRequest, endpoint="api/prepare", defer_file=True)
+            req, body = await self._body_model(request, PrepareRequest, endpoint="api/prepare",
+                                               max_size=_ROUTE_MAX_BODY["post_prepare"], defer_file=True)
             return web.json_response(await self.runs.prepare(req, body.get("file")))
 
     async def post_run(self, request: web.Request) -> web.Response:
         self.runs.not_closing()
         req, body = await self._body_model(request, RunRequest, endpoint="api/run",
+                                           max_size=_ROUTE_MAX_BODY["post_run"],
                                            allowed_fields=REQUEST_FIELDS, defer_file=True)
         return web.json_response(await self.runs.start_run(req, body))
 
     async def post_stop_session(self, request: web.Request) -> web.Response:
-        req, _ = await self._body_model(request, StopSessionRequest, endpoint="api/stop-session", empty_ok=True)
+        req, _ = await self._body_model(request, StopSessionRequest, endpoint="api/stop-session",
+                                        max_size=_ROUTE_MAX_BODY["post_stop_session"], empty_ok=True)
         return web.json_response(await self.runs.stop_session(req))
 
     async def post_time(self, request: web.Request) -> web.Response:
         self.runs.not_closing()
-        body = await self._body(request)
+        body = await self._body(request, max_size=_ROUTE_MAX_BODY["post_time"])
         return web.json_response(await self.runs.send_time(body))
 
     async def post_write(self, request: web.Request) -> web.Response:
         self.runs.not_closing()
-        body = await self._body(request)
+        body = await self._body(request, max_size=_ROUTE_MAX_BODY["post_write"])
         return web.json_response(await self.runs.write_variables(body))
 
     async def get_session(self, request: web.Request) -> web.Response:

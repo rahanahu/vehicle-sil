@@ -34,26 +34,40 @@ from pydantic import (
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import CoreSchema
 from vehicle_sil_control.protocol import (
-    CONNECTIONS_FIELDS,
-    DESCRIBE_FIELDS,
     EVENTS_FORMAT,
-    INTENT_FIELDS,
     MAX_ID,
-    NO_CONNECTION,
-    REQUEST_FIELDS,
-    REQUEST_VERSION,
-    REQUEST_VERSION_KEY,
     SPEED_MAX,
     SPEED_MIN,
     STEP_MS_MAX,
-    TEXT_FIELDS,
     TIME_COMMANDS,
 )
 
 PROTOCOL: int = 4
-AT_MS_MAX: int = STEP_MS_MAX
 STAMP_PATTERN: str = r"^[0-9a-f]{64}$"
+REQUEST_FIELDS: tuple[str, ...] = (
+    "file",
+    "$schema",
+    "vehicle_sil_run_request",
+    "scenario",
+    "variant",
+    "params",
+    "disable",
+    "enable",
+    "manual",
+    "strict",
+    "connect",
+    "time_policy",
+    "speed",
+    "start_paused",
+    "stop_at_ms",
+    "late_tolerance_ms",
+)
 CHECK_FIELDS: tuple[str, ...] = (*REQUEST_FIELDS, "text")
+
+DEFAULT_WRITES_PER_REQUEST: int = 256
+DEFAULT_WATCH_VARIABLES: int = 2000
+DEFAULT_PERIOD_MS_MIN: int = 20
+DEFAULT_PERIOD_MS_MAX: int = 60_000
 
 _M = TypeVar("_M", bound="ContractModel")
 
@@ -674,7 +688,7 @@ class WritePayload(ContractModel):
             )
         count = sum(len(v) for v in value.values())
         limits = info.context.get("limits") if isinstance(info.context, dict) else None
-        max_writes = getattr(limits, "writes_per_request", 256)
+        max_writes = getattr(limits, "writes_per_request", DEFAULT_WRITES_PER_REQUEST)
         if count > max_writes:
             raise ValueError(
                 f"one request writes at most {max_writes} variables (this one {count}): send more requests"
@@ -1201,18 +1215,11 @@ class WsAuthMessage(BaseModel):
     after_stream_seq: NonNegInt | None = None
 
 
-class WatchPayload(BaseModel):
+class WatchPayload(_OmitOnlyMixin):
     model_config = ConfigDict(extra="ignore", strict=True)
     id: CommandId
     variables: Literal["all"] | list[WatchVariableRef]
     period_ms: OmitPosInt = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_null_period_ms(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "period_ms" in data and data["period_ms"] is None:
-            raise ValueError("period_ms must not be null")
-        return data
 
     @field_validator("period_ms")
     @classmethod
@@ -1220,8 +1227,8 @@ class WatchPayload(BaseModel):
         if value is None:
             return None
         limits = info.context.get("limits") if isinstance(info.context, dict) else None
-        lo = getattr(limits, "period_ms_min", 20)
-        hi = getattr(limits, "period_ms_max", 60_000)
+        lo = getattr(limits, "period_ms_min", DEFAULT_PERIOD_MS_MIN)
+        hi = getattr(limits, "period_ms_max", DEFAULT_PERIOD_MS_MAX)
         if not lo <= value <= hi:
             raise ValueError(f"period_ms must be a whole number of milliseconds from {lo} to {hi}")
         return value
@@ -1235,7 +1242,7 @@ class WatchPayload(BaseModel):
     ) -> Literal["all"] | list[WatchVariableRef]:
         if isinstance(value, list):
             limits = info.context.get("limits") if isinstance(info.context, dict) else None
-            max_vars = getattr(limits, "watch_variables", 2000)
+            max_vars = getattr(limits, "watch_variables", DEFAULT_WATCH_VARIABLES)
             if len(value) > max_vars:
                 raise ValueError(
                     f'a watch names at most {max_vars} variables (this one {len(value)}): watch "all", or use more watches'

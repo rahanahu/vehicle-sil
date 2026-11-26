@@ -338,7 +338,7 @@ Where to change:
 Code and files to update:
 
 - `schema/run-request.schema.json` and its copy `template/schema/run-request.schema.json` (`schema.files_and_launcher` compares the keys with the launcher)
-- The fields that the Python SDK and the GUI server accept and writes (`INTENT_FIELDS` and `request_text()` in `python/vehicle_sil_control/protocol.py`, re-exported by `gui/server/src/vehicle_sil_gui/launcher.py`; see [the GUI map](code-map-gui.md#launcher-request-and-targets))
+- The fields that the GUI server validates and turns into a request file (`REQUEST_FIELDS`, `RunRequest` and `CheckTextRequest` in `gui/server/src/vehicle_sil_gui/contracts.py`, `ConfigService.build_intent()` in `gui/server/src/vehicle_sil_gui/config_service.py`, and `request_text()` in `python/vehicle_sil_control/protocol.py`; see [the GUI map](code-map-gui.md#launcher-request-and-targets))
 
 Documentation to update:
 

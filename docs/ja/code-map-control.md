@@ -78,7 +78,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `ControlServer` | `control_grpc/server.hpp` |
 | Python SDK パッケージ（`dependencies = []`、`python -S` 対応） | `python/pyproject.toml` |
 | Python のクライアント | `python/vehicle_sil_control/client.py` |
-| 純粋な Events v4 プロトコル検証とコマンド構築（`gui/server` と共有） | `python/vehicle_sil_control/protocol.py` |
+| 純粋な Events v4 プロトコル定数、要求ファイル書き出し、NDJSON コマンド構築（`gui/server` と共有） | `python/vehicle_sil_control/protocol.py` |
 | 遅延 gRPC スタブ探索、メタデータ、秘匿、エラー・proto 変換ヘルパー（`gui/server` と共有） | `python/vehicle_sil_control/grpc_helpers.py` |
 | `vehicle_sil_launch serve --once` ベースの 1 回実行補助（`Launch`） | `python/vehicle_sil_control/launcher.py` |
 | 常駐・1 回実行ランチャー（`Serve`、`RunHandle`）を扱う補助 | `python/vehicle_sil_control/serve.py` |

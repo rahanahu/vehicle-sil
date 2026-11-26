@@ -22,8 +22,10 @@ from pathlib import Path
 from aiohttp import web
 
 from . import __version__, launcher as launcher_module
+from .contracts import PROTOCOL
 from .paths import ConfigRoot, PathRejected
-from .server import CHECK_TIMEOUT_S, END_BUDGET_S, PROTOCOL, RUNNER_SHUTDOWN_S, GuiServer, Options
+from .run_manager import END_BUDGET_S, RUNNER_SHUTDOWN_S
+from .server import CHECK_TIMEOUT_S, GuiServer, Options
 from .session import SILENT_AFTER_S
 from .static import check_web_dir, find_web_dir
 
