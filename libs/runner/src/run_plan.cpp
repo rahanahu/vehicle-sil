@@ -84,6 +84,7 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     plan.stop_at_ms = choices.stop_at_ms;
     plan.start_timeout_ms = choices.start_timeout_ms;
     plan.stop_timeout_ms = choices.stop_timeout_ms;
+    plan.collect_control_metrics = choices.collect_control_metrics;
     if (check.run_timing)
     {
         plan.timing = *check.run_timing;

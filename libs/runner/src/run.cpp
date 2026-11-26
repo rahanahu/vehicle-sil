@@ -170,7 +170,9 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -440,7 +442,6 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
     // word did not arrive within its wait) is settled here. No sample is taken any more: the
     // tap goes before the transport does (a run that did not get to its watch still has it).
     samples_.untap();
-    control_.note_transport_stats(outcome_, *connection->transport);
     // From here on the connection is the closing thread's: nothing of it is named after this.
     close_connection(std::move(connection));
     return outcome_;
@@ -496,14 +497,45 @@ void RunnerImpl::close_connection(std::shared_ptr<RunConnection> connection)
     // while the closing thread still closes: it is off before the thread has the connection.
     assert(!samples_.tapped());
     const int interrupts = ctx_.interrupts();
-    // The thread keeps the connection, and reaches nothing else of this run (the list at the
-    // top of this file): the Runner may be destroyed while the thread is still closing.
-    // `interrupted` is asked on this thread, during the wait only: the caller's rule
-    // (RunObservers::close_cut, serve), else a stop request that comes after the wait began.
+    // Opt-in (--control-metrics): capture HubTransport::stats() inside the closing thread right
+    // before close(), sharing the exact same close_limit_ / close_cut budget. The slot is owned
+    // by shared_ptr and guarded by mutex so a detached closing thread that outlives RunnerImpl
+    // never races or dangles. Normal runs without --control-metrics never call stats() here.
+    struct SharedTransportStats
+    {
+        std::mutex mutex;
+        std::optional<ControlTransportStats> stats;
+    };
+    std::shared_ptr<SharedTransportStats> stats_slot;
+    std::function<void(const RunConnection&)> before_close;
+    if (ctx_.plan.collect_control_metrics)
+    {
+        stats_slot = std::make_shared<SharedTransportStats>();
+        before_close = [stats_slot](const RunConnection& closing) {
+            if (closing.transport)
+            {
+                const ControlTransportStats captured = detail::snapshot_transport_stats(*closing.transport);
+                const std::lock_guard lock(stats_slot->mutex);
+                stats_slot->stats = captured;
+            }
+        };
+    }
+    // The thread keeps the connection (and stats_slot if opt-in), and reaches nothing else of
+    // this run (the list at the top of this file): the Runner may be destroyed while the thread
+    // is still closing. `interrupted` is asked on this thread, during the wait only: the caller's
+    // rule (RunObservers::close_cut, serve), else a stop request that comes after the wait began.
     const auto left = detail::close_connection_within(
       std::move(connection), fault_close_timeout(close_limit_), ctx_.plan.poll,
       [this, interrupts] { return ctx_.observers.close_cut ? ctx_.observers.close_cut(interrupts) : ctx_.interrupts() > interrupts; },
-      detail::fault_close_delay());
+      detail::fault_close_delay(), std::move(before_close));
+    if (stats_slot)
+    {
+        const std::lock_guard lock(stats_slot->mutex);
+        if (stats_slot->stats)
+        {
+            outcome_.control.transport_stats = *stats_slot->stats;
+        }
+    }
     if (!left)
     {
         return;

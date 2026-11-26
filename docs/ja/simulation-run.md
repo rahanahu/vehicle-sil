@@ -1886,7 +1886,7 @@ vehicle_sil_launch run simulation.yaml --stop-at-ms 1000 --control-metrics build
 - `--control-metrics` はオプトインで、`run` だけで使えます（`check`、`test`、`serve` では終了コード 4 で拒否します）。
 - `--control` も `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` も**不要**です。Control Hub の SIL Kit トランスポートはすべての `vehicle_sil_launch run` で動きます。
 - 書き込みが成功したとき、仮想時間の進行、シナリオの判定、標準出力、`run --json`、既定の標準エラー、終了コードのいずれも変えません。
-- スナップショットは、すべての participant が終わり値のタップを止めた直後、ランチャーの SIL Kit 接続を閉じる直前（`before_transport_close`）に 1 回だけ読みます。ステップごとのメッセージや I/O は増えません。
+- スナップショットの取得はオプトインです（`--control-metrics` なしの通常実行では、終了時に `HubTransport::stats()` を呼びません）。`--control-metrics` を付けたときは、すべての participant が終わり値のタップを止めた直後、ランチャーの SIL Kit 接続を閉じる直前（`before_transport_close`）に 1 回だけ読みます。この取得は接続を閉じる待ち時間の上限に収められます（取得が完了する前に上限に達した場合は、`status: "unavailable"`、`unavailable_reason: "internal_error"`、`counters: null` を書きます）。ステップごとのメッセージや I/O は増えません。
 
 ### 形式とカウンターの意味
 
@@ -1940,7 +1940,7 @@ vehicle_sil_launch run simulation.yaml --stop-at-ms 1000 --control-metrics build
 | `status` | `"available"` \| `"unavailable"` | `HubTransport::stats()` を取得できたとき `"available"`（`counters` はオブジェクト、`unavailable_reason` は `null`）。`"unavailable"` のとき `counters` は常に `null`（0 では埋めません）。 |
 | `unavailable_reason` | 文字列 \| `null` | `"available"` のとき `null`。それ以外は `"unreadable"`、`"check_failed"`、`"stopped_before_setup"`、`"interrupted_before_setup"`、`"setup_failed"`、`"internal_error"` のいずれか。 |
 | `source` | オブジェクト | 出どころ（`transport: "silkit"`、`collector: "HubTransport::stats"`、`scope: "cumulative_hub_transport_lifetime"`、`collection_point: "before_transport_close"` または `null`）。 |
-| `run` | オブジェクト | 実行結果の文脈（`result`、`end`、`simulation`、`ok`、`sim_ms`、`wall_ms`、`time_step_ms`、`interrupted_by`）。開始前終了や `before_start` の中断では `sim_ms`・`wall_ms` は `null`、実行計画前では `time_step_ms` も `null`、`internal_error` では `result` も `null`。 |
+| `run` | オブジェクト | 実行結果の文脈（`result`、`end`、`simulation`、`ok`、`sim_ms`、`wall_ms`、`time_step_ms`、`interrupted_by`）。開始前終了や `before_start` の中断では `sim_ms`・`wall_ms` は `null`、実行計画前では `time_step_ms` も `null`。ランチャーの未捕捉例外による `internal_error` では `result`・`time_step_ms` も `null` ですが、実行後の接続クローズがスナップショット取得前に時間切れになった場合は実行済みの `run` 値を保持したまま `unavailable_reason: "internal_error"` になります。 |
 | `counters` | オブジェクト \| `null` | `"available"` のとき `HubTransport::stats()` のスナップショット、`"unavailable"` のとき `null`。 |
 
 カウンターはすべて **`HubTransport` の全生存期間にわたる累計**（生成から `before_transport_close` まで。開始ウィンドウの hello/probe、シミュレーションの各ステップ、一時停止・停止の遷移、終了時の last word を含む）です。定常状態の区間だけを切り出した値ではありません。
@@ -1963,6 +1963,7 @@ vehicle_sil_launch run simulation.yaml --stop-at-ms 1000 --control-metrics build
 
 - 親ディレクトリがなければ自動で作ります。同じディレクトリの一時ファイル（`<file>.writing-<nonce>`）に書き出してから `<file>` へアトミックにリネームするため、既存のファイルが途中で切れたり壊れたりしません。
 - 空パス、末尾スラッシュのディレクトリパス、既存のディレクトリは一時ファイルを作らずに拒否します。
+- `--control-metrics` が設定ファイル、`--scenario`、`--timeline`、`--request`、`--log-dir`、または `--control-*` のファイルと同じパスを指す場合（相対・絶対パスの表記揺れやシンボリックリンクを含む）、`run` は開始前に終了コード 4 で拒否し、そのファイルを変更しません。別の独立した既存メトリクスファイルへの上書きは許可されます。
 - コマンドラインの使い方の誤り（終了コード 4）ではファイルを書きません。
 - 実行の終わりにメトリクスファイルの書き込みが失敗した場合:
   - 標準エラーに `error: cannot write control metrics to <file>: <reason>` を 1 行書きます。

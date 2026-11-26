@@ -127,7 +127,7 @@
             "setup_failed",
             null
           ],
-          "description": "The run result (same names as `run --json`), or null on internal_error."
+          "description": "The run result (same names as `run --json`), or null on an uncaught launcher exception (internal_error without a run report)."
         },
         "end": {
           "type": [
@@ -185,7 +185,7 @@
             "null"
           ],
           "minimum": 1,
-          "description": "Controller virtual time step in milliseconds; null if the run was not planned (unreadable, check_failed, internal_error)."
+          "description": "Controller virtual time step in milliseconds; null if the run was not planned (unreadable, check_failed, or an uncaught launcher exception)."
         },
         "interrupted_by": {
           "type": [
@@ -282,16 +282,6 @@
             }
           }
         },
-        "run": {
-          "properties": {
-            "sim_ms": {
-              "type": "null"
-            },
-            "wall_ms": {
-              "type": "null"
-            }
-          }
-        },
         "counters": {
           "type": "null"
         }
@@ -305,7 +295,10 @@
           "run": {
             "properties": {
               "simulation": {
-                "const": "not_started"
+                "enum": [
+                  "not_started",
+                  null
+                ]
               }
             },
             "required": [

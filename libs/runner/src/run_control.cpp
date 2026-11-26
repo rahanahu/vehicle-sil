@@ -209,7 +209,7 @@ void RunControl::note_late_values(RunOutcome& outcome, control_silkit::HubTransp
     }
 }
 
-void RunControl::note_transport_stats(RunOutcome& outcome, const control_silkit::HubTransport& transport) const
+ControlTransportStats snapshot_transport_stats(const control_silkit::HubTransport& transport)
 {
     const control_silkit::HubTransportStats stats = transport.stats();
     ControlTransportStats snapshot;
@@ -224,7 +224,7 @@ void RunControl::note_transport_stats(RunOutcome& outcome, const control_silkit:
     snapshot.undecodable = stats.undecodable;
     snapshot.unknown = stats.unknown;
     snapshot.refused_hellos = stats.refused_hellos;
-    outcome.control.transport_stats = snapshot;
+    return snapshot;
 }
 
 void RunControl::note_late_maps(RunOutcome& outcome) const

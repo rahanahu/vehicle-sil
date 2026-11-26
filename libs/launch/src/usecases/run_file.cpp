@@ -76,8 +76,80 @@ runner::RunChoices run_choices(const RunRequest& request)
     choices.late_tolerance_ms = request.intent.late_tolerance_ms.value_or(config::kDefaultLateToleranceMs);
     choices.start_timeout_ms = request.host.start_timeout_ms;
     choices.stop_timeout_ms = request.host.stop_timeout_ms;
+    choices.collect_control_metrics = !request.host.control_metrics.empty();
     return choices;
 }
+
+namespace {
+
+/// Checks whether `request.host.control_metrics` collides with any input or sibling output file
+/// of the run. Returns an empty string if there is no collision, else a diagnostic message.
+std::string control_metrics_collision(const RunRequest& request)
+{
+    if (request.host.control_metrics.empty())
+    {
+        return {};
+    }
+    const std::filesystem::path metrics = process::path_from_utf8(request.host.control_metrics);
+    const std::filesystem::path config = process::path_from_utf8(request.host.config);
+    if (!request.host.config.empty() && same_file_path(metrics, config))
+    {
+        return "--control-metrics cannot write to the same file as the configuration file (" + request.host.config +
+               "): choose a different output path";
+    }
+    if (request.intent.scenario && !request.intent.scenario->empty())
+    {
+        std::filesystem::path scenario = process::path_from_utf8(*request.intent.scenario);
+        if (request.origin.has("scenario") && scenario.is_relative() && !config.parent_path().empty())
+        {
+            scenario = config.parent_path() / scenario;
+        }
+        if (same_file_path(metrics, scenario))
+        {
+            return "--control-metrics cannot write to the same file as --scenario (" + *request.intent.scenario +
+                   "): choose a different output path";
+        }
+    }
+    if (!request.host.timeline.empty() && same_file_path(metrics, process::path_from_utf8(request.host.timeline)))
+    {
+        return "--control-metrics cannot write to the same file as --timeline (" + request.host.timeline +
+               "): choose a different output path";
+    }
+    if (!request.host.log_dir.empty() && same_file_path(metrics, request.host.log_dir))
+    {
+        return "--control-metrics cannot write to the same path as --log-dir: choose a different output path";
+    }
+    if (request.host.control)
+    {
+        const auto check_control = [&metrics](const std::string& value, const char* option) -> std::string {
+            if (!value.empty() && same_file_path(metrics, process::path_from_utf8(value)))
+            {
+                return std::string("--control-metrics cannot write to the same file as ") + option + " (" + value +
+                       "): choose a different output path";
+            }
+            return {};
+        };
+        if (std::string msg = check_control(request.host.control->credentials, "--control-credentials"); !msg.empty())
+        {
+            return msg;
+        }
+        if (std::string msg = check_control(request.host.control->tls_cert, "--control-tls-cert"); !msg.empty())
+        {
+            return msg;
+        }
+        if (std::string msg = check_control(request.host.control->tls_key, "--control-tls-key"); !msg.empty())
+        {
+            return msg;
+        }
+        if (std::string msg = check_control(request.host.control->audit_log, "--control-audit-log"); !msg.empty())
+        {
+            return msg;
+        }
+    }
+    return {};
+}
+
+} // namespace
 
 RunReport run_file(const RunRequest& request, const runner::RunObservers& observers, const RunLent& lent, const runner::RunLimits& limits,
                    const CheckOptions& check_options)
@@ -161,6 +233,13 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     runner::RunControls& controls = own ? own->controls : *lent.controls;
     RunReport report;
     report.strict = request.intent.strict;
+    if (std::string collision = control_metrics_collision(request); !collision.empty())
+    {
+        report.check.file = request.host.config;
+        report.check.usage = true;
+        report.check.findings.push_back(config::Finding{config::Severity::Error, "usage", std::move(collision), 0, "", ""});
+        return report;
+    }
     // The control server of this run: made here from the request, or the caller's. Before the
     // check and its phase: a request for a server that is wrong is a usage error, and nothing is
     // checked. The report holds the run's own from here on, for the caller to let go after the

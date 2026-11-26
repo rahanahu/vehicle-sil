@@ -355,4 +355,71 @@ void control_metrics(const Options& o)
                     "serve --once --control-metrics");
         require(!fs::exists(dir / "x.json"), "rejected CLI invocations must not create x.json");
     }
+
+    // 8. Output path collisions with config / --scenario / --timeline / --request exit 4 without modifying files;
+    //    overwriting a standalone pre-existing metrics file still succeeds.
+    {
+        const fs::path sc = scenario_ecus(o, "",
+                                          "vehicle_sil_scenario: 1\n"
+                                          "name: collision check\n"
+                                          "steps:\n"
+                                          "  - set: { Body.level: 10 }\n"
+                                          "  - at_ms: 30\n"
+                                          "    expect: { Body.level: 10 }\n");
+        const std::string orig_sim = read_text(sc / "sim.yaml");
+        const std::string orig_scen = read_text(sc / "s.yaml");
+        const std::string orig_req = "{\n  \"vehicle_sil_run_request\": 1,\n  \"scenario\": \"s.yaml\"\n}\n";
+        write_file(sc / "req.json", orig_req);
+
+        // Collide with sim.yaml (exact and ./sim.yaml)
+        const Captured col_sim = launch(o, {"run", "sim.yaml", "--control-metrics", "sim.yaml"}, sc);
+        expect_code(col_sim, 4, "collision with config file");
+        require(contains(col_sim.standard_error, "--control-metrics"), "collision diagnostic:\n" + col_sim.standard_error);
+        expect_text(read_text(sc / "sim.yaml"), orig_sim, "sim.yaml untouched after collision");
+
+        const Captured col_dot_sim = launch(o, {"run", "sim.yaml", "--control-metrics", "./sim.yaml"}, sc);
+        expect_code(col_dot_sim, 4, "collision with ./sim.yaml");
+        expect_text(read_text(sc / "sim.yaml"), orig_sim, "sim.yaml untouched after ./ collision");
+
+#ifndef _WIN32
+        std::error_code ec;
+        fs::create_symlink(sc / "sim.yaml", sc / "sim_link.yaml", ec);
+        if (!ec)
+        {
+            const Captured col_link = launch(o, {"run", "sim.yaml", "--control-metrics", "sim_link.yaml"}, sc);
+            expect_code(col_link, 4, "collision with symlink to config file");
+            expect_text(read_text(sc / "sim.yaml"), orig_sim, "sim.yaml untouched after symlink collision");
+        }
+#endif
+
+        // Collide with --scenario (direct and via --request)
+        const Captured col_scen =
+            launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control-metrics", "./s.yaml"}, sc);
+        expect_code(col_scen, 4, "collision with --scenario");
+        expect_text(read_text(sc / "s.yaml"), orig_scen, "s.yaml untouched after --scenario collision");
+
+        const Captured col_req_scen =
+            launch(o, {"run", "sim.yaml", "--request", "req.json", "--control-metrics", "s.yaml"}, sc);
+        expect_code(col_req_scen, 4, "collision with request-file scenario");
+        expect_text(read_text(sc / "s.yaml"), orig_scen, "s.yaml untouched after request-file scenario collision");
+
+        // Collide with --timeline
+        const Captured col_tl = launch(
+            o, {"run", "sim.yaml", "--scenario", "s.yaml", "--timeline", "tl.json", "--control-metrics", "./tl.json"}, sc);
+        expect_code(col_tl, 4, "collision with --timeline");
+        require(!fs::exists(sc / "tl.json"), "tl.json must not be created on collision");
+
+        // Collide with --request
+        const Captured col_req =
+            launch(o, {"run", "sim.yaml", "--request", "req.json", "--control-metrics", "./req.json"}, sc);
+        expect_code(col_req, 4, "collision with --request");
+        expect_text(read_text(sc / "req.json"), orig_req, "req.json untouched after collision");
+
+        // Re-overwriting a standalone pre-existing metrics file MUST still succeed.
+        write_file(sc / "metrics.json", "{\"stale\": true}\n");
+        const Captured overwrite =
+            launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control-metrics", "metrics.json"}, sc);
+        expect_code(overwrite, 0, "overwriting standalone existing metrics.json");
+        require_available_invariants(read_text(sc / "metrics.json"), "overwritten standalone metrics.json");
+    }
 }

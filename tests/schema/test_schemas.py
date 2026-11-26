@@ -1414,6 +1414,12 @@ class ControlMetricsSchema(unittest.TestCase):
             self.assertEqual(problems(CONTROL_METRICS, sample), [],
                              f"valid unavailable variant rejected: {sample['unavailable_reason']}")
 
+        close_timeout_unavail = self._sample_unavailable(
+            "internal_error", result="passed", end="completed", simulation="reached_stop_at", ok=True, time_step_ms=10)
+        close_timeout_unavail["run"].update(sim_ms=1000, wall_ms=42)
+        self.assertEqual(problems(CONTROL_METRICS, close_timeout_unavail), [],
+                         "valid post-run close-timeout unavailable report rejected")
+
     def test_invalid_samples_are_rejected(self):
         def check_invalid(sample: dict, what: str):
             self.assertNotEqual(problems(CONTROL_METRICS, sample), [], f"schema accepted invalid sample: {what}")
@@ -1489,6 +1495,14 @@ class ControlMetricsSchema(unittest.TestCase):
         unavail_with_wall_ms = self._sample_unavailable("setup_failed")
         unavail_with_wall_ms["run"]["wall_ms"] = 0
         check_invalid(unavail_with_wall_ms, "unavailable with non-null wall_ms")
+
+        unavail_null_sim_with_sim_ms = self._sample_unavailable("unreadable")
+        unavail_null_sim_with_sim_ms["run"]["sim_ms"] = 0
+        check_invalid(unavail_null_sim_with_sim_ms, "unavailable unreadable (simulation: null) with non-null sim_ms")
+
+        unavail_null_sim_with_wall_ms = self._sample_unavailable("unreadable")
+        unavail_null_sim_with_wall_ms["run"]["wall_ms"] = 0
+        check_invalid(unavail_null_sim_with_wall_ms, "unavailable unreadable (simulation: null) with non-null wall_ms")
 
         zero_step = self._sample_available()
         zero_step["run"]["time_step_ms"] = 0

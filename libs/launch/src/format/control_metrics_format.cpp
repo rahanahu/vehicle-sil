@@ -52,15 +52,19 @@ const char* unavailable_reason(const RunReport& report)
     {
         return "check_failed";
     }
+    if (report.run->close.not_closed_ms)
+    {
+        return "internal_error";
+    }
     switch (runner::end_reason(*report.run))
     {
     case runner::EndReason::Stopped: return "stopped_before_setup";
     case runner::EndReason::Interrupted: return "interrupted_before_setup";
     case runner::EndReason::SetupFailed: return "setup_failed";
     case runner::EndReason::Completed:
-    case runner::EndReason::Failed: return "setup_failed";
+    case runner::EndReason::Failed: return "internal_error";
     }
-    return "setup_failed";
+    return "internal_error";
 }
 
 void write_text_or_null(JsonWriter& w, std::string_view key, std::string_view value)

@@ -76,10 +76,6 @@ public:
     /// control_late_messages), and what the transport dropped.
     void note_late_values(RunOutcome& outcome, control_silkit::HubTransport& transport) const;
 
-    /// Right before the connection closes: snapshots HubTransport::stats() into
-    /// RunOutcome::control.transport_stats.
-    void note_transport_stats(RunOutcome& outcome, const control_silkit::HubTransport& transport) const;
-
     /// After the simulation: what does not fit of the variable map of a participant whose agent
     /// connected after note_links() had looked (one that joined during the run, or whose hello
     /// came late), so that the result has it whenever the hello came; a line of the run too.
@@ -94,5 +90,9 @@ private:
     const std::shared_ptr<control::Hub> hub_; ///< the run's hub: made here, never null
     bool maps_set_ = false;                   ///< the first hub() gave the hub the participants' variable maps
 };
+
+/// Snapshots HubTransport::stats() into a SIL-Kit-free ControlTransportStats value. Pure wrt
+/// Runner state (safe to run on the detached closing thread inside close_connection_within()).
+[[nodiscard]] ControlTransportStats snapshot_transport_stats(const control_silkit::HubTransport& transport);
 
 } // namespace vehicle_sil::runner::detail

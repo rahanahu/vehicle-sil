@@ -171,6 +171,12 @@ struct SavedDescriptions
 /// without creating a temporary file. "" on success, else a diagnostic reason.
 [[nodiscard]] std::string write_control_metrics_file(const std::filesystem::path& path, std::string_view text);
 
+/// Returns true when `a` and `b` refer to the same file system path. Uses
+/// std::filesystem::equivalent() when both exist, falling back to weakly_canonical / normalized
+/// absolute comparison when one or both do not exist yet (handling "./foo" vs "foo", relative vs
+/// absolute paths, symlinks on existing prefixes, and Windows separators/case).
+[[nodiscard]] bool same_file_path(const std::filesystem::path& a, const std::filesystem::path& b);
+
 /// The DescribeSource that starts no process: the output of the entry of `saved` with the
 /// participant's name and command whose executable has the same stamp now (executable_stamp());
 /// nothing if there is none.

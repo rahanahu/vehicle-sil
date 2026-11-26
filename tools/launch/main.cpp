@@ -1448,6 +1448,16 @@ int run(const cli::Args& args, std::string& active_control_metrics, std::optiona
     // From here on the request is the whole of it: the arguments over the file of --request,
     // judged now that the fields the rules need (--stdin-commands, --control) are read.
     request = whole_request(request, launch::RequestCommand::Run, asked);
+    if (!request.host.control_metrics.empty() && args.has("request"))
+    {
+        const std::string request_file = args.str("request", "");
+        if (launch::same_file_path(process::path_from_utf8(request.host.control_metrics),
+                                   process::path_from_utf8(request_file)))
+        {
+            throw cli::UsageError("--control-metrics cannot write to the same file as --request (" + request_file +
+                                  "): choose a different output path");
+        }
+    }
     runner::RunObservers watching;
     launch::RunLent lent;
     g_end.publish(&g_stops);

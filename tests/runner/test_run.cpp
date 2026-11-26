@@ -755,6 +755,90 @@ TEST_CASE(a_connection_whose_close_was_left_keeps_itself_and_the_hub_until_the_c
     CHECK(hub.expired());
 }
 
+TEST_CASE(close_connection_within_runs_opt_in_before_close_before_transport_destruction)
+{
+    const auto going = std::make_shared<Going>();
+    auto hub = std::make_shared<NotedHub>(going);
+    struct Slot
+    {
+        std::mutex mutex;
+        bool saw_transport_alive = false;
+        std::optional<std::uint64_t> messages;
+    };
+    const auto slot = std::make_shared<Slot>();
+    const auto left = vehicle_sil::runner::detail::close_connection_within(
+        noted_connection(going, hub), 60s, 1ms, [] { return false; }, 0ms,
+        [slot, going](const NotedConnection& c) {
+            const bool alive = c.transport != nullptr && going->noted().empty();
+            const std::lock_guard lock(slot->mutex);
+            slot->saw_transport_alive = alive;
+            slot->messages = 42;
+        });
+    CHECK(!left);
+    {
+        const std::lock_guard lock(slot->mutex);
+        CHECK(slot->saw_transport_alive);
+        CHECK(slot->messages == std::optional<std::uint64_t>{42});
+    }
+    CHECK(going->noted() == (std::vector<std::string>{"transport", "controller", "registry"}));
+}
+
+TEST_CASE(close_connection_within_bounds_stalled_before_close_without_race_or_false_zero)
+{
+    const auto going = std::make_shared<Going>();
+    auto hub = std::make_shared<NotedHub>(going);
+    struct Shared
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool release = false;
+        std::optional<std::uint64_t> messages;
+    };
+    const auto shared = std::make_shared<Shared>();
+    std::optional<vehicle_sil::runner::detail::CloseLeft> left;
+    {
+        auto connection = noted_connection(going, hub);
+        left = vehicle_sil::runner::detail::close_connection_within(
+            std::move(connection), 80ms, 5ms, [] { return false; }, 0ms,
+            [shared](const NotedConnection& c) {
+                std::unique_lock lock(shared->mutex);
+                shared->cv.wait(lock, [&shared] { return shared->release; });
+                if (c.transport != nullptr)
+                {
+                    shared->messages = 99;
+                }
+            });
+    }
+    // Bounded by limit: returned promptly and slot has no value (never false 0).
+    CHECK(left.has_value());
+    CHECK(left && !left->interrupted);
+    {
+        const std::lock_guard lock(shared->mutex);
+        CHECK(!shared->messages.has_value());
+        shared->release = true;
+    }
+    shared->cv.notify_all();
+    // Wait for the detached closing thread to complete cleanly before returning (TSan verifies zero races).
+    std::unique_lock lock(going->mutex);
+    CHECK(going->changed.wait_for(lock, 30s, [&going] { return going->order.size() == 3; }));
+    CHECK(going->order == (std::vector<std::string>{"transport", "controller", "registry"}));
+}
+
+TEST_CASE(plan_run_keeps_control_metrics_collection_opt_in_by_default)
+{
+    vehicle_sil::config::CheckReport check;
+    check.config.emplace();
+    vehicle_sil::runner::RunChoices defaults;
+    CHECK(!defaults.collect_control_metrics);
+    const vehicle_sil::runner::RunPlan default_plan = vehicle_sil::runner::plan_run(check, nullptr, {}, defaults);
+    CHECK(!default_plan.collect_control_metrics);
+
+    vehicle_sil::runner::RunChoices opted_in;
+    opted_in.collect_control_metrics = true;
+    const vehicle_sil::runner::RunPlan opted_in_plan = vehicle_sil::runner::plan_run(check, nullptr, {}, opted_in);
+    CHECK(opted_in_plan.collect_control_metrics);
+}
+
 namespace {
 
 /// The hub's transport of a connection made of the real parts, whose end waits for a latch

@@ -14,6 +14,7 @@
 #include <thread>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 namespace vehicle_sil::runner::detail {
@@ -91,15 +92,22 @@ inline constexpr const char* kFaultCloseDelayVariable = "VEHICLE_SIL_FAULT_CLOSE
 /// close_within() does. The caller gives its hold away: from here on the closing thread is the
 /// only one that touches the connection, and the connection lives until that thread has ended,
 /// also if it is left (the result is not empty) and whatever the caller destroys meanwhile.
-/// `delay`: the closing thread first waits this long (fault_close_delay(); 0 in a product build).
+/// `before_close`: optional callback executed on the closing thread with `*connection` right before
+/// `delay` and `close()` (sharing the same `limit` and `interrupted` bound); must not reference
+/// caller-owned state that may be destroyed if the close is left.
+/// `delay`: the closing thread waits this long before `close()` (fault_close_delay(); 0 in a product build).
 template <class Connection>
-[[nodiscard]] std::optional<CloseLeft> close_connection_within(std::shared_ptr<Connection> connection,
-                                                               std::chrono::milliseconds limit, std::chrono::milliseconds poll,
-                                                               const std::function<bool()>& interrupted,
-                                                               std::chrono::milliseconds delay = std::chrono::milliseconds(0))
+[[nodiscard]] std::optional<CloseLeft> close_connection_within(
+  std::shared_ptr<Connection> connection, std::chrono::milliseconds limit, std::chrono::milliseconds poll,
+  const std::function<bool()>& interrupted, std::chrono::milliseconds delay = std::chrono::milliseconds(0),
+  std::type_identity_t<std::function<void(const Connection&)>> before_close = {})
 {
     return close_within(
-      [closing = std::move(connection), delay] {
+      [closing = std::move(connection), delay, before_close = std::move(before_close)] {
+          if (before_close)
+          {
+              before_close(*closing);
+          }
           if (delay.count() > 0)
           {
               std::this_thread::sleep_for(delay);

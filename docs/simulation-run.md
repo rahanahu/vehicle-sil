@@ -1886,7 +1886,7 @@ vehicle_sil_launch run simulation.yaml --stop-at-ms 1000 --control-metrics build
 - `--control-metrics` is opt-in and works on `run` only (`check`, `test` and `serve` reject it with exit code 4).
 - It does **not** require `--control` and does **not** require `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`: the Control Hub SIL Kit transport runs on every `vehicle_sil_launch run`.
 - It does not change virtual-time progression, scenario outcomes, stdout, `run --json`, default stderr, or exit codes when writing succeeds.
-- The snapshot is read once after all participants have ended and the values tap has stopped, right before closing the launcher's SIL Kit connection (`before_transport_close`). Zero per-step messages or per-step I/O are added.
+- The snapshot is opt-in (normal runs without `--control-metrics` do not read `HubTransport::stats()` during shutdown). When `--control-metrics` is given, the snapshot is read once after all participants have ended and the values tap has stopped, right before closing the launcher's SIL Kit connection (`before_transport_close`), bounded by the same connection-close timeout as the close itself (if that timeout expires before the snapshot completes, the file records `status: "unavailable"`, `unavailable_reason: "internal_error"`, and `counters: null`). Zero per-step messages or per-step I/O are added.
 
 ### Format and counter semantics
 
@@ -1940,7 +1940,7 @@ The format is defined by `schema/control-metrics.schema.json` (JSON Schema Draft
 | `status` | `"available"` \| `"unavailable"` | `"available"` iff `HubTransport::stats()` was collected (`counters` is an object and `unavailable_reason` is `null`). When `"unavailable"`, `counters` is `null` (never zero). |
 | `unavailable_reason` | string \| `null` | `null` when `"available"`; otherwise `"unreadable"`, `"check_failed"`, `"stopped_before_setup"`, `"interrupted_before_setup"`, `"setup_failed"`, or `"internal_error"`. |
 | `source` | object | Provenance (`transport: "silkit"`, `collector: "HubTransport::stats"`, `scope: "cumulative_hub_transport_lifetime"`, `collection_point: "before_transport_close"` or `null`). |
-| `run` | object | Outcome context (`result`, `end`, `simulation`, `ok`, `sim_ms`, `wall_ms`, `time_step_ms`, `interrupted_by`). `sim_ms` and `wall_ms` are `null` when the simulation did not start or aborted in `before_start`; `time_step_ms` is `null` when no run was planned; `result` is `null` on `internal_error`. |
+| `run` | object | Outcome context (`result`, `end`, `simulation`, `ok`, `sim_ms`, `wall_ms`, `time_step_ms`, `interrupted_by`). `sim_ms` and `wall_ms` are `null` when the simulation did not start or aborted in `before_start`; `time_step_ms` is `null` when no run was planned; `result` and `time_step_ms` are `null` on an uncaught launcher exception (`internal_error` without a run report), whereas a post-run close timeout before stats capture populates `run` from the completed run with `unavailable_reason: "internal_error"`. |
 | `counters` | object \| `null` | Exact snapshot of `HubTransport::stats()` when `"available"`, or `null` when `"unavailable"`. |
 
 All counters are **cumulative over the entire lifetime of `HubTransport`** (from construction to `before_transport_close`, including start-window hellos/probes, simulation steps, pause/stop transitions, and shutdown last words). They do not isolate a steady-state sub-window.
@@ -1963,6 +1963,7 @@ All counters are **cumulative over the entire lifetime of `HubTransport`** (from
 
 - Missing parent directories are created automatically. The file is written to a sibling temporary file (`<file>.writing-<nonce>`) and atomically renamed over `<file>`, so a pre-existing file is never left truncated or partially written.
 - Empty paths, trailing-slash directory paths, and existing directories are rejected without creating a temporary file.
+- If `--control-metrics` points to the same path as the configuration file, `--scenario`, `--timeline`, `--request`, `--log-dir`, or a `--control-*` file (including relative/absolute aliases and symlinks), `run` rejects it up front with exit code 4 without modifying that file. Overwriting a separate pre-existing metrics file is allowed.
 - No file is written on CLI usage errors (exit code 4).
 - If writing the metrics file fails at the end of a run:
   - `vehicle_sil_launch` writes `error: cannot write control metrics to <file>: <reason>` to stderr.

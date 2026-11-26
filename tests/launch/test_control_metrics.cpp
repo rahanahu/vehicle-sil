@@ -322,3 +322,180 @@ TEST_CASE(write_control_metrics_file_writes_atomically_and_rejects_bad_paths)
     check_text(read_all(blocker), "keep-me\n");
     CHECK_EQ(count_writing_temps(dir), std::size_t{0});
 }
+
+TEST_CASE(same_file_path_detects_equivalent_existing_nonexistent_and_symlink_paths)
+{
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "control_metrics_same_path";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    const std::filesystem::path existing = dir / "sim.yaml";
+    {
+        std::ofstream out(existing, std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n";
+    }
+    const std::filesystem::path other = dir / "other.yaml";
+    {
+        std::ofstream out(other, std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n";
+    }
+
+    CHECK(!same_file_path({}, existing));
+    CHECK(!same_file_path(existing, {}));
+    CHECK(same_file_path(existing, existing));
+    CHECK(same_file_path(existing, dir / "." / "sim.yaml"));
+    CHECK(same_file_path(existing, dir / "sub" / ".." / "sim.yaml"));
+    CHECK(!same_file_path(existing, other));
+
+    // Neither file exists yet (including bare relative vs "./" and trailing-slash directory aliases).
+    CHECK(same_file_path("nonexistent_metrics.json", "./nonexistent_metrics.json"));
+    CHECK(same_file_path("nonexistent_metrics.json", std::filesystem::current_path() / "nonexistent_metrics.json"));
+    CHECK(same_file_path(dir / "out.json", dir / "." / "out.json"));
+    CHECK(same_file_path(dir / "sub" / "tl.json", dir / "sub" / "." / "tl.json"));
+    CHECK(same_file_path(dir / "logs/", dir / "logs"));
+    CHECK(!same_file_path(dir / "out.json", dir / "other.json"));
+
+#ifndef _WIN32
+    std::error_code ec;
+    const std::filesystem::path file_link = dir / "sim_link.yaml";
+    std::filesystem::create_symlink(existing, file_link, ec);
+    if (!ec)
+    {
+        CHECK(same_file_path(existing, file_link));
+    }
+    ec.clear();
+    const std::filesystem::path dir_link = dir / "sub_link";
+    std::filesystem::create_directory_symlink(dir / "sub", dir_link, ec);
+    if (!ec)
+    {
+        CHECK(same_file_path(dir / "sub" / "new_tl.json", dir_link / "new_tl.json"));
+    }
+    // Dangling leaf symlink (e.g., --timeline tl_link.json -> metrics_target.json not created yet).
+    ec.clear();
+    const std::filesystem::path dangling_link = dir / "tl_link.json";
+    std::filesystem::create_symlink("metrics_target.json", dangling_link, ec);
+    if (!ec)
+    {
+        CHECK(same_file_path(dangling_link, dir / "metrics_target.json"));
+        CHECK(same_file_path(dir / "metrics_target.json", dangling_link));
+        // Chained dangling symlink through another relative link.
+        ec.clear();
+        const std::filesystem::path chained_link = dir / "tl_chain.json";
+        std::filesystem::create_symlink("tl_link.json", chained_link, ec);
+        if (!ec)
+        {
+            CHECK(same_file_path(chained_link, dir / "metrics_target.json"));
+        }
+        // Dangling symlink collision rejected by run_file() as well.
+        RunRequest r;
+        r.host.config = existing.string();
+        r.intent.scenario = other.string();
+        r.host.timeline = dangling_link.string();
+        r.host.control_metrics = (dir / "metrics_target.json").string();
+        const RunReport rep = run_file(r);
+        CHECK(rep.check.usage);
+        CHECK_EQ(rep.exit_code(), 4);
+        CHECK(rep.check.findings.front().message.find("--timeline") != std::string::npos);
+    }
+    // Cyclic symlinks must terminate cleanly without throwing.
+    ec.clear();
+    const std::filesystem::path loop_a = dir / "loop_a.json";
+    const std::filesystem::path loop_b = dir / "loop_b.json";
+    std::filesystem::create_symlink("loop_b.json", loop_a, ec);
+    if (!ec)
+    {
+        std::filesystem::create_symlink("loop_a.json", loop_b, ec);
+        if (!ec)
+        {
+            CHECK(!same_file_path(loop_a, dir / "metrics_target.json"));
+        }
+    }
+#endif
+}
+
+TEST_CASE(run_file_rejects_control_metrics_path_collisions_without_modifying_files)
+{
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "control_metrics_collisions";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "cfg");
+    const std::filesystem::path cfg = dir / "cfg" / "sim.yaml";
+    const std::filesystem::path scen = dir / "cfg" / "drive.yaml";
+    const std::filesystem::path tl = dir / "timeline.json";
+    {
+        std::ofstream out(cfg, std::ios::binary);
+        out << "config-sentinel\n";
+    }
+    {
+        std::ofstream out(scen, std::ios::binary);
+        out << "scenario-sentinel\n";
+    }
+
+    // Collides with configuration file.
+    {
+        RunRequest r;
+        r.host.config = cfg.string();
+        r.host.control_metrics = (dir / "cfg" / "." / "sim.yaml").string();
+        const RunReport rep = run_file(r);
+        CHECK(rep.check.usage);
+        CHECK(rep.result() == RunResult::Usage);
+        CHECK_EQ(rep.exit_code(), 4);
+        CHECK(!rep.check.findings.empty());
+        CHECK(rep.check.findings.front().message.find("configuration file") != std::string::npos);
+        check_text(read_all(cfg), "config-sentinel\n");
+    }
+    // Collides with --scenario from a request file (resolved relative to config directory).
+    {
+        RunRequest r;
+        r.host.config = cfg.string();
+        r.intent.scenario = "drive.yaml";
+        r.origin.file = "req.json";
+        r.origin.fields.emplace_back("scenario");
+        r.host.control_metrics = scen.string();
+        const RunReport rep = run_file(r);
+        CHECK(rep.check.usage);
+        CHECK_EQ(rep.exit_code(), 4);
+        CHECK(rep.check.findings.front().message.find("--scenario") != std::string::npos);
+        check_text(read_all(scen), "scenario-sentinel\n");
+    }
+    // Collides with --timeline (even when timeline does not exist yet).
+    {
+        RunRequest r;
+        r.host.config = cfg.string();
+        r.intent.scenario = scen.string();
+        r.host.timeline = tl.string();
+        r.host.control_metrics = (dir / "." / "timeline.json").string();
+        const RunReport rep = run_file(r);
+        CHECK(rep.check.usage);
+        CHECK_EQ(rep.exit_code(), 4);
+        CHECK(rep.check.findings.front().message.find("--timeline") != std::string::npos);
+        CHECK(!std::filesystem::exists(tl));
+    }
+    // run_choices() gates collect_control_metrics strictly on !control_metrics.empty().
+    {
+        RunRequest plain;
+        CHECK(!run_choices(plain).collect_control_metrics);
+        RunRequest opt_in;
+        opt_in.host.control_metrics = (dir / "metrics.json").string();
+        CHECK(run_choices(opt_in).collect_control_metrics);
+    }
+}
+
+TEST_CASE(control_metrics_formats_close_timeout_without_stats_as_unavailable_never_zero)
+{
+    RunReport r = base_report();
+    RunOutcome outcome;
+    outcome.end.simulation = SimulationEnd::ReachedStopAt;
+    outcome.timing.sim_ms = 100;
+    outcome.timing.wall_ms = 12;
+    outcome.timing.time_step_ms = 10;
+    outcome.close.not_closed_ms = 15000;
+    // transport_stats intentionally empty: close_connection_within timed out before stats capture finished.
+    r.run = outcome;
+
+    const std::string got = format_control_metrics_json(r);
+    CHECK(got.find("\"status\": \"unavailable\"") != std::string::npos);
+    CHECK(got.find("\"unavailable_reason\": \"internal_error\"") != std::string::npos);
+    CHECK(got.find("\"collection_point\": null") != std::string::npos);
+    CHECK(got.find("\"counters\": null") != std::string::npos);
+    CHECK(got.find("\"sim_ms\": 100") != std::string::npos);
+    CHECK(got.find("\"wall_ms\": 12") != std::string::npos);
+}
