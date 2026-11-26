@@ -246,7 +246,12 @@ export function buildClient(options: ClientOptions): ClientParts {
     afterGreeting: () => variablesFeed?.resume() ?? [],
     onError,
   });
-  feed = new SessionFeed(connection, onError, (instance) => variablesFeed?.onInstance(instance));
+  feed = new SessionFeed(connection, onError, (instance) => variablesFeed?.onInstance(instance), {
+    beforeRunSwitch: (beforeBatch, skippedBatch, current) =>
+      variablesFeed?.beforeRunSwitch(beforeBatch, skippedBatch, current),
+    stageRunSwitch: (instance, sessionId, instanceChanged) =>
+      variablesFeed?.stageRunSwitch(instance, sessionId, instanceChanged) ?? (() => undefined),
+  });
   const session = feed;
   variablesFeed = new VariablesFeed(
     {

@@ -167,6 +167,7 @@ export function makeVariable(
   const readable: Readable<VariableView> = {
     get: () => {
       if (!binding) return peek();
+      refresh();
       return view.get() as VariableView;
     },
     subscribe: (listener) => {

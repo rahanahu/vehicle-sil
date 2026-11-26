@@ -156,6 +156,18 @@ export class SessionFeed implements ClientSession {
     private readonly connection: Connection,
     private readonly onError: ErrorSink = rethrowLater,
     private readonly onInstance?: (instance: string) => void,
+    private readonly hooks?: {
+      beforeRunSwitch?: (
+        beforeBatch: readonly unknown[],
+        skippedBatch: readonly unknown[],
+        current: () => boolean,
+      ) => void;
+      stageRunSwitch?: (
+        instance: string | null,
+        sessionId: string | null,
+        instanceChanged: boolean,
+      ) => () => void;
+    },
   ) {
     this.current = new Writable<SessionView | null>(null, Object.is, onError);
     this.synced = new Writable<boolean>(false, Object.is, onError);
@@ -320,6 +332,8 @@ export class SessionFeed implements ClientSession {
     const notices: string[] = [];
     const selectedBatch: ServerMessage[] = [];
     const selectedRaw: unknown[] = [];
+    let firstSwitchRawIndex = -1;
+    let lastSwitchRawIndex = -1;
     let applied = false;
     let synced = this.synced.get();
     let syncReset = false;
@@ -381,6 +395,8 @@ export class SessionFeed implements ClientSession {
           } else if (!sameInstance) {
             runtimeNow = null;
           }
+          const prevId = session?.id ?? null;
+          const switchedInstance = instance !== null && instance !== message.instance;
           instance = message.instance;
           if (!summary) {
             session = null;
@@ -388,6 +404,10 @@ export class SessionFeed implements ClientSession {
             session = applySummary(session, summary);
           } else {
             session = sessionFromSummary(summary);
+          }
+          if (switchedInstance || (session?.id ?? null) !== prevId) {
+            if (firstSwitchRawIndex < 0) firstSwitchRawIndex = selectedRaw.length;
+            lastSwitchRawIndex = selectedRaw.length;
           }
           selectedBatch.push(message);
           selectedRaw.push(rawMessage);
@@ -427,7 +447,8 @@ export class SessionFeed implements ClientSession {
           selectedBatch.push(message);
           selectedRaw.push(rawMessage);
           break;
-        case 'session':
+        case 'session': {
+          const prevId = session?.id ?? null;
           takeAllowed(message.session.allowed);
           session =
             session?.id === message.session.id
@@ -436,9 +457,14 @@ export class SessionFeed implements ClientSession {
           if (typeof message.stream_seq !== 'number' && message.session.last_seq !== null) {
             streamSeq = Math.max(streamSeq, message.session.last_seq);
           }
+          if (session.id !== prevId) {
+            if (firstSwitchRawIndex < 0) firstSwitchRawIndex = selectedRaw.length;
+            lastSwitchRawIndex = selectedRaw.length;
+          }
           selectedBatch.push(message);
           selectedRaw.push(rawMessage);
           break;
+        }
         case 'event':
           if (session?.id === message.run_id) {
             events.push(message.event);
@@ -490,6 +516,19 @@ export class SessionFeed implements ClientSession {
       (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
     if (!currentOrigin()) return;
     const beforeInstance = this.instanceId;
+    const beforeId = before?.id ?? null;
+    if (lastSwitchRawIndex > 0 && this.hooks?.beforeRunSwitch) {
+      const sameBefore = () =>
+        currentOrigin() &&
+        this.instanceId === beforeInstance &&
+        (this.current.get()?.id ?? null) === beforeId;
+      this.hooks.beforeRunSwitch(
+        selectedRaw.slice(0, firstSwitchRawIndex),
+        selectedRaw.slice(firstSwitchRawIndex, lastSwitchRawIndex),
+        sameBefore,
+      );
+      if (!sameBefore()) return;
+    }
     this.instanceId = instance;
     this.lastStreamSeq = streamSeq;
     this.resyncing = resyncing;
@@ -500,6 +539,8 @@ export class SessionFeed implements ClientSession {
       currentOrigin() &&
       this.instanceId === instance &&
       (this.current.get()?.id ?? null) === sessionId;
+    const instanceChanged =
+      instance !== null && beforeInstance !== null && instance !== beforeInstance;
     const notifySession = this.current.setDeferred(session);
     const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
     const notifyRuntime = this.runtimeValue.setDeferred(runtimeNow);
@@ -507,13 +548,20 @@ export class SessionFeed implements ClientSession {
       this.synced.set(false);
       if (!sameStream()) return;
     }
-    if (instance !== null && instance !== beforeInstance) {
+    let notifyVarSwitch: (() => void) | undefined;
+    if (this.hooks?.stageRunSwitch) {
+      if (lastSwitchRawIndex >= 0 || (instance !== null && instance !== beforeInstance)) {
+        notifyVarSwitch = this.hooks.stageRunSwitch(instance, sessionId, instanceChanged);
+      }
+    } else if (instance !== null && instance !== beforeInstance) {
       this.onInstance?.(instance);
       if (!sameStream()) return;
     }
     notifySession();
     notifyAllowed();
     notifyRuntime();
+    if (!sameStream()) return;
+    notifyVarSwitch?.();
     if (!sameStream()) return;
     for (const notice of notices) {
       this.notify(notice);
@@ -523,8 +571,12 @@ export class SessionFeed implements ClientSession {
     if (!sameStream()) return;
     if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
     if (!sameStream()) return;
-    if (selectedRaw.length > 0) {
-      callEach(this.rawListeners, [selectedRaw, sameStream], this.onError, sameStream);
+    const rawToDeliver =
+      this.hooks?.beforeRunSwitch && lastSwitchRawIndex >= 0
+        ? selectedRaw.slice(lastSwitchRawIndex)
+        : selectedRaw;
+    if (rawToDeliver.length > 0) {
+      callEach(this.rawListeners, [rawToDeliver, sameStream], this.onError, sameStream);
     }
     if (!sameStream()) return;
     // Mark synced and notify ready subscribers only after both session state and raw listeners

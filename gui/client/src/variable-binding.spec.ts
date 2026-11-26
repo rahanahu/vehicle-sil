@@ -1,5 +1,5 @@
 import { GuiClient } from './client';
-import { createFront, createVariableEditor, createWaveforms, type Front } from './index';
+import { createFront, createVariableEditor, createWaveforms, watch, type Front } from './index';
 import { BATCH_MS, ConnectionState } from './connection';
 import { isHolding } from './session-state';
 import { FakeHttp, FakeRequest } from './testing/fake-http';
@@ -1210,6 +1210,235 @@ describe('client.variables.bind', () => {
 
       await deliver(synced(2));
       expect(blocks.at(-1)).toBeNull();
+      demand.close();
+    });
+
+    it('clears prior-run values before session notifications on live run replacement over an open socket', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      const fvar = front.variable('Engine.engine.demand');
+      const stopFront = fvar.subscribe(() => undefined);
+
+      await deliver(
+        hello('ready', 1, { launcher_state: { ...runningState, paused: true } }),
+        synced(1),
+        values(500, true, { 'engine.demand': 88 }),
+      );
+      expect(fvar.get().value).toBe(88);
+
+      const seenFront: { value: unknown; canWrite: boolean; kind: string }[] = [];
+      const stopFrontLog = fvar.subscribe((v) =>
+        seenFront.push({ value: v.value, canWrite: v.can_write, kind: v.condition.kind }),
+      );
+
+      const seenOnStatus: {
+        statusRun: string;
+        varSession: string | null;
+        value: unknown;
+        canWrite: boolean;
+        block: string | null;
+      }[] = [];
+      const stopStatus = watch(front.status, (st) => {
+        if (client.session.session.get()?.id !== '2') return;
+        const v = fvar.get();
+        seenOnStatus.push({
+          statusRun: st.run,
+          varSession: client.variables.state.get().session,
+          value: v.value,
+          canWrite: v.can_write,
+          block: v.block,
+        });
+      });
+
+      const seenOnSessionSwitch: {
+        ready: boolean;
+        varSession: string | null;
+        value: unknown;
+        canWrite: boolean;
+        block: string | null;
+      }[] = [];
+      const stopSession = client.session.session.subscribe((s) => {
+        if (s?.id !== '2') return;
+        seenOnSessionSwitch.push({
+          ready: client.session.ready.get(),
+          varSession: client.variables.state.get().session,
+          value: fvar.get().value,
+          canWrite: fvar.get().can_write,
+          block: demand.state.get().block,
+        });
+        // A binding write while run 2's variables are still unknown is ignored cleanly
+        demand.write(55);
+        // A low/front write started on the session notification targets run 2, never run 1
+        void fvar.write(66);
+      });
+
+      await deliver(
+        {
+          type: 'session',
+          session: {
+            id: '2',
+            state: 'running',
+            phase: 'running',
+            launcher: { pid: 2, running: true, exit_code: null, signal: null, silent_s: null },
+            stop: 'none',
+            launcher_state: runningState,
+          },
+        },
+        { type: 'variables', run_id: '2', variables: variables('ready') },
+      );
+
+      expect(seenOnStatus).toEqual([
+        {
+          statusRun: 'running',
+          varSession: '2',
+          value: null,
+          canWrite: false,
+          block: 'not-ready',
+        },
+      ]);
+      expect(seenOnSessionSwitch).toEqual([
+        {
+          ready: true,
+          varSession: '2',
+          value: null,
+          canWrite: false,
+          block: 'not-ready',
+        },
+      ]);
+      expect(seenFront.some((e) => e.value === 88)).toBe(false);
+      expect(http.requests.map((r) => r.request.body)).toEqual([
+        { run_id: '2', writes: { Engine: { 'engine.demand': 66 } } },
+      ]);
+      http.requests[0]!.flush({ run_id: '2', operation: 1 });
+      await deliver({ ...operation(1, 'applied', true), run_id: '2' });
+
+      stopStatus();
+      stopSession();
+      stopFrontLog();
+      stopFront();
+      demand.close();
+    });
+
+    it('skips superseded intermediate runs on multi-hop batches and settles pre-switch hello operations', async () => {
+      const fvar = front.variable('Engine.engine.demand');
+      const stopSub = fvar.subscribe(() => undefined);
+
+      await deliver(hello('ready', 1), synced(1));
+
+      // 1. Multi-hop batch (1 -> 2 -> 3): superseded run 2 never becomes writable or receives writes.
+      const seenMultiHop: {
+        sessionId: string | null;
+        varSession: string | null;
+        canWrite: boolean;
+      }[] = [];
+      const stopLog = fvar.subscribe((v) => {
+        const sessId = client.session.session.get()?.id ?? null;
+        seenMultiHop.push({
+          sessionId: sessId,
+          varSession: client.variables.state.get().session,
+          canWrite: v.can_write,
+        });
+        if (sessId === '3' && v.can_write) void fvar.write(99);
+      });
+
+      const runSummary = (id: string) => ({
+        id,
+        state: 'running',
+        phase: 'running',
+        launcher: { pid: Number(id), running: true, exit_code: null, signal: null, silent_s: null },
+        stop: 'none',
+        launcher_state: runningState,
+      });
+
+      await deliver(
+        { type: 'session', session: runSummary('2') },
+        { type: 'variables', run_id: '2', variables: variables('ready') },
+        { type: 'session', session: runSummary('3') },
+        { type: 'variables', run_id: '3', variables: { ...variables('off'), peers: [] } },
+      );
+      stopLog();
+
+      expect(seenMultiHop.every((e) => e.varSession === '3' && !e.canWrite)).toBe(true);
+      expect(http.requests).toHaveLength(0);
+
+      // 2. Reconnect hello carrying settled operations for run 3 coalesced with a switch to run 4.
+      await deliver({ type: 'variables', run_id: '3', variables: variables('ready') });
+      const writeOn3 = fvar.write(42);
+      http.expectOne('api/write').flush({ run_id: '3', operation: 7 });
+
+      socket().fail();
+      await vi.advanceTimersByTimeAsync(550);
+      socket().open();
+
+      await deliver(
+        hello('ended', 3, {
+          state: 'ended',
+          phase: 'ended',
+          launcher: { pid: 3, running: false, exit_code: 0, signal: null, silent_s: null },
+          launcher_state: { ...runningState, phase: 'ended' },
+          variables: variables('ended', true, {
+            operations: [
+              {
+                seq: 7,
+                state: 'applied',
+                done: true,
+                peers: {
+                  Engine: { state: 'applied', applied_at_ms: 200, late: false, reason: null },
+                },
+              },
+            ],
+            operations_from_seq: 7,
+            operations_open_omitted: 0,
+          }),
+        }),
+        synced(3),
+        { type: 'session', session: runSummary('4') },
+        { type: 'variables', run_id: '4', variables: variables('ready') },
+      );
+
+      await expect(writeOn3).resolves.toBeUndefined();
+      expect(client.variables.state.get().session).toBe('4');
+      stopSub();
+    });
+
+    it('marks cached readings stale and resends watches across a same-run resync on an open socket', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      const fvar = front.variable('Engine.engine.demand');
+      const stopFront = fvar.subscribe(() => undefined);
+
+      await deliver(hello('ready', 1), synced(1), values(100, true, { 'engine.demand': 25 }));
+      expect(demand.state.get().condition).toEqual({
+        kind: 'paused',
+        reading: { value: 25, sampleMs: 100, simMs: 100, paused: true },
+      });
+      expect(fvar.get().stale).toBe(false);
+
+      const sentBefore = socket().sent.length;
+      await deliver(
+        { type: 'resync', reason: 'slow-client', message: 'dropped' },
+        hello('ready', 1),
+        synced(1),
+      );
+
+      expect(client.session.ready.get()).toBe(true);
+      expect(demand.state.get().condition).toEqual({
+        kind: 'stale',
+        why: 'connection',
+        reading: { value: 25, sampleMs: 100, simMs: 100, paused: true },
+      });
+      expect(fvar.get().stale).toBe(true);
+      expect(socket().sent.slice(sentBefore)).toEqual([
+        expect.objectContaining({ type: 'watch', id: 1 }),
+      ]);
+
+      // Even an identical paused reading clears the post-resync stale flag
+      await deliver(values(100, true, { 'engine.demand': 25 }));
+      expect(demand.state.get().condition).toEqual({
+        kind: 'paused',
+        reading: { value: 25, sampleMs: 100, simMs: 100, paused: true },
+      });
+      expect(fvar.get().stale).toBe(false);
+
+      stopFront();
       demand.close();
     });
 
