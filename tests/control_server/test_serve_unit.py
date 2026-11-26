@@ -24,6 +24,7 @@ if str(_PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(_PYTHON_DIR))
 
 from vehicle_sil_control import Launch, LaunchError, RunHandle, Serve, ServeError, __version__, control_address  # noqa: E402
+from vehicle_sil_control.launcher import _MAX_FINDING_DETAIL_CHARS, _why  # noqa: E402
 from vehicle_sil_control.serve import MAX_COMMAND_ID, MAX_COMMAND_LINE, _MAX_BAD_LINES, _MAX_STDERR_CHARS  # noqa: E402
 
 
@@ -167,7 +168,7 @@ class ServeUnitTest(unittest.TestCase):
         env = dict(os.environ)
         env["PYTHONPATH"] = str(_PYTHON_DIR)
         code = (
-            "import vehicle_sil_control as c; "
+            "import vehicle_sil_control as c, vehicle_sil_control.launcher, vehicle_sil_control.serve; "
             "from vehicle_sil_control import Serve, RunHandle, ServeError, Launch, LaunchError, control_address; "
             "assert {'Serve', 'RunHandle', 'ServeError', 'Launch', 'LaunchError', 'control_address'} <= set(c.__all__); "
             "assert issubclass(ServeError, LaunchError)"
@@ -181,18 +182,19 @@ class ServeUnitTest(unittest.TestCase):
         self.assertTrue({"Launch", "LaunchError", "control_address", "Serve", "RunHandle", "ServeError"} <= set(pkg.__all__))
         self.assertTrue(issubclass(ServeError, LaunchError))
 
-        serve_tree = ast.parse((_PYTHON_DIR / "vehicle_sil_control" / "serve.py").read_text(encoding="utf-8"))
-        for node in serve_tree.body:
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    self.assertNotIn("grpc", alias.name)
-                    self.assertFalse(alias.name.startswith("tests"))
-            elif isinstance(node, ast.ImportFrom):
-                mod = node.module or ""
-                self.assertNotIn("grpc", mod)
-                self.assertNotEqual(mod, "client")
-                self.assertNotEqual(mod, "_stubs")
-                self.assertFalse(mod.startswith("tests"))
+        for mod_name in ("launcher.py", "serve.py"):
+            tree = ast.parse((_PYTHON_DIR / "vehicle_sil_control" / mod_name).read_text(encoding="utf-8"))
+            for node in tree.body:
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        self.assertNotIn("grpc", alias.name)
+                        self.assertFalse(alias.name.startswith("tests"))
+                elif isinstance(node, ast.ImportFrom):
+                    mod = node.module or ""
+                    self.assertNotIn("grpc", mod)
+                    self.assertNotEqual(mod, "client")
+                    self.assertNotEqual(mod, "_stubs")
+                    self.assertFalse(mod.startswith("tests"))
 
         support_path = _REPO_ROOT / "tests" / "serve" / "serve_support.py"
         support_tree = ast.parse(support_path.read_text(encoding="utf-8"))
@@ -1264,6 +1266,185 @@ class ServeUnitTest(unittest.TestCase):
                 self.assertEqual(st_done["status_rev"], 3)
                 self.assertEqual(st_done["last_run_id"], "0123456789abcdef-1")
                 self.assertTrue(envelope_keys.isdisjoint(st_done.keys()))
+
+    def test_why_includes_finding_detail_with_cap(self) -> None:
+        short_detail = "the end of its standard error:\nmissing libfoo.so.1"
+        ev = {
+            "event": "result",
+            "result": {
+                "result": "failed",
+                "findings": [],
+                "check": {
+                    "findings": [
+                        {"severity": "warning", "message": "ignored warning", "detail": "ignored detail"},
+                        {"severity": "error", "message": "describe failed", "detail": short_detail},
+                        {"severity": "error", "message": "second error", "detail": None},
+                        {"severity": "error", "message": "blank detail", "detail": "   \n  "},
+                    ],
+                },
+            },
+        }
+        why = _why(ev)
+        self.assertIn("describe failed", why)
+        self.assertIn("missing libfoo.so.1", why)
+        self.assertIn("second error", why)
+        self.assertIn("blank detail", why)
+        self.assertNotIn("ignored warning", why)
+        self.assertNotIn("ignored detail", why)
+        self.assertNotIn("second error (", why)
+        self.assertNotIn("blank detail (", why)
+
+        with self.assertRaises(LaunchError) as ctx:
+            control_address([ev])
+        self.assertIn("missing libfoo.so.1", str(ctx.exception))
+
+        # Long detail is truncated cleanly to _MAX_FINDING_DETAIL_CHARS + "...".
+        long_detail = "E" * (_MAX_FINDING_DETAIL_CHARS + 200)
+        long_ev = {
+            "event": "result",
+            "result": {
+                "result": "failed",
+                "findings": [{"severity": "error", "message": "boom", "detail": long_detail}],
+            },
+        }
+        long_why = _why(long_ev)
+        self.assertIn("E" * _MAX_FINDING_DETAIL_CHARS + "...", long_why)
+        self.assertNotIn("E" * (_MAX_FINDING_DETAIL_CHARS + 1), long_why)
+
+    def test_abnormal_exit_includes_command_returncode_and_stderr_tail(self) -> None:
+        # 1. Serve startup crash includes command, exit code, and stderr tail.
+        def crash_startup(cmd, **kw):
+            proc = _FakeProcess(cmd, auto_hello=False, stderr_pipe=True)
+            assert proc.stderr is not None
+            proc.stderr.push_raw(b"startup boom on stderr\n")
+            proc.finish(7)
+            return proc
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", side_effect=crash_startup):
+            with self.assertRaises(ServeError) as ctx:
+                Serve("/fake/launch", "sim.yaml", control=True, stderr=subprocess.PIPE, startup_timeout=5.0)
+        msg = str(ctx.exception)
+        self.assertIn("exit code 7", msg)
+        self.assertIn("/fake/launch serve --control 0 -- sim.yaml", msg)
+        self.assertIn("startup boom on stderr", msg)
+
+        # 2. Serve mid-run crash includes command, exit code, and stderr tail in RunHandle.wait() and wait_for_event().
+        def crash_mid_run(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "run":
+                proc.stdout.push_event({"event": "run_start", "seq": 10, "t_ms": 2, "run": "0123456789abcdef-1", "id": cmd["id"]})
+                assert proc.stderr is not None
+                proc.stderr.push_raw(b"mid-run segfault detail\n")
+                proc.finish(139)
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen",
+                        side_effect=lambda cmd, **kw: _FakeProcess(cmd, crash_mid_run, stderr_pipe=True)):
+            with Serve("/fake/launch", "sim.yaml", stderr=subprocess.PIPE) as runner:
+                run = runner.start()
+                with self.assertRaises(ServeError) as wait_ctx:
+                    run.wait()
+                self.assertIn("exit code 139", str(wait_ctx.exception))
+                self.assertIn("/fake/launch serve -- sim.yaml", str(wait_ctx.exception))
+                self.assertIn("mid-run segfault detail", str(wait_ctx.exception))
+                with self.assertRaises(ServeError) as ev_ctx:
+                    run.wait_for_event("control_server")
+                self.assertIn("exit code 139", str(ev_ctx.exception))
+                self.assertIn("mid-run segfault detail", str(ev_ctx.exception))
+
+        # 3. Serve crashes while answering prepare().
+        def crash_on_prepare(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "prepare":
+                assert proc.stderr is not None
+                proc.stderr.push_raw(b"prepare crashed\n")
+                proc.finish(2)
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen",
+                        side_effect=lambda cmd, **kw: _FakeProcess(cmd, crash_on_prepare, stderr_pipe=True)):
+            with Serve("/fake/launch", "sim.yaml", stderr=subprocess.PIPE) as runner:
+                with self.assertRaises(ServeError) as prep_ctx:
+                    runner.prepare()
+                self.assertIn("exit code 2", str(prep_ctx.exception))
+                self.assertIn("/fake/launch serve -- sim.yaml", str(prep_ctx.exception))
+                self.assertIn("prepare crashed", str(prep_ctx.exception))
+
+        # 4. Launch crash without result includes command, exit code, and stderr tail.
+        def crash_launch(cmd, **kw):
+            proc = _FakeProcess(cmd, auto_hello=False, stderr_pipe=True)
+            assert proc.stderr is not None
+            proc.stderr.push_raw(b"launch fatal stderr\n")
+            proc.finish(5)
+            return proc
+
+        with mock.patch("vehicle_sil_control.launcher.subprocess.Popen", side_effect=crash_launch):
+            with Launch("/fake/launch", "sim.yaml", stderr=subprocess.PIPE) as launch:
+                with self.assertRaises(LaunchError) as l_ctx:
+                    launch.wait()
+                self.assertIn("code 5", str(l_ctx.exception))
+                self.assertIn("/fake/launch serve --once --control 0 -- sim.yaml", str(l_ctx.exception))
+                self.assertIn("launch fatal stderr", str(l_ctx.exception))
+
+    def test_launch_pid_and_participant_pids(self) -> None:
+        # 1. Launch.pid and Launch.participant_pids.
+        def launch_popen(cmd, **kw):
+            proc = _FakeProcess(cmd, auto_hello=False)
+            proc.pid = 7777
+            proc.stdout.push_event({"event": "control_server", "seq": 1, "address": "127.0.0.1:5000"})
+            proc.stdout.push_event({"event": "participant", "seq": 2, "name": "Engine", "state": "started", "pid": 8001})
+            proc.stdout.push_event({"event": "participant", "seq": 3, "name": "Dashboard", "state": "started", "pid": 8002})
+            proc.stdout.push_event({"event": "participant", "seq": 4, "name": "Engine", "state": "joined"})
+            proc.stdout.push_event({"event": "participant", "seq": 5, "name": "Disabled", "state": "disabled"})
+            proc.stdout.push_event({"event": "participant", "seq": 6, "name": "BadPid", "state": "started", "pid": True})
+            proc.stdout.push_event({"event": "result", "seq": 7, "result": {"result": "passed"}})
+            proc.finish(0)
+            return proc
+
+        with mock.patch("vehicle_sil_control.launcher.subprocess.Popen", side_effect=launch_popen):
+            with Launch("/fake/launch", "sim.yaml") as launch:
+                self.assertEqual(launch.pid, 7777)
+                self.assertEqual(launch.wait()["result"], "passed")
+                pids = launch.participant_pids
+                self.assertEqual(pids, {"Engine": 8001, "Dashboard": 8002})
+                # Mutating the returned copy must not affect subsequent calls.
+                pids["Engine"] = 0
+                self.assertEqual(launch.participant_pids, {"Engine": 8001, "Dashboard": 8002})
+
+        # 2. RunHandle.participant_pids is isolated per run.
+        run_num = [0]
+
+        def serve_handler(proc: _FakeProcess, cmd: dict) -> None:
+            if cmd["command"] == "run":
+                run_num[0] += 1
+                n = run_num[0]
+                run_id = f"0123456789abcdef-{n}"
+                proc.stdout.push_event({"event": "run_start", "seq": n * 10, "t_ms": 1, "run": run_id, "id": cmd["id"]})
+                proc.stdout.push_event({
+                    "event": "participant",
+                    "seq": n * 10 + 1,
+                    "t_ms": 2,
+                    "run": run_id,
+                    "name": "Engine",
+                    "state": "started",
+                    "pid": 9000 + n,
+                })
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": n * 10 + 2,
+                    "t_ms": 3,
+                    "run": run_id,
+                    "launcher_ends": False,
+                    "status": {"launcher_state": "ready"},
+                    "result": {"result": "passed"},
+                })
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen",
+                        side_effect=lambda cmd, **kw: _FakeProcess(cmd, serve_handler)):
+            with Serve("/fake/launch", "sim.yaml") as runner:
+                r1 = runner.start()
+                r1.wait()
+                self.assertEqual(r1.participant_pids, {"Engine": 9001})
+                r2 = runner.start()
+                r2.wait()
+                self.assertEqual(r2.participant_pids, {"Engine": 9002})
+                self.assertEqual(r1.participant_pids, {"Engine": 9001})
 
 
 if __name__ == "__main__":
