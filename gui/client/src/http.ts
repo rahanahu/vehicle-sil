@@ -8,6 +8,8 @@ export interface HttpRequest {
   body?: unknown;
   /** How long to wait for the answer (ms). Omitted: the transport's default (DEFAULT_TIMEOUT_MS for fetchTransport). */
   timeoutMs?: number;
+  /** Forwarded to fetch() as `keepalive` so a request sent during `pagehide` can outlive the page. */
+  keepalive?: boolean;
 }
 
 /** Default time to wait for an answer (ms). A check (`api/check`) waits for the server's check limit plus this. */
@@ -124,6 +126,7 @@ export function fetchTransport(options: FetchTransportOptions): HttpTransport {
       redirect: 'error',
       signal: abort.signal,
     };
+    if (request.keepalive !== undefined) init.keepalive = request.keepalive;
     if (request.method === 'POST') init.body = JSON.stringify(request.body ?? {});
     const fail = (error: unknown) =>
       done({

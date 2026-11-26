@@ -27,7 +27,7 @@ function view(client: GuiClient) {
     pause: () => control.pause(),
     resume: () => control.resume(),
     step: (ms: number) => control.step(ms),
-    runUntil: (atMs: number) => control.send({ command: 'run_until', at_ms: atMs }),
+    runUntil: (atMs: number) => control.runUntil(atMs),
   };
 }
 type TimeView = ReturnType<typeof view>;
@@ -176,6 +176,7 @@ describe('TimeControl', () => {
 
   it('sends run_until with the time to pause at', async () => {
     const { time, socket } = await open();
+    expect(time.runUntil(500)).toEqual({ sent: false, reason: 'no-session' });
     await play(socket, 'ws-time', 0, standing);
     expect(time.runUntil(500)).toEqual({ sent: true });
     const sent = http.expectOne('api/time');
@@ -186,6 +187,7 @@ describe('TimeControl', () => {
       instance: '0123456789abcdef',
     });
     expect(time.sending()).toBe('run_until');
+    expect(time.runUntil(600)).toEqual({ sent: false, reason: 'waiting' });
   });
 
   it('does not call a small lateness within the tolerance late', async () => {

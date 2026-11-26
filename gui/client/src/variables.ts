@@ -1,4 +1,4 @@
-import { HttpError, HttpTransport, errorMessage } from './http';
+import { HttpError, HttpRequest, HttpTransport, errorMessage } from './http';
 import {
   Open,
   Unreadable,
@@ -196,6 +196,11 @@ export interface WriteOptions {
    * `operations`, so a widget can show "accepted, waiting to be applied" or know that it may send the next write.
    */
   onAccepted?: (operation: { session: string; seq: number }) => void;
+  /**
+   * Forwarded to the HTTP transport (`HttpRequest.keepalive` -> `fetch(..., { keepalive })`). Set `true` for a
+   * release write sent from a browser `pagehide` handler so the request can finish as the page unloads.
+   */
+  keepalive?: boolean;
 }
 
 /**
@@ -1072,7 +1077,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         this.operationsValue
           .get()
           .find((o) => o.seq === pending.seq && o.session === pending.session);
-      this.http({ method: 'POST', path: 'api/write', body }, (outcome) => {
+      const request: HttpRequest = { method: 'POST', path: 'api/write', body };
+      if (options.keepalive !== undefined) request.keepalive = options.keepalive;
+      this.http(request, (outcome) => {
         if (!this.pending.has(pending)) return; // close() failed it first
         if (!outcome.ok) {
           const error = outcome.error;

@@ -333,6 +333,7 @@ export function buildClient(options: ClientOptions): ClientParts {
       pause: () => time.pause(),
       resume: () => time.resume(),
       step: (ms) => time.step(ms),
+      runUntil: (atMs) => time.runUntil(atMs),
       setSpeed: (value) => time.setSpeed(value),
       send: (command) => time.send(command),
     },

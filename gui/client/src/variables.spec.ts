@@ -1111,6 +1111,36 @@ describe('variables: what the review found', () => {
     await deliver({ type: 'session', session: dead });
     expect(isHolding(client.session.session.get())).toBe(false);
   });
+
+  it('forwards optional keepalive on write() without changing the request body', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()), { type: 'synced', run_id: '1', last_seq: null });
+
+    const normal = client.variables.write({ Engine: { 'engine.demand': 10 } });
+    const req1 = http.expectOne('api/write');
+    expect(req1.request.keepalive).toBeUndefined();
+    expect(req1.request.body).toEqual({
+      run_id: '1',
+      writes: { Engine: { 'engine.demand': 10 } },
+    });
+    req1.flush({ run_id: '1', operation: 1 });
+    await deliver(operation(1, 'applied', true));
+    await expect(normal).resolves.toMatchObject({ seq: 1, state: 'applied' });
+
+    const unloading = client.variables.write(
+      { Engine: { 'engine.demand': 0 } },
+      { keepalive: true },
+    );
+    const req2 = http.expectOne('api/write');
+    expect(req2.request.keepalive).toBe(true);
+    expect(req2.request.body).toEqual({
+      run_id: '1',
+      writes: { Engine: { 'engine.demand': 0 } },
+    });
+    req2.flush({ run_id: '1', operation: 2 });
+    await deliver(operation(2, 'applied', true));
+    await expect(unloading).resolves.toMatchObject({ seq: 2, state: 'applied' });
+  });
 });
 
 describe('the variables examples of the protocol', () => {

@@ -2332,6 +2332,59 @@ describe('the front door', () => {
       stop();
       expect(variable.get().value).toBeNull();
     });
+
+    it('forwards optional keepalive on variable.write() without changing the request body', async () => {
+      const rig = await running();
+      await rig.deliver({
+        type: 'variables',
+        run_id: '1',
+        variables: {
+          state: 'ready',
+          reason: null,
+          peers: [
+            {
+              name: 'Engine',
+              connected: true,
+              variables: [
+                {
+                  name: 'engine.offset',
+                  type: 'real',
+                  role: 'input',
+                  writable: true,
+                  unit: 'rpm',
+                  min: null,
+                  max: null,
+                  step: null,
+                  description: '',
+                  enum: null,
+                },
+              ],
+            },
+          ],
+          peers_omitted: 0,
+          variables_omitted: 0,
+          operations: [],
+        },
+      });
+      const variable = rig.front.variable(named);
+      const release = variable.write(0, { keepalive: true });
+      const sent = rig.http.expectOne('api/write');
+      expect(sent.request.keepalive).toBe(true);
+      expect(sent.request.body).toEqual({
+        run_id: '1',
+        writes: { Engine: { 'engine.offset': 0 } },
+      });
+      sent.flush({ run_id: '1', operation: 7 });
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 7,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 500, late: false, reason: null } },
+      });
+      await expect(release).resolves.toBeUndefined();
+    });
   });
 
   describe('watch and until', () => {
