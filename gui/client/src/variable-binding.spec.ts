@@ -981,6 +981,29 @@ describe('client.variables.bind', () => {
       demand.close();
     });
 
+    it('surfaces peer and reading faults ahead of reconnect refresh staleness and keeps isStale internal', async () => {
+      expect('isStale' in client.variables).toBe(false);
+      const demand = client.variables.bind(ref('engine.demand'));
+      await deliver(hello('ready', 1), synced(1), values(100, false, { 'engine.demand': 25 }));
+      expect(demand.state.get().condition.kind).toBe('live');
+
+      socket().fail();
+      await vi.advanceTimersByTimeAsync(500);
+      socket().open();
+      await deliver(hello('ready', 1, { variables: variables('ready', false) }), synced(1));
+      expect(demand.state.get().condition).toMatchObject({ kind: 'stale', why: 'peer' });
+
+      await deliver(changed('ready', true, { reason: 'read failed' }));
+      expect(demand.state.get().condition).toMatchObject({ kind: 'stale', why: 'reading' });
+
+      await deliver(changed('ready', true, { reason: null }));
+      expect(demand.state.get().condition).toMatchObject({ kind: 'stale', why: 'connection' });
+
+      await deliver(values(200, false, { 'engine.demand': 30 }));
+      expect(demand.state.get().condition).toMatchObject({ kind: 'live', reading: { value: 30 } });
+      demand.close();
+    });
+
     it('updates VariablesFeed before notifying ready so immediate post-reconnect writes target the new run', async () => {
       const demand = client.variables.bind(ref('engine.demand'));
       await deliver(hello('ready', 1), synced(1), values(100, false, { 'engine.demand': 10 }));

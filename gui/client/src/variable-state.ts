@@ -69,9 +69,9 @@ export function valueCondition(input: ConditionInput): ValueCondition {
   if (!input.connected) return { kind: 'stale', reading, why: 'connection' };
   if (status === 'ended') return { kind: 'ended', reading };
   if (status !== 'ready') return { kind: 'stale', reading, why: 'reconnecting' };
-  if (input.awaitingRefresh) return { kind: 'stale', reading, why: 'connection' };
   if (!input.peerConnected) return { kind: 'stale', reading, why: 'peer' };
   if (input.readFailing) return { kind: 'stale', reading, why: 'reading' };
+  if (input.awaitingRefresh) return { kind: 'stale', reading, why: 'connection' };
   return reading.paused ? { kind: 'paused', reading } : { kind: 'live', reading };
 }
 

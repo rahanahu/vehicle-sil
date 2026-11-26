@@ -156,7 +156,7 @@ A screen can pass the `RunTarget` it captured when rendering a control to `front
 
 | Kind     | Name                                                                                                                                                                  |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Type     | `ClientVariables` (`state`, `operations`, `watchProblem`, `watch`, `write`, `bind`, `isStale?`)                                                                       |
+| Type     | `ClientVariables` (`state`, `operations`, `watchProblem`, `watch`, `write`, `bind`)                                                                                   |
 | Type     | `VariableWatch` (`values`, `value`, `history`, `close`)                                                                                                               |
 | Type     | `VariablesState`, `VariablesStatus`, `VariablePeer`, `VariableInfo`, `VariableRef`, `VariableValue`, `WatchOptions`, `WatchValues`, `VariableReading`, `HistoryPoint` |
 | Type     | `WriteOptions`, `OperationView`, `OperationPeer`, `WatchProblem`                                                                                                      |

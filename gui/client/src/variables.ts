@@ -274,11 +274,6 @@ export interface ClientVariables {
    * recreating a bind). Call close() when done with it.
    */
   bind(ref: VariableRef, options?: BindOptions): VariableBinding;
-  /**
-   * Whether the cached value for `ref` was kept across a reconnect and is still awaiting its first post-reconnect
-   * `values` sample.
-   */
-  isStale?(ref: VariableRef): boolean;
 }
 
 /** Default time to wait for the result of a write (ms). */
@@ -730,6 +725,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
                 notifyOperations = this.prepareOperations(currentOps, listed, sameIdentity);
               }
               const next = readVariables(variables, id);
+              if (next.status === 'ended' || next.status === 'off' || next.status === 'failed') {
+                this.awaitingRefresh.clear();
+              }
               this.stateValue.set(next);
               notifyOperations();
               if (
@@ -784,7 +782,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
               touchedAll = true;
             }
           }
-          this.stateValue.set(readVariables(details, id));
+          const next = readVariables(details, id);
+          if (next.status === 'ended' || next.status === 'off' || next.status === 'failed') {
+            this.awaitingRefresh.clear();
+          }
+          this.stateValue.set(next);
           break;
         }
         case 'values': {

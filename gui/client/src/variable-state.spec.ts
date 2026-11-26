@@ -43,7 +43,7 @@ describe('the condition of a value and whether it can be written', () => {
       kind: 'stale',
       why: 'reconnecting',
     });
-    // Kept reading after a reconnect to the same run stays stale until refreshed, unless ended or reconnecting
+    // Kept reading after a reconnect to the same run stays stale until refreshed, without masking active faults or ended
     expect(valueCondition({ ...base, reading, awaitingRefresh: true })).toMatchObject({
       kind: 'stale',
       why: 'connection',
@@ -53,6 +53,18 @@ describe('the condition of a value and whether it can be written', () => {
     ).toMatchObject({
       kind: 'stale',
       why: 'reconnecting',
+    });
+    expect(
+      valueCondition({ ...base, reading, peerConnected: false, awaitingRefresh: true }),
+    ).toMatchObject({
+      kind: 'stale',
+      why: 'peer',
+    });
+    expect(
+      valueCondition({ ...base, reading, readFailing: true, awaitingRefresh: true }),
+    ).toMatchObject({
+      kind: 'stale',
+      why: 'reading',
     });
     expect(valueCondition({ ...base, reading, status: 'ended', awaitingRefresh: true }).kind).toBe(
       'ended',

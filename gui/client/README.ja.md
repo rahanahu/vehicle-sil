@@ -156,7 +156,7 @@ editor.setVisible(true);
 
 | 種類   | 名前                                                                                                                                                                  |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 型     | `ClientVariables`（`state`、`operations`、`watchProblem`、`watch`、`write`、`bind`、`isStale?`）                                                                      |
+| 型     | `ClientVariables`（`state`、`operations`、`watchProblem`、`watch`、`write`、`bind`）                                                                                  |
 | 型     | `VariableWatch`（`values`、`value`、`history`、`close`）                                                                                                              |
 | 型     | `VariablesState`、`VariablesStatus`、`VariablePeer`、`VariableInfo`、`VariableRef`、`VariableValue`、`WatchOptions`、`WatchValues`、`VariableReading`、`HistoryPoint` |
 | 型     | `WriteOptions`、`OperationView`、`OperationPeer`、`WatchProblem`                                                                                                      |

@@ -346,7 +346,6 @@ export function buildClient(options: ClientOptions): ClientParts {
       watch: (wanted, watchOptions) => variables.watch(wanted, watchOptions),
       write: (writes, writeOptions) => variables.write(writes, writeOptions),
       bind: (ref, bindOptions) => binder.bind(ref, bindOptions),
-      isStale: (ref) => variables.isStale(ref),
     },
     app: app.readonly(),
     limits: limits.readonly(),
