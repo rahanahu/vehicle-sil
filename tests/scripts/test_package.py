@@ -234,6 +234,7 @@ class PackageVersionSyncTest(unittest.TestCase):
         "gui/server/src/vehicle_sil_gui/__init__.py",
         "template/get_tools.py",
         "template/CMakeLists.txt",
+        "examples/fetchcontent_consumer/CMakeLists.txt",
         "template/README.md",
         "template/README.ja.md",
     )
@@ -310,6 +311,7 @@ class PackageVersionSyncTest(unittest.TestCase):
         self.assertEqual(rc, 0, err.getvalue())
         self.assertIn("9.8.7-rc.1", out.getvalue())
         self.assertIn("would update pyproject.toml", out.getvalue())
+        self.assertIn("would update examples/fetchcontent_consumer/CMakeLists.txt", out.getvalue())
         self.assertIn("would update template/README.ja.md", out.getvalue())
         self.assertIn("would update uv.lock (via uv lock --offline)", out.getvalue())
         self.assertIn("warning: CHANGELOG.md", err.getvalue())
@@ -353,6 +355,10 @@ class PackageVersionSyncTest(unittest.TestCase):
 
                 non_changelog = [p for p in package_mod.version_problems(expected_ver) if not p.startswith("CHANGELOG.md")]
                 self.assertEqual(non_changelog, [])
+                self.assertIn(
+                    f'set(VEHICLE_SIL_GIT_TAG "v{expected_ver}"',
+                    (tree / "examples" / "fetchcontent_consumer" / "CMakeLists.txt").read_text(encoding="utf-8"),
+                )
 
                 # Second run is a no-op and does not re-run uv lock.
                 out2, err2 = io.StringIO(), io.StringIO()

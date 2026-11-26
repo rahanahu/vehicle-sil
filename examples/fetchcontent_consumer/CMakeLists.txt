@@ -13,8 +13,9 @@ include(FetchContent)
 
 set(VEHICLE_SIL_GIT_REPOSITORY "https://github.com/rahanahu/vehicle-sil.git"
     CACHE STRING "vehicle-sil git repository")
-# Pin a full commit hash. Override with -DVEHICLE_SIL_GIT_TAG=<commit>.
-set(VEHICLE_SIL_GIT_TAG "main" CACHE STRING "vehicle-sil commit to use")
+# Pin a release tag (kept in sync with the tools version) or a full commit hash.
+# Override with -DVEHICLE_SIL_GIT_TAG=<tag-or-commit>.
+set(VEHICLE_SIL_GIT_TAG "v0.4.0" CACHE STRING "vehicle-sil release tag or commit to use")
 
 FetchContent_Declare(
   vehicle_sil

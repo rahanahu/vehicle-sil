@@ -59,7 +59,8 @@ Commands:
             gui/server/pyproject.toml, uv.lock (when present, PEP 440 form),
             gui/server/src/vehicle_sil_gui/__init__.py (__version__), python/vehicle_sil_control/__init__.py
             (__version__), template/get_tools.py (VERSION), the versions that template/README*.md name,
-            template/CMakeLists.txt (GIT_TAG v<version>), CHANGELOG.md (a heading "## [<version>] - Unreleased" or
+            template/CMakeLists.txt (GIT_TAG v<version>), examples/fetchcontent_consumer/CMakeLists.txt
+            (VEHICLE_SIL_GIT_TAG "v<version>"), CHANGELOG.md (a heading "## [<version>] - Unreleased" or
             "## [<version>] - YYYY-MM-DD"). --expect v<version> also checks a tag, and that the heading has the
             release date. --check checks read-only (default); --sync updates the derived files and uv.lock (via
             uv lock --offline) from CMakeLists.txt without modifying CHANGELOG.md (--dry-run previews).
@@ -306,6 +307,7 @@ def version_problems(version: str, release: bool = False) -> list[str]:
         ("template/get_tools.py", r'(?m)^VERSION = "([^"]*)"', '{}'),
         ("gui/server/src/vehicle_sil_gui/__init__.py", r'(?m)^__version__ = "([^"]*)"', '{}'),
         ("template/CMakeLists.txt", r"GIT_TAG\s+(\S+)", 'v{}'),
+        ("examples/fetchcontent_consumer/CMakeLists.txt", r'set\(VEHICLE_SIL_GIT_TAG\s+"([^"]*)"', 'v{}'),
     ]
     problems = []
     for name, pattern, form in checks:
@@ -338,6 +340,7 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
         ("gui/server/src/vehicle_sil_gui/__init__.py", r'(?m)^(__version__ = )"[^"]*"', '"{}"'),
         ("template/get_tools.py", r'(?m)^(VERSION = )"[^"]*"', '"{}"'),
         ("template/CMakeLists.txt", r"(GIT_TAG\s+)\S+", "v{}"),
+        ("examples/fetchcontent_consumer/CMakeLists.txt", r'(set\(VEHICLE_SIL_GIT_TAG\s+)"[^"]*"', '"v{}"'),
     ]
     updates: list[tuple[str, str]] = []
     errors: list[str] = []
