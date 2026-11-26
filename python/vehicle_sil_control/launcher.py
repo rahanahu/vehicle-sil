@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import threading
 import time
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+
+_MAX_FINDING_DETAIL_CHARS = 500
 
 
 class LaunchError(Exception):
@@ -39,11 +42,37 @@ def control_address(events: Iterable[Union[str, bytes, Mapping]]) -> str:
     raise LaunchError("the events ended before the control server started")
 
 
+def _format_finding(finding: Mapping) -> str:
+    msg = str(finding.get("message") or "")
+    raw_detail = finding.get("detail")
+    if isinstance(raw_detail, str):
+        detail = raw_detail.strip()
+        if detail:
+            if len(detail) > _MAX_FINDING_DETAIL_CHARS:
+                head_len = _MAX_FINDING_DETAIL_CHARS * 2 // 5
+                tail_len = _MAX_FINDING_DETAIL_CHARS - head_len
+                detail = f"{detail[:head_len]} ... {detail[-tail_len:]}"
+            return f"{msg} ({detail})" if msg else detail
+    return msg
+
+
 def _why(result_event: Mapping) -> str:
     result = result_event.get("result") or {}
     findings = list(result.get("findings") or []) + list((result.get("check") or {}).get("findings") or [])
-    errors = [f["message"] for f in findings if f.get("severity") == "error"]
+    errors = [text for f in findings if f.get("severity") == "error" for text in (_format_finding(f),) if text]
     return f"result {result.get('result')!r}" + (": " + "; ".join(errors) if errors else "")
+
+
+def _participant_pids(events: Iterable[Mapping[str, Any]]) -> Dict[str, int]:
+    """Participant name -> PID from Events v4 `participant`/`started` events seen so far."""
+    pids: Dict[str, int] = {}
+    for e in events:
+        if e.get("event") == "participant" and e.get("state") == "started":
+            name = e.get("name")
+            pid = e.get("pid")
+            if isinstance(name, str) and isinstance(pid, int) and not isinstance(pid, bool):
+                pids[name] = pid
+    return pids
 
 
 _HOST_VALUE_OPTIONS = frozenset({
@@ -159,6 +188,7 @@ class Launch:
             "--",
             os.fspath(config),
         ]
+        self.command: List[str] = command
         self.events: List[dict] = []
         self.result: Optional[dict] = None
         self.bad_lines: List[bytes] = []
@@ -173,14 +203,14 @@ class Launch:
             stderr=stderr,
             cwd=cwd,
         )
-        self._reader = threading.Thread(target=self._read, name="vehicle_sil_launch events", daemon=True)
-        self._reader.start()
         self._stderr_reader = None
         if stderr == subprocess.PIPE:
             self._stderr_reader = threading.Thread(
                 target=self._read_stderr, name="vehicle_sil_launch stderr", daemon=True
             )
             self._stderr_reader.start()
+        self._reader = threading.Thread(target=self._read, name="vehicle_sil_launch events", daemon=True)
+        self._reader.start()
         self.send(run_cmd)
 
     def _read(self) -> None:
@@ -203,6 +233,8 @@ class Launch:
         except (OSError, ValueError):
             pass
         finally:
+            if self._stderr_reader is not None:
+                self._stderr_reader.join(0.2)
             with self._changed:
                 self._ended = True
                 self._changed.notify_all()
@@ -230,12 +262,30 @@ class Launch:
                     ):
                         return e
                 if self.result is not None or self._ended:
-                    why = _why({"result": self.result}) if self.result is not None else "its events ended"
+                    if self.result is not None:
+                        why = _why({"result": self.result})
+                    else:
+                        code = self._process.poll()
+                        code_part = f"exit code {code}" if code is not None else "exit code unknown"
+                        stderr_tail = self.stderr_text.strip()
+                        detail = f": {stderr_tail[-400:]}" if stderr_tail else ""
+                        why = f"its events ended ({code_part}; command: {shlex.join(self.command)}){detail}"
                     raise LaunchError(f"vehicle_sil_launch wrote no {event} event {keys or ''}: {why}")
                 left = deadline - time.monotonic()
                 if left <= 0:
                     raise LaunchError(f"no {event} event {keys or ''} within {timeout} s")
                 self._changed.wait(left)
+
+    @property
+    def pid(self) -> int:
+        """The child launcher process PID."""
+        return self._process.pid
+
+    @property
+    def participant_pids(self) -> Dict[str, int]:
+        """Mapping of participant name -> PID from Events v4 `participant`/`started` events seen so far."""
+        with self._changed:
+            return _participant_pids(self.events)
 
     @property
     def address(self) -> str:
@@ -268,7 +318,12 @@ class Launch:
         if self._stderr_reader is not None:
             self._stderr_reader.join(10)
         if self.result is None:
-            raise LaunchError(f"vehicle_sil_launch ended with code {self._process.returncode} and wrote no result")
+            stderr_tail = self.stderr_text.strip()
+            detail = f": {stderr_tail[-400:]}" if stderr_tail else ""
+            raise LaunchError(
+                f"vehicle_sil_launch ended with code {self._process.returncode} and wrote no result"
+                f" (command: {shlex.join(self.command)}){detail}"
+            )
         return self.result
 
     @property

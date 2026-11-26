@@ -19,6 +19,7 @@ from __future__ import annotations
 import collections
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from .launcher import LaunchError, _why
+from .launcher import LaunchError, _participant_pids, _why
 from .protocol import (
     MAX_COMMAND_ID,
     MAX_COMMAND_LINE,
@@ -110,6 +111,12 @@ class RunHandle:
         with self._serve._changed:
             return list(self._events)
 
+    @property
+    def participant_pids(self) -> Dict[str, int]:
+        """Mapping of participant name -> PID from Events v4 `participant`/`started` events seen so far."""
+        with self._serve._changed:
+            return _participant_pids(self._events)
+
     def _append_event(self, event: dict, keep_logs: bool) -> None:
         if keep_logs or event.get("event") != "log":
             self._events.append(event)
@@ -128,7 +135,10 @@ class RunHandle:
                     ):
                         return e
                 if self._result_event is not None or self._serve._ended:
-                    why = _why(self._result_event) if self._result_event is not None else "its events ended"
+                    if self._result_event is not None:
+                        why = _why(self._result_event)
+                    else:
+                        why = f"its events ended{self._serve._exit_context_locked()}"
                     raise ServeError(f"run {self._id} wrote no {event} event {keys or ''}: {why}")
                 self._serve._check_not_reader_thread(f"RunHandle.wait_for_event({event!r})")
                 left = deadline - time.monotonic()
@@ -191,7 +201,7 @@ class RunHandle:
                     raise ServeError(f"run {self._id} did not finish within {timeout} s")
                 self._serve._changed.wait(left)
             if self._result_event is None:
-                raise ServeError(f"run {self._id} ended without writing a result")
+                raise ServeError(f"run {self._id} ended without writing a result{self._serve._exit_context_locked()}")
             return self._result_event["result"]
 
     def __enter__(self) -> "RunHandle":
@@ -328,18 +338,18 @@ class Serve:
         except OSError as exc:
             raise ServeError(f"cannot start {os.fspath(launcher)}: {exc}") from exc
 
-        self._reader: Optional[threading.Thread] = None
-        if stdout == subprocess.PIPE:
-            self._reader = threading.Thread(target=self._read, name="vehicle_sil_launch serve events", daemon=True)
-            self._reader.start()
-        else:
-            self._ended = True
         self._stderr_reader: Optional[threading.Thread] = None
         if stderr == subprocess.PIPE:
             self._stderr_reader = threading.Thread(
                 target=self._read_stderr, name="vehicle_sil_launch serve stderr", daemon=True
             )
             self._stderr_reader.start()
+        self._reader: Optional[threading.Thread] = None
+        if stdout == subprocess.PIPE:
+            self._reader = threading.Thread(target=self._read, name="vehicle_sil_launch serve events", daemon=True)
+            self._reader.start()
+        else:
+            self._ended = True
 
         if not wait_ready:
             return
@@ -362,17 +372,24 @@ class Serve:
         with self._changed:
             startup_result = self._startup_result
             ended = self._ended
-            stderr_tail = "".join(self._stderr_chunks).strip()
+            exit_context = self._exit_context_locked()
         if startup_result is not None:
             reason = _startup_failure_reason(startup_result)
             raise ServeError(f"vehicle_sil_launch serve failed at startup: {_why(startup_result)}", reason=reason)
         if timed_out:
             raise ServeError(f"vehicle_sil_launch serve did not become ready within {startup_timeout} s")
-        code = self._process.returncode
-        detail = f": {stderr_tail[-400:]}" if stderr_tail else ""
         if ended:
-            raise ServeError(f"vehicle_sil_launch serve ended during startup (exit code {code}){detail}")
-        raise ServeError(f"vehicle_sil_launch serve failed to start (exit code {code}){detail}")
+            raise ServeError(f"vehicle_sil_launch serve ended during startup{exit_context}")
+        raise ServeError(f"vehicle_sil_launch serve failed to start{exit_context}")
+
+    def _exit_context_locked(self) -> str:
+        """Diagnostic suffix for abnormal process exit (caller holds `self._changed`)."""
+        code = self._process.poll()
+        stderr_tail = "".join(self._stderr_chunks).strip()
+        code_part = f"exit code {code}" if code is not None else "exit code unknown"
+        cmd_part = shlex.join(self.command)
+        detail = f": {stderr_tail[-400:]}" if stderr_tail else ""
+        return f" ({code_part}; command: {cmd_part}){detail}"
 
     def _dispatch_event(self, event: dict) -> None:
         if self._on_event is not None:
@@ -474,6 +491,8 @@ class Serve:
         except (OSError, ValueError):
             pass
         finally:
+            if self._stderr_reader is not None:
+                self._stderr_reader.join(0.2)
             with self._changed:
                 self._active_run = None
                 self._ended = True
@@ -524,7 +543,7 @@ class Serve:
         with self._changed:
             while self._hello is None:
                 if self._ended:
-                    raise ServeError("vehicle_sil_launch serve events ended without hello")
+                    raise ServeError(f"vehicle_sil_launch serve events ended without hello{self._exit_context_locked()}")
                 self._check_not_reader_thread("hello/instance before hello is processed")
                 left = deadline - time.monotonic()
                 if left <= 0:
@@ -563,7 +582,8 @@ class Serve:
 
     def _next_command_id(self) -> int:
         if self._closed or self._ended:
-            raise ServeError("vehicle_sil_launch serve has ended")
+            suffix = self._exit_context_locked() if self._ended and not self._closed else ""
+            raise ServeError(f"vehicle_sil_launch serve has ended{suffix}")
         for _ in range(len(self._pending) + 1):
             cmd_id = self._next_id
             self._next_id = 1 if cmd_id >= MAX_COMMAND_ID else cmd_id + 1
@@ -583,6 +603,7 @@ class Serve:
 
     def _write_line(self, line_bytes: bytes) -> None:
         wire = line_bytes + b"\n"
+        write_exc: Optional[Exception] = None
         with self._write_lock:
             if self._process.stdin is None or self._process.stdin.closed:
                 raise ServeError("vehicle_sil_launch serve stdin is closed")
@@ -590,7 +611,13 @@ class Serve:
                 self._process.stdin.write(wire)
                 self._process.stdin.flush()
             except (BrokenPipeError, ValueError, OSError) as exc:
-                raise ServeError(f"cannot write command to vehicle_sil_launch serve: {exc}") from exc
+                write_exc = exc
+        if write_exc is not None:
+            if self._stderr_reader is not None and not self._closed and self._stderr_reader.is_alive():
+                self._stderr_reader.join(0.2)
+            with self._changed:
+                suffix = self._exit_context_locked() if not self._closed else ""
+            raise ServeError(f"cannot write command to vehicle_sil_launch serve: {write_exc}{suffix}") from write_exc
 
     def _unlink_temp(self, path: Optional[str]) -> None:
         if path is None:
@@ -648,7 +675,7 @@ class Serve:
                         ev = slot.refusal
                         raise ServeError(ev.get("message") or "prepare refused", reason=ev.get("reason"))
                     if self._ended:
-                        raise ServeError("vehicle_sil_launch serve ended before answering prepare")
+                        raise ServeError(f"vehicle_sil_launch serve ended before answering prepare{self._exit_context_locked()}")
                     left = deadline - time.monotonic()
                     if left <= 0:
                         raise ServeError(f"prepare did not answer within {timeout} s")
@@ -677,7 +704,7 @@ class Serve:
                         ev = slot.refusal
                         raise ServeError(ev.get("message") or "status refused", reason=ev.get("reason"))
                     if self._ended:
-                        raise ServeError("vehicle_sil_launch serve ended before answering status")
+                        raise ServeError(f"vehicle_sil_launch serve ended before answering status{self._exit_context_locked()}")
                     left = deadline - time.monotonic()
                     if left <= 0:
                         raise ServeError(f"status did not answer within {timeout} s")
@@ -858,7 +885,7 @@ class Serve:
                     if self._ended:
                         temp_to_delete = temp_request_path
                         temp_request_path = None
-                        raise ServeError("vehicle_sil_launch serve ended before starting the run")
+                        raise ServeError(f"vehicle_sil_launch serve ended before starting the run{self._exit_context_locked()}")
                     left = deadline - time.monotonic()
                     if left <= 0:
                         raise ServeError(f"run did not start within {timeout} s")

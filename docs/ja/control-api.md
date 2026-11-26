@@ -109,7 +109,7 @@ vehicle_sil_launch run --stdin-commands --start-paused --control 0 simulation.ya
 | 呼び出しで実行を名乗る方法 | メタデータ `vehicle-sil-run: <ID>`。Python では `Control(address, run=<ID>)`、`Control.for_current_run(address)`、または `Serve` の `run.control()` です（[Python](#python)）。 |
 | 別の実行を名乗る呼び出し | `FAILED_PRECONDITION` で断ります。trailing metadata の `vehicle-sil-reason` は `run-changed` です。呼び出しの中身は ECU にも時刻にも届きません。 |
 | 実行を名乗らない呼び出し（`vehicle_sil_launch run`） | 受けます（実行に ID がなかったころと同じです）。 |
-| 実行を名乗らない呼び出し（`vehicle_sil_launch serve`。1 つのランチャーが実行を 1 つずつ順に行う。[simulation-run.md](simulation-run.md)） | `FAILED_PRECONDITION` で断ります。`vehicle-sil-reason` は `run-required` です。 |
+| 実行を名乗らない呼び出し（`vehicle_sil_launch serve`。1 つのランチャーが実行を 1 つずつ順に行う。[simulation-run.md](simulation-run.md)） | `FAILED_PRECONDITION` で断ります。`vehicle-sil-reason` は `run-required` です。Python では、`ControlError` に `Control.for_current_run()` または `Control(..., run=...)` を案内するヒントが付きます。 |
 | `Ping` | 実行を理由に断ることはありません。クライアントがいつでも今の実行を知れるようにするためです。 |
 | 確かめる順序 | トークン（`UNAUTHENTICATED`）、ロール（`PERMISSION_DENIED`）、実行の順です。正しいトークンのないクライアントは実行について何も知れず、トークンのあるクライアントも `Ping` で分かること以上は知れません。 |
 | 監査ログ | 各行の先頭に `[run <ID>] ` が付きます。1 つのファイル（`--control-audit-log`）に複数の実行の行が入っても区別できます。断った呼び出しの行には、名乗った実行も書きます。 |
@@ -485,6 +485,7 @@ with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulati
 | メンバー | 内容 |
 |---|---|
 | `address` | Control Server のアドレスです（イベント `control_server` を待って返します）。 |
+| `pid`、`participant_pids` | ランチャーの子プロセスの PID（`int`）と、これまで読んだ Events v4 の `participant`/`started` イベントから起動済み participant 名を PID に写す `dict[str, int]` です。 |
 | `events` | 読んだイベントの dict の一覧です（`bad_lines` は不正な標準出力行、`stderr_text` は `stderr=subprocess.PIPE` 時の標準エラー出力）。 |
 | `result` | 結果です。 |
 | `wait_for_event(event, timeout=60.0, after=None, **keys)` | キーの値が合う最初のイベントを待ちます。 |
@@ -494,7 +495,7 @@ with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulati
 | `close()` | 動いていればランチャーを停止し、パイプを閉じます（`__exit__` が呼びます）。 |
 | `returncode` | ランチャーの終了コードです。 |
 
-ランチャーが結果を出力せずに終わったときと、待つイベントが来ないまま実行が終わったときは、`LaunchError` です（メッセージに、結果とエラーの指摘があります）。
+ランチャーが結果を出力せずに終わったときと、待つイベントが来ないまま実行が終わったときは、`LaunchError` です（メッセージに、結果、エラーの指摘とその `detail`（`--describe` の標準エラーなど、上限 500 文字）、結果なしの異常終了時にはコマンド・終了コード・標準エラー末尾を含みます）。
 
 自分でランチャーを起動するときは、`control_address(lines)` が、イベントの行（文字列か dict）から最初の `control_server` の `address` を返します。
 
@@ -534,7 +535,7 @@ with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulatio
 |---|---|
 | `id`、`run_id` | ランチャーが付けた不透明な実行 ID です。 |
 | `address` | この実行の Control Server のアドレスです（この実行の `control_server` イベントを待って返します）。 |
-| `start_event`、`result_event`、`events`、`result`、`status`、`launcher_ends` | `run_start` イベント、終了後の `result` イベント、この実行のイベント一覧、`result` の dict と内包された確定済み `status`（`ExecutionStatus`）、この実行でランチャーが終わるかどうかです。 |
+| `start_event`、`result_event`、`events`、`participant_pids`、`result`、`status`、`launcher_ends` | `run_start` イベント、終了後の `result` イベント、この実行のイベント一覧、この実行の `participant`/`started` イベントから participant 名を PID に写す `dict[str, int]`、`result` の dict と内包された確定済み `status`（`ExecutionStatus`）、この実行でランチャーが終わるかどうかです。 |
 | `wait_for_event(event, timeout=60.0, after=None, **keys)` | この実行のイベントから、キーの値が合う最初のイベントを待ちます。 |
 | `control(**options)` | `Control(run.address, run=run.id, **options)` を返します。`run=...` を渡すと `TypeError` になります。 |
 | `send(command)` | この実行宛ての標準入力コマンド（`"run": run.id`）を送ります。 |
@@ -543,7 +544,7 @@ with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulatio
 
 `Serve` は終わった実行の履歴を持たず、ストリーム全体の `events` リストも溜めません。実行の `result` イベントが届くと、`Serve` はその `RunHandle` への参照を外すため、呼び出し側がハンドルを手放した時点でその実行のイベントと結果が解放されます（`keep_logs=False` にすると `RunHandle.events` に `"log"` イベントを含めません）。ストリーム全体のイベントを監視したいとき（`keep_logs=False` でも `"log"` イベントを受け取れます）は `on_event=callback` を渡します。`on_event` は読み取りスレッド上で `Serve` のロックの外から順に呼ばれ、`Serve` が状態を更新して待機中の呼び出しを起こす前に完了します（そのため `Serve()`、`prepare()`、`start()`、`run.wait()`、`close()` が返った時点で対応するイベントは配信済みです）。各呼び出しにはイベントの浅いコピー（`dict`）を渡します。入れ子の値は読み取り専用として扱い、コールバック内では `close()`、`wait()`、およびイベントを待つブロッキング呼び出し・プロパティ（`prepare()`、`status()`、`start()`、`run.wait()`、`run.wait_for_event()`、および該当イベントの処理前に `hello`、`instance`、`run.address`、`run.control()` を読む操作）を行わないでください（呼び出すと `ServeError` になります）。`on_event` が例外を上げても読み取りスレッドは止めず、`sys.excepthook` へ渡します。
 
-`with runner.start(...)` を抜けると、その実行だけを止めて（`force=False`）確定済みの `status` を持つ `result` を待ち、`once=True` や `launcher_ends` が真でない限り `Serve` は次の実行のために生かしたままにします。`launcher_ends: true`（たとえば汚染時の終了コード 6 や、`once=True` の 1 回実行）で終わった後は、次の実行を始められません。`with Serve(...)` を抜けると常駐ランチャーを閉じます。コマンドが拒否されたとき、時間切れのとき、または起動に失敗したとき（`once=True` なしの `VEHICLE_SIL_TRACE` を含み、`reason="trace-enabled"` で報告されます）は、`ServeError`（`LaunchError` のサブクラス）を上げ、理由があれば `reason` に設定します。
+`with runner.start(...)` を抜けると、その実行だけを止めて（`force=False`）確定済みの `status` を持つ `result` を待ち、`once=True` や `launcher_ends` が真でない限り `Serve` は次の実行のために生かしたままにします。`launcher_ends: true`（たとえば汚染時の終了コード 6 や、`once=True` の 1 回実行）で終わった後は、次の実行を始められません。`with Serve(...)` を抜けると常駐ランチャーを閉じます。コマンドが拒否されたとき、時間切れのとき、または起動失敗・予期せぬ終了のとき（`once=True` なしの `VEHICLE_SIL_TRACE` を含み、`reason="trace-enabled"` で報告されます）は、`ServeError`（`LaunchError` のサブクラス）を上げ、理由があれば `reason` に設定します。メッセージには指摘の `detail`（`--describe` の標準エラーなど）を含み、プロセスの異常終了経路ではコマンド・終了コード・標準エラー末尾を含みます。
 
 ### 接続して読み書きする（`Control`）
 
@@ -565,14 +566,16 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
         break
 ```
 
-時刻は、仮想時間のナノ秒です（`ms()`、`s()` で作ります）。指定時刻がすでに過ぎていた場合に次のステップで反映するには `c.write(..., at=..., late="apply_next")` を渡します（既定は `"reject"`）。
+時刻は、仮想時間のナノ秒です（`ms()`、`s()` で作ります）。指定時刻がすでに過ぎていた場合に次のステップで反映するには `c.write(..., at=..., late="apply_next")` を渡します（既定は `"reject"`）。`c.watch(..., timeout=5.0)` のように `timeout`（実時間の秒数）を渡すとストリームに期限を付けられます（`None` は無期限、期限切れは `ControlError` の `DEADLINE_EXCEEDED`）。
+
+値の読み取り（`c.values()`、`c.snapshot()`、`c.watch()`）は `Values` を返し、`.values` dict に変数名と Python の値（`bool`、`int`、`float`）が入ります。列挙変数の整数値から宣言済みの項目名を得るには `vals.text(name)` を使います（変数が存在しない・列挙でない・一致する項目がないときは `None`）。`c.values(peer, builtin=False)` や `c.snapshot(peers=(), builtin=False)` は、アプリケーションが宣言した変数だけ（`not v.builtin`）に絞るフィルタです。`builtin=False` はアプリ宣言変数フィルタであり（`ecu.connected`、`peer.steps`、`j1939.*` などの決定的な組み込み変数も除かれます）、実行間の決定性を比較するときは `builtin=True` のまま、壁時計に依存する 2 変数（`peer.speed` と `peer.app_time_max_us`）だけを除外してください。
 
 | 起きたこと | Python での現れ方 |
 |---|---|
 | 呼び出しの失敗 | 例外 `ControlError` です（[エラー](#エラー)）。 |
 | Agent が拒否した書き込み | 例外ではなく、操作の結果（`invalid` など）になります。 |
 
-`Control` を 1 つの実行にとどめるには（[宛先の実行](#宛先の実行)）、実行に結びつけます。結びつけた `Control` はすべての呼び出しで実行を名乗り、アドレスのサーバーが別の実行のものになると、`ping()` と `current_run()` 以外の呼び出しは `ControlError`（`reason` は `run-changed`）になります。新しい実行には新しい `Control` を作ります。
+`Control` を 1 つの実行にとどめるには（[宛先の実行](#宛先の実行)）、実行に結びつけます。結びつけた `Control` はすべての呼び出しで実行を名乗り、アドレスのサーバーが別の実行のものになると、`ping()` と `current_run()` 以外の呼び出しは `ControlError`（`reason` は `run-changed`）になります。新しい実行には新しい `Control` を作ります。複数回実行の `vehicle_sil_launch serve` に対して実行未指定の `Control(address)` を使うと `reason` `run-required` で拒否され、`ControlError` のメッセージに `Control.for_current_run()` / `Control(..., run=...)` を案内するヒントが付きます（`Serve` を使う場合は `run.control()` を使ってください）。
 
 ```python
 from vehicle_sil_control import Control
@@ -684,7 +687,7 @@ if snap.consistent:                       # 値は、止まっている時刻 sn
     print(snap.time.now, snap.values["Engine"].values["engine.speed"])
 ```
 
-`snapshot()`（gRPC の `GetSnapshot`）は、時間の状態（`sim.time()` と同じ `TimeState`）と、Peer ごとの最後の値（`values()` と同じ `Values`）を、Server が 1 回で読んで返します。Server は、時間の状態を先に読み、その後で全 Peer の値を同じ瞬間に読みます。
+`snapshot(peers=(), builtin=True)`（gRPC の `GetSnapshot`）は、時間の状態（`sim.time()` と同じ `TimeState`）と、Peer ごとの最後の値（`values()` と同じ `Values`。列挙名逆引きの `Values.text()` も利用可能）を、Server が 1 回で読んで返します。`builtin=False` を渡すとアプリケーション宣言変数のみ（`not v.builtin`）に絞れます。実行間の決定性を比較する場合は `builtin=True` のまま、壁時計の 2 変数（`peer.speed` と `peer.app_time_max_us`）だけ除外してください。Server は、時間の状態を先に読み、その後で全 Peer の値を同じ瞬間に読みます。
 
 保証は、シミュレーションの時刻で動く Peer について、Server が時間を操作できる（`time.available`）ときのものです。
 
@@ -758,6 +761,7 @@ python -m vehicle_sil_control stop
 | `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込み、外につながっていて実時間を保つ実行での一時停止や速度の変更）か、サーバーと別の実行宛ての呼び出し（`run-changed`）や、実行が必須のサーバーへの実行を名乗らない呼び出し（`run-required`）です。Python のクライアントは、別の vehicle-sil のリリースのサーバーにも出します。 |
 | `UNAUTHENTICATED` / `PERMISSION_DENIED` | `--control-credentials` が有効なときに、Bearer トークンが欠落・不正（`UNAUTHENTICATED`）またはロールが不足（`PERMISSION_DENIED`）しています。 |
 | `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
+| `DEADLINE_EXCEEDED` | 呼び出しの実時間期限が切れました（`Control.watch(..., timeout=...)` や応答遅延など）。 |
 | `RESOURCE_EXHAUSTED` | `snapshot()` のレスポンスが、1 つのメッセージの上限（4 MiB）を超えました。 |
 | `UNIMPLEMENTED` | そのアドレスは gRPC に答えますが、vehicle-sil の Control Server ではありません（その呼び出しがない）。 |
 | `UNAVAILABLE` / `NOT_FOUND` | サーバーへ接続できないか、`values()` / `snapshot()` 中に Peer が再起動し続けているとき（`UNAVAILABLE`）、または `peer(name)` で指定した名前の Peer がないとき（`NOT_FOUND`）。 |
@@ -783,7 +787,7 @@ python -m vehicle_sil_control stop
 
 - 速度を指定して遅れたときは、遅れた分だけ後ろにずれたまま、指定の速度で進みます（[internals/virtual-time.md](internals/virtual-time.md#遅れの測り方) の「遅れの測り方」）。
 - participant の失敗は、シミュレーションの状態（`watch(simulation=True)` の `failed_participant` と `failure_reason`）で読みます。
-- すべての値を記録するには、SIL Kit のトレースか `TapPort` を使います。
+- CAN / J1939 の生フレームを取りこぼしなく記録するには、`ecu_main` の ECU では `spy::Scope::on_frame` または `ecu.can().on_frame()` を使います（同一プロセス内で `Peer` や `LocalBench` を直接使う場合は `Peer::tap()` / `TapPort` も利用できますが、`Ecu` からは呼べません）。SIL Kit の `TraceSinks` は CAN ではそのまま使えません。同梱の `PcapFile` / `PcapPipe` は Ethernet 専用で CAN フレームに対して例外を投げ、`Mdf4File` には vehicle-sil に同梱されていない Vector 外部拡張 `SilKitExtension_Mdf` が必要です。
 
 | 上限（Server の既定） | 値 |
 |---|---|

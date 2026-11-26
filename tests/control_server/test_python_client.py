@@ -324,6 +324,29 @@ class ConversionTest(unittest.TestCase):
         self.assertEqual([(t.status, t.applied_writes, t.failed_write) for t in op.targets],
                          [("rejected", 1, 1), ("invalid", 0, None), ("unknown", None, None)])
 
+    def test_values_text_equality_and_repr(self):
+        plain = Values("Body", "inc1", ms(10), 1, {"cabin.lamp": 2, "cabin.ok": True, "cabin.speed": 50.0})
+        with_enums = Values(
+            "Body",
+            "inc1",
+            ms(10),
+            1,
+            {"cabin.lamp": 2, "cabin.ok": True, "cabin.speed": 50.0},
+            _enums={"cabin.lamp": {0: "off", 2: "high"}, "cabin.ok": {1: "yes"}},
+        )
+        # Direct construction without _enums stays equal to one with _enums, and repr hides _enums.
+        self.assertEqual(plain, with_enums)
+        self.assertNotIn("_enums", repr(with_enums))
+        self.assertIsNone(plain.text("cabin.lamp"))
+        self.assertEqual(with_enums.text("cabin.lamp"), "high")
+        # Bool must not match integer enum 1; non-enum and missing names return None.
+        self.assertIsNone(with_enums.text("cabin.ok"))
+        self.assertIsNone(with_enums.text("cabin.speed"))
+        self.assertIsNone(with_enums.text("missing.var"))
+        # Unlisted enum integer returns None.
+        unlisted = Values("Body", "inc1", ms(10), 2, {"cabin.lamp": 99}, _enums={"cabin.lamp": {0: "off", 2: "high"}})
+        self.assertIsNone(unlisted.text("cabin.lamp"))
+
 
 def ping_server(test, release):
     """A gRPC server on a free local port whose ControlService answers Ping alone (with `release` as
@@ -443,6 +466,11 @@ class RunBindingTest(unittest.TestCase):
                     c.sim.time()
                 self.assertEqual(refused.exception.code, grpc.StatusCode.FAILED_PRECONDITION)
                 self.assertEqual(refused.exception.reason, reason)
+                if reason == "run-required":
+                    self.assertIn("Control.for_current_run", str(refused.exception))
+                    self.assertIn("run=", str(refused.exception))
+                else:
+                    self.assertNotIn("Control.for_current_run", str(refused.exception))
                 self.assertEqual(c.current_run(), "4f2a-2")  # Ping is not refused: it tells the run now
 
     def test_for_current_run_binds_to_the_run_ping_reports(self):
@@ -466,6 +494,296 @@ class RunBindingTest(unittest.TestCase):
     def test_an_empty_run_is_refused(self):
         with self.assertRaises(ValueError):
             Control("127.0.0.1:1", run="")
+
+
+def mock_values_server(
+    test,
+    *,
+    watch_delay: float = 0.0,
+    watch_hang: bool = False,
+    ping_delay: float = 0.0,
+    ping_hang: bool = False,
+    ping_calls=None,
+    ping_started=None,
+    watch_deadlines=None,
+):
+    """In-process gRPC server serving Ping, ListPeers, GetValues, GetSnapshot, and Watch."""
+    from concurrent import futures
+    import grpc
+    import vehicle_sil_control
+    from vehicle_sil_control._stubs import pb, rpc
+
+    schema = [
+        pb.VariableInfo(name="ecu.connected", type=pb.VALUE_TYPE_BOOL, causality=pb.CAUSALITY_INPUT, builtin=True),
+        pb.VariableInfo(name="peer.speed", type=pb.VALUE_TYPE_REAL, causality=pb.CAUSALITY_OUTPUT, builtin=True),
+        pb.VariableInfo(
+            name="j1939.CAN1.node0.address_state",
+            type=pb.VALUE_TYPE_ENUM,
+            causality=pb.CAUSALITY_OUTPUT,
+            builtin=True,
+            items=[pb.EnumItem(name="claiming", value=2), pb.EnumItem(name="claimed", value=3)],
+        ),
+        pb.VariableInfo(name="engine.speed", type=pb.VALUE_TYPE_INTEGER, causality=pb.CAUSALITY_OUTPUT, builtin=False),
+        pb.VariableInfo(
+            name="engine.mode",
+            type=pb.VALUE_TYPE_ENUM,
+            causality=pb.CAUSALITY_INPUT,
+            builtin=False,
+            items=[pb.EnumItem(name="idle", value=0), pb.EnumItem(name="drive", value=1)],
+        ),
+    ]
+    peer_info = pb.PeerInfo(
+        participant="Engine",
+        incarnation="inc-1",
+        connected=True,
+        schema=schema,
+        has_agent=True,
+        simulation_state="Running",
+        virtual_time=True,
+    )
+    snap_pb = pb.Snapshot(
+        time_ns=ms(100),
+        sequence=5,
+        values=[pb.Value(b=True), pb.Value(d=1.5), pb.Value(i=3), pb.Value(i=1800), pb.Value(i=1)],
+    )
+    stop_watch = threading.Event()
+
+    class Service(rpc.ControlServiceServicer):
+        def Ping(self, request, context):
+            if ping_calls is not None:
+                ping_calls.append(request.text)
+            if ping_started is not None:
+                ping_started.set()
+            if ping_hang:
+                stop_watch.wait(timeout=10.0)
+            elif ping_delay > 0:
+                stop_watch.wait(timeout=ping_delay)
+            return pb.PingReply(text=request.text, server_version="vehicle-sil control v1",
+                                vehicle_sil=vehicle_sil_control.__version__, run="r-1")
+
+        def ListPeers(self, request, context):
+            return pb.ListPeersReply(peers=[peer_info])
+
+        def GetValues(self, request, context):
+            return pb.GetValuesReply(has_values=True, incarnation="inc-1", snapshot=snap_pb)
+
+        def GetSnapshot(self, request, context):
+            return pb.GetSnapshotReply(
+                time=pb.TimeState(available=True, now_ns=ms(100), paused=True, running=True),
+                values=[pb.PeerValues(peer="Engine", incarnation="inc-1", snapshot=snap_pb)],
+                consistent=True,
+            )
+
+        def Watch(self, request, context):
+            if watch_deadlines is not None:
+                watch_deadlines.append(context.time_remaining())
+            if watch_hang:
+                stop_watch.wait(timeout=5.0)
+                return
+            if watch_delay > 0:
+                stop_watch.wait(timeout=watch_delay)
+            yield pb.Update(peer=peer_info)
+            yield pb.Update(values=pb.PeerValues(peer="Engine", incarnation="inc-1", snapshot=snap_pb))
+            yield pb.Update(initial_done=True)
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    rpc.add_ControlServiceServicer_to_server(Service(), server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    test.addCleanup(server.stop, None)
+    test.addCleanup(stop_watch.set)
+    return f"127.0.0.1:{port}"
+
+
+class ClientSdkUnitTest(unittest.TestCase):
+    """In-process gRPC tests for builtin filtering, Values.text(), and watch(timeout=...)."""
+
+    def test_values_and_snapshot_builtin_filter_and_enum_text(self):
+        address = mock_values_server(self)
+        with Control(address) as c:
+            all_vals = c.values("Engine")
+            self.assertIsNotNone(all_vals)
+            self.assertEqual(
+                set(all_vals.values),
+                {"ecu.connected", "peer.speed", "j1939.CAN1.node0.address_state", "engine.speed", "engine.mode"},
+            )
+            self.assertEqual(all_vals.text("engine.mode"), "drive")
+            self.assertEqual(all_vals.text("j1939.CAN1.node0.address_state"), "claimed")
+            self.assertIsNone(all_vals.text("engine.speed"))
+
+            app_vals = c.values("Engine", builtin=False)
+            self.assertIsNotNone(app_vals)
+            self.assertEqual(set(app_vals.values), {"engine.speed", "engine.mode"})
+            self.assertEqual(app_vals.text("engine.mode"), "drive")
+            # Filtered-out builtin enum returns None instead of leaking from _enums.
+            self.assertIsNone(app_vals.text("j1939.CAN1.node0.address_state"))
+
+            snap_all = c.snapshot(["Engine"])
+            self.assertEqual(set(snap_all.values["Engine"].values), set(all_vals.values))
+            self.assertEqual(snap_all.values["Engine"].text("engine.mode"), "drive")
+            self.assertEqual(snap_all.values["Engine"].text("j1939.CAN1.node0.address_state"), "claimed")
+
+            snap_app = c.snapshot(["Engine"], builtin=False)
+            self.assertEqual(set(snap_app.values["Engine"].values), {"engine.speed", "engine.mode"})
+            self.assertEqual(snap_app.values["Engine"].text("engine.mode"), "drive")
+            self.assertIsNone(snap_app.values["Engine"].text("j1939.CAN1.node0.address_state"))
+
+    def test_watch_populates_enum_text_and_respects_timeout(self):
+        import grpc
+
+        address = mock_values_server(self)
+        with Control(address) as c:
+            updates = list(c.watch(timeout=5.0))
+        val_updates = [u for u in updates if isinstance(u, Values)]
+        self.assertEqual(len(val_updates), 1)
+        self.assertEqual(val_updates[0].text("engine.mode"), "drive")
+        self.assertEqual(val_updates[0].text("j1939.CAN1.node0.address_state"), "claimed")
+
+        hanging = mock_values_server(self, watch_hang=True)
+        with Control(hanging) as c:
+            with self.assertRaises(ControlError) as ctx:
+                list(c.watch(timeout=0.1))
+        self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+
+    def test_watch_timeout_bounds_initial_release_check_ping(self):
+        import grpc
+
+        pings = []
+        watch_deadlines = []
+        address = mock_values_server(self, ping_hang=True, ping_calls=pings, watch_deadlines=watch_deadlines)
+        with Control(address, timeout=10.0) as c:
+            t0 = time.monotonic()
+            with self.assertRaises(ControlError) as ctx:
+                list(c.watch(timeout=0.1))
+            elapsed = time.monotonic() - t0
+            self.assertFalse(c._checked)
+        self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+        self.assertLess(elapsed, scaled(2.0))
+        self.assertEqual(watch_deadlines, [])
+
+    def test_watch_timeout_carries_remaining_budget_after_slow_ping(self):
+        import grpc
+
+        pings = []
+        watch_deadlines = []
+        ping_delay = 0.15
+        total = ping_delay + scaled(0.45)
+        address = mock_values_server(
+            self, ping_delay=ping_delay, watch_hang=True, ping_calls=pings, watch_deadlines=watch_deadlines
+        )
+        with Control(address, timeout=10.0) as c:
+            t0 = time.monotonic()
+            with self.assertRaises(ControlError) as ctx:
+                list(c.watch(timeout=total))
+            elapsed = time.monotonic() - t0
+            self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+            self.assertLess(elapsed, total + scaled(2.0))
+            self.assertEqual(len(pings), 1)
+            self.assertEqual(len(watch_deadlines), 1)
+            # Watch received only the remaining budget after the slow Ping, not a fresh `total`.
+            self.assertLess(watch_deadlines[0], total - 0.10)
+            # The successful release check is cached and not retried by later calls.
+            self.assertIsNotNone(c.values("Engine"))
+            self.assertEqual(len(pings), 1)
+
+    def test_watch_timeout_does_not_block_on_concurrent_slow_ping(self):
+        import grpc
+
+        pings = []
+        watch_deadlines = []
+        ping_started = threading.Event()
+        address = mock_values_server(
+            self,
+            ping_hang=True,
+            ping_calls=pings,
+            ping_started=ping_started,
+            watch_deadlines=watch_deadlines,
+        )
+        c = Control(address, timeout=10.0)
+        self.addCleanup(c.close)
+        thread_a_errors = []
+
+        def run_ping():
+            try:
+                c.ping()
+            except Exception as e:
+                thread_a_errors.append(e)
+
+        thread_a = threading.Thread(target=run_ping, daemon=True)
+        thread_a.start()
+        try:
+            self.assertTrue(ping_started.wait(scaled(2.0)), "concurrent Ping did not start in time")
+            t0 = time.monotonic()
+            with self.assertRaises(ControlError) as ctx:
+                list(c.watch(timeout=0.1))
+            elapsed = time.monotonic() - t0
+            self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+            self.assertLess(elapsed, scaled(2.0))
+            self.assertEqual(len(pings), 1)
+            self.assertEqual(watch_deadlines, [])
+        finally:
+            c.close()
+            thread_a.join(scaled(2.0))
+        self.assertFalse(thread_a.is_alive())
+        self.assertTrue(thread_a_errors)
+
+    def test_watch_timeout_inf_and_post_check_positive_timeout(self):
+        import grpc
+
+        pings = []
+        watch_deadlines = []
+        address = mock_values_server(self, ping_calls=pings, watch_deadlines=watch_deadlines)
+        with Control(address, timeout=10.0) as c:
+            # +inf behaves like timeout=None (unbounded Watch) both before and after _checked.
+            updates = list(c.watch(timeout=float("inf")))
+            self.assertIn(("initial_done",), updates)
+            self.assertEqual(len(pings), 1)
+            self.assertGreater(watch_deadlines[-1], 1e9)
+
+            updates2 = list(c.watch(timeout=float("inf")))
+            self.assertIn(("initial_done",), updates2)
+            self.assertEqual(len(pings), 1)
+            self.assertGreater(watch_deadlines[-1], 1e9)
+
+        hang_pings = []
+        hang_deadlines = []
+        hanging = mock_values_server(self, watch_hang=True, ping_calls=hang_pings, watch_deadlines=hang_deadlines)
+        with Control(hanging, timeout=10.0) as c:
+            # Complete release check first, then verify positive watch(timeout=...) still bounds Watch.
+            self.assertIsNotNone(c.values("Engine"))
+            self.assertEqual(len(hang_pings), 1)
+            t0 = time.monotonic()
+            with self.assertRaises(ControlError) as ctx:
+                list(c.watch(timeout=0.1))
+            elapsed = time.monotonic() - t0
+            self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+            self.assertLess(elapsed, scaled(2.0))
+            self.assertEqual(len(hang_pings), 1)
+            self.assertEqual(len(hang_deadlines), 1)
+            self.assertLess(hang_deadlines[0], 0.25)
+
+    def test_watch_timeout_non_positive_and_nan(self):
+        import grpc
+
+        pings = []
+        address = mock_values_server(self, ping_calls=pings)
+        with Control(address, timeout=10.0) as c:
+            for bad in (0, 0.0, -1.0, float("-inf")):
+                with self.assertRaises(ControlError) as ctx:
+                    list(c.watch(timeout=bad))
+                self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
+            self.assertEqual(pings, [])
+            with self.assertRaises(ValueError):
+                list(c.watch(timeout=float("nan")))
+            self.assertEqual(pings, [])
+            # After release check succeeds, non-positive timeouts still raise DEADLINE_EXCEEDED immediately.
+            updates = list(c.watch(timeout=None))
+            self.assertEqual(len(pings), 1)
+            self.assertIn(("initial_done",), updates)
+            for bad in (0.0, -1.0):
+                with self.assertRaises(ControlError) as ctx:
+                    list(c.watch(timeout=bad))
+                self.assertEqual(ctx.exception.code, grpc.StatusCode.DEADLINE_EXCEEDED)
 
 
 if __name__ == "__main__":

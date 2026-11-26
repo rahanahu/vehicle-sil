@@ -7,8 +7,9 @@ and checks them, then lets the simulation run to its end as fast as possible.
         --launch build/<preset>/tools/launch/vehicle_sil_launch \
         build/<preset>/examples/ecu_main/simulation.yaml
 
-Needs a vehicle_sil_launch built with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON, the Python package
-python/vehicle_sil_control on PYTHONPATH with its gRPC stubs (docs/control-api.md, "Python").
+Needs a vehicle_sil_launch with --control (included in prebuilt vehicle-sil-tools-* archives,
+or built from source with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON) and vehicle_sil_control with
+its gRPC stubs on PYTHONPATH (docs/control-api.md, "Python").
 Prints what it did; exit code 0 if everything was as expected, 1 if not.
 
 The engine's speed moves 50 rpm per 10 ms step towards 800 rpm + 20 rpm per percent of throttle,
