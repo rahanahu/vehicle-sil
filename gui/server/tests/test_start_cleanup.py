@@ -357,7 +357,7 @@ def test_exception_in_handle_start_cleans_prehandoff_resources_and_stops_handle(
             assert status == 500
             assert err["error"]["code"] == "internal"
             failed_run = runtime.runs[0]
-            assert failed_run.stops == [2]
+            assert failed_run.stops == ["force"]
             assert failed_run.aborted is True
             assert len(created_creds) == 1 and not created_creds[0].exists()
             assert len(created_requests) == 1 and not created_requests[0].exists()

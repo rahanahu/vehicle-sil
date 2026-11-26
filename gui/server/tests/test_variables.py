@@ -548,7 +548,7 @@ def test_variables_ending_predicate_before_result_arrives() -> None:
 
     s = new_session()
     assert not _variables_ending(s)
-    s.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4}, 40)
+    s.feed_event({"event": "run_start", "seq": 0, "t_ms": 0, "run": "r-1"}, 40)
     s.feed_event({"event": "phase", "seq": 1, "t_ms": 1, "phase": "running"}, 40)
     assert not _variables_ending(s)
 
@@ -567,7 +567,7 @@ def test_variables_ending_predicate_before_result_arrives() -> None:
 
     async def verify_on_lost(trigger) -> None:
         sess = new_session()
-        sess.feed_event({"event": "hello", "seq": 0, "t_ms": 0, "vehicle_sil_events": 4}, 40)
+        sess.feed_event({"event": "run_start", "seq": 0, "t_ms": 0, "run": "r-1"}, 40)
         sess.feed_event({"event": "phase", "seq": 1, "t_ms": 1, "phase": "running"}, 40)
         sent: list[dict] = []
         v = Variables(sess.id, sent.extend, ending=lambda: _variables_ending(sess))

@@ -344,7 +344,7 @@ class FakeRun:
         self.sink: RunSink | None = None
         self.started = asyncio.Event()
         self.finished = asyncio.Event()
-        self.stops: list[int] = []
+        self.stops: list[str] = []
         self.stop_event = asyncio.Event()
         self.time_commands: list[dict] = []
         self.input_open = True
@@ -380,10 +380,10 @@ class FakeRun:
     def can_send(self) -> bool:
         return self.input_open
 
-    def send_stop(self, count: int, *, force: bool | None = None) -> bool:
+    def send_stop(self, *, force: bool = False) -> bool:
         if not self.input_open:
             return False
-        self.stops.append(count)
+        self.stops.append("force" if force else "graceful")
         self.stop_event.set()
         return True
 

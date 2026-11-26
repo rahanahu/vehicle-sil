@@ -2,7 +2,7 @@
 
 The server makes no state of its own: the summary is what the launcher's events said (phase, check,
 participants, findings, result), what the server did to the launcher (started it, asked it to stop) and noticed
-about it (it exited; a line that is not an event, a gap in seq, no result at the end). The summary is enough to
+about it (it exited; a line that is not an event, out-of-order seq, no result at the end). The summary is enough to
 rebuild a screen; of the events themselves only log lines are kept, for a screen that reconnects. Everything
 kept has a limit in count and in bytes, and what is dropped is counted. Nothing here does I/O; the caller feeds
 lines and gets back the messages to send to the screens.
@@ -13,7 +13,6 @@ from __future__ import annotations
 import heapq
 import itertools
 import json
-import math
 import time
 from array import array
 from bisect import bisect_left, insort
@@ -22,12 +21,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import islice
-from typing import Any
+from typing import Any, Literal
 
 from .allowed import Facts, allowed as allowed_of, project_run_facts
 from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT, STEP_MS_MAX
 
-EVENTS_FORMAT = 4  # the `vehicle_sil_events` of hello that this server reads
 SHARED_LOG = "*"  # the source key of the log shared by the sources after Limits.log_sources
 ENVELOPE = ("event", "seq", "t_ms", "run")  # what is removed from an event when its fields are kept in the summary
 MAX_COUNT = 2 ** 53  # seq and t_ms: integers that JavaScript reads exactly
@@ -43,11 +41,12 @@ ESSENTIAL = {
 # in the summary, so that a launcher that writes junk cannot push them out.
 SERVER_PROBLEMS = frozenset({"kept-limit", "no-result", "output-left-open", "stop-not-delivered",
                              "stop-escalated", "launcher-silent"})
-# The launcher writes a line (a heartbeat if nothing else) at least once a second from hello to its result; this
+# The launcher writes a line (a heartbeat if nothing else) at least once a second from run_start to its result; this
 # long without any line while its process runs, and it is reported as silent (it may hang).
 SILENT_AFTER_S = 5.0
 STDERR = "launcher-stderr"
 STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
+StopMode = Literal["graceful", "force"]
 # The summary's `variables` of a run without any (variables.Variables.summary makes the others).
 # The fields of a scenario step that the summary keeps (the launcher's scenario_step event and result.scenario.steps[])
 SCENARIO_STEP_FIELDS = ("index", "line", "kind", "text", "status", "start_ms", "at_ms", "end_ms", "code", "message")
@@ -95,18 +94,6 @@ def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def _no_constant(name: str) -> Any:
-    raise ValueError(f"{name} is not JSON")
-
-
-def _finite(text: str) -> float:
-    """A JSON number with a fraction or an exponent: 1e999 is valid JSON, but not a number JSON can carry on."""
-    value = float(text)
-    if not math.isfinite(value):
-        raise ValueError(f"{text} is not a finite number")
-    return value
-
-
 def _is_count(value: object) -> bool:
     return _is_int(value) and 0 <= value <= MAX_COUNT
 
@@ -127,8 +114,6 @@ def _shape_problem(event: dict) -> str | None:
     """What is wrong with a known event's fields (None: nothing, or an unknown event). Only what the server and
     the screen read is checked; other fields pass as they are."""
     kind = event["event"]
-    if kind == "hello":
-        return None if _int_or_none(event.get("pid")) else "pid is not an integer"
     if kind == "run_start":
         return None if isinstance(event.get("run"), str) and bool(event.get("run")) else "run is not a string"
     if kind == "phase":
@@ -308,11 +293,8 @@ class Session:
         self._problem_counts = {"launcher": 0, "server": 0}
         self._stderr_lines = 0
         self._stderr_last: deque[str] = deque(maxlen=self.limits.stderr_last)
-        self.hello_seen = False
         self.run_id: str | None = None
         self.run_t0_ms: int = 0
-        self._stream_run = False
-        self._skip_seq_gap = False
         self._logs: dict[str, _Log] = {}
         self._log_bytes = 0
         self._limit_reported: set[str] = set()
@@ -374,17 +356,6 @@ class Session:
                                 "(events must come in order)", problem_detail())
         out: list[dict] = []
         kind = event["event"]
-        if not self.hello_seen and kind == "run_start":
-            self._stream_run = True
-        if not self._stream_run and not self._skip_seq_gap:
-            expected = 0 if self.last_seq is None else self.last_seq + 1
-            if seq != expected:
-                missing = f"seq {expected}" if seq == expected + 1 else f"seq {expected} to {seq - 1}"
-                out += self.problem("seq-gap", f"events are missing: {missing} never came from the launcher",
-                                    {"expected": expected, "got": seq})
-        if not self.hello_seen and kind not in ("hello", "run_start"):
-            out += self.problem("no-hello", f"the first event is '{self._cut(kind)}', not 'hello'", None)
-        self.hello_seen = True
         self.last_seq = seq
         wrong = None if "t_ms" not in event or _is_count(event["t_ms"]) else "t_ms is not an integer from 0 to 2^53"
         if wrong is None:
@@ -407,15 +378,7 @@ class Session:
     def _apply(self, event: dict, size: int) -> list[dict]:
         kind = event["event"]
         out: list[dict] = []
-        if kind == "hello":
-            version = event.get("vehicle_sil_events")
-            if version != EVENTS_FORMAT:
-                out += self.problem("events-format",
-                                    f"the launcher writes events in format {self._cut(repr(version))}, and this GUI "
-                                    f"reads format {EVENTS_FORMAT}: what it shows may be wrong; use a GUI of the "
-                                    "same vehicle-sil version as the launcher",
-                                    {"vehicle_sil_events": version if _is_int(version) else None})
-        elif kind == "run_start":
+        if kind == "run_start":
             if isinstance(event.get("run"), str):
                 self.run_id = event["run"]
             if _is_count(event.get("t_ms")):
@@ -704,20 +667,19 @@ class Session:
 
     # ------------------------------------------------------------ what the server did and saw
 
-    def request_stop(self, force: bool) -> int:
-        """How many stop commands to write to the launcher now (0, 1 or 2); records the request."""
+    def request_stop(self, force: bool) -> StopMode | None:
+        """Records a stop request and returns the StopMode to send, or None when nothing new is requested."""
         if self.state != "running" or not self.launcher_running:
-            return 0
+            return None
         if not force:
             if self.stop != STOP_NONE:
-                return 0
+                return None
             self.stop = STOP_REQUESTED
-            return 1
+            return "graceful"
         if self.stop == STOP_FORCED:
-            return 0
-        n = 2 if self.stop == STOP_NONE else 1
+            return None
         self.stop = STOP_FORCED
-        return n
+        return "force"
 
     def check_silence(self, now: float, after_s: float = SILENT_AFTER_S) -> list[dict]:
         """Whether the launcher has written nothing for after_s or more while its process runs and before its

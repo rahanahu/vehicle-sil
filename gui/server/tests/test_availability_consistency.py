@@ -168,7 +168,7 @@ def test_cold_mode_projects_external_stop_skips_redundant_writes_and_preserves_p
                 {"run_id": started_esc["run_id"], "instance": started_esc["instance"], "force": True},
             )
             assert st_esc_force == 200
-            assert run_esc.stops == [2]
+            assert run_esc.stops == ["force"]
             await run_esc.finish(returncode=0)
             await sock.until(
                 lambda m: m.get("type") == "session"
@@ -200,7 +200,7 @@ def test_cold_mode_projects_external_stop_skips_redundant_writes_and_preserves_p
                 "api/stop-session", {"run_id": started2["run_id"], "instance": started2["instance"], "force": False},
             )
             assert st_stop == 200
-            assert run2.stops == [1]
+            assert run2.stops == ["graceful"]
             _, sess_after_stop = await app.client.get("api/session")
             assert sess_after_stop["allowed"]["stop"]["reason"] == "already-stopping"
             assert sess_after_stop["allowed"]["force"]["ok"] is True
@@ -267,7 +267,7 @@ def test_hot_can_send_turns_false_immediately_on_result_while_cold_stays_true(tm
         assert hot_res.current_run is None
         assert hot_handle.can_send() is False
         assert hot_handle.send_time({"command": "pause"}) is False
-        assert hot_handle.send_stop(1, force=False) is False
+        assert hot_handle.send_stop(force=False) is False
         assert hot_stdin.writes == []
 
         # Cold single-run resident (once=True): keeps current_run after result until process exit, so Stop still works.
@@ -280,6 +280,7 @@ def test_hot_can_send_turns_false_immediately_on_result_while_cold_stays_true(tm
         cold_handle = ServeRunHandle(cold_res, command_id=1, on_finished=lambda _: None)
         cold_handle._run_id = "run-cold-1"
         cold_res.current_run = cold_handle
+        rt._active_resident = cold_res
 
         cold_result_line = json.dumps({
             "event": "result",
@@ -287,12 +288,27 @@ def test_hot_can_send_turns_false_immediately_on_result_while_cold_stays_true(tm
             "t_ms": 100,
             "run": "run-cold-1",
             "result": {"vehicle_sil_run": 2, "result": "passed", "ok": True},
+            "status": {
+                "instance": "inst-cold",
+                "status_rev": 2,
+                "launcher_state": "ending",
+                "config": "a.yaml",
+                "eligibility": {"eligible": False, "reason": "fixed-registry", "message": "fixed"},
+                "launcher_allowed": {"run": {"ok": False}},
+                "active_run_id": None,
+                "last_run_id": "run-cold-1",
+                "run_state": None,
+            },
             "launcher_ends": True,
         })
         rt._handle_stdout_line(cold_res, cold_result_line)
         assert cold_res.current_run is cold_handle
+        assert cold_res.execution_status is not None
+        assert cold_res.execution_status["launcher_state"] == "ending"
+        assert rt.execution_status() == cold_res.execution_status
+        assert rt.resident_pid is None
         assert cold_handle.can_send() is True
-        assert cold_handle.send_stop(1, force=False) is True
+        assert cold_handle.send_stop(force=False) is True
         assert len(cold_stdin.writes) == 1
 
     asyncio.run(main())
