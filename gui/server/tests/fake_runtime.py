@@ -575,6 +575,12 @@ async def in_process_gui(
 
     fake_runtime = runtime or FakeRuntime()
     use_variables = (source is not None) if variables is None else variables
+    async def fake_check(argv: list[str], request: Path, descriptions: Path | None = None,
+                         text: bytes | None = None) -> tuple[int, dict]:
+        if check_fn is not None:
+            return await check_fn(argv, request, descriptions, text)
+        return 0, default_check_result(argv[-1])
+
     server = GuiServer(Options(
         root=root,
         launcher=FakeLauncher(features=features),
@@ -585,15 +591,8 @@ async def in_process_gui(
         variables=use_variables,
         source=source,
         runtime=fake_runtime,
+        check_runner=fake_check,
     ))
-
-    async def fake_check(argv: list[str], request: Path, descriptions: Path | None = None,
-                         text: bytes | None = None) -> tuple[int, dict]:
-        if check_fn is not None:
-            return await check_fn(argv, request, descriptions, text)
-        return 0, default_check_result(argv[-1])
-
-    server._launcher_check = fake_check  # type: ignore[method-assign]
     test_server = TestServer(server.app(), host="127.0.0.1", port=port)
     await test_server.start_server()
     http = aiohttp.ClientSession()

@@ -59,6 +59,10 @@ class _GatedFakeRuntime(FakeRuntime):
 async def _start_gui(root: Path, runtime: FakeRuntime, limits: Limits):
     port = free_port()
     token = "test-token"
+
+    async def fake_check(argv, request, descriptions=None, text=None):
+        return 0, default_check_result(argv[-1])
+
     server = GuiServer(Options(
         root=root,
         launcher=FakeLauncher(),
@@ -67,12 +71,8 @@ async def _start_gui(root: Path, runtime: FakeRuntime, limits: Limits):
         variables=False,
         limits=limits,
         runtime=runtime,
+        check_runner=fake_check,
     ))
-
-    async def fake_check(argv, request, descriptions=None, text=None):
-        return 0, default_check_result(argv[-1])
-
-    server._launcher_check = fake_check  # type: ignore[method-assign]
     test_server = TestServer(server.app(), host="127.0.0.1", port=port)
     await test_server.start_server()
     http = aiohttp.ClientSession()
@@ -379,7 +379,7 @@ def test_heavy_prestart_logs_preserve_failed_check_findings_and_allow_next_run(t
             assert body1["error"]["detail"]["findings"][0]["code"] == "bad-participant"
             assert body1["error"]["detail"]["findings"][0]["message"] == "ECU failed --describe"
             assert peak_logs == limits.log_lines_per_source
-            assert server.current is None
+            assert server.runs.current is None
 
             # Subsequent start succeeds cleanly after failed pre-start flood.
             st2, body2 = await client.post("api/run", {"file": "simple.yaml"})
@@ -557,9 +557,9 @@ def test_zero_flushed_frame_commit_without_finish_clamps_prestart_seq_to_stream_
             assert st == 200
             run_id = body["run_id"]
 
-            head = server._stream_seq
-            assert server.current is not None
-            assert server.current.session._logs["Engine"].prestart_seq <= head
+            head = server.runs.stream_seq
+            assert server.runs.current is not None
+            assert server.runs.current.session._logs["Engine"].prestart_seq <= head
 
             # Fresh client sees dropped once and synced at server head.
             fresh = server.snapshot(run_id, None)

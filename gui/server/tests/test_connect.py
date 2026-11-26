@@ -179,7 +179,7 @@ def test_a_run_compares_its_targets_right_before_the_launcher_starts(tmp_path: P
         server.origins = {f"http://127.0.0.1:{test_server.port}"}
         gui = Gui(proc=None, port=test_server.port, token="test-token",
                   url=f"http://127.0.0.1:{test_server.port}/#token=test-token", stderr=tmp_path / ".err")
-        orig_no_vars = server._no_variables
+        orig_no_vars = server.runs._no_variables
         entered = asyncio.Event()
         release = asyncio.Event()
 
@@ -188,7 +188,7 @@ def test_a_run_compares_its_targets_right_before_the_launcher_starts(tmp_path: P
             await release.wait()
             return await orig_no_vars()
 
-        server._no_variables = slow_no_vars  # type: ignore[method-assign]
+        server.runs._no_variables = slow_no_vars  # type: ignore[method-assign]
         try:
             async with aiohttp.ClientSession() as http:
                 c = Client(gui, http)
@@ -265,7 +265,7 @@ def test_a_run_whose_file_changes_during_its_check_connects_nothing(tmp_path: Pa
         server.origins = {f"http://127.0.0.1:{test_server.port}"}
         gui = Gui(proc=None, port=test_server.port, token="test-token",
                   url=f"http://127.0.0.1:{test_server.port}/#token=test-token", stderr=tmp_path / ".err")
-        orig_no_vars = server._no_variables
+        orig_no_vars = server.runs._no_variables
         entered = asyncio.Event()
         release = asyncio.Event()
 
@@ -274,7 +274,7 @@ def test_a_run_whose_file_changes_during_its_check_connects_nothing(tmp_path: Pa
             await release.wait()
             return await orig_no_vars()
 
-        server._no_variables = slow_no_vars  # type: ignore[method-assign]
+        server.runs._no_variables = slow_no_vars  # type: ignore[method-assign]
         try:
             async with aiohttp.ClientSession() as http:
                 c = Client(gui, http)
@@ -418,7 +418,7 @@ def test_file_only_metadata_fail_closed_and_sha256_toctou(tmp_path: Path) -> Non
         server.origins = {f"http://127.0.0.1:{test_server.port}"}
         gui = Gui(proc=None, port=test_server.port, token="test-token",
                   url=f"http://127.0.0.1:{test_server.port}/#token=test-token", stderr=tmp_path / ".err")
-        orig_no_vars = server._no_variables
+        orig_no_vars = server.runs._no_variables
         entered = asyncio.Event()
         release = asyncio.Event()
 
@@ -440,7 +440,7 @@ def test_file_only_metadata_fail_closed_and_sha256_toctou(tmp_path: Path) -> Non
                 st_before = cfg.stat()
                 edited_text = original_text.replace("ETH_EXT", "CAN_NEW")
                 assert len(edited_text.encode("utf-8")) == len(original_text.encode("utf-8"))
-                server._no_variables = slow_no_vars  # type: ignore[method-assign]
+                server.runs._no_variables = slow_no_vars  # type: ignore[method-assign]
                 starting = asyncio.ensure_future(c.post("api/run", {"file": "sim.yaml", "connect": {"ETH_EXT": "fake0"}}))
                 try:
                     try:

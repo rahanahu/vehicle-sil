@@ -134,8 +134,9 @@ def test_allowed_says_what_this_server_takes() -> None:
     s = new_session()
     ok = {"ok": True, "reason": None, "message": None}
 
-    def reasons() -> dict:
-        return {k: v["reason"] for k, v in s.summary()["allowed"].items() if k != "rev"}
+    def reasons(facts: Facts | None = None) -> dict:
+        allowed = s.allowed(facts)
+        return {k: v["reason"] for k, v in s.summary(allowed=allowed)["allowed"].items() if k != "rev"}
 
     assert reasons() == {"start": "already-running", "stop": None, "force": None, "save": None}
     assert s.summary()["allowed"]["stop"] == ok and s.allowed()["start"]["message"].startswith("a simulation is running")
@@ -153,20 +154,18 @@ def test_allowed_says_what_this_server_takes() -> None:
             (Facts(launcher_usable=False, launcher_message="no launcher"), "launcher-unusable", "not-running"),
             (Facts(starting=True, launcher_usable=False), "starting", "starting"),
             (Facts(closing=True, starting=True), "shutting-down", "shutting-down")):
-        s.facts = lambda facts=facts: facts
-        assert (reasons()["start"], reasons()["stop"], reasons()["force"]) == (start, stop, stop), facts
-    assert reasons()["save"] == "shutting-down"
-    s.facts = lambda: Facts(save=False)
-    assert reasons()["save"] == "save-disabled" and s.allowed()["save"]["caution"] is None
-    s.facts = lambda: Facts(command_changes_allowed=True)
-    assert reasons()["save"] is None and s.allowed()["save"]["caution"]["code"] == "command-changes-allowed"
+        assert (reasons(facts)["start"], reasons(facts)["stop"], reasons(facts)["force"]) == (start, stop, stop), facts
+    assert reasons(Facts(closing=True, starting=True))["save"] == "shutting-down"
+    no_save = Facts(save=False)
+    assert reasons(no_save)["save"] == "save-disabled" and s.allowed(no_save)["save"]["caution"] is None
+    allow_cmd = Facts(command_changes_allowed=True)
+    assert reasons(allow_cmd)["save"] is None and s.allowed(allow_cmd)["save"]["caution"]["code"] == "command-changes-allowed"
     s = new_session()  # running
-    s.facts = lambda: Facts(starting=True)
-    assert reasons()["start"] == "already-running"  # the run just registered, its start not yet answered
-    s.facts = lambda: Facts(launcher_usable=False, launcher_message="no launcher")
-    s.launcher_exited(0)
-    s.ended()
-    assert s.summary()["allowed"]["start"]["message"] == "no launcher"
+    assert reasons(Facts(starting=True))["start"] == "already-running"  # the run just registered, its start not yet answered
+    unusable = Facts(launcher_usable=False, launcher_message="no launcher")
+    s.launcher_exited(0, facts=unusable)
+    s.ended(facts=unusable)
+    assert s.summary(allowed=s.allowed(unusable))["allowed"]["start"]["message"] == "no launcher"
 
 
 def test_allowed_reflects_stop_and_facts_changes() -> None:
@@ -177,9 +176,7 @@ def test_allowed_reflects_stop_and_facts_changes() -> None:
     s.request_stop(False)
     second = s.summary()["allowed"]
     assert second["stop"]["reason"] == "already-stopping" and s.allowed() == second
-    s.facts = lambda: Facts(closing=True)
-    assert s.allowed()["start"]["reason"] == "shutting-down"
-    s.facts = Facts
+    assert s.allowed(Facts(closing=True))["start"]["reason"] == "shutting-down"
     assert s.allowed() == second
 
 
@@ -732,7 +729,7 @@ def test_relay_event_handles_non_finite_dict_and_feed_exceptions() -> None:
     server = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="t"))
     session = new_session()
     sent: list[dict] = []
-    server.hub.broadcast = lambda messages, log_key=None, real=server.hub.broadcast: (
+    server.ws.hub.broadcast = lambda messages, log_key=None, real=server.ws.hub.broadcast: (
         sent.extend(messages), real(messages, log_key))[1]
     feed = session.feed_event
     calls = iter([
@@ -740,9 +737,9 @@ def test_relay_event_handles_non_finite_dict_and_feed_exceptions() -> None:
         lambda ev, sz: 1 / 0,
     ])
     session.feed_event = lambda ev, sz: next(calls, feed)(ev, sz)
-    server.relay_event(session, {"event": "time", "seq": 1, "t_ms": 1, "sim_ms": 1}, 40)
-    server.relay_event(session, {"event": "time", "seq": 2, "t_ms": 2, "sim_ms": 2}, 40)
-    server.relay_event(session, {"event": "run_start", "seq": 0, "t_ms": 0, "run": "r-1"}, 50)
+    server.runs.relay_event(session, {"event": "time", "seq": 1, "t_ms": 1, "sim_ms": 1}, 40)
+    server.runs.relay_event(session, {"event": "time", "seq": 2, "t_ms": 2, "sim_ms": 2}, 40)
+    server.runs.relay_event(session, {"event": "run_start", "seq": 0, "t_ms": 0, "run": "r-1"}, 50)
     assert kinds(sent[1:]) == ["error:bad-event", "error:bad-event", "event"]
     assert "ZeroDivisionError" in sent[2]["message"]
 
@@ -1356,7 +1353,7 @@ def test_the_last_resort_kills_a_version_probe_that_hangs(tmp_path: Path) -> Non
         )
         server = GuiServer(Options(root=CONFIGS, launcher=Launcher(path), port=1, token="t"))
         try:
-            probe = asyncio.create_task(server.launcher.probe())
+            probe = asyncio.create_task(server.runs.launcher.probe())
             try:
                 pid = await asyncio.wait_for(ready, timeout=scaled(10.0))
                 server.kill_all()  # what the server's end does when it takes too long: the probe is not left
@@ -1571,14 +1568,14 @@ def test_hide_request_in_event_deep_nesting_without_recursion_error(tmp_path: Pa
 
 def test_relay_event_guards_redaction_exception_and_redacts_detail(tmp_path: Path, monkeypatch) -> None:
     from conftest import CONFIGS, REPLAY
-    from vehicle_sil_gui import server as server_mod
+    from vehicle_sil_gui import run_manager
     from vehicle_sil_gui.launcher import Launcher
     from vehicle_sil_gui.server import GuiServer, Options
 
     srv = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="t"))
     session = new_session()
     sent: list[dict] = []
-    srv.hub.broadcast = lambda messages, log_key=None, real=srv.hub.broadcast: (
+    srv.ws.hub.broadcast = lambda messages, log_key=None, real=srv.ws.hub.broadcast: (
         sent.extend(messages), real(messages, log_key))[1]
     req_path = tmp_path / "vehicle-sil-gui-request-secret.json"
     fake_run = type("_R", (), {"request": req_path, "session": session})()
@@ -1586,8 +1583,8 @@ def test_relay_event_guards_redaction_exception_and_redacts_detail(tmp_path: Pat
     def boom(_ev, _path):
         raise RuntimeError("redaction boom")
 
-    monkeypatch.setattr(server_mod, "hide_request_in_event", boom)
-    srv.relay_event(
+    monkeypatch.setattr(run_manager, "hide_request_in_event", boom)
+    srv.runs.relay_event(
         session,
         {"event": "finding", "seq": 0, "t_ms": 0, "message": f"{req_path}, line 9: secret"},
         64,
@@ -1603,14 +1600,15 @@ def test_relay_event_guards_redaction_exception_and_redacts_detail(tmp_path: Pat
 def test_a_request_file_that_cannot_be_made_is_said_so(monkeypatch) -> None:
     """No space, or no directory that can be written: 500 request-file with what to do (not "a bug"). The
     stand-in cannot make the temporary directory unusable (tempfile falls back to others), so the write fails here."""
-    from vehicle_sil_gui import server
+    from vehicle_sil_gui import config_service
+    from vehicle_sil_gui.refusal import Refused
 
     def full(intent):
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(server, "write_request_file", full)
-    with pytest.raises(server.Refused) as e:
-        server.GuiServer._make_request({})
+    monkeypatch.setattr(config_service, "write_request_file", full)
+    with pytest.raises(Refused) as e:
+        config_service.make_request_file({})
     assert (e.value.status, e.value.code) == (500, "request-file")
     assert "No space left on device" in str(e.value) and "TMPDIR" in str(e.value)
 
@@ -1719,26 +1717,25 @@ def test_allowed_run_facts_and_stop_requests_projection() -> None:
 def test_session_allowed_uses_hot_execution_status_projection() -> None:
     s = Session("1", "simulation.yaml", [], None, False, launcher_mode="hot")
     cur_status: dict | None = {"launcher_state": "running", "run_state": {"stop": {"requests": 0}}}
-    s.execution_status = lambda: cur_status
 
-    a1 = s.allowed()
+    a1 = s.allowed(execution_status=cur_status)
     assert a1["start"]["reason"] == "already-running"
     assert a1["stop"]["ok"] is True
     assert a1["force"]["ok"] is True
 
     # C++ reports 2 stop requests via ExecutionStatus -> force becomes already-forced without local request_stop().
     cur_status = {"launcher_state": "running", "run_state": {"stop": {"requests": 2}}}
-    a2 = s.allowed()
+    a2 = s.allowed(execution_status=cur_status)
     assert a2["stop"]["reason"] == "already-stopping"
     assert a2["force"]["reason"] == "already-forced"
 
     # C++ result arrived before session.ended(): stoppable drops to False while start stays already-running.
     cur_status = {"launcher_state": "ready", "run_state": None}
-    a3 = s.allowed()
+    a3 = s.allowed(execution_status=cur_status)
     assert a3["start"]["reason"] == "already-running"
     assert a3["stop"]["reason"] == "not-running"
     assert a3["force"]["reason"] == "not-running"
-    assert s.allowed() == a3
+    assert s.allowed(execution_status=cur_status) == a3
 
 
 def test_serve_runtime_projected_status_covers_all_cpp_launcher_states(tmp_path: Path) -> None:
@@ -2010,9 +2007,9 @@ def test_gui_server_shutdown_awaits_cancelled_ticker_and_evicting_tasks(
 
         ticker_task = asyncio.create_task(fake_tick())
         evict_task = asyncio.create_task(fake_evict())
-        server._ticker = ticker_task
-        server._evicting.add(evict_task)
-        evict_task.add_done_callback(server._evicting.discard)
+        server.ws._ticker = ticker_task
+        server.ws._evicting.add(evict_task)
+        evict_task.add_done_callback(server.ws._evicting.discard)
         await ticker_started.wait()
         await evict_started.wait()
 
@@ -2021,8 +2018,8 @@ def test_gui_server_shutdown_awaits_cancelled_ticker_and_evicting_tasks(
 
         assert ticker_task.done() and ticker_task.cancelled()
         assert evict_task.done() and not evict_task.cancelled()
-        assert server._ticker is None
-        assert not server._evicting
+        assert server.ws._ticker is None
+        assert not server.ws._evicting
         assert "evict-boom" in caplog.text
 
     asyncio.run(main())

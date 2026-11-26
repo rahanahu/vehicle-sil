@@ -472,7 +472,7 @@ def test_real_hot_pre_prepare_and_run_without_prepare_idle_projects_ready(tmp_pa
             pid1 = got1[-1]["session"]["launcher"]["pid"]
             assert got1[-1]["session"]["result"]["result"] == "passed"
 
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             post_status = rt.execution_status()
             assert post_status is not None
@@ -578,7 +578,7 @@ def test_real_hot_external_stop_does_not_escalate_on_graceful_api_stop(tmp_path:
             assert await until_async(logger_ready, timeout=10.0), "Logger did not install SIG_IGN handler"
             logger_pid = int(ready.read_text(encoding="utf-8"))
 
-            rt = server.runtime
+            rt = server.runs.runtime
             assert isinstance(rt, ServeRuntime)
             res = rt._resident
             assert res is not None and res.current_run is not None
@@ -662,14 +662,14 @@ def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_pa
         ))
         entered = asyncio.Event()
         release = asyncio.Event()
-        orig_close = server._close_variables
+        orig_close = server.runs._close_variables
 
         async def gated_close(run_obj) -> None:
             entered.set()
             await release.wait()
             await orig_close(run_obj)
 
-        server._close_variables = gated_close  # type: ignore[method-assign]
+        server.runs._close_variables = gated_close  # type: ignore[method-assign]
         test_server = TestServer(server.app(), host="127.0.0.1", port=port)
         await test_server.start_server()
         http = aiohttp.ClientSession()
@@ -685,8 +685,8 @@ def test_real_hot_post_result_drain_stop_is_noop_without_spurious_problem(tmp_pa
             sid = started["run_id"]
 
             await asyncio.wait_for(entered.wait(), timeout=scaled(15.0))
-            assert server.session is not None and server.session.state == "running"
-            assert server.session.launcher_running is True
+            assert server.runs.session is not None and server.runs.session.state == "running"
+            assert server.runs.session.launcher_running is True
 
             for payload in (
                 {"run_id": sid, "instance": server.instance, "force": False},

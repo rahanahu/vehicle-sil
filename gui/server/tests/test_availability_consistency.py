@@ -84,7 +84,7 @@ def test_cold_mode_projects_external_stop_skips_redundant_writes_and_preserves_p
             assert st == 200
             target = {"run_id": started["run_id"], "instance": started["instance"]}
             run = app.runtime.runs[0]
-            assert app.server.session is not None and app.server.session.launcher_mode == "cold"
+            assert app.server.runs.session is not None and app.server.runs.session.launcher_mode == "cold"
 
             run.emit("run_start", run="r1")
             run.emit("phase", phase="running")
