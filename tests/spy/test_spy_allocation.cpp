@@ -100,9 +100,20 @@ TEST_CASE(steady_state_steps_of_a_spy_do_not_allocate)
         g_counting.store(false);
         counted += g_allocations.load();
     }
+    // Also verify stale -> recovery transitions allocate nothing.
+    for (int i = 0; i < 2; ++i)
+    {
+        t += std::chrono::milliseconds(10);
+        g_allocations.store(0);
+        g_counting.store(true);
+        rig.bench.run_until(t);
+        g_counting.store(false);
+        counted += g_allocations.load();
+    }
     CHECK_EQ(counted, 0u);
     CHECK(integer_of(rig.ecu, "busy.count") > kSteps);
     CHECK(integer_of(rig.ecu, "busy.transfers") > kSteps);
     CHECK_EQ(integer_of(rig.ecu, "spy.missed"), 0);
     CHECK(integer_of(rig.ecu, "typed.count") > 2 * kSteps); // single frames and connections
+    CHECK_EQ(integer_of(rig.ecu, "typed.stale_count"), 1);
 }

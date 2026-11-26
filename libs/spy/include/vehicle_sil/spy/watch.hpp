@@ -39,8 +39,8 @@ namespace detail {
 
 /// The items a Watch publishes beside the signals ("<as>.count" ...; "state" for
 /// "<as>.<signal>.state"): no signal may have one of these names.
-inline constexpr std::array<std::string_view, 7> kWatchItems{"count", "last_ms", "period_ms", "size",
-                                                             "invalid", "stale", "state"};
+inline constexpr std::array<std::string_view, 8> kWatchItems{"count",   "last_ms", "period_ms",   "size",
+                                                             "invalid", "stale",   "stale_count", "state"};
 
 [[nodiscard]] constexpr bool is_watch_item(std::string_view name) noexcept
 {
@@ -152,13 +152,15 @@ inline std::vector<control::EnumItem> state_items()
 /// - "<as>.stale", with options.stale_after only: true while the latest message (before the
 ///   first one: the ECU's first step) is more than stale_after older than the ECU's step. It
 ///   changes in the steps of the ECU, so how soon it shows depends on the step size.
+/// - "<as>.stale_count", with options.stale_after only: the number of times "<as>.stale" changed
+///   from false to true (counted in the ECU's steps).
 /// "Latest" is by Message::time: a message older than the latest one (a connection is handed on
 /// after the receiver's acknowledgement, after frames that came later) is counted in count and
 /// invalid and changes nothing else. Of two messages with the same time (one sender's step), the
 /// one handed on later is the latest, and period_ms is 0.
 ///
 /// No signal of M may be named like an item above (count, last_ms, period_ms, size, invalid,
-/// stale, state): a build error says so; rename the signal in M's definition. If the ECU has one
+/// stale, stale_count, state): a build error says so; rename the signal in M's definition. If the ECU has one
 /// of the variables already, the watch publishes none (std::invalid_argument). Allocates when it
 /// is made only.
 template <class M>
@@ -204,10 +206,18 @@ public:
                 {
                     first_step_ = now;
                 }
+                const bool is_stale = stale();
+                if (is_stale && !was_stale_)
+                {
+                    ++stale_count_;
+                }
+                was_stale_ = is_stale;
             });
             scope.output("stale", [this] { return stale(); },
                          {.description = "true: no message for more than " +
                                          std::to_string(detail::whole_ms(*options_.stale_after)) + " ms"});
+            scope.output("stale_count", &stale_count_,
+                         {.description = "Number of times " + scope.name() + ".stale changed from false to true"});
         }
         scope.on_message(M::kPgn, [this](const j1939::Message& message) { hear(message); });
     }
@@ -252,6 +262,7 @@ private:
         if (options_.stale_after)
         {
             require("stale");
+            require("stale_count");
         }
     }
 
@@ -267,7 +278,7 @@ private:
     {
         static_assert(!detail::is_watch_item(S::name),
                       "vehicle_sil::spy::Spy::watch<M>(): a signal of M is named like an item the watch publishes "
-                      "(count, last_ms, period_ms, size, invalid, stale, state), so two variables would have one name: "
+                      "(count, last_ms, period_ms, size, invalid, stale, stale_count, state), so two variables would have one name: "
                       "rename the signal in M's definition (the YAML file, or the type written by hand)");
         const std::string name(S::name);
         std::string description = "Latest valid value of the signal";
@@ -371,6 +382,8 @@ private:
     std::int64_t count_ = 0;
     std::int64_t invalid_ = 0;
     std::int64_t size_ = 0;
+    std::int64_t stale_count_ = 0;
+    bool was_stale_ = false;
 };
 
 } // namespace vehicle_sil::spy
