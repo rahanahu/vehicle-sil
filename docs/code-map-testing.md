@@ -85,7 +85,7 @@ The job `all checks` in `.github/workflows/ci.yml` is the check that a merge int
 | Documents only (excluding `tools/knowledge/`) | The links and the schema and template checks (`python` on `.python-version` only). Also the `linux-gcc-debug` tests that compare the documents when a changed page is one they read (`docs/simulation-*.md`, `docs/scenario.md`, `docs/ecu-executable.md`, `docs/j1939-guide.md`, `docs/howto/*.md`), and `linux-gcc-control` when it is `docs/howto/first-ecu.md` or `docs/howto/operate-signals.md`. Also the format of the GUI's READMEs when a changed file is under `gui/`, the GUI server's tests and the timeline element's test when it is `docs/gui.md` or `gui/protocol/README.md` (or their Japanese pages), and the client library package check (`npm run pack:client`) when it is `gui/client/README.md` or `examples/gui_starter/README.md` (or their Japanese pages) |
 | The browser GUI only (`gui/web`, `gui/client`, `gui/timeline`, `gui/protocol/examples`, `examples/gui_client`, `examples/gui_starter`) | The GUI jobs (`gui` and `gui-server`) and `python`. Also `linux-gcc-debug` when a changed file is one of the files whose limits or constants `tests/launch/test_shared_values.cpp` reads |
 | The GUI server (`gui/server`, `gui/protocol/dashboard.schema.json`) | `gui` (Playwright e2e against `gui/server/tests/stub_launcher.py`), `gui-server` (pytest with `gui/server/tests/fake_runtime.py` and `stub_launcher.py`), `python`, and `linux-gcc-control` (scoped to `launch.shared_values` and `schema.*` plus the real-launcher GUI tests; adds `linux-gcc-debug` and full CTests if C++-tested docs also change) |
-| Non-GUI scripts (`scripts/` excluding GUI/shared scripts, `tests/scripts/test_*.py`) | `python`, plus `linux-gcc-debug` and Windows scoped to `scripts.*` and `template.*` (and `launch_run.trace_files` when `scripts/trace-report.py` changes) |
+| Non-GUI scripts (`scripts/` excluding GUI/shared scripts, `tests/scripts/test_*.py`) | `python`, plus `linux-gcc-debug` and Windows scoped to `scripts.*` and `template.*` (and `launch_run.trace_files` when `scripts/trace-report.py` changes, `benchmark.smoke_determinism` when `scripts/benchmark-vtime.py` changes) |
 | `tools/knowledge` only | `python` |
 | Code | `linux-gcc-debug`, `linux-clang-tsan`, `linux-gcc-control`, Windows, the GUI jobs (unless every file is outside the GUI and what its tests read) and `python` |
 | Build files (CMake, presets, patches, `external/`, `.gitmodules`, `.github/`) | Also `linux-gcc-release`, `linux-gcc-static`, the oldest CMake and the test that builds the ECU project template with FetchContent |
@@ -192,7 +192,7 @@ It is not set on the scenario tests that start processes (`integration`), the ex
 
 The label is also set on the other scenario tests that start processes.
 
-- `virtual_time.*`, `lin_cluster.*`, `launch_cli.*`, `launch_run.*`, `ecu_main.*`, `vector_xl.integration.*`, `control_server.launcher` (for what they cover, see the entry of each label)
+- `virtual_time.*`, `lin_cluster.*`, `launch_cli.*`, `launch_run.*`, `ecu_main.*`, `vector_xl.integration.*`, `control_server.launcher`, `benchmark.smoke_determinism` (for what they cover, see the entry of each label)
 - `template.check_and_run`: builds the template's ECUs with the main build and confirms that the launcher's check, run and scenario pass. It compares the check and run output with the guide "Create your first ECU".
 
 ## Documentation examples and tests

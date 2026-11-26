@@ -51,6 +51,7 @@
 | `tests/scripts/test_verify_common.py` | `scripts/verify_common.py`: 共通のパス、stdio の再設定、使い方エラー、パス表記、`--tag` の検査、ANSI 行の整形、プロセスグループのヘルパー、`verify*.py` の取り込みと `--help` |
 | `tests/scripts/test_hotspots.py` | `scripts/hotspots.py`: 信号（大きさ、変更の頻度、stack、parallel）、下の層と独立した作業の分け方、数えないもの（マージ済み、閉じた、古い）、観測できなかった範囲の表示、HEAD にないパス、`gh` の失敗、無応答、想定外の応答（Windows では実行しません） |
 | `tests/scripts/test_trace_report.py` | `scripts/trace-report.py`: 作ったトレースで、各ステップを最後に終えた参加者、同期の時間、ランチャーの保持、書き込みごとの往復、終了コード |
+| `tests/scripts/test_benchmark_vtime.py` | `scripts/benchmark-vtime.py`: コンパイラとフラグの抽出、区間整列チェック、CAN 因果トレース検証、定常境界ガード、プラットフォーム別プロセス CPU、Control トランスポートメトリクス連携（[internals/benchmark.md](internals/benchmark.md)） |
 | `tests/scripts/test_package.py` | `scripts/package.py`: MSYS2 のライセンス収集、Windows の `--build-only` 出力、`version --sync` |
 | `tests/template/test_get_tools.py` | `package.py template`、`version` |
 
@@ -80,6 +81,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 | 実行ファイル | ほかにリンクするもの |
 |---|---|
+| `vehicle_sil_bench_ecu`（`VEHICLE_SIL_BUILD_BENCHMARKS=ON`、配布対象外） | `simulation`、`process`、`json` |
 | `vehicle_sil_sim_controller` | `core` |
 | `vehicle_sil_can_bus_simulator` | `can_netsim` |
 | `vehicle_sil_launch` | `launch` と `process` |

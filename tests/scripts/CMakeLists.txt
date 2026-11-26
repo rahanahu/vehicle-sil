@@ -41,6 +41,9 @@ if(VEHICLE_SIL_J1939_CODEGEN_PYTHON)
   add_test(NAME scripts.package
            COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_package.py)
   set_tests_properties(scripts.package PROPERTIES LABELS unit TIMEOUT 120)
+  add_test(NAME scripts.benchmark_vtime
+           COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_benchmark_vtime.py)
+  set_tests_properties(scripts.benchmark_vtime PROPERTIES LABELS unit TIMEOUT 120)
   if(NOT WIN32)
     add_test(NAME scripts.hotspots
              COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_hotspots.py)

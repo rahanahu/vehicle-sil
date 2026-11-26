@@ -76,6 +76,7 @@ vehicle-sil/
 ├── bridges/can/     CAN ブリッジが共有する CanBridge と、別ターゲットの ExternalPortAdapter（移植可能、内部用）
 ├── bridges/vector-xl/ Vector XL CAN Bridge（チャネルの選択と引数はどこでも、XL バックエンドと実行ファイルは Windows 専用）
 ├── bridges/ethernet/ イーサネットのブリッジ（SIL Kit の Ethernet と外部のインターフェースの間の転送、統計、引数の解釈、実行ファイル。どのプラットフォームでもビルドする）
+├── tools/bench_ecu/  仮想時間ベンチマーク用の決定論的な合成 ECU 実行ファイル（vehicle_sil_bench_ecu。VEHICLE_SIL_BUILD_BENCHMARKS で制御、配布対象外）
 ├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
 ├── tools/sim_controller/ 仮想時間のシミュレーションを開始・停止する system controller（vehicle_sil_sim_controller）
 ├── tools/can_bus_simulator/ 簡易 CAN Network Simulator の実行ファイル（vehicle_sil_can_bus_simulator）

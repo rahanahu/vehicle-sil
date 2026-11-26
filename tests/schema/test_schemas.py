@@ -61,6 +61,7 @@ SCENARIO = json.loads((SCHEMA_DIR / "scenario.schema.json").read_text(encoding="
 TIMELINE = json.loads((SCHEMA_DIR / "timeline.schema.json").read_text(encoding="utf-8"))
 RUN_REQUEST = json.loads((SCHEMA_DIR / "run-request.schema.json").read_text(encoding="utf-8"))
 CONTROL_METRICS = json.loads((SCHEMA_DIR / "control-metrics.schema.json").read_text(encoding="utf-8"))
+BENCHMARK_REPORT = json.loads((SCHEMA_DIR / "benchmark-report.schema.json").read_text(encoding="utf-8"))
 TIMELINE_REFERENCES = ROOT / "tests" / "launch" / "timeline"
 TIMELINE_PAGE_FIXTURES = ROOT / "gui" / "timeline" / "tests" / "fixtures"
 MODELINE = re.compile(r"^# yaml-language-server: \$schema=(\S+)$")
@@ -779,7 +780,7 @@ class SchemaFiles(unittest.TestCase):
     maxDiff = None
 
     def test_the_schemas_are_json_schemas(self):
-        for schema in (SIMULATION, SCENARIO, TIMELINE, RUN_REQUEST, CONTROL_METRICS):
+        for schema in (SIMULATION, SCENARIO, TIMELINE, RUN_REQUEST, CONTROL_METRICS, BENCHMARK_REPORT):
             jsonschema.Draft7Validator.check_schema(schema)
             self.assertEqual(schema["$schema"], "http://json-schema.org/draft-07/schema#")
 
@@ -1703,6 +1704,271 @@ class SchemaOfTheBuiltExamples(unittest.TestCase):
                              "configure again (cmake --preset <preset>)")
         self.assertGreater(seen, 3, f"{built} has no copies of the examples' YAML files that name a schema: is "
                                     "VEHICLE_SIL_EXAMPLE_DIR the directory of the built examples/ecu_main?")
+
+
+class BenchmarkReportSchema(unittest.TestCase):
+    maxDiff = None
+
+    @staticmethod
+    def _sample_report() -> dict:
+        target_flags = {
+            "compiler_id": "GNU",
+            "compiler_version": "14.2.0",
+            "compiler_banner": "g++ (GCC) 14.2.0",
+            "optimization_flags": ["-O3"],
+            "effective_opt_level": "-O3",
+            "codegen_and_defines": ["-DNDEBUG"],
+            "sanitizers": [],
+            "ndebug": True,
+        }
+        return {
+            "$schema": "../schema/benchmark-report.schema.json",
+            "vehicle_sil_benchmark": 1,
+            "generated_at_utc": "2026-11-27T01:00:00Z",
+            "execution_backend": "silkit_coordinated_multiprocess",
+            "interpretation_contract": {
+                "local_bench_substitutable": False,
+                "process_count_equals_participant_count_assumed": False,
+                "wall_cpu_handler_summable": False,
+                "notes": [
+                    "Coordinated SIL Kit multi-process results cannot be substituted by LocalBench.",
+                    "ecu_count, silkit_participant_count, and os_process_count are distinct quantities.",
+                    "steady_state.wall_ms, process_cpu.*, and handler_time_ns must never be summed.",
+                    "Canonical cases use silkit_trivial CAN with network_simulator: null.",
+                ],
+            },
+            "provenance": {
+                "repo": {
+                    "git_commit": "0" * 40,
+                    "git_dirty": False,
+                    "vehicle_sil_version": "0.4.0",
+                    "launcher_features": ["control-metrics"],
+                },
+                "build": {
+                    "build_dir": "build/linux-gcc-release",
+                    "cmake_build_type": "Release",
+                    "flags_source": "compile_commands.json",
+                    "flags_warning": None,
+                    "targets": {
+                        "vehicle_sil_launch": copy.deepcopy(target_flags),
+                        "vehicle_sil_core": copy.deepcopy(target_flags),
+                        "vehicle_sil_bench_ecu": copy.deepcopy(target_flags),
+                    },
+                    "bench_ecu_build_info": {
+                        "compiler_id": "GNU",
+                        "compiler_version": "14.2.0",
+                        "ndebug": True,
+                        "optimize_macro": 1,
+                        "sanitizers": [],
+                    },
+                },
+                "dependencies": {
+                    "sil_kit": {
+                        "submodule_commit": "1" * 40,
+                        "tag": "v5.0.8",
+                        "patches": [{"name": "0001-example.patch", "sha256": "a" * 64}],
+                        "static_linked": False,
+                    },
+                    "control_server_built": False,
+                },
+                "host": {
+                    "os": "Linux",
+                    "os_release": "6.12.0",
+                    "arch": "x86_64",
+                    "cpu_model": "Test CPU",
+                    "cpu_logical_count": 8,
+                    "python_version": "3.13.0",
+                },
+            },
+            "run_options": {
+                "profile": "smoke",
+                "warmup_iterations": 0,
+                "measured_iterations": 1,
+                "control_metrics_mode": "auto",
+                "busy_machine_wait": False,
+            },
+            "cases": [
+                {
+                    "id": "case_c_5ecu_mixed",
+                    "description": "5 ECUs mixed rates (10 ms x 1 + 1 ms x 4)",
+                    "topology": {
+                        "ecu_count": 5,
+                        "silkit_participant_count": 6,
+                        "os_process_count": 6,
+                        "silkit_registry_hosted_in": "vehicle_sil_launch",
+                        "controller_hosted_in": "vehicle_sil_launch",
+                        "ecus": [
+                            {
+                                "name": "ecu0",
+                                "step_ms": 10,
+                                "configured_sample_period_ms": 10,
+                                "effective_sample_period_ms": 10,
+                                "sample_every_step_active": False,
+                                "can_period_ms": 10,
+                                "can_offset_ms": 0,
+                            }
+                        ],
+                    },
+                    "workload": {
+                        "speed": "max",
+                        "time_step_ms_configured": None,
+                        "time_step_ms_resolved": 1,
+                        "warmup_sim_ms": 50,
+                        "measure_sim_ms": 200,
+                        "tail_sim_ms": 10,
+                        "stop_at_ms": 260,
+                        "declared_vars_per_ecu": 250,
+                        "wire_vars_per_ecu": 254,
+                        "step_work": 0,
+                        "scenario": None,
+                        "communication_load": {
+                            "can_network": "BENCH_CAN",
+                            "can_simulation_mode": "silkit_trivial",
+                            "network_simulator": None,
+                            "can_tx_frames_per_sim_s": 500,
+                            "can_rx_frames_per_sim_s": 2000,
+                            "control_samples_per_sim_s": 500,
+                        },
+                    },
+                    "measurement_boundaries": {
+                        "steady_state_window_sim_ms": [50, 250],
+                        "excluded_from_steady_state": ["setup", "warmup_iterations", "in_run_warmup_0_to_50ms", "tail_250_to_260ms", "hold_paused", "shutdown"],
+                    },
+                    "warmup_iterations": [],
+                    "iterations": [
+                        {
+                            "index": 0,
+                            "phase": "measured",
+                            "steady_state": {
+                                "wall_ns": 12_500_000,
+                                "wall_ms": 12.5,
+                                "window_skew_ns": 1000,
+                                "virtual_to_realtime_ratio": 16.0,
+                                "completed_steps": {
+                                    "controller_window_steps": 200,
+                                    "ecu_window_steps_total": 820,
+                                    "ecu_window_steps_by_participant": {"ecu0": 20},
+                                },
+                                "app_messages": {
+                                    "tx_in_window": 100,
+                                    "rx_in_window": 400,
+                                    "tx_total": 125,
+                                    "rx_total": 500,
+                                    "tx_dropped": 0,
+                                    "rx_dropped": 0,
+                                },
+                            },
+                            "non_steady_state": {
+                                "total_process_wall_ms": 80.0,
+                                "launcher_run_wall_ms": 18.0,
+                                "setup_and_shutdown_wall_ms": 62.0,
+                                "paused_ms": 0,
+                            },
+                            "process_cpu": {
+                                "ecu_steady_state": {
+                                    "status": "available",
+                                    "reason": None,
+                                    "interval": "steady_state_window",
+                                    "window_sim_ms": [50, 250],
+                                    "target_processes": ["ecu0"],
+                                    "excludes": ["vehicle_sil_launch"],
+                                    "user_ms": 4.0,
+                                    "sys_ms": 1.0,
+                                    "total_ms": 5.0,
+                                    "per_process": [
+                                        {"name": "ecu0", "status": "available", "reason": None, "user_ms": 4.0, "sys_ms": 1.0, "total_ms": 5.0}
+                                    ],
+                                },
+                                "launcher_tree_total": {
+                                    "status": "unavailable",
+                                    "reason": "os.wait4 not available on this platform",
+                                    "interval": "full_process_lifetime",
+                                    "includes_non_steady_state": True,
+                                    "target_processes": ["vehicle_sil_launch", "<reaped_children>"],
+                                    "user_ms": None,
+                                    "sys_ms": None,
+                                    "total_ms": None,
+                                    "max_rss_kb": None,
+                                },
+                            },
+                            "control_transport_metrics": {
+                                "status": "unavailable",
+                                "unavailable_reason": "stopped_before_setup",
+                                "source": None,
+                                "counters": None,
+                            },
+                            "determinism": {
+                                "verified": True,
+                                "output_sha256": "b" * 64,
+                                "comm_trace_sha256": "c" * 64,
+                                "comm_events_verified": 625,
+                            },
+                            "environment_noise": {
+                                "waited_s": 0.0,
+                                "others_before": [],
+                                "others_after": [],
+                                "load1_before": None,
+                                "load1_after": None,
+                            },
+                        }
+                    ],
+                    "summary": {
+                        "iteration_count": 1,
+                        "steady_state_wall_ms": {"median": 12.5, "min": 12.5, "max": 12.5, "iqr": 0.0},
+                        "virtual_to_realtime_ratio": {"median": 16.0, "min": 16.0, "max": 16.0},
+                        "ecu_steady_state_cpu_ms": {"status": "available", "median": 5.0, "min": 5.0, "max": 5.0},
+                        "launcher_tree_cpu_ms": {"status": "unavailable", "median": None, "min": None, "max": None},
+                        "control_transport_metrics": {
+                            "status": "unavailable",
+                            "scope": None,
+                            "handler_time_ns": None,
+                            "max_handler_time_ns": None,
+                            "messages": None,
+                            "bytes": None,
+                            "handler_calls": None,
+                        },
+                        "determinism": {
+                            "all_iterations_identical": True,
+                            "output_sha256": "b" * 64,
+                            "comm_trace_sha256": "c" * 64,
+                        },
+                    },
+                }
+            ],
+        }
+
+    def test_valid_sample_and_invalid_mutations(self):
+        good = self._sample_report()
+        self.assertEqual(problems(BENCHMARK_REPORT, good), [])
+
+        def mutate(fn) -> list[str]:
+            data = copy.deepcopy(good)
+            fn(data)
+            return problems(BENCHMARK_REPORT, data)
+
+        # Anti-misinterpretation contracts must be strictly enforced.
+        self.assertNotEqual(mutate(lambda d: d["interpretation_contract"].update(local_bench_substitutable=True)), [])
+        self.assertNotEqual(mutate(lambda d: d["interpretation_contract"].update(wall_cpu_handler_summable=True)), [])
+        self.assertNotEqual(mutate(lambda d: d.update(execution_backend="local_bench")), [])
+        # Trivial CAN / NetworkSimulator provenance must be enforced.
+        self.assertNotEqual(
+            mutate(lambda d: d["cases"][0]["workload"]["communication_load"].update(can_simulation_mode="netsim")), []
+        )
+        self.assertNotEqual(
+            mutate(lambda d: d["cases"][0]["workload"]["communication_load"].update(network_simulator="NetworkSimulator")),
+            [],
+        )
+        # Conditional unavailable -> null rules must reject false 0.
+        self.assertNotEqual(
+            mutate(lambda d: d["cases"][0]["iterations"][0]["process_cpu"]["launcher_tree_total"].update(total_ms=0.0)),
+            [],
+        )
+        self.assertNotEqual(
+            mutate(lambda d: d["cases"][0]["summary"]["launcher_tree_cpu_ms"].update(median=0.0)),
+            [],
+        )
+        # Unknown properties must be refused.
+        self.assertNotEqual(mutate(lambda d: d.update(extra_field=123)), [])
 
 
 if __name__ == "__main__":

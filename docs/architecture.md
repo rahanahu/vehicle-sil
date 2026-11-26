@@ -76,6 +76,7 @@ vehicle-sil/
 ├── bridges/can/     CanBridge (shared by the CAN bridges) and ExternalPortAdapter (a target of its own) (portable; internal)
 ├── bridges/vector-xl/ Vector XL CAN Bridge (channel selection and arguments everywhere; XL backend and executable for Windows only)
 ├── bridges/ethernet/ Ethernet Bridge (forwarding between SIL Kit Ethernet and the external interface, statistics, argument parsing, executable; built on every platform)
+├── tools/bench_ecu/  Deterministic synthetic ECU executable for virtual-time benchmarks (vehicle_sil_bench_ecu; gated by VEHICLE_SIL_BUILD_BENCHMARKS, unshipped)
 ├── tools/common/     Command-line parsing, exit codes and logging shared by the executables (internal, header-only)
 ├── tools/sim_controller/ System controller that starts and stops virtual-time simulations (vehicle_sil_sim_controller)
 ├── tools/can_bus_simulator/ Executable of the simple CAN Network Simulator (vehicle_sil_can_bus_simulator)
