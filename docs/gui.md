@@ -272,6 +272,13 @@ vehicle-sil-gui [options] [<configuration file>]
 - Relative executable paths in the configuration file are relative to the directory that contains the configuration file (the launcher's rule).
 - If you start without `--web` and there is no build of the sample screens (`npm run build` in `gui/web`), the server shows a page with the build instructions.
 
+### Hot Start and Cold Start
+
+The GUI server can pre-warm a resident `vehicle_sil_launch serve` process through `POST api/prepare` (Hot Start) when a configuration is eligible, and falls back to per-run Cold Start (`serve --once`) automatically otherwise.
+
+- Hot Start skips restarting the `vehicle_sil_launch` process only; `--describe`, the Control Server, the SIL Kit registry/controller, and ECU startup still run from virtual time 0 on every run, and you can inspect the per-phase startup breakdown via Events v4 `phase` events (`t_ms`; see "[Events (`serve [--once]`)](simulation-events.md#events-serve---once)").
+- The server falls back to Cold Start (`serve --once`) when a configuration fixes `registry_uri` or sets `manual: true` on a participant, when manual participants are requested for the run (`manual` in the GUI/API, equivalent to `--manual`), when `VEHICLE_SIL_TRACE` is set, or if the resident launcher exits unexpectedly (see "[Running sequentially in one launcher (`vehicle_sil_launch serve`)](simulation-run.md#running-sequentially-in-one-launcher-vehicle_sil_launch-serve)").
+
 ### How the launcher is found
 
 The GUI server looks for the launcher in `--launcher <path>`, the environment variable `VEHICLE_SIL_LAUNCH`, and `PATH`, in that order.
@@ -336,7 +343,7 @@ npm --prefix gui/web/workbench run build
 scripts/run-gui.py --workbench
 ~~~
 
-The top **Network** menu selects a simulation configuration and asks `POST api/prepare` to warm a persistent launcher when eligible (falling back to per-run Cold launches automatically when a configuration is not eligible). In a Hot Start, only the resident `vehicle_sil_launch serve` process persists between runs; each run still creates and destroys fresh ECU processes, the SIL Kit registry/controller, and simulation state starting from virtual time 0 (see "[Running sequentially in one launcher (`vehicle_sil_launch serve`)](simulation-run.md#running-sequentially-in-one-launcher-vehicle_sil_launch-serve)"). The GUI falls back to Cold Start (`serve --once`) when a configuration fixes `registry_uri` or sets `manual: true` on a participant, when manual participants are selected for the run (`manual` in the GUI/API, equivalent to `--manual`), when `VEHICLE_SIL_TRACE` is set, or if the resident launcher fails. Each **Start** performs a single check before running, and Workbench views identify runs by configuration file and status rather than numeric run IDs. **Network Designer** edits its buses and ECU channel mappings. The top **Scenario** menu lists runnable YAML files in the server's `scenarios/` directory next to that configuration. **Free run** and **Record & start** have no automatic stop when **Stop at (ms)** is blank. A supplied limit applies to both Check and Start.
+The top **Network** menu selects a simulation configuration and calls `POST api/prepare` to use Hot Start when eligible (see "[Hot Start and Cold Start](#hot-start-and-cold-start)"). Each **Start** performs a single check before running, and Workbench views identify runs by configuration file and status rather than numeric run IDs. **Network Designer** edits its buses and ECU channel mappings. The top **Scenario** menu lists runnable YAML files in the server's `scenarios/` directory next to that configuration. **Free run** and **Record & start** have no automatic stop when **Stop at (ms)** is blank. A supplied limit applies to both Check and Start.
 
 In **Settings → Scenario folder**, choose a local directory for opening and saving YAML from the **Scenario** tab. If the browser offers read-only folder access, **Save YAML** downloads the file. To run a local file on the server, put it in the selected network's server-side `scenarios/` directory and refresh the run list.
 
@@ -1089,8 +1096,17 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 The command above is the form for the repository. With the prebuilt tools, leave out `uv run`: `vehicle-sil-gui --port 8765 ...`.
 
 - The GUI server prints the URL through the development server (`http://127.0.0.1:5173/#token=...`) to stderr (`dev_url` with `--json`) and opens it in the browser.
+- During local development where you restart the GUI server often, you can add `--no-auth` so the browser does not have to re-open a new `#token=...` URL on every restart (`127.0.0.1`, `Host`, `Origin`, no-CORS and `--root` checks still apply, but any local process on the machine can call the API; see "[Security](#security)").
 - If another program (including one of another user on the same computer) listens on the development server's port before the development server does, that page receives the token. Start the GUI server only after the development server has started listening with `strictPort`, and check that the page that opened is your own development server's.
-- Pages served by the development server do not get the GUI server's CSP, so for the final check, build the screen and try it with `--web`.
+- Pages served by the development server do not get the GUI server's CSP. To catch CSP violations early without breaking Vite HMR, add a report-only header in `server.headers` of `vite.config.js`, and still do a final check built with `--web`:
+
+```js
+headers: {
+  'Content-Security-Policy-Report-Only':
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
+},
+```
+
 - Developing the sample screens (`ng serve`) works the same way (`gui/web/proxy.conf.mjs`).
 
 ### Build a variable widget
@@ -1342,6 +1358,14 @@ The library does not enforce these rules for you. The sample screens follow them
 **Why a handshake was rejected**: when the WebSocket handshake is rejected, the browser cannot see the reason. When `client.connection.failures` grows, call `client.loadApp()` again: the HTTP response (its error text) gives the reason.
 
 **A participant you started yourself is still running**: currently, the only sign that a participant remains after the run is a line of text in the launcher's log (the `vehicle_sil_launch` lines). There is no machine-readable field for it.
+
+#### Held inputs, reconnect recovery, and bus observation
+
+- **Held or momentary inputs**: the GUI server does not automatically reset variable values when a browser tab closes or a WebSocket disconnects (`POST api/write` is stateless HTTP, separate from `/ws`, so automatic server-side resets would overwrite other tabs or scripts and could fire late after a silent drop). Handle release according to your use case:
+  1. **Held GUI controls (press-and-hold buttons, pedals)**: release on `blur` and `visibilitychange` with `front.variable(ref).write(0)` (or `front.low.variables.write(...)`). In `pagehide`, pass `{ keepalive: true }` (supported on both `front.variable(ref).write(value, { keepalive: true })` and `front.low.variables.write(writes, { keepalive: true })`) so `fetch()` keeps `Authorization` and `Origin` while the page unloads (`navigator.sendBeacon` fails with 401 when token authentication is enabled, and cross-origin `fetch` bypassing a dev proxy fails with 403). Limits: sudden network loss or a browser crash still leaves the last written value. Guarding against crashes requires an ECU-side watchdog (heartbeat variable), which means modifying the ECU, only works reliably near `x1` speed (browser wall-clock heartbeats false-trigger at `x4`/`max` and lag at `x0.1`), consumes operation history (256 server / 64 client) and recording capacity (`MAX_WRITES = 2000`), and requires multi-tab screens to send heartbeats only from the active tab.
+  2. **Deterministic virtual-time pulses (while paused)**: use low-level `front.low.variables.write(writes, { atMs, late, timeoutMs: Infinity })` (not `front.variable(ref).write()`, which does not accept `atMs` or `late`). While paused, queue both edges (`atMs: T` and `atMs: T + holdMs`) with `timeoutMs: Infinity` before advancing time so the pulse completes deterministically even if the browser disconnects. Do not use scheduled `atMs` pulses for live running buttons (`x1`/`x4`/`max`): `front.clock.sim_ms` lags by WebSocket batching (100 ms) plus RTT, so `late: 'reject'` drops writes and `late: 'apply'` collapses both writes onto the same step (zero width).
+- **Reconnect recovery**: the GUI server sends WebSocket heartbeats every 30 seconds (clients do not need to send their own ping, and a silent network drop can take up to about 30 seconds to detect). While reconnecting—including after the socket opens and before `hello` and `synced` arrive—`session.ready` stays `false`, `status.link` is not `online`, and `bind` keeps `block: 'disconnected'`. When `hello` and `synced` arrive, the client updates its variable state before notifying `session` and `ready` subscribers, so code reacting to reconnect immediately sees the current run's variables.
+- **Bus observation (`ecu.connected` vs `Spy`)**: setting an ECU's `ecu.connected` to `false` disconnects that participant from its buses while its steps keep running; it does not report what other ECUs actually transmit on the bus. To observe real bus traffic in the GUI, add a `Spy` participant (`Spy::watch<M>()`; see [j1939-guide.md](j1939-guide.md)): its variables (`count`, `last_ms`, `period_ms`, `size`, `invalid`, `spy.missed`, `stale`, `.state`) appear automatically on the dashboard. Remember that the GUI polls latest values every 20–100 ms rather than streaming every raw frame.
 
 ## Known limitations
 

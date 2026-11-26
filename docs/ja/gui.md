@@ -280,6 +280,13 @@ vehicle-sil-gui [options] [<configuration file>]
 - 設定ファイルの中の実行ファイルの相対パスは、設定ファイルのあるディレクトリが基準です（ランチャーのルール）。
 - `--web` を指定せずに起動して、サンプルの画面のビルド（`gui/web` の `npm run build`）がないときは、ビルドの手順を書いたページを表示します。
 
+### Hot 起動と Cold 起動
+
+GUI サーバーは、対応する構成では `POST api/prepare` で常駐の `vehicle_sil_launch serve` プロセスを事前準備（Hot 起動）し、非対応の構成では実行ごとの Cold 起動（`serve --once`）へ自動で切り替えます。
+
+- Hot 起動が省くのは `vehicle_sil_launch` プロセス自体の再起動だけです。`--describe`、Control Server、SIL Kit registry / controller、各 ECU の起動は毎ラン仮想時刻 0 から走り、起動内訳は Events v4 の `phase` イベントの `t_ms` で確認できます（[simulation-events.md](simulation-events.md#イベントserve---once) の「イベント（`serve [--once]`）」）。
+- 設定が `registry_uri` を固定している場合、participant に `manual: true` がある場合、実行時に手動の participant を指定した場合（GUI/API の `manual`、CLI の `--manual` に相当）、`VEHICLE_SIL_TRACE` が設定されている場合、または常駐ランチャーが予期せず終了した場合は、自動で Cold 起動（`serve --once`）へ切り替わります（[simulation-run.md](simulation-run.md#1-つのランチャーで順に実行するvehicle_sil_launch-serve) の「1 つのランチャーで順に実行する（`vehicle_sil_launch serve`）」）。
+
 ### ランチャーの探し方
 
 ランチャーは `--launcher <path>`、環境変数 `VEHICLE_SIL_LAUNCH`、`PATH` の順に探します。
@@ -344,7 +351,7 @@ npm --prefix gui/web/workbench run build
 scripts/run-gui.py --workbench
 ~~~
 
-上部の **Network** でシミュレーション構成を選ぶと、対応構成では `POST api/prepare` で常駐ランチャーを事前準備します（非対応構成では実行単位の Cold 起動へ自動で切り替わります）。Hot 起動で実行をまたいで常駐するのは `vehicle_sil_launch serve` のプロセスだけで、各実行では毎回新しい ECU プロセス、SIL Kit registry / controller、シミュレーション状態が仮想時刻 0 から作り直されます（[simulation-run.md](simulation-run.md#1-つのランチャーで順に実行するvehicle_sil_launch-serve) の「1 つのランチャーで順に実行する（`vehicle_sil_launch serve`）」）。設定が `registry_uri` を固定している場合、participant に `manual: true` がある場合、実行時に手動の participant を指定した場合（GUI/API の `manual`、CLI の `--manual` に相当）、`VEHICLE_SIL_TRACE` が設定されている場合、または常駐ランチャーが失敗した場合は、自動で Cold 起動（`serve --once`）へ切り替わります。開始時は単一のチェックで判定し、Workbench 画面では数値の Run ID ではなく構成ファイルと状態で実行を示します。**Network Designer** では、その構成のバスと ECU チャネルの接続先を編集できます。上部の **Scenario** には、構成ファイルと同じ階層にあるサーバー側の `scenarios/` から実行できる YAML が並びます。**Free run** と **Record & start** は、**Stop at (ms)** を空欄にすると、仮想時間で自動停止しません。時刻を入力すると、Check と再生に同じ設定が適用されます。
+上部の **Network** でシミュレーション構成を選ぶと、対応構成では `POST api/prepare` で Hot 起動を使います（[Hot 起動と Cold 起動](#hot-起動と-cold-起動)）。開始時は単一のチェックで判定し、Workbench 画面では数値の Run ID ではなく構成ファイルと状態で実行を示します。**Network Designer** では、その構成のバスと ECU チャネルの接続先を編集できます。上部の **Scenario** には、構成ファイルと同じ階層にあるサーバー側の `scenarios/` から実行できる YAML が並びます。**Free run** と **Record & start** は、**Stop at (ms)** を空欄にすると、仮想時間で自動停止しません。時刻を入力すると、Check と再生に同じ設定が適用されます。
 
 **Settings → Scenario folder** では、**Scenario** タブで YAML を開いたり保存したりするローカルフォルダを選びます。ブラウザーが読み取り専用でフォルダを開く場合、**Save YAML** はファイルをダウンロードします。ローカルの YAML をサーバーで実行するには、選択中の Network のサーバー側 `scenarios/` に置き、実行リストを更新します。
 
@@ -1097,8 +1104,17 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 上のコマンドは、リポジトリで実行する形です。ビルド済みのツールでは、`uv run` を付けずに `vehicle-sil-gui --port 8765 ...` とします。
 
 - GUI サーバーは、開発サーバーを通す URL（`http://127.0.0.1:5173/#token=...`）を標準エラーに出力し（`--json` では `dev_url`）、ブラウザでそれを開きます。
+- GUI サーバーを頻繁に再起動するローカル開発では、`--no-auth` を付けると再起動のたびに新しい `#token=...` の URL を開き直さずに済みます（`127.0.0.1`、`Host`、`Origin`、非 CORS、`--root` の検査は残りますが、同じ PC 上の任意のローカルプロセスが API を呼べます。[セキュリティ](#セキュリティ)）。
 - 開発サーバーのポートで、開発サーバーより先に別のプログラム（同じ PC のほかの利用者のものも）が待ち受けていると、そのページがトークンを受け取ります。開発サーバーが `strictPort` で待ち受けを始めてから GUI サーバーを起動し、開いたページが自分の開発サーバーのものかを確認します。
-- 開発サーバーが配信するページには GUI サーバーの CSP が付かないので、仕上げはビルドして `--web` で確認します。
+- 開発サーバーが配信するページには GUI サーバーの CSP が付きません。Vite の HMR を壊さずに開発中に CSP 違反を早く見つけるには、`vite.config.js` の `server.headers` に report-only ヘッダーを足し、仕上げは引き続きビルドして `--web` で確認します。
+
+```js
+headers: {
+  'Content-Security-Policy-Report-Only':
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
+},
+```
+
 - サンプルの画面の開発（`ng serve`）も同じ形です（`gui/web/proxy.conf.mjs`）。
 
 ### 変数のコンポーネントを作る
@@ -1350,6 +1366,14 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 **ハンドシェイクで拒否された理由**: WebSocket のハンドシェイクが拒否されると、ブラウザには理由が見えません。`client.connection.failures` が増えたら、`client.loadApp()` を呼び直すと、HTTP のレスポンス（エラーの文）で理由がわかります。
 
 **自分で起動した participant が残っている**: 実行の後も participant が残っていることは、いまはランチャーのログ（`vehicle_sil_launch` の行）の英語の文でだけ通知します。機械が読むフィールドはありません。
+
+#### 保持入力・切断復帰・バス観測
+
+- **保持入力・モーメンタリ操作**: GUI サーバーは、ブラウザのタブが閉じたり WebSocket が切れたりしたときに変数の値を自動で戻しません（`POST api/write` は `/ws` とは独立したステートレス HTTP であり、サーバー側の自動リセットは別タブやスクリプトの設定値を上書きしたり、無通知切断の後に遅れて発火したりするためです）。用途に合わせて次の 2 つを使い分けます。
+  1. **押している間だけ効く GUI 操作（ホールドボタン・ペダル）**: `blur` と `visibilitychange` では `front.variable(ref).write(0)`（または `front.low.variables.write(...)`）で解除します。`pagehide` では `{ keepalive: true }` を渡します（`front.variable(ref).write(value, { keepalive: true })` と `front.low.variables.write(writes, { keepalive: true })` の両方で指定できます）。これによりページ離脱時も `Authorization` と `Origin` を付けたまま `fetch()` が完了できます（認証有効時の `navigator.sendBeacon` は 401 で失敗し、開発プロキシを迂回したクロスオリジン `fetch` は 403 になります）。限界として、突然の回線断やブラウザのクラッシュでは最後に書いた値が残ります。クラッシュまで防ぐには ECU 側のウォッチドッグ（ハートビート変数）が必要ですが、対象 ECU の変更が要る点、仮想時間ウォッチドッグに対するブラウザの実時間送信は `x1` 付近に限られる点（`x4`/`max` では誤検知、`x0.1` では遅延）、定期書き込みが操作履歴上限（サーバー 256 件・クライアント 64 件）と記録上限（`MAX_WRITES = 2000`）を圧迫する点、複数タブ時は操作中のタブだけ送る配慮が要る点に注意してください。
+  2. **仮想時間で長さを決める決定的なパルス（一時停止中）**: 低レベルの `front.low.variables.write(writes, { atMs, late, timeoutMs: Infinity })` を使います（高レベルの `front.variable(ref).write()` は `atMs` と `late` を受け付けません）。一時停止中に `atMs: T` と `atMs: T + holdMs` の 2 回を `timeoutMs: Infinity` で先にキューへ積んでから時間を進めると、ブラウザが切断しても確実に決定的パルスが入ります。走行中（`x1`/`x4`/`max`）のボタンには使わないでください。`front.clock.sim_ms` は WebSocket のバッチ間隔（100 ms）と RTT 分だけ遅れるため、`late: 'reject'` では落ち、`late: 'apply'` では 2 回の書き込みが同じステップの先頭に潰れて幅 0 ms になります。
+- **切断復帰**: GUI サーバーは 30 秒ごとに WebSocket の `heartbeat` を送ります（クライアント側から ping を送る必要はなく、無通知切断の検知には実時間で最大約 30 秒かかります）。再接続中（ソケットが開いてから `hello` と `synced` が届くまでの間を含む）は `session.ready` が `false`、`status.link` が `online` 以外、`bind` の `block` が `'disconnected'` のままになります。`hello` と `synced` が届くと、`session` と `ready` の購読者を呼ぶ前に変数状態が更新されるため、再接続に反応するコードは直ちに現在の実行の変数を参照できます。
+- **バス観測（`ecu.connected` と `Spy`）**: ECU の `ecu.connected` を `false` にすると、その participant だけがステップを続けたままバスから切り離されますが、ほかの ECU が実際にバスへ流している内容は分かりません。GUI で実際のバストラフィックを監視するには、`Spy` participant（`Spy::watch<M>()`。[j1939-guide.md](j1939-guide.md)）を追加します。出力変数（`count`、`last_ms`、`period_ms`、`size`、`invalid`、`spy.missed`、`stale`、`.state`）が自動でダッシュボードに載ります。なお GUI は実時間 20〜100 ms 間隔で最新値を取得する仕組みであり、すべての生フレームをストリーム配信するものではありません。
 
 ## 既知の制限
 
