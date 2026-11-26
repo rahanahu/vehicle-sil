@@ -23,6 +23,8 @@ import copy
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -298,6 +300,273 @@ class TestBuildFlagExtraction(unittest.TestCase):
             self.assertIn("optimize_macro=0", warn)
             self.assertIn("ndebug", warn)
             self.assertIn("sanitizers conflict", warn)
+
+    def test_compile_commands_partial_ambiguity_leaves_null_and_warns_without_missing_tu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            cc = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/g++ -O0 -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c libs/core/src/participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/bench_ecu/main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+            (bdir / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\n", encoding="utf-8")
+
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++ (GCC) 14.2.0"):
+                build_info, _ = BV.extract_build_provenance(bdir, {"ndebug": True}, is_windows=False)
+
+            self.assertEqual(build_info["flags_source"], "compile_commands.json")
+            self.assertEqual(build_info["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            self.assertEqual(build_info["targets"]["vehicle_sil_core"]["effective_opt_level"], "-O3")
+            self.assertEqual(build_info["targets"]["vehicle_sil_bench_ecu"]["effective_opt_level"], "-O3")
+            warn = build_info["flags_warning"] or ""
+            self.assertIn("ambiguous compile_commands.json entries for vehicle_sil_launch", warn)
+            self.assertNotIn("missing target TU(s)", warn)
+
+            # Ambiguous target alongside a genuinely missing target: do not duplicate ambiguous target in missing list.
+            cc_partial = [e for e in cc if "participant_runtime.cpp" not in e["file"]]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_partial), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++ (GCC) 14.2.0"):
+                build_info2, _ = BV.extract_build_provenance(bdir, {"ndebug": True}, is_windows=False)
+            warn2 = build_info2["flags_warning"] or ""
+            self.assertIn("ambiguous compile_commands.json entries for vehicle_sil_launch", warn2)
+            self.assertIn("missing target TU(s) in compile_commands.json: vehicle_sil_core", warn2)
+            self.assertNotIn("missing target TU(s) in compile_commands.json: vehicle_sil_launch", warn2)
+
+    def test_compile_commands_all_targets_ambiguous_is_unavailable_no_cache_fallback_and_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            cc = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/g++ -O0 -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c libs/core/src/participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "/usr/bin/g++ -O0 -c libs/core/src/participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/bench_ecu/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O0 -c tools/bench_ecu/main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+            (bdir / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Release\n"
+                "CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/g++\n"
+                "CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++ (GCC) 14.2.0"):
+                build_info, _ = BV.extract_build_provenance(bdir, {"ndebug": True}, is_windows=False)
+
+            self.assertEqual(build_info["flags_source"], "unavailable")
+            for target_flags in build_info["targets"].values():
+                self.assertEqual(target_flags, BV._empty_target_flags())
+            warn = build_info["flags_warning"] or ""
+            self.assertIn("ambiguous compile_commands.json entries for", warn)
+            self.assertIn("vehicle_sil_launch", warn)
+            self.assertIn("vehicle_sil_core", warn)
+            self.assertIn("vehicle_sil_bench_ecu", warn)
+
+            # Single matched target with conflicting compilers (even if banner is None) -> unavailable, no cache fallback.
+            cc_compiler_conflict = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/clang++ -O3 -DNDEBUG -c tools/launch/main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_compiler_conflict), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value=None):
+                build_info2, _ = BV.extract_build_provenance(bdir, {"ndebug": True}, is_windows=False)
+            self.assertEqual(build_info2["flags_source"], "unavailable")
+            for target_flags in build_info2["targets"].values():
+                self.assertEqual(target_flags, BV._empty_target_flags())
+            self.assertIn("ambiguous compile_commands.json entries for vehicle_sil_launch", build_info2["flags_warning"] or "")
+
+    def test_compile_commands_identical_duplicates_accepted_without_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            cc = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/launch/main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c libs/core/src/participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c tools/bench_ecu/main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+            (bdir / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\n", encoding="utf-8")
+
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++ (GCC) 14.2.0"):
+                build_info, _ = BV.extract_build_provenance(bdir, {"ndebug": True}, is_windows=False)
+
+            self.assertEqual(build_info["flags_source"], "compile_commands.json")
+            self.assertEqual(build_info["targets"]["vehicle_sil_launch"]["effective_opt_level"], "-O3")
+            self.assertTrue(build_info["targets"]["vehicle_sil_launch"]["ndebug"])
+            self.assertIsNone(build_info["flags_warning"])
+
+
+@unittest.skipUnless(shutil.which("git"), "git executable is required for dependency provenance tests")
+class TestDependencyProvenance(unittest.TestCase):
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "Test Author",
+                "GIT_AUTHOR_EMAIL": "test@example.com",
+                "GIT_COMMITTER_NAME": "Test Author",
+                "GIT_COMMITTER_EMAIL": "test@example.com",
+            }
+        )
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+        )
+        return proc.stdout.strip()
+
+    def _init_repo_with_commit(
+        self, repo_dir: Path, filename: str, tag: str, *, separate_git_dir: Path | None = None
+    ) -> str:
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        if separate_git_dir is not None:
+            separate_git_dir.parent.mkdir(parents=True, exist_ok=True)
+            self._git(repo_dir, "init", f"--separate-git-dir={separate_git_dir}")
+        else:
+            self._git(repo_dir, "init")
+        (repo_dir / filename).write_text("hello\n", encoding="utf-8")
+        self._git(repo_dir, "add", filename)
+        self._git(repo_dir, "commit", "-m", f"init {filename}")
+        self._git(repo_dir, "tag", tag)
+        return self._git(repo_dir, "rev-parse", "HEAD")
+
+    def test_uninitialized_silkit_submodule_records_null_not_parent_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "repo"
+            parent_sha = self._init_repo_with_commit(parent, "README.md", "v9.9.9-parent")
+            silkit_dir = parent / "external" / "sil-kit"
+            silkit_dir.mkdir(parents=True)
+
+            repo_info, deps_info = BV._collect_repo_and_dependency_provenance(
+                {"vehicle_sil": "0.4.0", "features": []},
+                {},
+                root=parent,
+            )
+            self.assertEqual(repo_info["git_commit"], parent_sha)
+            self.assertIsNone(deps_info["sil_kit"]["submodule_commit"])
+            self.assertIsNone(deps_info["sil_kit"]["tag"])
+
+            # Even if a bogus empty .git directory exists inside external/sil-kit (causing git to climb to parent),
+            # --show-toplevel verification must prevent attributing parent's HEAD/tag to SIL Kit.
+            (silkit_dir / ".git").mkdir()
+            _, deps_info2 = BV._collect_repo_and_dependency_provenance(
+                {"vehicle_sil": "0.4.0", "features": []},
+                {},
+                root=parent,
+            )
+            self.assertIsNone(deps_info2["sil_kit"]["submodule_commit"])
+            self.assertIsNone(deps_info2["sil_kit"]["tag"])
+
+    def test_initialized_silkit_repo_records_own_commit_and_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "repo"
+            parent_sha = self._init_repo_with_commit(parent, "README.md", "v9.9.9-parent")
+            silkit_dir = parent / "external" / "sil-kit"
+            silkit_sha = self._init_repo_with_commit(silkit_dir, "CMakeLists.txt", "v5.0.8-silkit")
+
+            self.assertNotEqual(parent_sha, silkit_sha)
+            repo_info, deps_info = BV._collect_repo_and_dependency_provenance(
+                {"vehicle_sil": "0.4.0", "features": ["control-server"]},
+                {"VEHICLE_SIL_STATIC": "ON"},
+                root=parent,
+            )
+            self.assertEqual(repo_info["git_commit"], parent_sha)
+            self.assertEqual(deps_info["sil_kit"]["submodule_commit"], silkit_sha)
+            self.assertEqual(deps_info["sil_kit"]["tag"], "v5.0.8-silkit")
+            self.assertTrue(deps_info["sil_kit"]["static_linked"])
+            self.assertTrue(deps_info["control_server_built"])
+
+            # Also verify submodule-style .git file (gitdir pointer via --separate-git-dir).
+            parent2 = Path(tmp) / "repo_gitfile"
+            parent2_sha = self._init_repo_with_commit(parent2, "README.md", "v9.9.9-parent2")
+            silkit_dir2 = parent2 / "external" / "sil-kit"
+            gitdir2 = parent2 / ".git" / "modules" / "external" / "sil-kit"
+            silkit_sha2 = self._init_repo_with_commit(
+                silkit_dir2, "CMakeLists.txt", "v5.0.8-submod", separate_git_dir=gitdir2
+            )
+            self.assertTrue((silkit_dir2 / ".git").is_file())
+            self.assertNotEqual(parent2_sha, silkit_sha2)
+            repo_info2, deps_info2 = BV._collect_repo_and_dependency_provenance(
+                {"vehicle_sil": "0.4.0", "features": []},
+                {},
+                root=parent2,
+            )
+            self.assertEqual(repo_info2["git_commit"], parent2_sha)
+            self.assertEqual(deps_info2["sil_kit"]["submodule_commit"], silkit_sha2)
+            self.assertEqual(deps_info2["sil_kit"]["tag"], "v5.0.8-submod")
 
 
 class TestAlignmentValidation(unittest.TestCase):

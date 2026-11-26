@@ -444,11 +444,20 @@ def _compute_flags_warning(
     build_dir: Path | None = None,
     launcher_path: Path | None = None,
     bench_ecu_path: Path | None = None,
+    ambiguous_targets: list[str] | None = None,
 ) -> str | None:
     warnings: list[str] = []
+    ambiguous_list = list(ambiguous_targets) if ambiguous_targets else []
+    ambiguous_set = set(ambiguous_list)
+    if ambiguous_list:
+        warnings.append(f"ambiguous compile_commands.json entries for {', '.join(ambiguous_list)}")
     if flags_source != "unavailable":
         if flags_source == "compile_commands.json":
-            missing_tus = [name for name, info in targets.items() if info["optimization_flags"] is None]
+            missing_tus = [
+                name
+                for name, info in targets.items()
+                if info["optimization_flags"] is None and name not in ambiguous_set
+            ]
             if missing_tus:
                 warnings.append(f"missing target TU(s) in compile_commands.json: {', '.join(missing_tus)}")
         if build_dir is not None:
@@ -541,6 +550,7 @@ def extract_build_provenance(
 
     targets: dict[str, dict[str, Any]] = {name: _empty_target_flags() for name in TARGET_TU_SUFFIXES}
     flags_source = "unavailable"
+    ambiguous_targets: list[str] = []
 
     cc_path = (build_dir / "compile_commands.json") if build_dir is not None else None
     if cc_path is not None and cc_path.is_file():
@@ -549,7 +559,9 @@ def extract_build_provenance(
         except (OSError, json.JSONDecodeError):
             entries = None
         if isinstance(entries, list):
-            matched_any = False
+            matched_entries: dict[str, list[tuple[str | None, dict[str, Any]]]] = {
+                name: [] for name in TARGET_TU_SUFFIXES
+            }
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
@@ -567,18 +579,29 @@ def extract_build_provenance(
                         tokens = _expand_response_files(tokens, entry_dir, windows)
                         compiler_path = _extract_compiler_path(tokens)
                         parsed = parse_flag_tokens(tokens[1:] if tokens else [])
-                        targets[target_name] = {
+                        entry_flags = {
                             "compiler_id": compiler_id_cmake,
                             "compiler_version": compiler_ver_cmake,
                             "compiler_banner": _compiler_banner(compiler_path, banner_cache),
                             **parsed,
                         }
-                        matched_any = True
-            if matched_any:
+                        matched_entries[target_name].append((compiler_path, entry_flags))
+            unambiguous_any = False
+            for target_name in TARGET_TU_SUFFIXES:
+                target_matches = matched_entries[target_name]
+                if not target_matches:
+                    continue
+                first = target_matches[0]
+                if all(match == first for match in target_matches[1:]):
+                    targets[target_name] = first[1]
+                    unambiguous_any = True
+                else:
+                    ambiguous_targets.append(target_name)
+            if unambiguous_any:
                 flags_source = "compile_commands.json"
 
     is_multi_config = bool(cache_vals.get("CMAKE_CONFIGURATION_TYPES", "").strip()) and cmake_build_type is None
-    if flags_source == "unavailable" and cache_vals and not is_multi_config:
+    if flags_source == "unavailable" and not ambiguous_targets and cache_vals and not is_multi_config:
         flags_source = "cmake_cache"
         base_flags = cache_vals.get("CMAKE_CXX_FLAGS", "")
         type_key = f"CMAKE_CXX_FLAGS_{cmake_build_type.upper()}" if cmake_build_type else ""
@@ -613,6 +636,7 @@ def extract_build_provenance(
         build_dir=build_dir,
         launcher_path=launcher_path,
         bench_ecu_path=bench_ecu_path,
+        ambiguous_targets=ambiguous_targets,
     )
     return (
         {
@@ -627,11 +651,11 @@ def extract_build_provenance(
     )
 
 
-def _git_output(args: list[str], cwd: Path = ROOT) -> str | None:
+def _git_output(args: list[str], cwd: Path | None = None) -> str | None:
     try:
         proc = subprocess.run(
             ["git", *args],
-            cwd=cwd,
+            cwd=ROOT if cwd is None else cwd,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -649,14 +673,17 @@ def _git_output(args: list[str], cwd: Path = ROOT) -> str | None:
 def _collect_repo_and_dependency_provenance(
     launcher_version_info: dict[str, Any],
     cache_vals: dict[str, str],
+    *,
+    root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    git_commit = _git_output(["rev-parse", "HEAD"])
+    repo_root = ROOT if root is None else root
+    git_commit = _git_output(["rev-parse", "HEAD"], cwd=repo_root)
     git_dirty: bool | None = None
     if git_commit is not None:
         try:
             proc = subprocess.run(
                 ["git", "diff", "--quiet", "HEAD"],
-                cwd=ROOT,
+                cwd=repo_root,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -674,21 +701,22 @@ def _collect_repo_and_dependency_provenance(
         "launcher_features": features,
     }
 
-    silkit_dir = ROOT / "external" / "sil-kit"
+    silkit_dir = repo_root / "external" / "sil-kit"
     silkit_commit: str | None = None
     silkit_tag: str | None = None
-    if silkit_dir.exists():
-        silkit_commit = _git_output(["rev-parse", "HEAD"], cwd=silkit_dir)
-        silkit_tag = _git_output(["describe", "--tags", "--exact-match"], cwd=silkit_dir)
-    if silkit_commit is None:
-        ls_out = _git_output(["ls-tree", "HEAD", "external/sil-kit"])
-        if ls_out:
-            parts = ls_out.split()
-            if len(parts) >= 3:
-                silkit_commit = parts[2]
+    if (silkit_dir / ".git").exists():
+        toplevel = _git_output(["rev-parse", "--show-toplevel"], cwd=silkit_dir)
+        if toplevel is not None:
+            try:
+                is_own_repo = Path(toplevel).resolve() == silkit_dir.resolve()
+            except OSError:
+                is_own_repo = False
+            if is_own_repo:
+                silkit_commit = _git_output(["rev-parse", "HEAD"], cwd=silkit_dir)
+                silkit_tag = _git_output(["describe", "--tags", "--exact-match"], cwd=silkit_dir)
 
     patches: list[dict[str, str]] = []
-    patch_dir = ROOT / "patches" / "sil-kit"
+    patch_dir = repo_root / "patches" / "sil-kit"
     if patch_dir.is_dir():
         for p in sorted(patch_dir.glob("*.patch")):
             digest = hashlib.sha256(p.read_bytes()).hexdigest()
