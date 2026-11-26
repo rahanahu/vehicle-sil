@@ -109,7 +109,7 @@ Each run has an ID that the launcher gives it: an opaque string. Compare it for 
 | How a call names the run | The metadata `vehicle-sil-run: <ID>`. In Python, `Control(address, run=<ID>)`, `Control.for_current_run(address)`, or `run.control()` from `Serve` (see [Python](#python)). |
 | A call that names another run | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` in the trailing metadata is `run-changed`. Nothing of the call reaches the ECUs or the time. |
 | A call that names no run, with `vehicle_sil_launch run` | Served, as before runs had IDs. |
-| A call that names no run, with `vehicle_sil_launch serve` (one launcher, one run after another; see [simulation-run.md](simulation-run.md)) | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` is `run-required`. |
+| A call that names no run, with `vehicle_sil_launch serve` (one launcher, one run after another; see [simulation-run.md](simulation-run.md)) | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` is `run-required`. In Python, `ControlError` appends a hint pointing to `Control.for_current_run()` or `Control(..., run=...)`. |
 | `Ping` | Never rejected for the run, so that a client can always learn the current one. |
 | Order of the checks | The token (`UNAUTHENTICATED`), then the role (`PERMISSION_DENIED`), then the run. A client without a valid token learns nothing about the run, and a client with one learns no more than `Ping` tells it. |
 | The audit log | Each line begins with `[run <ID>] `, so one file (`--control-audit-log`) can hold the lines of several runs. A rejected call is logged with the run it named. |
@@ -485,6 +485,7 @@ In `Launch(launcher, config, *, address="0", start_paused=False, arguments=(), c
 | Member | Details |
 |---|---|
 | `address` | The address of the Control Server. It waits for the `control_server` event, then returns. |
+| `pid`, `participant_pids` | The launcher child PID (`int`), and a `dict[str, int]` mapping each started participant name to its PID from Events v4 `participant`/`started` events seen so far. |
 | `events` | The list of the events read so far, as dicts (`bad_lines` holds malformed stdout lines; `stderr_text` holds stderr when `stderr=subprocess.PIPE`). |
 | `result` | The result. |
 | `wait_for_event(event, timeout=60.0, after=None, **keys)` | Waits for the first event whose keys have the given values. |
@@ -494,7 +495,7 @@ In `Launch(launcher, config, *, address="0", start_paused=False, arguments=(), c
 | `close()` | Stops the launcher if running and closes pipes (`__exit__` calls this). |
 | `returncode` | The exit code of the launcher. |
 
-If the launcher ends without printing a result, or the run ends before the awaited event arrives, `LaunchError` is raised. Its message includes the result and the error findings.
+If the launcher ends without printing a result, or the run ends before the awaited event arrives, `LaunchError` is raised. Its message includes the result, error findings with their `detail` (such as `--describe` stderr, capped to 500 characters), and—on abnormal exit without a result—the command, exit code, and captured stderr tail.
 
 If you start the launcher yourself, `control_address(lines)` returns `address` of the first `control_server` event in the event lines (strings or dicts).
 
@@ -534,7 +535,7 @@ In `Serve(launcher, config, *, once=False, control=False, address="0", credentia
 |---|---|
 | `id`, `run_id` | The opaque run ID assigned by the launcher. |
 | `address` | Where this run's Control Server listens (waits for this run's `control_server` event). |
-| `start_event`, `result_event`, `events`, `result`, `status`, `launcher_ends` | The `run_start` event, the `result` event once finished, events for this run, the `result` dict and embedded settled `status` (`ExecutionStatus`), and whether the launcher ends with this run. |
+| `start_event`, `result_event`, `events`, `participant_pids`, `result`, `status`, `launcher_ends` | The `run_start` event, the `result` event once finished, events for this run, a `dict[str, int]` of participant name to PID from `participant`/`started` events of this run, the `result` dict and embedded settled `status` (`ExecutionStatus`), and whether the launcher ends with this run. |
 | `wait_for_event(event, timeout=60.0, after=None, **keys)` | Waits for the first matching event of this run. |
 | `control(**options)` | Returns `Control(run.address, run=run.id, **options)`. Passing `run=...` raises `TypeError`. |
 | `send(command)` | Sends a stdin command targeted at this run (`"run": run.id`). |
@@ -543,7 +544,7 @@ In `Serve(launcher, config, *, once=False, control=False, address="0", credentia
 
 `Serve` keeps no history of completed runs and does not accumulate a stream-wide `events` list. Once a run's `result` event arrives, `Serve` drops its reference to that `RunHandle`, so the run's events and result are freed as soon as you release the handle (`keep_logs=False` omits `"log"` events from `RunHandle.events`). To observe every event across the whole stream (including `"log"` events even when `keep_logs=False`), pass `on_event=callback`. `on_event` runs sequentially on the reader thread outside `Serve`'s lock and before `Serve` updates its state and wakes waiting callers (so `Serve()`, `prepare()`, `start()`, `run.wait()`, and `close()` return only after the corresponding event has been delivered). Each call receives a shallow copy (`dict`) of the event; treat nested values as read-only and do not call `close()`, `wait()`, or blocking methods/properties that wait for events (`prepare()`, `status()`, `start()`, `run.wait()`, `run.wait_for_event()`, or reading `hello`, `instance`, `run.address`, or `run.control()` before those events are processed) inside the callback—doing so raises `ServeError`. Exceptions raised by `on_event` are passed to `sys.excepthook` without stopping the reader thread.
 
-Leaving `with runner.start(...)` stops only that run (`force=False`) and waits for its `result` (which carries the settled `status`), keeping `Serve` alive for the next run (unless `once=True` or `launcher_ends` is true). If a run ends with `launcher_ends: true` (for example exit code 6 when contaminated, or a single run with `once=True`), `Serve` cannot start further runs; leaving `with Serve(...)` closes the resident launcher. When a command is refused, times out, or the launcher fails to start (including `VEHICLE_SIL_TRACE` without `once=True`, reported with `reason="trace-enabled"`), `ServeError` (a subclass of `LaunchError`) is raised with `reason` when available.
+Leaving `with runner.start(...)` stops only that run (`force=False`) and waits for its `result` (which carries the settled `status`), keeping `Serve` alive for the next run (unless `once=True` or `launcher_ends` is true). If a run ends with `launcher_ends: true` (for example exit code 6 when contaminated, or a single run with `once=True`), `Serve` cannot start further runs; leaving `with Serve(...)` closes the resident launcher. When a command is refused, times out, or the launcher fails to start or exits unexpectedly (including `VEHICLE_SIL_TRACE` without `once=True`, reported with `reason="trace-enabled"`), `ServeError` (a subclass of `LaunchError`) is raised with `reason` when available; its message includes finding `detail` (such as `--describe` stderr) and, on abnormal process exit, the command, exit code, and captured stderr tail.
 
 ### Connect, read and write (`Control`)
 
@@ -565,14 +566,16 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
         break
 ```
 
-Times are virtual time in nanoseconds. Make them with `ms()` and `s()`. Pass `late="apply_next"` to `c.write(..., at=..., late="apply_next")` to apply in the next step if `at` has already passed (default `"reject"`).
+Times are virtual time in nanoseconds. Make them with `ms()` and `s()`. Pass `late="apply_next"` to `c.write(..., at=..., late="apply_next")` to apply in the next step if `at` has already passed (default `"reject"`). Pass `timeout=<seconds>` to `c.watch(..., timeout=5.0)` to bound a watch stream in wall-clock seconds (`None` waits indefinitely; expiry raises `ControlError` with code `DEADLINE_EXCEEDED`).
+
+Reading values (`c.values()`, `c.snapshot()`, `c.watch()`) returns `Values` objects whose `.values` dict maps variable names to their Python values (`bool`, `int`, `float`). Call `vals.text(name)` to resolve an enum variable's integer value to its declared item name (returns `None` if `name` is absent, not an enum, or its integer has no matching item). Pass `builtin=False` to `c.values(peer, builtin=False)` or `c.snapshot(peers=(), builtin=False)` to filter to application-declared variables only (`not v.builtin`). Note that `builtin=False` is an application-declared variables filter (it also drops deterministic built-in variables such as `ecu.connected`, `peer.steps`, and `j1939.*`); when comparing runs for determinism, keep `builtin=True` and exclude only the two wall-clock monitoring variables (`peer.speed` and `peer.app_time_max_us`).
 
 | What happened | How it shows in Python |
 |---|---|
 | A call fails | The exception `ControlError` (see [Errors](#errors)). |
 | The Agent rejects a write | Not an exception: the result of the operation (`invalid` and others). |
 
-To keep a `Control` to one run (see [The run a call is for](#the-run-a-call-is-for)), bind it to the run. It then names the run in every call, and once the server at the address belongs to another run, every call but `ping()` and `current_run()` raises `ControlError` with the `reason` `run-changed`. Make a new `Control` for the new run.
+To keep a `Control` to one run (see [The run a call is for](#the-run-a-call-is-for)), bind it to the run. It then names the run in every call, and once the server at the address belongs to another run, every call but `ping()` and `current_run()` raises `ControlError` with the `reason` `run-changed`. Make a new `Control` for the new run. Against a multi-run `vehicle_sil_launch serve` launcher, an unbound `Control(address)` is refused with `reason` `run-required`, and the `ControlError` message includes a hint pointing to `Control.for_current_run()` / `Control(..., run=...)` (or use `run.control()` with `Serve`).
 
 ```python
 from vehicle_sil_control import Control
@@ -684,7 +687,7 @@ if snap.consistent:                       # the values are those of the paused t
     print(snap.time.now, snap.values["Engine"].values["engine.speed"])
 ```
 
-`snapshot()` (gRPC `GetSnapshot`) returns the time state (the same `TimeState` as `sim.time()`) and the latest values of each peer (the same `Values` as `values()`), which the server reads in one go. The server reads the time state first, then the values of all peers at the same instant.
+`snapshot(peers=(), builtin=True)` (gRPC `GetSnapshot`) returns the time state (the same `TimeState` as `sim.time()`) and the latest values of each peer (the same `Values` as `values()`, including `Values.text()` for enum names), which the server reads in one go. Pass `builtin=False` to include only application-declared variables (`not v.builtin`); for determinism comparisons across runs, keep `builtin=True` and exclude only the two wall-clock variables (`peer.speed` and `peer.app_time_max_us`). The server reads the time state first, then the values of all peers at the same instant.
 
 The guarantees apply to peers that run on the simulation's time, while the server can control time (`time.available`).
 
@@ -758,6 +761,7 @@ A failed call returns a gRPC status code. In Python, it raises the exception `Co
 | `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes during a scenario, a pause or another speed in a run that is connected outside and keeps real time), or it is for another run than the server's (`run-changed`) or names no run where the server requires one (`run-required`). The Python client also raises it for a server of another vehicle-sil release. |
 | `UNAUTHENTICATED` / `PERMISSION_DENIED` | Missing/invalid bearer token (`UNAUTHENTICATED`) or insufficient role (`PERMISSION_DENIED`) when `--control-credentials` is enabled. |
 | `CANCELLED` | The server closed while the call was waiting (`WaitPaused`; it can also get `FAILED_PRECONDITION`). |
+| `DEADLINE_EXCEEDED` | The call's wall-clock deadline expired (for example `Control.watch(..., timeout=...)` or a slow RPC). |
 | `RESOURCE_EXHAUSTED` | The response of `snapshot()` was larger than the limit of one message (4 MiB). |
 | `UNIMPLEMENTED` | The address answers gRPC but is not a vehicle-sil Control Server (it has no such call). |
 | `UNAVAILABLE` / `NOT_FOUND` | The server is unreachable or a peer keeps restarting during `values()` / `snapshot()` (`UNAVAILABLE`); `peer(name)` found no peer of that name (`NOT_FOUND`). |
@@ -783,7 +787,7 @@ Writes during a scenario have the `reason` `scenario-running`.
 
 - When a run at a set speed falls behind, it keeps going at the set speed, shifted back by the lateness (see "How lateness is measured" in [internals/virtual-time.md](internals/virtual-time.md#how-lateness-is-measured)).
 - Read participant failures from the simulation state (`failed_participant` and `failure_reason` of `watch(simulation=True)`).
-- To record every value, use SIL Kit tracing or `TapPort`.
+- To record every raw CAN/J1939 frame without missing intermediate frames, use `Spy::Scope::on_frame` or `ecu.can().on_frame()` in an `ecu_main` ECU (or `Peer::tap()` / `TapPort` when driving a `Peer` or `LocalBench` directly in-process; `TapPort` is not exposed on `Ecu`). Do not rely on SIL Kit `TraceSinks` for CAN: the bundled `PcapFile`/`PcapPipe` sinks are Ethernet-only and throw on CAN frames, and `Mdf4File` requires Vector's external `SilKitExtension_Mdf` extension, which is not bundled with vehicle-sil.
 
 | Limit (server default) | Value |
 |---|---|
