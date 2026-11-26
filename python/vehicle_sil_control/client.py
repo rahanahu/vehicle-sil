@@ -21,6 +21,7 @@ from .grpc_helpers import (
     to_proto_value,
     trailing_reason,
 )
+from .protocol import REASON_RUN_REQUIRED
 
 Number = Union[bool, int, float]
 
@@ -70,7 +71,12 @@ class ControlError(Exception):
 
 
 def _error(e: grpc.RpcError) -> ControlError:
-    return ControlError(e.code(), e.details(), trailing_reason(e) or "")
+    reason = trailing_reason(e) or ""
+    details = e.details() or ""
+    if reason == REASON_RUN_REQUIRED:
+        hint = "hint: bind Control to a run with Control.for_current_run(address) or Control(address, run=<run_id>)"
+        details = f"{details}\n{hint}" if details else hint
+    return ControlError(e.code(), details, reason)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -111,9 +117,14 @@ class Peer:
 @dataclasses.dataclass(frozen=True)
 class Target:
     """One peer's result of a write. Its writes are those of the request for this peer, in the
-    order given; positions count from 0 (see TargetResult in control.proto)."""
+    order given; positions count from 0 (see TargetResult in control.proto).
+
+    `status` is one of the open states ("sent", "queued", "disconnected") or final states
+    ("applied", "late", "rejected", "cancelled", "invalid", "busy", "unknown"). `late` is True
+    when `at` had already passed before the peer applied (with `late="apply_next"`) or refused
+    (with `late="reject"`) the write."""
     peer: str
-    status: str  # "sent", "queued", "disconnected", "applied", "late", ...
+    status: str
     applied_at: Optional[int] = None  # ns
     late: bool = False
     reason: str = ""
@@ -163,6 +174,20 @@ class Values:
     time: int  # ns: the start of the ECU step at whose end the values were read
     sequence: int
     values: Dict[str, Number]
+    _enums: Mapping[str, Mapping[int, str]] = dataclasses.field(default_factory=dict, repr=False, compare=False)
+
+    def text(self, name: str) -> Optional[str]:
+        """The enum item name for `name`'s current value, or None if `name` is absent, not an enum,
+        or its integer value has no matching item."""
+        if name not in self.values:
+            return None
+        mapping = self._enums.get(name)
+        if not mapping:
+            return None
+        raw = self.values[name]
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            return None
+        return mapping.get(raw)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -193,6 +218,36 @@ class EventInfo:
     time: int
     level: str
     text: str
+
+
+def _enum_lookup(schema: Sequence[Variable]) -> Dict[str, Dict[int, str]]:
+    lookup: Dict[str, Dict[int, str]] = {}
+    for v in schema:
+        if v.items:
+            by_value: Dict[int, str] = {}
+            for item_name, item_value in v.items.items():
+                by_value.setdefault(item_value, item_name)
+            lookup[v.name] = by_value
+    return lookup
+
+
+def _build_values(
+    peer: str,
+    incarnation: str,
+    time_ns: int,
+    sequence: int,
+    schema: Sequence[Variable],
+    raw_values: Sequence,
+    *,
+    builtin: bool = True,
+    enums: Optional[Mapping[str, Mapping[int, str]]] = None,
+) -> Values:
+    named: Dict[str, Number] = {}
+    for v, x in zip(schema, raw_values):
+        if builtin or not v.builtin:
+            named[v.name] = _value(x)
+    enum_map = _enum_lookup(schema) if enums is None else enums
+    return Values(peer, incarnation, time_ns, sequence, named, _enums=enum_map)
 
 
 def _variable(v) -> Variable:
@@ -280,8 +335,9 @@ class _Simulation:
 
     def pause(self, at: Optional[int] = None) -> TimeState:
         """Pause immediately (`at=None`) or schedule a pause at `at` ns (replaces any earlier
-        `pause_target`). Does not resume from a normal post-start pause (only `--start-paused`
-        before step 0 advances when `at > 0`); use `run_until(at)` to advance to `at` and pause."""
+        `pause_target`; `at` is rounded up to whole milliseconds and then up to the controller's
+        time step). Does not resume from a normal post-start pause (only `--start-paused` before
+        step 0 advances when `at > 0`); use `run_until(at)` to advance to `at` and pause."""
         request = pb.PauseRequest() if at is None else pb.PauseRequest(at_ns=at)
         return _time(self._c._call(self._c._stub.Pause, request))
 
@@ -290,21 +346,30 @@ class _Simulation:
         return _time(self._c._call(self._c._stub.Resume, pb.ResumeRequest()))
 
     def run_until(self, at: int) -> TimeState:
-        """Advance to `at` ns (resuming if paused before `at`) and pause there."""
+        """Advance to `at` ns (resuming if paused before `at`) and pause there. Returns once
+        accepted (call `wait_paused()` to wait until the simulation stands still); `at` is rounded
+        up to whole milliseconds and then up to the controller's time step."""
         return _time(self._c._call(self._c._stub.RunUntil, pb.RunUntilRequest(at_ns=at)))
 
     def step(self, duration: int) -> TimeState:
+        """Advance by `duration` ns from the current paused time and pause again (valid only while
+        paused; raises ControlError FAILED_PRECONDITION otherwise). Returns once accepted (call
+        `wait_paused()` to wait until paused); the stop time is rounded up to whole milliseconds
+        and then up to the controller's time step."""
         return _time(self._c._call(self._c._stub.Step, pb.StepRequest(duration_ns=duration)))
 
     def set_speed(self, speed: Optional[float]) -> TimeState:
+        """Set simulation speed (simulation seconds per wall-clock second; `None` for max speed)."""
         request = pb.SetSpeedRequest() if speed is None else pb.SetSpeedRequest(speed=speed)
         return _time(self._c._call(self._c._stub.SetSpeed, request))
 
     def wait_paused(self, timeout: float = 30.0) -> TimeState:
+        """Wait up to `timeout` wall-clock seconds until the simulation pauses, returning its `TimeState`."""
         return _time(self._c._call(self._c._stub.WaitPaused, pb.WaitPausedRequest(timeout_ms=int(timeout * 1000)),
                                    timeout=timeout + 5))
 
     def stop(self, reason: str = "") -> TimeState:
+        """Stop the simulation (`reason` is recorded in the audit log if enabled)."""
         return _time(self._c._call(self._c._stub.Stop, pb.StopRequest(reason=reason)))
 
 
@@ -315,7 +380,7 @@ class Control:
             c.sim.pause(); c.sim.wait_paused()
             seq = c.write({"Body": {"cabin.parking_brake": True}}, at=c.sim.time().now + ms(10))
             c.wait(seq, until="queued")
-            c.sim.step(ms(100))
+            c.sim.step(ms(100)); c.sim.wait_paused()
 
     Making one does not connect. The first call (or watch) checks that the server is of this
     client's vehicle-sil release (__version__) and refuses another with ControlError.
@@ -348,6 +413,7 @@ class Control:
         self._stub = rpc.ControlServiceStub(self._channel)
         self._timeout = timeout
         self._schemas: Dict[tuple, List[Variable]] = {}  # (peer, incarnation) -> schema, for snapshot()
+        self._enum_maps: Dict[tuple, Dict[str, Dict[int, str]]] = {}  # (peer, incarnation) -> {var: {int: name}}
         self._checked = False  # the server's release was compared with this client's (_check_release)
         self._check_lock = threading.Lock()
         self.sim = _Simulation(self)
@@ -427,8 +493,9 @@ class Control:
                 return p
         raise ControlError(grpc.StatusCode.NOT_FOUND, f"no peer {name}")
 
-    def values(self, peer: str) -> Optional[Values]:
-        """The peer's latest sample, by variable name (None if there is none yet)."""
+    def values(self, peer: str, builtin: bool = True) -> Optional[Values]:
+        """The peer's latest sample, by variable name (None if there is none yet).
+        With `builtin=False`, returns only application-declared variables (`not v.builtin`)."""
         for _ in range(3):
             info = self.peer(peer)
             reply = self._call(self._stub.GetValues, pb.GetValuesRequest(peer=peer))
@@ -438,14 +505,20 @@ class Control:
                 break  # the schema fits the values
         else:
             raise ControlError(grpc.StatusCode.UNAVAILABLE, f"{peer} keeps restarting")
-        values = {v.name: _value(x) for v, x in zip(info.schema, reply.snapshot.values)}
-        return Values(peer, reply.incarnation, reply.snapshot.time_ns, reply.snapshot.sequence, values)
+        key = (peer, reply.incarnation)
+        enums = self._enum_maps.get(key)
+        if enums is None:
+            enums = _enum_lookup(info.schema)
+            self._enum_maps[key] = enums
+        return _build_values(peer, reply.incarnation, reply.snapshot.time_ns, reply.snapshot.sequence,
+                             info.schema, reply.snapshot.values, builtin=builtin, enums=enums)
 
-    def snapshot(self, peers: Sequence[str] = ()) -> Snapshot:
+    def snapshot(self, peers: Sequence[str] = (), builtin: bool = True) -> Snapshot:
         """The time state and the latest values of `peers` (empty: every peer with an agent), read
         by the server in one go: see Snapshot for what holds between the time and the values.
         After `sim.wait_paused()`, `consistent` says that the values are those of the time the
-        simulation stands still at."""
+        simulation stands still at. With `builtin=False`, each peer's `Values` includes only
+        application-declared variables (`not v.builtin`)."""
         if isinstance(peers, (str, bytes)):
             raise TypeError("peers is a sequence of names, not one name: pass [name]")
         reply = self._call(self._stub.GetSnapshot, pb.GetSnapshotRequest(peers=list(peers)))
@@ -454,19 +527,32 @@ class Control:
             # The names of the values: a schema belongs to an incarnation and does not change.
             for p in self._call(self._stub.ListPeers, pb.ListPeersRequest()).peers:
                 if p.has_agent:
-                    self._schemas[(p.participant, p.incarnation)] = [_variable(v) for v in p.schema]
+                    schema = [_variable(v) for v in p.schema]
+                    key = (p.participant, p.incarnation)
+                    self._schemas[key] = schema
+                    self._enum_maps[key] = _enum_lookup(schema)
         values: Dict[str, Values] = {}
         for v in sampled:
-            schema = self._schemas.get((v.peer, v.incarnation))
+            key = (v.peer, v.incarnation)
+            schema = self._schemas.get(key)
             if schema is None:
                 raise ControlError(grpc.StatusCode.UNAVAILABLE, f"{v.peer} restarted during the call: ask again")
-            named = {variable.name: _value(x) for variable, x in zip(schema, v.snapshot.values)}
-            values[v.peer] = Values(v.peer, v.incarnation, v.snapshot.time_ns, v.snapshot.sequence, named)
+            enums = self._enum_maps.get(key)
+            if enums is None:
+                enums = _enum_lookup(schema)
+                self._enum_maps[key] = enums
+            values[v.peer] = _build_values(v.peer, v.incarnation, v.snapshot.time_ns, v.snapshot.sequence,
+                                           schema, v.snapshot.values, builtin=builtin, enums=enums)
         return Snapshot(_time(reply.time), values, reply.consistent)
 
     def write(self, writes: Mapping[str, Mapping[str, Number]], at: Optional[int] = None, late: str = "reject") -> int:
-        """Writes {peer: {variable: value}}; returns the operation's sequence number. `at` is a
-        simulation time in ns (None: the next step); late is "reject" or "apply_next"."""
+        """Writes {peer: {variable: value}}; returns the operation's sequence number.
+
+        `at` is a simulation time in ns (None: the next step; after a pause set `at > sim.time().now`
+        except in the `--start-paused` pre-start hold). `late` decides what happens if `at` has
+        already passed when a peer receives the write: `"reject"` (default) leaves the variable
+        unchanged with `Target.status == "late"`, while `"apply_next"` applies it in the next step
+        with `Target.status == "applied"` and `Target.late == True`."""
         request = pb.WriteRequest(late=pb.LATE_POLICY_APPLY_NEXT if late == "apply_next" else pb.LATE_POLICY_REJECT)
         if at is not None:
             request.at_ns = at
@@ -483,37 +569,46 @@ class Control:
         self._call(self._stub.ForgetPeer, pb.ForgetPeerRequest(peer=peer))
 
     def wait(self, seq: int, until: str = "done", timeout: float = 30.0) -> Operation:
-        """Waits until every target is final ("done") or none is still being sent ("queued")."""
+        """Waits up to `timeout` wall-clock seconds for operation `seq`.
+
+        `until="done"` (default) waits until every target reaches a final `Target.status`
+        ("applied", "late", "rejected", "cancelled", "invalid", "busy", "unknown");
+        `until="queued"` waits until no target is still "sent"."""
         request = pb.WaitOperationRequest(seq=seq, timeout_ms=int(timeout * 1000),
                                           until=pb.WAIT_FOR_QUEUED if until == "queued" else pb.WAIT_FOR_DONE)
         return _operation(self._call(self._stub.WaitOperation, request, timeout=timeout + 5))
 
     def watch(self, peers: Sequence[str] = (), values: bool = True, events: bool = True, operations: bool = True,
-              capacity: int = 0, time: bool = False, simulation: bool = False) -> Iterator[object]:
+              capacity: int = 0, time: bool = False, simulation: bool = False,
+              timeout: Optional[float] = None) -> Iterator[object]:
         """Yields Peer, ("removed", name), Values, EventInfo, Operation, TimeState (with time=True),
         SimulationState (with simulation=True: participants' states, a failure, the end) and
-        ("initial_done",) once the current state has been sent, until the caller stops iterating (or
-        the server ends the stream)."""
+        ("initial_done",) once the current state has been sent, until the caller stops iterating,
+        the server ends the stream, or `timeout` wall-clock seconds pass (raising ControlError with
+        code `DEADLINE_EXCEEDED`; `None` waits indefinitely)."""
         self._check_release()
-        schemas: Dict[str, List[Variable]] = {}
+        schemas: Dict[tuple, List[Variable]] = {}
+        enum_maps: Dict[tuple, Dict[str, Dict[int, str]]] = {}
         request = pb.WatchRequest(peers=list(peers), values=values, events=events, operations=operations,
                                   capacity=capacity, time=time, simulation=simulation)
-        stream = self._stub.Watch(request)
+        stream = self._stub.Watch(request, timeout=timeout)
         try:
             for u in stream:
                 kind = u.WhichOneof("kind")
                 if kind == "peer":
                     peer = _peer(u.peer)
-                    schemas[(peer.participant, peer.incarnation)] = peer.schema
+                    key = (peer.participant, peer.incarnation)
+                    schemas[key] = peer.schema
+                    enum_maps[key] = _enum_lookup(peer.schema)
                     yield peer
                 elif kind == "removed_peer":
                     yield ("removed", u.removed_peer)
                 elif kind == "values":
-                    schema = schemas.get((u.values.peer, u.values.incarnation), [])
-                    names = [v.name for v in schema]
-                    vals = {n: _value(x) for n, x in zip(names, u.values.snapshot.values)}
-                    yield Values(u.values.peer, u.values.incarnation, u.values.snapshot.time_ns,
-                                 u.values.snapshot.sequence, vals)
+                    key = (u.values.peer, u.values.incarnation)
+                    schema = schemas.get(key, [])
+                    enums = enum_maps.get(key, {})
+                    yield _build_values(u.values.peer, u.values.incarnation, u.values.snapshot.time_ns,
+                                        u.values.snapshot.sequence, schema, u.values.snapshot.values, enums=enums)
                 elif kind == "event":
                     e = u.event.event
                     yield EventInfo(u.event.peer, e.time_ns, _enum_name(pb.EventLevel, e.level, "EVENT_LEVEL_"),
