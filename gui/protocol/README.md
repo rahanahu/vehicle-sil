@@ -27,7 +27,7 @@ The API version is `vehicle_sil_gui` (currently 4). The server writes it in the 
 - What a reader ignores or passes on: unknown fields, unknown `type`s, unknown events (`event`), unknown `code`s, and unknown values of fields whose set of values can grow (`phase`, `state`, `result` and others).
 - On a version mismatch, waiting does not help, so the client does not reconnect. The library stops, with a `ProtocolError` for `api/app` and with `session.incompatible` for `hello`.
 - **What is received again**: if a WebSocket message is not valid JSON, or the core fields of the `hello` or `session` summary (`id`, `state`, `launcher`, `stop`) cannot be read, the reader cannot tell what was lost. It reconnects and receives everything again from `hello`. The summary is the source of truth. Each time this happens again in a row, the wait before reconnecting grows.
-- Launcher events (the contents of `event`) have exactly the shape of the launcher's `run --events`. The launcher sets their version (`vehicle_sil_events` in the `hello` event; see [docs/simulation-events.md](../../docs/simulation-events.md)).
+- Launcher events (the contents of `event`) have the shape of the launcher's `serve [--once]` Events v4 stream (`vehicle_sil_events: 4` in `hello`; see [docs/simulation-events.md](../../docs/simulation-events.md)).
 - The launcher's objects (the check and the run result in the summary and in `api/check`, findings, launcher events) are relayed with every key. The client library types the keys that screens need and keeps the launcher's whole object in `raw` (see "The launcher's keys (`raw`)" in [gui/client/README.md](../client/README.md#the-launchers-keys-raw)).
 - Error `code` names do not change (new ones may be added). `message` is a human-readable sentence, not localized, and its wording may change. Programs branch on `code`.
 
@@ -101,7 +101,7 @@ Every `api/` request has these conditions:
 - Each file in `api/configs` has `path` (relative to the root, separated by `/`), `modified`, `size` and `simulation` (whether it starts with `vehicle_sil_simulation`). The list as a whole has `truncated`.
 - `check` in the `api/check` response is the result of `check --json` as is. The response is 200 even if the check fails.
 - For `api/write`, see "ECU variables" below; for `api/scenarios` and `scenario`, "Scenarios"; for `api/recording`, "Recording actions (`api/recording`)"; for `api/timeline`, "Timeline of a scenario run (`api/timeline`)"; for `api/dashboard`, "Dashboard files". The `file` of `api/dashboard` goes through the same checks as for `api/check` (`invalid-path`, `outside-root`, `not-a-configuration`, `file-not-found`).
-- Once the server has begun to shut down, `api/prepare`, `api/run`, `api/check`, `api/describe`, `POST api/config`, `api/connections` and `api/write` return 503 `shutting-down`.
+- Once the server has begun to shut down, `api/prepare`, `api/run`, `api/check`, `api/describe`, `POST api/config`, `api/connections`, `api/time` and `api/write` return 503 `shutting-down`.
 
 ### `disable` and `manual`
 
@@ -144,7 +144,7 @@ A `can` or `ethernet` network can be connected to a real bus through the launche
 
 The optional integer `stop_at_ms` (1–10^12) gives the virtual stop time. The optional integer `late_tolerance_ms` (0–10^12) gives the wall-clock pacing tolerance. Both fields apply to Check and Start. The server returns HTTP 409 `launcher-unsupported` if either field is sent to a launcher without the `run-stop-at` feature. Check returns the resolved `time_step_ms` after Describe.
 
-- **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. The response is `{instance, run_id}`, and the summary of the new run arrives over the WebSocket stream as `session`.
+- **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. The response is `{instance, run_id}`, and the summary of the new run arrives over the WebSocket stream as `session`. **Ordering with WebSocket**: the server broadcasts the initial `session`, `variables`, and any buffered pre-start events over WebSocket *before* the `POST api/run` HTTP response resolves. External HTTP+WS clients must accept events (and even a fast `session` with `state: "ended"`) arriving before `POST api/run` returns (see [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs) and [examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)).
 - **Start after a check**: `api/run` validates `disable`/`manual` participant names against the saved configuration and runs the launcher's own single `check` when starting. If the check does not pass (`result` is not `passed`), the run does not proceed and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before any session becomes active, so there is nothing to stop. Example: `error-check-failed.json`.
 - **The intent and the request file**: the body is `file` (this server's field: the configuration file, relative to the root) and the keys of the launcher's request file (`schema/run-request.schema.json`; "Request files (`--request`)" in [docs/simulation-run.md](../../docs/simulation-run.md#request-files---request)), with the same names and value forms: `variant` (a string), `params` (an object of parameter name to a string, a number or a boolean), `scenario`, `disable`, `enable` and `manual` (lists of participant names), `strict` (a boolean), `connect` (an object of network name to target) and `time_policy` (a string) ("Connecting a network outside" above), `speed` and `start_paused` (for `api/check` too: the launcher's check uses them for its rules about time and about a scenario). `vehicle_sil_run_request` may be sent as `1`, and `$schema` as a text (it is dropped). The names of the keys and the forms of the values are those of the request file; `file` is added, and `scenario` is a name from the listing of `api/scenarios`, not a path from the directory of the configuration file. The server checks the form of each value (the body is at most 64 KiB; of `api/check`, 6 MiB + 64 KiB) and the paths (`file`; `scenario` against the listing of `api/scenarios`), writes the intent into a request file of its own (readable by this user only; removed when the check or the run has ended) and gives the launcher `--request <that file>`. What the values mean for the file (is there that variant, can `disable` and `manual` be used together, does the scenario have those `params`) is the launcher's to say: it shows as a finding (`api/check`) or as 422 `check-failed` (`api/run`), and a finding that is about the request file names it "the request" (the temporary file is gone by the time you read it). `params` without `scenario` is not refused: as with any request file, the launcher uses `params` only when a scenario runs, and ignores them otherwise. The names that `disable` and `manual` may take are those of the check of that variant.
 - **A choice that is not made is a key that is left out.** A `null` is refused (400 `invalid-field`). The keys of the launcher's side of a run (`control`, `timeline`, `log_dir` and others) are unknown fields (400 `invalid-field`): the server decides them. The `scenario` to send is the `path` that `api/scenarios` lists (relative to the root); the server writes it relative to the directory of the configuration file, which is where the request file reads it from. A launcher without the feature `request` cannot be used (`api/app` says so in `launcher.problems`).
@@ -175,6 +175,16 @@ The body has exactly these 3 fields (another field is 400 `invalid-field`). `tex
 
 The response is `{file, stamp}`, with the stamp of the saved content. A save takes one turn of the queue of the checks (503 `check-busy` as for a check). What the server kept of the old content is dropped: its descriptions are made again before the next check of its text, so the executables of the saved file describe themselves then (with `--allow-command-changes`, a new command runs with `--describe` at that point), and a `connect` needs a new list of `api/connections`. The second comparison of the stamp narrows the time in which another program can change the file between the check and the replacement; it does not close it. Examples: `save-config.json`, `error-commands-changed.json`.
 
+### Run targeting (`instance` and `run_id`)
+
+Obtain `instance` from `GET api/app`, `GET api/session`, `POST api/run`, or WebSocket `hello`, and `run_id` from `POST api/run`, `GET api/session` (`session.id`), or WebSocket `hello` / `session` / `event`. The three run-scoped POST endpoints differ in how they check these fields:
+
+| Endpoint | `run_id` and `instance` rule | On mismatch |
+|---|---|---|
+| `POST api/stop-session` | Both `run_id` and `instance` are **required** (`400 invalid-field` if either is missing or empty) | `409 session-changed` (nothing stopped) |
+| `POST api/time` | **Both or neither**: Protocol v4 preserves omitting both unchanged for compatibility (targeting whichever run is current), but new clients, AI agents, and CI automation should always send both `instance` and `run_id`. Sending only one returns `400 invalid-field` | `409 session-changed` (nothing sent) |
+| `POST api/write` | `run_id` is **required**; `instance` is **optional** (checked if present; empty/non-string returns `400 invalid-field`) | `409 session-changed` (nothing written) |
+
 ### Stop (`api/stop-session`)
 
 The GUI Client requires an `instance` in successful `api/session` and `api/run` responses. If it is missing, the operation fails with a message to use the GUI server from the same release. A start request may already have reached the server. Check the current run before retrying.
@@ -193,6 +203,8 @@ To stop a run, use `POST api/stop-session` with `{"run_id": <string>, "instance"
 
 ### Time commands (`api/time`)
 
+Machine-readable contracts: [openapi.yaml](openapi.yaml) (`POST /api/time` request, HTTP 200 ack, and error envelope) and [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json) (asynchronous WebSocket `command` event).
+
 The body is one of the following commands, with the optional fields described below.
 
 | Body | Range |
@@ -205,11 +217,13 @@ The body is one of the following commands, with the optional fields described be
 
 Each body may also have `"id"`, a whole number from 0 to 2^53. The server passes it to the launcher in the command line, and the launcher returns it as `id` in the `command` event that answers that line (`null` when the line had none). A screen uses it to tell the answer to its own command from the answers to the commands of other screens or of the launcher's stdin; the server does not read it. The response carries `{run_id, command}` with its `id`. An `id` that is not such a number gives 400 `invalid-field`.
 
-To send a command to a particular run, include `run_id` (a non-empty string) and optionally `instance` (the server identifier from `api/run`, `api/session`, or the WebSocket hello). The server checks the target before writing to the launcher. A mismatch, an absent run, or a run being replaced returns 409 `session-changed`. Neither field is passed to the launcher or included in the response's `command`. An invalid value or an unknown field returns 400 `invalid-field`. If both fields are omitted, the command still goes to the run current when the server handles it.
+To target a specific run, **include both `instance` and `run_id`** (non-empty strings from `api/run`, `api/session`, or WebSocket `hello`). Protocol v4 preserves omitting both `run_id` and `instance` unchanged for compatibility (targeting whichever run is current when the server handles the request), but **new clients, AI agents, and CI automation should always send both `instance` and `run_id`**. The server checks both fields together before writing to the launcher; a mismatch, an absent run, or a run being replaced returns 409 `session-changed`. Neither field is passed to the launcher or included in the response's `command`. **Sending only one of `run_id` or `instance` returns 400 `invalid-field`** (as does an empty, null, or unknown field).
 
-The server writes the command as one line to the stdin of the running run's launcher and returns without waiting for an answer. This keeps a request from hanging on a stuck launcher.
+The server writes the command as one line to the stdin of the running run's launcher and returns HTTP 200 immediately without waiting for the launcher's decision. **HTTP 200 acknowledges forwarding to launcher stdin only—not that the launcher accepted or applied the command.**
 
-- Whether the command was accepted, and why not, arrives in the launcher's `command` event (`accepted`, `message`, `reason` (the code of why not), `id`, for `step` the actual `ms` it advances and the `at_ms` at which the simulation pauses after it, and for `run_until` the `at_ms` asked for, rounded up to the time step). The `time` event shows that the command took effect. Both stay in `last_command` and `time` of the summary.
+- Whether the command was accepted, and why not, arrives asynchronously in the launcher's WebSocket `event` message (`event: "command"` with `accepted`, `message`, `reason` (always `null` when `accepted` is `true`), `id`, optional `asked_run` on launcher-level refusals outside a run window, `ms` and `at_ms` for an accepted `step`, and `at_ms` for an accepted `run_until`). The `time` and `state` events show that the command took effect.
+- **Pre-setup window**: immediately after `POST api/run` returns 200, `launcher_state` may still be `null` or in setup (`allowed.<cmd>.ok === false`, `reason: "not-set-up"`). Except when `launcher_state.allowed.<cmd>.reason` is `"not-running"` (which returns HTTP 409 `not-running` immediately), `POST api/time` returns HTTP 200 and the launcher queues commands until setup finishes, then emits `command` events. External callers should wait for `launcher_state.allowed.<cmd>.ok === true` (or `phase === "running"` / `holding === true`) before sending commands, or handle async `command` refusals.
+- **Correlation termination and `last_command`**: if a run ends (`session.state === "ended"` or `!session.launcher.running`) right after HTTP 200, the launcher may exit after `result` without ever emitting a `command` event. Clients waiting on a WebSocket `command` event matching `event.id` must abort the wait when the run ends or on a timeout (see [examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)). Prefer streaming WebSocket `command` events matched by `id` over polling `session.last_command`, because `last_command` keeps only the latest single command and overwrites earlier answers under concurrent commands.
 - If the request has no target or its target matches, but the launcher cannot take a command, the response is 409 `not-running`. This includes a run that ended or is starting, closed launcher input, and a launcher state of `not-running`. The server lets the launcher answer for any other reason in `allowed`, since it may have changed.
 - Even if the launcher never reads its input, the request returns within about 2 seconds (the command stays in the launcher's input).
 - What the commands mean (a pause takes effect at a step boundary, stepping works only while paused and so on) is defined by the launcher (see "Stdin commands (`run --stdin-commands`)" in [docs/simulation-events.md](../../docs/simulation-events.md#stdin-commands-run---stdin-commands)).
@@ -247,6 +261,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 409 | `starting` | `api/run`: another `api/run` is starting a run (the launcher has not been registered yet) |
 | 422 | `check-failed` | `api/run`: the check of what the run is made of did not pass, so no run was started (`detail` holds `{result, findings}`; "Check and start" above). Example: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
+| 409 | `launcher-unsupported` | `api/check`, `api/run`: `stop_at_ms` or `late_tolerance_ms` was sent to a launcher without the `run-stop-at` feature |
 | 409 | `scenario-running` | `api/write`: the running run is running a scenario (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
 | 409 | `session-changed` | `api/stop-session` and targeted `api/time`: the server instance or current run changed. `api/write`: the requested run ID differs from the running run. No operation was sent. Example: `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: the file's content no longer has `stamp`, or a new file (`stamp` `null`) is there already |
@@ -271,7 +286,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
 
 - `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed`, `start_paused`, `stop_at_ms` and `late_tolerance_ms`. With `text`, `api/check` takes only `file`, `$schema`, `vehicle_sil_run_request`, `variant`, `strict` and `text`. `api/describe` takes `file` and `variant`. `POST api/config` takes `file`, `text` and `stamp` (`stamp` is required, and may be `null`). `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
-- Fields covered by `invalid-field`: `speed`, `start_paused`, `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
+- Fields covered by `invalid-field`: `speed`, `start_paused`, `stop_at_ms`, `late_tolerance_ms`, `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms`, `at_ms`, `value`, `id`, `run_id` and `instance` of `api/time` (including sending only one of `run_id` or `instance`), `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
 - Case of `unsupported`: `api/write` sent when the launcher lacks `control-server`. (The server requires `time-commands`, `stdin-run-until`, `state`, `speed`, `start-paused`, `scenario` and `manual-participants` when it starts, so `api/time` has no such case.)
 
 The example files. The GUI server's tests check the other codes.
@@ -334,10 +349,10 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `allowed` | `{stream_seq, run_id, allowed}`. What the server accepts changed, and no `session` follows to carry it ("What the server accepts (`allowed`)" below). `run_id` is the id of the current run, or `null` | `ws-allowed.json` |
 | `runtime` | `{stream_seq, runtime}`. Persistent launcher state (`mode`, `state`, `config`, `reason`, `message`) changed | — |
 | `error` | `{stream_seq, run_id, code, message, detail}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
-| `dropped` | `{stream_seq, run_id, reason, log, at_least, events}`. Counts of what was not sent to this screen | `ws-dropped.json`, `ws-slow-client.json` |
+| `dropped` | `{run_id, reason, log, at_least, events}`. Counts of what was not sent to this screen (outside `stream_seq`) | `ws-dropped.json`, `ws-slow-client.json` |
 | `resync` | `{reason, message}`. The screen receives too slowly, and even notifications that must not be dropped overflowed. Right after this, the server sends everything again from `hello` | `ws-resync.json` |
 | `variables` | `{stream_seq, run_id, variables}`. The state or list of that run's variable feature (same shape as `variables` in the summary) | `ws-variables.json`, `ws-variables-failed.json` |
-| `values` | `{watch_id, run_id, sim_ms, paused, peers}`. The last values of the watched variables ("ECU variables" below; outside `stream_seq`) | `ws-variables.json` |
+| `values` | `{id, watch_id, run_id, sim_ms, paused, peers}`. The last values of the watched variables ("ECU variables" below; outside `stream_seq`) | `ws-variables.json` |
 | `operation` | `{stream_seq, run_id, seq, state, done, peers}`. The result of a write changed ("ECU variables" below). Sent to every connection, never dropped | `ws-variables.json` |
 | `availability` | `{stream_seq, run_id, peers}`. Whether the ECUs use their variables changed ("ECU variables" below). Sent to every connection | `ws-availability.json` ("Availability" below) |
 
@@ -347,7 +362,7 @@ The server sends `session` at these times:
 - When a run ends (`launcher.running` is `false` and `state` is `ended`; after the launcher's last event).
 - When the launcher stops writing anything (when `launcher.silent_s` changes), and when it starts writing again.
 
-The server sends `variables` right after a run starts (immediately after that `session` notification) and whenever it changes. Every ordered notification on the WebSocket stream carries a monotonic `stream_seq` within the server `instance`, so `session`, `event`, `allowed`, `runtime`, `variables`, `availability`, `operation` and `error` share one total order without separate per-channel revision counters. Delayed `values` notifications are outside `stream_seq` and carry `{run_id, watch_id}`. A later complete variable snapshot includes the current availability; a delta replaces only its named peers.
+The server sends `variables` right after a run starts (immediately after that `session` notification) and whenever it changes. Every ordered notification on the WebSocket stream carries a monotonic `stream_seq` within the server `instance`, so `session`, `event`, `allowed`, `runtime`, `variables`, `availability`, `operation` and `error` share one total order without separate per-channel revision counters. **Replay `stream_seq` ordering (`hello` → replay → `synced`)**: `hello.stream_seq` is the current server head, whereas replayed `event` messages sent between `hello` and `synced` carry their older historical `stream_seq` values (monotonically increasing within the replay, and often lower than `hello.stream_seq`). Live monotonic ordering resumes from `synced.stream_seq` (which is `>= hello.stream_seq`); clients must not discard replayed events for having `stream_seq < hello.stream_seq`. `dropped`, `resync`, and delayed `values` notifications are outside `stream_seq` (`values` carries `{id, watch_id, run_id}`). A later complete variable snapshot includes the current availability; a delta replaces only its named peers.
 
 The fields of `dropped` (the numbers in `ws-slow-client.json` are examples). A screen shows "N lines dropped here" at that position in that source's log.
 
@@ -406,7 +421,7 @@ Notifications from the server.
 
 | Field | Contents |
 |---|---|
-| `id` | The run identifier (a string, such as `"1"`, for each run started on the server) |
+| `id` | The run identifier (an opaque string formatted as `"<instance>-<n>"`, one per run started on the server; compare for equality only) |
 | `run_t0_ms` | Baseline launcher `t_ms` at the start of the run (`0` on cold runs) |
 | `file`, `disable`, `manual`, `speed`, `start_paused` | What was requested at the start |
 | `started_at`, `ended_at` | Times (UTC, ISO 8601). `ended_at` is `null` until the run ends |
@@ -438,7 +453,7 @@ Notes on the fields:
 - **`launcher`**: `running` tells whether the run is still active on its launcher (decides whether the run can be stopped; turns `false` when the run ends, even when a persistent launcher process stays alive for the next run). `mode` is `"hot"` for a persistent `serve` launcher or `"cold"` for a one-shot launcher, and `process_alive` tells whether the underlying launcher process is still alive (older servers omit `mode` and `process_alive`). When the launcher exits, `exit_code` is set (if it ended by a signal, `null`, with the signal number in `signal`; POSIX only). `silent_s` is the number of seconds a running launcher has written nothing (updated only past `--silent-after`, at each multiple of it; `null` once it writes).
 - **`time`**: virtual time `sim_ms`, actual speed `actual_speed`, and the lateness figures `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms`. A screen opened midway learns the current time from this; whether the run is paused, where, and the speed set, are in `launcher_state` (`paused`, `paused_at_ms`, `speed`). While the run is paused, `time` can be from before the pause (an earlier `sim_ms` for up to one look of the launcher, and the `actual_speed` and `late_ms` from before it).
 - **`check`**: includes `required`, `enabled` and `variables` of each participant.
-- **`last_command`**: `seq`, `command`, `source`, `accepted`, `message`, `reason`, `id`, `ms` and `at_ms` of an accepted `step`, and `at_ms` of an accepted `run_until`. `seq` tells a new answer from the same answer as before. A launcher before `state` writes no `reason` and `id`.
+- **`last_command`**: `seq`, `command`, `source`, `accepted`, `message`, `reason`, `id`, `ms` and `at_ms` of an accepted `step`, and `at_ms` of an accepted `run_until` (`event`, `t_ms`, `run` and `asked_run` are stripped from `last_command`, though `asked_run` appears on launcher-level refused `command` events over WebSocket). `seq` tells a new answer from the same answer as before. `last_command` keeps only the latest single command and overwrites earlier answers under concurrent commands. A launcher before `state` writes no `reason` and `id`.
 - **`launcher_state`**: the launcher's `state` event as it wrote it (see "`state`" in [docs/simulation-events.md](../../docs/simulation-events.md)) with its `seq`: `rev`, `phase`, `paused`, `paused_at_ms` (where it is paused), `speed`, `stop`, `allowed` (what the launcher accepts: `pause`, `resume`, `step`, `speed`, `run_until`, `stop`, `write`, each `{ok, reason, message, caution}`) and so on. The server does not change it. `rev` goes up with each change, so a screen tells a newer one from the same one sent again. It is the answer of the launcher at the moment it wrote it: `ok` says that the launcher would accept the command, not that it would change anything. Events after `state` (a `command`, a `time`) may be newer. The `state` event also comes as an `event` message; the summary holds only the last, so a screen opened later reads it from the summary and the earlier ones are not replayed. A launcher without the feature `state` writes none, and the field is `null`.
 - **`omitted_fields`**: `time`, `registry`, `last_command` and each element of `participants` have an array `omitted_fields` with the names of the fields that were too large to keep. For a participant, a name disappears when a later event brings that field (example: `ws-large-fields.json`).
 - **`variables`**: present in the `hello` summary and in HTTP responses. **The summary in a `session` notification does not have this field.** It is large and rarely changes, so it comes in a `variables` notification when it changes. On a `session` notification for the same run, the client keeps using its local value. Right after a `session` notification for another run, that run's `variables` notification arrives.
@@ -560,7 +575,7 @@ After authentication, a screen sends:
 - When the connection drops, all its watches are gone (send them again after reconnecting).
 - A watch continues across runs. Nothing arrives while there is no run, while the variable state is neither `ready` nor `ended`, or for variables the current run does not have (only for those). Naming a variable the current run does not have is not an error (you can watch before the run).
 
-The server sends `{"type": "values", "watch_id", "run_id", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <value>}}}}`.
+The server sends `{"type": "values", "id", "watch_id", "run_id", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <value>}}}}`.
 
 **When values arrive**
 
@@ -887,20 +902,22 @@ Required fields kept even beyond 4 KiB. If these alone exceed 4 KiB, the item is
 
 ## JSON in `examples/`
 
-The JSON files in `examples/` are produced by a server test (`gui/server/tests/test_protocol_examples.py`) from real exchanges with the replay launcher (`gui/server/tests/replay_launcher.py`), which replays recordings of the real launcher's output, and are checked on every run.
+The JSON files in `examples/` are produced and checked by `gui/server/tests/test_protocol_examples.py` against the Events v4 stand-in launcher (`gui/server/tests/stub_launcher.py`, `serve [--once]`) and the contract validator (`gui/server/tests/fake_runtime.py`), alongside [openapi.yaml](openapi.yaml) and [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json).
 
 - The files kept are 1–2 per shape, plus those that the documentation and the tests of the screens and the library read. Other cases of the same shape (other error codes, runs that end differently) are checked inside the test, by their error code or how the exchange ends.
 - The test also fails if `examples/` holds a file that the test does not produce.
 - When you change a shape, rewrite the files with `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web`, and update the library's types and parsers (`gui/client/src/protocol/`) and their unit tests (which read the same files) to match.
-- Process IDs, times, instances, paths of this computer, and numbers that change with each run are replaced with fixed values (`t_ms` is `seq × 10`).
+- Process IDs, times, instances, paths of this computer, and numbers that change with each run are replaced with fixed values (`t_ms` is `seq × 10`, and `"<instance>-<n>"` run IDs are normalized to `"<n>"` in the captured example JSONs).
 
 ## See also
 
 | Goal | Document |
 |---|---|
+| Browse all external API docs, schemas, and examples | [External API and Schemas](../../docs/external-api.md) |
 | Build your own screen | [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) |
 | Use the API from TypeScript (connection, reconnection, applying events to the summary, time commands, watching ECU variables, writes and their results) | The client library [gui/client](../client/README.md) |
 | See a minimal client without a screen | [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs) in the repository (plain JavaScript, no dependencies, Node 22 or later) |
+| See targeted time commands (`id` correlation), reconnect (`after_stream_seq`), and `stop-session` without a library | [examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs) in the repository (plain JavaScript, no dependencies, Node 22 or later) |
 | See an example that reads and writes ECU variables | [examples/gui_client/variables.mjs](../../examples/gui_client/variables.mjs) in the repository (uses the library) |
 
-`run.mjs` checks, starts a run, reads the events and waits for the end. `scripts/verify-gui.py` runs it against the replay launcher. `examples/gui_client/` is not included in the prebuilt tools archive.
+`run.mjs` and `time-and-stop.mjs` are run by `scripts/verify-gui.py` against `stub_launcher.py`. `examples/gui_client/` is not included in the prebuilt tools archive.

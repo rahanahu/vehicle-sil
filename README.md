@@ -18,6 +18,7 @@ A set of tools for simulating vehicle ECUs (electronic control units) in softwar
 | Write tests and run them automatically | A YAML scenario lists steps that set values, wait and check the results. | [Write tests with scenarios](docs/howto/scenario-tests.md) |
 | Read and write values of a running simulation from Python | The Control API (gRPC) and its Python client. | [Read and write signals from outside](docs/howto/operate-signals.md) |
 | Watch and change values in a browser | `vehicle-sil-gui` shows variables as sliders and charts. | [gui.md](docs/gui.md) |
+| Integrate external tools or validate files with schemas | GUI HTTP/WS API, OpenAPI/JSON Schemas, launcher events, and runnable client examples (tag-pinned). | [external-api.md](docs/external-api.md) |
 | Connect to real CAN hardware or real networks | Bridges relay frames between a simulated bus and a real one. There is one for Vector XL CAN (Windows), one for SocketCAN (Linux) and one for Ethernet. | Vector XL (Windows): [bridges.md](docs/bridges.md); SocketCAN (Linux): [socketcan-bridge.md](docs/socketcan-bridge.md); Ethernet: [ethernet-bridge.md](docs/ethernet-bridge.md); to write a bridge of your own, [bridge-contract.md](docs/bridge-contract.md) |
 | Let ECUs on other computers join | In the configuration file, give the address of the SIL Kit registry (the server that introduces participants to each other) and list the ECUs that the people on the other computers start themselves. | [Run on several computers](docs/howto/multi-pc.md) |
 

@@ -670,13 +670,13 @@ CI では、次の引数も使います。
 | `--timeout-ms <ms>` | 実時間の上限を付けます。ステップの中で止まった ECU がいると仮想時間が進まず、実行が終わらないためです。`test` では 1 組ごとの上限です。 |
 | `--strict` | 警告も失敗にします。 |
 | `--log-dir <dir>` | `run` で、ECU ごとの出力をファイルに残します。 |
-| `--events` | `run` で、経過を 1 行に 1 つの JSON で読みます。手順が始まったときと結果が決まったときに、イベント `scenario_step` が出力されます。 |
+| `serve [--once]` | 経過を 1 行に 1 つの NDJSON イベント（`vehicle_sil_events: 4`）で書きます。手順が始まったときと結果が決まったときに、イベント `scenario_step` が出力されます。 |
 
 | 知りたいこと | 読む所 |
 |---|---|
 | `run --json` の `scenario` のキー | [scenario.md](../scenario.md) の「出力」 |
 | 引数と終了コードの全部 | [simulation-config.md](../simulation-config.md) の「引数と終了コード」 |
-| `--events` のイベント | [simulation-events.md](../simulation-events.md) |
+| `serve [--once]` のイベント | [simulation-events.md](../simulation-events.md) |
 
 ## ECU をバスから切断する
 

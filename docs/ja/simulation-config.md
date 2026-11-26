@@ -123,7 +123,7 @@ participants:
 |---|---|
 | 書かない | 127.0.0.1 の空いているポートです。 |
 | 書かず、自分で起動する必須の participant がいる | `silkit://127.0.0.1:8500` です（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。 |
-| ポート 0（`silkit://127.0.0.1:0`、`silkit://0.0.0.0:0`） | 実行を始めるときに選ぶ、空いているポートです。`registry at` と `join at` の行、participant のコマンド（自分で起動する participant に出すものも）、`--events` のイベント `registry`、`run --json` の結果の `registry_uri` は、そのポートです。照合の JSON の `registry_uri` は、書いたとおりです。ポートは実行ごとに変わるので、自分で起動する participant（manual）やほかの PC の participant のコマンドも、実行ごとに変わります。使い回すデバッガーの設定や、ほかの PC には、決まったポートを書きます。 |
+| ポート 0（`silkit://127.0.0.1:0`、`silkit://0.0.0.0:0`） | 実行を始めるときに選ぶ、空いているポートです。`registry at` と `join at` の行、participant のコマンド（自分で起動する participant に出すものも）、`serve [--once]` のイベント `registry`、`run --json` の結果の `registry_uri` は、そのポートです。照合の JSON の `registry_uri` は、書いたとおりです。ポートは実行ごとに変わるので、自分で起動する participant（manual）やほかの PC の participant のコマンドも、実行ごとに変わります。使い回すデバッガーの設定や、ほかの PC には、決まったポートを書きます。 |
 | ほかの PC の participant も参加させる | `silkit://0.0.0.0:8500` のように書きます（この PC の participant には `127.0.0.1` の URI を渡します）。 |
 | ループバックのアドレス（`127.x.x.x`、`[::1]`、`localhost`）でない | 注記 `registry-on-network` を表示し、`run` が起動する participant に環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を渡します（[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。 |
 
@@ -334,7 +334,7 @@ ECU をデバッガーから動かすときなど、ある participant を `run`
 
 #### `run` が表示するコマンド
 
-`run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を表示します（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`。`network_names` があれば `--map-network`、`j1939_nodes` があれば `--j1939-node` も）。そのコマンドを、表示されたディレクトリで実行します。デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します。`--events` では、イベント `participant` の `state` が `manual` の行に、同じ内容があります。
+`run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を表示します（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`。`network_names` があれば `--map-network`、`j1939_nodes` があれば `--j1939-node` も）。そのコマンドを、表示されたディレクトリで実行します。デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します。`serve [--once]` では、イベント `participant` の `state` が `manual` の行に、同じ内容があります。
 
 引数の引用は、貼り付けるシェルに合わせてあります。
 
@@ -887,7 +887,7 @@ vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [-
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
                          [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
-vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
+vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
@@ -897,6 +897,9 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
+vehicle_sil_launch serve [--once] [--events-stall-ms <ms>]
+                         [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
+                         [--control-audit-log <file>]] [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
@@ -918,8 +921,8 @@ vehicle_sil_launch version [--json]
 | 引数 | 条件 | 意味 |
 |---|---|---|
 | `--json` | | 結果を JSON で書きます。 |
-| `--events` | `run` だけ | 経過と結果をイベントとして書きます（[プログラムから使う](simulation-events.md)。`--json` と一緒には使えません）。 |
-| `--events-stall-ms <ms>` | `--events` を付けた `run` だけ | イベントの書き込みがこの時間まったく進まなければ、読む側がいなくなったものとして扱います（1000 以上 86400000 以下の整数。既定は 30000）。 |
+| `--once` | `serve` だけ | NDJSON の `serve` ストリームで 1 回だけ実行し、`result` を書いて終了します（[プログラムから使う](simulation-events.md)）。 |
+| `--events-stall-ms <ms>` | `serve` だけ | イベントの書き込みがこの時間まったく進まなければ、読む側がいなくなったものとして扱います（1000 以上 86400000 以下の整数。既定は 30000）。 |
 | `--stdin-commands` | `run` だけ | 標準入力からコマンドを読みます（標準入力の終わりも、停止の要求です）。 |
 | `--start-paused` | `--stdin-commands` か `--control` を付けた `run` だけ | 全員がそろったら仮想時間 0 で止まり、`resume` か `step` のコマンドを待ちます。 |
 | `--control <address>` | `run` だけ、Control Server を持つビルドだけ | Control API（gRPC）の Server を立てます（[control-api.md](control-api.md) の「ランチャーに接続する」）。 |
@@ -1036,11 +1039,11 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | どのコマンドでも | 設定ファイルの名前がない、2 つ以上のファイル |
 | どのコマンドでも | 同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます） |
 | どのコマンドでも | 値のない `--describe-timeout-ms` |
-| `check` | `--events`、`--stdin-commands` |
+| どのコマンドでも | `--events`（廃止。`serve --once` または `serve` を使う） |
+| `check` | `--stdin-commands`、`--events-stall-ms` |
 | `check` | `--log-dir`、`--timeout-ms`、`--start-paused`、`--control` と `--control-*` |
-| `run` | `--json` と `--events` を一緒に付ける |
 | `run` | `--file-only`、`--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
-| `run` | `--events` なしの `--events-stall-ms` と、範囲の外の値 |
+| `run` | `--events-stall-ms`（`serve` だけのもの）、または `serve` で範囲外の `--events-stall-ms` |
 | `run` | `--stdin-commands` も `--control` もない `--start-paused` |
 | `run` | 数でも `max` でもない `--speed` |
 | `run` | `--start-paused` と一緒の `--scenario` |

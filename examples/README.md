@@ -26,7 +26,7 @@ The further down the list, the lower the layer an example uses.
 | Write a value from Python, advance time and read a value (the shortest example) | [launch_control](launch_control) | `write_and_read.py` |
 | Pause a running simulation and write at a specified time | [launch_control](launch_control) | `pause_and_step.py` |
 | Run sequential simulations in one resident launcher (`Serve`, `RunHandle`) | [launch_control](launch_control) | `serve_runs.py` |
-| Call the browser GUI server without the screens | [gui_client](gui_client) | `run.mjs`, `run-with-library.mjs`, `variables.mjs` (plain JavaScript) |
+| Call the browser GUI server without the screens | [gui_client](gui_client) | `run.mjs`, `time-and-stop.mjs`, `run-with-library.mjs`, `variables.mjs` (plain JavaScript) |
 | Build your own screen for the browser GUI | [gui_starter](gui_starter) | HTML of parts and a short script (no build) |
 | Assemble the layers yourself (bus, host, driver, network) | [low_level](low_level) | `vehicle_sil_low_level` |
 
@@ -138,6 +138,7 @@ Read this to build your own tool on the same API as the GUI ([gui/protocol](../g
 | File | Contents |
 |---|---|
 | `run.mjs` | Uses only the standard `fetch` and `WebSocket` of Node 22 or later. |
+| `time-and-stop.mjs` | Uses only standard `fetch` and `WebSocket` of Node 22 or later: sends `{instance, run_id}` on `POST api/time` and `POST api/stop-session`, correlates numeric `id` between HTTP 200 and WebSocket `command` events (`accepted: true`/`false`), and reconnects with `after_stream_seq`. |
 | `run-with-library.mjs` | Uses the client library ([gui/client](../gui/client/README.md)) bundled into one file. |
 | `variables.mjs` | Reads and writes ECU variables with the same library: starts paused, writes one variable before the first step, advances, pauses and checks the value. Needs a launcher with a Control Server. |
 

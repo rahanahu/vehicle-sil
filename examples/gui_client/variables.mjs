@@ -131,6 +131,41 @@ function until(readable, condition) {
   });
 }
 
+/**
+ * Sends a time command through gui/client and waits for the launcher's asynchronous `command` event,
+ * distinguishing synchronous local send acceptance (`.sent`) from launcher acceptance (`lastCommand.accepted`).
+ */
+async function sendTimeCommand(send, description, { allowRunEnd = false } = {}) {
+  const prevSeq = client.time.state.get().lastCommand?.seq ?? -1;
+  const result = send();
+  expect(result.sent, `${description} was sent`);
+  if (!result.sent) return false;
+  const settled = await until(client.time.state, (t) => t.sending === null);
+  if (settled.failure) {
+    expect(
+      false,
+      `${description} failed (${settled.failure.kind}: ${settled.failure.message})`,
+    );
+    return false;
+  }
+  const cmd = settled.lastCommand;
+  if (cmd && cmd.seq > prevSeq) {
+    expect(
+      cmd.accepted,
+      cmd.accepted
+        ? `${description} was accepted by the launcher`
+        : `${description} was refused by the launcher (${cmd.reason ?? "unknown"}: ${cmd.message ?? ""})`,
+    );
+    return cmd.accepted;
+  }
+  if (!allowRunEnd) {
+    expect(false, `run ended before the launcher answered ${description}`);
+    return false;
+  }
+  // Run ended before a command event arrived.
+  return true;
+}
+
 async function main() {
   setTimeout(
     () => finish(1, `FAIL not done after ${timeoutS} s`),
@@ -213,7 +248,14 @@ async function main() {
   console.log(
     `write: operation ${seq} is ${client.variables.operations.get().at(-1)?.state}`,
   );
-  expect(client.time.step(stepMs).sent, `a step of ${stepMs} ms was sent`);
+  if (
+    !(await sendTimeCommand(
+      () => client.time.step(stepMs),
+      `a step of ${stepMs} ms`,
+    ))
+  ) {
+    await finish(1, `${problems.length} not as expected`);
+  }
   const operation = await written;
   const applied = operation.peers[write.peer];
   expect(
@@ -246,7 +288,13 @@ async function main() {
 
   // Run to the end
   await until(client.session.session, (s) => accepts(s, 'resume'));
-  client.time.resume();
+  if (
+    !(await sendTimeCommand(() => client.time.resume(), "resume", {
+      allowRunEnd: true,
+    }))
+  ) {
+    await finish(1, `${problems.length} not as expected`);
+  }
   const ended = await until(
     client.session.session,
     (s) => s?.id === started?.run_id && !s.launcher.running,

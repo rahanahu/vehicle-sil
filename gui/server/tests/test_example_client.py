@@ -195,3 +195,54 @@ def test_tokenless_url_is_rejected_by_default_auth_server(shared_gui: Gui, examp
     tokenless = shared_gui.url.split("#", 1)[0]
     out = run_example(example, tokenless, "simulation.yaml")
     assert out.returncode == 1 and "unauthorized" in out.stdout, out.stdout + out.stderr
+
+
+# ---------------------------------------------------------------- time-and-stop.mjs
+
+
+def test_time_and_stop_example_targeted_commands_reconnect_and_stop(tmp_path: Path) -> None:
+    """Raw Node example: {instance, run_id} targeting, id correlation (accept + refuse), WS reconnect, stop-session.
+
+    Runs twice sequentially against the same GUI server to verify prior-run replay history cannot poison
+    command-id correlation or launcher_state scoping on a subsequent run.
+    """
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "200"}) as gui:
+        first = run_example("time-and-stop.mjs", gui.url, "forever.yaml", "--step", "100",
+                            "--timeout", str(math.ceil(scaled(60))))
+        second = run_example("time-and-stop.mjs", gui.url, "forever.yaml", "--step", "100",
+                             "--timeout", str(math.ceil(scaled(60))))
+    run_ids: list[str] = []
+    for out in (first, second):
+        assert out.returncode == 0, out.stdout + out.stderr
+        lines = out.stdout.strip().splitlines()
+        started_line = next((line for line in lines if line.startswith("started: instance=") and "run_id=" in line), "")
+        assert started_line, out.stdout
+        run_ids.append(started_line.split("run_id=", 1)[1])
+        assert any("http ack: step id=1" in line for line in lines), out.stdout
+        assert any("command event: id=1 command=step accepted=true" in line for line in lines), out.stdout
+        assert any("command event: id=2 command=resume accepted=true" in line for line in lines), out.stdout
+        assert any("command event: id=3 command=step accepted=false reason=not-paused" in line for line in lines), out.stdout
+        # Under default token auth, WS reconnect sends after_stream_seq and receives delta replay (non-null replay_after).
+        reconnect_line = next((line for line in lines if line.startswith("reconnected:")), "")
+        assert "replay_after=" in reconnect_line and "replay_after=null" not in reconnect_line, out.stdout
+        assert any(line.startswith("stop-session ack: instance=") and "run_id=" in line for line in lines), out.stdout
+        assert lines[-1] == "result: stopped", out.stdout
+        assert gui.token not in out.stdout + out.stderr
+    assert run_ids[0] != run_ids[1], run_ids
+
+
+def test_time_and_stop_example_with_no_auth_and_usage_errors(tmp_path: Path) -> None:
+    """Under --no-auth, reconnect falls back to full replay (replay_after=null); bad options return exit 2."""
+    with gui_server(tmp_path, args=("--no-auth",), env={"REPLAY_TICK_MS": "200"}) as gui:
+        assert "#token=" not in gui.url
+        out = run_example("time-and-stop.mjs", gui.url, "forever.yaml", "--step", "100",
+                          "--timeout", str(math.ceil(scaled(60))))
+    assert out.returncode == 0, out.stdout + out.stderr
+    lines = out.stdout.strip().splitlines()
+    assert any("replay_after=null" in line for line in lines), out.stdout
+    assert lines[-1] == "result: stopped", out.stdout
+
+    bad_step = run_example("time-and-stop.mjs", None, "forever.yaml", "--step", "0")
+    assert bad_step.returncode == 2 and "--step needs an integer" in bad_step.stderr
+    missing_url = run_example("time-and-stop.mjs", None, "forever.yaml")
+    assert missing_url.returncode == 2 and "VEHICLE_SIL_GUI_URL" in missing_url.stderr

@@ -12,6 +12,7 @@
 | See what the GUI protects against, and what it does not | "[Security](#security)" |
 | Describe the layout of the Variables screen in a file | "[Dashboard files](#dashboard-files)" |
 | Look up the rules that apply to your own screen | "[Reference for your own screen](#reference-for-your-own-screen)" |
+| Find all external API specs, OpenAPI/JSON Schemas, and examples | [External API and Schemas](external-api.md) |
 | Develop the GUI itself | "[Development](#development)" |
 
 ## Structure
@@ -1419,6 +1420,7 @@ If the launcher has a Control Server, the screen end-to-end tests also check tha
 
 | Document | Contents |
 |---|---|
+| [external-api.md](external-api.md) | Tag-pinned index of external API specs, OpenAPI/JSON Schemas, manuals, and runnable examples |
 | [Build your own screen for the browser GUI](howto/gui-screen.md) | How to build a screen that shows one variable, starting from the screen template |
 | [gui/client/README.md](../gui/client/README.md) | The client library API |
 | [gui/protocol/README.md](../gui/protocol/README.md) | The server's HTTP and WebSocket API |

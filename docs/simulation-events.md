@@ -1,4 +1,4 @@
-# Programmatic use (`--events`, `--stdin-commands`, `version`)
+# Programmatic use (`serve`, `--stdin-commands`, `version`)
 
 [日本語](ja/simulation-events.md)
 
@@ -6,19 +6,19 @@ This reference is for programs, such as the GUI or a script, that start `vehicle
 
 | Use | What it does | Section |
 |---|---|---|
-| `run --events` | Writes the progress of the run to stdout as events, and the result last. | [Events](#events-run---events) |
-| `run --stdin-commands` | Reads commands from stdin. | [Stdin commands](#stdin-commands-run---stdin-commands) |
+| `serve [--once]` | Writes the progress of runs to stdout as NDJSON events (`vehicle_sil_events: 4`), and reads commands from stdin. | [Events](#events-serve---once), [Resident launcher (`serve`)](#resident-launcher-serve) |
+| `run --stdin-commands` | Reads commands from stdin during a single `run`. | [Stdin commands](#stdin-commands-run---stdin-commands) |
 | `version --json` | Writes the format versions this `vehicle_sil_launch` writes, and its list of features. | [Version and features](#version-and-features-vehicle_sil_launch-version) |
 
 ```sh
 vehicle_sil_launch version --json
 vehicle_sil_launch check --json simulation.yaml
-vehicle_sil_launch run --events --stdin-commands simulation.yaml
+vehicle_sil_launch serve --once simulation.yaml   # send {"command":"run"} on stdin to start
 ```
 
-## Events (`run --events`)
+## Events (`serve [--once]`)
 
-`run --events` writes one JSON object per line to stdout, in the order things happen (NDJSON). The encoding is UTF-8, the line ending is `\n`, and no line contains a line break. Each line is flushed as it is written. Only `run` writes events. Every line starts with these 3 keys:
+`serve` and `serve --once` write one JSON object per line to stdout, in the order things happen (NDJSON). The encoding is UTF-8, the line ending is `\n`, and no line contains a line break. Each line is flushed as it is written. (`run --events` is no longer supported and exits with code 4; use `serve --once` for a single run or `serve` for multiple runs — see [Resident launcher (`serve`)](#resident-launcher-serve).) Every line starts with these 3 keys:
 
 | Key | Value |
 |---|---|
@@ -56,7 +56,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 | Key | Value |
 |---|---|
-| `vehicle_sil_events` | Version of the event format (currently 2) |
+| `vehicle_sil_events` | Version of the event format (currently 4; see [Resident launcher (`serve`)](#resident-launcher-serve) for `launcher`, `status`, `run_start`, `prepare`, and per-run `run` keys) |
 | `vehicle_sil` | vehicle-sil version |
 | `pid` | Process ID of `vehicle_sil_launch` |
 | `file` | The configuration file (as given in the arguments; `null` if unknown) |
@@ -391,11 +391,11 @@ The `state` of step 1 is not written when the one of step 4 replaces it before t
 
 ### Events when the run does not start
 
-`run` with `--events` writes `hello` first and `result` last even on a usage error. The table leaves out the `state` and `heartbeat` lines; a run that has begun its check ends as [How a run ends](#how-a-run-ends) says.
+`serve [--once]` writes `hello` first and `result` last even on a startup usage error. The table leaves out the `state`, `status`, `run_start`, and `heartbeat` lines; a run that has begun its check ends as [How a run ends](#how-a-run-ends) says.
 
 | Case | Events | `result` of `result` | Exit code |
 |---|---|---|---|
-| Usage error (unknown option, no configuration file given, `--events` together with `--json`, a value of `--control` that is wrong, and so on) | `hello`, `result` | `"usage"` | 4 |
+| Usage error (unknown option, no configuration file given, a value of `--control` that is wrong, and so on) | `hello`, `result` | `"usage"` | 4 |
 | Usage error found by reading the configuration file | `hello`, `phase` (`checking`), `check`, `phase` (`ended`), `result` | `"usage"` | 4 |
 | The configuration file cannot be read | The same 5 | `"unreadable"` | 3 |
 | The check found errors | The same 5 | `"check_failed"` | 1 |
@@ -409,11 +409,11 @@ These usage errors are found by reading the configuration file:
 - The configuration file has variants, and `--variant` is not given.
 - The name given to `--variant` is not in the configuration file.
 
-`--events` on a command other than `run` (`check`, `version`, no command) writes no events. It is a usage error: the error goes to stderr and the exit code is 4.
+Passing `--events` on `run` or on any other command (`check`, `version`, `serve`, no command) writes no events. It is a usage error: the error goes to stderr and the exit code is 4.
 
 ### `log` lines
 
-`line` is one line that a participant wrote to stdout or stderr (without the line break at the end), or one progress line of `vehicle_sil_launch`. It is the same as the line written to stderr without `--events`, minus the leading `[<name>] `.
+`line` is one line that a participant wrote to stdout or stderr (without the line break at the end), or one progress line of `vehicle_sil_launch`. It is the same as the line written to stderr by `run`, minus the leading `[<name>] `.
 
 | Line content | Handling |
 |---|---|
@@ -509,7 +509,7 @@ If no `result` arrives, use the exit code of the process.
 
 `event` values, keys, reason codes, and the values of `phase` and of a participant's `state` can be added without a version change. When the meaning of a key changes or a key is removed, `vehicle_sil_events` goes up. Format 2 took `paused` and `speed` out of `time`; they are in `state`.
 
-With `--events`, stderr gets only the notices of `vehicle_sil_launch` itself (usage errors, events can no longer be written, the result cannot be written, unexpected failures). Participant lines and progress lines do not go there. Anything a library inside `vehicle_sil_launch` writes to stdout goes to stderr (it never mixes with the event lines).
+With `serve [--once]`, stderr gets only the notices of `vehicle_sil_launch` itself (usage errors, events can no longer be written, the result cannot be written, unexpected failures). Participant lines and progress lines do not go there. Anything a library inside `vehicle_sil_launch` writes to stdout goes to stderr (it never mixes with the event lines).
 
 With `--stdin-commands`, stdin closes when the program that started the launcher stops or ends, so `vehicle_sil_launch` stops in order right away, whatever the state of stdout.
 
@@ -517,8 +517,8 @@ With `--stdin-commands`, stdin closes when the program that started the launcher
 
 - String escaping is the same as with `--json` (`"`, `\`, control characters; bytes that are not UTF-8 become U+FFFD). The `line` of `log` has already been through the `?` replacement described above.
 - Lines have no length limit (`check` and `result` get long).
-- `--json` together with `--events` is a usage error (the last event is the result).
-- The exit codes are the same as without `--events`.
+- `serve` does not take `--json`, `--events`, or `--stdin-commands` (passing them is a usage error; `serve` always emits NDJSON events and reads stdin commands).
+- In `serve --once`, the exit codes match `run` (for multi-run `serve`, see [Resident launcher (`serve`)](#resident-launcher-serve)).
 
 ### Example
 
@@ -558,7 +558,7 @@ The CTest test `launch_run.events` compares this example with the real output by
 
 ## Stdin commands (`run --stdin-commands`)
 
-The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not read (a closed or empty stdin does not stop the run). Each line is one JSON object. Use it together with `--events` (see [Reader requirements](#reader-requirements)); it also works on its own.
+With `run`, the launcher reads stdin only when `--stdin-commands` is passed (without it, stdin is not read, so a closed or empty stdin does not stop the run). `serve [--once]` always reads stdin commands without `--stdin-commands`. Each line is one JSON object; for machine-readable events alongside stdin commands, use `serve [--once]` (see [Reader requirements](#reader-requirements) and [Resident launcher (`serve`)](#resident-launcher-serve)).
 
 | Line | Meaning |
 |---|---|
@@ -588,7 +588,7 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `speed` | A pause stays in effect. |
 | EOF | If a stop request (`stop`, a signal, a closed stdout) has already arrived, does nothing (it does not count as a second one and no `command` event is written). |
 | Anything else | This covers a line that is not a JSON object, has no `command`, has an unknown command, has an `id` that is not an integer from 0 to 2^53, or is longer than 64 KiB. |
-| Anything else | With `--events`, a `command` event (`accepted: false`, the `message` and the `reason`) is written; otherwise one line goes to stderr. |
+| Anything else | Under `serve [--once]`, a `command` event (`accepted: false`, the `message` and the `reason`) is written; under `run --stdin-commands`, one line goes to stderr. |
 
 Other keys of the object are ignored; a `pause` with an `at_ms` is a plain `pause` (to pause at a time, use `run_until`). The `state` event answers a `run_until` as for stdin even in a run without `--stdin-commands`. Commands are accepted and carried out even when nobody reads the events.
 
@@ -731,7 +731,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 
 | Name in `features` | Feature |
 |---|---|
-| `events` | `run --events` |
+| `events` | NDJSON event stream (`serve [--once]`, `vehicle_sil_events: 4`) |
 | `stdin-commands` | `run --stdin-commands` and `{"command":"stop"}` |
 | `check-variables` | `participants[].variables` in the check JSON |
 | `speed` | Setting the speed (see [Running at a set speed](simulation-run.md#running-at-a-set-speed-speed)) |

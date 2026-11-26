@@ -18,6 +18,7 @@ vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェア�
 | テストを書いて自動で実行する | YAML のシナリオに、値の設定、待機、確認の手順を書きます。 | [シナリオでテストを書く](docs/ja/howto/scenario-tests.md) |
 | 動いているシミュレーションの値を Python から読み書きする | Control API（gRPC）と、その Python のクライアントを使います。 | [信号を外から操作する](docs/ja/howto/operate-signals.md) |
 | ブラウザで値を見て操作する | `vehicle-sil-gui` が、変数をスライダーやグラフで表示します。 | [gui.md](docs/ja/gui.md) |
+| 外部ツールから連携する・スキーマで検証する | GUI の HTTP/WS API、OpenAPI・JSON Schema、ランチャーのイベント、実行可能なクライアント例への入口（タグ固定）。 | [external-api.md](docs/ja/external-api.md) |
 | 実機の CAN やネットワークにつなぐ | シミュレーションのバスと実機のバスの間でフレームを中継するブリッジが、Vector XL の CAN 用（Windows）、SocketCAN 用（Linux）、イーサネット用にあります。 | Vector XL（Windows）は [bridges.md](docs/ja/bridges.md)、SocketCAN（Linux）は [socketcan-bridge.md](docs/ja/socketcan-bridge.md)、イーサネットは [ethernet-bridge.md](docs/ja/ethernet-bridge.md)。自分でブリッジを作るときは [bridge-contract.md](docs/ja/bridge-contract.md) |
 | ほかの PC の ECU を参加させる | 設定ファイルに、SIL Kit の registry（参加者どうしを引き合わせるサーバー）のアドレスと、相手が自分で起動する ECU を書きます。 | [複数の PC で動かす](docs/ja/howto/multi-pc.md) |
 

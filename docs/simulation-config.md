@@ -123,7 +123,7 @@ Notes on individual keys:
 |---|---|
 | Omitted | A free port on 127.0.0.1. |
 | Omitted, and a required participant is one that you start yourself | `silkit://127.0.0.1:8500` (see [Starting a participant yourself](#starting-a-participant-yourself-manual---manual)). |
-| Port 0 (`silkit://127.0.0.1:0`, `silkit://0.0.0.0:0`) | A free port, chosen when the run starts. The `registry at` and `join at` lines, the commands of the participants (also the one printed for a participant that you start yourself) and the `registry` event of `--events` have that port, and so has `registry_uri` of the `run --json` result; `registry_uri` in the JSON of the check is as written. The port changes from run to run, and so does the command for a participant that you start yourself (manual) or that runs on another computer: for a debugger configuration you reuse, or for another computer, write a fixed port. |
+| Port 0 (`silkit://127.0.0.1:0`, `silkit://0.0.0.0:0`) | A free port, chosen when the run starts. The `registry at` and `join at` lines, the commands of the participants (also the one printed for a participant that you start yourself) and the `registry` event of `serve [--once]` have that port, and so has `registry_uri` of the `run --json` result; `registry_uri` in the JSON of the check is as written. The port changes from run to run, and so does the command for a participant that you start yourself (manual) or that runs on another computer: for a debugger configuration you reuse, or for another computer, write a fixed port. |
 | Participants on other computers join too | Write an address such as `silkit://0.0.0.0:8500`. Participants on this computer get a URI with `127.0.0.1`. |
 | Not a loopback address (`127.x.x.x`, `[::1]`, `localhost`) | The check reports the note `registry-on-network`, and `run` passes the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1` to the participants it starts (see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses)). |
 
@@ -336,7 +336,7 @@ Rules for combining the options:
 
 #### The command `run` prints
 
-When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, `--map-network` if it has `network_names`, and `--j1939-node` if it has `j1939_nodes`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. With `--events`, the `participant` event whose `state` is `manual` carries the same information.
+When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, `--map-network` if it has `network_names`, and `--j1939-node` if it has `j1939_nodes`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. Under `serve [--once]`, the `participant` event whose `state` is `manual` carries the same information.
 
 The arguments are quoted for the shell you paste them into:
 
@@ -889,7 +889,7 @@ vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [-
                          [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]
                          [--compare-commands <file>]
                          [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>
-vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
+vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
@@ -899,6 +899,9 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
+vehicle_sil_launch serve [--once] [--events-stall-ms <ms>]
+                         [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
+                         [--control-audit-log <file>]] [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
@@ -920,8 +923,8 @@ The usage above shows which commands accept each option. The Condition column of
 | Option | Condition | Meaning |
 |---|---|---|
 | `--json` | | Writes the result as JSON. |
-| `--events` | `run` only | Writes the progress and the result as events ([Programmatic use](simulation-events.md); not with `--json`). |
-| `--events-stall-ms <ms>` | `run` with `--events` only | If writing events makes no progress at all for this long, the reader is treated as gone (an integer from 1000 to 86400000; default 30000). |
+| `--once` | `serve` only | Runs a single run on the NDJSON `serve` stream and exits after its `result` ([Programmatic use](simulation-events.md)). |
+| `--events-stall-ms <ms>` | `serve` only | If writing events makes no progress at all for this long, the reader is treated as gone (an integer from 1000 to 86400000; default 30000). |
 | `--stdin-commands` | `run` only | Reads commands from stdin (the end of stdin is also a stop request). |
 | `--start-paused` | `run` with `--stdin-commands` or `--control` only | When all participants have joined, pauses at virtual time 0 and waits for the `resume` or `step` command. |
 | `--control <address>` | `run` only, and only in builds with the Control Server | Starts a Control API (gRPC) server (see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher)). |
@@ -1038,11 +1041,11 @@ The following give exit code 4:
 | Every command | No configuration file name, or 2 or more files |
 | Every command | An option given twice (`--disable` and `--enable` can be repeated) |
 | Every command | `--describe-timeout-ms` without a value |
-| `check` | `--events`, `--stdin-commands` |
+| Every command | `--events` (removed: use `serve --once` or `serve`) |
+| `check` | `--stdin-commands`, `--events-stall-ms` |
 | `check` | `--log-dir`, `--timeout-ms`, `--start-paused`, `--control` and `--control-*` |
-| `run` | `--json` and `--events` together |
 | `run` | `--file-only`, `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
-| `run` | `--events-stall-ms` without `--events`, or with a value out of range |
+| `run` | `--events-stall-ms` (it is for `serve`), or `--events-stall-ms` out of range on `serve` |
 | `run` | `--start-paused` with neither `--stdin-commands` nor `--control` |
 | `check` or `run` | `--speed` that is neither a number nor `max` |
 | `run` | `--scenario` together with `--start-paused` |

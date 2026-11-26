@@ -27,7 +27,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 - 無視するか通すものは、知らないフィールド、知らない `type`、知らないイベント（`event`）、知らない `code` と、値の集合が増えうるフィールド（`phase`、`state`、`result` など）の知らない値です。
 - バージョンが違うときは、待っても直らないので再接続しません。ライブラリは `api/app` で `ProtocolError`、`hello` で `session.incompatible` を立てて止まります。
 - **受信し直すもの**: WebSocket のメッセージが JSON として読めない、または `hello` と `session` の要約の中心のフィールド（`id`、`state`、`launcher`、`stop`）が読めないときは、何が抜けたかわからないので、再接続して `hello` から受信し直します。要約を正とします。続けて起きるたびに、再接続するまでの間隔を延ばします。
-- ランチャーのイベント（`event` の中身）は、ランチャーの `run --events` の形そのままです。そのバージョン（`hello` のイベントの `vehicle_sil_events`）はランチャーが決めます（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「プログラムから使う」）。
+- ランチャーのイベント（`event` の中身）は、ランチャーの `serve [--once]` の Events v4 ストリーム（`hello` の `vehicle_sil_events: 4`）の形そのままです（[docs/simulation-events.md](../../docs/ja/simulation-events.md)）。
 - ランチャーのオブジェクト（要約と `api/check` のチェックと実行の結果、指摘、ランチャーのイベント）は、キーをすべて中継します。クライアントのライブラリは、画面に要るキーに型を付け、ランチャーのオブジェクト全体を `raw` に残します（[gui/client/README.md](../client/README.ja.md#ランチャーのキーraw) の「ランチャーのキー（`raw`）」）。
 - エラーの `code` の名前は変えません（追加することはあります）。`message` は人向けの英語の 1 文で、文言は変わることがあります。プログラムは `code` で分けます。
 
@@ -81,11 +81,11 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
 | `GET api/config?file=<configuration file>` | ファイルの文と、そのバイト列の SHA-256: `{file, text, stamp}`（下の「構成ファイルの文」） | `config.json` |
-| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: 文をそのファイルとして保存する。既定では、実行されるコマンドを変えない編集だけ（下の「文を保存する（`POST api/config`）」） | `save-config.json`、`error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | 対象の `{instance, run_id}`、または 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
@@ -101,7 +101,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 - `api/configs` の各ファイルは、`path`（root からの相対で `/` 区切り）、`modified`、`size`、`simulation`（先頭に `vehicle_sil_simulation` があるか）を持ちます。一覧の全体に `truncated` があります。
 - `api/check` の `check` は `check --json` の結果そのままです。照合が失敗しても 200 です。
 - `api/write` は下の「ECU の変数」、`api/scenarios` と `scenario` は下の「シナリオ」、`api/recording` は下の「操作の記録（`api/recording`）」、`api/timeline` は下の「シナリオの実行の時間の軸（`api/timeline`）」、`api/dashboard` は下の「ダッシュボードのファイル」にあります。`api/dashboard` の `file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
-- サーバーが終了を始めたら、`api/prepare`、`api/run`、`api/check`、`api/describe`、`POST api/config`、`api/connections`、`api/write` は 503 `shutting-down` です。
+- サーバーが終了を始めたら、`api/prepare`、`api/run`、`api/check`、`api/describe`、`POST api/config`、`api/connections`、`api/time`、`api/write` は 503 `shutting-down` です。
 
 ### `disable` と `manual`
 
@@ -123,7 +123,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 `speed`（`"max"`、数）と `start_paused`（`true`）は、選ぶときだけ書きます。選ばないときはフィールドを省きます。`null` は、どのフィールドでも断ります（400 `invalid-field`）。
 
 - `speed` の数の範囲は `limits.speed_min` から `limits.speed_max` までです（ランチャーと同じ）。
-- `speed` を省くと、設定ファイルの `speed` です。
+- `speed` を省くと、外部接続による実時間固定が速度 1 を課す場合を除き、最速で実行します。
 
 ### ネットワークを外につなぐ（`connect`、`time_policy`、`api/connections`）
 
@@ -142,7 +142,9 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 
 ### 照合と開始（`api/check`、`api/run`）
 
-- **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスは `{instance, run_id}` で、新しい実行の要約は WebSocket ストリームの `session` として届きます。
+任意の整数 `stop_at_ms`（1〜10^12）は仮想時間の停止時刻を指定します。任意の整数 `late_tolerance_ms`（0〜10^12）は実時間ペーシングの遅延許容を指定します。どちらも照合と開始の両方で使えます。`run-stop-at` 機能を持たないランチャーにどちらかを送ると、サーバーは HTTP 409 `launcher-unsupported` を返します。照合は Describe の後に確定した `time_step_ms` を返します。
+
+- **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスは `{instance, run_id}` で、新しい実行の要約は WebSocket ストリームの `session` として届きます。**WebSocket との到達順**: サーバーは `POST api/run` の HTTP レスポンスを返す*前*に、最初の `session`、`variables`、および開始前に溜まったイベントを WebSocket へ配信します。外部の HTTP+WS クライアントは、`POST api/run` が返る前に新しい実行のイベント（速く終わった実行では `state: "ended"` の `session` も含む）が届く前提で扱ってください（[examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)、[examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)）。
 - **照合のあとの開始**: `api/run` は、`disable`/`manual` の participant 名を保存済み構成と照合したうえで、起動時にランチャー自身の単一の `check` を実行します。照合が通らなければ（`result` が `passed` でなければ）実行は進まず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。セッションを有効にする前に断るので、止めるものはありません。例: `error-check-failed.json`。
 - **意図と要求ファイル**: 本文は、`file`（このサーバーのフィールド。root からの相対の構成ファイル）と、ランチャーの要求ファイル（`schema/run-request.schema.json`。[docs/simulation-run.md](../../docs/ja/simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」）のキーです。名前と値の形は同じです。`variant`（文字列）、`params`（パラメーター名から文字列、数、真偽への object）、`scenario`、`disable`、`enable`、`manual`（participant 名の配列）、`strict`（真偽）、`connect`（ネットワーク名から先への object）と `time_policy`（文字列）（上の「ネットワークを外につなぐ」）、`speed` と `start_paused`（`api/check` でも。ランチャーの照合が、時間とシナリオの規則に使います）です。`vehicle_sil_run_request` は `1` なら、`$schema` は文字列なら送れます（後者は捨てます）。キーの名前と値の形は要求ファイルと同じで、`file` が加わります。`scenario` は `api/scenarios` の一覧の名前で、構成ファイルのディレクトリからのパスではありません。サーバーは、各値の形（本文は 64 KiB まで。`api/check` は 6 MiB + 64 KiB まで）、パス（`file`、`api/scenarios` の一覧と照らす `scenario`）だけを調べ、意図を自分の要求ファイル（この利用者だけが読める。照合か実行が終わったら消す）に書いて、ランチャーに `--request <そのファイル>` を渡します。値がそのファイルで何を意味するか（その variant があるか、`disable` と `manual` を併せてよいか、シナリオにその `params` があるか）は、ランチャーが言います。所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。要求ファイルについての所見は、そのファイルを「the request」と呼びます（一時ファイルは、読むときにはもうありません）。`scenario` のない `params` は断りません。どの要求ファイルでも、ランチャーは `params` をシナリオを動かすときだけ使い、それ以外では無視します。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
 - **選ばないことは、キーを書かないこと。** `null` は断ります（400 `invalid-field`）。実行をする側のキー（`control`、`timeline`、`log_dir` など）は知らないフィールドです（400 `invalid-field`）。サーバーが決めます。送る `scenario` は、`api/scenarios` が返す `path`（root からの相対）です。サーバーは、要求ファイルが読む基準である構成ファイルのディレクトリからの相対に直して書きます。`request` の feature がないランチャーは使えません（`api/app` の `launcher.problems` に出ます）。
@@ -173,6 +175,16 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 
 レスポンスは `{file, stamp}` で、保存した中身の印です。保存は照合の順番を 1 回使います（照合と同じく 503 `check-busy`）。サーバーが古い中身について覚えたものは捨てます。説明は次の文の照合の前に取り直すので、保存したファイルの実行ファイルがそのとき説明を出します（`--allow-command-changes` では、新しいコマンドがそこで `--describe` つきで動きます）。`connect` には `api/connections` の一覧を取り直します。2 回目の印の比べは、照合と置き換えの間にほかのプログラムがファイルを変えられる時間を狭めますが、なくしはしません。例: `save-config.json`、`error-commands-changed.json`。
 
+### 実行の対象指定（`instance` と `run_id`）
+
+`instance` は `GET api/app`、`GET api/session`、`POST api/run`、または WebSocket の `hello` から取得し、`run_id` は `POST api/run`、`GET api/session`（`session.id`）、または WebSocket の `hello` / `session` / `event` から取得します。実行に対する 3 つの POST エンドポイントは、これら 2 つの扱い方が次のように異なります。
+
+| エンドポイント | `run_id` と `instance` の規則 | 不一致のとき |
+|---|---|---|
+| `POST api/stop-session` | `run_id` と `instance` の**両方必須**（どちらかが欠けるか空なら `400 invalid-field`） | `409 session-changed`（何も止めない） |
+| `POST api/time` | **両方指定するか、両方省略**: プロトコル v4 では互換性のため両方省略（現在の実行を対象）をそのまま維持しますが、新規クライアント・AI エージェント・CI 自動化では常に `instance` と `run_id` の両方を指定してください。片方だけ送ると `400 invalid-field` | `409 session-changed`（何も送らない） |
+| `POST api/write` | `run_id` は**必須**、`instance` は**任意**（指定時は照合し、空文字列や非文字列は `400 invalid-field`） | `409 session-changed`（何も書かない） |
+
 ### 停止（`api/stop-session`）
 
 GUI Client は `api/session` と `api/run` の成功応答に `instance` を必要とします。応答にない場合は操作を中断し、同じリリースの GUI サーバーを使うよう案内します。開始要求はサーバーに届いている場合があるため、再試行の前に現在の実行を確認してください。
@@ -191,6 +203,8 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 ### 時間のコマンド（`api/time`）
 
+機械可読の契約定義: [openapi.yaml](openapi.yaml)（`POST /api/time` のリクエスト、HTTP 200 の応答、エラー応答）と [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json)（非同期に届く WebSocket の `command` イベント）。
+
 本文は次のいずれかのコマンドです。表の下で説明するフィールドも追加できます。
 
 | 本文 | 値の範囲 |
@@ -201,13 +215,15 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | `{"command": "run_until", "at_ms": <整数>}` | 0 から `limits.step_ms_max` |
 | `{"command": "speed", "value": <"max" or a number>}` | `speed` と同じ範囲 |
 
-どの本体にも `"id"`（0 から 2^53 までの整数）を付けられます。サーバーはそれをコマンドの行に入れてランチャーに渡し、ランチャーはその行に答える `command` イベントの `id` に返します（`id` のない行は `null`）。画面は、自分のコマンドへの答えを、ほかの画面やランチャーの標準入力のコマンドへの答えと見分けるのに使います。サーバーは `id` を読みません。レスポンスの `{run_id, command}` のコマンドにも `id` が入ります。そのような数でない `id` は 400 `invalid-field`です。
+どの本体にも `"id"`（0 から 2^53 までの整数）を付けられます。サーバーはそれをコマンドの行に入れてランチャーに渡し、ランチャーはその行に答える `command` イベントの `id` に返します（`id` のない行は `null`）。画面は、自分のコマンドへの答えを、ほかの画面やランチャーの標準入力のコマンドへの答えと見分けるのに使います。サーバーは `id` を読みません。レスポンスの `{run_id, command}` のコマンドにも `id` が入ります。そのような数でない `id` は 400 `invalid-field` です。
 
-特定の実行にコマンドを送るには、`run_id`（空でない文字列）と、任意で `instance`（`api/run`、`api/session` の応答か WebSocket の `hello` にあるサーバーの識別子）を指定します。サーバーはランチャーに書く直前にこの対象を照合します。一致しない場合、実行がない場合、次の実行を開始中の場合は 409 `session-changed` を返します。2 つの値はランチャーへのコマンドや応答の `command` に含めません。不正な値、未知のフィールドは 400 `invalid-field` です。両方を省略すると、サーバーが処理した時点の実行にコマンドを送ります。
+特定の実行にコマンドを送るには、**`instance` と `run_id` の両方を指定**します（`api/run`、`api/session`、または WebSocket の `hello` で得た空でない文字列）。プロトコル v4 では互換性のため両方省略（サーバーが処理した時点の実行を対象にする動作）をそのまま維持しますが、**新規クライアント・AI エージェント・CI 自動化では常に `instance` と `run_id` の両方を指定してください**。サーバーはランチャーへ書く直前に両方をまとめて照合し、一致しない場合、実行がない場合、次の実行を開始中の場合は 409 `session-changed` を返します。2 つの値はランチャーへのコマンドや応答の `command` に含めません。**`run_id` か `instance` の片方だけを送ると 400 `invalid-field` になります**（空文字・`null`・未知のフィールドも同様）。
 
-サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、レスポンスを待たずに返します。止まっているランチャーでリクエストが固まらないようにするためです。
+サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、ランチャーの判断を待たずに HTTP 200 を返します。**HTTP 200 はサーバーがランチャーの標準入力へ転送したことの応答であり、ランチャーがコマンドを受理・適用したことを意味しません。**
 
-- 受け付けたかどうかと理由は、ランチャーの `command` のイベント（`accepted`、`message`、断った理由のコード `reason`、`id`、`step` の実際に進む `ms` とその後に止まる時刻 `at_ms`、`run_until` の頼んだ時刻をタイムステップに切り上げた `at_ms`）で届きます。コマンドが反映されたことは `time` のイベントで届きます。どちらも、要約の `last_command` と `time` に残ります。
+- 受け付けたかどうかと理由は、WebSocket の `event` メッセージ（`event: "command"`。`accepted`、`message`、`reason`（`accepted: true` のときは常に `null`）、`id`、実行ウィンドウ外でのランチャー側拒否時に付く `asked_run`、受け付けた `step` の `ms` と `at_ms`、受け付けた `run_until` の `at_ms`）として非同期に届きます。コマンドが反映されたことは `time` と `state` のイベントで届きます。
+- **セットアップ完了前の区間**: `POST api/run` が 200 を返した直後は、`launcher_state` が `null` かセットアップ中（`allowed.<cmd>.ok === false`、`reason: "not-set-up"`）のことがあります。`launcher_state.allowed.<cmd>.reason` が `"not-running"` の場合（このときは HTTP 409 `not-running` を即時返却）を除き、`POST api/time` は HTTP 200 を返し、ランチャーがセットアップ完了までコマンドを待機させたうえで `command` イベントを返します。外部クライアントは `launcher_state.allowed.<cmd>.ok === true`（または `phase === "running"` / `holding === true`）を待ってから送るか、非同期の `command` 拒否を扱ってください。
+- **応答待ちの終了と `last_command` の注意**: HTTP 200 の直後に実行が終わった（`session.state === "ended"` または `!session.launcher.running`）場合、ランチャーが `result` の後に終了して `command` イベントが出ないことがあります。`event.id` で応答を待つクライアントは、実行終了やタイムアウトでも待ちを打ち切ってください（[examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)）。また、`session.last_command` は最後の 1 件しか保持せず同時コマンドで上書きされるため、正確な対応づけには `id` で照合する WebSocket の `command` イベントを使ってください。
 - 対象の指定がないか照合が通った場合に、ランチャーがコマンドを受け取れなければ 409 `not-running` です。実行の終了や開始中、ランチャーの入力が閉じた場合、最後の `state` が `not-running` の場合が該当します。`allowed` にあるほかの理由はすでに変わっていることがあるため、ランチャーがコマンドに答えます。
 - ランチャーが入力を読まないままのときも、リクエストは長くて約 2 秒で返ります（コマンドはランチャーの入力に残ります）。
 - コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「標準入力のコマンド」）。
@@ -245,6 +261,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 409 | `starting` | `api/run`: 別の `api/run` が実行を始めている途中（ランチャーをまだ登録していない） |
 | 422 | `check-failed` | `api/run`: 実行を成す内容の照合が通らなかったので、実行を始めなかった（`detail` は `{result, findings}`。上の「照合と開始」）。例: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
+| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った |
 | 409 | `scenario-running` | `api/write`: 動いている実行がシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
 | 409 | `session-changed` | `api/stop-session` と対象を指定した `api/time` では、サーバーの識別子か実行が変わった。`api/write` では、指定した実行 ID が動いている実行と違う。操作は送られていない。例 `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: ファイルの中身がもう `stamp` でない、または新しいファイル（`stamp` が `null`）がすでにある |
@@ -268,8 +285,8 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 504 | `check-timeout` | 照合（または `api/connections` の一覧）が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
 
-- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
-- `invalid-field` の対象: `speed`、`start_paused`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
+- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `invalid-field` の対象: `speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`at_ms`、`value`、`id`、`run_id`、`instance`（`run_id` と `instance` の片方だけの指定を含む）、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
 - `unsupported` の対象: `control-server` を持たないのに `api/write` を送った。（サーバーは起動時に `time-commands`、`stdin-run-until`、`state`、`speed`、`start-paused`、`scenario`、`manual-participants` を必須として確かめるので、`api/time` にこの場合はありません。）
 
 例のファイルは次のとおりです。ほかのコードは、GUI サーバーのテストの中で確認します。
@@ -332,10 +349,10 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | `allowed` | `{stream_seq, run_id, allowed}`。サーバーが受け付けることが変わり、それを運ぶ `session` が続かない（下の「サーバーが受け付けること（`allowed`）」）。`run_id` は今の実行の id、なければ `null` | `ws-allowed.json` |
 | `runtime` | `{stream_seq, runtime}`。常駐ランチャーの状態（`mode`、`state`、`config`、`reason`、`message`）が変わった | — |
 | `error` | `{stream_seq, run_id, code, message, detail}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
-| `dropped` | `{stream_seq, run_id, reason, log, at_least, events}`。この画面に送らなかったものの数 | `ws-dropped.json`、`ws-slow-client.json` |
+| `dropped` | `{run_id, reason, log, at_least, events}`。この画面に送らなかったものの数（`stream_seq` の対象外） | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受信が遅く、落とせない通知まであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
 | `variables` | `{stream_seq, run_id, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形） | `ws-variables.json`、`ws-variables-failed.json` |
-| `values` | `{watch_id, run_id, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」。`stream_seq` の対象外） | `ws-variables.json` |
+| `values` | `{id, watch_id, run_id, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」。`stream_seq` の対象外） | `ws-variables.json` |
 | `operation` | `{stream_seq, run_id, seq, state, done, peers}`。書き込みの結果が変わった（下の「ECU の変数」）。全部の接続へ送り、落とさない | `ws-variables.json` |
 | `availability` | `{stream_seq, run_id, peers}`。ECU が変数を使っているかが変わった（下の「ECU の変数」）。全部の接続へ送る | `ws-availability.json`（下の「利用状態」） |
 
@@ -345,7 +362,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 - 実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後のイベントの後）。
 - ランチャーが何も書かなくなったとき（`launcher.silent_s` が変わったとき）と、また書き始めたとき。
 
-`variables` を送るのは、実行が始まった直後（その `session` の通知のすぐ後）と、変わったときです。WebSocket ストリームの順序付きの通知はすべてサーバーの `instance` 内で単調増加する `stream_seq` を持ち、`session`、`event`、`allowed`、`runtime`、`variables`、`availability`、`operation`、`error` がチャネルごとの別々の revision カウンタなしに 1 つの全順序を共有します。遅延サンプリングの `values` は `stream_seq` の対象外で、`{run_id, watch_id}` を持ちます。後の完全な変数要約には現在の利用状態が入り、差分は指定した participant だけを置き換えます。
+`variables` を送るのは、実行が始まった直後（その `session` の通知のすぐ後）と、変わったときです。WebSocket ストリームの順序付きの通知はすべてサーバーの `instance` 内で単調増加する `stream_seq` を持ち、`session`、`event`、`allowed`、`runtime`、`variables`、`availability`、`operation`、`error` がチャネルごとの別々の revision カウンタなしに 1 つの全順序を共有します。**再送中の `stream_seq` 順序（`hello` → 再送 → `synced`）**: `hello.stream_seq` は現在のサーバー先頭位置である一方、`hello` と `synced` の間に再送される `event` は当時の過去の `stream_seq`（再送内では単調増加するが、`hello.stream_seq` より小さいことが多い）を持ちます。ライブ配信の単調増加は `synced.stream_seq`（`>= hello.stream_seq`）から再開するため、再送中の `event` を `stream_seq < hello.stream_seq` を理由に捨ててはいけません。`dropped`、`resync`、および遅延サンプリングの `values` は `stream_seq` の対象外です（`values` は `{id, watch_id, run_id}` を持ちます）。後の完全な変数要約には現在の利用状態が入り、差分は指定した participant だけを置き換えます。
 
 `dropped` のフィールドは次のとおりです（`ws-slow-client.json` の数は例）。画面は、その source のログのその位置に「ここで N 行が落ちた」を表示します。
 
@@ -404,7 +421,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 | フィールド | 内容 |
 |---|---|
-| `id` | 実行の識別子（`"1"` のような文字列。サーバーで始めた実行ごと） |
+| `id` | 実行の識別子（`"<instance>-<n>"` 形式の不透明な文字列。サーバーで始めた実行ごとに付与。同値比較のみに使用） |
 | `run_t0_ms` | 実行が始まった時点のランチャーの基準 `t_ms`（cold 実行では `0`） |
 | `file`、`disable`、`manual`、`speed`、`start_paused` | 始めたときの指定 |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
@@ -436,7 +453,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - **`launcher`**: `running` はこの実行がランチャー上でまだ継続中かを示し、止められるかどうかはこれで決めます（常駐ランチャーが次の実行のため生き残る場合でも、実行が終われば `false` になります）。`mode` は常駐の `"hot"` か 1 回ごとの `"cold"`、`process_alive` はランチャープロセス自体が生きているかを示します（旧サーバーでは `mode` と `process_alive` は省略されます）。終わったら `exit_code` が入ります（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数です（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`）。
 - **`time`**: 仮想時間 `sim_ms`、実際の速度 `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` です。途中から開いた画面も、これで今の時刻がわかります。一時停止しているか、その時刻、指定の速度は、`launcher_state` にあります（`paused`、`paused_at_ms`、`speed`）。一時停止している間、`time` は止まる前のものでありえます（ランチャーが次に見るまで `sim_ms` が前の時刻、`actual_speed` と `late_ms` が止まる前の値）。
 - **`check`**: participant の `required`、`enabled`、`variables` を含みます。
-- **`last_command`**: `seq`、`command`、`source`、`accepted`、`message`、`reason`、`id`、受け付けた `step` の `ms` と `at_ms`、受け付けた `run_until` の `at_ms` です。`seq` で、新しいレスポンスか、前と同じレスポンスかがわかります。`state` より前のランチャーは `reason` と `id` を書きません。
+- **`last_command`**: `seq`、`command`、`source`、`accepted`、`message`、`reason`、`id`、受け付けた `step` の `ms` と `at_ms`、受け付けた `run_until` の `at_ms` です（`event`、`t_ms`、`run`、`asked_run` は `last_command` から除かれますが、ランチャー側拒否の WebSocket `command` イベントには `asked_run` が含まれます）。`seq` で、新しいレスポンスか、前と同じレスポンスかがわかります。`last_command` は最後の 1 件だけを保持し、同時のコマンドでは上書きされます。`state` より前のランチャーは `reason` と `id` を書きません。
 - **`launcher_state`**: ランチャーが書いた `state` イベントそのまま（[docs/ja/simulation-events.md](../../docs/ja/simulation-events.md) の `state`）に、その `seq` を付けたものです: `rev`、`phase`、`paused`、`paused_at_ms`（一時停止している時刻）、`speed`、`stop`、`allowed`（ランチャーが受け付けること: `pause`、`resume`、`step`、`speed`、`run_until`、`stop`、`write`。それぞれ `{ok, reason, message, caution}`）など。サーバーは変えません。`rev` は変わるたびに上がるので、画面は新しいものと、同じものがもう一度届いたのとを見分けられます。これは、ランチャーが書いた時点の答えです。`ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません。`state` の後のイベント（`command`、`time`）のほうが新しいことがあります。`state` のイベントは `event` の通知としても届きますが、要約が覚えるのは最後の 1 つだけなので、後から開いた画面は要約から読み、前のものは再送されません。機能 `state` のないランチャーは何も書かず、このフィールドは `null` です。
 - **`omitted_fields`**: `time`、`registry`、`last_command`、`participants` の各要素は、大きすぎて入れなかったフィールドがあれば、その名前の配列 `omitted_fields` を持ちます。participant では、後のイベントでそのフィールドが届けば消えます（例は `ws-large-fields.json`）。
 - **`variables`**: `hello` の要約と HTTP のレスポンスにあります。**`session` の通知の要約には、このフィールドがありません**。大きく、めったに変わらないので、変わったときに `variables` の通知で送ります。同じ実行の `session` の通知では、手元の値を使い続けます。別の実行の `session` の通知の直後には、その実行の `variables` の通知が届きます。
@@ -558,7 +575,7 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 - 接続が切断されると、その接続の watch は全部なくなります（再接続したら送り直します）。
 - watch は実行をまたいで続きます。実行がないとき、変数の状態が `ready` と `ended` のどちらでもないとき、いまの実行にない変数（その分だけ）には、何も届きません。いまの実行にない名前を挙げてもエラーではありません（実行の前に watch できます）。
 
-サーバーは `{"type": "values", "watch_id", "run_id", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <value>}}}}` を送ります。
+サーバーは `{"type": "values", "id", "watch_id", "run_id", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <value>}}}}` を送ります。
 
 **いつ届くか**
 
@@ -676,7 +693,7 @@ participant ごとの `state` は次のとおりです。
 
 ### 照合と実行の `scenario`
 
-`api/check` と `api/run` の `scenario` は、省くか `null` なら、シナリオなしです。
+`api/check` と `api/run` の `scenario` は、省くとシナリオなしです（`null` は 400 `invalid-field`）。
 
 - 値は、その設定ファイルの `api/scenarios` の `path` のどれかだけです（サーバーが一覧を作り直して確認します）。ほかは 400 `scenario-not-listed` です。
 - サーバーは、それを要求ファイルの `scenario` に、構成ファイルのディレクトリからの相対で書きます（要求ファイルの相対の `scenario` は、ランチャーがそこから読みます）。`simulation.yaml` でも `sub/simulation.yaml` でも `scenarios/throttle.yaml` です。
@@ -885,20 +902,22 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 
 ## `examples/` の JSON
 
-`examples/` の JSON は、サーバーのテスト（`gui/server/tests/test_protocol_examples.py`）が、本物のランチャーの出力の記録を再生するランチャー（`gui/server/tests/replay_launcher.py`）との実際のやりとりから作り、毎回照合します。
+`examples/` の JSON は、サーバーのテスト（`gui/server/tests/test_protocol_examples.py`）が Events v4 準拠のスタブランチャー（`gui/server/tests/stub_launcher.py`、`serve [--once]`）および契約バリデーター（`gui/server/tests/fake_runtime.py`）とやりとりして生成・照合し、あわせて [openapi.yaml](openapi.yaml) と [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json) でも検証します。
 
 - ファイルに残すのは、形ごとに 1〜2 個と、ドキュメントや画面とライブラリのテストが読むものです。同じ形のほかの場合（ほかのエラーのコード、ほかの終わり方の実行）は、テストの中で、エラーのコードややりとりの終わり方を確認します。
 - テストが作らないファイルが `examples/` に残っていてもテストは失敗します。
 - 形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web` で書き直し、ライブラリの型と読み取り（`gui/client/src/protocol/`）と、その単体テスト（同じファイルを読む）を合わせます。
-- プロセス ID、時刻、インスタンス、この PC のパス、実行ごとに変わる数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
+- プロセス ID、時刻、インスタンス、この PC のパス、実行ごとに変わる数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`、`"<instance>-<n>"` 形式の実行 ID は保存済み JSON 例では `"<n>"` に正規化しています）。
 
 ## 関連するドキュメント
 
 | したいこと | 読むもの |
 |---|---|
+| 外部 API の仕様・スキーマ・サンプルをまとめて見る | [外部 API とスキーマ](../../docs/ja/external-api.md) |
 | 自分の画面を作る | [自分の画面を作る](../../docs/ja/howto/gui-screen.md) |
 | TypeScript から使う（接続、再接続、要約へのイベントの反映、時間のコマンド、ECU の変数の watch、書き込みと結果） | クライアントのライブラリ [gui/client](../client/README.ja.md) |
 | 画面を使わない最小のクライアントを見る | リポジトリの [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)（素の JavaScript、依存なし、Node 22 以上） |
+| 対象指定つきの時間コマンド（`id` 対応づけ）、再接続（`after_stream_seq`）、`stop-session` をライブラリなしで見る | リポジトリの [examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)（素の JavaScript、依存なし、Node 22 以上） |
 | ECU の変数を読み書きする例を見る | リポジトリの [examples/gui_client/variables.mjs](../../examples/gui_client/variables.mjs)（ライブラリを使う） |
 
-`run.mjs` は、照合して実行を始め、イベントを読み、終わりを待ちます。`scripts/verify-gui.py` が、記録を再生するランチャーを相手に動かして確認します。`examples/gui_client/` は、ビルド済みのツールのアーカイブには入っていません。
+`run.mjs` と `time-and-stop.mjs` は `scripts/verify-gui.py` が `stub_launcher.py` を相手に動かして確認します。`examples/gui_client/` は、ビルド済みのツールのアーカイブには入っていません。

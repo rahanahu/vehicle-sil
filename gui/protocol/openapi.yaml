@@ -1,0 +1,298 @@
+openapi: "3.1.0"
+info:
+  title: vehicle-sil GUI Server API
+  version: "4"
+  summary: Machine-readable contract for POST /api/time (vehicle_sil_gui protocol 4)
+  description: >
+    OpenAPI 3.1.0 schema covering POST /api/time and its shared request/response
+    types in GUI protocol 4 (vehicle_sil_gui: 4). See gui/protocol/README.md for
+    the full HTTP and WebSocket protocol specification, and
+    gui/protocol/schemas/ws-command-event.schema.json for the asynchronous
+    WebSocket `command` event that carries the launcher's accept/refuse result.
+servers:
+  - url: http://127.0.0.1:8765
+    description: Local GUI server (loopback only; actual port is configured or ephemeral)
+security:
+  - bearerAuth: []
+paths:
+  /api/time:
+    post:
+      operationId: sendTimeCommand
+      summary: Send a time command to the running simulation
+      description: >
+        Validates the command and writes one NDJSON line to the launcher's
+        standard input, returning HTTP 200 as soon as the command is forwarded.
+        HTTP 200 acknowledges forwarding only; whether the launcher accepted or
+        refused the command arrives asynchronously on `/ws` as an `event`
+        message with `event.event == "command"` (correlated by the optional
+        numeric `id`; see `schemas/ws-command-event.schema.json`).
+
+
+        Targeting: Protocol v4 preserves omitting both `run_id` and `instance`
+        unchanged for compatibility (targeting whichever run is current).
+        However, new clients, AI agents, and CI automation should always send
+        both `instance` and `run_id` so the server refuses with
+        `409 session-changed` if another run has started or the server
+        restarted. Sending only one of `run_id` or `instance` returns
+        `400 invalid-field`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TimeCommandRequest"
+            examples:
+              step:
+                summary: Targeted step command (recommended for new clients, AI agents, and CI)
+                value:
+                  command: step
+                  ms: 100
+                  id: 1
+                  instance: "inst-1"
+                  run_id: "inst-1-1"
+              pause:
+                summary: Targeted pause command
+                value:
+                  command: pause
+                  id: 2
+                  instance: "inst-1"
+                  run_id: "inst-1-1"
+      responses:
+        "200":
+          description: >
+            Command forwarded to the launcher's standard input (asynchronous
+            launcher decision follows as a WebSocket `command` event).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimeCommandAck"
+        "400":
+          description: >
+            Malformed JSON (`invalid-json`) or invalid field (`invalid-field`),
+            including out-of-range arguments, unknown fields, `null` values, or
+            supplying only one of `run_id` and `instance`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: >
+            Missing or wrong bearer token (`unauthorized`). Skipped when the
+            server is started with `--no-auth`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >
+            Forbidden `Host` or `Origin` header, or CORS preflight
+            (`forbidden-host`, `forbidden-origin`, `cors-not-allowed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >
+            Target run no longer matches (`session-changed`), or no simulation
+            is running / launcher reports `not-running` (`not-running`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Request body exceeds 64 KiB (`too-large`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: >
+            `Content-Type` is not `application/json`
+            (`unsupported-media-type`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Server is shutting down (`shutting-down`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Per-run bearer token printed by `vehicle-sil-gui` (`Authorization: Bearer <token>`).
+        Authentication is disabled when the server is started with `--no-auth`.
+  schemas:
+    CommandId:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740992
+      description: >
+        Optional caller-supplied integer (0..2^53) echoed in `TimeCommandAck.command.id`
+        and in the launcher's asynchronous WebSocket `command` event (`event.id`).
+    RunTarget:
+      type: object
+      description: Pair identifying a specific run on a specific GUI server instance.
+      required:
+        - run_id
+        - instance
+      properties:
+        run_id:
+          type: string
+          minLength: 1
+          description: Opaque run identifier (`"<instance>-<n>"`) from `POST /api/run`, `GET /api/session`, or WebSocket `hello`.
+        instance:
+          type: string
+          minLength: 1
+          description: Server instance identifier from `GET /api/app`, `GET /api/session`, `POST /api/run`, or WebSocket `hello`.
+      additionalProperties: false
+    TimeCommandPayload:
+      type: object
+      description: Valid time command variants and their arguments.
+      oneOf:
+        - type: object
+          title: PauseCommand
+          required:
+            - command
+          properties:
+            command:
+              const: pause
+            id:
+              $ref: "#/components/schemas/CommandId"
+        - type: object
+          title: ResumeCommand
+          required:
+            - command
+          properties:
+            command:
+              const: resume
+            id:
+              $ref: "#/components/schemas/CommandId"
+        - type: object
+          title: StepCommand
+          required:
+            - command
+            - ms
+          properties:
+            command:
+              const: step
+            ms:
+              type: integer
+              minimum: 1
+              maximum: 1000000000000
+              description: Virtual milliseconds to advance while paused (1..10^12).
+            id:
+              $ref: "#/components/schemas/CommandId"
+        - type: object
+          title: RunUntilCommand
+          required:
+            - command
+            - at_ms
+          properties:
+            command:
+              const: run_until
+            at_ms:
+              type: integer
+              minimum: 0
+              maximum: 1000000000000
+              description: Virtual timestamp in milliseconds at which to pause (0..10^12).
+            id:
+              $ref: "#/components/schemas/CommandId"
+        - type: object
+          title: SpeedCommand
+          required:
+            - command
+            - value
+          properties:
+            command:
+              const: speed
+            value:
+              description: Virtual-to-real-time speed multiplier (1e-6..1e6) or `"max"`.
+              oneOf:
+                - const: max
+                - type: number
+                  minimum: 0.000001
+                  maximum: 1000000
+            id:
+              $ref: "#/components/schemas/CommandId"
+    TimeCommand:
+      type: object
+      description: Normalized time command payload without `run_id` or `instance` targeting fields.
+      allOf:
+        - $ref: "#/components/schemas/TimeCommandPayload"
+      unevaluatedProperties: false
+    TimeCommandRequest:
+      type: object
+      description: >
+        Request body for `POST /api/time`. Protocol v4 preserves omitting both
+        `run_id` and `instance` unchanged for compatibility (targeting whichever
+        run is current), but new clients, AI agents, and CI automation should
+        always send both `instance` and `run_id`. Supplying only one fails with
+        `400 invalid-field`.
+      allOf:
+        - $ref: "#/components/schemas/TimeCommandPayload"
+      properties:
+        run_id:
+          type: string
+          minLength: 1
+          description: Target run ID (must be paired with `instance`).
+        instance:
+          type: string
+          minLength: 1
+          description: Target GUI server instance ID (must be paired with `run_id`).
+      dependentRequired:
+        run_id:
+          - instance
+        instance:
+          - run_id
+      unevaluatedProperties: false
+    TimeCommandAck:
+      type: object
+      description: HTTP 200 acknowledgement that `POST /api/time` wrote the command to launcher stdin.
+      required:
+        - run_id
+        - command
+      properties:
+        run_id:
+          type: string
+          minLength: 1
+          description: Run ID of the run that received the command on launcher stdin.
+        command:
+          $ref: "#/components/schemas/TimeCommand"
+      additionalProperties: false
+    ErrorBody:
+      type: object
+      required:
+        - code
+        - message
+        - detail
+      properties:
+        code:
+          type: string
+          minLength: 1
+          description: Stable lowercase-hyphenated error code.
+        message:
+          type: string
+          minLength: 1
+          description: Human-readable English explanation of the error.
+        detail:
+          type:
+            - object
+            - array
+            - "null"
+          description: Optional structured error detail (`object`, `array`, or `null`).
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      description: Standard JSON error envelope returned by GUI server HTTP endpoints.
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+      additionalProperties: false

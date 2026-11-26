@@ -248,7 +248,7 @@ def check_time_command(body: dict) -> dict:
     if name not in TIME_COMMANDS:
         raise InvalidRequest(
             "invalid-field",
-            f"command must be one of {', '.join(TIME_COMMANDS)} (to stop, use POST api/stop)",
+            f"command must be one of {', '.join(TIME_COMMANDS)} (to stop, use POST api/stop-session)",
         )
     allowed = {"command", "id", *({"step": ("ms",), "run_until": ("at_ms",), "speed": ("value",)}.get(name, ()))}
     extra = sorted(k for k in body if k not in allowed)

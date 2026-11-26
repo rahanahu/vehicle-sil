@@ -941,7 +941,7 @@ A reader of the JSON or of a timeline file decides pass or fail from these value
 |---|---|
 | `run --json`: `result` and `end` | The whole run. It passed if `ok` is true (`ok` is true only when the exit code is 0; see [How a run ended (`end`, `ok`, `message`)](simulation-run.md#how-a-run-ended-end-ok-message)). `result` and `end` already have values that are neither a pass nor an error (`stopped`, `incomplete`, `interrupted`) |
 | `scenario.status` of `run --json` | `passed`, `failed`, `incomplete`, `not_run` |
-| `status` of a step (`run --json`, `scenario_step` of `run --events`, the timeline file) | `passed`, `failed`, `unfinished`, `not_run`, `skipped` |
+| `status` of a step (`run --json`, `scenario_step` of `serve [--once]`, the timeline file) | `passed`, `failed`, `unfinished`, `not_run`, `skipped` |
 | `test --json`: `result`, `runs[].result` | The whole `test` and each run |
 | `check --json`: `result`, `participants[].status`, `severity` of a finding | See [simulation-check.md](simulation-check.md#json---json) |
 
@@ -1107,7 +1107,7 @@ Here is the `scenario` that `run --json` gives for the failing example of [Resul
   }
 ```
 
-### `run --events`
+### `serve [--once]`
 
 The event `scenario_step` (with the same keys as `steps[]`) is emitted when a step starts (`status` is `running`) and when its result is decided. The result event also has `scenario`.
 
@@ -1185,5 +1185,5 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | Configuration file, variants, arguments and exit codes | [simulation-config.md](simulation-config.md) |
 | The check (`check`) | [simulation-check.md](simulation-check.md) |
 | The run (`run`), and `test`, which runs several scenarios | [simulation-run.md](simulation-run.md) |
-| Events (`run --events`) and stdin commands | [simulation-events.md](simulation-events.md) |
+| Events (`serve [--once]`) and stdin commands | [simulation-events.md](simulation-events.md) |
 | Reading values from outside during a run | [control-api.md](control-api.md) |
