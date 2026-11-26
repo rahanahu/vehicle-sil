@@ -1,0 +1,213 @@
+{
+  "description": "The recorded timeline JSON of a completed scenario run.",
+  "request": {
+    "method": "GET",
+    "path": "api/timeline/1"
+  },
+  "status": 200,
+  "response": {
+    "vehicle_sil_timeline": 1,
+    "vehicle_sil": "<version>",
+    "stage": "run",
+    "file": "simulation.yaml",
+    "variant": null,
+    "params": [],
+    "time_step_ms": 5,
+    "scenario": {
+      "file": "scenarios/fails.yaml",
+      "name": "speed too high",
+      "status": "failed",
+      "over_at_ms": 101,
+      "recorded_to_ms": 100
+    },
+    "variables": [
+      {
+        "name": "Engine.engine.demand",
+        "participant": "Engine",
+        "type": "real",
+        "causality": "input",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "items": [],
+        "ecu_step_ms": 10,
+        "written": true,
+        "watched": false
+      },
+      {
+        "name": "Engine.engine.speed",
+        "participant": "Engine",
+        "type": "integer",
+        "causality": "output",
+        "unit": "rpm",
+        "min": null,
+        "max": null,
+        "items": [],
+        "ecu_step_ms": 10,
+        "written": false,
+        "watched": true
+      }
+    ],
+    "steps": [
+      {
+        "index": 1,
+        "line": 5,
+        "kind": "set",
+        "text": "set Engine.engine.demand = 50",
+        "status": "passed",
+        "start_ms": 0,
+        "at_ms": 0,
+        "end_ms": 0,
+        "code": null,
+        "message": null,
+        "lines": [
+          0
+        ],
+        "watch": null,
+        "failed": null
+      },
+      {
+        "index": 2,
+        "line": 7,
+        "kind": "expect",
+        "text": "expect Engine.engine.speed ge 5000",
+        "status": "failed",
+        "start_ms": 100,
+        "at_ms": 100,
+        "end_ms": 100,
+        "code": "scenario-failed",
+        "message": "not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)",
+        "lines": [],
+        "watch": {
+          "mode": "at",
+          "from_ms": 100,
+          "to_ms": null,
+          "conditions": [
+            {
+              "variable": "Engine.engine.speed",
+              "compare": [
+                {
+                  "op": "ge",
+                  "value": 5000,
+                  "tolerance": null
+                }
+              ]
+            }
+          ]
+        },
+        "failed": {
+          "at_ms": 100,
+          "code": "scenario-failed",
+          "conditions": [
+            {
+              "condition": 0,
+              "value": 550,
+              "sample_ms": 100
+            }
+          ],
+          "writes": [],
+          "write": null
+        }
+      },
+      {
+        "index": 3,
+        "line": 9,
+        "kind": "expect",
+        "text": "expect Engine.engine.speed eq 0",
+        "status": "not_run",
+        "start_ms": null,
+        "at_ms": null,
+        "end_ms": null,
+        "code": null,
+        "message": null,
+        "lines": [],
+        "watch": {
+          "mode": "at",
+          "from_ms": null,
+          "to_ms": null,
+          "conditions": [
+            {
+              "variable": "Engine.engine.speed",
+              "compare": [
+                {
+                  "op": "eq",
+                  "value": 0,
+                  "tolerance": null
+                }
+              ]
+            }
+          ]
+        },
+        "failed": null
+      }
+    ],
+    "series": [
+      {
+        "variable": "Engine.engine.demand",
+        "source": "written",
+        "encoding": "all",
+        "columns": [
+          "at_ms",
+          "value"
+        ],
+        "samples": null,
+        "first_ms": null,
+        "last_ms": null,
+        "not_applied_from": null,
+        "points": [
+          [
+            0,
+            50
+          ]
+        ]
+      },
+      {
+        "variable": "Engine.engine.speed",
+        "source": "sampled",
+        "encoding": "changes",
+        "columns": [
+          "at_ms",
+          "value"
+        ],
+        "samples": 11,
+        "first_ms": 0,
+        "last_ms": 100,
+        "not_applied_from": null,
+        "points": [
+          [
+            0,
+            50
+          ],
+          [
+            50,
+            300
+          ],
+          [
+            100,
+            550
+          ]
+        ]
+      }
+    ],
+    "lines": [
+      {
+        "variable": "Engine.engine.demand",
+        "kind": "set",
+        "line": 5,
+        "step": 1,
+        "from_ms": 0,
+        "to_ms": 0,
+        "base": 50,
+        "base_source": "written",
+        "shape": null,
+        "text": "Engine.engine.demand = 50"
+      }
+    ],
+    "findings": [],
+    "limits": {
+      "points_per_series": 100000,
+      "points_total": 1000000,
+      "dropped": []
+    }
+  }
+}

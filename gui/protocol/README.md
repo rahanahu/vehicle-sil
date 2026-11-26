@@ -203,7 +203,7 @@ To stop a run, use `POST api/stop-session` with `{"run_id": <string>, "instance"
 
 ### Time commands (`api/time`)
 
-Machine-readable contracts: [openapi.yaml](openapi.yaml) (`POST /api/time` request, HTTP 200 ack, and error envelope) and [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json) (asynchronous WebSocket `command` event).
+Machine-readable contracts: [openapi.yaml](openapi.yaml) (all 17 `/api/*` HTTP endpoints, including `POST /api/time` with `run_id` ↔ `instance` `dependentRequired`, `TimeCommandAck`, and `ErrorResponse`) and [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json) (asynchronous WebSocket `command` event), alongside [schemas/ws-server.schema.json](schemas/ws-server.schema.json), [schemas/ws-client.schema.json](schemas/ws-client.schema.json), and [schemas/cli-json.schema.json](schemas/cli-json.schema.json). All schemas are generated offline from `gui/server/src/vehicle_sil_gui/contracts.py` and `server.route_specs()` without starting a server (`python -m vehicle_sil_gui.openapi --write` / `--check`) and are bundled under `protocol/` in the prebuilt tools archive.
 
 The body is one of the following commands, with the optional fields described below.
 
@@ -398,7 +398,6 @@ Notifications from the server.
 | `bad-event` | A field of a known event has the wrong type, or the server could not relay the event |
 | `line-too-long` | A line exceeds the limit (16 MiB). It is discarded |
 | `seq-gap`, `seq-order` | `seq` skipped, or went back |
-| `no-hello` | The first event is not `hello` |
 | `events-format` | `vehicle_sil_events` in `hello` differs from the version this server reads |
 | `launcher-stderr` | A line the launcher wrote to stderr |
 | `kept-limit` | The amount kept exceeded its limit, so the summary holds only part |
@@ -902,7 +901,7 @@ Required fields kept even beyond 4 KiB. If these alone exceed 4 KiB, the item is
 
 ## JSON in `examples/`
 
-The JSON files in `examples/` are produced and checked by `gui/server/tests/test_protocol_examples.py` against the Events v4 stand-in launcher (`gui/server/tests/stub_launcher.py`, `serve [--once]`) and the contract validator (`gui/server/tests/fake_runtime.py`), alongside [openapi.yaml](openapi.yaml) and [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json).
+The JSON files in `examples/` are produced and checked by `gui/server/tests/test_protocol_examples.py` against the Events v4 stand-in launcher (`gui/server/tests/stub_launcher.py`, `serve [--once]`) and the contract validator (`gui/server/tests/fake_runtime.py`), alongside [openapi.yaml](openapi.yaml) and the generated Draft 2020-12 schemas ([schemas/ws-server.schema.json](schemas/ws-server.schema.json), [schemas/ws-client.schema.json](schemas/ws-client.schema.json), [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json), and [schemas/cli-json.schema.json](schemas/cli-json.schema.json)). Regenerate and verify byte-for-byte drift offline with `python -m vehicle_sil_gui.openapi --write` and `--check`.
 
 - The files kept are 1–2 per shape, plus those that the documentation and the tests of the screens and the library read. Other cases of the same shape (other error codes, runs that end differently) are checked inside the test, by their error code or how the exchange ends.
 - The test also fails if `examples/` holds a file that the test does not produce.

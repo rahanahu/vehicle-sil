@@ -10,12 +10,17 @@ Protocol v4 preserves omitting both `run_id` and `instance` on `POST /api/time` 
 
 | Resource | Path | Contents |
 |---|---|---|
-| Protocol specification | [gui/protocol/README.md](../gui/protocol/README.md) | Authoritative HTTP and WebSocket Protocol v4 (`vehicle_sil_gui: 4`) spec: auth, Origin, run targeting (`instance` + `run_id`), `/api/time`, `/api/stop-session`, `/api/write`, reconnect replay, and limits |
-| OpenAPI 3.1.0 (`/api/time`) | [gui/protocol/openapi.yaml](../gui/protocol/openapi.yaml) | Machine-readable contract for `POST /api/time` (`TimeCommandRequest` with `run_id` ↔ `instance` `dependentRequired`, `TimeCommandAck`, `ErrorResponse`, status codes) |
+| Protocol specification | [gui/protocol/README.md](../gui/protocol/README.md) | Authoritative HTTP and WebSocket Protocol v4 (`vehicle_sil_gui: 4`) spec: auth, Origin, run targeting (`instance` + `run_id`), `/api/time`, `/api/stop-session`, `/api/write`, reconnect replay, behavioral ordering invariants, and limits |
+| OpenAPI 3.1.0 (all 17 endpoints) | [gui/protocol/openapi.yaml](../gui/protocol/openapi.yaml) | Offline-generated machine-readable contract for all 17 `/api/*` HTTP endpoints (`TimeCommandRequest` with `run_id` ↔ `instance` `dependentRequired`, `TimeCommandAck`, `ErrorResponse`, status codes); also bundled as `protocol/openapi.yaml` in the prebuilt tools archive |
+| WebSocket server frames schema | [gui/protocol/schemas/ws-server.schema.json](../gui/protocol/schemas/ws-server.schema.json) | Draft 2020-12 JSON Schema for all 13 server-to-client WebSocket frames (`hello`, `synced`, `session`, `event`, `allowed`, `runtime`, `variables`, `values`, `operation`, `availability`, `dropped`, `resync`, `error`) |
+| WebSocket client frames schema | [gui/protocol/schemas/ws-client.schema.json](../gui/protocol/schemas/ws-client.schema.json) | Draft 2020-12 JSON Schema for all 3 client-to-server WebSocket frames (`auth`, `watch`, `unwatch`) |
 | WebSocket `command` event schema | [gui/protocol/schemas/ws-command-event.schema.json](../gui/protocol/schemas/ws-command-event.schema.json) | Draft 2020-12 JSON Schema for asynchronous WebSocket `command` events (`accepted`, `reason`, `message`, `id`, `asked_run`) |
+| CLI `--json` readiness schema | [gui/protocol/schemas/cli-json.schema.json](../gui/protocol/schemas/cli-json.schema.json) | Draft 2020-12 JSON Schema for the `vehicle-sil-gui --json` stdout readiness line |
 | Dashboard file schema | [gui/protocol/dashboard.schema.json](../gui/protocol/dashboard.schema.json) | Draft 2020-12 JSON Schema for `<configuration>.dashboard.yaml` |
-| Wire examples | [gui/protocol/examples/](../gui/protocol/examples/) | Captured HTTP and WebSocket JSON exchanges verified by the GUI server test suite |
+| Wire examples | [gui/protocol/examples/](../gui/protocol/examples/) | 60 captured HTTP and WebSocket JSON exchanges covering all 17 HTTP endpoints, validated against the generated schemas |
 | TypeScript client library | [gui/client/README.md](../gui/client/README.md) | `@vehicle-sil/gui-client` (`connect()` front door and low-level `createClient()`) |
+
+All GUI Server API schemas (`openapi.yaml` and `schemas/*.schema.json`) are exported deterministically offline without starting a server (`python -m vehicle_sil_gui.openapi --write` / `--check`) and are bundled under `protocol/` in the prebuilt tools archive.
 
 ## Configuration, Scenario, and Launcher Schemas
 

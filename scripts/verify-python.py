@@ -27,6 +27,9 @@ needs no C++ build:
            --help
   gui      imports the GUI server dependencies and runs gui/server/tests/test_contracts.py (fast
            contracts and protocol-parity smoke check; excludes full server and OpenAPI drift tests)
+  openapi  checks byte-for-byte parity of gui/protocol/openapi.yaml and
+           gui/protocol/schemas/*.schema.json via `python -m vehicle_sil_gui.openapi --check`
+           (locked uv.lock environments only; excluded from 3.11 lowest)
 
 Then, unless --skip-lowest, one more run on 3.11 ("3.11 lowest", build/python-envs/3.11-lowest) with
 the lower bounds of pyproject.toml and gui/server/pyproject.toml instead of uv.lock: its sync step
@@ -60,7 +63,7 @@ ROOT = verify_common.ROOT
 LOG_DIR = verify_common.LOG_DIR
 ENV_DIR = ROOT / "build" / "python-envs"
 LOWEST = "3.11"
-ALL_STEPS = ("syntax", "codegen", "knowledge", "template", "schema", "scripts", "control", "gui")
+ALL_STEPS = ("syntax", "codegen", "knowledge", "template", "schema", "scripts", "control", "gui", "openapi")
 LOWEST_STEPS = ("codegen", "schema", "control", "gui")
 OUTPUT_LINES = 15
 LINE_CHARS = 400
@@ -283,6 +286,9 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             s.run([python, "-m", "pytest", "gui/server/tests/test_contracts.py", "-q"]),
         ])
 
+    def openapi(s: Step) -> bool:
+        return s.run([python, "-m", "vehicle_sil_gui.openapi", "--check"])
+
     step_map = {
         "syntax": syntax,
         "codegen": codegen,
@@ -292,6 +298,7 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
         "scripts": scripts,
         "control": control,
         "gui": gui,
+        "openapi": openapi,
     }
     wanted = list(ALL_STEPS) if selected is None else selected
     if lowest:  # the syntax, the template's script and the scripts do not depend on the packages

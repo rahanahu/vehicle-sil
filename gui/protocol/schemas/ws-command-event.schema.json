@@ -1,134 +1,343 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "vehicle-sil GUI WebSocket command event message (Protocol v4)",
-  "description": "Validates a GUI server WebSocket `event` message carrying a launcher `command` event (Events v4 / Protocol v4). Matches libs/launch/src/format/events.cpp and gui/server WebSocket framing.",
-  "type": "object",
+  "description": "Validates a GUI server WebSocket `event` message carrying a launcher `command` event (Events v4 / Protocol v4). Enforces accepted vs. refused conditional rules (accepted events require a non-empty command, `reason: null`, forbid `asked_run`, and allow `ms` only for `step`; refused events forbid `ms` and `at_ms`).",
+  "$defs": {
+    "AcceptedOtherCommandEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "const": "command",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "source": {
+          "enum": [
+            "stdin",
+            "eof",
+            "control_server",
+            "api"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740992,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "command": {
+          "minLength": 1,
+          "title": "Command",
+          "type": "string"
+        },
+        "accepted": {
+          "const": true,
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "reason": {
+          "const": null,
+          "title": "Reason",
+          "type": "null"
+        },
+        "at_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "At Ms"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "source",
+        "message",
+        "id",
+        "command",
+        "accepted",
+        "reason"
+      ],
+      "title": "AcceptedOtherCommandEvent",
+      "type": "object"
+    },
+    "AcceptedStepCommandEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "const": "command",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "source": {
+          "enum": [
+            "stdin",
+            "eof",
+            "control_server",
+            "api"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740992,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "command": {
+          "const": "step",
+          "title": "Command",
+          "type": "string"
+        },
+        "accepted": {
+          "const": true,
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "reason": {
+          "const": null,
+          "title": "Reason",
+          "type": "null"
+        },
+        "ms": {
+          "minimum": 1,
+          "type": "integer",
+          "title": "Ms"
+        },
+        "at_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "At Ms"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "source",
+        "message",
+        "id",
+        "command",
+        "accepted",
+        "reason"
+      ],
+      "title": "AcceptedStepCommandEvent",
+      "type": "object"
+    },
+    "RefusedCommandEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "const": "command",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "source": {
+          "enum": [
+            "stdin",
+            "eof",
+            "control_server",
+            "api"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740992,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Command"
+        },
+        "accepted": {
+          "const": false,
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Reason"
+        },
+        "asked_run": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Asked Run"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "source",
+        "message",
+        "id",
+        "command",
+        "accepted",
+        "reason"
+      ],
+      "title": "RefusedCommandEvent",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
-  "required": ["type", "stream_seq", "run_id", "event"],
   "properties": {
     "type": {
       "const": "event",
-      "description": "WebSocket message kind."
+      "title": "Type",
+      "type": "string"
     },
     "stream_seq": {
-      "type": "integer",
       "minimum": 0,
-      "description": "Server-assigned WebSocket stream sequence number."
+      "title": "Stream Seq",
+      "type": "integer"
     },
     "run_id": {
-      "type": "string",
       "minLength": 1,
-      "description": "GUI server run ID (`<instance>-<n>`) that owns this event."
+      "title": "Run Id",
+      "type": "string"
     },
     "event": {
-      "$ref": "#/$defs/commandEvent"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AcceptedOtherCommandEvent"
+        },
+        {
+          "$ref": "#/$defs/AcceptedStepCommandEvent"
+        },
+        {
+          "$ref": "#/$defs/RefusedCommandEvent"
+        }
+      ],
+      "title": "Event"
     }
   },
-  "$defs": {
-    "commandEvent": {
-      "type": "object",
-      "description": "Launcher `command` event payload (`EventStream::command` / `EventStream::refused`).",
-      "additionalProperties": false,
-      "required": ["event", "seq", "command", "source", "accepted", "message", "reason", "id"],
-      "properties": {
-        "event": {
-          "const": "command"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Per-stream monotonic launcher event sequence number."
-        },
-        "t_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Wall-clock milliseconds elapsed since the launcher started (present on real Events v4 events)."
-        },
-        "run": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Launcher run identifier on in-window `serve` events."
-        },
-        "command": {
-          "type": ["string", "null"],
-          "description": "Command name (for example `pause`, `resume`, `step`, `run_until`, `speed`, `stop`), or `null` if the line had no valid command name."
-        },
-        "source": {
-          "type": "string",
-          "enum": ["stdin", "eof", "control_server", "api"],
-          "description": "Where the command entered the launcher."
-        },
-        "accepted": {
-          "type": "boolean",
-          "description": "Whether the launcher accepted the command."
-        },
-        "message": {
-          "type": ["string", "null"],
-          "description": "Human-readable explanation (typically populated when `accepted` is `false`, `null` when accepted)."
-        },
-        "reason": {
-          "type": ["string", "null"],
-          "description": "Stable lowercase-hyphenated refusal code when `accepted` is `false`; always `null` when `accepted` is `true`."
-        },
-        "ms": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Effective virtual milliseconds stepped (present on accepted `step` commands)."
-        },
-        "at_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Effective target virtual timestamp in milliseconds (present on accepted `step`, `run_until`, or `pause` with target)."
-        },
-        "asked_run": {
-          "type": ["string", "null"],
-          "description": "Run ID requested on a launcher-level refusal emitted outside an active run window."
-        },
-        "id": {
-          "type": ["integer", "null"],
-          "minimum": 0,
-          "maximum": 9007199254740992,
-          "description": "Caller-supplied command correlation integer (`0..2^53`), or `null` if omitted."
-        }
-      },
-      "dependentSchemas": {
-        "ms": {
-          "properties": {
-            "command": { "const": "step" }
-          }
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": { "accepted": { "const": true } },
-            "required": ["accepted"]
-          },
-          "then": {
-            "properties": {
-              "command": { "type": "string", "minLength": 1 },
-              "reason": { "type": "null" }
-            },
-            "not": {
-              "required": ["asked_run"]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": { "accepted": { "const": false } },
-            "required": ["accepted"]
-          },
-          "then": {
-            "not": {
-              "anyOf": [
-                { "required": ["ms"] },
-                { "required": ["at_ms"] }
-              ]
-            }
-          }
-        }
-      ]
-    }
-  }
+  "required": [
+    "type",
+    "stream_seq",
+    "run_id",
+    "event"
+  ],
+  "type": "object"
 }

@@ -203,7 +203,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 
 ### 時間のコマンド（`api/time`）
 
-機械可読の契約定義: [openapi.yaml](openapi.yaml)（`POST /api/time` のリクエスト、HTTP 200 の応答、エラー応答）と [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json)（非同期に届く WebSocket の `command` イベント）。
+機械可読の契約定義: [openapi.yaml](openapi.yaml)（`run_id` ↔ `instance` の `dependentRequired` を含む `POST /api/time`、`TimeCommandAck`、`ErrorResponse` を含む全 17 個の `/api/*` HTTP エンドポイント）と [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json)（非同期に届く WebSocket の `command` イベント）、あわせて [schemas/ws-server.schema.json](schemas/ws-server.schema.json)、[schemas/ws-client.schema.json](schemas/ws-client.schema.json)、[schemas/cli-json.schema.json](schemas/cli-json.schema.json)。これらすべてのスキーマは `gui/server/src/vehicle_sil_gui/contracts.py` と `server.route_specs()` からサーバーを起動せずにオフライン生成され（`python -m vehicle_sil_gui.openapi --write` / `--check`）、ビルド済みツールアーカイブの `protocol/` にも同梱されます。
 
 本文は次のいずれかのコマンドです。表の下で説明するフィールドも追加できます。
 
@@ -398,7 +398,6 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `bad-event` | 知っているイベントのフィールドの型が違うか、サーバーがそのイベントを中継できなかった |
 | `line-too-long` | 1 行が上限（16 MiB）を超えた。捨てる |
 | `seq-gap`、`seq-order` | `seq` が飛んだ、戻った |
-| `no-hello` | 最初のイベントが `hello` でない |
 | `events-format` | `hello` の `vehicle_sil_events` が、このサーバーの読むバージョンと違う |
 | `launcher-stderr` | ランチャーが標準エラーに書いた行 |
 | `kept-limit` | 覚える量の上限を超えたので、要約に一部しか入れなかった |
@@ -902,7 +901,7 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 
 ## `examples/` の JSON
 
-`examples/` の JSON は、サーバーのテスト（`gui/server/tests/test_protocol_examples.py`）が Events v4 準拠のスタブランチャー（`gui/server/tests/stub_launcher.py`、`serve [--once]`）および契約バリデーター（`gui/server/tests/fake_runtime.py`）とやりとりして生成・照合し、あわせて [openapi.yaml](openapi.yaml) と [schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json) でも検証します。
+`examples/` の JSON は、サーバーのテスト（`gui/server/tests/test_protocol_examples.py`）が Events v4 準拠のスタブランチャー（`gui/server/tests/stub_launcher.py`、`serve [--once]`）および契約バリデーター（`gui/server/tests/fake_runtime.py`）とやりとりして生成・照合し、あわせて [openapi.yaml](openapi.yaml) と生成された Draft 2020-12 スキーマ（[schemas/ws-server.schema.json](schemas/ws-server.schema.json)、[schemas/ws-client.schema.json](schemas/ws-client.schema.json)、[schemas/ws-command-event.schema.json](schemas/ws-command-event.schema.json)、[schemas/cli-json.schema.json](schemas/cli-json.schema.json)）でも検証します。オフラインでの再生成とバイト一致の差分確認には `python -m vehicle_sil_gui.openapi --write` と `--check` を使います。
 
 - ファイルに残すのは、形ごとに 1〜2 個と、ドキュメントや画面とライブラリのテストが読むものです。同じ形のほかの場合（ほかのエラーのコード、ほかの終わり方の実行）は、テストの中で、エラーのコードややりとりの終わり方を確認します。
 - テストが作らないファイルが `examples/` に残っていてもテストは失敗します。

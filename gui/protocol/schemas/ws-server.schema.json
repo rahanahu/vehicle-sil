@@ -1,0 +1,4193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vehicle-sil GUI WebSocket server-to-client message (Protocol v4)",
+  "description": "Draft 2020-12 JSON Schema for all 13 server-to-client WebSocket frames on `/ws` (Protocol v4). Behavioral invariants documented in `gui/protocol/README.md`: `hello.stream_seq` is the stream head; replayed log events carry `stream_seq <= hello.stream_seq`; live frames after `synced` have strictly increasing `stream_seq`; `values`, `dropped`, and `resync` never carry `stream_seq`; `hello.session` includes `variables` while `session` frames omit `variables`.",
+  "$defs": {
+    "AcceptedOtherCommandEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "const": "command",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "source": {
+          "enum": [
+            "stdin",
+            "eof",
+            "control_server",
+            "api"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740992,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "command": {
+          "minLength": 1,
+          "title": "Command",
+          "type": "string"
+        },
+        "accepted": {
+          "const": true,
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "reason": {
+          "const": null,
+          "title": "Reason",
+          "type": "null"
+        },
+        "at_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "At Ms"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "source",
+        "message",
+        "id",
+        "command",
+        "accepted",
+        "reason"
+      ],
+      "title": "AcceptedOtherCommandEvent",
+      "type": "object"
+    },
+    "AcceptedStepCommandEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "const": "command",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "source": {
+          "enum": [
+            "stdin",
+            "eof",
+            "control_server",
+            "api"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740992,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "command": {
+          "const": "step",
+          "title": "Command",
+          "type": "string"
+        },
+        "accepted": {
+          "const": true,
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "reason": {
+          "const": null,
+          "title": "Reason",
+          "type": "null"
+        },
+        "ms": {
+          "minimum": 1,
+          "type": "integer",
+          "title": "Ms"
+        },
+        "at_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "At Ms"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "source",
+        "message",
+        "id",
+        "command",
+        "accepted",
+        "reason"
+      ],
+      "title": "AcceptedStepCommandEvent",
+      "type": "object"
+    },
+    "AllowedItem": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Reason"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        }
+      },
+      "required": [
+        "ok",
+        "reason",
+        "message"
+      ],
+      "title": "AllowedItem",
+      "type": "object"
+    },
+    "CautionInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "CautionInfo",
+      "type": "object"
+    },
+    "CheckNetwork": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CheckNetwork",
+      "type": "object"
+    },
+    "CheckObject": {
+      "additionalProperties": true,
+      "properties": {
+        "result": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "participants": {
+          "items": {
+            "$ref": "#/$defs/CheckParticipant"
+          },
+          "title": "Participants",
+          "type": "array"
+        },
+        "networks": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CheckNetwork"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Networks"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/FindingSummary"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "errors": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Errors"
+        },
+        "warnings": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Warnings"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "stop_at_ms": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop At Ms"
+        },
+        "commands": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Commands"
+        }
+      },
+      "title": "CheckObject",
+      "type": "object"
+    },
+    "CheckParticipant": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "describe": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Describe"
+        },
+        "required": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Required"
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enabled"
+        },
+        "manual": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manual"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "step_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Ms"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CheckParticipant",
+      "type": "object"
+    },
+    "CommandSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "accepted": {
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "ms": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ms"
+        },
+        "at_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At Ms"
+        },
+        "asked_run": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Asked Run"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740992,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "omitted_fields": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Omitted Fields"
+        }
+      },
+      "required": [
+        "accepted"
+      ],
+      "title": "CommandSummary",
+      "type": "object"
+    },
+    "ControlLinkEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "control_link",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "name",
+        "state"
+      ],
+      "title": "ControlLinkEvent",
+      "type": "object"
+    },
+    "FindingEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "finding",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "severity",
+        "message"
+      ],
+      "title": "FindingEvent",
+      "type": "object"
+    },
+    "FindingSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "participant": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Participant"
+        },
+        "network": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Network"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "detail": {
+          "default": null,
+          "title": "Detail"
+        }
+      },
+      "required": [
+        "severity",
+        "message"
+      ],
+      "title": "FindingSummary",
+      "type": "object"
+    },
+    "HeartbeatEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "heartbeat",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        }
+      },
+      "required": [
+        "event",
+        "seq"
+      ],
+      "title": "HeartbeatEvent",
+      "type": "object"
+    },
+    "HelloEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "hello",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        }
+      },
+      "required": [
+        "event",
+        "seq"
+      ],
+      "title": "HelloEvent",
+      "type": "object"
+    },
+    "InboundCheckParticipant": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "InboundCheckParticipant",
+      "type": "object"
+    },
+    "LauncherAllowedItem": {
+      "additionalProperties": true,
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Reason"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        },
+        "caution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CautionInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "reason",
+        "message",
+        "caution"
+      ],
+      "title": "LauncherAllowedItem",
+      "type": "object"
+    },
+    "LauncherStateSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "rev": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Rev",
+          "type": "integer"
+        },
+        "allowed": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LauncherAllowedItem"
+          },
+          "title": "Allowed",
+          "type": "object"
+        }
+      },
+      "required": [
+        "seq",
+        "rev",
+        "allowed"
+      ],
+      "title": "LauncherStateSummary",
+      "type": "object"
+    },
+    "LogDroppedEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "log_dropped",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "count": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "sources": {
+          "additionalProperties": {
+            "maximum": 9007199254740992,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Sources",
+          "type": "object"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "count",
+        "sources"
+      ],
+      "title": "LogDroppedEvent",
+      "type": "object"
+    },
+    "LogEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "log",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "line": {
+          "title": "Line",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "source",
+        "line"
+      ],
+      "title": "LogEvent",
+      "type": "object"
+    },
+    "LogSourceStats": {
+      "additionalProperties": false,
+      "properties": {
+        "kept": {
+          "minimum": 0,
+          "title": "Kept",
+          "type": "integer"
+        },
+        "dropped": {
+          "minimum": 0,
+          "title": "Dropped",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kept",
+        "dropped"
+      ],
+      "title": "LogSourceStats",
+      "type": "object"
+    },
+    "OperationPeerResult": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "title": "State",
+          "type": "string"
+        },
+        "applied_at_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Applied At Ms"
+        },
+        "late": {
+          "title": "Late",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Reason"
+        },
+        "applied_writes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Applied Writes"
+        },
+        "failed_write": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Failed Write"
+        }
+      },
+      "required": [
+        "state",
+        "applied_at_ms",
+        "late",
+        "reason",
+        "applied_writes",
+        "failed_write"
+      ],
+      "title": "OperationPeerResult",
+      "type": "object"
+    },
+    "OperationRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        },
+        "done": {
+          "title": "Done",
+          "type": "boolean"
+        },
+        "peers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OperationPeerResult"
+          },
+          "title": "Peers",
+          "type": "object"
+        }
+      },
+      "required": [
+        "seq",
+        "state",
+        "done",
+        "peers"
+      ],
+      "title": "OperationRecord",
+      "type": "object"
+    },
+    "ParticipantControlLink": {
+      "additionalProperties": true,
+      "properties": {
+        "state": {
+          "title": "State",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "variables": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Variables"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "ParticipantControlLink",
+      "type": "object"
+    },
+    "ParticipantEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "participant",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        },
+        "pid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pid"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exit Code"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "name",
+        "state"
+      ],
+      "title": "ParticipantEvent",
+      "type": "object"
+    },
+    "ParticipantSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "title": "State"
+        },
+        "pid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pid"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exit Code"
+        },
+        "signal": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Signal"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "stop_requested": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop Requested"
+        },
+        "control_link": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ParticipantControlLink"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "omitted_fields": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Omitted Fields"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ParticipantSummary",
+      "type": "object"
+    },
+    "PeerValuesSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "sample_ms": {
+          "title": "Sample Ms",
+          "type": "integer"
+        },
+        "values": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "title": "Values",
+          "type": "object"
+        }
+      },
+      "required": [
+        "sample_ms",
+        "values"
+      ],
+      "title": "PeerValuesSnapshot",
+      "type": "object"
+    },
+    "PhaseEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "phase",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "phase": {
+          "title": "Phase",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "phase"
+      ],
+      "title": "PhaseEvent",
+      "type": "object"
+    },
+    "RefusedCommandEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "const": "command",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "source": {
+          "enum": [
+            "stdin",
+            "eof",
+            "control_server",
+            "api"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740992,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Command"
+        },
+        "accepted": {
+          "const": false,
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Reason"
+        },
+        "asked_run": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Asked Run"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "source",
+        "message",
+        "id",
+        "command",
+        "accepted",
+        "reason"
+      ],
+      "title": "RefusedCommandEvent",
+      "type": "object"
+    },
+    "RegistryEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "registry",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Uri"
+        }
+      },
+      "required": [
+        "event",
+        "seq"
+      ],
+      "title": "RegistryEvent",
+      "type": "object"
+    },
+    "RegistrySummary": {
+      "additionalProperties": true,
+      "properties": {
+        "uri": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Uri"
+        },
+        "omitted_fields": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Omitted Fields"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "title": "RegistrySummary",
+      "type": "object"
+    },
+    "ReplayInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "after_stream_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "After Stream Seq"
+        }
+      },
+      "required": [
+        "after_stream_seq"
+      ],
+      "title": "ReplayInfo",
+      "type": "object"
+    },
+    "ResultSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        }
+      },
+      "required": [
+        "result",
+        "ok"
+      ],
+      "title": "ResultSummary",
+      "type": "object"
+    },
+    "RunStartEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "run_start",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "title": "Run",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "run"
+      ],
+      "title": "RunStartEvent",
+      "type": "object"
+    },
+    "RuntimeStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "hot",
+            "cold"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "idle",
+            "preparing",
+            "ready",
+            "running",
+            "resetting",
+            "cold"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Config"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Reason"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        }
+      },
+      "required": [
+        "mode",
+        "state",
+        "config",
+        "reason",
+        "message"
+      ],
+      "title": "RuntimeStatus",
+      "type": "object"
+    },
+    "SaveAllowedItem": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Reason"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Message"
+        },
+        "caution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CautionInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "reason",
+        "message",
+        "caution"
+      ],
+      "title": "SaveAllowedItem",
+      "type": "object"
+    },
+    "ScenarioStepEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "scenario_step",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "index": {
+          "minimum": 1,
+          "title": "Index",
+          "type": "integer"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "index",
+        "status"
+      ],
+      "title": "ScenarioStepEvent",
+      "type": "object"
+    },
+    "ScenarioStepSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "index": {
+          "minimum": 1,
+          "title": "Index",
+          "type": "integer"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        },
+        "start_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "title": "Start Ms"
+        },
+        "at_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "title": "At Ms"
+        },
+        "end_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "title": "End Ms"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        }
+      },
+      "required": [
+        "index",
+        "status"
+      ],
+      "title": "ScenarioStepSummary",
+      "type": "object"
+    },
+    "ServerAllowed": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/AllowedItem"
+        },
+        "stop": {
+          "$ref": "#/$defs/AllowedItem"
+        },
+        "force": {
+          "$ref": "#/$defs/AllowedItem"
+        },
+        "save": {
+          "$ref": "#/$defs/SaveAllowedItem"
+        }
+      },
+      "required": [
+        "start",
+        "stop",
+        "force",
+        "save"
+      ],
+      "title": "ServerAllowed",
+      "type": "object"
+    },
+    "SessionLauncherSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "pid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pid"
+        },
+        "running": {
+          "title": "Running",
+          "type": "boolean"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exit Code"
+        },
+        "signal": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Signal"
+        },
+        "silent_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Silent S"
+        },
+        "mode": {
+          "enum": [
+            "hot",
+            "cold"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "process_alive": {
+          "title": "Process Alive",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pid",
+        "running",
+        "exit_code",
+        "signal",
+        "silent_s",
+        "mode",
+        "process_alive"
+      ],
+      "title": "SessionLauncherSummary",
+      "type": "object"
+    },
+    "SessionProblem": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "detail"
+      ],
+      "title": "SessionProblem",
+      "type": "object"
+    },
+    "SessionScenarioSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Name"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Status"
+        },
+        "step_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Step Count"
+        },
+        "over_at_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Over At Ms"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/ScenarioStepSummary"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "steps_omitted": {
+          "minimum": 0,
+          "title": "Steps Omitted",
+          "type": "integer"
+        },
+        "timeline_url": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Timeline Url"
+        }
+      },
+      "required": [
+        "file",
+        "name",
+        "status",
+        "step_count",
+        "over_at_ms",
+        "steps",
+        "steps_omitted",
+        "timeline_url"
+      ],
+      "title": "SessionScenarioSummary",
+      "type": "object"
+    },
+    "SessionSummary": {
+      "additionalProperties": false,
+      "description": "Full session summary in `GET /api/session` and WS `hello` (includes `variables`).",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "run_t0_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run T0 Ms"
+        },
+        "file": {
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "disable": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Disable",
+          "type": "array"
+        },
+        "manual": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Manual",
+          "type": "array"
+        },
+        "speed": {
+          "anyOf": [
+            {
+              "const": "max",
+              "type": "string"
+            },
+            {
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "maximum": 1000000.0,
+              "minimum": 1e-06,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Speed"
+        },
+        "start_paused": {
+          "title": "Start Paused",
+          "type": "boolean"
+        },
+        "started_at": {
+          "minLength": 1,
+          "title": "Started At",
+          "type": "string"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Ended At"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "ended"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "launcher": {
+          "$ref": "#/$defs/SessionLauncherSummary"
+        },
+        "stop": {
+          "enum": [
+            "none",
+            "requested",
+            "forced"
+          ],
+          "title": "Stop",
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Phase"
+        },
+        "last_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Seq"
+        },
+        "last_t_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last T Ms"
+        },
+        "time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckObject"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "registry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RegistrySummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "participants": {
+          "items": {
+            "$ref": "#/$defs/ParticipantSummary"
+          },
+          "title": "Participants",
+          "type": "array"
+        },
+        "participants_omitted": {
+          "minimum": 0,
+          "title": "Participants Omitted",
+          "type": "integer"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/FindingSummary"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "findings_omitted": {
+          "minimum": 0,
+          "title": "Findings Omitted",
+          "type": "integer"
+        },
+        "last_command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "launcher_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LauncherStateSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed": {
+          "$ref": "#/$defs/ServerAllowed"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResultSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LogSourceStats"
+          },
+          "title": "Log",
+          "type": "object"
+        },
+        "problems": {
+          "items": {
+            "$ref": "#/$defs/SessionProblem"
+          },
+          "title": "Problems",
+          "type": "array"
+        },
+        "problems_omitted": {
+          "minimum": 0,
+          "title": "Problems Omitted",
+          "type": "integer"
+        },
+        "scenario": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionScenarioSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stop_at_ms": {
+          "anyOf": [
+            {
+              "maximum": 1000000000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop At Ms"
+        },
+        "variables": {
+          "$ref": "#/$defs/VariablesSummary"
+        }
+      },
+      "required": [
+        "id",
+        "run_t0_ms",
+        "file",
+        "disable",
+        "manual",
+        "speed",
+        "start_paused",
+        "started_at",
+        "ended_at",
+        "state",
+        "launcher",
+        "stop",
+        "phase",
+        "last_seq",
+        "last_t_ms",
+        "time",
+        "check",
+        "registry",
+        "participants",
+        "participants_omitted",
+        "findings",
+        "findings_omitted",
+        "last_command",
+        "launcher_state",
+        "allowed",
+        "result",
+        "log",
+        "problems",
+        "problems_omitted",
+        "scenario",
+        "variables"
+      ],
+      "title": "SessionSummary",
+      "type": "object"
+    },
+    "SessionWsSummary": {
+      "additionalProperties": false,
+      "description": "Session summary in WS `session` frames (omits `variables`).",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "run_t0_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run T0 Ms"
+        },
+        "file": {
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "disable": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Disable",
+          "type": "array"
+        },
+        "manual": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Manual",
+          "type": "array"
+        },
+        "speed": {
+          "anyOf": [
+            {
+              "const": "max",
+              "type": "string"
+            },
+            {
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "maximum": 1000000.0,
+              "minimum": 1e-06,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Speed"
+        },
+        "start_paused": {
+          "title": "Start Paused",
+          "type": "boolean"
+        },
+        "started_at": {
+          "minLength": 1,
+          "title": "Started At",
+          "type": "string"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Ended At"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "ended"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "launcher": {
+          "$ref": "#/$defs/SessionLauncherSummary"
+        },
+        "stop": {
+          "enum": [
+            "none",
+            "requested",
+            "forced"
+          ],
+          "title": "Stop",
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Phase"
+        },
+        "last_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Seq"
+        },
+        "last_t_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last T Ms"
+        },
+        "time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckObject"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "registry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RegistrySummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "participants": {
+          "items": {
+            "$ref": "#/$defs/ParticipantSummary"
+          },
+          "title": "Participants",
+          "type": "array"
+        },
+        "participants_omitted": {
+          "minimum": 0,
+          "title": "Participants Omitted",
+          "type": "integer"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/FindingSummary"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "findings_omitted": {
+          "minimum": 0,
+          "title": "Findings Omitted",
+          "type": "integer"
+        },
+        "last_command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "launcher_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LauncherStateSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed": {
+          "$ref": "#/$defs/ServerAllowed"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResultSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LogSourceStats"
+          },
+          "title": "Log",
+          "type": "object"
+        },
+        "problems": {
+          "items": {
+            "$ref": "#/$defs/SessionProblem"
+          },
+          "title": "Problems",
+          "type": "array"
+        },
+        "problems_omitted": {
+          "minimum": 0,
+          "title": "Problems Omitted",
+          "type": "integer"
+        },
+        "scenario": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionScenarioSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stop_at_ms": {
+          "anyOf": [
+            {
+              "maximum": 1000000000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop At Ms"
+        }
+      },
+      "required": [
+        "id",
+        "run_t0_ms",
+        "file",
+        "disable",
+        "manual",
+        "speed",
+        "start_paused",
+        "started_at",
+        "ended_at",
+        "state",
+        "launcher",
+        "stop",
+        "phase",
+        "last_seq",
+        "last_t_ms",
+        "time",
+        "check",
+        "registry",
+        "participants",
+        "participants_omitted",
+        "findings",
+        "findings_omitted",
+        "last_command",
+        "launcher_state",
+        "allowed",
+        "result",
+        "log",
+        "problems",
+        "problems_omitted",
+        "scenario"
+      ],
+      "title": "SessionWsSummary",
+      "type": "object"
+    },
+    "TimeEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "time",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "sim_ms": {
+          "title": "Sim Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "sim_ms"
+      ],
+      "title": "TimeEvent",
+      "type": "object"
+    },
+    "TimeSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "time",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "t_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T Ms"
+        },
+        "sim_ms": {
+          "title": "Sim Ms",
+          "type": "integer"
+        },
+        "actual_speed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": null,
+          "title": "Actual Speed"
+        },
+        "late_steps": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Late Steps"
+        },
+        "max_late_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Late Ms"
+        },
+        "slipped_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Slipped Ms"
+        },
+        "late_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Late Ms"
+        },
+        "omitted_fields": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Omitted Fields"
+        }
+      },
+      "required": [
+        "event",
+        "sim_ms"
+      ],
+      "title": "TimeSummary",
+      "type": "object"
+    },
+    "UnknownLauncherEvent": {
+      "additionalProperties": true,
+      "description": "Forward-compatible fallback strictly for unknown future launcher event kinds.",
+      "properties": {
+        "event": {
+          "minLength": 1,
+          "not": {
+            "enum": [
+              "check",
+              "command",
+              "control_link",
+              "finding",
+              "heartbeat",
+              "hello",
+              "log",
+              "log_dropped",
+              "participant",
+              "phase",
+              "registry",
+              "result",
+              "run_start",
+              "scenario_step",
+              "state",
+              "time"
+            ]
+          },
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        }
+      },
+      "required": [
+        "event",
+        "seq"
+      ],
+      "title": "UnknownLauncherEvent",
+      "type": "object"
+    },
+    "VariableEnumItem": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "VariableEnumItem",
+      "type": "object"
+    },
+    "VariablePeer": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "connected": {
+          "title": "Connected",
+          "type": "boolean"
+        },
+        "variables": {
+          "items": {
+            "$ref": "#/$defs/VariableSpec"
+          },
+          "title": "Variables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "connected",
+        "variables"
+      ],
+      "title": "VariablePeer",
+      "type": "object"
+    },
+    "VariableSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "bool",
+            "integer",
+            "real",
+            "enum"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "input",
+            "output",
+            "parameter"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "writable": {
+          "title": "Writable",
+          "type": "boolean"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Min"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Max"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Step"
+        },
+        "enum": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/VariableEnumItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Enum"
+        },
+        "availability": {
+          "enum": [
+            "active",
+            "inactive",
+            "unknown"
+          ],
+          "type": "string",
+          "title": "Availability"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "role",
+        "writable",
+        "unit",
+        "description",
+        "min",
+        "max",
+        "step",
+        "enum"
+      ],
+      "title": "VariableSpec",
+      "type": "object"
+    },
+    "VariablesSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "enum": [
+            "off",
+            "connecting",
+            "ready",
+            "failed",
+            "ended"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Reason"
+        },
+        "peers": {
+          "items": {
+            "$ref": "#/$defs/VariablePeer"
+          },
+          "title": "Peers",
+          "type": "array"
+        },
+        "peers_omitted": {
+          "minimum": 0,
+          "title": "Peers Omitted",
+          "type": "integer"
+        },
+        "variables_omitted": {
+          "minimum": 0,
+          "title": "Variables Omitted",
+          "type": "integer"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/OperationRecord"
+          },
+          "title": "Operations",
+          "type": "array"
+        },
+        "operations_from_seq": {
+          "minimum": 0,
+          "title": "Operations From Seq",
+          "type": "integer"
+        },
+        "operations_open_omitted": {
+          "minimum": 0,
+          "title": "Operations Open Omitted",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "peers",
+        "peers_omitted",
+        "variables_omitted",
+        "operations",
+        "operations_from_seq",
+        "operations_open_omitted"
+      ],
+      "title": "VariablesSummary",
+      "type": "object"
+    },
+    "WsAllowedMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "allowed",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "allowed": {
+          "$ref": "#/$defs/ServerAllowed"
+        }
+      },
+      "required": [
+        "type",
+        "stream_seq",
+        "run_id",
+        "allowed"
+      ],
+      "title": "WsAllowedMessage",
+      "type": "object"
+    },
+    "WsAvailabilityMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "availability",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "peers": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "enum": [
+                "active",
+                "inactive",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "minProperties": 1,
+          "title": "Peers",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "stream_seq",
+        "run_id",
+        "peers"
+      ],
+      "title": "WsAvailabilityMessage",
+      "type": "object"
+    },
+    "WsCheckEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "check",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "check": {
+          "$ref": "#/$defs/WsCheckObject"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "check"
+      ],
+      "title": "WsCheckEvent",
+      "type": "object"
+    },
+    "WsCheckObject": {
+      "additionalProperties": true,
+      "properties": {
+        "participants": {
+          "items": {
+            "$ref": "#/$defs/InboundCheckParticipant"
+          },
+          "title": "Participants",
+          "type": "array"
+        },
+        "vehicle_sil_check": {
+          "const": 1,
+          "title": "Vehicle Sil Check",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "vehicle_sil_check"
+      ],
+      "title": "WsCheckObject",
+      "type": "object"
+    },
+    "WsDroppedMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dropped",
+          "title": "Type",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "reason": {
+          "enum": [
+            "not-kept",
+            "slow-client"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "log": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Log",
+          "type": "object"
+        },
+        "at_least": {
+          "items": {
+            "type": "string"
+          },
+          "title": "At Least",
+          "type": "array"
+        },
+        "events": {
+          "minimum": 0,
+          "title": "Events",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "run_id",
+        "reason",
+        "log",
+        "at_least",
+        "events"
+      ],
+      "title": "WsDroppedMessage",
+      "type": "object"
+    },
+    "WsErrorMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "error",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "type": "integer",
+          "title": "Stream Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail"
+        }
+      },
+      "required": [
+        "type",
+        "run_id",
+        "code",
+        "message",
+        "detail"
+      ],
+      "title": "WsErrorMessage",
+      "type": "object"
+    },
+    "WsEventMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "event",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcceptedOtherCommandEvent"
+            },
+            {
+              "$ref": "#/$defs/AcceptedStepCommandEvent"
+            },
+            {
+              "$ref": "#/$defs/ControlLinkEvent"
+            },
+            {
+              "$ref": "#/$defs/FindingEvent"
+            },
+            {
+              "$ref": "#/$defs/HeartbeatEvent"
+            },
+            {
+              "$ref": "#/$defs/HelloEvent"
+            },
+            {
+              "$ref": "#/$defs/LogDroppedEvent"
+            },
+            {
+              "$ref": "#/$defs/LogEvent"
+            },
+            {
+              "$ref": "#/$defs/ParticipantEvent"
+            },
+            {
+              "$ref": "#/$defs/PhaseEvent"
+            },
+            {
+              "$ref": "#/$defs/RefusedCommandEvent"
+            },
+            {
+              "$ref": "#/$defs/RegistryEvent"
+            },
+            {
+              "$ref": "#/$defs/RunStartEvent"
+            },
+            {
+              "$ref": "#/$defs/ScenarioStepEvent"
+            },
+            {
+              "$ref": "#/$defs/TimeEvent"
+            },
+            {
+              "$ref": "#/$defs/UnknownLauncherEvent"
+            },
+            {
+              "$ref": "#/$defs/WsCheckEvent"
+            },
+            {
+              "$ref": "#/$defs/WsResultEvent"
+            },
+            {
+              "$ref": "#/$defs/WsStateEvent"
+            }
+          ],
+          "title": "Event"
+        }
+      },
+      "required": [
+        "type",
+        "stream_seq",
+        "run_id",
+        "event"
+      ],
+      "title": "WsEventMessage",
+      "type": "object"
+    },
+    "WsHelloMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "hello",
+          "title": "Type",
+          "type": "string"
+        },
+        "vehicle_sil_gui": {
+          "const": 4,
+          "title": "Vehicle Sil Gui",
+          "type": "integer"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        },
+        "instance": {
+          "minLength": 1,
+          "title": "Instance",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed": {
+          "$ref": "#/$defs/ServerAllowed"
+        },
+        "replay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReplayInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeStatus"
+        }
+      },
+      "required": [
+        "type",
+        "vehicle_sil_gui",
+        "version",
+        "instance",
+        "stream_seq",
+        "session",
+        "allowed",
+        "replay",
+        "runtime"
+      ],
+      "title": "WsHelloMessage",
+      "type": "object"
+    },
+    "WsOperationMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        },
+        "done": {
+          "title": "Done",
+          "type": "boolean"
+        },
+        "peers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OperationPeerResult"
+          },
+          "title": "Peers",
+          "type": "object"
+        },
+        "type": {
+          "const": "operation",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "state",
+        "done",
+        "peers",
+        "type",
+        "stream_seq",
+        "run_id"
+      ],
+      "title": "WsOperationMessage",
+      "type": "object"
+    },
+    "WsResultEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "result",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "result": {
+          "$ref": "#/$defs/ResultSummary"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "result"
+      ],
+      "title": "WsResultEvent",
+      "type": "object"
+    },
+    "WsResyncMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "resync",
+          "title": "Type",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "reason",
+        "message"
+      ],
+      "title": "WsResyncMessage",
+      "type": "object"
+    },
+    "WsRuntimeMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "runtime",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeStatus"
+        }
+      },
+      "required": [
+        "type",
+        "stream_seq",
+        "runtime"
+      ],
+      "title": "WsRuntimeMessage",
+      "type": "object"
+    },
+    "WsSessionMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "session",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionWsSummary"
+        }
+      },
+      "required": [
+        "type",
+        "stream_seq",
+        "session"
+      ],
+      "title": "WsSessionMessage",
+      "type": "object"
+    },
+    "WsStateEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {
+          "const": "state",
+          "title": "Event",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer",
+          "title": "T Ms"
+        },
+        "run": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Run"
+        },
+        "rev": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Rev",
+          "type": "integer"
+        },
+        "allowed": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LauncherAllowedItem"
+          },
+          "title": "Allowed",
+          "type": "object"
+        }
+      },
+      "required": [
+        "event",
+        "seq",
+        "rev",
+        "allowed"
+      ],
+      "title": "WsStateEvent",
+      "type": "object"
+    },
+    "WsSyncedMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "synced",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "last_seq": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Seq"
+        }
+      },
+      "required": [
+        "type",
+        "stream_seq",
+        "run_id",
+        "last_seq"
+      ],
+      "title": "WsSyncedMessage",
+      "type": "object"
+    },
+    "WsValuesMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "values",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "watch_id": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "title": "Watch Id",
+          "type": "integer"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sim_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sim Ms"
+        },
+        "paused": {
+          "title": "Paused",
+          "type": "boolean"
+        },
+        "peers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PeerValuesSnapshot"
+          },
+          "title": "Peers",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "watch_id",
+        "run_id",
+        "sim_ms",
+        "paused",
+        "peers"
+      ],
+      "title": "WsValuesMessage",
+      "type": "object"
+    },
+    "WsVariablesMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "variables",
+          "title": "Type",
+          "type": "string"
+        },
+        "stream_seq": {
+          "minimum": 0,
+          "title": "Stream Seq",
+          "type": "integer"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "variables": {
+          "$ref": "#/$defs/VariablesSummary"
+        }
+      },
+      "required": [
+        "type",
+        "stream_seq",
+        "run_id",
+        "variables"
+      ],
+      "title": "WsVariablesMessage",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "allowed": "#/$defs/WsAllowedMessage",
+      "availability": "#/$defs/WsAvailabilityMessage",
+      "dropped": "#/$defs/WsDroppedMessage",
+      "error": "#/$defs/WsErrorMessage",
+      "event": "#/$defs/WsEventMessage",
+      "hello": "#/$defs/WsHelloMessage",
+      "operation": "#/$defs/WsOperationMessage",
+      "resync": "#/$defs/WsResyncMessage",
+      "runtime": "#/$defs/WsRuntimeMessage",
+      "session": "#/$defs/WsSessionMessage",
+      "synced": "#/$defs/WsSyncedMessage",
+      "values": "#/$defs/WsValuesMessage",
+      "variables": "#/$defs/WsVariablesMessage"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/WsAllowedMessage"
+    },
+    {
+      "$ref": "#/$defs/WsAvailabilityMessage"
+    },
+    {
+      "$ref": "#/$defs/WsDroppedMessage"
+    },
+    {
+      "$ref": "#/$defs/WsErrorMessage"
+    },
+    {
+      "$ref": "#/$defs/WsEventMessage"
+    },
+    {
+      "$ref": "#/$defs/WsHelloMessage"
+    },
+    {
+      "$ref": "#/$defs/WsOperationMessage"
+    },
+    {
+      "$ref": "#/$defs/WsResyncMessage"
+    },
+    {
+      "$ref": "#/$defs/WsRuntimeMessage"
+    },
+    {
+      "$ref": "#/$defs/WsSessionMessage"
+    },
+    {
+      "$ref": "#/$defs/WsSyncedMessage"
+    },
+    {
+      "$ref": "#/$defs/WsValuesMessage"
+    },
+    {
+      "$ref": "#/$defs/WsVariablesMessage"
+    }
+  ]
+}

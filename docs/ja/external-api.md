@@ -10,12 +10,17 @@ GUI サーバー API、ランチャー CLI / イベント、Control API、およ
 
 | リソース | パス | 内容 |
 |---|---|---|
-| プロトコル仕様 | [gui/protocol/README.ja.md](../../gui/protocol/README.ja.md) | HTTP・WebSocket プロトコル v4（`vehicle_sil_gui: 4`）の正本仕様: 認証・Origin・実行の対象指定（`instance` + `run_id`）・`/api/time`・`/api/stop-session`・`/api/write`・再接続リプレイ・上限 |
-| OpenAPI 3.1.0（`/api/time`） | [gui/protocol/openapi.yaml](../../gui/protocol/openapi.yaml) | `POST /api/time` の機械可読契約（`run_id` ↔ `instance` の `dependentRequired` を含む `TimeCommandRequest`、`TimeCommandAck`、`ErrorResponse`、ステータスコード） |
+| プロトコル仕様 | [gui/protocol/README.ja.md](../../gui/protocol/README.ja.md) | HTTP・WebSocket プロトコル v4（`vehicle_sil_gui: 4`）の正本仕様: 認証・Origin・実行の対象指定（`instance` + `run_id`）・`/api/time`・`/api/stop-session`・`/api/write`・再接続リプレイ・順序などの振る舞い不変条件・上限 |
+| OpenAPI 3.1.0（全 17 エンドポイント） | [gui/protocol/openapi.yaml](../../gui/protocol/openapi.yaml) | 全 17 個の `/api/*` HTTP エンドポイントを網羅するオフライン生成の機械可読契約（`run_id` ↔ `instance` の `dependentRequired` を含む `TimeCommandRequest`、`TimeCommandAck`、`ErrorResponse`、ステータスコード）。ビルド済みツールアーカイブでは `protocol/openapi.yaml` として同梱 |
+| WebSocket サーバーフレームスキーマ | [gui/protocol/schemas/ws-server.schema.json](../../gui/protocol/schemas/ws-server.schema.json) | サーバーからクライアントへの全 13 種類の WebSocket フレーム（`hello`、`synced`、`session`、`event`、`allowed`、`runtime`、`variables`、`values`、`operation`、`availability`、`dropped`、`resync`、`error`）の Draft 2020-12 JSON Schema |
+| WebSocket クライアントフレームスキーマ | [gui/protocol/schemas/ws-client.schema.json](../../gui/protocol/schemas/ws-client.schema.json) | クライアントからサーバーへの全 3 種類の WebSocket フレーム（`auth`、`watch`、`unwatch`）の Draft 2020-12 JSON Schema |
 | WebSocket `command` イベントスキーマ | [gui/protocol/schemas/ws-command-event.schema.json](../../gui/protocol/schemas/ws-command-event.schema.json) | 非同期 WebSocket `command` イベント（`accepted`、`reason`、`message`、`id`、`asked_run`）の Draft 2020-12 JSON Schema |
+| CLI `--json` 起動通知スキーマ | [gui/protocol/schemas/cli-json.schema.json](../../gui/protocol/schemas/cli-json.schema.json) | `vehicle-sil-gui --json` が標準出力に書き出す起動完了 JSON 行の Draft 2020-12 JSON Schema |
 | ダッシュボードファイルスキーマ | [gui/protocol/dashboard.schema.json](../../gui/protocol/dashboard.schema.json) | `<configuration>.dashboard.yaml` の Draft 2020-12 JSON Schema |
-| 通信例の JSON | [gui/protocol/examples/](../../gui/protocol/examples/) | GUI サーバーテストで検証されている HTTP・WebSocket の JSON 例 |
+| 通信例の JSON | [gui/protocol/examples/](../../gui/protocol/examples/) | 全 17 個の HTTP エンドポイントと WebSocket 交換を網羅し、生成スキーマで検証される 60 件の JSON 例 |
 | TypeScript クライアントライブラリ | [gui/client/README.ja.md](../../gui/client/README.ja.md) | `@vehicle-sil/gui-client`（正面入口 `connect()` および低レベル `createClient()`） |
+
+GUI サーバー API の全スキーマ（`openapi.yaml` と `schemas/*.schema.json`）は、サーバーを起動せずにオフラインで決定論的に生成・検証でき（`python -m vehicle_sil_gui.openapi --write` / `--check`）、ビルド済みツールアーカイブの `protocol/` にも同梱されます。
 
 ## 構成・シナリオ・ランチャーのスキーマ
 

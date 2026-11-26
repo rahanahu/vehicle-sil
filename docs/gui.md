@@ -34,7 +34,7 @@ Arrows point in the direction of the calls. The GUI is also an SDK for building 
 | Part | Location | Role |
 |---|---|---|
 | GUI server | `gui/server` (the command is `vehicle-sil-gui`) | Starts the launcher, provides the API, and serves the screens' static files. |
-| Server API | [gui/protocol](../gui/protocol/README.md) | Defines the HTTP and WebSocket shapes, the versioning and compatibility rules, and authentication. Usable from any language. |
+| Server API | [gui/protocol](../gui/protocol/README.md) | Defines the HTTP and WebSocket shapes, the versioning and compatibility rules, and authentication, backed by offline OpenAPI 3.1 (`openapi.yaml`) and Draft 2020-12 WebSocket/CLI JSON Schemas (`schemas/*.schema.json`, also bundled in `protocol/` of the prebuilt tools archive). Usable from any language. |
 | Client library | [gui/client](../gui/client/README.md) (`@vehicle-sil/gui-client`) | A TypeScript library for the connection, run and time control, and ECU variables. It does not depend on any framework. `connect()` returns its front door: what a screen shows (`status`, `clock`, `controls`), the operations as Promises, and one variable at a time. |
 | Sample screens | `gui/web` (Angular) | A reference implementation built only on the 3 parts above. The GUI server serves it unless you give `--web`. |
 
