@@ -298,6 +298,7 @@ With the prebuilt tools, add their `bin` to `PATH` and start the GUI in the dire
 - Packages are never built from source.
 - Without uv, install the packages into a virtual environment of Python 3.11 or later with `python -m pip install --require-hashes -r <tools>/python/requirements.txt`, and name that Python in the environment variable `VEHICLE_SIL_PYTHON`. If something is missing, the script says so and exits with exit code 2.
 - The GUI server's Python does not load modules from the current directory (`python -P`).
+- Because `bin/vehicle-sil-gui` launches the server through `uv run`, automation stopping it should send `SIGTERM` or signal the process group (`killpg` on POSIX, `taskkill /T` on Windows) rather than sending `SIGKILL` to the `uv` PID alone (which would leave the child Python process running).
 
 ### Start from the repository
 
@@ -335,7 +336,7 @@ npm --prefix gui/web/workbench run build
 scripts/run-gui.py --workbench
 ~~~
 
-The top **Network** menu selects a simulation configuration and asks `POST api/prepare` to warm a persistent launcher when eligible (falling back to per-run Cold launches automatically when a configuration is not eligible). Each **Start** performs a single check before running, and Workbench views identify runs by configuration file and status rather than numeric run IDs. **Network Designer** edits its buses and ECU channel mappings. The top **Scenario** menu lists runnable YAML files in the server's `scenarios/` directory next to that configuration. **Free run** and **Record & start** have no automatic stop when **Stop at (ms)** is blank. A supplied limit applies to both Check and Start.
+The top **Network** menu selects a simulation configuration and asks `POST api/prepare` to warm a persistent launcher when eligible (falling back to per-run Cold launches automatically when a configuration is not eligible). In a Hot Start, only the resident `vehicle_sil_launch serve` process persists between runs; each run still creates and destroys fresh ECU processes, the SIL Kit registry/controller, and simulation state starting from virtual time 0 (see "[Running sequentially in one launcher (`vehicle_sil_launch serve`)](simulation-run.md#running-sequentially-in-one-launcher-vehicle_sil_launch-serve)"). The GUI falls back to Cold Start (`serve --once`) when a configuration fixes `registry_uri` or sets `manual: true` on a participant, when `--manual` is selected or `VEHICLE_SIL_TRACE` is set, when the launcher is an older version without `serve`, or if the resident launcher fails. Each **Start** performs a single check before running, and Workbench views identify runs by configuration file and status rather than numeric run IDs. **Network Designer** edits its buses and ECU channel mappings. The top **Scenario** menu lists runnable YAML files in the server's `scenarios/` directory next to that configuration. **Free run** and **Record & start** have no automatic stop when **Stop at (ms)** is blank. A supplied limit applies to both Check and Start.
 
 In **Settings → Scenario folder**, choose a local directory for opening and saving YAML from the **Scenario** tab. If the browser offers read-only folder access, **Save YAML** downloads the file. To run a local file on the server, put it in the selected network's server-side `scenarios/` directory and refresh the run list.
 
@@ -353,6 +354,7 @@ In **Settings → Scenario folder**, choose a local directory for opening and sa
 - When the server exits, it closes the launcher's input and waits for it to finish. If `--stop-timeout` is given and the launcher has not stopped within that time, the server sends SIGTERM (on Windows, Ctrl+Break) to its process group and kills the group 5 seconds later (on Windows, `taskkill /T /F`). A second signal skips both the initial wait and the 5-second wait. With no timeout, a launcher that cannot finish needs a second signal to force it to stop.
 - The server can stop only the launcher and what is in the launcher's process group. Cleaning up the participants is the launcher's job (the launcher starts the participants in a process group of their own).
 - If the launcher has exited but a process it started still holds its output open, the server waits 2 seconds, then ends the run and notifies the screen. That process may still be running.
+- When running `bin/vehicle-sil-gui` via `uv run` from automation, stop it with `SIGTERM` or by signaling its process group (`killpg` on POSIX, `taskkill /T` on Windows) rather than `SIGKILL` to the `uv` PID alone.
 
 ## Security
 
@@ -439,6 +441,7 @@ While the run is paced at a numeric speed (not as fast as possible), the screen 
 | `speed` and `start_paused` of `POST api/run` | The launcher's `--speed` and `--start-paused` (returns `{instance, run_id}` Ack on success, or synchronous `422 check-failed` on check failure without clearing the prior run screen) |
 | `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "pause"}` or `"resume"` | Pause, resume (returns `{run_id, command}` Ack) |
 | `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "step", "ms": <ms>}` | Step (only while paused; the launcher rounds up to a multiple of the time step; returns `{run_id, command}` Ack) |
+| `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "run_until", "at_ms": <ms>}` | Run until `at_ms` and pause (whether currently paused or running; returns `{run_id, command}` Ack) |
 | `POST api/time` `{"run_id": "<run_id>", "instance": "<instance>", "command": "speed", "value": <number or "max">}` | Change the speed (a pause stays a pause; returns `{run_id, command}` Ack) |
 | `POST api/stop-session` `{"force": <bool>, "run_id": "<run_id>", "instance": "<instance>"}` | Stop the named run (returns `{instance, run_id}` Ack; non-targeted `POST api/stop` is removed) |
 | `POST api/prepare` `{"file": ...}` | Prepare the resident launcher (returns `{instance}` Ack) |
@@ -528,7 +531,7 @@ The GUI reads and writes the variables that ECUs declare (see "ECU variables" in
 | Start | If the launcher has a Control Server, the GUI server starts the launcher (`serve --once`, or `serve` for a persistent launcher) with `--control 0 --control-credentials <file>` and connects to the address that the launcher's `control_server` event reports. |
 | State | The state of the variable feature (`off`, `connecting`, `ready`, `failed`, `ended`) and its reason arrive in `variables` of the summary and in the `variables` notification. |
 | List | The variables of each participant (name, type, role, unit, range, value increment, description, enum items, whether writable). |
-| Values | When the screen watches selected variables, their last values arrive at the chosen period (20 ms or more) as delayed `values` frames carrying `{id, watch_id, run_id}` outside `stream_seq`. |
+| Values | When the screen watches selected variables, their last values arrive at the chosen period (20 ms or more) as delayed `values` frames carrying `{id, watch_id, run_id, sim_ms, paused, peers}` outside `stream_seq`. |
 | Writes | Sent to `POST api/write` with the target `run_id` (and optional `instance`), returning `{run_id, operation}`. |
 | After the end | The state becomes `ended`, and the last values read remain (until the next run starts). |
 
@@ -549,7 +552,7 @@ The GUI reads and writes the variables that ECUs declare (see "ECU variables" in
 | A working example | `examples/gui_client/variables.mjs` in the repository |
 | The Angular wrapper | `EcuVariables` (`gui/web/src/app/core/session/ecu-variables.ts`) |
 
-`EcuVariables` provides `session`, `status`, `reason`, `peers`, `operations`, `find(ref)`, `peerConnected(peer)`, `watch()` that ends automatically when its component is destroyed, `open()` that also ends automatically, and `write()`.
+`EcuVariables` provides `session`, `status`, `reason`, `peers`, `operations`, `find(ref)`, `peerConnected(peer)`, `watch()` that ends automatically when its component is destroyed, `open()` (callers must call `close()` explicitly; it does not auto-dispose), and `write()`.
 
 ## The sample screens
 
