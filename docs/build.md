@@ -58,6 +58,8 @@ A fresh clone does not have the SIL Kit patches (`patches/sil-kit/`) applied. `c
 
 ### Linux
 
+On WSL, clone and build on the WSL Linux filesystem (for example under `~/`) rather than a mounted Windows drive such as `/mnt/c` (the 9p filesystem is much slower for builds).
+
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
 cd vehicle-sil
@@ -178,7 +180,7 @@ include(FetchContent)
 FetchContent_Declare(
   vehicle_sil
   GIT_REPOSITORY https://github.com/rahanahu/vehicle-sil.git
-  GIT_TAG <commit hash to pin>)
+  GIT_TAG <release tag or commit hash to pin>)   # pin a release tag such as v0.4.0 or a full commit hash
 
 FetchContent_MakeAvailable(vehicle_sil)
 

@@ -272,7 +272,7 @@ auto& reply = node.attach<j1939::PeriodicSender>(kPgnReply, 100ms, [&](std::vect
 - 同じ相手からの新しい要求には、コンポーネントを作り直さずに周期を変えて応えられます（`examples/pid_stream`）。
 - 呼んだステップで送信したいときは、`trigger()` ではなく `node.send()` を使います。
 
-送信を始める時点と止める時点は、ノードのアドレスの状態で決まります。ノードが送信できるようになるまで（Address Claim の後の待ち、既定 250 ms の間も）送信せず、送信できるようになったときに 1 回送信してから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
+送信を始める時点と止める時点は、ノードのアドレスの状態で決まります。ノードが送信できるようになるまで（任意アドレス可能なノード、またはアドレス `128..247` では Address Claim の後の待ち、既定 250 ms の間も）送信せず、送信できるようになったときに 1 回送信してから周期を数えます（任意アドレス不可でアドレスが `0..127` または `248..253` のノードは例外として待たずにすぐ送信します）。アドレスを失えば止まり、取り直せば再開します。
 
 DM13 でブロードキャストを止めている間（ほかのノードの DM13 か、自分の `BroadcastSuppression::suspend()`）の扱いは、宛先で変わります。
 
@@ -294,9 +294,9 @@ DM13 でブロードキャストを止めている間（ほかのノードの DM
 | `t3` | 1250 ms | T3: 送信側が、受信側の CTS か EndOfMsgACK を待つ時間 |
 | `t4` | 1050 ms | T4: 送信側が、接続を保留する CTS の後に待つ時間 |
 | `max_retransmit_requests` | 2 | ウィンドウごとの再送の要求の回数。もう 1 回必要なとき、受信側は Abort する |
-| `address_claim_wait` | 250 ms | ノードが Address Claimed の後に、送信するものを保留する時間 |
+| `address_claim_wait` | 250 ms | ノードが Address Claimed の後に、送信するものを保留する時間（`!arbitrary_address_capable()` かつアドレスが `0..127` または `248..253` のときは免除。任意アドレス可能なノードは常に待つ） |
 
-これらの既定は、このプロジェクトでは規格と照らしていません。そのため変えられるようにしてあります。模擬する ECU やつなぐ ECU が別の値を使うときは、`Ecu::j1939(network, NetworkOptions{.timing = {...}})`（`Peer` では `J1939ChannelOptions::network.timing`）で変えます。0 以下の時間は、`Network` のコンストラクターが `std::invalid_argument` を投げます。同じ `Network` の `Listener` も同じ時間を使います（下の「受信だけをする participant」）。詳しくは [internals/j1939.md](internals/j1939.md) の「トランスポートプロトコルのタイマー」にあります。
+これらの既定は、このプロジェクトでは規格と照らしていません。そのため変えられるようにしてあります。模擬する ECU やつなぐ ECU が別の値を使うときは、`Ecu::j1939(network, NetworkOptions{.timing = {...}})`（`Peer` では `J1939ChannelOptions::network.timing`）で変えます。0 以下の時間は、`Network` のコンストラクターが `std::invalid_argument` を投げます。同じ `Network` の `Listener` も同じ時間を使います（下の「受信だけをする participant」）。待ちの例外を含む詳しくは [internals/j1939.md](internals/j1939.md) の「要求の後の待ち」と「トランスポートプロトコルのタイマー」にあります。
 
 ## Request に応答する
 
