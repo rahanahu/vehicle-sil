@@ -2,7 +2,8 @@
 """Tests of the JSON Schemas of the simulation configuration and of a scenario (schema/): that they say what the
 launcher's readers say (libs/config/src/config.cpp, libs/scenario/src/scenario.cpp), no more.
 
-    python tests/schema/test_schemas.py      (exit code 0 when every test passes)
+    python tests/schema/test_schemas.py          (exit code 0 when every test passes)
+    python tests/schema/test_schemas.py --sync   (sync shared scenario definitions and template/schema copies)
 
 Without the launcher (the files only):
   - the schemas are JSON Schemas, and every $ref in them leads somewhere;
@@ -79,6 +80,69 @@ TEMPLATE_COPIES = {
     "template/schema/run-request.schema.json": "schema/run-request.schema.json",
     "template/schema/dashboard.schema.json": "gui/protocol/dashboard.schema.json",
 }
+# Definitions in scenario-template.schema.json that intentionally keep template-specific wording/patterns
+# (templates allow relative '..' segments that do not escape the root scenario directory).
+TEMPLATE_SPECIFIC_OVERRIDES = (
+    ("template_path", "pattern"),
+    ("template_path", "description"),
+    ("step_template", "properties", "template", "description"),
+    ("points_file", "properties", "file", "pattern"),
+    ("points_file", "properties", "file", "description"),
+)
+
+
+def _get_nested(mapping: dict, path: tuple[str, ...]):
+    cur = mapping
+    for part in path:
+        cur = cur[part]
+    return cur
+
+
+def _set_nested(mapping: dict, path: tuple[str, ...], value) -> None:
+    cur = mapping
+    for part in path[:-1]:
+        cur = cur[part]
+    cur[path[-1]] = value
+
+
+def sync_scenario_template_schema(scenario_schema: dict, template_schema: dict) -> dict:
+    """Return a copy of `template_schema` with every shared definition synchronized from `scenario_schema`,
+    preserving only `parameter_def` and the intentional template-specific path overrides."""
+    out = copy.deepcopy(template_schema)
+    old_defs = template_schema["definitions"]
+    new_defs: dict = {}
+    for key, value in scenario_schema["definitions"].items():
+        new_defs[key] = copy.deepcopy(value)
+    for path in TEMPLATE_SPECIFIC_OVERRIDES:
+        _set_nested(new_defs, path, copy.deepcopy(_get_nested(old_defs, path)))
+    if "parameter_def" in old_defs:
+        new_defs["parameter_def"] = copy.deepcopy(old_defs["parameter_def"])
+    out["definitions"] = new_defs
+    return out
+
+
+def sync_schemas(root: Path = ROOT) -> list[str]:
+    """Synchronize `schema/scenario-template.schema.json` from `schema/scenario.schema.json` and update every
+    copy listed in `TEMPLATE_COPIES`. Returns the relative POSIX paths of modified files."""
+    updated: list[str] = []
+    scenario_path = root / "schema" / "scenario.schema.json"
+    template_path = root / "schema" / "scenario-template.schema.json"
+    scenario_data = json.loads(scenario_path.read_text(encoding="utf-8"))
+    template_data = json.loads(template_path.read_text(encoding="utf-8"))
+    synced_template = sync_scenario_template_schema(scenario_data, template_data)
+    rendered = json.dumps(synced_template, indent=2, ensure_ascii=False) + "\n"
+    if template_path.read_text(encoding="utf-8") != rendered:
+        template_path.write_text(rendered, encoding="utf-8", newline="\n")
+        updated.append("schema/scenario-template.schema.json")
+    for copy_rel, source_rel in TEMPLATE_COPIES.items():
+        source_path = root / source_rel
+        copy_path = root / copy_rel
+        source_bytes = source_path.read_bytes()
+        if not copy_path.is_file() or copy_path.read_bytes() != source_bytes:
+            copy_path.parent.mkdir(parents=True, exist_ok=True)
+            copy_path.write_bytes(source_bytes)
+            updated.append(copy_rel)
+    return updated
 # The schema of each kind of file, by the key that says the format version.
 KINDS = {
     "vehicle_sil_simulation": "simulation.schema.json",
@@ -1001,19 +1065,58 @@ class SchemaFiles(unittest.TestCase):
             self.assertLessEqual({"at_ms", "after_ms"}, set(step["properties"]), f"step_{kind} has no time")
 
     def test_the_template_schema_matches_the_scenario_schema(self):
-        scenario_defs = copy.deepcopy(SCENARIO["definitions"])
-        template_defs = copy.deepcopy(SCENARIO_TEMPLATE["definitions"])
-        self.assertIn("parameter_def", template_defs)
-        template_defs.pop("parameter_def")
-        self.assertEqual(set(template_defs), set(scenario_defs))
-        # Only template_path and points_file.properties.file intentionally differ (templates allow ..).
-        for defs in (scenario_defs, template_defs):
-            defs["template_path"].pop("pattern", None)
-            defs["template_path"].pop("description", None)
-            defs["step_template"]["properties"]["template"].pop("description", None)
-            defs["points_file"]["properties"]["file"].pop("pattern", None)
-            defs["points_file"]["properties"]["file"].pop("description", None)
-        self.assertEqual(template_defs, scenario_defs)
+        self.assertIn("parameter_def", SCENARIO_TEMPLATE["definitions"])
+        synced = sync_scenario_template_schema(SCENARIO, SCENARIO_TEMPLATE)
+        self.assertEqual(
+            SCENARIO_TEMPLATE,
+            synced,
+            "schema/scenario-template.schema.json is out of sync with schema/scenario.schema.json: "
+            "run `python3 tests/schema/test_schemas.py --sync`",
+        )
+        self.assertEqual(
+            list(SCENARIO_TEMPLATE["definitions"].keys()),
+            list(SCENARIO["definitions"].keys()) + ["parameter_def"],
+            "schema/scenario-template.schema.json definition order drifted: "
+            "run `python3 tests/schema/test_schemas.py --sync`",
+        )
+
+    def test_sync_schemas_repairs_template_definitions_and_copies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            for rel in {
+                "schema/scenario.schema.json",
+                "schema/scenario-template.schema.json",
+                *TEMPLATE_COPIES.values(),
+                *TEMPLATE_COPIES.keys(),
+            }:
+                dst = tmp_root / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes((ROOT / rel).read_bytes())
+
+            # Mutate a shared definition in scenario.schema.json and verify sync propagates it to
+            # scenario-template.schema.json and both template/schema/ copies.
+            scen_path = tmp_root / "schema" / "scenario.schema.json"
+            tpl_path = tmp_root / "schema" / "scenario-template.schema.json"
+            updated_scen = json.loads(scen_path.read_text(encoding="utf-8"))
+            updated_scen["definitions"]["at_ms"]["description"] = "updated at_ms description"
+            scen_path.write_text(json.dumps(updated_scen, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+            updated = sync_schemas(tmp_root)
+            self.assertIn("schema/scenario-template.schema.json", updated)
+            self.assertIn("template/schema/scenario-template.schema.json", updated)
+            self.assertIn("template/schema/scenario.schema.json", updated)
+            synced_tpl = json.loads(tpl_path.read_text(encoding="utf-8"))
+            self.assertEqual(synced_tpl["definitions"]["at_ms"]["description"], "updated at_ms description")
+            self.assertEqual(
+                (tmp_root / "template" / "schema" / "scenario-template.schema.json").read_bytes(),
+                tpl_path.read_bytes(),
+            )
+            self.assertEqual(
+                (tmp_root / "template" / "schema" / "scenario.schema.json").read_bytes(),
+                scen_path.read_bytes(),
+            )
+            # Second sync is a no-op.
+            self.assertEqual(sync_schemas(tmp_root), [])
 
     def test_the_examples_are_valid(self):
         schemas = {
@@ -1140,9 +1243,10 @@ class SchemaFiles(unittest.TestCase):
 
     def test_the_copies_of_the_template_are_the_schemas(self):
         for copy_path, source in TEMPLATE_COPIES.items():
-            self.assertTrue((ROOT / copy_path).is_file(), f"{copy_path} is missing: copy {source} there")
+            self.assertTrue((ROOT / copy_path).is_file(),
+                            f"{copy_path} is missing: run `python3 tests/schema/test_schemas.py --sync`")
             self.assertEqual((ROOT / copy_path).read_bytes(), (ROOT / source).read_bytes(),
-                             f"{copy_path} is not {source} any more: copy it again (cp {source} {copy_path})")
+                             f"{copy_path} is not {source} any more: run `python3 tests/schema/test_schemas.py --sync`")
         extra = {p.name for p in (ROOT / "template" / "schema").iterdir()} - {Path(c).name for c in TEMPLATE_COPIES}
         self.assertEqual(extra, set(), "template/schema has files that are not copies of a schema")
 
@@ -2468,4 +2572,11 @@ class BenchmarkReportSchema(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    if "--sync" in sys.argv[1:]:
+        changed = sync_schemas(ROOT)
+        if changed:
+            print("synced:", ", ".join(changed))
+        else:
+            print("schemas are already in sync")
+        sys.exit(0)
     unittest.main(verbosity=2)
