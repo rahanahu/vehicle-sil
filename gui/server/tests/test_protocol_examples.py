@@ -1418,26 +1418,103 @@ def test_ws_kept_limit_example(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("kind", ["slow-client", "resync"])
-def test_ws_slow_client_examples(tmp_path: Path, kind: str) -> None:
-    # A screen that reads nothing while the launcher floods: log lines are dropped for it (dropped); findings
-    # cannot be, so its queue is emptied and it is sent everything again (resync).
+def test_ws_slow_client_examples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    # A screen that cannot receive while the launcher floods: log lines are dropped for it (dropped); findings
+    # cannot be, so its queue is emptied and it is sent everything again (resync). Run GuiServer in-process and
+    # gate the slow socket's Hub send callback (scaling hub.SEND_TIMEOUT_S with the test timeout) so shedding
+    # does not race OS loopback TCP buffer auto-tuning (SO_SNDBUF/SO_RCVBUF) or the unscaled per-frame send
+    # timeout.
+    import aiohttp
+    from aiohttp.test_utils import TestServer
+    from conftest import Gui, scaled
+    import vehicle_sil_gui.hub as hub_module
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+
     file = "flood.yaml" if kind == "slow-client" else "finding-flood.yaml"
-    with gui_server(tmp_path, env={"REPLAY_FLOOD": "100000"}) as gui:
-        async def talk(c: Client) -> None:
-            slow = await c.ws()
-            fast = await c.ws()
-            await fast.until(is_synced)
-            await c.post("api/run", {"file": file, "stop_at_ms": 1000})
-            await fast.until(is_ended, timeout=120)
-            want = "dropped" if kind == "slow-client" else "resync"
-            got = await slow.until(lambda m: m["type"] == want, timeout=120)
-            message = got[-1]
-            if want == "dropped":
-                assert message["reason"] == "slow-client" and message["log"].get("Engine", 0) > 0
-                message = {**message, "log": {"Engine": 1000}, "events": 0}
-            check_example(f"ws-{kind}", ws("What a screen that reads too slowly gets (one message; the numbers "
-                                           "are examples).", [], [message]), gui)
-        run_async(talk, gui)
+    report = tmp_path / "replay-slow.txt"
+    monkeypatch.setenv("REPLAY_FLOOD", str(hub_module.QUEUE_LIMIT + 2000))
+    monkeypatch.setenv("REPLAY_TICK_MS", "10")
+    monkeypatch.setenv("REPLAY_REPORT", str(report))
+    monkeypatch.delenv("REPLAY_FAULT", raising=False)
+    monkeypatch.delenv("REPLAY_CASE", raising=False)
+    monkeypatch.setattr(hub_module, "SEND_TIMEOUT_S", max(hub_module.SEND_TIMEOUT_S, scaled(120)))
+
+    def ended_or_resynced_ended(m: dict) -> bool:
+        return (
+            m["type"] in ("session", "hello")
+            and isinstance(m.get("session"), dict)
+            and m["session"].get("state") == "ended"
+        )
+
+    async def talk() -> None:
+        launcher = Launcher(REPLAY)
+        await launcher.probe()
+        server = GuiServer(Options(root=CONFIGS, launcher=launcher, port=0, token="test-token", variables=False))
+        test_server = TestServer(server.app(), host="127.0.0.1")
+        await test_server.start_server()
+        assert test_server.port is not None
+        server.hosts = {f"127.0.0.1:{test_server.port}"}
+        server.origins = {f"http://127.0.0.1:{test_server.port}"}
+        gui = Gui(
+            proc=None,
+            port=test_server.port,
+            token="test-token",
+            url=f"http://127.0.0.1:{test_server.port}/#token=test-token",
+            stderr=tmp_path / ".err",
+        )
+        gate = asyncio.Event()
+        try:
+            async with aiohttp.ClientSession() as http:
+                c = Client(gui, http)
+                slow = await c.ws()
+                await slow.until(is_synced)
+                assert len(server.ws.hub.clients) == 1
+                slow_client = next(iter(server.ws.hub.clients))
+                real_send = slow_client.send
+
+                async def gated_send(text: str) -> None:
+                    await gate.wait()
+                    await real_send(text)
+
+                slow_client.send = gated_send  # type: ignore[method-assign]
+                fast = await c.ws()
+                await fast.until(is_synced)
+                status, body = await c.post("api/run", {"file": file, "stop_at_ms": 1000})
+                assert status == 200, body
+                await fast.until(ended_or_resynced_ended, timeout=120)
+                if kind == "slow-client":
+                    assert slow_client.sheds >= 1 and slow_client.resyncs == 0
+                else:
+                    assert slow_client.resyncs >= 1
+                gate.set()
+                if kind == "slow-client":
+                    got = await slow.until(
+                        lambda m: m["type"] == "dropped" and m.get("reason") == "slow-client",
+                        timeout=120,
+                    )
+                else:
+                    got = await slow.until(lambda m: m["type"] == "resync", timeout=120)
+                message = got[-1]
+                if kind == "slow-client":
+                    assert message["reason"] == "slow-client" and message["log"].get("Engine", 0) > 0
+                    await slow.until(is_ended, timeout=120)
+                    message = {**message, "log": {"Engine": 1000}, "events": 0}
+                else:
+                    resynced = await slow.until(is_synced, timeout=120)
+                    assert resynced[0]["type"] == "hello" and resynced[0]["session"]["state"] == "ended"
+                check_example(f"ws-{kind}", ws("What a screen that reads too slowly gets (one message; the numbers "
+                                               "are examples).", [], [message]), gui)
+                await slow.close()
+                await fast.close()
+        finally:
+            gate.set()
+            await server.shutdown()
+            await test_server.close()
+
+    asyncio.run(talk())
+    mistakes = report.read_text(encoding="utf-8") if report.exists() else ""
+    assert not mistakes, f"the stand-in launcher ended on a mistake:\n{mistakes}"
 
 
 def test_ws_unauthorized_example(tmp_path: Path) -> None:
