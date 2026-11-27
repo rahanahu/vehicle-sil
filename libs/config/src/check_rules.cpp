@@ -1084,6 +1084,21 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
                     "VariableOptions::availability",
                 p.name, "");
         }
+        // Independent of the link checks above: even an older wire_revision can report a coarse
+        // sample_period, and a note here never fails --strict.
+        if (offer && offer->sample_period && *offer->sample_period > SimDuration::zero() &&
+            ecu.step() && *ecu.step() > SimDuration::zero() && *ecu.step() < *offer->sample_period)
+        {
+            rules.add(Severity::Note, "coarse-sample-period", p.line,
+                prefix + "its step is " + step_text(*ecu.step()) +
+                    ", but its control agent samples its variables every " + step_text(*offer->sample_period) +
+                    " (AgentOptions::sample_period; 10 ms by default): changes between samples are not sent to live "
+                    "clients or scenarios with samples: as_sent (scenarios with the default samples: every_step pass "
+                    "--sample-every-step automatically): set AgentOptions::sample_period to " +
+                    step_text(*ecu.step()) + " (or 0 for every step) via Ecu::set_agent_options() before declaring "
+                    "variables",
+                p.name, "");
+        }
     }
     // The variable map: every mapping must fit what the executable describes (the run applies the
     // same rules to what its agent announces).

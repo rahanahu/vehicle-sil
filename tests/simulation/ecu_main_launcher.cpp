@@ -164,6 +164,7 @@ void describe(const Options& o)
                 contains(renamed, "\n  \"name\": \"Dashboard2\",\n  \"step_ns\": 5000000,\n"),
             "dashboard --describe --name Dashboard2 wrote:\n" + renamed);
     require(contains(renamed, "\"name\": \"dashboard.engine_speed\""), "the dashboard's variable is missing:\n" + renamed);
+    require(contains(renamed, "\"sample_period_ns\": 5000000"), "the dashboard's sample_period_ns is missing:\n" + renamed);
     log("CHECK dashboard --describe --name Dashboard2 -> ok");
 }
 

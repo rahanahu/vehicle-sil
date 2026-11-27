@@ -501,6 +501,7 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
 | `control.transport` | トランスポート。今は `"silkit"`（SIL Kit の publish/subscribe）だけ |
 | `control.wire_version` | メッセージの形式のバージョン（整数） |
 | `control.wire_revision` | 実行ファイルが書く、その形式の改訂番号（整数）。同じバージョンで改訂の違うランチャーも、変数をふつうに読み書きします。古い実行ファイルからは後の改訂で足したもの（改訂 1: 変数の利用状態）が届かないので、check が注記します（`control-link-revision`） |
+| `control.sample_period_ns` | 制御エージェントが変数をサンプリングする周期（整数ナノ秒、`AgentOptions::sample_period`、`0` は毎ステップ、未報告なら `null`）。正の周期よりステップ幅が短い ECU には check が注記します（`coarse-sample-period`） |
 | `features` | この実行ファイルが、起動する側から受け取れる引数や動きの名前の配列（文字列）。`"map-network"` は `--map-network` を、`"j1939-node"` は `--j1939-node` を、`"sample-every-step"` は `--sample-every-step` を受け取ります。`ecu_main` の実行ファイルは、どの引数で呼んでも同じ一覧を出します |
 
 キーのない JSON の読み方は次のとおりです。
@@ -510,6 +511,7 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
 | `networks[].mac` | 前のバージョンの ECU の JSON です。`null` として読みます。 |
 | `control` | このキーができる前の vehicle-sil でビルドした実行ファイルです。`null` と同じに扱います。 |
 | `control.wire_revision` | このキーができる前の vehicle-sil でビルドした実行ファイルです。0 として読みます。 |
+| `control.sample_period_ns` | このキーができる前の vehicle-sil でビルドした実行ファイルです。`null`（未報告）として読みます。 |
 | `features` | 前のバージョンの ECU の JSON です。空の配列として読みます。 |
 
 `variables[].builtin` は、画面などが、アプリの変数と分けて表示するのに使います。`control.wire_version` が `vehicle_sil_launch` のバージョンと違えば、変数を読み書きできません。
@@ -581,7 +583,8 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
   "control": {
     "transport": "silkit",
     "wire_version": 2,
-    "wire_revision": 1
+    "wire_revision": 1,
+    "sample_period_ns": 10000000
   },
   "features": [
     "map-network",

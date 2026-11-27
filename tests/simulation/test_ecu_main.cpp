@@ -164,7 +164,8 @@ struct Probe
 vehicle_sil::EcuDescription offered(vehicle_sil::EcuDescription description)
 {
     description.control = vehicle_sil::ControlOffer{"silkit", vehicle_sil::control::wire::kVersion,
-                                                     vehicle_sil::control::wire::kRevision};
+                                                     vehicle_sil::control::wire::kRevision,
+                                                     vehicle_sil::control::AgentOptions{}.sample_period};
     description.features = {"map-network", "j1939-node", "sample-every-step"};
     return description;
 }
@@ -1100,8 +1101,23 @@ TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
             "--describe --no-control", described);
     const Result offering = call({"--describe"});
     require(offering.code == 0 &&
-                contains(offering.out, "  \"control\": {\n    \"transport\": \"silkit\",\n    \"wire_version\": 2,\n    \"wire_revision\": 1\n  },\n"),
+                contains(offering.out,
+                         "  \"control\": {\n    \"transport\": \"silkit\",\n    \"wire_version\": 2,\n"
+                         "    \"wire_revision\": 1,\n    \"sample_period_ns\": 10000000\n  },\n"),
             "--describe says that the variables are offered", offering);
+    // Custom sample_period (positive and 0) is reflected in control.sample_period_ns.
+    const auto with_period = [](vehicle_sil::SimDuration period) {
+        return [period](Ecu& ecu) {
+            ecu.set_agent_options({.sample_period = period});
+            ecu.output("x", [] { return 0; });
+        };
+    };
+    const Result custom = call_with({"--describe"}, with_period(5ms));
+    require(custom.code == 0 && contains(custom.out, "    \"sample_period_ns\": 5000000\n  },\n"),
+            "--describe reports custom sample_period_ns", custom);
+    const Result zero = call_with({"--describe"}, with_period(0ms));
+    require(zero.code == 0 && contains(zero.out, "    \"sample_period_ns\": 0\n  },\n"),
+            "--describe reports 0 sample_period_ns", zero);
     const Result local = call({"--local", "--run-for-ms", "20", "--no-control"});
     require(local.code == 0, "--local --no-control", local);
     const Result twice = call({"--describe", "--no-control", "--no-control"});

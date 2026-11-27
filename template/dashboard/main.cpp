@@ -25,6 +25,7 @@ public:
             ++received_;
             last_ = m.time;
         });
+        ecu.set_agent_options({.sample_period = 5ms});
         ecu.output("dashboard.engine_speed", &rpm_, {.unit = "rpm", .description = "the speed shown"});
         ecu.output("dashboard.engine_lost", &lost_,
                    {.description = "no engine speed for more than 300 ms (it comes every 100 ms)"});

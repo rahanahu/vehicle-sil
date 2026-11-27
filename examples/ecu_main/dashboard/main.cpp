@@ -20,6 +20,7 @@ class Dashboard
 public:
     explicit Dashboard(vehicle_sil::Ecu& ecu)
     {
+        ecu.set_agent_options({.sample_period = 5ms});
         auto& node = ecu.j1939("J1939_CAN").add_node({.address = 0x28});
         node.on_message(ecu_main_example::kEngineSpeed, [this](const j1939::Message& m) {
             rpm_ = ecu_main_example::decode_speed(m.data);

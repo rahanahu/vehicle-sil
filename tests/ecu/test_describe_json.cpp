@@ -118,7 +118,7 @@ TEST_CASE(full_description)
     d.variables.push_back(count);
     d.features = {"map-network", "a \"later\" one"};
 
-    d.control = vehicle_sil::ControlOffer{"silkit", 1, 1};
+    d.control = vehicle_sil::ControlOffer{"silkit", 1, 1, 10ms};
     check_text(to_json(d),
                R"({
   "vehicle_sil_ecu": 1,
@@ -266,7 +266,8 @@ TEST_CASE(full_description)
   "control": {
     "transport": "silkit",
     "wire_version": 1,
-    "wire_revision": 1
+    "wire_revision": 1,
+    "sample_period_ns": 10000000
   },
   "features": [
     "map-network",
@@ -274,6 +275,14 @@ TEST_CASE(full_description)
   ]
 }
 )");
+
+    // sample_period empty writes null; 0 writes 0 (every step).
+    vehicle_sil::EcuDescription noSample = d;
+    noSample.control->sample_period.reset();
+    CHECK(to_json(noSample).find("\"sample_period_ns\": null\n") != std::string::npos);
+    vehicle_sil::EcuDescription everyStep = d;
+    everyStep.control->sample_period = vehicle_sil::SimDuration::zero();
+    CHECK(to_json(everyStep).find("\"sample_period_ns\": 0\n") != std::string::npos);
 
     // Whether a variable reports its availability, and how it starts, is not written: the
     // description has the candidates, not what the steps decide.
