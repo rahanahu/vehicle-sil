@@ -13,14 +13,14 @@ This is a project template for building ECUs with [vehicle-sil](https://github.c
 | Python 3.9 or later (to run `get_tools.py`) | Distribution package | The Python of MSYS2 |
 | Python 3.11 or later (for the GUI) | If you have [uv](https://docs.astral.sh/uv/), uv installs any missing Python and packages. | uv is required (`mingw-w64-ucrt-x86_64-uv` of MSYS2). |
 
-On Windows, work in the MSYS2 "UCRT64" shell. Install the requirements with this command:
+On Windows, work in the MSYS2 "UCRT64" shell. MSVC (Visual Studio) is officially unsupported for building template ECUs. Install the requirements with this command:
 
 ```sh
 pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
   mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-uv
 ```
 
-On Windows, the GUI runs on a Python that uv downloads. The GUI packages cannot be installed into the Python of MSYS2.
+On Windows, the GUI runs on a Python that uv downloads (with prebuilt wheels). The GUI packages cannot be installed into the Python of MSYS2. External executables or tools built with other compilers (including MSVC) can still connect across process boundaries via SIL Kit or gRPC.
 
 On WSL, place the project on the WSL Linux filesystem (such as under `~/`) rather than `/mnt/<drive>` (9p builds are much slower), and do not share one working tree or `node_modules` between Windows and WSL.
 
@@ -109,7 +109,7 @@ Step 1 of the guide "[Create your first ECU](https://github.com/rahanahu/vehicle
 | Symptom | Cause | Fix |
 |---|---|---|
 | `vehicle_sil_launch` is not found | You are in a new shell and have not run the command that adds the tools to `PATH`. | Run `python3 get_tools.py` again, then run the PATH line that it prints for your shell. |
-| On Windows, an ECU exits without printing anything | ECUs load the MinGW runtime DLLs (`libstdc++-6.dll` and others) from the `PATH` of UCRT64. | Start `vehicle_sil_launch` and `vehicle-sil-gui` from the UCRT64 shell. |
+| On Windows, an ECU exits without printing anything (`0xC0000135` / `0xC0000139`) | A required DLL is missing (`0xC0000135`) or a DLL from an incompatible MinGW version was loaded first (`0xC0000139`). | Non-static builds copy `SilKit.dll` and the toolchain's MinGW runtime DLLs next to each ECU via `vehicle_sil_copy_runtime_dlls(<target>)` in `CMakeLists.txt`. Verify that call is present (or build with `-DVEHICLE_SIL_STATIC=ON`), and run `ldd bin/<ecu>.exe` in UCRT64 or `where.exe <dll>` in PowerShell/cmd to check which DLL directory is loaded first. |
 | `check` prints `version-mismatch` | The ECUs and the tools use different versions of vehicle-sil. | Make the versions match, as described in "Upgrade vehicle-sil" below. |
 
 The `vehicle_sil_launch` of the tools is a single executable that needs no DLLs (the `bin` of the tools contains none).

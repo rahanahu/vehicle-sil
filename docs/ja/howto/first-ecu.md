@@ -209,7 +209,7 @@ ECU は、`vehicle_sil::Ecu&` を受け取る普通のクラスです。コン�
 - `ecu_main()` は、上のように `main()` の最後で呼び、その戻り値を返します。`--describe` のときは、`ecu_main()` が戻った後も、プロセスが終わるまで、プログラムが標準出力に書いたものはすべて標準エラーに出ます。標準出力に出るのは JSON だけです。
 - この ECU のように、ネットワークを宣言せず、変数だけを持つ ECU も作れます。
 
-変数に使える型と宣言の種類は、[control-api.md](../control-api.md) の「ECU の変数」にあります。書いたコードは、次の手順のビルドで確認します。
+変数に使える C++ の型（`std::uint64_t` は `output()` だけで使え、`input()` では使えません）、`AgentOptions`、宣言の種類は、[control-api.md](../control-api.md) の「ECU の変数」にあります。`vehicle_sil::SimTime` と、それをナノ秒に変換する `vehicle_sil::to_ns()` については、[j1939-guide.md](../j1939-guide.md) の「仮想時間（`SimTime`）」を参照してください。書いたコードは、次の手順のビルドで確認します。
 
 ## 手順 3: CMake に追加してビルドする
 
@@ -228,7 +228,7 @@ vehicle_sil_copy_runtime_dlls(cooler_ecu)
 | `add_executable` | 実行ファイルの名前（`cooler_ecu`）とソースファイルを指定します。 |
 | `target_include_directories` | プロジェクトのルートにあるヘッダー（`engine_speed.hpp` など）を `#include` できるようにします。 |
 | `target_link_libraries` | `ecu_main()` と、ECU が使うライブラリ（変数、CAN、LIN、J1939 のスタック）をリンクします。 |
-| `vehicle_sil_copy_runtime_dlls` | Windows で、`SilKit.dll` を実行ファイルの隣にコピーします。 |
+| `vehicle_sil_copy_runtime_dlls` | Windows（非静的 MinGW ビルド）で、`SilKit.dll` とツールチェーンに一致する MinGW ランタイム DLL を実行ファイルの隣にコピーします（`VEHICLE_SIL_STATIC=ON` では 0 個、Linux では何もしません）。 |
 
 ビルドします。`CMakeLists.txt` を変更したので、CMake が configure を自動でやり直します。
 

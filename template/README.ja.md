@@ -13,14 +13,14 @@
 | Python 3.9 以上（`get_tools.py` の実行） | ディストリビューションのパッケージ | MSYS2 の Python |
 | Python 3.11 以上（GUI） | [uv](https://docs.astral.sh/uv/) があれば、足りない Python とパッケージを uv がインストールします。 | uv（MSYS2 の `mingw-w64-ucrt-x86_64-uv`）が必要です。 |
 
-Windows では、MSYS2 の「UCRT64」シェルで作業します。必要なものは、次のコマンドでインストールします。
+Windows では、MSYS2 の「UCRT64」シェルで作業します。MSVC（Visual Studio）はテンプレート ECU のビルドに対して公式に非対応です。必要なものは、次のコマンドでインストールします。
 
 ```sh
 pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
   mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-uv
 ```
 
-Windows の GUI は、uv がダウンロードする Python で動きます。MSYS2 の Python には、GUI のパッケージをインストールできません。
+Windows の GUI は、uv がダウンロードする Python（ビルド済み wheel 対応）で動きます。MSYS2 の Python には、GUI のパッケージをインストールできません。なお、ほかのコンパイラ（MSVC を含む）で作った外部の実行ファイルやツールも、SIL Kit や gRPC を介してプロセス境界越しに接続できます。
 
 WSL では、`/mnt/<drive>` ではなく WSL の Linux ファイルシステム（`~/` 配下など）に置いてください（9p 上のビルドは遅くなります）。また、Windows と WSL で同じ作業ツリーや `node_modules` を共有しないでください。
 
@@ -109,7 +109,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | 症状 | 原因 | 直し方 |
 |---|---|---|
 | `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示された、自分のシェルの PATH の行を実行します。 |
-| Windows で、ECU が何も表示せずに終了する | ECU は MinGW のランタイムの DLL（`libstdc++-6.dll` など）を UCRT64 の `PATH` から読み込みます。 | `vehicle_sil_launch` と `vehicle-sil-gui` を UCRT64 シェルから起動します。 |
+| Windows で、ECU が何も表示せずに終了する（`0xC0000135` / `0xC0000139`） | 必要な DLL が見つからない（`0xC0000135`）、または互換性のない MinGW のバージョンの DLL が先に読み込まれた（`0xC0000139`）。 | 非静的ビルドでは `CMakeLists.txt` の `vehicle_sil_copy_runtime_dlls(<target>)` が `SilKit.dll` とツールチェーンの MinGW ランタイム DLL を各 ECU の隣にコピーします。その呼び出しがあるか確認し（または `-DVEHICLE_SIL_STATIC=ON` でビルドし）、UCRT64 で `ldd bin/<ecu>.exe`、PowerShell/cmd で `where.exe <dll>` を実行してどのディレクトリの DLL が先に読み込まれているか調べてください。 |
 | `check` が `version-mismatch` を表示する | ECU とツールで、vehicle-sil のバージョンが違います。 | 下の「vehicle-sil のバージョンを上げる」で、バージョンをそろえます。 |
 
 ツールの `vehicle_sil_launch` は、DLL が不要な 1 つの実行ファイルです（ツールの `bin` に DLL はありません）。

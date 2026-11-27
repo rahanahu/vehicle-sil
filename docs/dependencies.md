@@ -22,7 +22,7 @@ vehicle-sil includes the upstream library SIL Kit as a Git submodule, pinned to 
 
 SIL Kit has submodules of its own (`ThirdParty/asio`, `fmt`, `spdlog`, `googletest`), so you need `git submodule update --init --recursive`. FetchContent does this automatically.
 
-SIL Kit itself is built as C++17. Its C++ API is header-only and wraps the C API, so consumers can compile with C++20 without problems. Upstream supports MinGW-w64 (`-Wa,-mbig-obj` and other settings).
+SIL Kit itself is built as C++17. Its C++ API is header-only and wraps the C API, so consumers can compile with C++20 without problems. Upstream supports MinGW-w64 (`-Wa,-mbig-obj` and other settings). Building vehicle-sil libraries and C++ ECUs with MSVC is officially unsupported; external MSVC executables can still participate across process boundaries via SIL Kit or gRPC (see "[Compiler policy (MSVC unsupported) and process boundaries](build.md#compiler-policy-msvc-unsupported-and-process-boundaries)" in build.md).
 
 ### gRPC and Protocol Buffers (Control Server, optional)
 
@@ -75,7 +75,7 @@ On Windows, `find_package(Python3)` finds Pythons registered in the Windows regi
 |---|---|
 | You created `.venv` with `uv sync`, or added packages to `.venv` | The generator's Python is searched for again at every configure, so a normal reconfigure picks it up (no `--fresh` needed). |
 | A consumer's build that includes vehicle-sil with FetchContent or `add_subdirectory` | The `.venv` of vehicle-sil is not used. The consumer's Python is used (an activated virtual environment, `Python3_EXECUTABLE`, `PATH`). |
-| Windows | `.venv` is not a candidate (using uv's Python from a MinGW build is not verified). The Python from the MSYS2 UCRT64 pacman packages is found and used as before. |
+| Windows | `.venv` is not a candidate (using uv's standard Windows CPython from a MinGW build is not verified). The Python from the MSYS2 UCRT64 pacman packages is found and used for CMake/CTest as before, while `vehicle-sil-gui` and `scripts/verify-python.py` run via `uv` (see "[Windows Python and `uv` matrix](build.md#windows-python-and-uv-matrix)" in build.md). |
 
 ### Python 3 and PyYAML (J1939 typed message generation)
 
@@ -257,7 +257,7 @@ With `VEHICLE_SIL_STATIC=ON`, SIL Kit becomes a static library, and static linki
 
 When SIL Kit is not added from the submodule (the consumer already defines `SilKit::SilKit`), there is no `rapidyaml` target, so `vehicle_sil::can_netsim`, `vehicle_sil_can_bus_simulator`, `vehicle_sil::launch` and `vehicle_sil_launch` are not created. `vehicle_sil::core` is created, but uses the SIL Kit configuration it is given as it is: it adds no defaults and does not check the name, the registry URI or `DynamicSimulationStep` (see "SIL Kit configuration defaults" in [internals/core.md](internals/core.md#sil-kit-configuration-defaults)).
 
-On Windows, `SilKit.dll` is written to a different directory from the executables. Call `vehicle_sil_copy_runtime_dlls(<target>)` to copy the DLL next to the executable after the build.
+On Windows (non-static MinGW builds), `SilKit.dll` is written to a different directory from the executables. Call `vehicle_sil_copy_runtime_dlls(<target>)` to copy `SilKit.dll` and the toolchain-matched MinGW runtime DLLs next to the executable after the build (0 DLLs are copied when `VEHICLE_SIL_STATIC=ON`).
 
 ## APIs used
 

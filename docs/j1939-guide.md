@@ -119,6 +119,18 @@ These calls have limits:
 
 A program that creates a `j1939::Network` itself (one that does not use `Ecu`) can change a node's address and part of its NAME (identity number, function instance, ECU instance) with `NetworkOptions::node_overrides`, without changing the node's code. It is the way to put 2 copies of the same node code on one bus. A line picks a node by the address in the code (`from`; without it, the only node of that network). `add_node()` creates the picked node with the changed values: `Node::address()`, `requested_address()` and `name()` return the changed values, and only `Node::coded_address()` returns the address in the code. The lines apply only to nodes added before the first `begin()` (`Network::close_node_overrides()` also closes them and returns the numbers of the lines that were not used); nodes added later keep the values of the code. A line that cannot be applied (a NAME field for a node without a NAME, for example), and a line that would apply to a second node, make `add_node()` throw `std::invalid_argument`. A network created with `Ecu::j1939()` does not accept `node_overrides` (`std::invalid_argument`): the program that runs the ECU changes the values of the ECU's nodes from outside (`SilKitOptions::j1939_nodes` and `PeerOptions::j1939_nodes` under "Run in a simulation" below).
 
+### Virtual time (`SimTime`)
+
+All simulation timestamps use `vehicle_sil::SimTime` and `vehicle_sil::SimDuration` (`vehicle_sil/core/sim_time.hpp`), rather than wall-clock types.
+
+| Symbol | Type / Return | Meaning |
+|---|---|---|
+| `vehicle_sil::SimTime` | `SimClock::time_point` (`std::chrono::nanoseconds`) | Point in virtual simulation time; `SimTime{}` is simulation start (`T = 0`). Distinct clock type: mixing it with `std::chrono::steady_clock` or `system_clock` is a compile error, and `SimClock` has no `now()`. |
+| `vehicle_sil::SimDuration` | `std::chrono::nanoseconds` | Span of simulation time (SIL Kit's nanosecond resolution). |
+| `vehicle_sil::to_ns(SimTime)` | `std::int64_t` | Converts a `SimTime` to nanoseconds since simulation start (`T = 0`), for logging, traces, or comparisons. |
+
+Handlers such as `ecu.on_step()`, `ecu.every()`, and `ecu.at()` receive the current step's start time as `SimTime now`. For received messages and CAN frames, the timestamp on the frame/message (`TimedFrame::time`, `Message::time`) is the **bus arrival timestamp**, not the receiver's step `now` (see below).
+
 ### ECUs with several networks
 
 A gateway calls `j1939()` with different network names. When a handler of one network sends on the other, the message goes out in the same step.
@@ -160,7 +172,8 @@ ecu.every(100ms, [&raw](vehicle_sil::SimTime) {
 |---|---|
 | Where you can call `send()` | Only within a step (calling it from a constructor throws `std::logic_error`). |
 | Result of `send()` | A `RawSendStatus` (`Ok`, `QueueFull`, `InvalidFrame`). |
-| Transmission time | Frames are sent at the end of the step, with the step's time. |
+| Transmission time | Frames are sent at the end of the step, with the sending step's start time (`now`). |
+| Received `TimedFrame::time` | The **bus arrival timestamp** assigned by the backend (`< now` of the receiving step), not the receiving step's `now`: without bus timing (SIL Kit trivial simulation or default `VirtualCanBus`), it equals the sender's step time; with bus timing (`VirtualCanBusOptions::timing` or `CanBusSimulator`), it is the end of bus transmission; with `FaultAction::delay_by(d)`, it includes `+ d`; on a real-time port (`TimeDomain::RealTime`), it is the arrival time on `RealTimeDriver`'s clock. Use `vehicle_sil::to_ns(f.time)` to log it in nanoseconds. |
 | Order of frames received from different ECUs at the same time | Not defined on SIL Kit. Do not write processing that depends on it. |
 
 One ECU can call both `j1939()` and `can()` with the same network name. They are separate controllers, so each receives the other's frames (the J1939 network ignores 11-bit frames).
@@ -185,7 +198,7 @@ node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // as
 | Registrations that you need to remove | Let a `j1939::Subscription` hold them (destroying it removes them). |
 | You need only the latest value and loss detection | Use `Monitor` (see "Monitor reception"). |
 
-For a reassembled message, `Message::time` is the time the transfer ended (the time of the last packet), not the time the sender started sending. To check the sender's period from reception times, use a single-frame message.
+For a single-frame message, `Message::time` is the received frame's `TimedFrame::time` (bus arrival timestamp). For a reassembled message, `Message::time` is the time the transfer ended (the `TimedFrame::time` of the last packet), not the time the sender started sending. To check the sender's period from reception times, use a single-frame message.
 
 ## Send messages
 
@@ -844,6 +857,17 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 | `Monitor` | Watch for loss of communication |
 | `testkit::J1939Events` | Watch send requests, frames put on the bus, ends of transfers and address changes |
 | `testkit::FrameLog` | Watch the frames on the bus |
+
+Choose between `ecu.connected` and `LocalBench` (`Simulation::local()`, `vehicle_sil::testkit::faults`) based on what fault you want to inject and where the simulation runs:
+
+| Need | Use | Scope & key APIs |
+|---|---|---|
+| Disconnect/reconnect an entire ECU from all buses in a scenario, Control API, GUI, or multi-process SIL Kit run | `ecu.connected` | Available on every `Ecu` (SIL Kit `Peer` and `LocalBench`), scenarios, Control API, and GUI. Cuts off all CAN, LIN, and Ethernet ports of that ECU while its steps continue; cannot drop/delay individual frames. |
+| Directional or per-bus CAN outage in a deterministic time window | `LocalBench` (`add_outage`) | In-process `Simulation()` / `LocalBench` only (not multi-process SIL Kit). `bus.endpoint(ecu[, network]).add_outage(from, until[, can::OutageDirection::{Receive, Send, Both}])`. |
+| Drop, duplicate, delay/reorder, or fail specific CAN frames (by PGN, source address, CAN ID, count, or time span) | `LocalBench` + `vehicle_sil::testkit::faults` | In-process `Simulation()` / `LocalBench` only. `bus.endpoint(ecu[, network]).set_fault_injector(...)` with `testkit::faults` (`when`, `between`, `nth`, `sequence`, `first_of`, `j1939_pgn`, `j1939_source`, `can_id`) and `can::FaultAction::{deliver, drop, duplicate, delay_by, queue_full, failed, transmit_failed}`. |
+| Inject arbitrary 11-bit or 29-bit CAN frames or controller/bus events (`BusStateChanged`, `ErrorFrame`) | `LocalBench` (`inject`, `inject_event`) | In-process `Simulation()` / `LocalBench` only. `bus.inject([network, ]time, frame)` and `bus.endpoint(ecu[, network]).inject_event(can::PortEvent)`. |
+
+For runnable scenes of `add_outage`, `set_fault_injector` (`testkit::faults`), `inject`, and address-conflict observation, see [examples/fault_injection/main.cpp](../examples/fault_injection/main.cpp) (`ecu.connected` is shown in [examples/ecu_main/scenarios/engine_disconnect.yaml](../examples/ecu_main/scenarios/engine_disconnect.yaml) and `tests/simulation/test_disconnect.cpp`).
 
 A network has one `J1939Events` and a tap one `FrameLog`: creating a second one on the same network or tap is a `std::logic_error`, so share the first one with the helpers that need it.
 

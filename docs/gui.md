@@ -225,9 +225,9 @@ For the files that are served, CSP, the token, development servers and the rules
 | Screens | A build of the sample screens (the output of `npm run build` in `gui/web`) or a build of your own screen (`--web`) |
 | Browser | A desktop browser: a current Chromium-based one (Chrome, Edge), which the tests use; Firefox should work too. The features that the screens and the timeline use need Chrome or Edge 123 or later (`light-dark()`), or Firefox 121 or later (`:has()`) |
 
-- The prebuilt tools (see "[Quick start](../README.md#quick-start)" in the README) contain everything except Python: a launcher with a Control Server, the GUI server, the built screens and the gRPC stubs. You need only Python 3.11 or later; if you have uv, uv installs Python and the packages too.
+- The prebuilt tools (see "[Quick start](../README.md#quick-start)" in the README) contain everything except Python: a launcher with a Control Server, the GUI server, the built screens and the gRPC stubs. You need only Python 3.11 or later; if you have uv, uv installs Python and the packages too. On Windows, use `uv` (`mingw-w64-ucrt-x86_64-uv` or Windows `uv`) so the GUI runs on a standard Windows Python with prebuilt PyPI wheels (`aiohttp`, `pydantic-core`, `grpcio`); MSYS2's `mingw-w64-ucrt-x86_64-python` cannot install the GUI packages (see "[Windows Python and `uv` matrix](build.md#windows-python-and-uv-matrix)" in build.md).
 - If either requirement for reading and writing variables is missing, everything else still works. Only the variables show **Not available**, with the reason.
-- Using the screens needs no Node.js. Building them does (see [gui/web/README.md](../gui/web/README.md)).
+- Using the screens needs no Node.js. Building them does: Node.js `^24.15.0 || ^26.0.0` (`gui/web/.nvmrc`: `24`) and npm `>= 11.12.1` as specified in `gui/web/package.json` and enforced by `gui/web/.npmrc` (`engine-strict=true`; see [gui/web/README.md](../gui/web/README.md)).
 
 ## Arguments and exit codes
 

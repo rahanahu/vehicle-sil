@@ -726,6 +726,17 @@ line  step                                                             result  a
 | 切断している間に ECU の中で動き続けるもの | [internals/execution.md](../internals/execution.md) の「バスからの切断（`ecu.connected`）」 |
 | 切断したときと戻したときの J1939 の動作 | [j1939-guide.md](../j1939-guide.md) の「ECU をバスから切断する（`ecu.connected`）」 |
 
+### `ecu.connected` と `LocalBench` の故障注入の使い分け
+
+`ecu.connected` はシナリオテスト、Control API、複数プロセスの SIL Kit 実行向けです。フレーム単位の CAN 故障注入や生フレーム／イベントの注入が必要な場合は、`Simulation()`（`LocalBench`）と `vehicle_sil::testkit::faults` を使った C++ テストを書きます。
+
+| 故障注入の手段 | シナリオ / SIL Kit で使えるか | 制御できる内容 |
+|---|---|---|
+| `ecu.connected`（bool 変数） | はい（シナリオ、Control API、GUI、複数プロセス SIL Kit、`LocalBench`） | ECU のステップを動かしたまま、その ECU の全 CAN・LIN・Ethernet バスを一括で切断・再接続します。 |
+| `LocalBench` + `vehicle_sil::testkit::faults` | いいえ（同一プロセス内の `Simulation()` / `LocalBench` C++ テスト専用） | エンドポイント単位の方向別通信断（`endpoint().add_outage()`）、フレーム単位の欠落・複製・遅延・送信失敗（`endpoint().set_fault_injector()` と `can::FaultAction`）、生フレーム注入（`inject()`）、ポート異常イベント注入（`endpoint().inject_event()`）。 |
+
+[j1939-guide.md](../j1939-guide.md) の「ECU をテストする」と [examples/fault_injection/main.cpp](../../../examples/fault_injection/main.cpp) を参照してください。
+
 ## 終了時刻までの再現と手動操作への引き継ぎ
 
 最後の `set` や確認の後もしばらくシミュレーションを進めたい場合（たとえば対話実行から記録したシナリオで、最後の `Engine.engine.throttle` 書き込みに対する `Dashboard` などの下流 ECU の応答まで再現したい場合）は、ダミーの `set` や常に真の `expect` を足す代わりに、最上位に `end_ms` を書きます。

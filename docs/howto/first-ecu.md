@@ -209,7 +209,7 @@ Follow these rules:
 - Call `ecu_main()` at the end of `main()` and return its result, as above. With `--describe`, everything the program writes to stdout goes to stderr until the process ends, even after `ecu_main()` returns; only the JSON goes to stdout.
 - An ECU can have variables and no network, like this one.
 
-For the variable types and the kinds of declaration, see "ECU variables" in [control-api.md](../control-api.md#ecu-variables). You verify the code by building it in the next step.
+For the supported C++ variable types (note that `std::uint64_t` is supported for `output()` only, not `input()`), `AgentOptions`, and the kinds of declaration, see "ECU variables" in [control-api.md](../control-api.md#ecu-variables). For `vehicle_sil::SimTime` and converting it to nanoseconds with `vehicle_sil::to_ns()`, see "Virtual time (`SimTime`)" in [j1939-guide.md](../j1939-guide.md#virtual-time-simtime). You verify the code by building it in the next step.
 
 ## Step 3: Add the ECU to CMake and build it
 
@@ -228,7 +228,7 @@ vehicle_sil_copy_runtime_dlls(cooler_ecu)
 | `add_executable` | Names the executable (`cooler_ecu`) and its source file. |
 | `target_include_directories` | Lets the code `#include` headers in the project root, such as `engine_speed.hpp`. |
 | `target_link_libraries` | Links `ecu_main()` and the libraries that an ECU uses (variables and the CAN, LIN and J1939 stacks). |
-| `vehicle_sil_copy_runtime_dlls` | On Windows, copies `SilKit.dll` next to the executable. |
+| `vehicle_sil_copy_runtime_dlls` | On Windows (non-static MinGW builds), copies `SilKit.dll` and the toolchain-matched MinGW runtime DLLs next to the executable (0 DLLs when `VEHICLE_SIL_STATIC=ON`; no-op on Linux). |
 
 Build the project. Because `CMakeLists.txt` changed, CMake reruns the configure step on its own.
 

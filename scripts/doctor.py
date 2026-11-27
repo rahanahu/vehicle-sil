@@ -82,11 +82,15 @@ def compiler(report: Report) -> str | None:
     """The C++ compiler CMake would take: $CXX, else g++, else clang++."""
     names = [os.environ["CXX"]] if os.environ.get("CXX") else ["g++", "clang++"]
     fix = ("install GCC or Clang (Fedora: dnf install gcc-c++; Ubuntu: apt install g++; "
-           "MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-gcc)")
+           "MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-gcc; MSVC is unsupported)")
     for name in names:
         path = shutil.which(name)
         if path is None:
             continue
+        if WINDOWS and Path(path).stem.lower() == "cl":
+            report.add("C++ compiler", False, f"MSVC ({path}) is officially unsupported; use MSYS2 UCRT64 GCC",
+                       needed=True, purpose="every build", fix=fix)
+            return None
         code, text = run(path, "--version")
         first = text.splitlines()[0] if text else ""
         if code != 0:
@@ -179,11 +183,16 @@ def check() -> Report:
                    purpose="the windows-mingw-* presets",
                    fix="start the 'MSYS2 UCRT64' shell: the presets expect the UCRT64 toolchain")
 
+    uv_fix = ("MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-uv (or https://docs.astral.sh/uv/)"
+              if WINDOWS else "install uv (https://docs.astral.sh/uv/)")
     report.tool("uv", "uv", needed=False, purpose="scripts/verify-python.py, the GUI server and its tests",
-                fix="install uv (https://docs.astral.sh/uv/)")
+                fix=uv_fix)
+    node_fix = ("install the Windows build of Node.js 24.x (24.15 or later) or 26.x "
+                "(the engines of gui/web/package.json; npm ci refuses other versions)"
+                if WINDOWS else
+                "install Node.js 24.x (24.15 or later) or 26.x (the engines of gui/web/package.json; npm ci refuses other versions)")
     report.tool("Node.js", "node", ranges=(((24, 15), (25,)), ((26,), (27,))), needed=False,
-                purpose="the GUI screen and client library (gui/)",
-                fix="install Node.js 24.x (24.15 or later) or 26.x (the engines of gui/web/package.json; npm ci refuses other versions)")
+                purpose="the GUI screen and client library (gui/)", fix=node_fix)
     report.tool("npm", "npm", at_least=(11, 12), needed=False, purpose="the GUI screen and client library (gui/)",
                 fix="npm comes with Node.js; update it with: npm install -g npm")
     chromium(report)

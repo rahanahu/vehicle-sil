@@ -134,7 +134,7 @@ In the browser GUI, moving the throttle slider changes the engine speed.
 
 | Requirement | Version | Used for |
 |---|---|---|
-| C++ compiler | GCC or Clang with C++20 support | Every build |
+| C++ compiler | GCC or Clang with C++20 support (Windows: MSYS2 UCRT64 MinGW-w64 GCC; MSVC unsupported) | Every build |
 | CMake | 3.21 or later (3.28 or later to build gRPC) | Configuring and building |
 | Ninja, Git | Any | Building, and fetching SIL Kit |
 | [uv](https://docs.astral.sh/uv/) | Any | Installing the Python (3.11 or later) and the packages that the build and the GUI use |
@@ -259,6 +259,7 @@ You can also run several ECUs in one process. This runs without SIL Kit, which m
 | Tools and build | The test library (`vehicle_sil::testkit`) has no LIN fault injection or recording. | To record, observe the virtual LIN bus. To disconnect a single ECU, use `ecu.connected`. |
 | Tools and build | The APIs of `LocalBench` (`vehicle_sil::local`), `vehicle_sil::testkit` and `vehicle_sil::spy` are not stable. | See target categories and stability tiers in [Targets](docs/architecture.md#targets) (and the 0.x API note above). |
 | Tools and build | `install()` and packaging (`find_package`) are not supported. | Include vehicle-sil with FetchContent or `add_subdirectory` (see "Use from another project (FetchContent)" in [docs/build.md](docs/build.md#use-from-another-project-fetchcontent)). |
+| OS and hardware | MSVC is officially unsupported for building vehicle-sil libraries and C++ ECUs. | Use MSYS2 UCRT64 MinGW-w64 GCC on Windows. Separate processes (external SIL Kit participants, gRPC Control API clients, CLI/GUI tools) are ABI-independent across process boundaries (see [docs/build.md](docs/build.md#compiler-policy-msvc-unsupported-and-process-boundaries)). |
 | OS and hardware | Windows 10 is not verified. | Verified on Windows 11 with MSYS2 UCRT64. |
 | OS and hardware | The Vector XL CAN Bridge handles classic CAN only. | For how to use it and how it behaves, see [bridges.md](docs/bridges.md). |
 | OS and hardware | The Vector XL CAN Bridge is not verified with other physical CAN setups or devices. | Verified with Vector Virtual CAN and with a physical loopback on a VN5620. |
