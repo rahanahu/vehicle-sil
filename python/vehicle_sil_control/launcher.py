@@ -144,10 +144,18 @@ def _split_once_arguments(
             intent["scenario"] = arguments[i + 1]
             i += 2
         elif arg == "--case" and i + 1 < n:
-            intent["case"] = arguments[i + 1]
+            val = arguments[i + 1]
+            if "case" in intent:
+                raise ValueError(f"case is given more than once ({intent['case']!r} and {val!r})")
+            intent["case"] = val
             i += 2
         elif arg == "--after-scenario" and i + 1 < n:
-            intent["after_scenario"] = arguments[i + 1]
+            val = arguments[i + 1]
+            if "after_scenario" in intent:
+                raise ValueError(
+                    f"after_scenario is given more than once ({intent['after_scenario']!r} and {val!r})"
+                )
+            intent["after_scenario"] = val
             i += 2
         elif arg == "--variant" and i + 1 < n:
             intent["variant"] = arguments[i + 1]
@@ -164,7 +172,12 @@ def _split_once_arguments(
             k, sep, v = raw.partition("=")
             if not sep:
                 raise ValueError(f"--param {raw!r}: write --param <name>=<value>")
-            intent.setdefault("cli_params", {})[k] = v
+            cli_params = intent.setdefault("cli_params", {})
+            if k in cli_params:
+                raise ValueError(
+                    f"--param {k} is given twice ({cli_params[k]} and {v}): give each parameter one value"
+                )
+            cli_params[k] = v
             i += 2
         elif arg == "--connect" and i + 1 < n:
             net, _, target = arguments[i + 1].partition("=")
@@ -180,9 +193,12 @@ def _split_once_arguments(
             host_args.append(arg)
             i += 1
 
-    if "request" in run_cmd and (case is not None or params is not None or after_scenario is not None):
-        raise ValueError("cannot combine --request with case, params, or after_scenario keyword arguments")
-    if intent and "request" not in run_cmd:
+    if "request" in run_cmd and intent:
+        raise ValueError(
+            "cannot combine --request with inline run options "
+            f"({', '.join(sorted(intent))}): put them in the request file or omit --request"
+        )
+    if intent:
         run_cmd["intent"] = intent
     return host_args, run_cmd
 

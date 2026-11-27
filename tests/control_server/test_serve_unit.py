@@ -1585,9 +1585,9 @@ class ServeUnitTest(unittest.TestCase):
             },
         )
 
-        # Typed params kwarg coexists with cli_params from --param; CLI --case overrides case kwarg.
+        # Typed params kwarg coexists with cli_params from --param alongside case and after_scenario kwargs.
         _, merged = _split_once_arguments(
-            ["--scenario", "scn.yaml", "--param", "tag=50", "--case", "cli_case"],
+            ["--scenario", "scn.yaml", "--param", "tag=50"],
             start_paused=False,
             case="kw_case",
             params={"tag": 10, "keep": True, "ratio": 0.25},
@@ -1597,16 +1597,20 @@ class ServeUnitTest(unittest.TestCase):
             merged["intent"],
             {
                 "scenario": "scn.yaml",
-                "case": "cli_case",
+                "case": "kw_case",
                 "params": {"tag": 10, "keep": True, "ratio": 0.25},
                 "after_scenario": "pause",
                 "cli_params": {"tag": "50"},
             },
         )
 
-        # Validation errors.
+        # Validation errors: malformed/duplicate --param, bad types, conflicting/duplicate case or
+        # after_scenario, and combining --request with any inline run option.
         with self.assertRaises(ValueError):
             _split_once_arguments(["--param", "missing_equals"], start_paused=False)
+        with self.assertRaises(ValueError) as dup_param:
+            _split_once_arguments(["--param", "n_thr=11", "--param", "n_thr=22"], start_paused=False)
+        self.assertIn("n_thr", str(dup_param.exception))
         with self.assertRaises(TypeError):
             _split_once_arguments([], start_paused=False, case=1)  # type: ignore[arg-type]
         with self.assertRaises(TypeError):
@@ -1614,7 +1618,38 @@ class ServeUnitTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             _split_once_arguments([], start_paused=False, after_scenario=1)  # type: ignore[arg-type]
         with self.assertRaises(ValueError):
-            _split_once_arguments(["--request", "bench.json"], start_paused=False, case="c1")
+            _split_once_arguments(["--case", "cli_case"], start_paused=False, case="kw_case")
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--case", "c1", "--case", "c2"], start_paused=False)
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--after-scenario", "stop"], start_paused=False, after_scenario="pause")
+        with self.assertRaises(ValueError):
+            _split_once_arguments(
+                ["--after-scenario", "pause", "--after-scenario", "stop"], start_paused=False
+            )
+        for bad_args, bad_kwargs in [
+            (["--request", "bench.json"], {"case": "c1"}),
+            (["--request", "bench.json"], {"params": {"k": 1}}),
+            (["--request", "bench.json"], {"after_scenario": "pause"}),
+            (["--request", "bench.json", "--case", "high"], {}),
+            (["--request", "bench.json", "--param", "n_thr=77"], {}),
+            (["--request", "bench.json", "--after-scenario", "pause"], {}),
+            (["--request", "bench.json", "--variant", "v1"], {}),
+            (["--request", "bench.json"], {"start_paused": True}),
+        ]:
+            with self.assertRaises(ValueError):
+                _split_once_arguments(
+                    bad_args,
+                    start_paused=bool(bad_kwargs.pop("start_paused", False)),
+                    **bad_kwargs,
+                )
+        # Host flags and --timeline still work alongside --request.
+        req_host, req_cmd = _split_once_arguments(
+            ["--request", "bench.json", "--timeline", "out.json", "--log-dir", "logs"],
+            start_paused=False,
+        )
+        self.assertEqual(req_host, ["--log-dir", "logs"])
+        self.assertEqual(req_cmd, {"command": "run", "request": "bench.json", "timeline": "out.json"})
 
         # Launch constructor forwards case, params, after_scenario, and --param cli_params to stdin.
         captured_procs: list[_FakeProcess] = []
