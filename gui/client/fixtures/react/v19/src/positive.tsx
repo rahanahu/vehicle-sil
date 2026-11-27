@@ -64,6 +64,7 @@ export function PositiveReact19({ front }: { front: Front }) {
       <vsil-write client={front} variable="Engine.e.throttle" value={0} />
       <vsil-write client={front} variable="Engine.e.mode" value="eco" />
       <vsil-scenario-select client={front} />
+      <vsil-case-select client={front} />
       <vsil-scenario-result client={front} />
       <vsil-timeline client={front} />
       <vsil-connect client={front} network="CAN1" file="bench.yaml" />

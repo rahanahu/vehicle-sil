@@ -7,7 +7,7 @@ type Listener = (intent: Intent) => void;
 let intent: Intent = {};
 const listeners = new Set<Listener>();
 
-/** The page's selection for the next run (`<vsil-scenario-select>` writes it, `<vsil-run-controls>` starts with it). */
+/** The page's selection for the next run (`<vsil-scenario-select>` and `<vsil-case-select>` write it, `<vsil-run-controls>` starts with it). */
 export const pageIntent = {
   get: (): Intent => intent,
   subscribe(listener: Listener): () => void {

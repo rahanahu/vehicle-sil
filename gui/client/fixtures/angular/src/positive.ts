@@ -54,6 +54,7 @@ import type {
     <vsil-connect [client]="front" network="CAN1" [file]="'bench.yaml'"></vsil-connect>
     <vsil-outside [client]="front"></vsil-outside>
     <vsil-scenario-select [client]="front"></vsil-scenario-select>
+    <vsil-case-select [client]="front"></vsil-case-select>
     <vsil-scenario-result [client]="front"></vsil-scenario-result>
     <vsil-timeline [client]="front"></vsil-timeline>
     <vehicle-sil-timeline

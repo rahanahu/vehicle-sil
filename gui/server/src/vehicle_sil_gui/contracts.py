@@ -49,6 +49,7 @@ REQUEST_FIELDS: tuple[str, ...] = (
     "$schema",
     "vehicle_sil_run_request",
     "scenario",
+    "case",
     "after_scenario",
     "variant",
     "params",
@@ -254,6 +255,7 @@ AfterScenario = Literal["stop", "pause"]
 
 OmitStr = Annotated[StrictStr | None, OmitOnly]
 OmitNonEmptyStr = Annotated[NonEmptyStr | None, OmitOnly]
+OmitNonEmptyUtf8Str = Annotated[NonEmptyUtf8Str | None, OmitOnly]
 OmitCommandId = Annotated[CommandId | None, OmitOnly]
 OmitNonNegInt = Annotated[NonNegInt | None, OmitOnly]
 OmitPosInt = Annotated[PosInt | None, OmitOnly]
@@ -262,6 +264,7 @@ OmitAtMs = Annotated[AtMs | None, OmitOnly]
 OmitSpeedValue = Annotated[SpeedValue | None, OmitOnly]
 OmitAfterScenario = Annotated[AfterScenario | None, OmitOnly]
 OmitBool = Annotated[StrictBool, OmitOnly]
+OmitOptionalBool = Annotated[StrictBool | None, OmitOnly]
 
 
 # ------------------------------------------------------------ Error catalog & envelopes
@@ -631,6 +634,7 @@ class RunRequest(PrepareRequest):
     schema_uri: OmitStr = Field(default=None, alias="$schema")
     vehicle_sil_run_request: Annotated[ExactLiteral1 | None, OmitOnly] = None
     scenario: OmitStr = None
+    case: OmitNonEmptyUtf8Str = None
     after_scenario: OmitAfterScenario = None
     params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
     strict: OmitBool = False
@@ -814,10 +818,25 @@ class CheckNetwork(OpenContractModel):
     kind: StrictStr | None = None
 
 
+class CheckScenarioCaseDetail(OpenContractModel):
+    name: StrictStr
+    only: list[StrictStr] | None = None
+
+
+class CheckScenarioParamMeta(OpenContractModel):
+    name: StrictStr
+    type: StrictStr | None = None
+    values: list[StrictStr] | None = None
+    description: StrictStr | None = None
+
+
 class CheckScenarioParam(OpenContractModel):
     name: StrictStr
     value: ParamScalar
     from_: StrictStr = Field(alias="from")
+    type: StrictStr | None = None
+    values: list[StrictStr] | None = None
+    description: StrictStr | None = None
 
 
 class CheckScenario(OpenContractModel):
@@ -825,9 +844,12 @@ class CheckScenario(OpenContractModel):
     name: StrictStr | None = None
     case: StrictStr | None = None
     cases: list[StrictStr] | None = None
+    case_details: list[CheckScenarioCaseDetail] | None = None
     steps: NonNegInt | None = None
     only: list[StrictStr] | None = None
     params: list[CheckScenarioParam] | None = None
+    param_meta: list[CheckScenarioParamMeta] | None = None
+    missing_params: list[StrictStr] | None = None
     skipped_steps: NonNegInt | None = None
     unchecked_expects: NonNegInt | None = None
     end_ms: NonNegInt | None = None
@@ -835,6 +857,9 @@ class CheckScenario(OpenContractModel):
 
 class CheckObject(OpenContractModel):
     result: StrictStr | None = None
+    variant: StrictStr | None = None
+    variants: list[StrictStr] | None = None
+    params: list[CheckScenarioParam] | None = None
     participants: list[CheckParticipant] = Field(default_factory=list)
     networks: list[CheckNetwork] | None = None
     findings: list[FindingSummary] = Field(default_factory=list)
@@ -842,6 +867,7 @@ class CheckObject(OpenContractModel):
     warnings: NonNegInt | None = None
     notes: NonNegInt | None = None
     stop_at_ms: PosInt | None = None
+    time_step_ms: PosInt | None = None
     commands: StrictStr | None = None
     scenario: CheckScenario | None = None
 
@@ -1027,6 +1053,7 @@ class SessionScenarioSummary(ContractModel):
     file: NonEmptyUtf8Str
     name: Utf8Str | None
     case: Utf8Str | None = None
+    params: list[CheckScenarioParam] | None = None
     status: Utf8Str | None
     step_count: NonNegInt | None
     over_at_ms: FiniteNumber | None
@@ -1109,6 +1136,31 @@ class ResultSummary(OpenContractModel):
     message: StrictStr | None = None
 
 
+class SessionIntentSummary(ContractModel):
+    """Root-relative run intent suitable for re-submitting to `POST /api/run` with `session.file`."""
+
+    variant: OmitNonEmptyStr = None
+    disable: Annotated[UniqueNameList | None, OmitOnly] = None
+    enable: Annotated[UniqueNameList | None, OmitOnly] = None
+    manual: Annotated[UniqueNameList | None, OmitOnly] = None
+    scenario: OmitNonEmptyStr = None
+    case: OmitNonEmptyUtf8Str = None
+    after_scenario: OmitAfterScenario = None
+    params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
+    strict: OmitOptionalBool = None
+    connect: Annotated[dict[NonEmptyStr, StrictStr] | None, OmitOnly] = None
+    time_policy: OmitNonEmptyStr = None
+    speed: OmitSpeedValue = None
+    start_paused: OmitOptionalBool = None
+    stop_at_ms: OmitStepMs = None
+    late_tolerance_ms: OmitAtMs = None
+
+    @field_validator("disable", "enable", "manual")
+    @classmethod
+    def _unique_participants(cls, value: list[str] | None, info: ValidationInfo) -> list[str] | None:
+        return _check_unique_names(info.field_name or "list", value)
+
+
 class SessionWsSummary(ContractModel):
     """Session summary in WS `session` frames (omits `variables`)."""
 
@@ -1143,6 +1195,7 @@ class SessionWsSummary(ContractModel):
     problems_omitted: NonNegInt
     scenario: SessionScenarioSummary | None
     stop_at_ms: StepMs | None = None
+    intent: SessionIntentSummary | None = None
 
 
 class SessionSummary(SessionWsSummary):

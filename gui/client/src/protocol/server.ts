@@ -26,12 +26,14 @@ import {
 import {
   CONTROL_SUMMARY_KEY,
   CheckResult,
+  CheckScenarioParam,
   ControlLink,
   Finding,
   LauncherEvent,
   ParticipantState,
   Phase,
   RunResult,
+  ScenarioParamValue,
   ScenarioStatus,
   ScenarioStep,
   Speed,
@@ -41,10 +43,12 @@ import {
   Caution,
   readCaution,
   readCheckResult,
+  readCheckScenarioParam,
   readCommandFields,
   readControlLink,
   readFinding,
   readLauncherEvent,
+  readParamScalar,
   readRunResult,
   readScenarioStep,
   readStateFields,
@@ -273,6 +277,8 @@ export interface CheckRequest {
   manual?: string[];
   /** The scenario (`path` from `GET api/scenarios`; only one in the list for that configuration file). */
   scenario?: string;
+  /** The named case of the scenario (`cases:`). Requires `scenario`. */
+  case?: string;
   /** What to do after the scenario passes (`stop`, or `pause` to hand over to manual control). */
   after_scenario?: AfterScenario;
   /** The variant of the configuration file. */
@@ -662,6 +668,95 @@ const readLogCounts: Reader<LogCounts> = (value, path) => {
 };
 
 /**
+ * Root-relative intent of a started run (`session.intent`). Suitable for passing directly to
+ * `front.run.start(session.intent, { file: session.file })` to re-run with the same choices.
+ */
+export interface SessionIntent {
+  disable?: string[];
+  enable?: string[];
+  manual?: string[];
+  scenario?: string;
+  case?: string;
+  after_scenario?: AfterScenario;
+  variant?: string;
+  params?: Record<string, ScenarioParamValue>;
+  speed?: number | 'max';
+  start_paused?: boolean;
+  stop_at_ms?: number;
+  late_tolerance_ms?: number;
+  strict?: boolean;
+  connect?: Record<string, string>;
+  time_policy?: Open<'realtime' | 'free'>;
+}
+
+const readAfterScenario: Reader<AfterScenario> = (value, path) => {
+  if (value === 'stop' || value === 'pause') return value;
+  throw new ProtocolError(path, '"stop" or "pause"');
+};
+
+const readIntentSpeed: Reader<number | 'max'> = (value, path) => {
+  if (value === 'max') return 'max';
+  return number(value, path);
+};
+
+const readSessionIntent = (value: unknown, path: string, u: Unreadable): SessionIntent => {
+  const f = object(value, path);
+  const out: SessionIntent = {};
+  const listField = (key: 'disable' | 'enable' | 'manual') => {
+    if (f[key] !== undefined) {
+      const read = field(f, path, key, soft(items(string, u), undefined, u));
+      if (read !== undefined) out[key] = read;
+    }
+  };
+  listField('disable');
+  listField('enable');
+  listField('manual');
+  const strField = (key: 'scenario' | 'case' | 'variant' | 'time_policy') => {
+    if (f[key] !== undefined) {
+      const read = field(f, path, key, soft(nonEmptyString, undefined, u));
+      if (read !== undefined) out[key] = read;
+    }
+  };
+  strField('scenario');
+  strField('case');
+  strField('variant');
+  strField('time_policy');
+  if (f['after_scenario'] !== undefined) {
+    const read = field(f, path, 'after_scenario', soft(readAfterScenario, undefined, u));
+    if (read !== undefined) out.after_scenario = read;
+  }
+  if (f['params'] !== undefined) {
+    const read = field(f, path, 'params', soft(partlyRecord(readParamScalar, u), undefined, u));
+    if (read !== undefined) out.params = read;
+  }
+  if (f['connect'] !== undefined) {
+    const read = field(f, path, 'connect', soft(partlyRecord(string, u), undefined, u));
+    if (read !== undefined) out.connect = read;
+  }
+  if (f['speed'] !== undefined) {
+    const read = field(f, path, 'speed', soft(readIntentSpeed, undefined, u));
+    if (read !== undefined) out.speed = read;
+  }
+  if (f['start_paused'] !== undefined) {
+    const read = field(f, path, 'start_paused', soft(boolean, undefined, u));
+    if (read !== undefined) out.start_paused = read;
+  }
+  if (f['strict'] !== undefined) {
+    const read = field(f, path, 'strict', soft(boolean, undefined, u));
+    if (read !== undefined) out.strict = read;
+  }
+  if (f['stop_at_ms'] !== undefined) {
+    const read = field(f, path, 'stop_at_ms', soft(integer, undefined, u));
+    if (read !== undefined) out.stop_at_ms = read;
+  }
+  if (f['late_tolerance_ms'] !== undefined) {
+    const read = field(f, path, 'late_tolerance_ms', soft(integer, undefined, u));
+    if (read !== undefined) out.late_tolerance_ms = read;
+  }
+  return out;
+};
+
+/**
  * Summary of a server session (one run of the launcher). The screen rebuilds its state from it (the summary is
  * authoritative).
  */
@@ -722,6 +817,8 @@ export interface SessionSummary {
   problems_omitted: number;
   /** Progress of the scenario run (`scenario` of `api/run`). null for a run without a scenario. */
   scenario: SummaryScenario | null;
+  /** Root-relative run intent suitable for re-running this session. Omitted on older servers. */
+  intent?: SessionIntent | null;
   /**
    * Names of the parts that could not be read (`result.participants`, `findings.code` and so on; set by the screen,
    * not a server field). The missing fields of a result shrunk to fit the limits go here too.
@@ -738,6 +835,8 @@ export interface SummaryScenario {
   name: string | null;
   /** Selected case name, or null when none was selected. */
   case?: string | null;
+  /** Resolved parameters of the scenario, if any. */
+  params?: CheckScenarioParam[];
   /** Number of steps (from the check result; null until then). */
   step_count: number | null;
   /** Steps received (in index order). After the result, every step (not_run included). */
@@ -764,6 +863,20 @@ const readSummaryScenario = (value: unknown, path: string, u: Unreadable): Summa
     ...(f['case'] === undefined
       ? {}
       : { case: field(f, path, 'case', soft(nullable(string), null, u)) }),
+    ...(f['params'] === undefined
+      ? {}
+      : {
+          params: field(
+            f,
+            path,
+            'params',
+            soft(
+              items((v, p) => readCheckScenarioParam(v, p, u), u),
+              [],
+              u,
+            ),
+          ),
+        }),
     step_count: field(f, path, 'step_count', soft(nullable(integer), null, u)),
     steps: field(
       f,
@@ -893,6 +1006,20 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
         u,
       ),
     ),
+    ...(f['intent'] === undefined
+      ? {}
+      : {
+          intent: field(
+            f,
+            path,
+            'intent',
+            soft(
+              nullable((v, p) => readSessionIntent(v, p, u)),
+              null,
+              u,
+            ),
+          ),
+        }),
   };
   return { ...summary, unreadable: u.parts };
 };

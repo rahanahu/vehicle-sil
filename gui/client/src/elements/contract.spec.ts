@@ -83,6 +83,9 @@ const _writableVsil: CheckWritable = {
   'vsil-scenario-select': (el, p) => {
     el.client = p.client;
   },
+  'vsil-case-select': (el, p) => {
+    el.client = p.client;
+  },
   'vsil-scenario-result': (el, p) => {
     el.client = p.client;
   },
@@ -173,6 +176,7 @@ const ALL_VSIL_TAGS: (keyof VsilElementContracts)[] = [
   'vsil-slider',
   'vsil-write',
   'vsil-scenario-select',
+  'vsil-case-select',
   'vsil-scenario-result',
   'vsil-timeline',
   'vsil-connect',
@@ -184,7 +188,7 @@ afterEach(() => {
 });
 
 describe('vsil-* element contracts and property reflection', () => {
-  it('exposes a camelCase getter/setter pair for all 19 observedAttributes across the 11 parts', () => {
+  it('exposes a camelCase getter/setter pair for all 19 observedAttributes across the 12 parts', () => {
     let totalObserved = 0;
     for (const tag of ALL_VSIL_TAGS) {
       const ctor = customElements.get(tag) as

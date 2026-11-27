@@ -955,3 +955,87 @@ def test_a_launcher_that_does_not_read_its_input_holds_no_request(tmp_path: Path
         assert len(events(sock.received, "log")) >= logs + 2
     with gui_server(tmp_path, env={"REPLAY_TICK_MS": "100"}, args=("--stop-timeout", "0.3")) as gui:
         run_async(main, gui)
+
+
+def test_multicase_check_usage_and_subdirectory_intent_rerun_http(tmp_path: Path) -> None:
+    """Multi-case check without case preserves participants/hot_eligibility/scenario on usage, and
+    running a subdirectory config with case/params populates root-relative session.intent for re-run."""
+    root = tmp_path / "root"
+    sub = root / "sub"
+    shutil.copytree(CONFIGS, sub)
+    (sub / "scenarios").mkdir(exist_ok=True)
+    (sub / "scenarios" / "cases.yaml").write_text(
+        "vehicle_sil_scenario: 1\n"
+        "name: drive cases\n"
+        "parameters:\n"
+        "  mode:\n"
+        "    type: enum\n"
+        "    values: [eco, sport]\n"
+        "    default: eco\n"
+        "    description: drive mode\n"
+        "  target_rpm:\n"
+        "    type: integer\n"
+        "    description: target rpm\n"
+        "cases:\n"
+        "  idle:\n"
+        "    params: { target_rpm: 800 }\n"
+        "  load:\n"
+        "    only: [small]\n"
+        "    params: { target_rpm: 3000 }\n"
+        "steps:\n"
+        "  - set: { Engine.engine.throttle: 50 }\n",
+        encoding="utf-8",
+    )
+
+    async def main(c: Client) -> None:
+        # 1. Invalid case value rejected at HTTP boundary
+        st, bad = await c.post("api/check", {"file": "sub/simulation.yaml", "case": ""})
+        assert (st, bad["error"]["code"]) == (400, "invalid-field"), bad
+
+        # 2. Multi-case without case returns usage with full check metadata preserved
+        st, chk = await c.post(
+            "api/check",
+            {"file": "sub/simulation.yaml", "scenario": "sub/scenarios/cases.yaml"},
+        )
+        assert st == 200 and chk["check"]["result"] == "usage", chk
+        assert chk["check"]["participants"], chk
+        assert chk["check"]["hot_eligibility"]["eligible"] is True, chk
+        sc = chk["check"]["scenario"]
+        assert sc["case"] is None
+        assert sc["cases"] == ["idle", "load"]
+        assert sc["case_details"] == [{"name": "idle", "only": None}, {"name": "load", "only": ["small"]}]
+        assert [p["name"] for p in sc["param_meta"]] == ["mode", "target_rpm"]
+        assert sc["missing_params"] == ["target_rpm"]
+
+        # 3. Run with case + params in subdirectory and verify root-relative session.intent
+        got = await run_to_end(
+            c,
+            {
+                "file": "sub/simulation.yaml",
+                "scenario": "sub/scenarios/cases.yaml",
+                "case": "idle",
+                "params": {"mode": "sport"},
+                "stop_at_ms": 1000,
+            },
+        )
+        end = got[-1]["session"]
+        assert end["result"]["result"] == "passed"
+        assert end["scenario"]["case"] == "idle"
+        assert any(p["name"] == "mode" and p["value"] == "sport" for p in end["scenario"]["params"])
+        assert end["intent"] == {
+            "scenario": "sub/scenarios/cases.yaml",
+            "case": "idle",
+            "params": {"mode": "sport"},
+            "stop_at_ms": 1000,
+        }
+
+        # 4. Re-run directly from GET /api/session intent
+        st, snap = await c.get("api/session")
+        assert st == 200 and snap["session"]["intent"] == end["intent"]
+        rerun = await run_to_end(c, {"file": snap["session"]["file"], **snap["session"]["intent"]})
+        assert rerun[-1]["session"]["id"] != end["id"]
+        assert rerun[-1]["session"]["result"]["result"] == "passed"
+        assert rerun[-1]["session"]["scenario"]["case"] == "idle"
+
+    with gui_server(tmp_path, root=root) as gui:
+        run_async(main, gui)
