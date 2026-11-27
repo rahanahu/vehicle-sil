@@ -1394,7 +1394,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
             "counted": true,
             "not_counted": null,
             "virtual_time": true,
-            "at_ms": 990,
+            "at_ms": 995,
             "frames_sent": 0,
             "frames_received": 11
           }

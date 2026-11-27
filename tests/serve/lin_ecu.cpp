@@ -60,6 +60,7 @@ class Slave
 public:
     explicit Slave(vehicle_sil::Ecu& ecu)
     {
+        ecu.set_agent_options({.sample_period = 5ms});
         ecu.output("door.command", &command_, {.description = "the last 0x10 heard"});
         auto& slave = ecu.lin_slave("DOOR", {.subscriptions = {kCommand}});
         slave.on_frame([this](const lin::LinReceivedFrame& f) { command_ = f.data[0]; });

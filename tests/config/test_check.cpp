@@ -757,6 +757,29 @@ TEST_CASE(reads_what_an_executable_says_about_offering_its_variables)
     CHECK_EQ(read_description(head + R"({"transport": "silkit", "wire_version": 2}})").description.control->wire_revision, 0);
     check_text(refused(R"({"transport": "silkit", "wire_version": 2, "wire_revision": 256})"),
                "control.wire_revision is 256, not a revision");
+    // sample_period_ns: positive, zero (every step), absent (older executable) and null all round-trip.
+    d.control = ControlOffer{"silkit", 2, 1, 5ms};
+    CHECK(read_description(to_json(d)).description == d);
+    CHECK(read_description(to_json(d)).description.control->sample_period == std::optional<SimDuration>(5ms));
+    d.control = ControlOffer{"silkit", 2, 1, 0ns};
+    CHECK(read_description(to_json(d)).description == d);
+    CHECK(read_description(to_json(d)).description.control->sample_period == std::optional<SimDuration>(0ns));
+    CHECK(!read_description(head + R"({"transport": "silkit", "wire_version": 2, "wire_revision": 1}})").description.control->sample_period.has_value());
+    CHECK(!read_description(head + R"({"transport": "silkit", "wire_version": 2, "wire_revision": 1, "sample_period_ns": null}})").description.control->sample_period.has_value());
+    check_text(refused(R"({"transport": "silkit", "wire_version": 2, "sample_period_ns": -1})"),
+               "control.sample_period_ns is -1, not a sample period");
+    check_text(refused(R"({"transport": "silkit", "wire_version": 2, "sample_period_ns": -10000000})"),
+               "control.sample_period_ns is -10000000, not a sample period");
+    check_text(refused(R"({"transport": "silkit", "wire_version": 2, "sample_period_ns": "10000000"})"),
+               "control.sample_period_ns is not an integer");
+    check_text(refused(R"({"transport": "silkit", "wire_version": 2, "sample_period_ns": 1.5})"),
+               "control.sample_period_ns is not an integer");
+    check_text(refused(R"({"transport": "silkit", "wire_version": 2, "sample_period_ns": true})"),
+               "control.sample_period_ns is not an integer");
+    check_text(refused(R"({"transport": "silkit", "wire_version": 2, "sample_period_ns": []})"),
+               "control.sample_period_ns is not an integer");
+    check_text(refused(R"({"transport": "silkit", "wire_version": 2, "sample_period_ns": 999999999999999999999999})"),
+               "control.sample_period_ns is not an integer");
 }
 
 TEST_CASE(every_mapping_of_variables_must_fit_what_the_executable_describes)

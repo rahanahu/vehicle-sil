@@ -324,7 +324,8 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual([f for f in findings_of(result) if f[1].startswith("variable-map")], [])
 
     def test_a_snapshot_has_the_time_and_the_values_of_one_moment(self):
-        step = ms(10)  # the engine's step and both ECUs' default sample period; the controller steps at 5 ms
+        step = ms(10)  # the engine's step and sample period; the controller and dashboard step and sample at 5 ms
+        dashboard_step = ms(5)
         throttle_at = {0: 20.0}  # the engine's step -> the throttle from then on (20 % as it starts)
 
         def engine_speed(at):
@@ -343,9 +344,9 @@ class LauncherTest(unittest.TestCase):
             self.assertTrue(snap.consistent)
             self.assertEqual((snap.time.now, snap.time.paused), (now, True))
             engine, dashboard = snap.values["Engine"], snap.values["Dashboard"]
-            last_before = ((now - 1) // step) * step
-            self.assertIn(engine.time, (last_before, (now // step) * step))
-            self.assertIn(dashboard.time, (last_before, (now // step) * step))
+            self.assertIn(engine.time, (((now - 1) // step) * step, (now // step) * step))
+            self.assertIn(dashboard.time, (((now - 1) // dashboard_step) * dashboard_step,
+                                           (now // dashboard_step) * dashboard_step))
             self.assertEqual(engine.values["engine.speed"], engine_speed(engine.time))
 
         with self.launch("snapshot", stop_at_ms=600_000, start_paused=True) as launch:

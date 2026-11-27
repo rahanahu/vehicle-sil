@@ -194,6 +194,7 @@
 | `control-link-not-offered` | 注記 | 変数のある ECU が、それをシミュレーションに公開すると `--describe` に出力していません（`--no-control`、`control` のない古い実行ファイル）。 | 変数を読み書きしたいなら、`--no-control` を削除するか、新しい vehicle-sil で ECU をビルドし直します。 |
 | `control-link-version` | 警告 | 変数のある ECU が出力した、メッセージの形式のバージョンが `vehicle_sil_launch` と違うか、トランスポートが `silkit` ではありません。シミュレーションは動きますが、`run` はその ECU の変数を読み書きできません。どちらが古いかは文に出ます。 | ECU のほうが古ければ、`vehicle_sil_launch` の vehicle-sil でビルドし直します。新しければ、ECU と同じかそれより新しいバージョンの `vehicle_sil_launch` を使います。別のトランスポートなら、実行ファイルが `silkit` で変数を出すようにします。 |
 | `control-link-revision` | 注記 | 変数のある ECU が書くメッセージの形式の改訂が、`vehicle_sil_launch` より古い（`--describe` の `control.wire_revision`。ないときは 0）。変数はふつうに読み書きできますが、後の改訂で足したものはその ECU から届きません。変数は利用状態を報告せず、すべて Active に見えます。 | 変数に利用状態を報告させるなら、ECU を `vehicle_sil_launch` の vehicle-sil でビルドし直し、その変数を `VariableOptions::availability` で宣言します。 |
+| `coarse-sample-period` | 注記 | 変数のある ECU のステップ幅が、正の `AgentOptions::sample_period`（`--describe` の `control.sample_period_ns`、既定 10 ms）より短い。サンプルの間の変化は、ライブ監視や `samples: as_sent` のシナリオには届きません（既定の `samples: every_step` のシナリオは `--sample-every-step` を自動で渡します）。 | 変数を宣言する前に `Ecu::set_agent_options()` で `sample_period` をステップ幅（または毎ステップの `0`）に設定します。 |
 | `variable-map-unknown` | エラー | `variables` の対応の `from` の変数が、実行ファイルにありません。 | `from` の名前を直します（指摘の文に、近い名前か、実行ファイルの変数の一覧があります）。 |
 | `variable-map-type` | エラー | 対応の形が、変数の型に合いません。 | `scale`、`offset` は整数か実数の変数に、`map` は整数か列挙の変数に書きます。 |
 | `variable-map-value` | エラー | `map` の値を、実行ファイルの変数が取れません（列挙の項目にない、範囲の外）。 | `map` の値を、変数が取れる値にします。 |

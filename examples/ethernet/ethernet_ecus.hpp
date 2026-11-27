@@ -143,6 +143,7 @@ public:
       channel_(ecu.ethernet(kNetwork, {.mac = kDisplayMac, .accept = vehicle_sil::eth::Accept::Addressed})),
       options_(options)
     {
+        ecu.set_agent_options({.sample_period = std::chrono::milliseconds(5)});
         ecu.output("display.value", &value_, {.description = "the reading shown"});
         ecu.output("display.received", &received_, {.description = "readings received"});
         // The other way to receive: take the frames of this step, one by one, from the step.

@@ -206,6 +206,14 @@ std::string to_json(const EcuDescription& description)
         w.string("transport", description.control->transport);
         w.integer("wire_version", description.control->wire_version);
         w.integer("wire_revision", description.control->wire_revision);
+        if (description.control->sample_period)
+        {
+            w.integer("sample_period_ns", static_cast<std::int64_t>(description.control->sample_period->count()));
+        }
+        else
+        {
+            w.null("sample_period_ns");
+        }
         w.end_object();
     }
     else

@@ -107,6 +107,17 @@ public:
                 }
                 offer.wire_revision = static_cast<int>(number);
             }
+            // Absent (an executable of an earlier vehicle-sil) or null: not reported.
+            if (const auto samplePeriod = find(control, "sample_period_ns");
+                samplePeriod != ryml::NONE && !is_null(samplePeriod))
+            {
+                const auto ns = integer(samplePeriod, "control.sample_period_ns");
+                if (ns < 0)
+                {
+                    fail("control.sample_period_ns is " + std::to_string(ns) + ", not a sample period");
+                }
+                offer.sample_period = SimDuration{ns};
+            }
             out.description.control = std::move(offer);
         }
         // Absent (an executable of an earlier vehicle-sil): none. An open list: every name is kept,

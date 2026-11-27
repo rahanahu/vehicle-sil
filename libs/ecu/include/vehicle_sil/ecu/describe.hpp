@@ -211,6 +211,10 @@ struct ControlOffer
     /// what was added (for revision 1, the availability of the variables). 0 when the executable
     /// does not say it (one built before the key existed).
     int wire_revision = 0;
+    /// How often the control agent samples its variables (AgentOptions::sample_period; 0: every
+    /// step). Empty when the executable does not say it (one built before the key existed).
+    /// "sample_period_ns" in JSON (null if empty).
+    std::optional<SimDuration> sample_period{};
 
     friend bool operator==(const ControlOffer&, const ControlOffer&) = default;
 };

@@ -65,9 +65,10 @@ void scenario_samples(const Options& o)
         const std::string passed = scenario_json(out);
         require(contains(passed, "    \"status\": \"passed\",\n") && contains(passed, "        \"at_ms\": " + form.as_sent + ",\n"),
                 form.what + " with samples: as_sent passes:\n" + passed);
-        require(contains(out, "\"code\": \"scenario-samples-as-sent\"") && contains(out, "\"notes\": 1,") &&
+        require(contains(out, "\"code\": \"scenario-samples-as-sent\"") &&
+                    contains(out, "\"code\": \"coarse-sample-period\"") && contains(out, "\"notes\": 2,") &&
                     !contains(lf(coarse.standard_error), "--sample-every-step"),
-                form.what + " with samples: as_sent: the note, and no argument:\n" + out + lf(coarse.standard_error));
+                form.what + " with samples: as_sent: the notes, and no argument:\n" + out + lf(coarse.standard_error));
     }
 
     // An ECU that does not follow the argument (its --describe says that it takes it): the

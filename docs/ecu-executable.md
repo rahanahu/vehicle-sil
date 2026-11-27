@@ -501,6 +501,7 @@ A reader rejects an unknown version and ignores unknown keys. An unknown value o
 | `control.transport` | The transport. Currently only `"silkit"` (SIL Kit publish/subscribe) |
 | `control.wire_version` | The message format version (an integer) |
 | `control.wire_revision` | The revision of that format the executable writes (an integer). A launcher of another revision of the same version reads and writes the variables as usual; the check notes an older executable (`control-link-revision`), because what later revisions added does not arrive from it (revision 1: the availability of the variables) |
+| `control.sample_period_ns` | How often the control agent samples its variables, in integer nanoseconds (`AgentOptions::sample_period`; `0`: every step; `null` if not reported). The check notes an ECU whose step is shorter than this positive period (`coarse-sample-period`) |
 | `features` | Array of the names (strings) of the arguments and behaviors that this executable accepts from the program that starts it. `"map-network"`: it accepts `--map-network`. `"j1939-node"`: it accepts `--j1939-node`. `"sample-every-step"`: it accepts `--sample-every-step`. An `ecu_main` executable writes the same list whatever its arguments |
 
 How to read JSON in which a key is missing:
@@ -510,6 +511,7 @@ How to read JSON in which a key is missing:
 | `networks[].mac` | The JSON of an ECU from an earlier version. Read it as `null`. |
 | `control` | An executable built with a vehicle-sil from before this key existed. Treat it as `null`. |
 | `control.wire_revision` | An executable built with a vehicle-sil from before this key existed. Read it as 0. |
+| `control.sample_period_ns` | An executable built with a vehicle-sil from before this key existed. Read it as `null` (not reported). |
 | `features` | The JSON of an ECU from an earlier version. Read it as an empty array. |
 
 Screens and other tools use `variables[].builtin` to show these variables separately from the application's variables. If `control.wire_version` differs from that of `vehicle_sil_launch`, the variables cannot be read or written.
@@ -581,7 +583,8 @@ Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_
   "control": {
     "transport": "silkit",
     "wire_version": 2,
-    "wire_revision": 1
+    "wire_revision": 1,
+    "sample_period_ns": 10000000
   },
   "features": [
     "map-network",

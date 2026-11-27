@@ -98,6 +98,63 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
     CHECK(s.check().find("control-link") == std::string::npos);
 }
 
+TEST_CASE(coarse_sample_period_is_a_note_independent_of_control_link_revision)
+{
+    Setup s = good_pair();
+    s.config.participants[0].step_ms.reset();
+    s.results[0].ecu->description.step = 1ms;
+    s.results[0].ecu->description.variables = {variable("x")};
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1, 10ms};
+    check_text(s.check(),
+               "N 6 coarse-sample-period: participant 'Engine': its step is 1 ms, but its control agent samples its "
+               "variables every 10 ms (AgentOptions::sample_period; 10 ms by default): changes between samples are not "
+               "sent to live clients or scenarios with samples: as_sent (scenarios with the default samples: every_step "
+               "pass --sample-every-step automatically): set AgentOptions::sample_period to 1 ms (or 0 for every step) "
+               "via Ecu::set_agent_options() before declaring variables\n");
+    // Independent of control-link-revision: an older revision also reports coarse-sample-period.
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 0, 10ms};
+    const std::string both = s.check();
+    CHECK(both.find("N 6 control-link-revision: ") != std::string::npos);
+    CHECK(both.find("N 6 coarse-sample-period: ") != std::string::npos);
+    // Boundary values that must NOT trigger coarse-sample-period:
+    // 0 ns (every step), step == sample_period, step > sample_period, absent sample_period, no variables,
+    // real-time (no step), no control offer (--no-control).
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1, 0ns};
+    check_text(s.check(), "");
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1, 1ms};
+    check_text(s.check(), "");
+    s.results[0].ecu->description.step = 20ms;
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1, 10ms};
+    check_text(s.check(), "");
+    s.results[0].ecu->description.step = 1ms;
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1, std::nullopt};
+    check_text(s.check(), "");
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1, 10ms};
+    s.results[0].ecu->description.variables.clear();
+    check_text(s.check(), "");
+    s.results[0].ecu->description.variables = {variable("x")};
+    s.results[0].ecu->description.step.reset();
+    check_text(s.check(), "");
+    s.results[0].ecu->description.step = 1ms;
+    s.results[0].ecu->description.control.reset();
+    CHECK(s.check().find("coarse-sample-period") == std::string::npos);
+    // Sub-millisecond step formats cleanly.
+    s.results[0].ecu->description.step = 500us;
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1, 2ms};
+    const std::string subms = s.check();
+    CHECK(subms.find("N 6 coarse-sample-period: participant 'Engine': its step is 500 us, but its control agent "
+                     "samples its variables every 2 ms") != std::string::npos);
+    // Strict check still passes on Severity::Note (coarse-sample-period).
+    Checked report;
+    report.file = "sim.yaml";
+    report.strict = true;
+    report.config = s.config;
+    report.participants = s.results;
+    report.findings = check_participants(s.config, s.results, "1.0.0");
+    CHECK(report.errors() == 0 && report.warnings() == 0 && report.notes() == 1);
+    CHECK(report.passed());
+}
+
 TEST_CASE(a_scenario_may_write_what_the_hub_takes_of_a_converted_variable)
 {
     // The seen ends of a converted range are products, and may be off the number as written by a

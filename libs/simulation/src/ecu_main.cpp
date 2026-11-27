@@ -414,7 +414,8 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
         if (!c.no_control && !own_transport)
         {
             description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion),
-                                               static_cast<int>(control::wire::kRevision)};
+                                               static_cast<int>(control::wire::kRevision),
+                                               ecu->agent().options().sample_period};
         }
         // What this executable takes from whoever starts it (the same for every way to call it).
         description.features = {std::string(ecu_executable::kFeatureMapNetwork),

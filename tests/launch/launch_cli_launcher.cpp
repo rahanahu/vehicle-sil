@@ -523,6 +523,20 @@ void strict(const Options& o)
     expect_code(noted, 0, "check --strict alone.yaml with a participant not checked");
     require(contains(noted.standard_output, "\npassed: 0 errors, 0 warnings, 2 notes\n"),
             "check --strict alone.yaml with a participant not checked wrote:\n" + noted.standard_output);
+    // coarse-sample-period is a note, so --strict still passes with exit code 0.
+    const fs::path coarse = o.work_dir / "coarse.yaml";
+    write_file(coarse, "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+                       "  - name: Fast\n    command: [" + yaml_quote(shown_path(o.helper)) +
+                       ", --out, '{\"vehicle_sil_ecu\": 1, \"name\": \"Fast\", \"step_ns\": 1000000, \"networks\": [], "
+                       "\"variables\": [{\"name\": \"fast.x\", \"type\": \"integer\", \"causality\": \"output\", "
+                       "\"unit\": \"\", \"min\": null, \"max\": null, \"step\": null, \"description\": \"\", "
+                       "\"items\": [], \"builtin\": false}], \"control\": {\"transport\": \"silkit\", "
+                       "\"wire_version\": 2, \"wire_revision\": 1, \"sample_period_ns\": 10000000}, \"features\": []}']\n");
+    const Captured coarseStrict = launch(o, {"check", "--strict", shown_path(coarse)});
+    expect_code(coarseStrict, 0, "check --strict coarse.yaml");
+    require(contains(coarseStrict.standard_output, "[coarse-sample-period]") &&
+                contains(coarseStrict.standard_output, "\npassed: 0 errors, 0 warnings, 1 note\n"),
+            "check --strict coarse.yaml wrote:\n" + coarseStrict.standard_output);
     log("CHECK --strict fails on a warning, not on a note -> ok");
 }
 
