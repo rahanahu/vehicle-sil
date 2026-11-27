@@ -630,3 +630,4 @@ vehicle_sil_sim_controller --registry-uri silkit://localhost:8500 --required Eng
 | 設定ファイルのキーと `vehicle_sil_launch` の引数 | [simulation-config.md](simulation-config.md) |
 | 照合の順序と指摘のコード | [simulation-check.md](simulation-check.md) |
 | 実行、止め方、結果 | [simulation-run.md](simulation-run.md) |
+| ランチャーを使わず Vector SIL Kit Dashboard で観測する手順 | [Vector SIL Kit Dashboard でシミュレーションを観測する](howto/vector-dashboard.md) |
