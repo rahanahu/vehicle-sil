@@ -80,21 +80,6 @@ bool has_non_whitespace_utf8(std::string_view text) noexcept
     return false;
 }
 
-const char* compare_name(Compare op)
-{
-    switch (op)
-    {
-    case Compare::Eq: return "eq";
-    case Compare::Ne: return "ne";
-    case Compare::Ge: return "ge";
-    case Compare::Le: return "le";
-    case Compare::Gt: return "gt";
-    case Compare::Lt: return "lt";
-    case Compare::Near: return "near";
-    }
-    return "eq";
-}
-
 int param_source_rank(config::ParamSource source) noexcept
 {
     switch (source)
@@ -364,13 +349,57 @@ void Reader::read()
         {
             out_.steps = static_cast<std::size_t>(tree().num_children(stepsNode));
         }
+        if (hasSteps && !out_.not_for_variant && (!skipReading || !cases_.empty()))
+        {
+            scan_metadata_only(inputsNode, stepsNode);
+        }
     }
-    for (const Known& known : scope().params)
+    std::set<std::string> emittedMeta;
+    const auto push_meta = [&](const std::string& name) {
+        if (!emittedMeta.insert(name).second)
+        {
+            return;
+        }
+        const auto it = param_constraints_.find(name);
+        if (it == param_constraints_.end() || !it->second.template_type)
+        {
+            return;
+        }
+        const ParamConstraint& c = it->second;
+        ScenarioParamMeta meta;
+        meta.name = name;
+        meta.type = param_type_name(*c.template_type);
+        if (c.has_values)
+        {
+            meta.values.reserve(c.allowed_values.size());
+            for (const config::ParamValue& v : c.allowed_values)
+            {
+                meta.values.push_back(v.text);
+            }
+        }
+        meta.description = c.description;
+        out_.param_meta.push_back(std::move(meta));
+    };
+    for (Known& known : scope().params)
     {
         if (known.declared || known.used)
         {
+            if (known.value.from_cli)
+            {
+                const auto cit = param_constraints_.find(known.value.name);
+                if (cit != param_constraints_.end() && cit->second.template_type &&
+                    *cit->second.template_type == ParamType::String && !cit->second.conflict_reported)
+                {
+                    known.value.quoted = true;
+                }
+            }
+            push_meta(known.value.name);
             out_.params.push_back(known.value);
         }
+    }
+    for (const std::string& name : param_constraint_order_)
+    {
+        push_meta(name);
     }
     if (!skipReading &&
         std::none_of(out_.findings.begin(), out_.findings.end(), [](const config::Finding& f) { return f.severity == config::Severity::Error; }))
@@ -386,7 +415,8 @@ void Reader::take_params(ryml::id_type node, const std::vector<config::ParamValu
     {
         for (config::ParamValue& param : read_params(node, "", config::ParamSource::Scenario))
         {
-            scope().params.push_back(Known{std::move(param), true, false});
+            const std::string rootName = param.name;
+            scope().params.push_back(Known{std::move(param), true, false, rootName});
         }
     }
     const auto merge_param = [this](const config::ParamValue& param) {
@@ -394,7 +424,7 @@ void Reader::take_params(ryml::id_type node, const std::vector<config::ParamValu
             std::find_if(scope().params.begin(), scope().params.end(), [&param](const Known& k) { return k.value.name == param.name; });
         if (same == scope().params.end())
         {
-            scope().params.push_back(Known{param, false, false});
+            scope().params.push_back(Known{param, false, false, param.name});
         }
         else if (param_source_rank(param.source) >= param_source_rank(same->value.source))
         {
@@ -416,6 +446,10 @@ void Reader::take_params(ryml::id_type node, const std::vector<config::ParamValu
 
 void Reader::report_undefined_param(const std::string& name, std::size_t line)
 {
+    if (scopes_.size() <= 1)
+    {
+        add_missing_param(name);
+    }
     if (!scope().undefined.insert(name).second)
     {
         return; // said once
@@ -975,6 +1009,34 @@ void Reader::resolve_only_and_case(ryml::id_type onlyNode, const CaseDef* chosen
     {
         scenarioOnly = read_only_list(onlyNode, "");
     }
+    out_.case_details.clear();
+    out_.case_details.reserve(cases_.size());
+    for (const CaseDef& c : cases_)
+    {
+        ScenarioCaseDetail detail;
+        detail.name = c.name;
+        if (scenarioOnly && c.only)
+        {
+            std::vector<std::string> inter;
+            for (const std::string& v : *scenarioOnly)
+            {
+                if (std::find(c.only->begin(), c.only->end(), v) != c.only->end())
+                {
+                    inter.push_back(v);
+                }
+            }
+            detail.only = std::move(inter);
+        }
+        else if (c.only)
+        {
+            detail.only = c.only;
+        }
+        else if (scenarioOnly)
+        {
+            detail.only = scenarioOnly;
+        }
+        out_.case_details.push_back(std::move(detail));
+    }
     const bool hasCaseOnly = chosenCase != nullptr && chosenCase->only.has_value();
     if (!scenarioOnly && !hasCaseOnly)
     {
@@ -1119,6 +1181,7 @@ void Reader::resolve_only_and_case(ryml::id_type onlyNode, const CaseDef* chosen
 
 std::optional<std::int64_t> Reader::millis(ryml::id_type node, const std::string& key, std::int64_t least, const std::string& meaning)
 {
+    record_direct_param_usage(node, ParamType::Integer);
     std::int64_t value = 0;
     if (!plain_integer(node, value))
     {
@@ -1198,9 +1261,7 @@ void Reader::read_step(ryml::id_type node, std::optional<InheritedTiming> inheri
     step.file = current_file();
     step.line = line;
     step.call_stack = active_templates_;
-    absent_.clear();
-    step_bases_.clear();
-    step_dithers_.clear();
+    StepReadState state;
     std::map<std::string, std::size_t> seen;
     std::map<std::string, ryml::id_type> nodes;
     for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
@@ -1449,16 +1510,16 @@ void Reader::read_step(ryml::id_type node, std::optional<InheritedTiming> inheri
     }
 
     std::int64_t length = 0; // of a step whose end is known before the run
-    beside_ = beside;
+    state.beside = beside;
     switch (step.kind)
     {
-    case StepKind::Set: read_set(nodes.at("set"), step, time); break;
-    case StepKind::Ramp: length = read_ramp(nodes.at("ramp"), step, time); break;
-    case StepKind::Wave: length = read_wave(nodes.at("wave"), step, time, undersampledOk); break;
-    case StepKind::Dither: read_dither(nodes.at("dither"), step, undersampledOk); break;
+    case StepKind::Set: read_set(nodes.at("set"), step, state, time); break;
+    case StepKind::Ramp: length = read_ramp(nodes.at("ramp"), step, state, time); break;
+    case StepKind::Wave: length = read_wave(nodes.at("wave"), step, state, time, undersampledOk); break;
+    case StepKind::Dither: read_dither(nodes.at("dither"), step, state, undersampledOk); break;
     case StepKind::Expect:
     case StepKind::WaitUntil:
-        read_conditions(nodes.at(action), step, action);
+        read_conditions(nodes.at(action), step, state, action);
         if (step.kind == StepKind::WaitUntil)
         {
             if (nodes.count("timeout_ms") == 0)
@@ -1490,22 +1551,22 @@ void Reader::read_step(ryml::id_type node, std::optional<InheritedTiming> inheri
         break;
     }
     // The absent variables of the ramp or the wave, before those of the expect beside it.
-    motion_absent_ = absent_.size();
+    state.motion_absent = state.absent.size();
     if (beside)
     {
-        read_conditions(nodes.at("expect"), step, "expect");
+        read_conditions(nodes.at("expect"), step, state, "expect");
     }
     // Only the expect uses what is absent: the ramp or wave runs, unchecked.
-    unchecked_ = beside && motion_absent_ == 0 && !absent_.empty();
-    step.text = step_text(step);
+    state.unchecked = beside && state.motion_absent == 0 && !state.absent.empty();
+    step.text = step_text(step, state);
     const bool checks = beside || step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil;
     if (checks)
     {
         checks_.push_back(CheckRef{step.file, line});
     }
-    if (unchecked_)
+    if (state.unchecked)
     {
-        step.expect_skipped = skip_reason();
+        step.expect_skipped = skip_reason(state.absent);
         step.conditions.clear();
         skipped_checks_.push_back(CheckRef{step.file, line});
         ++unchecked_checks_;
@@ -1514,11 +1575,11 @@ void Reader::read_step(ryml::id_type node, std::optional<InheritedTiming> inheri
             "the " + std::string(step_kind_name(step.kind)) + " runs; its expect is not checked (" + step.text +
                 "): " + step.expect_skipped);
     }
-    else if (!absent_.empty())
+    else if (!state.absent.empty())
     {
         // It takes the time its text says (length), as in a configuration that has the
         // variables: the times of the steps after it do not depend on what is skipped.
-        skip(step);
+        skip(step, state);
         step.skipped_ms = length; // 0 for a step that waits: when it would end is not in the text
         if (checks)
         {
@@ -1551,14 +1612,14 @@ void Reader::read_step(ryml::id_type node, std::optional<InheritedTiming> inheri
     }
     if (step.skipped.empty())
     {
-        note_lines(step, time);
+        note_lines(step, state, time);
     }
     scenario_.steps.push_back(std::move(step));
 }
 
-void Reader::skip(ScenarioStep& step)
+void Reader::skip(ScenarioStep& step, const StepReadState& state)
 {
-    step.skipped = skip_reason();
+    step.skipped = skip_reason(state.absent);
     step.writes.clear();
     step.motions.clear();
     step.overlays.clear();
@@ -1569,12 +1630,12 @@ void Reader::skip(ScenarioStep& step)
             "; the other steps run, also those that would need what this one does");
 }
 
-std::string Reader::skip_reason() const
+std::string Reader::skip_reason(const std::vector<std::string>& absent) const
 {
     std::vector<std::string> names;
     std::vector<std::string> owners;
     std::vector<std::string> leftOut; // the participants the variant leaves out, once each
-    for (const std::string& name : absent_)
+    for (const std::string& name : absent)
     {
         const std::string& owner = absent_variables_.at(name);
         if (left_out_.count(owner) > 0)
@@ -1609,7 +1670,7 @@ std::string Reader::skip_reason() const
     return out;
 }
 
-void Reader::read_set(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time)
+void Reader::read_set(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::optional<std::int64_t>& time)
 {
     if (!tree().is_map(node) || !tree().has_children(node))
     {
@@ -1624,12 +1685,12 @@ void Reader::read_set(ryml::id_type node, ScenarioStep& step, const std::optiona
         {
             continue;
         }
-        const auto v = variable(child);
+        const auto v = variable(child, state.absent);
         if (!v || !writable(*v, doc().line(child), time))
         {
             continue;
         }
-        if (const auto value = value_of(child, *v, "the value", true))
+        if (const auto value = value_of(child, *v, "the value", true, &state))
         {
             const ScenarioVariable& var = scenario_.variables[*v];
             step.writes.push_back(ScenarioWrite{*v, *value, var.text + " = " + value_text(*value, &var)});
@@ -1653,7 +1714,7 @@ std::int64_t Reader::skipped_over_ms(ryml::id_type node)
     return 0;
 }
 
-std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time)
+std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::optional<std::int64_t>& time)
 {
     std::int64_t longest = 0;
     if (!tree().is_map(node) || !tree().has_children(node))
@@ -1670,11 +1731,11 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
         {
             continue;
         }
-        const std::size_t absentBefore = absent_.size();
-        const auto v = variable(child);
+        const std::size_t absentBefore = state.absent.size();
+        const auto v = variable(child, state.absent);
         if (!v)
         {
-            if (absent_.size() > absentBefore)
+            if (state.absent.size() > absentBefore)
             {
                 longest = std::max(longest, skipped_over_ms(child));
             }
@@ -1727,6 +1788,7 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
                     hasTo = hasTo || key == "to";
                     continue;
                 }
+                record_direct_param_usage(part, ParamType::Number);
                 // A ramp writes numbers in between: its ends are numbers of the range, also for an integer.
                 double d = 0;
                 if (!number_of(part, *v, d))
@@ -1745,12 +1807,12 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
                 else if (key == "to")
                 {
                     to = d;
-                    note_base(*v, d, doc().line(part), true);
+                    note_base(state, *v, d, doc().line(part), true);
                 }
                 else
                 {
                     ramp.base = d;
-                    note_base(*v, d, doc().line(part), false);
+                    note_base(state, *v, d, doc().line(part), false);
                 }
                 hasTo = hasTo || key == "to";
             }
@@ -1787,7 +1849,7 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
     return longest;
 }
 
-void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::string& action)
+void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::string& action)
 {
     if (!tree().is_map(node) || !tree().has_children(node))
     {
@@ -1804,7 +1866,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
         {
             continue;
         }
-        const auto v = variable(child);
+        const auto v = variable(child, state.absent);
         if (!v)
         {
             continue;
@@ -1828,6 +1890,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
                 }
                 if (key == "tolerance")
                 {
+                    record_direct_param_usage(part, ParamType::Number);
                     double d = 0;
                     if (!plain_number(part, d) || d < 0)
                     {
@@ -1925,7 +1988,7 @@ std::string Reader::condition_text(const ScenarioVariable& var, const ScenarioCo
     return out;
 }
 
-std::string Reader::step_text(const ScenarioStep& step) const
+std::string Reader::step_text(const ScenarioStep& step, const StepReadState& state) const
 {
     std::string out = step_kind_name(step.kind);
     bool first = true;
@@ -1934,14 +1997,15 @@ std::string Reader::step_text(const ScenarioStep& step) const
     const auto absent = [&](std::size_t from, std::size_t to) {
         for (std::size_t i = from; i < to; ++i)
         {
-            if (std::find(absent_.begin() + static_cast<std::ptrdiff_t>(from), absent_.begin() + static_cast<std::ptrdiff_t>(i), absent_[i]) ==
-                absent_.begin() + static_cast<std::ptrdiff_t>(i))
+            if (std::find(state.absent.begin() + static_cast<std::ptrdiff_t>(from),
+                          state.absent.begin() + static_cast<std::ptrdiff_t>(i), state.absent[i]) ==
+                state.absent.begin() + static_cast<std::ptrdiff_t>(i))
             {
-                out += sep() + absent_[i];
+                out += sep() + state.absent[i];
             }
         }
     };
-    const std::size_t motion = beside_ ? motion_absent_ : absent_.size();
+    const std::size_t motion = state.beside ? state.motion_absent : state.absent.size();
     absent(0, motion);
     for (const auto& w : step.writes)
     {
@@ -1956,12 +2020,12 @@ std::string Reader::step_text(const ScenarioStep& step) const
     {
         out += sep() + o.text;
     }
-    if (beside_)
+    if (state.beside)
     {
         // "ramp Engine.engine.throttle to 80 over 1000 ms, expecting Engine.engine.speed le 3000"
-        out += unchecked_ ? ", expect not checked:" : ", expecting";
+        out += state.unchecked ? ", expect not checked:" : ", expecting";
         first = true;
-        absent(motion, absent_.size());
+        absent(motion, state.absent.size());
     }
     for (const auto& c : step.conditions)
     {
@@ -1990,6 +2054,21 @@ using reader::as_number;
 using reader::kDocs;
 using reader::number_text;
 using reader::Reader;
+
+const char* compare_name(Compare op)
+{
+    switch (op)
+    {
+    case Compare::Eq: return "eq";
+    case Compare::Ne: return "ne";
+    case Compare::Ge: return "ge";
+    case Compare::Le: return "le";
+    case Compare::Gt: return "gt";
+    case Compare::Lt: return "lt";
+    case Compare::Near: return "near";
+    }
+    return "eq";
+}
 
 const char* step_kind_name(StepKind kind)
 {
@@ -2177,11 +2256,12 @@ ScenarioInspection inspect_scenario(std::string_view text, const ScenarioContext
             out.params_incomplete = true;
             return out;
         }
+        reader::SharedReadCache sharedCache;
         ScenarioContext baseCtx = context;
         baseCtx.case_name.reset();
         baseCtx.params_for_many = true;
         ScenarioRead firstRead;
-        Reader firstReader(doc, {}, baseCtx, firstRead, false);
+        Reader firstReader(doc, {}, baseCtx, firstRead, false, &sharedCache);
         firstReader.read();
         out.has_cases = firstReader.has_cases();
         out.cases = firstRead.cases;
@@ -2216,25 +2296,34 @@ ScenarioInspection inspect_scenario(std::string_view text, const ScenarioContext
         {
             targets = out.cases;
         }
+        const auto has_err = [](const std::vector<config::Finding>& fs) {
+            return std::any_of(fs.begin(), fs.end(),
+                               [](const config::Finding& f) { return f.severity == config::Severity::Error; });
+        };
         for (const std::string& caseName : targets)
         {
             ScenarioContext caseCtx = context;
             caseCtx.case_name = caseName;
             caseCtx.params_for_many = true;
             ScenarioRead caseRead;
-            Reader(doc, {}, caseCtx, caseRead, false).read();
+            Reader(doc, {}, caseCtx, caseRead, false, &sharedCache).read();
             out.params_incomplete = out.params_incomplete || caseRead.params_incomplete;
+            CaseInspection caseInfo;
+            caseInfo.name = caseName;
+            caseInfo.params_incomplete = caseRead.params_incomplete;
+            caseInfo.has_error = has_err(caseRead.findings);
             for (const config::ParamValue& p : caseRead.params)
             {
+                if (std::find(caseInfo.param_names.begin(), caseInfo.param_names.end(), p.name) == caseInfo.param_names.end())
+                {
+                    caseInfo.param_names.push_back(p.name);
+                }
                 if (std::find(out.param_names.begin(), out.param_names.end(), p.name) == out.param_names.end())
                 {
                     out.param_names.push_back(p.name);
                 }
             }
-            const auto has_err = [](const std::vector<config::Finding>& fs) {
-                return std::any_of(fs.begin(), fs.end(),
-                                   [](const config::Finding& f) { return f.severity == config::Severity::Error; });
-            };
+            out.case_inspections.push_back(std::move(caseInfo));
             if (out.findings.empty() || (!has_err(out.findings) && has_err(caseRead.findings)))
             {
                 out.findings = std::move(caseRead.findings);

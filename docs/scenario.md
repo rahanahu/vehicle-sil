@@ -786,7 +786,7 @@ Each entry under `parameters` has:
 | `values` | No | Optional non-empty list of allowed values matching `type`. |
 | `description` | No | Optional human description. |
 
-Templates are **lexically isolated**: steps inside a template only see parameters declared in that template's `parameters` (`TemplateDefault < TemplateCall`). Scenario, configuration, variant, and `--param` values do not leak into templates unless passed explicitly via `params:` on `- template:` (where `"${outer}"` forwards the outer value without adding YAML quotes).
+Templates are **lexically isolated**: steps inside a template only see parameters declared in that template's `parameters` (`TemplateDefault < TemplateCall`). Scenario, configuration, variant, and `--param` values do not leak into templates unless passed explicitly via `params:` on `- template:` (where `"${outer}"` forwards the outer value without adding YAML quotes). When the same scenario parameter `${p}` is forwarded to multiple template parameters or typed direct steps, compatible numeric constraints narrow (`integer` + `number` becomes `integer`) and `values` lists intersect (an empty intersection is a `scenario-param` error); mixing `string` with numeric/boolean uses or `boolean` with numeric uses is a static `scenario-param` error (string interpolation such as `name: "Run ${p}"` adds no type constraint). When CLI `--param p=123` is bound only to `type: string`, `check --json` and `run --json` emit `"123"` consistently with `call_stack[].params`.
 
 Relative paths in `template:` and `points: { file: ... }` resolve from the declaring template's directory and may use `..` segments as long as the normalized path stays inside the root scenario's directory. Nested calls enforce a cycle check (`scenario-template-cycle`), maximum depth of 16 (`scenario-template-depth`), and maximum of 10,000 expanded steps (`scenario-template-steps`). Findings and failed steps inside templates include their template `file:line` and `called from:` `call_stack` provenance.
 
@@ -1162,9 +1162,11 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `file`, `name` | Always | The scenario's file and name |
 | `case` | Only if selected | The selected case name (`--case`) |
 | `cases` | Only if defined | The scenario's case names in file order |
+| `case_details` | Only if `cases` is defined | Per-case summary objects (`{ name, only }`, where `only` is the effective variant array or `null`) |
 | `steps` | Always | The number of steps |
 | `only` | Only if set | An array of variant names |
-| `params` | Only if any | For each parameter that the scenario declares or uses: `name`, `value`, `from` |
+| `params` | Only if any | For each parameter that the scenario declares or uses: `name`, `value`, `from`, plus optional `type`, `values`, `description` derived from called templates |
+| `missing_params` | Only if any | Required parameter names that currently have no value (undefined root `${name}` references or omitted required template parameters) |
 | `skipped_steps` | Only if any | The number of steps to be skipped |
 | `unchecked_expects` | Only if any | The number of `expect`s beside steps that will not be checked |
 | `inputs`, `lines` | Always (empty arrays in a scenario without a `dither`; `null` if the scenario could not be read) | See the next table. The `scenario` of `run --json` has the same keys |

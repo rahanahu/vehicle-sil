@@ -71,18 +71,80 @@ const char* type_name(control::ValueType type);
 double as_number(const control::Value& value);
 std::string items_text(const std::vector<control::EnumItem>& items);
 
+template <class Fn>
+class ScopeGuard
+{
+public:
+    explicit ScopeGuard(Fn fn) : fn_(std::move(fn)) {}
+    ~ScopeGuard() { fn_(); }
+    ScopeGuard(const ScopeGuard&) = delete;
+    ScopeGuard& operator=(const ScopeGuard&) = delete;
+
+private:
+    Fn fn_;
+};
+
+enum class ParamType
+{
+    Integer,
+    Number,
+    Boolean,
+    String,
+};
+
+struct ParameterDef
+{
+    std::string name;
+    ParamType type = ParamType::String;
+    std::size_t line = 0;
+    std::optional<config::ParamValue> default_value{};
+    std::vector<config::ParamValue> allowed_values{};
+    std::string description{};
+};
+
+struct CachedTemplate
+{
+    std::unique_ptr<config::detail::YamlDocument> doc;
+    std::string shown_file;
+    std::string dir_rel;
+    std::vector<ParameterDef> parameters;
+    ryml::id_type steps_node = ryml::NONE;
+    bool valid = false;
+    std::string read_error{};
+    std::string invalid_summary{};
+};
+
+/// A file the scenario names, as read once (ScenarioContext::read_file, read_csv()).
+struct CsvFile
+{
+    std::optional<detail::CsvTable> table;
+    std::string problem; ///< if there is no table: after the file's name
+};
+
+/// Cache of parsed template files and CSV points files, reusable across cases in inspect_scenario().
+struct SharedReadCache
+{
+    std::map<std::string, CachedTemplate> templates{};
+    std::map<std::string, CsvFile> files{};
+};
+
 class Reader : config::detail::YamlReader
 {
 public:
     Reader(const config::detail::YamlDocument& doc, const ScenarioCatalog& catalog, const ScenarioContext& context,
-           ScenarioRead& out, bool check_catalog = true) :
+           ScenarioRead& out, bool check_catalog = true, SharedReadCache* shared_cache = nullptr) :
       config::detail::YamlReader(doc, out.findings), catalog_(catalog), context_(context), out_(out),
-      check_catalog_(check_catalog)
+      check_catalog_(check_catalog), cache_(shared_cache != nullptr ? *shared_cache : owned_cache_)
     {
         const auto slash = context_.scenario_file.find_last_of("/\\");
         if (slash != std::string::npos)
         {
             scenario_dir_prefix_ = context_.scenario_file.substr(0, slash);
+            std::replace(scenario_dir_prefix_.begin(), scenario_dir_prefix_.end(), '\\', '/');
+            while (!scenario_dir_prefix_.empty() && scenario_dir_prefix_.back() == '/')
+            {
+                scenario_dir_prefix_.pop_back();
+            }
         }
         scopes_.push_back(EvalScope{&doc, context_.scenario_file, ""});
     }
@@ -130,8 +192,43 @@ private:
     {
         config::ParamValue value;
         bool declared = false;
-        bool used = false; ///< a step has "${name}"
+        bool used = false;                     ///< a step has "${name}"
+        std::optional<std::string> root_param; ///< root scenario parameter name if bound/forwarded from root scope
     };
+
+    /// Parameter constraint lattice accumulated for a root scenario parameter across called templates
+    /// and direct steps. Only `template_type` / `allowed_values` / `description` (from template ParameterDefs)
+    /// are emitted as metadata; `effective_type` also tracks direct step usages for static conflict checks.
+    struct ParamConstraint
+    {
+        std::optional<ParamType> template_type{};
+        std::vector<config::ParamValue> allowed_values{};
+        bool has_values = false;
+        std::string description{};
+        std::optional<ParamType> effective_type{};
+        std::string first_origin{};
+        bool conflict_reported = false;
+    };
+
+    struct Base;
+    struct Dither;
+    struct StepReadState;
+
+    /// Records a constraint from a template ParameterDef on root parameter `root_name`.
+    void record_template_param_constraint(const std::string& root_name, const ParameterDef& def, std::size_t line,
+                                          bool emit_errors);
+    /// Records a direct typed step usage of a whole-value `${param}` node (conflict check only, not emitted as metadata).
+    void record_direct_param_usage(ryml::id_type node, ParamType usage_type);
+    static std::optional<ParamType> join_param_types(ParamType a, ParamType b) noexcept;
+    static bool value_fits_type_quiet(const config::ParamValue& pv, ParamType type);
+    void add_missing_param(const std::string& name);
+    /// Lightweight cache-sharing scan of inputs, steps, and templates for unselected/unknown case metadata
+    /// (and fallback metadata collection when parameter resolution fails). Emits no findings.
+    void scan_metadata_only(ryml::id_type inputs_node, ryml::id_type steps_node);
+    void scan_scalar_param_refs(ryml::id_type node, bool allow_interpolation);
+    void scan_interpolated_text_refs(const std::string& text);
+    void note_param_ref_metadata(const std::string& name);
+    void scan_steps_metadata(ryml::id_type steps_node);
 
     /// The scenario's defaults (`node`, or ryml::NONE), then the context's and chosen case's by rank.
     void take_params(ryml::id_type node, const std::vector<config::ParamValue>* case_params = nullptr);
@@ -213,13 +310,16 @@ private:
     const control::VariableInfo* info_of(std::size_t variable) const { return infos_[variable]; }
 
     /// The index of "<participant>.<name>" in the scenario's variables, or empty (and an error).
-    std::optional<std::size_t> variable(ryml::id_type node);
+    /// Appends absent/left-out variable names to `absent` instead of touching member state.
+    std::optional<std::size_t> variable_by_name(std::string_view raw_name, std::size_t line, std::vector<std::string>& absent);
+    std::optional<std::size_t> variable(ryml::id_type node, std::vector<std::string>& absent);
 
     std::string example_variable() const;
 
     /// The value written at `node` as a value of the variable: for a write (`write`: an integer
     /// variable takes whole numbers only, and the range counts) or for a comparison.
-    std::optional<control::Value> value_of(ryml::id_type node, std::size_t variable, const std::string& what, bool write);
+    std::optional<control::Value> value_of(ryml::id_type node, std::size_t variable, const std::string& what, bool write,
+                                           StepReadState* state = nullptr);
 
     /// Whether `value` may be written to the variable: as the run's hub decides for a converted
     /// variable (the seen ends of its range are products), else within min and max.
@@ -236,34 +336,6 @@ private:
     {
         std::optional<std::int64_t> at_ms{};
         std::int64_t after_ms = 0;
-    };
-
-    enum class ParamType
-    {
-        Integer,
-        Number,
-        Boolean,
-        String,
-    };
-
-    struct ParameterDef
-    {
-        std::string name;
-        ParamType type = ParamType::String;
-        std::size_t line = 0;
-        std::optional<config::ParamValue> default_value{};
-        std::vector<config::ParamValue> allowed_values{};
-    };
-
-    struct CachedTemplate
-    {
-        std::unique_ptr<config::detail::YamlDocument> doc;
-        std::string shown_file;
-        std::string dir_rel;
-        std::vector<ParameterDef> parameters;
-        ryml::id_type steps_node = ryml::NONE;
-        bool valid = false;
-        std::string read_error{};
     };
 
     void read_steps(ryml::id_type node, std::optional<InheritedTiming> first_timing = std::nullopt,
@@ -299,11 +371,11 @@ private:
     /// A value the text puts on a written variable (a set's value, an end of a ramp, a level or
     /// an end of a wave), of the step being read: what a dither on the variable may be added to.
     /// `stays`: the step leaves the input there.
-    void note_base(std::size_t variable, double value, std::size_t line, bool stays);
+    void note_base(StepReadState& state, std::size_t variable, double value, std::size_t line, bool stays);
 
     /// A step that runs: what it puts on the inputs, for the list of the lines and the findings
     /// about the dithers (a skipped step puts nothing).
-    void note_lines(const ScenarioStep& step, const std::optional<std::int64_t>& time);
+    void note_lines(const ScenarioStep& step, const StepReadState& state, const std::optional<std::int64_t>& time);
 
     /// A number as it is written to the variable: an integer rounded as the run rounds it.
     double as_written(double value, std::size_t variable) const;
@@ -314,15 +386,15 @@ private:
     /// an integer rounds away, and those that nothing is ever under.
     void check_dithers();
 
-    /// The step uses variables that their participants do not have (absent_): it does nothing in
+    /// The step uses variables that their participants do not have (`state.absent`): it does nothing in
     /// the run, which says so; a note says it before.
-    void skip(ScenarioStep& step);
+    void skip(ScenarioStep& step, const StepReadState& state);
 
-    /// Why the variables of absent_ cannot be used: "Body.boost is absent: participant 'Body' does
+    /// Why the variables of `absent` cannot be used: "Body.boost is absent: participant 'Body' does
     /// not have it in this configuration (absent: true in its variables)".
-    std::string skip_reason() const;
+    std::string skip_reason(const std::vector<std::string>& absent) const;
 
-    void read_set(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time);
+    void read_set(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::optional<std::int64_t>& time);
 
     /// The over_ms of the ramp of a variable that is absent (`node`: its entry in "ramp"), or 0 if
     /// it has none that can be read. Only this is read of it: it is a time, which needs no type;
@@ -330,7 +402,7 @@ private:
     std::int64_t skipped_over_ms(ryml::id_type node);
 
     /// @returns the longest over_ms, also of the variables that are absent.
-    std::int64_t read_ramp(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time);
+    std::int64_t read_ramp(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::optional<std::int64_t>& time);
 
     // --- wave ---
 
@@ -360,7 +432,8 @@ private:
     /// A value of the variable that a wave writes as it is (`key` of `what`): for a bool true or
     /// false, for an enum an item, else a number of the range (also for an integer: the wave
     /// rounds what it writes).
-    std::optional<double> level(ryml::id_type node, std::size_t variable, const std::string& key, const std::string& what);
+    std::optional<double> level(ryml::id_type node, std::size_t variable, const std::string& key, const std::string& what,
+                                StepReadState* state = nullptr);
 
     /// period_ms or frequency_hz, and phase_deg, of a shape that repeats. `text`: as the step's
     /// text shows them.
@@ -429,7 +502,7 @@ private:
     std::int64_t skipped_wave_ms(ryml::id_type node);
 
     /// @returns the longest length, also of the variables that are absent.
-    std::int64_t read_wave(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time, bool quiet);
+    std::int64_t read_wave(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::optional<std::int64_t>& time, bool quiet);
 
     // --- dithers ---
 
@@ -437,11 +510,12 @@ private:
     void read_inputs(ryml::id_type node);
 
     /// The step "dither": per variable none, or the shape that is on top of it from the step's time.
-    void read_dither(ryml::id_type node, ScenarioStep& step, bool quiet);
+    void read_dither(ryml::id_type node, ScenarioStep& step, StepReadState& state, bool quiet);
 
     /// The dither of the variable `v` (`node`: a shape, or in a step none), or empty (and its errors).
     /// `shown`: the line it is known by (ScenarioOverlay::line): the step's, or its entry's in "inputs".
-    std::optional<ScenarioOverlay> read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step, std::size_t shown);
+    std::optional<ScenarioOverlay> read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step, std::size_t shown,
+                                                std::vector<Dither>* step_dithers = nullptr);
 
     /// What makes a wave's shape once everything is read: given the wave's length.
     using MakeShape = std::function<std::shared_ptr<const Waveform>(SimDuration)>;
@@ -458,10 +532,11 @@ private:
     bool read_shape(const std::string& shape, ryml::id_type body, const Parts& top_parts, std::size_t v, const std::string& what,
                     std::size_t line, const std::optional<std::int64_t>& time, bool quiet, bool& good, ScenarioMotion& out,
                     std::string& text, std::optional<std::int64_t>& length, bool& wantsFor, std::string& noAround,
-                    std::optional<double>& swing, MakeShape& make);
+                    std::optional<double>& swing, MakeShape& make, StepReadState* state = nullptr);
 
     /// The wave of one variable (`node`: its entry in "wave"), or empty (and its errors).
-    std::optional<ScenarioMotion> read_wave_of(ryml::id_type node, std::size_t v, const std::optional<std::int64_t>& time, bool quiet);
+    std::optional<ScenarioMotion> read_wave_of(ryml::id_type node, std::size_t v, StepReadState& state,
+                                               const std::optional<std::int64_t>& time, bool quiet);
 
     /// A chirp whose highest frequency its ECU cannot see (a warning), or sees coarsely (a note).
     void check_chirp(std::size_t variable, const std::string& what, std::size_t line, bool quiet, double top_hz);
@@ -470,16 +545,9 @@ private:
     /// they have no error; then `length` and `make` are set.
     bool read_points(ryml::id_type body, ryml::id_type interpolate, std::size_t v, const std::string& what,
                      const std::optional<std::int64_t>& time, bool quiet, ScenarioMotion& out, std::string& text, std::optional<std::int64_t>& length,
-                     std::function<std::shared_ptr<const Waveform>(SimDuration)>& make);
+                     std::function<std::shared_ptr<const Waveform>(SimDuration)>& make, StepReadState& state);
 
     // --- points from a CSV file ---
-
-    /// A file the scenario names, as read once (ScenarioContext::read_file, read_csv()).
-    struct CsvFile
-    {
-        std::optional<detail::CsvTable> table;
-        std::string problem; ///< if there is no table: after the file's name
-    };
 
     const CsvFile& csv(const std::string& path);
 
@@ -491,13 +559,14 @@ private:
     /// 1 or 0; for an enum an item by name or by value; else a number of the range (also hexadecimal
     /// for an integer). Empty and an error at `line` if it is not one. `where`: "line 7 of f.csv
     /// (column throttle)".
-    std::optional<double> cell_value(const std::string& cell, std::size_t variable, const std::string& where, std::size_t line);
+    std::optional<double> cell_value(const std::string& cell, std::size_t variable, const std::string& where, std::size_t line,
+                                     StepReadState& state);
 
     /// The points of a wave from a CSV file (`body`: { file, value, time, time_unit }), each given
     /// to `add` (read_points()). Stops at the first error. `source`: " from <file> column <name>".
     template <class Add>
     bool file_points(ryml::id_type body, std::size_t v, const std::string& what, const Add& add, std::string& source,
-                     ScenarioShapeText& described);
+                     ScenarioShapeText& described, StepReadState& state);
 
     /// Points that are kept until the next (interpolate: hold): a jump is what they are for, so
     /// how close two of them are does not matter; one whose value the ECU never gets does. Says
@@ -506,13 +575,13 @@ private:
                            const std::vector<signal::Point>& points, const std::vector<std::string>& names,
                            const std::optional<std::int64_t>& time);
 
-    void read_conditions(ryml::id_type node, ScenarioStep& step, const std::string& action);
+    void read_conditions(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::string& action);
 
     static std::optional<Compare> compare_of(const std::string& key);
 
     static std::string condition_text(const ScenarioVariable& var, const ScenarioCondition& condition);
 
-    std::string step_text(const ScenarioStep& step) const;
+    std::string step_text(const ScenarioStep& step, const StepReadState& state) const;
 
     struct EvalScope
     {
@@ -532,18 +601,20 @@ private:
     const ScenarioContext& context_;
     ScenarioRead& out_;
     bool check_catalog_ = true;
+    SharedReadCache owned_cache_{};
+    SharedReadCache& cache_;
     std::string scenario_dir_prefix_{};
     std::vector<EvalScope> scopes_;
     std::vector<SourceFrame> active_templates_;
     std::vector<std::string> active_rel_paths_;
-    std::map<std::string, CachedTemplate> templates_;
+    std::map<std::string, ParamConstraint> param_constraints_;
+    std::vector<std::string> param_constraint_order_;
     std::size_t expanded_steps_ = 0;
     bool too_many_expanded_steps_ = false;
     bool caller_template_params_incomplete_ = false;
     std::vector<CaseDef> cases_;
     bool cases_written_ = false;
     bool cases_incomplete_ = false;
-    std::map<std::string, CsvFile> files_; ///< the points files, by normalized path from root scenario dir
     Scenario scenario_;
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
     /// What the steps that run put on the inputs, as the text says it (note_lines()).
@@ -569,6 +640,16 @@ private:
         std::string shape;
         std::vector<SourceFrame> call_stack{};
     };
+    /// Per-step scratch state passed explicitly while reading a single step (isolated from recursive template calls).
+    struct StepReadState
+    {
+        std::vector<std::string> absent{};
+        bool beside = false;
+        bool unchecked = false;
+        std::size_t motion_absent = 0;
+        std::vector<Base> bases{};
+        std::vector<Dither> dithers{};
+    };
     /// In the order of the file, of the steps that run: a value put on an input, or a dither
     /// step's dither (an index in dithers_).
     struct Flow
@@ -577,8 +658,6 @@ private:
         std::optional<Base> value{};
         std::optional<std::size_t> dither{};
     };
-    std::vector<Base> step_bases_;     ///< of the step being read
-    std::vector<Dither> step_dithers_; ///< of the step being read
     std::vector<Dither> dithers_;      ///< those of "inputs" (the first declared_ of them), then those of the steps that run
     std::size_t declared_ = 0;
     std::vector<Flow> flow_;
@@ -588,12 +667,8 @@ private:
     bool inputs_written_ = false; ///< the file has "inputs"
     /// How the messages say to run a wave or a dither as it is (kAsItIs; kAsItIsInput while "inputs" is read).
     const char* as_it_is_ = kAsItIs;
-    std::vector<std::string> absent_;                   ///< those the step being read uses
-    bool beside_ = false;          ///< the step being read is a ramp or a wave with an expect beside it
-    bool unchecked_ = false;       ///< and only its expect uses what is absent: the expect is not checked
     std::size_t unchecked_checks_ = 0; ///< of skipped_checks_, those of an expect beside that is not checked
-    std::size_t motion_absent_ = 0; ///< of absent_, those of its ramp or wave (the others: of the expect)
-    std::set<std::string> left_out_; ///< the participants of absent_variables_ that the variant leaves out
+    std::set<std::string> left_out_;   ///< the participants of absent_variables_ that the variant leaves out
     struct CheckRef
     {
         std::string file;

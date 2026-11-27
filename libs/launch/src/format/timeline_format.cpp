@@ -59,21 +59,6 @@ void write_text_or_null(JsonWriter& w, std::string_view key, const std::string& 
     }
 }
 
-const char* compare_name(scenario::Compare op)
-{
-    switch (op)
-    {
-    case scenario::Compare::Eq: return "eq";
-    case scenario::Compare::Ne: return "ne";
-    case scenario::Compare::Ge: return "ge";
-    case scenario::Compare::Le: return "le";
-    case scenario::Compare::Gt: return "gt";
-    case scenario::Compare::Lt: return "lt";
-    case scenario::Compare::Near: return "near";
-    }
-    return "eq";
-}
-
 const control::VariableInfo* described(const scenario::ScenarioCatalog* catalog, const scenario::Scenario& scenario, const scenario::ScenarioVariable& variable)
 {
     if (catalog == nullptr)
@@ -177,7 +162,7 @@ void write_watch(JsonWriter& w, const scenario::Scenario& scenario, const scenar
         for (const scenario::ScenarioComparison& c : condition.all)
         {
             w.begin_object();
-            w.string("op", compare_name(c.op));
+            w.string("op", scenario::compare_name(c.op));
             write_value(w, "value", c.value);
             if (c.op == scenario::Compare::Near)
             {
@@ -343,26 +328,6 @@ void write_series(JsonWriter& w, const TimelineInput& input)
     w.end_array();
 }
 
-void write_shape_value(JsonWriter& w, std::string_view key, const scenario::ScenarioShapeText::Value& value)
-{
-    if (const auto* d = std::get_if<double>(&value))
-    {
-        w.real(key, *d);
-    }
-    else if (const auto* i = std::get_if<std::int64_t>(&value))
-    {
-        w.integer(key, *i);
-    }
-    else if (const auto* b = std::get_if<bool>(&value))
-    {
-        w.boolean(key, *b);
-    }
-    else
-    {
-        w.string(key, std::get<std::string>(value));
-    }
-}
-
 /// A dither as a line: what "inputs" declares (no step) or a dither step put, from the first
 /// write that carried it. It has no end in the text and no base.
 void write_dither_line(JsonWriter& w, const scenario::Scenario& scenario, const scenario::TimelineRecord::Line& line)
@@ -395,7 +360,7 @@ void write_dither_line(JsonWriter& w, const scenario::Scenario& scenario, const 
         w.string("type", overlay.described.type);
         for (const auto& [key, value] : overlay.described.values)
         {
-            write_shape_value(w, key, value);
+            detail::write_shape_value(w, key, value);
         }
         w.end_object();
     }
@@ -442,7 +407,7 @@ void write_lines(JsonWriter& w, const TimelineInput& input)
                 w.string("type", motion->described.type);
                 for (const auto& [key, value] : motion->described.values)
                 {
-                    write_shape_value(w, key, value);
+                    detail::write_shape_value(w, key, value);
                 }
                 w.end_object();
             }

@@ -236,14 +236,10 @@ std::vector<InspectedScenario> inspect_scenarios(const std::vector<TestScenario>
 
 /// The parameters of the command line that no scenario declares or uses: a usage error each (a
 /// typing error would otherwise change nothing, silently). Nothing if a scenario cannot be read
-/// that far: its run says what is wrong with it, and the parameter may be in it. `configured`:
-/// the parameters the configuration gives a value (in any of the variants that run), so that a
-/// scenario's parameter without a default of its own is found too.
+/// that far: its run says what is wrong with it, and the parameter may be in it.
 std::vector<config::Finding> unused_params(const std::vector<TestScenario>& scenarios,
                                            const std::vector<InspectedScenario>& inspected,
-                                           const std::vector<std::string>& variants,
                                            const std::vector<std::string>& filterCases,
-                                           const std::vector<config::ParamValue>& configured,
                                            const std::vector<config::ParamValue>& given)
 {
     if (given.empty())
@@ -300,32 +296,19 @@ std::vector<config::Finding> unused_params(const std::vector<TestScenario>& scen
             }
             continue;
         }
-        const std::filesystem::path path = process::path_from_utf8(scenarios[i].shown);
         for (const std::string& caseName : item.inspection.cases)
         {
             if (std::find(filterCases.begin(), filterCases.end(), caseName) == filterCases.end())
             {
                 continue;
             }
-            scenario::ScenarioContext context;
-            context.variants = variants;
-            context.params = configured;
-            context.params.insert(context.params.end(), given.begin(), given.end());
-            context.params_for_many = true;
-            context.scenario_file = scenarios[i].shown;
-            context.read_file = files_beside(path);
-            context.read_template = files_beside(path, "the template file");
-            context.case_name = caseName;
-            const scenario::ScenarioInspection caseInsp = scenario::inspect_scenario(item.text, context);
-            const bool caseBroken =
-                caseInsp.params_incomplete ||
-                std::any_of(caseInsp.findings.begin(), caseInsp.findings.end(),
-                            [](const config::Finding& f) { return f.severity == config::Severity::Error; });
-            if (caseBroken)
+            const auto ci = std::find_if(item.inspection.case_inspections.begin(), item.inspection.case_inspections.end(),
+                                         [&](const scenario::CaseInspection& c) { return c.name == caseName; });
+            if (ci == item.inspection.case_inspections.end() || ci->params_incomplete || ci->has_error)
             {
                 return {};
             }
-            for (const std::string& p : caseInsp.param_names)
+            for (const std::string& p : ci->param_names)
             {
                 if (std::find(names.begin(), names.end(), p) == names.end())
                 {
@@ -827,7 +810,7 @@ TestReport test_file(const TestOptions& options)
     }
     if (!intent.params.empty())
     {
-        if (auto unused = unused_params(options.scenarios, inspected, file.variants, options.cases, configured, intent.params); !unused.empty())
+        if (auto unused = unused_params(options.scenarios, inspected, options.cases, intent.params); !unused.empty())
         {
             return refuse(std::move(unused));
         }

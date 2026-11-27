@@ -786,7 +786,7 @@ steps:
 | `values` | いいえ | `type` に合う許可値のリスト（空でない配列、省略可）です。 |
 | `description` | いいえ | 人が読む説明文（省略可）です。 |
 
-テンプレートは**レキシカルに隔離**されます。テンプレート内の手順が参照できるのは、そのテンプレート自身の `parameters` に宣言されたパラメーターだけです（`TemplateDefault < TemplateCall`）。シナリオ、設定ファイル、variant、`--param` の値は暗黙には入らず、`- template:` の `params:` で明示的に渡します（`"${outer}"` と書くと外側の引用符を剥がして値・型情報を引き継ぎます）。
+テンプレートは**レキシカルに隔離**されます。テンプレート内の手順が参照できるのは、そのテンプレート自身の `parameters` に宣言されたパラメーターだけです（`TemplateDefault < TemplateCall`）。シナリオ、設定ファイル、variant、`--param` の値は暗黙には入らず、`- template:` の `params:` で明示的に渡します（`"${outer}"` と書くと外側の引用符を剥がして値・型情報を引き継ぎます）。同じシナリオパラメーター `${p}` を複数のテンプレートパラメーターや型付きの直接手順へ渡す場合、`integer` と `number` の併用は `integer` に絞り込まれ、`values` は積集合をとります（空集合は `scenario-param` エラー）。`string` と数値・真偽値の併用、および `boolean` と数値の併用は静的な `scenario-param` エラーになります（`name: "Run ${p}"` のような文字列補間は型制約を課しません）。CLI の `--param p=123` が `type: string` のみに束縛される場合、`check --json` と `run --json` は `call_stack[].params` と同じく `"123"` を出力します。
 
 `template:` と `points: { file: ... }` の相対パスは、それを書いたテンプレートのディレクトリを起点に解決され、正規化後のパスがルートシナリオのディレクトリ内に留まる限り `..` を使えます。入れ子呼び出しでは循環検出（`scenario-template-cycle`）、最大深さ 16（`scenario-template-depth`）、最大展開手順数 10,000（`scenario-template-steps`）を強制します。テンプレート内の照合指摘や失敗手順には、テンプレートの `file:line` と `called from:` の `call_stack` が付きます。
 
@@ -1162,9 +1162,11 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `file`、`name` | いつも | シナリオのファイルと名前 |
 | `case` | 選択されたときだけ | 選択されたケース名（`--case`） |
 | `cases` | 定義されたときだけ | ファイル順のケース名一覧 |
+| `case_details` | `cases` が定義されたときだけ | ケースごとの要約オブジェクト（`{ name, only }`、`only` は有効な機種配列または `null`） |
 | `steps` | いつも | 手順の数 |
 | `only` | あるときだけ | 機種の名前の配列 |
-| `params` | あるときだけ | シナリオが宣言したか使ったパラメーターごとに、`name`、`value`、`from` |
+| `params` | あるときだけ | シナリオが宣言したか使ったパラメーターごとに、`name`、`value`、`from`、および呼び出し先テンプレートから確定する任意の `type`、`values`、`description` |
+| `missing_params` | あるときだけ | 値が未指定の必須パラメーター名（ルートスコープで未定義の `${name}`、または呼び出し側で省略された必須テンプレート引数） |
 | `skipped_steps` | あるときだけ | スキップする手順の数 |
 | `unchecked_expects` | あるときだけ | 確認しない横の `expect` の数 |
 | `inputs`、`lines` | いつも（`dither` のないシナリオでは空の配列。シナリオを読めなかったときは `null`） | 次の表。`run --json` の `scenario` にも同じものがあります |

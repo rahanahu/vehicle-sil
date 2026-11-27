@@ -382,28 +382,9 @@ std::string detail::scenario_text(const scenario::ScenarioRun& scenario)
     // Why, for the steps that were skipped and the expects that were not checked: the table has no
     // room for it.
     const auto add_call_stack = [&](const std::vector<scenario::SourceFrame>& stack) {
-        for (auto it = stack.rbegin(); it != stack.rend(); ++it)
+        if (!stack.empty())
         {
-            out += "    called from: " +
-                   (it->file.empty() ? "line " + std::to_string(it->line) : it->file + ":" + std::to_string(it->line));
-            std::string meta;
-            if (!it->name.empty())
-            {
-                meta += "step '" + it->name + "'";
-            }
-            for (const scenario::SourceParam& p : it->params)
-            {
-                if (!meta.empty())
-                {
-                    meta += ", ";
-                }
-                meta += p.name + " = " + (p.quoted ? "\"" + p.text + "\"" : p.text);
-            }
-            if (!meta.empty())
-            {
-                out += " (" + meta + ")";
-            }
-            out += "\n";
+            out += scenario::format_call_stack_text(stack, "    ") + "\n";
         }
     };
     for (const scenario::ScenarioStepRun& step : scenario.steps)
@@ -765,32 +746,7 @@ void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const
         // Only when there is one: the steps of a scenario without it are as they were.
         w.string("expect_skipped", step.expect_skipped);
     }
-    if (!step.call_stack.empty())
-    {
-        w.begin_array("call_stack");
-        for (const scenario::SourceFrame& frame : step.call_stack)
-        {
-            w.begin_object();
-            w.string("file", frame.file);
-            w.integer("line", static_cast<std::int64_t>(frame.line));
-            if (frame.name.empty())
-            {
-                w.null("name");
-            }
-            else
-            {
-                w.string("name", frame.name);
-            }
-            w.begin_object("params");
-            for (const scenario::SourceParam& param : frame.params)
-            {
-                detail::write_param_scalar(w, param.name, param.text, param.quoted);
-            }
-            w.end_object();
-            w.end_object();
-        }
-        w.end_array();
-    }
+    detail::write_call_stack_json(w, "call_stack", step.call_stack);
 }
 
 void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const scenario::ScenarioRun& scenario,

@@ -701,3 +701,76 @@ TEST_CASE(request_file_reads_after_scenario_and_copies_it_on_merge)
     CHECK(merged.intent.after_scenario == AfterScenario::Pause);
     CHECK(merged.intent.scenario == std::optional<std::string>("s.yaml"));
 }
+
+TEST_CASE(request_file_parameter_precedence_with_variant_case_cli_and_template)
+{
+    const std::filesystem::path dir = project("param_precedence");
+    std::filesystem::create_directories(dir / "project" / "scenarios" / "templates");
+    std::ofstream(dir / "project" / "sim.yaml", std::ios::binary)
+        << "vehicle_sil_simulation: 2\n"
+        << "networks: []\n"
+        << "params: { p_cfg: 10, p_var: 10, p_case: 10, p_req: 10, p_cli: 10 }\n"
+        << "participants:\n"
+        << "  - name: A\n"
+        << "    command: [missing/a]\n"
+        << "variants:\n"
+        << "  fast:\n"
+        << "    params: { p_var: 20, p_case: 20, p_req: 20, p_cli: 20 }\n";
+    std::ofstream(dir / "project" / "scenarios" / "templates" / "forward.yaml", std::ios::binary)
+        << "vehicle_sil_scenario_template: 1\n"
+        << "parameters:\n"
+        << "  a: { type: integer }\n"
+        << "  b: { type: integer }\n"
+        << "  c: { type: integer }\n"
+        << "  d: { type: integer }\n"
+        << "  e: { type: integer }\n"
+        << "steps:\n"
+        << "  - set: { A.level: \"${a}\" }\n";
+    std::ofstream(dir / "project" / "scenarios" / "prec.yaml", std::ios::binary)
+        << "vehicle_sil_scenario: 1\n"
+        << "params: { p_cfg: 1, p_var: 1, p_case: 1, p_req: 1, p_cli: 1 }\n"
+        << "cases:\n"
+        << "  c1:\n"
+        << "    params: { p_case: 30, p_req: 30, p_cli: 30 }\n"
+        << "steps:\n"
+        << "  - template: templates/forward.yaml\n"
+        << "    params:\n"
+        << "      a: \"${p_cfg}\"\n"
+        << "      b: \"${p_var}\"\n"
+        << "      c: \"${p_case}\"\n"
+        << "      d: \"${p_req}\"\n"
+        << "      e: \"${p_cli}\"\n";
+
+    const vehicle_sil::config::test::InDirectory there(dir / "project");
+    const RequestFile reqFile = *read_request_file(
+        with("\"variant\": \"fast\", \"scenario\": \"scenarios/prec.yaml\", \"params\": {\"p_req\": 40, \"p_cli\": 40}"),
+        "bench.json").file;
+    RunRequest cli;
+    cli.host.config = "sim.yaml";
+    cli.intent.scenario_case = "c1";
+    cli.intent.params.push_back(argument("p_cli", "50"));
+
+    const Checked checked = check_file(with_request_file(cli, reqFile, false));
+    CHECK(!checked.usage);
+    CHECK(checked.scenario.has_value());
+    const auto find_param = [&](std::string_view name) -> const ParamValue* {
+        for (const ParamValue& p : checked.scenario->params)
+        {
+            if (p.name == name)
+            {
+                return &p;
+            }
+        }
+        return nullptr;
+    };
+    const ParamValue* cfg = find_param("p_cfg");
+    const ParamValue* var = find_param("p_var");
+    const ParamValue* cas = find_param("p_case");
+    const ParamValue* req = find_param("p_req");
+    const ParamValue* clp = find_param("p_cli");
+    CHECK(cfg && cfg->text == "10" && cfg->source == ParamSource::Configuration);
+    CHECK(var && var->text == "20" && var->source == ParamSource::Variant);
+    CHECK(cas && cas->text == "30" && cas->source == ParamSource::Case);
+    CHECK(req && req->text == "40" && req->source == ParamSource::RequestFile);
+    CHECK(clp && clp->text == "50" && clp->source == ParamSource::CommandLine);
+}

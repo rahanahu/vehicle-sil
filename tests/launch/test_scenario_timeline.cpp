@@ -1697,3 +1697,76 @@ TEST_CASE(timeline_json_records_nested_template_fail_grid_skipped_and_case)
     CHECK(tl.find("\"file\": \"scenarios/templates/outer.yaml\"") != std::string::npos);
     CHECK(tl.find("\"not_applied_from\":") != std::string::npos);
 }
+
+TEST_CASE(timeline_json_records_template_dither_cancel_and_nested_every_step_series)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "template-dither-cancel-and-every-step";
+    fs::remove_all(dir);
+    fs::create_directories(dir / "templates");
+    std::ofstream(dir / "templates" / "cancel_inner.yaml", std::ios::binary)
+        << "vehicle_sil_scenario_template: 1\n"
+        << "steps:\n"
+        << "  - name: turn off dither\n"
+        << "    after_ms: 20\n"
+        << "    dither: { Body.level: none }\n"
+        << "  - name: check speed\n"
+        << "    after_ms: 10\n"
+        << "    expect: { Body.body.speed: { ge: 0 } }\n";
+    std::ofstream(dir / "templates" / "cancel_outer.yaml", std::ios::binary)
+        << "vehicle_sil_scenario_template: 1\n"
+        << "steps:\n"
+        << "  - name: invoke inner\n"
+        << "    template: cancel_inner.yaml\n";
+
+    const std::string scenarioText =
+        "vehicle_sil_scenario: 1\n"
+        "samples: every_step\n"
+        "inputs:\n"
+        "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+        "steps:\n"
+        "  - at_ms: 0\n"
+        "    set: { Body.level: 40 }\n"
+        "  - name: invoke outer\n"
+        "    template: templates/cancel_outer.yaml\n";
+
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/main.yaml";
+    ctx.read_template = files_beside(dir / "main.yaml", "the template file");
+    const ScenarioRead read = read_scenario(scenarioText, catalog(), ctx);
+    if (!read.scenario)
+    {
+        throw unit::Failure("the scenario has errors:\n" + lines(read.findings));
+    }
+
+    World world;
+    world.tick = 10ms;
+    TimelineRecord record(*read.scenario);
+    world.record = &record;
+    ScenarioRun run = world.run(*read.scenario);
+    run.file = "scenarios/main.yaml";
+    CHECK(run.status == ScenarioStatus::Passed);
+
+    TimelineInput input;
+    input.file = "simulation.yaml";
+    input.time_step_ms = 10.0;
+    input.scenario = &*read.scenario;
+    input.run = &run;
+    const auto desc = catalog();
+    input.catalog = &desc;
+    input.record = &record;
+
+    const std::string tl = format_timeline_json(input);
+    // Dither cancel line carries template file attribution.
+    CHECK(tl.find("\"kind\": \"dither\"") != std::string::npos);
+    CHECK(tl.find("\"text\": \"Body.level none\"") != std::string::npos);
+    CHECK(tl.find("\"file\": \"scenarios/templates/cancel_inner.yaml\"") != std::string::npos);
+    // Nested 2-level call_stack (main.yaml -> cancel_outer.yaml) is preserved on inner template steps.
+    CHECK(tl.find("\"file\": \"scenarios/main.yaml\"") != std::string::npos);
+    CHECK(tl.find("\"file\": \"scenarios/templates/cancel_outer.yaml\"") != std::string::npos);
+    CHECK(tl.find("\"name\": \"invoke outer\"") != std::string::npos);
+    CHECK(tl.find("\"name\": \"invoke inner\"") != std::string::npos);
+    // samples: every_step records sampled series points for Body.body.speed.
+    CHECK(tl.find("\"variable\": \"Body.body.speed\"") != std::string::npos);
+    CHECK(tl.find("\"source\": \"sampled\"") != std::string::npos);
+}

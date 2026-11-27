@@ -12,40 +12,9 @@
 #include <utility>
 #include <vector>
 
-namespace vehicle_sil::scenario::reader {
+namespace vehicle_sil::scenario {
 
-namespace {
-
-bool is_whole_param_ref(std::string_view text, std::string& name)
-{
-    if (text.size() > 3 && text.rfind("${", 0) == 0 && text.back() == '}')
-    {
-        const std::string_view inner = text.substr(2, text.size() - 3);
-        if (config::is_param_name(inner))
-        {
-            name = std::string(inner);
-            return true;
-        }
-    }
-    return false;
-}
-
-template <class PopFn>
-class ScopeGuard
-{
-public:
-    explicit ScopeGuard(PopFn fn) : fn_(std::move(fn)) {}
-    ~ScopeGuard() { fn_(); }
-    ScopeGuard(const ScopeGuard&) = delete;
-    ScopeGuard& operator=(const ScopeGuard&) = delete;
-
-private:
-    PopFn fn_;
-};
-
-} // namespace
-
-std::string Reader::format_call_stack(const std::vector<SourceFrame>& stack)
+std::string format_call_stack_text(const std::vector<SourceFrame>& stack, std::string_view line_prefix)
 {
     std::string detail;
     for (auto it = stack.rbegin(); it != stack.rend(); ++it)
@@ -54,7 +23,9 @@ std::string Reader::format_call_stack(const std::vector<SourceFrame>& stack)
         {
             detail += '\n';
         }
-        detail += "called from: " + loc_text(it->file, it->line);
+        detail += line_prefix;
+        detail += "called from: ";
+        detail += it->file.empty() ? "line " + std::to_string(it->line) : it->file + ":" + std::to_string(it->line);
         std::string meta;
         if (!it->name.empty())
         {
@@ -74,6 +45,57 @@ std::string Reader::format_call_stack(const std::vector<SourceFrame>& stack)
         }
     }
     return detail;
+}
+
+} // namespace vehicle_sil::scenario
+
+namespace vehicle_sil::scenario::reader {
+
+namespace {
+
+bool is_whole_param_ref(std::string_view text, std::string& name)
+{
+    if (text.size() > 3 && text.rfind("${", 0) == 0 && text.back() == '}')
+    {
+        const std::string_view inner = text.substr(2, text.size() - 3);
+        if (config::is_param_name(inner))
+        {
+            name = std::string(inner);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string summarize_template_error(const std::vector<config::Finding>& findings, std::size_t from)
+{
+    for (std::size_t i = from; i < findings.size(); ++i)
+    {
+        if (findings[i].severity == config::Severity::Error)
+        {
+            const config::Finding& f = findings[i];
+            std::string out = "is invalid (";
+            if (!f.code.empty())
+            {
+                out += f.code;
+                if (f.line > 0)
+                {
+                    out += " at line " + std::to_string(f.line);
+                }
+                out += ": ";
+            }
+            out += f.message + ")";
+            return out;
+        }
+    }
+    return "is invalid";
+}
+
+} // namespace
+
+std::string Reader::format_call_stack(const std::vector<SourceFrame>& stack)
+{
+    return format_call_stack_text(stack);
 }
 
 std::string Reader::shown_path_for(const std::string& normalized_rel) const
@@ -503,6 +525,10 @@ bool Reader::parse_template_parameters(ryml::id_type node, std::vector<Parameter
                                          config::detail::to_string(tree().val(part)) + "\")"));
                     ok = false;
                 }
+                else
+                {
+                    def.description = config::detail::to_string(tree().val(part));
+                }
             }
             else
             {
@@ -612,19 +638,25 @@ bool Reader::parse_template_parameters(ryml::id_type node, std::vector<Parameter
     return ok;
 }
 
-const Reader::CachedTemplate* Reader::load_template(const std::string& normalized_rel, std::size_t call_line)
+const CachedTemplate* Reader::load_template(const std::string& normalized_rel, std::size_t call_line)
 {
-    if (const auto it = templates_.find(normalized_rel); it != templates_.end())
+    if (const auto it = cache_.templates.find(normalized_rel); it != cache_.templates.end())
     {
         if (!it->second.read_error.empty())
         {
             error("scenario-template-file", call_line, "template '" + normalized_rel + "' " + it->second.read_error);
             return nullptr;
         }
-        return it->second.valid ? &it->second : nullptr;
+        if (!it->second.valid)
+        {
+            const std::string summary = it->second.invalid_summary.empty() ? std::string("is invalid") : it->second.invalid_summary;
+            error("scenario-template-file", call_line, "template '" + normalized_rel + "' " + summary);
+            return nullptr;
+        }
+        return &it->second;
     }
 
-    CachedTemplate& tpl = templates_[normalized_rel];
+    CachedTemplate& tpl = cache_.templates[normalized_rel];
     tpl.shown_file = shown_path_for(normalized_rel);
     const auto slash = normalized_rel.rfind('/');
     tpl.dir_rel = slash == std::string::npos ? std::string{} : normalized_rel.substr(0, slash);
@@ -647,12 +679,14 @@ const Reader::CachedTemplate* Reader::load_template(const std::string& normalize
         error("scenario-template-file", call_line, "template '" + normalized_rel + "' " + tpl.read_error);
         return nullptr;
     }
+    const std::size_t loadFindingsStart = findings_.size();
     if (bytes->substr(0, 2) == "\xFF\xFE" || bytes->substr(0, 2) == "\xFE\xFF" ||
         bytes->find('\0') != std::string::npos)
     {
         add_at(config::Severity::Error, "encoding", tpl.shown_file, 0,
                "the file is not UTF-8 text (it looks like UTF-16, or has NUL bytes): save it as UTF-8", "", "",
                format_call_stack(active_templates_));
+        tpl.invalid_summary = summarize_template_error(findings_, loadFindingsStart);
         return nullptr;
     }
     try
@@ -677,6 +711,7 @@ const Reader::CachedTemplate* Reader::load_template(const std::string& normalize
                         ? ": inside { ... } or [ ... ], write a parameter in quotes (\"${name}\")"
                         : ""),
                "", "", std::move(detail));
+        tpl.invalid_summary = summarize_template_error(findings_, loadFindingsStart);
         return nullptr;
     }
     if (tpl.doc->empty())
@@ -684,6 +719,7 @@ const Reader::CachedTemplate* Reader::load_template(const std::string& normalize
         add_at(config::Severity::Error, "not-a-template", tpl.shown_file, 0,
                "the template file is empty: write vehicle_sil_scenario_template: 1 and steps", "", "",
                format_call_stack(active_templates_));
+        tpl.invalid_summary = summarize_template_error(findings_, loadFindingsStart);
         return nullptr;
     }
 
@@ -696,6 +732,7 @@ const Reader::CachedTemplate* Reader::load_template(const std::string& normalize
     {
         error("not-a-template", root == ryml::NONE ? 0 : doc().line(root),
               "the file is not a scenario template: it must be a mapping with vehicle_sil_scenario_template: 1 and steps");
+        tpl.invalid_summary = summarize_template_error(findings_, findingsBefore);
         return nullptr;
     }
     std::vector<std::size_t> refs;
@@ -707,6 +744,7 @@ const Reader::CachedTemplate* Reader::load_template(const std::string& normalize
             error("unsupported-yaml", line,
                   "anchors and aliases (&name, *name, <<) are not read: write the values out (a value that starts with * or & must be in quotes)");
         }
+        tpl.invalid_summary = summarize_template_error(findings_, findingsBefore);
         return nullptr;
     }
     if (const ryml::id_type second = doc().second_document(); second != ryml::NONE)
@@ -745,6 +783,7 @@ const Reader::CachedTemplate* Reader::load_template(const std::string& normalize
                       "vehicle_sil_scenario_template is " + std::to_string(version) +
                           ", but this vehicle_sil_launch reads format " + std::to_string(kScenarioTemplateFormat) +
                           " only: use the vehicle-sil that the file was written for");
+                tpl.invalid_summary = summarize_template_error(findings_, findingsBefore);
                 return nullptr;
             }
         }
@@ -779,6 +818,7 @@ const Reader::CachedTemplate* Reader::load_template(const std::string& normalize
         findings_.erase(findings_.begin() + static_cast<std::ptrdiff_t>(findingsBefore), findings_.end());
         error("not-a-template", doc().line(root),
               "this file is a runnable scenario (vehicle_sil_scenario: 1), not a scenario template: put shared steps in a file with vehicle_sil_scenario_template: 1");
+        tpl.invalid_summary = summarize_template_error(findings_, findingsBefore);
         return nullptr;
     }
     if (!hasVersion)
@@ -810,6 +850,10 @@ const Reader::CachedTemplate* Reader::load_template(const std::string& normalize
     const bool hasErrors = std::any_of(findings_.begin() + static_cast<std::ptrdiff_t>(findingsBefore), findings_.end(),
                                        [](const config::Finding& f) { return f.severity == config::Severity::Error; });
     tpl.valid = !hasErrors;
+    if (!tpl.valid)
+    {
+        tpl.invalid_summary = summarize_template_error(findings_, findingsBefore);
+    }
     return tpl.valid ? &tpl : nullptr;
 }
 
@@ -817,7 +861,13 @@ bool Reader::read_template_call_params(ryml::id_type params_node, const CachedTe
                                        std::vector<Known>& callee_params, std::vector<SourceParam>& frame_params)
 {
     bool ok = true;
-    std::map<std::string, config::ParamValue> passed;
+    struct PassedArg
+    {
+        config::ParamValue value;
+        std::optional<std::string> root_param{};
+    };
+    std::map<std::string, PassedArg> passed;
+    std::set<std::string> mentioned;
     if (params_node != ryml::NONE)
     {
         if (!tree().is_map(params_node))
@@ -863,6 +913,7 @@ bool Reader::read_template_call_params(ryml::id_type params_node, const CachedTe
                 ok = false;
                 continue;
             }
+            mentioned.insert(argName);
             if (!is_scalar(child) || is_null(child))
             {
                 error("value", line,
@@ -876,6 +927,7 @@ bool Reader::read_template_call_params(ryml::id_type params_node, const CachedTe
             val.name = argName;
             val.source = config::ParamSource::TemplateCall;
             val.line = line;
+            std::optional<std::string> forwardedRoot;
 
             std::string refName;
             if (rawText.find("${") != std::string::npos)
@@ -887,10 +939,19 @@ bool Reader::read_template_call_params(ryml::id_type params_node, const CachedTe
                     if (known == scope().params.end())
                     {
                         report_undefined_param(refName, line);
+                        if (scopes_.size() == 1)
+                        {
+                            record_template_param_constraint(refName, *defIt, line, true);
+                        }
                         ok = false;
                         continue;
                     }
                     known->used = true;
+                    forwardedRoot = known->root_param;
+                    if (forwardedRoot)
+                    {
+                        record_template_param_constraint(*forwardedRoot, *defIt, line, true);
+                    }
                     val.text = known->value.text;
                     val.quoted = known->value.quoted;
                     val.from_cli = known->value.from_cli;
@@ -946,7 +1007,7 @@ bool Reader::read_template_call_params(ryml::id_type params_node, const CachedTe
                 ok = false;
                 continue;
             }
-            passed.emplace(argName, std::move(val));
+            passed.emplace(argName, PassedArg{std::move(val), std::move(forwardedRoot)});
         }
     }
 
@@ -954,21 +1015,29 @@ bool Reader::read_template_call_params(ryml::id_type params_node, const CachedTe
     {
         if (const auto it = passed.find(def.name); it != passed.end())
         {
-            callee_params.push_back(Known{it->second, true, false});
-            frame_params.push_back(SourceParam{it->second.name, it->second.text, it->second.quoted, it->second.source});
+            callee_params.push_back(Known{it->second.value, true, false, it->second.root_param});
+            frame_params.push_back(SourceParam{it->second.value.name, it->second.value.text, it->second.value.quoted,
+                                               it->second.value.source});
         }
         else if (def.default_value)
         {
-            callee_params.push_back(Known{*def.default_value, true, false});
+            callee_params.push_back(Known{*def.default_value, true, false, std::nullopt});
             frame_params.push_back(SourceParam{def.default_value->name, def.default_value->text,
                                                def.default_value->quoted, def.default_value->source});
         }
-        else if (ok)
+        else if (mentioned.count(def.name) == 0)
         {
-            error("scenario-param", call_line,
-                  "missing required template parameter '" + def.name + "' (type: " + param_type_name(def.type) +
-                      "): pass it under params: { " + def.name + ": <value> }");
-            ok = false;
+            if (scopes_.size() == 1)
+            {
+                add_missing_param(def.name);
+            }
+            if (ok)
+            {
+                error("scenario-param", call_line,
+                      "missing required template parameter '" + def.name + "' (type: " + param_type_name(def.type) +
+                          "): pass it under params: { " + def.name + ": <value> }");
+                ok = false;
+            }
         }
     }
     return ok;
@@ -1096,6 +1165,487 @@ void Reader::read_template_step(const std::map<std::string, ryml::id_type>& node
     if (aborted)
     {
         end_known_ = false;
+    }
+}
+
+std::optional<ParamType> Reader::join_param_types(ParamType a, ParamType b) noexcept
+{
+    if (a == b)
+    {
+        return a;
+    }
+    if ((a == ParamType::Integer && b == ParamType::Number) || (a == ParamType::Number && b == ParamType::Integer))
+    {
+        return ParamType::Integer;
+    }
+    return std::nullopt;
+}
+
+bool Reader::value_fits_type_quiet(const config::ParamValue& pv, ParamType type)
+{
+    switch (type)
+    {
+    case ParamType::Integer:
+    {
+        std::int64_t i = 0;
+        return !pv.quoted && (read_integer(pv.text, i) || read_hex(pv.text).kind == Hex::Kind::Read);
+    }
+    case ParamType::Number:
+    {
+        double d = 0;
+        return !pv.quoted && read_number(pv.text, d);
+    }
+    case ParamType::Boolean:
+        return !pv.quoted && (pv.text == "true" || pv.text == "false");
+    case ParamType::String:
+        return pv.quoted || pv.from_cli || !is_yaml12_non_string_literal(pv.text);
+    }
+    return false;
+}
+
+void Reader::add_missing_param(const std::string& name)
+{
+    if (std::find(out_.missing_params.begin(), out_.missing_params.end(), name) == out_.missing_params.end())
+    {
+        out_.missing_params.push_back(name);
+    }
+}
+
+void Reader::record_template_param_constraint(const std::string& root_name, const ParameterDef& def, std::size_t line,
+                                              bool emit_errors)
+{
+    auto [it, inserted] = param_constraints_.try_emplace(root_name);
+    if (inserted)
+    {
+        param_constraint_order_.push_back(root_name);
+    }
+    ParamConstraint& c = it->second;
+    if (c.description.empty() && !def.description.empty())
+    {
+        c.description = def.description;
+    }
+    if (!c.effective_type)
+    {
+        c.effective_type = def.type;
+        c.first_origin = loc_text(current_file(), line);
+    }
+    else
+    {
+        const auto joined = join_param_types(*c.effective_type, def.type);
+        if (!joined)
+        {
+            if (emit_errors && !c.conflict_reported)
+            {
+                c.conflict_reported = true;
+                error("scenario-param", line,
+                      "parameter '" + root_name + "' has incompatible types: used as " +
+                          param_type_name(*c.effective_type) + " (" + c.first_origin + ") and as " +
+                          param_type_name(def.type) + ": use separate parameters or align the types");
+            }
+            return;
+        }
+        c.effective_type = *joined;
+    }
+    if (!c.template_type)
+    {
+        c.template_type = def.type;
+    }
+    else if (const auto joined = join_param_types(*c.template_type, def.type))
+    {
+        c.template_type = *joined;
+    }
+    const ParamType t = *c.template_type;
+    if (c.has_values && def.allowed_values.empty())
+    {
+        std::vector<config::ParamValue> filtered;
+        for (const config::ParamValue& v : c.allowed_values)
+        {
+            if (value_fits_type_quiet(v, t))
+            {
+                filtered.push_back(v);
+            }
+        }
+        c.allowed_values = std::move(filtered);
+        if (c.allowed_values.empty() && emit_errors && !c.conflict_reported)
+        {
+            c.conflict_reported = true;
+            error("scenario-param", line,
+                  "parameter '" + root_name + "' has no allowed value compatible with type " + param_type_name(t) +
+                      ": use separate parameters or align the template parameter constraints");
+        }
+    }
+    else if (!c.has_values && !def.allowed_values.empty())
+    {
+        c.has_values = true;
+        for (const config::ParamValue& v : def.allowed_values)
+        {
+            if (value_fits_type_quiet(v, t) &&
+                std::none_of(c.allowed_values.begin(), c.allowed_values.end(),
+                             [&](const config::ParamValue& existing) { return param_values_equal(t, existing, v); }))
+            {
+                c.allowed_values.push_back(v);
+            }
+        }
+        if (c.allowed_values.empty() && emit_errors && !c.conflict_reported)
+        {
+            c.conflict_reported = true;
+            error("scenario-param", line,
+                  "parameter '" + root_name + "' has no allowed value compatible with type " + param_type_name(t) +
+                      ": use separate parameters or align the template parameter constraints");
+        }
+    }
+    else if (c.has_values && !def.allowed_values.empty())
+    {
+        std::vector<config::ParamValue> inter;
+        for (const config::ParamValue& a : c.allowed_values)
+        {
+            const auto match = std::find_if(def.allowed_values.begin(), def.allowed_values.end(),
+                                            [&](const config::ParamValue& b) {
+                                                if (t == ParamType::Integer)
+                                                {
+                                                    if (value_fits_type_quiet(a, ParamType::Integer) &&
+                                                        value_fits_type_quiet(b, ParamType::Integer))
+                                                    {
+                                                        return param_values_equal(ParamType::Integer, a, b);
+                                                    }
+                                                    return param_values_equal(ParamType::Number, a, b) &&
+                                                           (value_fits_type_quiet(a, ParamType::Integer) ||
+                                                            value_fits_type_quiet(b, ParamType::Integer));
+                                                }
+                                                return param_values_equal(t, a, b);
+                                            });
+            if (match != def.allowed_values.end())
+            {
+                const config::ParamValue& kept =
+                    (t == ParamType::Integer && !value_fits_type_quiet(a, ParamType::Integer)) ? *match : a;
+                if (std::none_of(inter.begin(), inter.end(),
+                                 [&](const config::ParamValue& existing) { return param_values_equal(t, existing, kept); }))
+                {
+                    inter.push_back(kept);
+                }
+            }
+        }
+        c.allowed_values = std::move(inter);
+        if (c.allowed_values.empty() && emit_errors && !c.conflict_reported)
+        {
+            c.conflict_reported = true;
+            error("scenario-param", line,
+                  "parameter '" + root_name +
+                      "' has conflicting allowed values across template calls (their intersection is empty): use separate "
+                      "parameters or align the values lists");
+        }
+    }
+}
+
+void Reader::record_direct_param_usage(ryml::id_type node, ParamType usage_type)
+{
+    const auto it = scope().substituted.find(node);
+    if (it == scope().substituted.end())
+    {
+        return;
+    }
+    const Known& k = scope().params[it->second];
+    if (!k.root_param)
+    {
+        return;
+    }
+    auto [cit, inserted] = param_constraints_.try_emplace(*k.root_param);
+    if (inserted)
+    {
+        param_constraint_order_.push_back(*k.root_param);
+    }
+    ParamConstraint& c = cit->second;
+    const std::size_t line = doc().line(node);
+    if (!c.effective_type)
+    {
+        c.effective_type = usage_type;
+        c.first_origin = loc_text(current_file(), line);
+        return;
+    }
+    const auto joined = join_param_types(*c.effective_type, usage_type);
+    if (!joined)
+    {
+        if (!c.conflict_reported)
+        {
+            c.conflict_reported = true;
+            error("scenario-param", line,
+                  "parameter '" + *k.root_param + "' has incompatible types: used as " +
+                      param_type_name(*c.effective_type) + " (" + c.first_origin + ") and as " +
+                      param_type_name(usage_type) + ": use separate parameters for text and numeric/boolean values");
+        }
+        return;
+    }
+    c.effective_type = *joined;
+}
+
+void Reader::note_param_ref_metadata(const std::string& name)
+{
+    const auto known = std::find_if(scope().params.begin(), scope().params.end(),
+                                    [&name](const Known& k) { return k.value.name == name; });
+    if (known != scope().params.end())
+    {
+        known->used = true;
+    }
+    else if (scopes_.size() == 1)
+    {
+        add_missing_param(name);
+    }
+}
+
+void Reader::scan_interpolated_text_refs(const std::string& text)
+{
+    std::size_t pos = 0;
+    while (pos < text.size())
+    {
+        const std::size_t open = text.find("${", pos);
+        if (open == std::string::npos)
+        {
+            break;
+        }
+        const std::size_t close = text.find('}', open + 2);
+        if (close == std::string::npos)
+        {
+            break;
+        }
+        const std::string name = text.substr(open + 2, close - (open + 2));
+        if (config::is_param_name(name))
+        {
+            note_param_ref_metadata(name);
+        }
+        pos = close + 1;
+    }
+}
+
+void Reader::scan_scalar_param_refs(ryml::id_type node, bool allow_interpolation)
+{
+    if (is_scalar(node))
+    {
+        if (is_null(node))
+        {
+            return;
+        }
+        const std::string text = config::detail::to_string(tree().val(node));
+        if (text.find("${") == std::string::npos)
+        {
+            return;
+        }
+        if (allow_interpolation)
+        {
+            scan_interpolated_text_refs(text);
+        }
+        else
+        {
+            std::string name;
+            if (is_whole_param_ref(text, name))
+            {
+                note_param_ref_metadata(name);
+            }
+        }
+        return;
+    }
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
+    {
+        scan_scalar_param_refs(child, allow_interpolation);
+    }
+}
+
+void Reader::scan_steps_metadata(ryml::id_type steps_node)
+{
+    if (!tree().is_seq(steps_node))
+    {
+        return;
+    }
+    for (auto step = tree().first_child(steps_node); step != ryml::NONE; step = tree().next_sibling(step))
+    {
+        if (!tree().is_map(step))
+        {
+            scan_scalar_param_refs(step, false);
+            continue;
+        }
+        ryml::id_type templateNode = ryml::NONE;
+        ryml::id_type paramsNode = ryml::NONE;
+        for (auto field = tree().first_child(step); field != ryml::NONE; field = tree().next_sibling(field))
+        {
+            const std::string fieldKey = tree().has_key(field) ? config::detail::to_string(tree().key(field)) : std::string{};
+            if (fieldKey == "template")
+            {
+                templateNode = field;
+            }
+            else if (fieldKey == "params")
+            {
+                paramsNode = field;
+            }
+            else if (fieldKey == "name" && is_scalar(field))
+            {
+                scan_scalar_param_refs(field, true);
+            }
+            else if (fieldKey == "wave" && tree().is_map(field))
+            {
+                for (auto varNode = tree().first_child(field); varNode != ryml::NONE; varNode = tree().next_sibling(varNode))
+                {
+                    if (!tree().is_map(varNode))
+                    {
+                        scan_scalar_param_refs(varNode, false);
+                        continue;
+                    }
+                    for (auto part = tree().first_child(varNode); part != ryml::NONE; part = tree().next_sibling(part))
+                    {
+                        const std::string partKey = tree().has_key(part) ? config::detail::to_string(tree().key(part)) : std::string{};
+                        if (partKey == "points" && tree().is_map(part))
+                        {
+                            for (auto pf = tree().first_child(part); pf != ryml::NONE; pf = tree().next_sibling(pf))
+                            {
+                                const std::string pfKey = tree().has_key(pf) ? config::detail::to_string(tree().key(pf)) : std::string{};
+                                scan_scalar_param_refs(pf, (pfKey == "file" || pfKey == "value" || pfKey == "time") && is_scalar(pf));
+                            }
+                        }
+                        else
+                        {
+                            scan_scalar_param_refs(part, false);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                scan_scalar_param_refs(field, false);
+            }
+        }
+        if (templateNode == ryml::NONE || !is_scalar(templateNode) || is_null(templateNode))
+        {
+            continue;
+        }
+        const std::string rawPath = config::detail::to_string(tree().val(templateNode));
+        if (rawPath.find("${") != std::string::npos)
+        {
+            continue;
+        }
+        std::string normalizedRel;
+        if (resolve_scoped_path(scope().dir_rel, rawPath, normalizedRel, true))
+        {
+            continue;
+        }
+        if (std::find(active_rel_paths_.begin(), active_rel_paths_.end(), normalizedRel) != active_rel_paths_.end() ||
+            active_templates_.size() >= kMaxTemplateDepth)
+        {
+            continue;
+        }
+        const CachedTemplate* tpl = nullptr;
+        if (const auto it = cache_.templates.find(normalizedRel); it != cache_.templates.end())
+        {
+            if (!it->second.valid)
+            {
+                continue;
+            }
+            tpl = &it->second;
+        }
+        else
+        {
+            const std::size_t findingsBefore = findings_.size();
+            tpl = load_template(normalizedRel, doc().line(templateNode));
+            findings_.resize(findingsBefore);
+            if (tpl == nullptr)
+            {
+                // Do not poison a shared cache with silently discarded errors.
+                cache_.templates.erase(normalizedRel);
+                continue;
+            }
+        }
+        std::vector<Known> calleeParams;
+        std::set<std::string> passedNames;
+        if (paramsNode != ryml::NONE && tree().is_map(paramsNode))
+        {
+            for (auto child = tree().first_child(paramsNode); child != ryml::NONE; child = tree().next_sibling(child))
+            {
+                const std::string argName = config::detail::to_string(tree().key(child));
+                const auto defIt = std::find_if(tpl->parameters.begin(), tpl->parameters.end(),
+                                                [&](const ParameterDef& d) { return d.name == argName; });
+                if (defIt == tpl->parameters.end())
+                {
+                    continue;
+                }
+                passedNames.insert(argName);
+                if (!is_scalar(child) || is_null(child))
+                {
+                    continue;
+                }
+                const std::string rawText = config::detail::to_string(tree().val(child));
+                std::optional<std::string> forwardedRoot;
+                if (rawText.find("${") != std::string::npos)
+                {
+                    std::string refName;
+                    if (is_whole_param_ref(rawText, refName))
+                    {
+                        const auto known = std::find_if(scope().params.begin(), scope().params.end(),
+                                                        [&](const Known& k) { return k.value.name == refName; });
+                        if (known != scope().params.end())
+                        {
+                            known->used = true;
+                            forwardedRoot = known->root_param;
+                        }
+                        else if (scopes_.size() == 1)
+                        {
+                            add_missing_param(refName);
+                            forwardedRoot = refName;
+                        }
+                        if (forwardedRoot)
+                        {
+                            record_template_param_constraint(*forwardedRoot, *defIt, doc().line(child), false);
+                        }
+                    }
+                    else if (defIt->type == ParamType::String)
+                    {
+                        scan_interpolated_text_refs(rawText);
+                    }
+                }
+                calleeParams.push_back(Known{config::ParamValue{argName, rawText, tree().is_val_quoted(child),
+                                                                config::ParamSource::TemplateCall, doc().line(child), false},
+                                             true, false, std::move(forwardedRoot)});
+            }
+        }
+        for (const ParameterDef& def : tpl->parameters)
+        {
+            if (passedNames.count(def.name) == 0)
+            {
+                if (def.default_value)
+                {
+                    calleeParams.push_back(Known{*def.default_value, true, false, std::nullopt});
+                }
+                else if (scopes_.size() == 1)
+                {
+                    add_missing_param(def.name);
+                }
+            }
+        }
+        SourceFrame frame;
+        frame.file = scope().file;
+        frame.line = doc().line(step);
+        active_templates_.push_back(std::move(frame));
+        active_rel_paths_.push_back(normalizedRel);
+        EvalScope calleeScope;
+        calleeScope.doc = tpl->doc.get();
+        calleeScope.file = tpl->shown_file;
+        calleeScope.dir_rel = tpl->dir_rel;
+        calleeScope.params = std::move(calleeParams);
+        scopes_.push_back(std::move(calleeScope));
+        ScopeGuard popMeta([this]() {
+            scopes_.pop_back();
+            active_rel_paths_.pop_back();
+            active_templates_.pop_back();
+        });
+        scan_steps_metadata(tpl->steps_node);
+    }
+}
+
+void Reader::scan_metadata_only(ryml::id_type inputs_node, ryml::id_type steps_node)
+{
+    if (inputs_node != ryml::NONE)
+    {
+        scan_scalar_param_refs(inputs_node, false);
+    }
+    if (steps_node != ryml::NONE)
+    {
+        scan_steps_metadata(steps_node);
     }
 }
 

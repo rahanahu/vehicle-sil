@@ -29,12 +29,12 @@ public:
     {
         RequestFile out;
         RunIntent& intent = out.intent;
-        const ryml::id_type root = doc_.root();
+        const ryml::id_type root = doc().root();
         bool version = false;
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(root); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            const std::string key = config::detail::to_string(tree_.key(child));
+            const std::string key = config::detail::to_string(tree().key(child));
             if (!first_occurrence(seen, key, child))
             {
                 continue;
@@ -45,7 +45,7 @@ public:
                 std::int64_t value = 0;
                 if (!plain_integer(child, value) || value != kRunRequestFormat)
                 {
-                    error("value", doc_.line(child),
+                    error("value", doc().line(child),
                           "vehicle_sil_run_request must be " + std::to_string(kRunRequestFormat) +
                               " (the version of the request file that this vehicle_sil_launch reads), not " +
                               shown_value(child));
@@ -98,14 +98,14 @@ public:
             else if (key == "time_policy")
             {
                 const std::optional<config::TimePolicy> policy =
-                    quoted(child) ? config::time_policy_named(config::detail::to_string(tree_.val(child))) : std::nullopt;
+                    quoted(child) ? config::time_policy_named(config::detail::to_string(tree().val(child))) : std::nullopt;
                 if (policy)
                 {
                     intent.time_policy = *policy;
                 }
                 else
                 {
-                    error("value", doc_.line(child),
+                    error("value", doc().line(child),
                           "time_policy must be \"realtime\" (a run that is connected outside the simulation goes at speed "
                           "1; the default) or \"free\" (its speed and time can be changed), not " +
                               shown_value(child));
@@ -114,7 +114,7 @@ public:
             else if (key == "speed")
             {
                 // A number, or the text "max".
-                const std::string written = is_scalar(child) && !is_null(child) ? config::detail::to_string(tree_.val(child)) : "";
+                const std::string written = is_scalar(child) && !is_null(child) ? config::detail::to_string(tree().val(child)) : "";
                 std::optional<double> speed;
                 if (is_scalar(child) && !is_null(child) && config::parse_speed(written, speed) && quoted(child) == !speed)
                 {
@@ -122,7 +122,7 @@ public:
                 }
                 else
                 {
-                    error("value", doc_.line(child),
+                    error("value", doc().line(child),
                           "speed must be a number of simulation seconds per wall-clock second from 0.000001 to 1000000 (1: "
                           "real time, 2: twice as fast) or \"max\" (as fast as possible), not " +
                               shown_value(child));
@@ -146,7 +146,7 @@ public:
                     (positive ? config::valid_positive_millis(value) : config::valid_non_negative_millis(value));
                 if (!in_range)
                 {
-                    error("value", doc_.line(child), key + " must be an integer from " + std::to_string(min) +
+                    error("value", doc().line(child), key + " must be an integer from " + std::to_string(min) +
                               " to " + std::to_string(config::kMaxMillis) + ", not " + shown_value(child));
                 }
                 else if (positive)
@@ -161,14 +161,14 @@ public:
             else if (key == "after_scenario")
             {
                 const std::optional<config::AfterScenario> after =
-                    quoted(child) ? config::after_scenario_named(config::detail::to_string(tree_.val(child))) : std::nullopt;
+                    quoted(child) ? config::after_scenario_named(config::detail::to_string(tree().val(child))) : std::nullopt;
                 if (after)
                 {
                     intent.after_scenario = *after;
                 }
                 else
                 {
-                    error("value", doc_.line(child),
+                    error("value", doc().line(child),
                           "after_scenario must be \"stop\" (end the run when the scenario finishes; the default) or "
                           "\"pause\" (pause the run for manual control when the scenario passes), not " +
                               shown_value(child));
@@ -181,7 +181,7 @@ public:
         }
         if (!version && require_version)
         {
-            error("value", root == ryml::NONE ? 0 : doc_.line(root),
+            error("value", root == ryml::NONE ? 0 : doc().line(root),
                   "vehicle_sil_run_request is missing: write \"vehicle_sil_run_request\": " +
                       std::to_string(kRunRequestFormat) + " (it says that this is a request file, and of which version)");
         }
@@ -191,25 +191,25 @@ public:
     }
 
 private:
-    bool quoted(ryml::id_type node) const { return is_scalar(node) && !is_null(node) && tree_.is_val_quoted(node); }
+    bool quoted(ryml::id_type node) const { return is_scalar(node) && !is_null(node) && tree().is_val_quoted(node); }
 
     /// A text that is not empty; "" with an error.
     std::string text(ryml::id_type node, const std::string& key, const std::string& meaning)
     {
-        std::string out = quoted(node) ? config::detail::to_string(tree_.val(node)) : std::string{};
+        std::string out = quoted(node) ? config::detail::to_string(tree().val(node)) : std::string{};
         if (out.empty())
         {
-            error("value", doc_.line(node), key + " must be " + meaning + " as a text, not " + shown_value(node));
+            error("value", doc().line(node), key + " must be " + meaning + " as a text, not " + shown_value(node));
         }
         return out;
     }
 
     bool flag(ryml::id_type node, const std::string& key)
     {
-        const std::string written = is_scalar(node) && !quoted(node) && !is_null(node) ? config::detail::to_string(tree_.val(node)) : "";
+        const std::string written = is_scalar(node) && !quoted(node) && !is_null(node) ? config::detail::to_string(tree().val(node)) : "";
         if (written != "true" && written != "false")
         {
-            error("value", doc_.line(node), key + " must be true or false, not " + shown_value(node));
+            error("value", doc().line(node), key + " must be true or false, not " + shown_value(node));
         }
         return written == "true";
     }
@@ -218,21 +218,21 @@ private:
     std::vector<std::string> names(ryml::id_type node, const std::string& key)
     {
         std::vector<std::string> out;
-        if (!tree_.is_seq(node))
+        if (!tree().is_seq(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   key + " must be a list of participant names (" + key + ": [\"Engine\"]), not " + shown_value(node));
             return out;
         }
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            if (!quoted(child) || tree_.val(child).empty())
+            if (!quoted(child) || tree().val(child).empty())
             {
-                error("value", doc_.line(child),
+                error("value", doc().line(child),
                       key + " must be a list of participant names, each a text; one of them is " + shown_value(child));
                 continue;
             }
-            out.push_back(config::detail::to_string(tree_.val(child)));
+            out.push_back(config::detail::to_string(tree().val(child)));
         }
         return out;
     }
@@ -240,32 +240,32 @@ private:
     /// "connect": { "<network>": "<target>" }.
     void connect(ryml::id_type node, std::vector<config::ConnectRequest>& out)
     {
-        if (!tree_.is_map(node))
+        if (!tree().is_map(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   "connect must be a mapping of network names to targets (connect: { \"CAN1\": \"physical:1\" }; "
                   "the target as --connect takes it, \"none\": SIL Kit only), not " +
                       shown_value(node));
             return;
         }
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            const std::string network = config::detail::to_string(tree_.key(child));
+            const std::string network = config::detail::to_string(tree().key(child));
             if (!first_occurrence(seen, network, child, "connect: "))
             {
                 continue;
             }
             if (network.empty() || !quoted(child))
             {
-                error("value", doc_.line(child),
+                error("value", doc().line(child),
                       "connect: " + (network.empty() ? std::string("a network needs its name") : network + " must be a target") +
                           " as a text (\"CAN1\": \"physical:1\"; \"none\": SIL Kit only), not " + shown_value(child));
                 continue;
             }
             config::ConnectRequest& request = out.emplace_back();
             request.network = network;
-            request.target = config::detail::to_string(tree_.val(child));
+            request.target = config::detail::to_string(tree().val(child));
         }
     }
 

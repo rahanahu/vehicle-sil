@@ -26,12 +26,15 @@ struct ScenarioCheck
     std::string name{};
     std::string case_name{};
     std::vector<std::string> cases{};
+    std::vector<ScenarioCaseDetail> case_details{};
     std::size_t steps = 0;
     std::optional<std::int64_t> end_ms{};
     /// Set if the configuration could be read and the scenario has no error: it can run.
     std::optional<Scenario> scenario{};
-    /// ScenarioRead::params, only, skipped and unchecked_expects.
+    /// ScenarioRead::params, param_meta, missing_params, only, skipped and unchecked_expects.
     std::vector<config::ParamValue> params{};
+    std::vector<ScenarioParamMeta> param_meta{};
+    std::vector<std::string> missing_params{};
     std::optional<std::vector<std::string>> only{};
     std::size_t skipped = 0;
     std::size_t unchecked_expects = 0;

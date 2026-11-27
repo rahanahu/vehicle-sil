@@ -1573,3 +1573,160 @@ TEST_CASE(check_json_records_template_after_file_and_after_line_in_scenario_line
     CHECK(json.find("\"after_file\": \"templates/wait_dither.yaml\"") != std::string::npos);
     CHECK(json.find("\"after_line\": 3") != std::string::npos);
 }
+
+TEST_CASE(check_json_emits_param_metadata_case_details_missing_params_and_hex_ints)
+{
+    Setup s = good_pair();
+    control::VariableInfo level = variable("level");
+    level.type = control::ValueType::Integer;
+    level.causality = control::Causality::Input;
+    s.results[0].ecu->description.variables = {level};
+    s.results[0].ecu->variables_reported = true;
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1};
+
+    Checked r;
+    r.file = "sim.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+
+    const std::string tplText =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  lvl:\n"
+        "    type: integer\n"
+        "    values: [16, 31, 64]\n"
+        "    description: Target level\n"
+        "  tag:\n"
+        "    type: string\n"
+        "    description: Label\n"
+        "steps:\n"
+        "  - name: \"Run ${tag}\"\n"
+        "    set: { Engine.level: \"${lvl}\" }\n";
+
+    scenario::ScenarioContext ctx;
+    ctx.variants = {"small", "large"};
+    ctx.variant = "small";
+    ctx.scenario_file = "scn.yaml";
+    ctx.case_name = "hex_case";
+    ctx.params = {config::ParamValue{"tag", "123", false, config::ParamSource::CommandLine, 0, true}};
+    ctx.read_template = [&](const std::string& rel, std::string& prob) -> std::optional<std::string> {
+        if (rel == "templates/t.yaml")
+        {
+            return tplText;
+        }
+        prob = "missing";
+        return std::nullopt;
+    };
+
+    const std::string scnText =
+        "vehicle_sil_scenario: 1\n"
+        "cases:\n"
+        "  hex_case:\n"
+        "    only: [small]\n"
+        "    params: { lvl: 0x1F }\n"
+        "  other_case: {}\n"
+        "steps:\n"
+        "  - template: templates/t.yaml\n"
+        "    params: { lvl: \"${lvl}\", tag: \"${tag}\" }\n";
+
+    scenario::ScenarioRead read = scenario::read_scenario(scnText, scenario::scenario_catalog(r), ctx);
+    CHECK(read.scenario.has_value());
+    r.scenario.emplace();
+    r.scenario->file = "scn.yaml";
+    r.scenario->case_name = read.case_name;
+    r.scenario->cases = read.cases;
+    r.scenario->case_details = read.case_details;
+    r.scenario->steps = read.steps;
+    r.scenario->params = read.params;
+    r.scenario->param_meta = read.param_meta;
+    r.scenario->missing_params = read.missing_params;
+    r.scenario->scenario = std::move(read.scenario);
+
+    const std::string json = format_json(r);
+    // Unquoted hex 0x1F is emitted as integer 31, not string "0x1F".
+    CHECK(json.find("\"value\": 31") != std::string::npos);
+    CHECK(json.find("\"value\": \"0x1F\"") == std::string::npos);
+    // CLI --param tag=123 bound to type: string is emitted as string "123".
+    CHECK(json.find("\"value\": \"123\"") != std::string::npos);
+    // Template parameter metadata fields.
+    CHECK(json.find("\"type\": \"integer\"") != std::string::npos);
+    CHECK(json.find("\"values\": [") != std::string::npos);
+    CHECK(json.find("\"description\": \"Target level\"") != std::string::npos);
+    // case_details with per-case only / null.
+    CHECK(json.find("\"case_details\": [") != std::string::npos);
+    CHECK(json.find("\"name\": \"hex_case\"") != std::string::npos);
+    CHECK(json.find("\"only\": null") != std::string::npos);
+    CHECK(json.find("\"missing_params\":") == std::string::npos);
+
+    // Missing parameter in a caseless scenario surfaces missing_params in check --json.
+    scenario::ScenarioContext missCtx = ctx;
+    missCtx.case_name.reset();
+    missCtx.params.clear();
+    const std::string missScn =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - template: templates/t.yaml\n"
+        "    params: { lvl: \"${need_lvl}\", tag: \"ok\" }\n";
+    scenario::ScenarioRead missRead = scenario::read_scenario(missScn, scenario::scenario_catalog(r), missCtx);
+    Checked rMiss = r;
+    rMiss.scenario.emplace();
+    rMiss.scenario->file = "miss.yaml";
+    rMiss.scenario->steps = missRead.steps;
+    rMiss.scenario->params = missRead.params;
+    rMiss.scenario->param_meta = missRead.param_meta;
+    rMiss.scenario->missing_params = missRead.missing_params;
+    const std::string missJson = format_json(rMiss);
+    CHECK(missJson.find("\"missing_params\": [") != std::string::npos);
+    CHECK(missJson.find("\"need_lvl\"") != std::string::npos);
+}
+
+TEST_CASE(check_template_static_error_and_same_line_attribution)
+{
+    const auto dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "check-template-errors";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "templates");
+    {
+        std::ofstream out(dir / "sim.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [missing/engine]\n";
+    }
+    // Line 5 of templates/same_line.yaml has a static error, matching line 5 of main.yaml.
+    {
+        std::ofstream out(dir / "templates" / "same_line.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario_template: 1\n"
+               "name: same line\n"
+               "steps:\n"
+               "  - set: { NoSuchEcu.level: 1 }\n"
+               "  - set: { AnotherMissing.level: 2 }\n";
+    }
+    {
+        std::ofstream out(dir / "main.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\n"
+               "name: main\n"
+               "steps:\n"
+               "  - name: call same line\n"
+               "    template: templates/same_line.yaml\n";
+    }
+    const vehicle_sil::config::test::InDirectory there(dir);
+
+    RunRequest req;
+    req.host.config = "sim.yaml";
+    req.intent.scenario = "main.yaml";
+    const Checked report = check_file(req);
+    CHECK(!report.usage);
+    const auto err4 = std::find_if(report.findings.begin(), report.findings.end(), [](const Finding& f) {
+        return f.code == "scenario-variable" && f.line == 4;
+    });
+    const auto err5 = std::find_if(report.findings.begin(), report.findings.end(), [](const Finding& f) {
+        return f.code == "scenario-variable" && f.line == 5;
+    });
+    CHECK(err4 != report.findings.end());
+    CHECK(err5 != report.findings.end());
+    CHECK(err4->file == "templates/same_line.yaml");
+    CHECK(err4->detail.find("called from: main.yaml:4") != std::string::npos);
+    // Line 5 in templates/same_line.yaml is attributed to the template file, not main.yaml:5.
+    CHECK(err5->file == "templates/same_line.yaml");
+    CHECK(err5->detail.find("called from: main.yaml:4") != std::string::npos);
+    const std::string json = format_json(report);
+    CHECK(json.find("\"file\": \"templates/same_line.yaml\"") != std::string::npos);
+    CHECK(json.find("called from: main.yaml:4") != std::string::npos);
+}

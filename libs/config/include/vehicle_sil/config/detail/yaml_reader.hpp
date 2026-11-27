@@ -28,7 +28,7 @@ class YamlReader
 {
 protected:
     /// Reads `doc`; the findings go to `findings`.
-    YamlReader(const YamlDocument& doc, std::vector<Finding>& findings) : doc_(doc), tree_(doc.tree()), findings_(findings) {}
+    YamlReader(const YamlDocument& doc, std::vector<Finding>& findings) : findings_(findings), doc_(doc), tree_(doc.tree()) {}
     virtual ~YamlReader() = default;
 
     virtual const YamlDocument& doc() const noexcept { return doc_; }
@@ -234,9 +234,11 @@ protected:
         return out;
     }
 
+    std::vector<Finding>& findings_;
+
+private:
     const YamlDocument& doc_;
     const ryml::Tree& tree_;
-    std::vector<Finding>& findings_;
 };
 
 } // namespace vehicle_sil::config::detail

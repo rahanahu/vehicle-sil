@@ -11,10 +11,16 @@
 #include "vehicle_sil/j1939/types.hpp"
 #include "vehicle_sil/config/config.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace vehicle_sil::config::detail {
@@ -193,6 +199,39 @@ inline constexpr std::int64_t kNanosPerMilli = 1'000'000;
 inline std::string millis_text(std::int64_t ns)
 {
     return speed_text(static_cast<double>(ns) / static_cast<double>(kNanosPerMilli));
+}
+
+/// Parses an unquoted scenario/config integer: signed decimal (`-?[0-9]+`) or unsigned
+/// hexadecimal (`0x` / `0X` followed by hex digits, up to INT64_MAX).
+[[nodiscard]] inline std::optional<std::int64_t> parse_int64(std::string_view text) noexcept
+{
+    if (text.empty())
+    {
+        return std::nullopt;
+    }
+    const char* begin = text.data();
+    const char* end = begin + text.size();
+    if (text.size() >= 3 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+    {
+        if (!std::all_of(begin + 2, end, [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }))
+        {
+            return std::nullopt;
+        }
+        std::uint64_t magnitude = 0;
+        const auto [ptr, ec] = std::from_chars(begin + 2, end, magnitude, 16);
+        if (ec != std::errc{} || ptr != end || magnitude > static_cast<std::uint64_t>(INT64_MAX))
+        {
+            return std::nullopt;
+        }
+        return static_cast<std::int64_t>(magnitude);
+    }
+    std::int64_t value = 0;
+    const auto [ptr, ec] = std::from_chars(begin, end, value, 10);
+    if (ec != std::errc{} || ptr != end)
+    {
+        return std::nullopt;
+    }
+    return value;
 }
 
 } // namespace vehicle_sil::config::detail

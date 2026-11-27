@@ -296,22 +296,7 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
         w.string("type", described->type);
         for (const auto& [key, value] : described->values)
         {
-            if (const auto* d = std::get_if<double>(&value))
-            {
-                w.real(key, *d);
-            }
-            else if (const auto* i = std::get_if<std::int64_t>(&value))
-            {
-                w.integer(key, *i);
-            }
-            else if (const auto* b = std::get_if<bool>(&value))
-            {
-                w.boolean(key, *b);
-            }
-            else
-            {
-                w.string(key, std::get<std::string>(value));
-            }
+            detail::write_shape_value(w, key, value);
         }
         w.end_object();
     };
@@ -481,37 +466,92 @@ void detail::write_finding_members(vehicle_sil::json::JsonWriter& w, const std::
     optional_text("detail", finding.detail);
 }
 
+void detail::write_shape_value(vehicle_sil::json::JsonWriter& w, std::string_view key, const scenario::ScenarioShapeText::Value& value)
+{
+    if (const auto* d = std::get_if<double>(&value))
+    {
+        w.real(key, *d);
+    }
+    else if (const auto* i = std::get_if<std::int64_t>(&value))
+    {
+        w.integer(key, *i);
+    }
+    else if (const auto* b = std::get_if<bool>(&value))
+    {
+        w.boolean(key, *b);
+    }
+    else
+    {
+        w.string(key, std::get<std::string>(value));
+    }
+}
+
+void detail::write_call_stack_json(vehicle_sil::json::JsonWriter& w, std::string_view key,
+                                   const std::vector<scenario::SourceFrame>& stack)
+{
+    if (stack.empty())
+    {
+        return;
+    }
+    w.begin_array(key);
+    for (const scenario::SourceFrame& frame : stack)
+    {
+        w.begin_object();
+        w.string("file", frame.file);
+        w.integer("line", static_cast<std::int64_t>(frame.line));
+        if (frame.name.empty())
+        {
+            w.null("name");
+        }
+        else
+        {
+            w.string("name", frame.name);
+        }
+        w.begin_object("params");
+        for (const scenario::SourceParam& param : frame.params)
+        {
+            detail::write_param_scalar(w, param.name, param.text, param.quoted);
+        }
+        w.end_object();
+        w.end_object();
+    }
+    w.end_array();
+}
+
 void detail::write_param_scalar(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::string& text, bool quoted)
 {
-    // As a scenario reads it: true, false, a whole number, a number, or a text.
-    std::int64_t integer = 0;
-    double number = 0;
-    const char* end = text.data() + text.size();
-    const bool plain = !quoted && !text.empty() &&
-                       (std::isdigit(static_cast<unsigned char>(text.front())) != 0 || text.front() == '-') &&
-                       std::all_of(text.begin(), text.end(), [](char c) {
-                           return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
-                       });
+    // As a scenario reads it: true, false, a whole number (decimal or 0x hex), a number, or a text.
     if (!quoted && (text == "true" || text == "false"))
     {
         w.boolean(key, text == "true");
     }
-    else if (const auto [ptr, ec] = std::from_chars(text.data(), end, integer); plain && ec == std::errc{} && ptr == end)
+    else if (const auto integer = !quoted ? config::detail::parse_int64(text) : std::nullopt)
     {
-        w.integer(key, integer);
-    }
-    else if (const auto [at, bad] = std::from_chars(text.data(), end, number);
-             plain && bad == std::errc{} && at == end && std::isfinite(number))
-    {
-        w.real(key, number);
+        w.integer(key, *integer);
     }
     else
     {
-        w.string(key, text);
+        double number = 0;
+        const char* end = text.data() + text.size();
+        const bool plain = !quoted && !text.empty() &&
+                           (std::isdigit(static_cast<unsigned char>(text.front())) != 0 || text.front() == '-') &&
+                           std::all_of(text.begin(), text.end(), [](char c) {
+                               return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
+                           });
+        if (const auto [at, bad] = std::from_chars(text.data(), end, number);
+            plain && bad == std::errc{} && at == end && std::isfinite(number))
+        {
+            w.real(key, number);
+        }
+        else
+        {
+            w.string(key, text);
+        }
     }
 }
 
-void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<config::ParamValue>& params)
+void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<config::ParamValue>& params,
+                               const std::vector<scenario::ScenarioParamMeta>* meta)
 {
     w.begin_array(key);
     for (const config::ParamValue& param : params)
@@ -520,6 +560,31 @@ void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_vie
         w.string("name", param.name);
         write_param_scalar(w, "value", param.text, param.quoted);
         w.string("from", config::param_source_name(param.source));
+        if (meta != nullptr)
+        {
+            const auto it = std::find_if(meta->begin(), meta->end(),
+                                         [&](const scenario::ScenarioParamMeta& m) { return m.name == param.name; });
+            if (it != meta->end())
+            {
+                if (!it->type.empty())
+                {
+                    w.string("type", it->type);
+                }
+                if (!it->values.empty())
+                {
+                    w.begin_array("values");
+                    for (const std::string& v : it->values)
+                    {
+                        w.string({}, v);
+                    }
+                    w.end_array();
+                }
+                if (!it->description.empty())
+                {
+                    w.string("description", it->description);
+                }
+            }
+        }
         w.end_object();
     }
     w.end_array();
@@ -910,6 +975,30 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             }
             w.end_array();
         }
+        if (!scenario->case_details.empty())
+        {
+            w.begin_array("case_details");
+            for (const scenario::ScenarioCaseDetail& detail : scenario->case_details)
+            {
+                w.begin_object();
+                w.string("name", detail.name);
+                if (detail.only)
+                {
+                    w.begin_array("only");
+                    for (const std::string& v : *detail.only)
+                    {
+                        w.string({}, v);
+                    }
+                    w.end_array();
+                }
+                else
+                {
+                    w.null("only");
+                }
+                w.end_object();
+            }
+            w.end_array();
+        }
         w.integer("steps", static_cast<std::int64_t>(scenario->steps));
         // Each only if the scenario has it.
         if (scenario->only)
@@ -923,7 +1012,16 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         }
         if (!scenario->params.empty())
         {
-            write_params_json(w, "params", scenario->params);
+            write_params_json(w, "params", scenario->params, &scenario->param_meta);
+        }
+        if (!scenario->missing_params.empty())
+        {
+            w.begin_array("missing_params");
+            for (const std::string& name : scenario->missing_params)
+            {
+                w.string({}, name);
+            }
+            w.end_array();
         }
         if (scenario->skipped > 0)
         {

@@ -1014,9 +1014,8 @@ test('stepTitle, lineTitle, and callStackFrames handle line == null without "lin
   }
 });
 
-test('DOM rendering handles non-string step.file, line == null, lines[].file, and escapes XSS payloads', async () => {
-  const makeMockDom = () => {
-    const byTag = (root, pred, out = []) => {
+const makeMockDom = () => {
+  const byTag = (root, pred, out = []) => {
       for (const ch of root.children || []) {
         if (pred(ch)) out.push(ch);
         byTag(ch, pred, out);
@@ -1162,8 +1161,9 @@ test('DOM rendering handles non-string step.file, line == null, lines[].file, an
       global.ResizeObserver,
     );
     return { Element: global.VehicleSilTimeline.Element };
-  };
+};
 
+test('DOM rendering handles non-string step.file, line == null, lines[].file, and escapes XSS payloads', async () => {
   const { Element } = makeMockDom();
   const el = new Element();
   const tl = JSON.parse(JSON.stringify(reference('fails_beside')));
@@ -1207,4 +1207,38 @@ test('DOM rendering handles non-string step.file, line == null, lines[].file, an
   const titles = shadow.querySelectorAll('title').map((n) => n.textContent);
   assert.ok(titles.some((txt) => txt.includes('templates/sub.yaml')));
   assert.ok(!titles.some((txt) => txt.includes('line null')));
+});
+
+test('element DOM escapes XSS in scenario.case facts, multiline step.name, and multi-frame call_stack with empty params', async () => {
+  const { Element } = makeMockDom();
+  const el = new Element();
+  const tl = JSON.parse(JSON.stringify(reference('fails_beside')));
+  tl.scenario.case = '<b>case&xss</b><script>alert(1)</script>';
+  tl.steps[0].name = 'Line1\n<img src=x onerror="alert(2)">';
+  tl.steps[0].file = 'templates/inner.yaml';
+  tl.steps[0].line = 7;
+  tl.steps[0].status = 'failed';
+  tl.steps[0].code = 'scenario-failed';
+  tl.steps[0].call_stack = [
+    { file: 'scenarios/main.yaml', line: 4, name: 'Outer <script>x</script>', params: {} },
+    { file: 'templates/mid.yaml', line: 9, name: null, params: { key: '<svg onload=1>' } },
+  ];
+
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  const shadow = el._shadow;
+  // No raw <script> or <img> elements were ever constructed in the shadow DOM (and innerHTML throws).
+  assert.equal(shadow.querySelectorAll('script').length, 0);
+  assert.equal(shadow.querySelectorAll('img').length, 0);
+  // #facts renders the escaped case text verbatim.
+  const factsText = shadow.getElementById('facts').textContent;
+  assert.ok(factsText.includes('<b>case&xss</b><script>alert(1)</script>'), factsText);
+  // Step name and multi-frame call_stack (including empty params: {}) render as safe text.
+  const stepsText = shadow.querySelectorAll('[data-testid=steps-table]')[0].textContent;
+  assert.ok(stepsText.includes('Line1\n<img src=x onerror="alert(2)">'), stepsText);
+  assert.ok(stepsText.includes('line 4 of scenarios/main.yaml · Outer <script>x</script>'), stepsText);
+  assert.ok(stepsText.includes('line 9 of templates/mid.yaml · key = <svg onload=1>'), stepsText);
+  assert.ok(!stepsText.includes('()'), stepsText);
 });

@@ -52,6 +52,7 @@ std::optional<Reader::Parts> Reader::parts_of(ryml::id_type node, const std::str
 std::optional<double> Reader::measure(ryml::id_type node, const std::string& label, double least, bool above, double most,
                                       const std::string& meaning)
 {
+    record_direct_param_usage(node, ParamType::Number);
     double d = 0;
     if (!plain_number(node, d))
     {
@@ -73,6 +74,7 @@ std::optional<double> Reader::measure(ryml::id_type node, const std::string& lab
 
 std::optional<bool> Reader::flag(ryml::id_type node, const std::string& label, const std::string& meaning)
 {
+    record_direct_param_usage(node, ParamType::Boolean);
     const std::string text = is_scalar(node) && !is_null(node) && !quoted(node) ? text_of(node) : std::string{};
     if (text != "true" && text != "false")
     {
@@ -95,6 +97,7 @@ std::optional<std::string> Reader::choice(ryml::id_type node, const std::string&
 
 std::optional<std::uint64_t> Reader::seed_of(ryml::id_type node, const std::string& label)
 {
+    record_direct_param_usage(node, ParamType::Integer);
     std::int64_t value = 0;
     if (!plain_integer(node, value) || value < 0)
     {
@@ -105,14 +108,16 @@ std::optional<std::uint64_t> Reader::seed_of(ryml::id_type node, const std::stri
     return static_cast<std::uint64_t>(value);
 }
 
-std::optional<double> Reader::level(ryml::id_type node, std::size_t variable, const std::string& key, const std::string& what)
+std::optional<double> Reader::level(ryml::id_type node, std::size_t variable, const std::string& key, const std::string& what,
+                                    StepReadState* state)
 {
     const ScenarioVariable& var = scenario_.variables[variable];
     if (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum)
     {
-        const auto value = value_of(node, variable, key + " of " + what, true);
+        const auto value = value_of(node, variable, key + " of " + what, true, state);
         return value ? std::optional<double>{as_number(*value)} : std::nullopt;
     }
+    record_direct_param_usage(node, ParamType::Number);
     double d = 0;
     if (!number_of(node, variable, d))
     {
@@ -128,7 +133,10 @@ std::optional<double> Reader::level(ryml::id_type node, std::size_t variable, co
                   range_text(*info_of(variable)) + ")");
         return std::nullopt;
     }
-    note_base(variable, d, doc().line(node), key == "to"); // (what a lag or a chatter comes to rest at)
+    if (state != nullptr)
+    {
+        note_base(*state, variable, d, doc().line(node), key == "to"); // (what a lag or a chatter comes to rest at)
+    }
     return d;
 }
 
@@ -464,7 +472,7 @@ std::int64_t Reader::skipped_wave_ms(ryml::id_type node)
     return length;
 }
 
-std::int64_t Reader::read_wave(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time, bool quiet)
+std::int64_t Reader::read_wave(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::optional<std::int64_t>& time, bool quiet)
 {
     std::int64_t longest = 0;
     if (!tree().is_map(node) || !tree().has_children(node))
@@ -481,17 +489,17 @@ std::int64_t Reader::read_wave(ryml::id_type node, ScenarioStep& step, const std
         {
             continue;
         }
-        const std::size_t absentBefore = absent_.size();
-        const auto v = variable(child);
+        const std::size_t absentBefore = state.absent.size();
+        const auto v = variable(child, state.absent);
         if (!v)
         {
-            if (absent_.size() > absentBefore)
+            if (state.absent.size() > absentBefore)
             {
                 longest = std::max(longest, skipped_wave_ms(child));
             }
             continue;
         }
-        if (auto one = read_wave_of(child, *v, time, quiet))
+        if (auto one = read_wave_of(child, *v, state, time, quiet))
         {
             longest = std::max(longest, one->length_ms);
             step.motions.push_back(std::move(*one));
@@ -503,7 +511,7 @@ std::int64_t Reader::read_wave(ryml::id_type node, ScenarioStep& step, const std
 bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Parts& top_parts, std::size_t v, const std::string& what,
                         std::size_t line, const std::optional<std::int64_t>& time, bool quiet, bool& good, ScenarioMotion& out,
                         std::string& text, std::optional<std::int64_t>& length, bool& wantsFor, std::string& noAround,
-                        std::optional<double>& swing, MakeShape& make)
+                        std::optional<double>& swing, MakeShape& make, StepReadState* state)
 {
     const Parts* top = &top_parts;
     const ScenarioVariable& var = scenario_.variables[v];
@@ -618,8 +626,8 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         {
             if (need("low", "the value while it is low") && need("high", "the value while it is high"))
             {
-                low = level(parts->at("low"), v, "low", "the square");
-                high = level(parts->at("high"), v, "high", "the square");
+                low = level(parts->at("low"), v, "low", "the square", state);
+                high = level(parts->at("high"), v, "high", "the square", state);
                 good = good && low && high;
                 text += low && high ? " low " + number_text(*low) + " high " + number_text(*high) : "";
             }
@@ -666,7 +674,7 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         }
         else if (need("value", "the value during the pulse"))
         {
-            value = level(parts->at("value"), v, "value", "the pulse");
+            value = level(parts->at("value"), v, "value", "the pulse", state);
             good = good && value.has_value();
         }
         text += value ? " " + (isBool ? std::string(*value != 0.0 ? "true" : "false") : number_text(*value)) : "";
@@ -791,12 +799,12 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         std::optional<double> to;
         if (need("to", "the value it goes towards"))
         {
-            to = level(parts->at("to"), v, "to", "the lag");
+            to = level(parts->at("to"), v, "to", "the lag", state);
             good = good && to.has_value();
         }
         if (has("from"))
         {
-            out.base = level(parts->at("from"), v, "from", "the lag");
+            out.base = level(parts->at("from"), v, "from", "the lag", state);
             good = good && out.base.has_value();
             text += out.base ? " from " + number_text(*out.base) : "";
         }
@@ -828,7 +836,7 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         std::optional<double> to;
         if (need("to", "the value it comes to rest at"))
         {
-            to = level(parts->at("to"), v, "to", "the chatter");
+            to = level(parts->at("to"), v, "to", "the chatter", state);
             good = good && to.has_value();
         }
         if (has("from") && isBool)
@@ -839,7 +847,7 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         }
         else if (has("from"))
         {
-            out.base = level(parts->at("from"), v, "from", "the chatter");
+            out.base = level(parts->at("from"), v, "from", "the chatter", state);
             good = good && out.base.has_value();
             text += out.base ? " from " + number_text(*out.base) : "";
         }
@@ -931,7 +939,8 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
     return true;
 }
 
-std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size_t v, const std::optional<std::int64_t>& time, bool quiet)
+std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size_t v, StepReadState& state,
+                                                   const std::optional<std::int64_t>& time, bool quiet)
 {
     const std::size_t line = doc().line(node);
     const ScenarioVariable& var = scenario_.variables[v];
@@ -986,11 +995,11 @@ std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size
 
     if (shape == "points")
     {
-        good = read_points(body, top->count("interpolate") > 0 ? top->at("interpolate") : ryml::NONE, v, what, time, quiet, out, text, length, make) && good;
+        good = read_points(body, top->count("interpolate") > 0 ? top->at("interpolate") : ryml::NONE, v, what, time, quiet, out, text, length, make, state) && good;
         wantsFor = false;
         noAround = "the points are the values themselves (for where it begins, start with a point at 0: [0, <value>])";
     }
-    else if (!read_shape(shape, body, *top, v, what, line, time, quiet, good, out, text, length, wantsFor, noAround, swing, make))
+    else if (!read_shape(shape, body, *top, v, what, line, time, quiet, good, out, text, length, wantsFor, noAround, swing, make, &state))
     {
         return std::nullopt;
     }
@@ -1032,7 +1041,7 @@ std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size
         }
         else
         {
-            around = level(top->at("around"), v, "around", "the " + shape);
+            around = level(top->at("around"), v, "around", "the " + shape, &state);
             good = good && around.has_value();
             out.base = around;
         }
@@ -1052,9 +1061,9 @@ std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size
     if (around && swing)
     {
         // Where the wave takes the input: what a dither on top of it starts from.
-        note_base(v, *around - *swing, line, false);
-        note_base(v, *around + *swing, line, false);
-        note_base(v, *around, line, true); // (where it leaves the input)
+        note_base(state, v, *around - *swing, line, false);
+        note_base(state, v, *around + *swing, line, false);
+        note_base(state, v, *around, line, true); // (where it leaves the input)
     }
     out.length_ms = *length;
     if (wantsFor)
@@ -1099,7 +1108,7 @@ void Reader::check_chirp(std::size_t variable, const std::string& what, std::siz
 
 bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::size_t v, const std::string& what,
                          const std::optional<std::int64_t>& time, bool quiet, ScenarioMotion& out, std::string& text, std::optional<std::int64_t>& length,
-                         std::function<std::shared_ptr<const Waveform>(SimDuration)>& make)
+                         std::function<std::shared_ptr<const Waveform>(SimDuration)>& make, StepReadState& state)
 {
     const ScenarioVariable& var = scenario_.variables[v];
     const bool number = var.type == control::ValueType::Integer || var.type == control::ValueType::Real;
@@ -1153,7 +1162,7 @@ bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::siz
     std::string source; // " from <file> column <name>" for points from a file
     if (tree().is_map(body))
     {
-        const bool read = file_points(body, v, what, add, source, out.described);
+        const bool read = file_points(body, v, what, add, source, out.described, state);
         if (!good || !read)
         {
             return false;
@@ -1185,7 +1194,7 @@ bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::siz
             const ryml::id_type timeNode = tree().first_child(item);
             const ryml::id_type valueNode = tree().last_child(item);
             const auto at = millis(timeNode, "the time of " + label, 0, "milliseconds of virtual time since the step began");
-            const auto value = level(valueNode, v, "the value of " + label, "the points");
+            const auto value = level(valueNode, v, "the value of " + label, "the points", &state);
             if (!at || !value || !add(*at, *value, label, "point " + std::to_string(index - 1), doc().line(item)))
             {
                 good = false;
@@ -1225,9 +1234,9 @@ bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::siz
     return true;
 }
 
-const Reader::CsvFile& Reader::csv(const std::string& path)
+const CsvFile& Reader::csv(const std::string& path)
 {
-    if (const auto it = files_.find(path); it != files_.end())
+    if (const auto it = cache_.files.find(path); it != cache_.files.end())
     {
         return it->second;
     }
@@ -1240,7 +1249,7 @@ const Reader::CsvFile& Reader::csv(const std::string& path)
     {
         file.table = detail::read_csv(*text, file.problem);
     }
-    return files_.emplace(path, std::move(file)).first->second;
+    return cache_.files.emplace(path, std::move(file)).first->second;
 }
 
 std::optional<std::int64_t> Reader::cell_ms(const std::string& cell, bool seconds, double& ms)
@@ -1266,7 +1275,8 @@ std::optional<std::int64_t> Reader::cell_ms(const std::string& cell, bool second
     return static_cast<std::int64_t>(whole);
 }
 
-std::optional<double> Reader::cell_value(const std::string& cell, std::size_t variable, const std::string& where, std::size_t line)
+std::optional<double> Reader::cell_value(const std::string& cell, std::size_t variable, const std::string& where, std::size_t line,
+                                         StepReadState& state)
 {
     const ScenarioVariable& var = scenario_.variables[variable];
     const control::VariableInfo& info = *info_of(variable);
@@ -1319,13 +1329,13 @@ std::optional<double> Reader::cell_value(const std::string& cell, std::size_t va
         error("scenario-value", line, pre + " is " + number_text(d) + ", outside its range (" + range_text(info) + ")");
         return std::nullopt;
     }
-    note_base(variable, d, line, false);
+    note_base(state, variable, d, line, false);
     return d;
 }
 
 template <class Add>
 bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& what, const Add& add, std::string& source,
-                         ScenarioShapeText& described)
+                         ScenarioShapeText& described, StepReadState& state)
 {
     const auto parts = parts_of(body, what, kPointsFileKeys, std::string("a CSV file and its column (") + kPointsFileExample + ")");
     if (!parts)
@@ -1455,7 +1465,7 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
                             " (milliseconds of virtual time since the step began)");
             return false;
         }
-        const auto value = cell_value(row.cells[*valueColumn], v, at + " (column " + detail::shown_cell(*valueName) + ")", line);
+        const auto value = cell_value(row.cells[*valueColumn], v, at + " (column " + detail::shown_cell(*valueName) + ")", line, state);
         if (!value || !add(*time, *value, at, after, line))
         {
             return false;
