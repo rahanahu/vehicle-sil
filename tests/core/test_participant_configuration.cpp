@@ -754,3 +754,34 @@ TEST_CASE(local_acceptor_uses_socket_directory_variable_when_valid_and_falls_bac
     CHECK(contains(tcp_only, R"("AcceptorUris":["tcp://127.0.0.1:0"])"));
 #endif
 }
+
+TEST_CASE(external_registry_uri_validation_accepts_loopback_ports_and_rejects_paths_and_network_hosts)
+{
+    for (const char* ok : {"silkit://127.0.0.1:8500", "silkit://127.0.0.2:1", "silkit://localhost:65535",
+                           "silkit://LOCALHOST.:18500", "silkit://[::1]:8500", "silkit://[::ffff:127.0.0.1]:8500"})
+    {
+        CHECK(is_valid_external_registry_uri(ok));
+        CHECK(external_registry_uri_error(ok).empty());
+    }
+    for (const char* bad_fmt : {"", "127.0.0.1:8500", "http://127.0.0.1:8500", "silkit://127.0.0.1",
+                                "silkit://127.0.0.1:0", "silkit://127.0.0.1:08500", "silkit://127.0.0.1:65536",
+                                "silkit://127.0.0.1:-1", "silkit://127.0.0.1:8500/vsil-1",
+                                "silkit://127.0.0.1:8500?x=1", "silkit://127.0.0.1:8500#frag",
+                                "silkit://127.0.0.1:8500 ", "silkit://[::1%lo]:8500", "silkit://[::1]x:8500"})
+    {
+        CHECK(!is_valid_external_registry_uri(bad_fmt));
+        CHECK(contains(external_registry_uri_error(bad_fmt), "silkit://<loopback-host>:<port>"));
+    }
+    for (const char* non_loopback : {"silkit://0.0.0.0:8500", "silkit://192.168.1.10:8500",
+                                     "silkit://example.com:8500", "silkit://[::]:8500", "silkit://[2001:db8::1]:8500"})
+    {
+        CHECK(!is_valid_external_registry_uri(non_loopback));
+        CHECK(contains(external_registry_uri_error(non_loopback), "loopback address"));
+    }
+    // A per-run simulation path appended by the launcher stays recognized as loopback.
+    CHECK(is_loopback_registry_uri("silkit://127.0.0.1:8500/vsil-0123456789abcdef"));
+    CHECK(is_loopback_registry_uri("silkit://localhost:8500/vsil-0123456789abcdef"));
+    CHECK(is_loopback_registry_uri("silkit://[::1]:8500/vsil-0123456789abcdef"));
+    CHECK(contains(default_participant_configuration("silkit://127.0.0.1:8500/vsil-0123456789abcdef"),
+                   "tcp://127.0.0.1:0"));
+}

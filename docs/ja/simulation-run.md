@@ -23,6 +23,7 @@
 | Control Hub トランスポートの累計カウンターを JSON のファイルに記録する | [`--control-metrics`](#control-hub-トランスポートのメトリクスを記録する--control-metrics) |
 | 全部の機種で、シナリオをまとめて実行する | [`test`](#シナリオをまとめて実行するvehicle_sil_launch-test) |
 | 1 つのランチャープロセスで順に実行を繰り返す | [`serve`](#1-つのランチャーで順に実行するvehicle_sil_launch-serve) |
+| Vector SIL Kit Dashboard で participant・CAN トポロジー・Metrics を観測する | [`--external-registry`](#vector-sil-kit-dashboard-で実行を観測する--external-registry) |
 
 ## 実行の流れ
 
@@ -37,7 +38,7 @@
 
 手順 1: 照合でエラーがあれば（`--strict` では警告も）、何も起動せずに照合の結果を書き、終了コード 1 です。機種（`variants`）を書いた設定ファイルでは、`--variant <名前>` で選んだ機種を照合し、その機種の実行ファイル、変数の対応、participant で動かします（[simulation-config.md](simulation-config.md) の「機種」）。`--variant` がなければ引数のエラーで、何も起動しません。
 
-手順 2: registry のアドレスは `registry_uri` で、なければ 127.0.0.1 の空いているポートです。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。`--control` を付けたときは、registry より前に Control Server を起動し、`[vehicle_sil_launch] control server at <address>` の行を書きます。
+手順 2: registry のアドレスは `registry_uri` で、なければ 127.0.0.1 の空いているポートです（`--external-registry <uri>` を付けたときは、プロセス内の registry を起動せず `<uri>/vsil-<id>` に接続します。[Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）](#vector-sil-kit-dashboard-で実行を観測する--external-registry)を参照）。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。`--control` を付けたときは、registry より前に Control Server を起動し、`[vehicle_sil_launch] control server at <address>` の行を書きます。
 
 手順 3: シミュレーションが待つ participant（このドキュメントでは「必須の participant」）は、無効にしていない `required: true` のものです。controller はタイムステップ（設定または実行時に決定した `time_step_ms`）で時刻同期に参加し、タイムステップの終わりを止めて、速度、一時停止、ステップ実行を決めます。最速のときも同じで、タイムステップごとに同期が 1 回増えます。
 
@@ -2184,8 +2185,8 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 `vehicle_sil_launch serve <file>` は、1 つの設定ファイルに対して常駐し、標準入力の `{"command":"run"}` コマンドごとに 1 つずつ順に実行します。各実行は独自の SIL Kit registry、controller、hub、Control Server、participant プロセス、シナリオを作成して破棄し、前の実行の状態を持ち越さずに毎回仮想時刻 0 から開始します。
 
 ```sh
-vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>] \
-  [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>] \
+vehicle_sil_launch serve [--once] [--external-registry <uri>] [--log-dir <dir>] [--timeout-ms <ms>] \
+  [--describe-timeout-ms <ms>] [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>] \
   [--events-stall-ms <ms>] [--control <address> [--control-credentials <file>] \
   [--control-tls-cert <file> --control-tls-key <file>] [--control-audit-log <file>]] \
   [--] <file>
@@ -2218,6 +2219,43 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
 | 4 | 起動時の使い方の誤り（`VEHICLE_SIL_TRACE` 設定時を含む） |
 | 6 | 実行がランチャーを未確定状態に残した（`connection-not-closed` または内部エラー。`"launcher_ends": true`） |
 | 130 | シグナル・コンソールイベント、実行中の標準入力 EOF、またはイベント出力の閉鎖による中断 |
+
+## Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）
+
+既定では、`vehicle_sil_launch` は Vector SIL Kit Dashboard 用の HTTP クライアントを含まないプロセス内 SIL Kit registry を起動します。`--external-registry silkit://<loopback-host>:<port>` を渡すと、`run`、`serve`（[gui.md](gui.md) の Hot 起動を含む）、`test` は、`--dashboard-uri` 付きで別途起動した公式 Vector `sil-kit-registry` などの外部 `sil-kit-registry` に接続し、Vector SIL Kit Dashboard 上で各実行の participant（`SimulationController` と起動した全 participant）、ライフサイクル状態遷移、ネットワークトポロジーを表示できます。
+
+```sh
+# 1. Start Vector SIL Kit Dashboard separately (browser UI on 8080, OTLP/REST ingestion on 8082),
+#    then start an official Dashboard-capable sil-kit-registry once:
+sil-kit-registry --listen-uri silkit://127.0.0.1:8500 --dashboard-uri http://localhost:8082
+
+# 2. Run any existing scenario or configuration through the external registry:
+vehicle_sil_launch run --external-registry silkit://127.0.0.1:8500 \
+  --speed 1 --scenario scenarios/throttle_step.yaml simulation.yaml
+```
+
+- **明示オプトインとループバック限定**: `--external-registry` を付けない限り、従来どおりプロセス内の registry で動きます。`--external-registry` が受け付けるのはループバックアドレス（`127.x.x.x`、`[::1]`、`localhost`）と `1` から `65535` の具体的なポート番号だけで、`/path`、`?query`、`#fragment` は付けられません。`simulation.yaml` の `registry_uri` とは併用できません（終了コード 4）。
+- **実行ごとの分離（`silkit://<host>:<port>/vsil-<id>`）**: `vehicle_sil_launch` は実行ごとに新しい 16 桁 hex のシミュレーション名（`silkit://127.0.0.1:8500/vsil-<16hex>`）を採番し、`SimulationController` と起動するすべての participant に渡します（`run --json` の `registry_uri`、`serve` の `registry` イベント、`[vehicle_sil_launch] registry at ...`）。連続する `run`、`serve`、および GUI の **Start** → **Stop** → **Start** は、前の実行の終了処理と衝突したりデータが混ざったりすることなく、Vector SIL Kit Dashboard 上で別々の Simulation として記録されます。終了イベント（`SimulationEnd`）を最後まで送信させるため、外部の `sil-kit-registry` は実行をまたいで起動したままにしてください。
+- **外部 registry や Dashboard に到達できないとき**: `--external-registry` の先に `sil-kit-registry` がいなければ、手順 3 で `SimulationController` の接続が失敗し、ブリッジや ECU を 1 つも起動せずに終了します（`result: "setup_failed"`、終了コード 3）。`sil-kit-registry` が動いていて Vector SIL Kit Dashboard だけに到達できない場合は、`sil-kit-registry` 側で警告が出るだけで、シミュレーション自体は通常どおり完走します。
+- **Participant の Remote Metrics（`--silkit-config`）**: 特定の participant について SIL Kit のカウンターや統計値を Vector SIL Kit Dashboard に送るには、`Remote` メトリクスシンクを書いた SIL Kit 設定ファイルを `simulation.yaml` の `participants[].command`（または `variants` の項目）に `--silkit-config` で渡します。
+
+```yaml
+# remote-metrics.silkit.yaml
+Experimental:
+  Metrics:
+    UpdateInterval: 1
+    Sinks:
+      - Type: Remote
+```
+
+```yaml
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu, --silkit-config, remote-metrics.silkit.yaml]
+    step_ms: 10
+```
+
+  `UpdateInterval` は実時間の秒単位（最小 `1` 秒）で測られるため、周期メトリクスを確認するときは実時間で 1〜2 秒以上動くように速度付き（`--speed 1` や GUI の対話実行）で動かしてください。数ミリ秒で終わる `--speed max` の実行では、最初の周期送信の前に実行が終わります。
 
 ## 関連するドキュメント
 

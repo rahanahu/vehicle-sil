@@ -3,6 +3,7 @@
 // plan_run(), planned_outcome(): what is settled about a run before it begins. Pure.
 #include "vehicle_sil/runner/run_plan.hpp"
 
+#include "vehicle_sil/core/registry_uri.hpp"
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 #include "vehicle_sil/scenario/scenario_run.hpp"
 #include "vehicle_sil/process/paths.hpp"
@@ -75,6 +76,17 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
             throw std::invalid_argument("plan_run: after_scenario=pause cannot be used when time is locked (outside-real-time)");
         }
     }
+    if (!choices.external_registry_uri.empty())
+    {
+        if (const std::string err = external_registry_uri_error(choices.external_registry_uri); !err.empty())
+        {
+            throw std::invalid_argument("plan_run: " + err);
+        }
+        if (check.config->registry_uri.has_value())
+        {
+            throw std::invalid_argument("plan_run: external_registry_uri cannot be combined with SimulationConfig::registry_uri");
+        }
+    }
     RunPlan plan;
     plan.check = detail::with_bridges(check);
     if (scenario != nullptr)
@@ -101,6 +113,7 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     plan.start_timeout_ms = choices.start_timeout_ms;
     plan.stop_timeout_ms = choices.stop_timeout_ms;
     plan.collect_control_metrics = choices.collect_control_metrics;
+    plan.external_registry_uri = choices.external_registry_uri;
     plan.after_scenario = choices.after_scenario;
     if (check.run_timing)
     {

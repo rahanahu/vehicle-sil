@@ -1765,13 +1765,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "scenario-end-ms",
     "scenario-handover",
     "scenario-cases",
-    "scenario-templates"
+    "scenario-templates",
+    "external-registry"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature, kScenarioTimeFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-metrics\",\n    \"scenario-end-ms\",\n    \"scenario-handover\",\n    \"scenario-cases\",\n    \"scenario-templates\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-metrics\",\n    \"scenario-end-ms\",\n    \"scenario-handover\",\n    \"scenario-cases\",\n    \"scenario-templates\",\n    \"external-registry\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(event_stream_formats_prepare_and_status_replies)

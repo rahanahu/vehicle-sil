@@ -118,6 +118,9 @@ struct RunHost
     /// check --compare-commands: the configuration file whose commands that run the check compares
     /// with those of `config` (CheckReport::commands); it only reads it. Empty: none.
     std::string compare_commands{};
+    /// run/serve/test --external-registry: loopback `silkit://<host>:<port>` of a user-started
+    /// external registry (e.g. official sil-kit-registry with --dashboard-uri); empty: in-process.
+    std::string external_registry_uri{};
 };
 
 struct RunRequest

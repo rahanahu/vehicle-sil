@@ -25,7 +25,7 @@ DEFAULT_FEATURES = [
     "time-commands", "stdin-run-until", "state", "control-links", "scenario",
     "manual-participants", "timeline", "run-stop-at", "scenario-end-ms", "scenario-handover",
     "connections", "connect", "check-text", "compare-commands", "serve", "check-file-only",
-    "serve-prepare", "control-metrics",
+    "serve-prepare", "control-metrics", "external-registry",
 ]
 
 def _peer_variables(name: str) -> list[dict]:
@@ -557,6 +557,9 @@ def _serve_main(argv: list[str]) -> int:
     cred_path: Path | None = None
     if "--control-credentials" in argv:
         cred_path = Path(argv[argv.index("--control-credentials") + 1])
+    ext_reg_uri: str | None = None
+    if "--external-registry" in argv:
+        ext_reg_uri = argv[argv.index("--external-registry") + 1]
     want_control = "--control" in argv and cred_path is not None
 
     _, _, init_fault = inspect_config(cfg, file_only=True)
@@ -790,6 +793,7 @@ def _serve_main(argv: list[str]) -> int:
                     once=once,
                     want_control=want_control,
                     cred_path=cred_path,
+                    ext_reg_uri=ext_reg_uri,
                     req_dict=req_dict,
                     timeline_file=timeline_file,
                     chk_doc=chk_doc,
@@ -839,6 +843,7 @@ def _execute_run(
     once: bool,
     want_control: bool,
     cred_path: Path | None,
+    ext_reg_uri: str | None = None,
     req_dict: dict,
     timeline_file: str | None,
     chk_doc: dict,
@@ -917,7 +922,11 @@ def _execute_run(
     atexit.register(cleanup_sleepers)
 
     _emit(next_ev("phase", run=run_id, phase="starting"))
-    reg_uri = "tcp://0.0.0.0:28500" if name == "network.yaml" else "silkit://localhost:8500"
+    if ext_reg_uri is not None:
+        suffix = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:16]
+        reg_uri = f"{ext_reg_uri}/vsil-{suffix}"
+    else:
+        reg_uri = "tcp://0.0.0.0:28500" if name == "network.yaml" else "silkit://localhost:8500"
     _emit(next_ev("registry", run=run_id, uri=reg_uri))
     if fault != "flood":
         _emit(next_ev("log", run=run_id, source="vehicle_sil_launch", line=f"registry at {reg_uri}"))

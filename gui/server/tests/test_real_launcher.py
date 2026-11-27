@@ -744,3 +744,92 @@ def test_real_recording_roundtrip_with_yaml_reserved_enum_names(tmp_path: Path) 
     run_data = json.loads(run.stdout)
     assert run_data["scenario"]["status"] == "passed", run_data["scenario"]
     assert run_data["scenario"]["over_at_ms"] == 60, run_data["scenario"]
+
+
+def test_real_gui_external_registry_consecutive_runs_and_stop(tmp_path: Path) -> None:
+    """GUI server started with `--external-registry` keeps idle prepare free of registry connections and runs
+    consecutive Start -> Stop -> Start sessions on distinct `/vsil-<16hex>` simulation paths."""
+    assert LAUNCHER is not None and EXAMPLES is not None
+    launcher_exe = Path(LAUNCHER).resolve()
+    build_root = launcher_exe.parent.parent.parent
+    candidates = list(build_root.glob("**/sil-kit-registry"))
+    assert candidates, f"missing built sil-kit-registry under {build_root}"
+    registry_exe = candidates[0]
+
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    reg_log = tmp_path / "external-registry.log"
+    with open(reg_log, "wb") as log_fp:
+        reg_proc = subprocess.Popen(
+            [str(registry_exe), "--listen-uri", "silkit://127.0.0.1:0"],
+            stdin=subprocess.DEVNULL,
+            stdout=log_fp,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+        ext_uri = ""
+        deadline = time.monotonic() + scaled(15)
+        while time.monotonic() < deadline:
+            text = reg_log.read_text(encoding="utf-8", errors="replace")
+            for line in text.splitlines():
+                if "SIL Kit Registry listening on " in line:
+                    ext_uri = line.split("SIL Kit Registry listening on ", 1)[1].strip()
+                    break
+            if ext_uri:
+                break
+            assert reg_proc.poll() is None, text
+            time.sleep(0.05)
+        assert ext_uri.startswith("silkit://127.0.0.1:"), reg_log.read_text(encoding="utf-8", errors="replace")
+
+        async def talk(c: Client) -> None:
+            ws = await c.ws()
+            await ws.until(is_synced)
+
+            st_prep, _ = await c.post("api/prepare", {"file": "forever.yaml"})
+            assert st_prep == 200
+            # Idle prepare must not connect SimulationController to sil-kit-registry before Start.
+            assert "SimulationController" not in reg_log.read_text(encoding="utf-8", errors="replace")
+
+            uris: list[str] = []
+            for _ in range(2):
+                st_run, started = await c.post("api/run", {"file": "forever.yaml"})
+                assert st_run == 200, started
+                await ws.until(
+                    lambda m: m["type"] == "variables"
+                    and m["variables"]["state"] == "ready"
+                    and any(p["name"] == "Engine" and p["connected"] for p in m["variables"]["peers"]),
+                    timeout=30,
+                )
+                st_stop, _ = await c.post(
+                    "api/stop-session",
+                    {"run_id": started["run_id"], "instance": started["instance"], "force": False},
+                )
+                assert st_stop == 200
+                await ws.until(is_ended, timeout=30)
+                _, sess = await c.get("api/session")
+                summary = sess["session"]
+                assert summary["result"]["result"] == "stopped" and summary["result"]["ok"] is True, summary
+                reg_info = summary["registry"]
+                assert reg_info is not None and isinstance(reg_info["uri"], str), summary
+                uri = reg_info["uri"]
+                assert uri.startswith(f"{ext_uri}/vsil-") and len(uri) == len(ext_uri) + 6 + 16, uri
+                uris.append(uri)
+
+            assert uris[0] != uris[1], uris
+            await ws.close()
+
+        with gui_server(
+            tmp_path,
+            root=configs,
+            launcher=launcher_exe,
+            args=("--external-registry", ext_uri),
+        ) as gui:
+            run_async(talk, gui)
+    finally:
+        if reg_proc.poll() is None:
+            reg_proc.terminate()
+            try:
+                reg_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                reg_proc.kill()
+                reg_proc.wait()

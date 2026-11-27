@@ -250,6 +250,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--port <n>` | 待ち受けるポート（127.0.0.1）。既定の 0 は空いているポート。80 は使えない（ブラウザが `Host` からポートを省くため） |
 | `--no-browser` | ブラウザを開かない |
 | `--launcher <path>` | `vehicle_sil_launch` のパス（`.py` で終わるパスは、この Python で実行する） |
+| `--external-registry <uri>` | 各実行を起動済みのループバック SIL Kit registry（`silkit://<loopback-host>:<port>`。ポートは 1 から 65535、パスなし。`--dashboard-uri` を付けた公式 `sil-kit-registry` など）へ接続する（「[Vector SIL Kit Dashboard で GUI の実行を観測する](#vector-sil-kit-dashboard-で-gui-の実行を観測する)」） |
 | `--web <dir>` | 自分の画面を配信する: そのビルドの出力のディレクトリ（`index.html` があること）。既定はサンプルの画面（「[`--web` で配信するファイル](#--web-で配信するファイル)」） |
 | `--dev-origin <origin>` | 画面の開発サーバー（`ng serve`、Vite など。`http://127.0.0.1:<port>` の形だけ）からのリクエストも受け付ける（「[開発サーバーを使う](#開発サーバーを使う)」） |
 | `--json` | URL の代わりに `{"vehicle_sil_gui": 4, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき。`--no-auth` のときは `"auth": false` も入り、`url`/`dev_url` に `#token=...` は付かない） |
@@ -356,6 +357,20 @@ scripts/run-gui.py --workbench
 **Record & start** で開始した実行では、**Scenario** タブの **Load recording** で記録されたシナリオ YAML を読み込めます。実行中に読み込むと `end_ms` は省かれて最後の `set` 手順で止まり、実行終了後に読み込むと記録元の終了仮想時刻から確定した `end_ms` が入ります。シナリオを選び、ランチャーが `scenario-handover` に対応しているときは、**After scenario** で **Stop run**（既定）または **Pause for manual control** を選べます。**Pause for manual control** を選ぶと **Stop at (ms)** は無効になり送信されません。引き継ぎが成立した後は、同じ実行のまま **ECU I/O** がアンロックされ、手動書き込みと **1 step** / **Resume** / **Speed** を続けられます。
 
 **Settings → Scenario folder** では、**Scenario** タブで YAML を開いたり保存したりするローカルフォルダを選びます。ブラウザーが読み取り専用でフォルダを開く場合、**Save YAML** はファイルをダウンロードします。ローカルの YAML をサーバーで実行するには、選択中の Network のサーバー側 `scenarios/` に置き、実行リストを更新します。
+
+### Vector SIL Kit Dashboard で GUI の実行を観測する
+
+`vehicle-sil-gui`（または `scripts/run-gui.py`）に `--external-registry silkit://<loopback-host>:<port>` を渡すと、ブラウザ GUI や Workbench の通常の **Start** による実行を、Vector SIL Kit Dashboard につないだ起動済みの公式 `sil-kit-registry` へ接続できます（[simulation-run.md](simulation-run.md#vector-sil-kit-dashboard-で実行を観測する--external-registry) の「Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）」）。
+
+```sh
+sil-kit-registry --listen-uri silkit://127.0.0.1:8500 --dashboard-uri http://localhost:8082
+vehicle-sil-gui --external-registry silkit://127.0.0.1:8500 simulation.live.yaml
+# or, from a repository build:
+scripts/run-gui.py --external-registry silkit://127.0.0.1:8500
+```
+
+- 待機中（Hot 起動の `POST api/prepare` を含む）は外部 registry へ接続しません。**Start** を押すたびに新しい `silkit://<host>:<port>/vsil-<16hex>` の URI が採番され、**Stop** してから再び **Start** を押すと、前の実行とデータが混ざらずに Vector SIL Kit Dashboard 上で新しい Simulation として表示されます。
+- 設定ファイル（または選んだ機種）の `command` に `Remote` メトリクスシンク付きの `--silkit-config` を指定した participant は、GUI での実行中に標準の SIL Kit メトリクスも Vector SIL Kit Dashboard へ送信します。
 
 ## 停止と終了
 

@@ -222,6 +222,7 @@ class Options:
     stop_timeout_s: float | None = None
     participant_start_timeout_ms: int = 30000
     participant_stop_timeout_ms: int = 10000
+    external_registry_uri: str | None = None
     check_timeout_s: float = CHECK_TIMEOUT_S
     silent_after_s: float = SILENT_AFTER_S
     limits: Limits = field(default_factory=Limits)
@@ -268,6 +269,7 @@ class GuiServer:
             stop_timeout_s=options.stop_timeout_s,
             participant_start_timeout_ms=options.participant_start_timeout_ms,
             participant_stop_timeout_ms=options.participant_stop_timeout_ms,
+            external_registry_uri=options.external_registry_uri,
             check_timeout_s=options.check_timeout_s,
             silent_after_s=options.silent_after_s,
             limits=options.limits,

@@ -73,6 +73,9 @@ struct RunChoices
     std::int64_t stop_timeout_ms = 10000;
     /// Opt-in (--control-metrics): capture HubTransport::stats() inside close_connection_within().
     bool collect_control_metrics = false;
+    /// Opt-in (--external-registry): loopback `silkit://<host>:<port>` of a user-started external
+    /// registry; empty: start an in-process registry for the run.
+    std::string external_registry_uri{};
     /// What to do after the scenario passes: stop the simulation (default) or pause for handover.
     config::AfterScenario after_scenario = config::AfterScenario::Stop;
 };
@@ -134,6 +137,7 @@ struct RunPlan
     std::int64_t start_timeout_ms = 30000;
     std::int64_t stop_timeout_ms = 10000;
     bool collect_control_metrics = false;
+    std::string external_registry_uri{};
     config::AfterScenario after_scenario = config::AfterScenario::Stop;
 
     /// The configuration of `check` (a check that passed has one).

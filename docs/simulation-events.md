@@ -704,7 +704,8 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "scenario-end-ms",
     "scenario-handover",
     "scenario-cases",
-    "scenario-templates"
+    "scenario-templates",
+    "external-registry"
   ]
 }
 ```
@@ -777,6 +778,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `scenario-handover` | `after_scenario: "pause"` in run requests: pauses at scenario pass for manual handover with dynamic write unlock (`handed_over` and `scenario_over_at_ms` in `state`) |
 | `scenario-cases` | Named scenario `cases:`, `--case` / request `"case"`, `case_details` and preserved multi-case `check --json` usage metadata, and inline `serve` `intent.cli_params` |
 | `scenario-templates` | Reusable scenario templates (`vehicle_sil_scenario_template: 1`), `call_stack` provenance, and template parameter metadata (`param_meta` and `missing_params`) |
+| `external-registry` | `--external-registry <uri>` on `run`, `serve`, and `test`: connects to a running loopback `sil-kit-registry` using a fresh per-run `/vsil-<16hex>` simulation path (see "Observing runs in Vector SIL Kit Dashboard (`--external-registry`)" in [simulation-run.md](simulation-run.md#observing-runs-in-vector-sil-kit-dashboard---external-registry)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 | `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |

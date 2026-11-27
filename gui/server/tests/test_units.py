@@ -2293,3 +2293,97 @@ def test_tier5_call_stack_bounds_partial_step_provenance_and_surrogates() -> Non
     feed_line(s2, line("scenario_step", 1, index=1, line=2, kind="set", text="set x = 1", status="passed"))
     fresh_step1 = s2.scenario_summary()["steps"][0]
     assert fresh_step1["file"] is None and fresh_step1["name"] is None and fresh_step1["call_stack"] is None
+
+
+def test_external_registry_uri_validation_and_serve_command(tmp_path: Path) -> None:
+    from vehicle_sil_gui.launcher import (
+        FEATURE_EXTERNAL_REGISTRY,
+        REQUIRED_FEATURES,
+        external_registry_uri_error,
+        with_participant_timeouts,
+    )
+
+    for ok in (
+        "silkit://127.0.0.1:8500",
+        "silkit://127.0.0.2:1",
+        "silkit://localhost:65535",
+        "silkit://LOCALHOST.:18500",
+        "silkit://[::1]:8500",
+        "silkit://[::ffff:127.0.0.1]:8500",
+    ):
+        assert external_registry_uri_error(ok) is None, ok
+
+    for bad_fmt in (
+        "",
+        "127.0.0.1:8500",
+        "http://127.0.0.1:8500",
+        "silkit://127.0.0.1",
+        "silkit://127.0.0.1:0",
+        "silkit://127.0.0.1:08500",
+        "silkit://127.0.0.1:65536",
+        "silkit://127.0.0.1:8500/vsil-1",
+        "silkit://127.0.0.1:8500?x=1",
+        "silkit://127.0.0.1:8500#f",
+        "silkit://[::1%lo]:8500",
+    ):
+        err = external_registry_uri_error(bad_fmt)
+        assert err is not None and "silkit://<loopback-host>:<port>" in err, bad_fmt
+
+    for non_loopback in (
+        "silkit://0.0.0.0:8500",
+        "silkit://192.168.1.10:8500",
+        "silkit://example.com:8500",
+        "silkit://[::]:8500",
+        "silkit://[2001:db8::1]:8500",
+    ):
+        err = external_registry_uri_error(non_loopback)
+        assert err is not None and "loopback address" in err, non_loopback
+
+    launcher = Launcher(Path("/bin/vehicle_sil_launch"))
+    cred = tmp_path / "creds.txt"
+    cmd = with_participant_timeouts(
+        serve_command(
+            launcher,
+            "simulation.live.yaml",
+            cred,
+            once=True,
+            external_registry_uri="silkit://127.0.0.1:18500",
+        ),
+        25000,
+        10000,
+    )
+    assert cmd == [
+        "/bin/vehicle_sil_launch",
+        "serve",
+        "--once",
+        "--external-registry",
+        "silkit://127.0.0.1:18500",
+        "--control",
+        "0",
+        "--control-credentials",
+        str(cred),
+        "--participant-start-timeout-ms",
+        "25000",
+        "--",
+        "simulation.live.yaml",
+    ]
+
+    # Launcher(extra_features=...) requires external-registry only when requested.
+    script = tmp_path / "fake_launcher.py"
+    from vehicle_sil_gui import __version__
+
+    script.write_text(
+        "import json, sys\n"
+        f"print(json.dumps({{'vehicle_sil_launch': 1, 'vehicle_sil': {__version__!r}, "
+        f"'features': {list(REQUIRED_FEATURES)!r}}}))\n",
+        encoding="utf-8",
+    )
+    plain = Launcher(script)
+    asyncio.run(plain.probe())
+    assert plain.usable
+
+    strict = Launcher(script, extra_features=(FEATURE_EXTERNAL_REGISTRY,))
+    asyncio.run(strict.probe())
+    assert not strict.usable
+    assert strict.problems and strict.problems[0]["code"] == "missing-feature"
+    assert FEATURE_EXTERNAL_REGISTRY in strict.problems[0]["message"]

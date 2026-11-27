@@ -26,6 +26,7 @@ DEFAULT_FEATURES = (
     "scenario-handover",
     "control-links",
     "control-server",
+    "external-registry",
 )
 
 

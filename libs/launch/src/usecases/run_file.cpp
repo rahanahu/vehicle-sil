@@ -10,6 +10,7 @@
 
 #include "vehicle_sil/runner/detail/run_detail.hpp"
 #include "vehicle_sil/runner/detail/runner.hpp"
+#include "vehicle_sil/core/registry_uri.hpp"
 #include "vehicle_sil/launch/control_metrics_format.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/run_sink.hpp"
@@ -77,6 +78,7 @@ runner::RunChoices run_choices(const RunRequest& request)
     choices.start_timeout_ms = request.host.start_timeout_ms;
     choices.stop_timeout_ms = request.host.stop_timeout_ms;
     choices.collect_control_metrics = !request.host.control_metrics.empty();
+    choices.external_registry_uri = request.host.external_registry_uri;
     choices.after_scenario = request.intent.after_scenario;
     return choices;
 }
@@ -234,6 +236,16 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     runner::RunControls& controls = own ? own->controls : *lent.controls;
     RunReport report;
     report.strict = request.intent.strict;
+    if (!request.host.external_registry_uri.empty())
+    {
+        if (const std::string err = external_registry_uri_error(request.host.external_registry_uri); !err.empty())
+        {
+            report.check.file = request.host.config;
+            report.check.usage = true;
+            report.check.findings.push_back(config::Finding{config::Severity::Error, "usage", err, 0, "", ""});
+            return report;
+        }
+    }
     if (std::string collision = control_metrics_collision(request); !collision.empty())
     {
         report.check.file = request.host.config;

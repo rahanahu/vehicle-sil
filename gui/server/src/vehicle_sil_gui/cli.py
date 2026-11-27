@@ -76,6 +76,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--port", type=int, default=0, help="the port on 127.0.0.1 (default 0: a free one)")
     p.add_argument("--no-browser", action="store_true", help="do not open the browser")
     p.add_argument("--launcher", help="the path of vehicle_sil_launch")
+    p.add_argument("--external-registry", metavar="URI",
+                   help="connect each run to a user-started SIL Kit registry at silkit://<loopback-host>:<port> "
+                        "(e.g. official sil-kit-registry started with --dashboard-uri for Vector SIL Kit Dashboard)")
     p.add_argument("--web", metavar="DIR",
                    help="serve your own screen: the directory of its built files, with index.html (default: the "
                         "sample screen). Only the files in DIR are served, with the same checks and CSP")
@@ -157,6 +160,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.dev_origin is not None and not DEV_ORIGIN.fullmatch(args.dev_origin):
         return usage_error(f"--dev-origin {args.dev_origin}: write http://127.0.0.1:<port> (only a development "
                            "server on this computer)")
+    if args.external_registry is not None and (
+        problem := launcher_module.external_registry_uri_error(args.external_registry)
+    ):
+        return usage_error(problem)
     if not 0 <= args.port <= 65535:
         return usage_error(f"--port {args.port}: write 0 (a free port) or a port from 1 to 65535")
     if args.port == 80:  # a browser leaves :80 out of Host and Origin, which the checks compare
@@ -194,8 +201,11 @@ def main(argv: list[str] | None = None) -> int:
         found = launcher_module.find(args.launcher)
     except launcher_module.LauncherNotFound as e:
         return usage_error(str(e))
+    extra_features = (launcher_module.FEATURE_EXTERNAL_REGISTRY,) if args.external_registry else ()
     try:
-        return asyncio.run(serve(args, config_root.root, initial, launcher_module.Launcher(found), web_dir))
+        return asyncio.run(
+            serve(args, config_root.root, initial, launcher_module.Launcher(found, extra_features=extra_features), web_dir)
+        )
     except KeyboardInterrupt:
         return EXIT_OK
 
@@ -219,6 +229,7 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
                                dev_origin=args.dev_origin, web_dir=web_dir, stop_timeout_s=stop_timeout_s,
                                participant_start_timeout_ms=args.participant_start_timeout_ms,
                                participant_stop_timeout_ms=args.participant_stop_timeout_ms,
+                               external_registry_uri=args.external_registry,
                                check_timeout_s=args.check_timeout, silent_after_s=args.silent_after,
                                variables=not args.no_variables, save=not args.no_save,
                                command_changes_allowed=args.allow_command_changes, auth=not args.no_auth))

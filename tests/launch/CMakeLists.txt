@@ -268,6 +268,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     launch_run_connect.cpp
     launch_run_control_metrics.cpp
     launch_run_events.cpp
+    launch_run_external_registry.cpp
     launch_run_launcher.cpp
     launch_run_manual.cpp
     launch_run_networks.cpp
@@ -411,6 +412,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       connect_speed
       connect_time_changed
       connect_time_locked
+      external_registry
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>

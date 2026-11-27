@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/request.hpp"
 
+#include "vehicle_sil/core/registry_uri.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -93,6 +95,17 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
                                 ? "--control-metrics is for run: check starts no participant"
                                 : "--control-metrics is for run, not for test (which runs multiple simulations into one "
                                   "summary): run one simulation with vehicle_sil_launch run --control-metrics <file>"));
+    }
+    if (!host.external_registry_uri.empty())
+    {
+        if (command == RequestCommand::Check)
+        {
+            out.push_back(usage("--external-registry is for run, serve and test: check starts no participant"));
+        }
+        else if (const std::string err = external_registry_uri_error(host.external_registry_uri); !err.empty())
+        {
+            out.push_back(usage(err));
+        }
     }
     if (intent.scenario && intent.start_paused)
     {

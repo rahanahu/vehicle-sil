@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import re
@@ -57,6 +58,63 @@ SCENARIO_STEP_EVENT = "scenario_step"
 FEATURE_TIMELINE = "timeline"
 FEATURE_RUN_STOP_AT = "run-stop-at"
 FEATURE_SCENARIO_HANDOVER = "scenario-handover"
+FEATURE_EXTERNAL_REGISTRY = "external-registry"
+
+
+def external_registry_uri_error(uri: str) -> str | None:
+    """Validates `--external-registry <uri>`: `silkit://<loopback-host>:<port>` (port 1..65535, no path)."""
+    fmt_err = (
+        "--external-registry must be silkit://<loopback-host>:<port> with a port from 1 to 65535 and no path "
+        f"(e.g. silkit://127.0.0.1:8500 or silkit://localhost:8500), not '{uri}'"
+    )
+    if not uri.startswith("silkit://"):
+        return fmt_err
+    rest = uri[len("silkit://"):]
+    if any(ord(c) <= 0x20 or ord(c) == 0x7F or c in "/?#" for c in rest):
+        return fmt_err
+    is_v6 = False
+    if rest.startswith("["):
+        close = rest.find("]")
+        if close <= 1 or close + 2 > len(rest) or rest[close + 1] != ":":
+            return fmt_err
+        host = rest[1:close]
+        if "%" in host:
+            return fmt_err
+        port_part = rest[close + 2:]
+        is_v6 = True
+    else:
+        colon = rest.find(":")
+        if colon <= 0 or rest.find(":", colon + 1) != -1:
+            return fmt_err
+        host = rest[:colon]
+        if "[" in host or "]" in host:
+            return fmt_err
+        port_part = rest[colon + 1:]
+    if not port_part or port_part[0] == "0" or not port_part.isascii() or not port_part.isdigit():
+        return fmt_err
+    port = int(port_part)
+    if not 1 <= port <= 65535:
+        return fmt_err
+    loopback = False
+    if is_v6:
+        try:
+            addr6 = ipaddress.IPv6Address(host)
+            mapped = addr6.ipv4_mapped
+            loopback = addr6.is_loopback or (mapped is not None and mapped.is_loopback)
+        except ValueError:
+            return fmt_err
+    else:
+        try:
+            loopback = ipaddress.IPv4Address(host).is_loopback
+        except ValueError:
+            trimmed = host[:-1] if host.endswith(".") else host
+            loopback = trimmed.lower() == "localhost"
+    if not loopback:
+        return (
+            "--external-registry must name a loopback address on this computer "
+            f"(e.g. silkit://127.0.0.1:8500 or silkit://localhost:8500), not '{uri}'"
+        )
+    return None
 
 
 class LauncherNotFound(Exception):
@@ -69,6 +127,7 @@ class Launcher:
     usable: bool = False
     problems: list[dict] = field(default_factory=list)
     version: dict | None = None
+    extra_features: tuple[str, ...] = ()
     _stamp: tuple | None = None
     track: set | None = field(default=None, repr=False)  # where a running `version --json` is put (see process)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -134,7 +193,8 @@ class Launcher:
                                  "message": f"this {LAUNCHER_NAME} ({self.path}) is vehicle-sil {theirs}, this GUI is "
                                             f"{__version__}: use the {LAUNCHER_NAME} of the same version"}])
             return
-        missing = [f for f in REQUIRED_FEATURES if f not in self.features]
+        required = (*REQUIRED_FEATURES, *(f for f in self.extra_features if f not in REQUIRED_FEATURES))
+        missing = [f for f in required if f not in self.features]
         self._set(version, [{"code": "missing-feature",
                              "message": f"{self.path} has no '{f}' (its features: "
                                         f"{', '.join(self.features) or 'none'}): this {LAUNCHER_NAME} is not "
@@ -230,11 +290,13 @@ def connections_command(launcher: Launcher, file: str, network: str) -> list[str
 
 
 def serve_command(launcher: Launcher, file: str, control_credentials: Path | None = None,
-                  *, once: bool = False) -> list[str]:
+                  *, once: bool = False, external_registry_uri: str | None = None) -> list[str]:
     """Builds the `vehicle_sil_launch serve` (or `serve --once`) invocation."""
     argv = launcher.prefix + ["serve"]
     if once:
         argv.append("--once")
+    if external_registry_uri is not None:
+        argv += ["--external-registry", external_registry_uri]
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
     return argv + ["--", file]

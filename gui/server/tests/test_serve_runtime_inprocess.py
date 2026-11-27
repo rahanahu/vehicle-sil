@@ -188,7 +188,7 @@ FAKE_SERVE_SCRIPT = textwrap.dedent("""\
             continue
         cmd = json.loads(line)
         name = cmd.get("command")
-        log_event({"pid": os.getpid(), "config": cfg, "cmd": cmd, "cred_exists": cred_path.exists() if cred_path else None})
+        log_event({"pid": os.getpid(), "config": cfg, "cmd": cmd, "argv": argv, "cred_exists": cred_path.exists() if cred_path else None})
 
         if name == "status":
             emit({"event": "status", "seq": seq, "t_ms": t_ms, "id": cmd.get("id"), **current_status_payload()})
@@ -494,6 +494,7 @@ async def _serve_gui(
     silent_after_s: float = 5.0,
     stop_timeout_s: float = 1.0,
     check_timeout_s: float = 120.0,
+    external_registry_uri: str | None = None,
     source=None,
     env: dict[str, str] | None = None,
 ):
@@ -529,6 +530,7 @@ async def _serve_gui(
         stop_timeout_s=stop_timeout_s,
         silent_after_s=silent_after_s,
         check_timeout_s=check_timeout_s,
+        external_registry_uri=external_registry_uri,
         variables=variables,
         source=resolved_source,
         check_runner=fake_check,
@@ -2099,5 +2101,42 @@ def test_shutdown_waits_for_in_flight_post_prepare(tmp_path: Path) -> None:
                 for p in created_creds:
                     control.remove(p)
                 control.credentials_file = orig_creds  # type: ignore[assignment]
+
+    asyncio.run(run())
+
+
+def test_serve_runtime_forwards_external_registry_in_hot_and_cold_modes(tmp_path: Path) -> None:
+    ext_uri = "silkit://127.0.0.1:18500"
+
+    async def run() -> None:
+        async with _serve_gui(tmp_path, external_registry_uri=ext_uri, env={"FAKE_SERVE_BEHAVIOR": "normal"}) as (
+            server,
+            c,
+            log_path,
+        ):
+            sock = await c.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            # Hot Start on a.yaml
+            st_prep, _ = await c.post("api/prepare", {"file": "a.yaml"})
+            assert st_prep == 200
+            st_run1, _ = await c.post("api/run", {"file": "a.yaml"})
+            assert st_run1 == 200
+            await sock.until(is_ended)
+
+            # Cold Start fallback on manual.yaml
+            st_run2, _ = await c.post("api/run", {"file": "manual.yaml"})
+            assert st_run2 == 200
+            await sock.until(is_ended)
+
+            entries = [json.loads(ln) for ln in log_path.read_text(encoding="utf-8").splitlines()]
+            run_entries = [e for e in entries if isinstance(e.get("cmd"), dict) and e["cmd"].get("command") == "run"]
+            assert len(run_entries) == 2, entries
+            argv_hot, argv_cold = run_entries[0]["argv"], run_entries[1]["argv"]
+            assert "--once" not in argv_hot
+            assert "--external-registry" in argv_hot and argv_hot[argv_hot.index("--external-registry") + 1] == ext_uri
+            assert "--once" in argv_cold
+            assert "--external-registry" in argv_cold and argv_cold[argv_cold.index("--external-registry") + 1] == ext_uri
+            assert server.runs.runtime.active_pids() == []
+            await sock.close()
 
     asyncio.run(run())
