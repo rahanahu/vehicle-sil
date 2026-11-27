@@ -1332,4 +1332,277 @@ describe('generated OpenAPI 3.1 and WebSocket JSON Schemas align with client bui
     expect(badHandedOver?.scenario?.handed_over).toBe(false);
     expect(badHandedOver?.unreadable).toContain('scenario.handed_over');
   });
+
+  it('reads check scenario case metadata, param_meta, missing_params, and top-level variant/params', () => {
+    const check = readCheckResponse({
+      check: {
+        vehicle_sil_check: 1,
+        file: 'sub/simulation.yaml',
+        result: 'usage',
+        errors: 1,
+        warnings: 0,
+        notes: 0,
+        variant: 'hil',
+        variants: ['hil', 'sil'],
+        params: [{ name: 'throttle', value: 50, from: 'default' }],
+        participants: [
+          {
+            name: 'Engine',
+            line: 4,
+            required: true,
+            enabled: true,
+            manual: false,
+            step_ms: 10,
+            status: 'described',
+            variables: null,
+            control: null,
+          },
+        ],
+        networks: [],
+        findings: [
+          {
+            severity: 'error',
+            code: 'scenario-case-required',
+            file: 'sub/scenarios/cases.yaml',
+            line: 1,
+            participant: null,
+            network: null,
+            message: 'choose one case with --case',
+            detail: null,
+          },
+        ],
+        hot_eligibility: { eligible: true, reason: null },
+        scenario: {
+          file: 'sub/scenarios/cases.yaml',
+          name: 'drive cases',
+          case: null,
+          cases: ['idle', 'full_load'],
+          case_details: [
+            { name: 'idle', only: null },
+            { name: 'full_load', only: ['hil'] },
+          ],
+          steps: 0,
+          params: [
+            {
+              name: 'mode',
+              value: 'eco',
+              from: 'default',
+              type: 'enum',
+              values: ['eco', 'sport'],
+              description: 'drive mode',
+            },
+          ],
+          param_meta: [
+            {
+              name: 'mode',
+              type: 'enum',
+              values: ['eco', 'sport'],
+              description: 'drive mode',
+            },
+            {
+              name: 'target_rpm',
+              type: 'integer',
+              description: 'target engine rpm',
+            },
+          ],
+          missing_params: ['target_rpm'],
+        },
+      },
+    });
+
+    expect(check.result).toBe('usage');
+    expect(check.variant).toBe('hil');
+    expect(check.variants).toEqual(['hil', 'sil']);
+    expect(check.params).toEqual([{ name: 'throttle', value: 50, from: 'default' }]);
+    expect(check.raw?.['hot_eligibility']).toEqual({ eligible: true, reason: null });
+    expect(check.scenario).toMatchObject({
+      file: 'sub/scenarios/cases.yaml',
+      name: 'drive cases',
+      case: null,
+      cases: ['idle', 'full_load'],
+      case_details: [
+        { name: 'idle', only: null },
+        { name: 'full_load', only: ['hil'] },
+      ],
+      params: [
+        {
+          name: 'mode',
+          value: 'eco',
+          from: 'default',
+          type: 'enum',
+          values: ['eco', 'sport'],
+          description: 'drive mode',
+        },
+      ],
+      param_meta: [
+        {
+          name: 'mode',
+          type: 'enum',
+          values: ['eco', 'sport'],
+          description: 'drive mode',
+        },
+        {
+          name: 'target_rpm',
+          type: 'integer',
+          description: 'target engine rpm',
+        },
+      ],
+      missing_params: ['target_rpm'],
+    });
+  });
+
+  it('preserves scenario.case, scenario.params, step provenance, and session.intent in readSessionResponse', () => {
+    const callStack = [
+      {
+        file: 'sub/scenarios/cases.yaml',
+        line: 31,
+        name: 'run load check',
+        params: { throttle: 50, label: 'rated' },
+      },
+    ];
+    const summary = readSessionResponse({
+      session: {
+        id: '7',
+        state: 'ended',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        stop: 'none',
+        file: 'sub/simulation.yaml',
+        disable: [],
+        manual: [],
+        speed: 1,
+        start_paused: false,
+        phase: 'done',
+        last_seq: 12,
+        last_t_ms: 400,
+        time: null,
+        last_command: null,
+        launcher_state: null,
+        allowed: null,
+        check: null,
+        participants: [],
+        findings: [],
+        result: null,
+        log: {},
+        problems: [],
+        problems_omitted: 0,
+        intent: {
+          scenario: 'sub/scenarios/cases.yaml',
+          case: 'full_load',
+          after_scenario: 'pause',
+          variant: 'hil',
+          disable: ['Logger'],
+          enable: ['Engine'],
+          manual: ['Brake'],
+          connect: { Engine: 'lab' },
+          params: { target_rpm: 3000, mode: 'sport', dry_run: false },
+          time_policy: 'realtime',
+          speed: 2,
+          start_paused: true,
+          stop_at_ms: 5000,
+        },
+        scenario: {
+          file: 'sub/scenarios/cases.yaml',
+          name: 'drive cases',
+          case: 'full_load',
+          params: [
+            {
+              name: 'target_rpm',
+              value: 3000,
+              from: 'cli',
+              type: 'integer',
+              description: 'target engine rpm',
+            },
+          ],
+          step_count: 1,
+          steps: [
+            {
+              index: 1,
+              file: 'sub/scenarios/templates/check.yaml',
+              line: 22,
+              kind: 'expect',
+              name: 'rated: speed check',
+              text: 'expect Engine.speed == 3000',
+              status: 'failed',
+              start_ms: 100,
+              at_ms: 200,
+              end_ms: 200,
+              code: 'expect-failed',
+              message: 'actual 2500',
+              call_stack: callStack,
+            },
+          ],
+          steps_omitted: 0,
+          status: 'failed',
+          over_at_ms: 200,
+          timeline_url: 'api/timeline/7',
+        },
+      },
+    });
+
+    expect(summary?.unreadable).toEqual([]);
+    expect(summary?.intent).toEqual({
+      scenario: 'sub/scenarios/cases.yaml',
+      case: 'full_load',
+      after_scenario: 'pause',
+      variant: 'hil',
+      disable: ['Logger'],
+      enable: ['Engine'],
+      manual: ['Brake'],
+      connect: { Engine: 'lab' },
+      params: { target_rpm: 3000, mode: 'sport', dry_run: false },
+      time_policy: 'realtime',
+      speed: 2,
+      start_paused: true,
+      stop_at_ms: 5000,
+    });
+    expect(summary?.scenario?.case).toBe('full_load');
+    expect(summary?.scenario?.params).toEqual([
+      {
+        name: 'target_rpm',
+        value: 3000,
+        from: 'cli',
+        type: 'integer',
+        description: 'target engine rpm',
+      },
+    ]);
+    expect(summary?.scenario?.steps[0]).toMatchObject({
+      file: 'sub/scenarios/templates/check.yaml',
+      line: 22,
+      name: 'rated: speed check',
+      call_stack: callStack,
+    });
+
+    const malformed = readSessionResponse({
+      session: {
+        id: '8',
+        state: 'ended',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        stop: 'none',
+        file: 'sub/simulation.yaml',
+        disable: [],
+        manual: [],
+        speed: null,
+        start_paused: false,
+        phase: null,
+        last_seq: null,
+        last_t_ms: null,
+        time: null,
+        last_command: null,
+        launcher_state: null,
+        allowed: null,
+        check: null,
+        participants: [],
+        findings: [],
+        result: null,
+        log: {},
+        problems: [],
+        problems_omitted: 0,
+        intent: { scenario: 123, case: '', params: { bad: { nested: true } } },
+        scenario: null,
+      },
+    });
+    expect(malformed?.unreadable).toEqual(
+      expect.arrayContaining(['intent.scenario', 'intent.case', 'intent.params.bad']),
+    );
+  });
 });

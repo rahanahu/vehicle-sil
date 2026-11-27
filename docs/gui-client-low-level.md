@@ -2,7 +2,7 @@
 
 [日本語](ja/gui-client-low-level.md)
 
-Low-level reference for `@vehicle-sil/gui-client`: `createClient()`, `GuiClient`, the full public API surface, wire-adjacent ECU variable watches and writes, widget binding (`bind`), lifecycle details, and contributor tests. For onboarding, choosing between `connect()` and `createFront()`, high-level recipes, and the 11 custom elements (`@vehicle-sil/gui-client/elements`) across all 5 frameworks, start with [gui/client/README.md](../gui/client/README.md).
+Low-level reference for `@vehicle-sil/gui-client`: `createClient()`, `GuiClient`, the full public API surface, wire-adjacent ECU variable watches and writes, widget binding (`bind`), lifecycle details, and contributor tests. For onboarding, choosing between `connect()` and `createFront()`, high-level recipes, and the 12 custom elements (`@vehicle-sil/gui-client/elements`) across all 5 frameworks, start with [gui/client/README.md](../gui/client/README.md).
 
 The front door (`connect()` / `createFront()`) is built directly on `createClient()` and exposes the same instance as `front.low`. Use this low-level API when you need direct access to raw events, logs, findings, participant state, multi-variable atomic `enqueue()` / `write()`, or `variables.bind()`.
 
@@ -21,7 +21,7 @@ The front door (`connect()` / `createFront()`) is built directly on `createClien
 | Entry point | Name | Contents |
 | --- | --- | --- |
 | `src/index.ts` | `@vehicle-sil/gui-client` | The public API ([Public API](#public-api) below). This entry point and `./elements` are kept compatible |
-| `src/elements/index.ts` (`dist/elements.js`, which imports `dist/index.js`) | `@vehicle-sil/gui-client/elements` | The 11 `vsil-*` custom elements, `pageIntent`, `setReasonText`, and element/event types (`VsilElementContracts`, `WriteQueuedInfo`, `WriteOutcome`, `WriteSuccess`, `WriteFailure`). Needs a DOM; the main entry does not import it |
+| `src/elements/index.ts` (`dist/elements.js`, which imports `dist/index.js`) | `@vehicle-sil/gui-client/elements` | The 12 `vsil-*` custom elements, `pageIntent`, `setReasonText`, and element/event types (`VsilElementContracts`, `WriteQueuedInfo`, `WriteOutcome`, `WriteSuccess`, `WriteFailure`). Needs a DOM; the main entry does not import it |
 | `../timeline/vehicle-sil-timeline.js` (`timeline/vehicle-sil-timeline.mjs`) | `@vehicle-sil/gui-client/timeline` | The `<vehicle-sil-timeline>` element and its types ("Putting a timeline on your own screen" in [docs/gui.md](gui.md#putting-a-timeline-on-your-own-screen)) |
 | `types/frameworks/react.d.ts` (`dist/empty.js`) | `@vehicle-sil/gui-client/react` | Type-only React 18/19 JSX intrinsic element declarations derived from `AllElementContracts` (no runtime dependency on `react`) |
 | `types/frameworks/vue.d.ts` (`dist/empty.js`) | `@vehicle-sil/gui-client/vue` | Type-only Vue 3 `GlobalComponents` declarations derived from `AllElementContracts` (no runtime dependency on `vue`) |
@@ -164,8 +164,8 @@ Types for the shapes that `gui/protocol` defines, and the parsers to use when yo
 | Parsers | `readServerMessage`, `readAppInfo`, `readConfigList`, `readConfigText`, `readSavedConfig`, `readCheckResponse`, `readConnections`, `readDashboardResponse`, `readPrepareResponse`, `readRecording`, `readRunResponse`, `readRuntimeStatus`, `readScenarioList`, `readSessionAllowed`, `readSessionResponse`, `readSessionRuntime`, `readTimeResponse`, `readVariablesSummary`, `readWriteResponse` |
 | Shapes of the variable API | `VariablesSummary`, `VariableSummary`, `ValuesMessage`, `OperationReport`, `VariableAvailability`, `WatchMessage`, `WriteAnswer` |
 | Dashboard files (`dashboard(file)`) | `DashboardResponse`, `DashboardFile`, `DashboardFileSection`, `DashboardFileItem`, `DashboardFileError`, `DashboardPanelModule`, `DashboardVariable` |
-| Scenarios (`--scenario`, `scenarios(file)`, `recording()`) | `ScenarioStep`, `ScenarioStepStatus`, `ScenarioStatus`, `ScenarioCallFrame`, `CheckScenario`, `ScenarioResult`, `SummaryScenario` (includes optional `handed_over`), `ScenarioList`, `ScenarioFile`, `Recording` (includes `end_ms: number \| null`) |
-| Request shapes | `AfterScenario`, `CheckRequest`, `CheckTextRequest`, `DescribeRequest`, `PrepareRequest`, `SaveConfigRequest`, `RunRequest`, `ConnectionsRequest`, `Speed`, `StopRequest`, `StopSessionRequestBody`, `TimeCommand` |
+| Scenarios (`--scenario`, `scenarios(file)`, `recording()`) | `ScenarioStep`, `ScenarioStepStatus`, `ScenarioStatus`, `ScenarioCallFrame`, `ScenarioParamType`, `CheckScenario`, `CheckScenarioCaseDetail`, `CheckScenarioParam`, `CheckScenarioParamMeta`, `ScenarioResult`, `SummaryScenario` (includes optional `handed_over`, `case`, `params`), `ScenarioList`, `ScenarioFile`, `Recording` (includes `end_ms: number \| null`) |
+| Request shapes | `AfterScenario`, `CheckRequest`, `CheckTextRequest`, `DescribeRequest`, `PrepareRequest`, `SaveConfigRequest`, `RunRequest`, `SessionIntent`, `ConnectionsRequest`, `Speed`, `StopRequest`, `StopSessionRequestBody`, `TimeCommand` |
 | List of configuration files | `ConfigList`, `ConfigFile`, `ConfigText`, `SavedConfig` |
 | Error shape | `ServerProblem` |
 | Findings | `Finding`, `Severity` |
@@ -591,7 +591,7 @@ The unit tests feed the examples in `gui/protocol/examples/` instead of building
 
 | To find | Document |
 | --- | --- |
-| Onboarding, `connect()` front door, recipes, 11 custom elements, and 5-framework setup | [gui/client/README.md](../gui/client/README.md) |
+| Onboarding, `connect()` front door, recipes, 12 custom elements, and 5-framework setup | [gui/client/README.md](../gui/client/README.md) |
 | Which way to add your own code to the GUI: a custom panel, your own screen or a tool | "Build your own screen" in [docs/gui.md](gui.md#build-your-own-screen) |
 | How to build your own screen and have the GUI server serve it | [Build your own screen for the browser GUI](howto/gui-screen.md) |
 | The server API (HTTP and WebSocket shapes, versioning and compatibility rules, authentication) | [gui/protocol/README.md](../gui/protocol/README.md) |

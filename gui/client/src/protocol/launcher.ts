@@ -156,8 +156,36 @@ export type ScenarioStepStatus = Open<
 /** Overall result of a scenario. */
 export type ScenarioStatus = Open<'passed' | 'failed' | 'incomplete' | 'not_run'>;
 
-/** A resolved parameter scalar in a template call-stack frame. */
+/** A resolved parameter scalar in a template call-stack frame or check parameter entry. */
 export type ScenarioParamValue = string | number | boolean;
+
+/** Declared parameter type derived from template parameter definitions. */
+export type ScenarioParamType = Open<'integer' | 'number' | 'boolean' | 'string'>;
+
+/** Metadata of one named case in a multi-case scenario (`scenario.case_details[]`). */
+export interface CheckScenarioCaseDetail extends FromLauncher {
+  name: string;
+  /** Variant restriction (`only:`) of the case, or null if unrestricted. */
+  only: string[] | null;
+}
+
+/** Parameter metadata from template definitions (`scenario.param_meta[]`). */
+export interface CheckScenarioParamMeta extends FromLauncher {
+  name: string;
+  type?: ScenarioParamType | null;
+  values?: string[] | null;
+  description?: string | null;
+}
+
+/** One resolved parameter entry (`params[]` of a check or scenario result). */
+export interface CheckScenarioParam extends FromLauncher {
+  name: string;
+  value: ScenarioParamValue;
+  from: string;
+  type?: ScenarioParamType | null;
+  values?: string[] | null;
+  description?: string | null;
+}
 
 /** One frame in a step's template call stack (outermost to immediate caller). */
 export interface ScenarioCallFrame extends FromLauncher {
@@ -167,10 +195,64 @@ export interface ScenarioCallFrame extends FromLauncher {
   params: Readonly<Record<string, ScenarioParamValue>>;
 }
 
-const readParamScalar: Reader<ScenarioParamValue> = (value, path) => {
+export const readParamScalar: Reader<ScenarioParamValue> = (value, path) => {
   if (typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   throw new ProtocolError(path, 'a string, finite number, or boolean');
+};
+
+const readCheckScenarioCaseDetail = (
+  value: unknown,
+  path: string,
+  u?: Unreadable,
+): CheckScenarioCaseDetail => {
+  const f = object(value, path);
+  return withRaw(f, {
+    name: field(f, path, 'name', string),
+    only: field(f, path, 'only', soft(nullable(items(string, u)), null, u)),
+  });
+};
+
+const readCheckScenarioParamMeta = (
+  value: unknown,
+  path: string,
+  u?: Unreadable,
+): CheckScenarioParamMeta => {
+  const f = object(value, path);
+  return withRaw(f, {
+    name: field(f, path, 'name', string),
+    ...(f['type'] === undefined
+      ? {}
+      : { type: field(f, path, 'type', soft(nullable(string), null, u)) }),
+    ...(f['values'] === undefined
+      ? {}
+      : { values: field(f, path, 'values', soft(nullable(items(string, u)), null, u)) }),
+    ...(f['description'] === undefined
+      ? {}
+      : { description: field(f, path, 'description', soft(nullable(string), null, u)) }),
+  });
+};
+
+export const readCheckScenarioParam = (
+  value: unknown,
+  path: string,
+  u?: Unreadable,
+): CheckScenarioParam => {
+  const f = object(value, path);
+  return withRaw(f, {
+    name: field(f, path, 'name', string),
+    value: field(f, path, 'value', readParamScalar),
+    from: field(f, path, 'from', lenient(string, '', u)),
+    ...(f['type'] === undefined
+      ? {}
+      : { type: field(f, path, 'type', soft(nullable(string), null, u)) }),
+    ...(f['values'] === undefined
+      ? {}
+      : { values: field(f, path, 'values', soft(nullable(items(string, u)), null, u)) }),
+    ...(f['description'] === undefined
+      ? {}
+      : { description: field(f, path, 'description', soft(nullable(string), null, u)) }),
+  });
 };
 
 const readScenarioCallFrame = (value: unknown, path: string, u?: Unreadable): ScenarioCallFrame => {
@@ -252,8 +334,24 @@ export interface CheckScenario extends FromLauncher {
   name: string | null;
   /** Selected case name, or null if omitted. */
   case?: string | null;
+  /** Available case names when the scenario defines `cases:`. */
+  cases?: string[];
+  /** Case metadata including variant restrictions (`only`). */
+  case_details?: CheckScenarioCaseDetail[];
   /** Number of steps. */
   steps: number;
+  /** Variant restriction (`only:`) of the scenario, if any. */
+  only?: string[];
+  /** Resolved parameters and their provenance/metadata. */
+  params?: CheckScenarioParam[];
+  /** Template parameter metadata (including parameters missing a value). */
+  param_meta?: CheckScenarioParamMeta[];
+  /** Required parameter names that have no value yet. */
+  missing_params?: string[];
+  /** Number of skipped steps when variables are absent in the variant. */
+  skipped_steps?: number;
+  /** Number of unchecked expect steps. */
+  unchecked_expects?: number;
   /** Virtual end time from the scenario file (`end_ms`), or null if omitted. */
   end_ms?: number | null;
 }
@@ -264,7 +362,64 @@ const readCheckScenario = (value: unknown, path: string, u?: Unreadable): CheckS
     file: field(f, path, 'file', lenient(string, '', u)),
     name: field(f, path, 'name', soft(nullable(string), null, u)),
     case: field(f, path, 'case', soft(nullable(string), null, u)),
+    ...(f['cases'] === undefined
+      ? {}
+      : { cases: field(f, path, 'cases', soft(items(string, u), [], u)) }),
+    ...(f['case_details'] === undefined
+      ? {}
+      : {
+          case_details: field(
+            f,
+            path,
+            'case_details',
+            soft(
+              items((v, p) => readCheckScenarioCaseDetail(v, p, u), u),
+              [],
+              u,
+            ),
+          ),
+        }),
     steps: field(f, path, 'steps', lenient(integer, 0, u)),
+    ...(f['only'] === undefined
+      ? {}
+      : { only: field(f, path, 'only', soft(items(string, u), [], u)) }),
+    ...(f['params'] === undefined
+      ? {}
+      : {
+          params: field(
+            f,
+            path,
+            'params',
+            soft(
+              items((v, p) => readCheckScenarioParam(v, p, u), u),
+              [],
+              u,
+            ),
+          ),
+        }),
+    ...(f['param_meta'] === undefined
+      ? {}
+      : {
+          param_meta: field(
+            f,
+            path,
+            'param_meta',
+            soft(
+              items((v, p) => readCheckScenarioParamMeta(v, p, u), u),
+              [],
+              u,
+            ),
+          ),
+        }),
+    ...(f['missing_params'] === undefined
+      ? {}
+      : { missing_params: field(f, path, 'missing_params', soft(items(string, u), [], u)) }),
+    ...(f['skipped_steps'] === undefined
+      ? {}
+      : { skipped_steps: field(f, path, 'skipped_steps', soft(integer, 0, u)) }),
+    ...(f['unchecked_expects'] === undefined
+      ? {}
+      : { unchecked_expects: field(f, path, 'unchecked_expects', soft(integer, 0, u)) }),
     end_ms: field(f, path, 'end_ms', soft(nullable(integer), null, u)),
   });
 };
@@ -275,6 +430,8 @@ export interface ScenarioResult extends FromLauncher {
   name: string | null;
   /** Selected case name, or null if omitted. */
   case?: string | null;
+  /** Resolved parameters used by the scenario, if any. */
+  params?: CheckScenarioParam[];
   status: ScenarioStatus;
   /** The controller step at which the scenario ended (passed and failed; null otherwise). */
   over_at_ms: number | null;
@@ -289,6 +446,20 @@ const readScenarioResult = (value: unknown, path: string, u?: Unreadable): Scena
     file: field(f, path, 'file', lenient(string, '', u)),
     name: field(f, path, 'name', soft(nullable(string), null, u)),
     case: field(f, path, 'case', soft(nullable(string), null, u)),
+    ...(f['params'] === undefined
+      ? {}
+      : {
+          params: field(
+            f,
+            path,
+            'params',
+            soft(
+              items((v, p) => readCheckScenarioParam(v, p, u), u),
+              [],
+              u,
+            ),
+          ),
+        }),
     status: field(f, path, 'status', lenient(string, '', u)),
     over_at_ms: field(f, path, 'over_at_ms', soft(nullable(number), null, u)),
     end_ms: field(f, path, 'end_ms', soft(nullable(integer), null, u)),
@@ -381,6 +552,12 @@ export type CheckOutcome = Open<'passed' | 'failed' | 'unreadable' | 'usage'>;
 export interface CheckResult extends FromLauncher {
   file: string | null;
   result: CheckOutcome;
+  /** Selected variant name when the configuration has variants (null on usage). */
+  variant?: string | null;
+  /** Available variant names when the configuration defines `variants:`. */
+  variants?: string[];
+  /** Configuration-level parameters, if any. */
+  params?: CheckScenarioParam[];
   errors: number;
   warnings: number;
   notes: number;
@@ -400,6 +577,26 @@ export const readCheckResult = (value: unknown, path: string, u?: Unreadable): C
   return withRaw(f, {
     file: field(f, path, 'file', soft(nullable(string), null, u)),
     result: field(f, path, 'result', lenient(string, '', u)),
+    ...(f['variant'] === undefined
+      ? {}
+      : { variant: field(f, path, 'variant', soft(nullable(string), null, u)) }),
+    ...(f['variants'] === undefined
+      ? {}
+      : { variants: field(f, path, 'variants', soft(items(string, u), [], u)) }),
+    ...(f['params'] === undefined
+      ? {}
+      : {
+          params: field(
+            f,
+            path,
+            'params',
+            soft(
+              items((v, p) => readCheckScenarioParam(v, p, u), u),
+              [],
+              u,
+            ),
+          ),
+        }),
     errors: field(f, path, 'errors', lenient(integer, 0, u)),
     warnings: field(f, path, 'warnings', lenient(integer, 0, u)),
     notes: field(f, path, 'notes', lenient(integer, 0, u)),

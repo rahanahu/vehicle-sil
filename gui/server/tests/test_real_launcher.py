@@ -744,3 +744,199 @@ def test_real_recording_roundtrip_with_yaml_reserved_enum_names(tmp_path: Path) 
     run_data = json.loads(run.stdout)
     assert run_data["scenario"]["status"] == "passed", run_data["scenario"]
     assert run_data["scenario"]["over_at_ms"] == 60, run_data["scenario"]
+
+
+def test_real_multicase_params_session_intent_rerun_and_hot_standby(tmp_path: Path) -> None:
+    """Real launcher + GUI server (subdirectory config):
+    - Multi-case check without case preserves participants/hot_eligibility/scenario/param_meta/missing_params
+    - GUI API run with case + typed params + template propagates scenario.case, params, provenance, and timeline
+    - Session.intent keeps root-relative scenario path and after_scenario, and re-runs cleanly via POST /api/run
+    - Hot standby is reused across case and parameter changes without restarting the resident launcher."""
+    root = tmp_path / "root"
+    sub = root / "sub"
+    write(sub, EXAMPLES)
+    (sub / "scenarios" / "templates").mkdir(parents=True)
+    (sub / "scenarios" / "templates" / "drive.yaml").write_text(
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  throttle:\n"
+        "    type: integer\n"
+        "    description: engine throttle percent\n"
+        "  min_speed:\n"
+        "    type: number\n"
+        "    default: 10.0\n"
+        "    description: minimum speed threshold\n"
+        "  verify_only:\n"
+        "    type: boolean\n"
+        "    default: false\n"
+        "  label:\n"
+        "    type: string\n"
+        "    values: [idle_case, load_case, rated, cool]\n"
+        "    default: idle_case\n"
+        "steps:\n"
+        "  - name: \"${label}: throttle\"\n"
+        "    set: { Engine.engine.throttle: \"${throttle}\", Engine.ecu.connected: \"${verify_only}\" }\n"
+        "  - name: \"${label}: check\"\n"
+        "    after_ms: 40\n"
+        "    expect: { Engine.engine.speed: { ge: \"${min_speed}\" } }\n",
+        encoding="utf-8",
+    )
+    (sub / "scenarios" / "cases_tpl.yaml").write_text(
+        "vehicle_sil_scenario: 1\n"
+        "name: multicase drive\n"
+        "params:\n"
+        "  min_speed: 10.0\n"
+        "  verify_only: true\n"
+        "cases:\n"
+        "  idle:\n"
+        "    params: { throttle: 0, label: idle_case }\n"
+        "  load:\n"
+        "    params: { throttle: 50, label: load_case }\n"
+        "steps:\n"
+        "  - name: invoke template\n"
+        "    template: templates/drive.yaml\n"
+        "    params:\n"
+        "      throttle: \"${throttle}\"\n"
+        "      min_speed: \"${min_speed}\"\n"
+        "      verify_only: \"${verify_only}\"\n"
+        "      label: \"${label}\"\n",
+        encoding="utf-8",
+    )
+
+    async def talk(c: Client) -> None:
+        # 1. Multi-case check without case -> usage, keeping participants, hot_eligibility, case_details, param_meta, missing_params
+        st, chk_usage = await c.post(
+            "api/check",
+            {"file": "sub/simulation.yaml", "scenario": "sub/scenarios/cases_tpl.yaml"},
+        )
+        assert st == 200 and chk_usage["exit_code"] == 4, chk_usage
+        chk = chk_usage["check"]
+        assert chk["result"] == "usage"
+        assert any(p["name"] == "Engine" for p in chk["participants"]), chk
+        assert chk["hot_eligibility"]["eligible"] is True, chk
+        sc_chk = chk["scenario"]
+        assert sc_chk["case"] is None
+        assert sc_chk["cases"] == ["idle", "load"]
+        assert sc_chk["case_details"] == [{"name": "idle", "only": None}, {"name": "load", "only": None}]
+        meta_by_name = {m["name"]: m for m in sc_chk["param_meta"]}
+        assert meta_by_name["throttle"]["type"] == "integer"
+        assert meta_by_name["throttle"]["description"] == "engine throttle percent"
+        assert meta_by_name["min_speed"]["type"] == "number"
+        assert meta_by_name["verify_only"]["type"] == "boolean"
+        assert meta_by_name["label"]["type"] == "string"
+        assert meta_by_name["label"]["values"] == ["idle_case", "load_case", "rated", "cool"]
+        assert "throttle" in sc_chk["missing_params"]
+
+        # 2. Check with case + typed params passes
+        st, chk_ok = await c.post(
+            "api/check",
+            {
+                "file": "sub/simulation.yaml",
+                "scenario": "sub/scenarios/cases_tpl.yaml",
+                "case": "load",
+                "params": {"min_speed": 12.5, "verify_only": True, "label": "rated"},
+            },
+        )
+        assert st == 200 and chk_ok["exit_code"] == 0 and chk_ok["check"]["result"] == "passed", chk_ok
+        assert chk_ok["check"]["scenario"]["case"] == "load"
+
+        # 3. Prepare hot standby for sub/simulation.yaml
+        ws = await c.ws()
+        await ws.until(is_synced)
+        st, prep = await c.post("api/prepare", {"file": "sub/simulation.yaml"})
+        assert st == 200 and "instance" in prep, prep
+        await ws.until(
+            lambda m: m["type"] == "runtime"
+            and m["runtime"]["mode"] == "hot"
+            and m["runtime"]["state"] == "ready",
+            timeout=30,
+        )
+
+        # 4. Run case='load' with typed params and after_scenario='pause'
+        st, run1 = await c.post(
+            "api/run",
+            {
+                "file": "sub/simulation.yaml",
+                "scenario": "sub/scenarios/cases_tpl.yaml",
+                "case": "load",
+                "after_scenario": "pause",
+                "params": {"throttle": 60, "min_speed": 12.5, "verify_only": True, "label": "rated"},
+                "speed": "max",
+            },
+        )
+        assert st == 200, run1
+        await ws.until(
+            lambda m: m["type"] == "event"
+            and m["event"]["event"] == "state"
+            and m["event"].get("handed_over") is True,
+            timeout=30,
+        )
+        _, sess1_running = await c.get("api/session")
+        pid1 = sess1_running["session"]["launcher"]["pid"]
+        assert isinstance(pid1, int) and pid1 > 0
+        await c.post("api/stop-session", {"run_id": run1["run_id"], "instance": run1["instance"], "force": False})
+        await ws.until(is_ended, timeout=30)
+
+        _, sess1 = await c.get("api/session")
+        s1 = sess1["session"]
+        assert s1["scenario"]["status"] == "passed"
+        assert s1["scenario"]["case"] == "load"
+        params_by_name = {p["name"]: p for p in s1["scenario"]["params"]}
+        assert params_by_name["throttle"]["value"] == 60
+        assert params_by_name["throttle"]["type"] == "integer"
+        assert params_by_name["min_speed"]["value"] == 12.5
+        assert params_by_name["verify_only"]["value"] is True
+        assert params_by_name["label"]["value"] == "rated"
+        assert s1["scenario"]["steps"][0]["name"] == "rated: throttle"
+        assert s1["scenario"]["steps"][0]["file"] == "sub/scenarios/templates/drive.yaml"
+        assert s1["scenario"]["steps"][0]["call_stack"][0]["name"] == "invoke template"
+        assert s1["intent"] == {
+            "scenario": "sub/scenarios/cases_tpl.yaml",
+            "case": "load",
+            "after_scenario": "pause",
+            "params": {"throttle": 60, "min_speed": 12.5, "verify_only": True, "label": "rated"},
+            "speed": "max",
+        }
+
+        st_tl, tl = await c.get(f"api/timeline/{run1['run_id']}")
+        assert st_tl == 200 and tl["vehicle_sil_timeline"] == 1, tl
+        assert tl["scenario"]["status"] == "passed"
+        assert tl["scenario"]["case"] == "load"
+        assert tl["steps"][0]["call_stack"][0]["name"] == "invoke template"
+
+        # 5. Re-run directly from session.intent (root-relative path) and verify hot standby PID is reused
+        st, run2 = await c.post("api/run", {"file": s1["file"], **s1["intent"]})
+        assert st == 200 and run2["run_id"] != run1["run_id"], run2
+        await ws.until(
+            lambda m: m["type"] == "event"
+            and m["event"]["event"] == "state"
+            and m["event"].get("handed_over") is True,
+            timeout=30,
+        )
+        _, sess2_running = await c.get("api/session")
+        assert sess2_running["session"]["launcher"]["pid"] == pid1
+        await c.post("api/stop-session", {"run_id": run2["run_id"], "instance": run2["instance"], "force": False})
+        await ws.until(is_ended, timeout=30)
+
+        # 6. Switch case & params without after_scenario -> still reuses the same hot standby PID
+        st, run3 = await c.post(
+            "api/run",
+            {
+                "file": "sub/simulation.yaml",
+                "scenario": "sub/scenarios/cases_tpl.yaml",
+                "case": "idle",
+                "params": {"label": "cool"},
+                "speed": "max",
+            },
+        )
+        assert st == 200, run3
+        await ws.until(is_ended, timeout=30)
+        _, sess3 = await c.get("api/session")
+        assert sess3["session"]["launcher"]["pid"] == pid1
+        assert sess3["session"]["scenario"]["status"] == "passed"
+        assert sess3["session"]["scenario"]["case"] == "idle"
+        assert sess3["session"]["scenario"]["steps"][0]["name"] == "cool: throttle"
+        await ws.close()
+
+    with gui_server(tmp_path, root=root, launcher=Path(LAUNCHER)) as gui:
+        run_async(talk, gui)

@@ -4,7 +4,7 @@
 
 `vehicle-sil-gui` サーバー向けの依存ゼロ TypeScript クライアントライブラリおよびカスタム要素集です。ブラウザと Node.js 22 以上で動作します。
 
-このページでは、導入手順、`connect()` と `createFront()` の使い分け、高水準レシピ、および 5 フレームワーク（Vanilla JS/TS・Angular・React・Vue・Svelte）での 11 種の `vsil-*` 部品の使い方を扱います。低水準の `createClient()` API、`variables.bind()`、公開エクスポート全一覧、プロトコルに近い詳細、開発者向けテストは [docs/ja/gui-client-low-level.md](../../docs/ja/gui-client-low-level.md) を参照してください。
+このページでは、導入手順、`connect()` と `createFront()` の使い分け、高水準レシピ、および 5 フレームワーク（Vanilla JS/TS・Angular・React・Vue・Svelte）での 12 種の `vsil-*` 部品の使い方を扱います。低水準の `createClient()` API、`variables.bind()`、公開エクスポート全一覧、プロトコルに近い詳細、開発者向けテストは [docs/ja/gui-client-low-level.md](../../docs/ja/gui-client-low-level.md) を参照してください。
 
 ## 目次
 
@@ -39,7 +39,7 @@
 | import パス                        | 用途                                                                                                                                                                                                        |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `@vehicle-sil/gui-client`          | 高水準 `connect()` / `createFront()`、低水準 `createClient()`、`watch()`、`until()`、`ActionError`、`WriteError`、プロトコル型                                                                              |
-| `@vehicle-sil/gui-client/elements` | 11 種の `vsil-*` カスタム要素を登録し、`pageIntent`、`setReasonText`、要素クラス、`VsilElementContracts`、書き込みイベント詳細型（`WriteQueuedInfo`、`WriteOutcome`、`WriteSuccess`、`WriteFailure`）を公開 |
+| `@vehicle-sil/gui-client/elements` | 12 種の `vsil-*` カスタム要素を登録し、`pageIntent`、`setReasonText`、要素クラス、`VsilElementContracts`、書き込みイベント詳細型（`WriteQueuedInfo`、`WriteOutcome`、`WriteSuccess`、`WriteFailure`）を公開 |
 | `@vehicle-sil/gui-client/timeline` | `<vehicle-sil-timeline>` を登録し、要素型・イベント型を公開                                                                                                                                                 |
 | `@vehicle-sil/gui-client/react`    | React 18・19 向けの型専用 JSX 要素宣言（`react` への実行時依存なし）                                                                                                                                        |
 | `@vehicle-sil/gui-client/vue`      | Vue 3 向けの型専用 `GlobalComponents` 宣言（`vue` への実行時依存なし）                                                                                                                                      |
@@ -109,7 +109,7 @@ try {
 
 ### `run`、`time`、`until()`
 
-- **`run.start(intent?, { file?, onStarted? }?)`**: 実行を開始します。`intent` は `schema/run-request.schema.json` のキー（`variant`、`params`、`scenario`、`after_scenario`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`connect`、`time_policy`）を取り、未指定キーは `null` ではなく省略します。サーバーが開始を受け付けた時点で解決するため、新しい実行状態を読む前に `until()` で `status.run !== 'starting'` を待ってください。
+- **`run.start(intent?, { file?, onStarted? }?)`**: 実行を開始します。`intent` は `schema/run-request.schema.json` のキー（`variant`、`params`、`scenario`、`case`、`after_scenario`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`connect`、`time_policy`）を取り、未指定キーは `null` ではなく省略します。直近のセッションと同じ条件で再実行するときは、`session.intent` をそのまま渡せます: `await front.run.start(session.intent, { file: session.file })`（`session.intent.scenario` はルート相対パスのまま保持されています）。サーバーが開始を受け付けた時点で解決するため、新しい実行状態を読む前に `until()` で `status.run !== 'starting'` を待ってください。
 - **`run.stop()` / `run.forceStop(target?)`**: 実行を停止します。`await connect()` 直後の `link === 'connecting'` 中に `run.stop()`、`run.forceStop()`、`time.*()`、`variable().enqueue()` / `write()` を呼んだ場合、初回 WebSocket 同期の完了（上限 `answerTimeoutMs`）を自動で待ってから送出します。
 - **`time.pause()` / `resume()` / `step(ms)` / `runUntil(ms)` / `setSpeed(value)`**: `step` と `runUntil` は目標時刻へ到達して再び一時停止したときに解決します。到達前に別クライアントや標準入力から別のコマンドが入ると `ActionError('interrupted', ..., 'unknown')` で reject します。
 - **`until(source, test, { timeoutMs?, signal? })`**: `test` を満たす最初の値で解決し（現在値も即検査）、タイムアウトや中断では `ActionError('timeout' | 'aborted', ..., 'unknown')` で reject します。オプションは camelCase（`timeoutMs`、`signal`）のみで、未知キーは `unknown-field` で拒否されます。
@@ -289,21 +289,22 @@ const stop = client.variable('Engine.engine.speed').subscribe(
 
 ## 部品（custom element）
 
-`@vehicle-sil/gui-client/elements` は、`connect()` の上に作られたスタイルなしのライト DOM カスタム要素を 11 個定義します。すべての HTML 属性に対応する camelCase JS プロパティ（真偽値 `noUnit`、falsy 値 `value={false}` / `value={0}`、数値 `stepMs` を含む）を備えているため、素の HTML でも Angular・React・Vue・Svelte のテンプレートでもそのままバインドできます。
+`@vehicle-sil/gui-client/elements` は、`connect()` の上に作られたスタイルなしのライト DOM カスタム要素を 12 個定義します。すべての HTML 属性に対応する camelCase JS プロパティ（真偽値 `noUnit`、falsy 値 `value={false}` / `value={0}`、数値 `stepMs` を含む）を備えているため、素の HTML でも Angular・React・Vue・Svelte のテンプレートでもそのままバインドできます。
 
-| 要素                     | 表示・動作                                                         | 属性 / JS プロパティ                                                                                                                                                                 | カスタムイベント                         |
-| ------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `<vsil-status>`          | 接続、実行状態、仮想時間（遅れ表示付き）、現在の問題 1 件          | `client`（prop）                                                                                                                                                                     | —                                        |
-| `<vsil-run-controls>`    | 開始（ページの意図付き）、停止、強制停止                           | `label-start`（`labelStart`）、`label-stop`（`labelStop`）、`label-force-stop`（`labelForceStop`）、`intent`（prop）、`client`（prop）                                               | —                                        |
-| `<vsil-time-controls>`   | 一時停止、再開、ステップ、時刻まで実行、速度選択                   | `speeds`、`step-ms`（`stepMs`）、`label-pause`（`labelPause`）、`label-resume`（`labelResume`）、`label-step`（`labelStep`）、`label-run-until`（`labelRunUntil`）、`client`（prop） | —                                        |
-| `<vsil-value>`           | 単位付きの値と非ライブ時の説明。bool は `on`/`off` 文字            | `variable`、`on`、`off`、`no-unit`（`noUnit`）、`client`（prop）                                                                                                                     | —                                        |
-| `<vsil-slider>`          | 範囲内の数値スライダー。離したときに単一スロット合体で書き込み     | `variable`、`client`（prop）                                                                                                                                                         | `vsil-write-queued`、`vsil-write-result` |
-| `<vsil-write>`           | 1 つの値を書き込むボタン（すでに同値なら無効）                     | `variable`、`value`（`string \| number \| boolean \| null`）、`label`、`client`（prop）                                                                                              | `vsil-write-queued`、`vsil-write-result` |
-| `<vsil-scenario-select>` | 次の実行のシナリオ選択                                             | `client`（prop）                                                                                                                                                                     | —                                        |
-| `<vsil-scenario-result>` | シナリオ判定とステップ一覧                                         | `client`（prop）                                                                                                                                                                     | —                                        |
-| `<vsil-timeline>`        | 内の `<vehicle-sil-timeline>` を実行の `timeline_url` へ結び付ける | `client`（prop）                                                                                                                                                                     | —                                        |
-| `<vsil-connect>`         | 外部バス接続先選択（`SIL Kit only` + ブリッジ一覧）                | `network`、`file`、`client`（prop）                                                                                                                                                  | —                                        |
-| `<vsil-outside>`         | 外部接続中ネットワークの状態・フレーム数一覧                       | `client`（prop）                                                                                                                                                                     | —                                        |
+| 要素                     | 表示・動作                                                                                                                | 属性 / JS プロパティ                                                                                                                                                                 | カスタムイベント                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `<vsil-status>`          | 接続、実行状態、仮想時間（遅れ表示付き）、現在の問題 1 件                                                                 | `client`（prop）                                                                                                                                                                     | —                                        |
+| `<vsil-run-controls>`    | 開始（ページの意図付き）、停止、強制停止                                                                                  | `label-start`（`labelStart`）、`label-stop`（`labelStop`）、`label-force-stop`（`labelForceStop`）、`intent`（prop）、`client`（prop）                                               | —                                        |
+| `<vsil-time-controls>`   | 一時停止、再開、ステップ、時刻まで実行、速度選択                                                                          | `speeds`、`step-ms`（`stepMs`）、`label-pause`（`labelPause`）、`label-resume`（`labelResume`）、`label-step`（`labelStep`）、`label-run-until`（`labelRunUntil`）、`client`（prop） | —                                        |
+| `<vsil-value>`           | 単位付きの値と非ライブ時の説明。bool は `on`/`off` 文字                                                                   | `variable`、`on`、`off`、`no-unit`（`noUnit`）、`client`（prop）                                                                                                                     | —                                        |
+| `<vsil-slider>`          | 範囲内の数値スライダー。離したときに単一スロット合体で書き込み                                                            | `variable`、`client`（prop）                                                                                                                                                         | `vsil-write-queued`、`vsil-write-result` |
+| `<vsil-write>`           | 1 つの値を書き込むボタン（すでに同値なら無効）                                                                            | `variable`、`value`（`string \| number \| boolean \| null`）、`label`、`client`（prop）                                                                                              | `vsil-write-queued`、`vsil-write-result` |
+| `<vsil-scenario-select>` | 次の実行のシナリオ選択                                                                                                    | `client`（prop）                                                                                                                                                                     | —                                        |
+| `<vsil-case-select>`     | 選んだシナリオに複数ケースがあるときのケース選択（現在の `variant` に合わない `only` 付きケースを無効化）                 | `client`（prop）                                                                                                                                                                     | —                                        |
+| `<vsil-scenario-result>` | シナリオの状態、ケース、解決済みパラメーター、ステップ一覧（失敗手順の `file:line` とテンプレートの `call_stack` を含む） | `client`（prop）                                                                                                                                                                     | —                                        |
+| `<vsil-timeline>`        | 内の `<vehicle-sil-timeline>` を実行の `timeline_url` へ結び付ける                                                        | `client`（prop）                                                                                                                                                                     | —                                        |
+| `<vsil-connect>`         | 外部バス接続先選択（`SIL Kit only` + ブリッジ一覧）                                                                       | `network`、`file`、`client`（prop）                                                                                                                                                  | —                                        |
+| `<vsil-outside>`         | 外部接続中ネットワークの状態・フレーム数一覧                                                                              | `client`（prop）                                                                                                                                                                     | —                                        |
 
 ```html
 <script type="module" src="/vsil/vehicle-sil-gui-elements.mjs"></script>
@@ -320,6 +321,7 @@ const stop = client.variable('Engine.engine.speed').subscribe(
 </p>
 <vsil-time-controls speeds="0.5 1 5 max"></vsil-time-controls>
 <label>Scenario of the next run <vsil-scenario-select></vsil-scenario-select></label>
+<label>Case <vsil-case-select></vsil-case-select></label>
 <vsil-scenario-result></vsil-scenario-result>
 <script src="/timeline/vehicle-sil-timeline.js"></script>
 <vsil-timeline>
@@ -330,7 +332,7 @@ const stop = client.variable('Engine.engine.speed').subscribe(
 `<vsil-timeline>` は内部の `<vehicle-sil-timeline>` の `src` と `hidden` だけを管理し（中身が空なら既定要素を追加）、自身に `data-timeline`（`shown` または `none`）を付けます。タイムラインのスクリプト自体はページ側で読み込みます（`<script src="/timeline/vehicle-sil-timeline.js">` または `import '@vehicle-sil/gui-client/timeline'`）。
 
 ```ts
-import '@vehicle-sil/gui-client/elements'; // 11 個の部品を定義する
+import '@vehicle-sil/gui-client/elements'; // 12 個の部品を定義する
 import { pageIntent, setReasonText } from '@vehicle-sil/gui-client/elements';
 
 setReasonText((reason) => (reason.code === 'busy' ? 'Wait a moment.' : null));
@@ -345,7 +347,7 @@ if (controls) {
 ### 部品が約束すること
 
 - **ページ共有の接続**: 既定では各部品が引数なしの `connect()` を呼び、自分のスクリプトと 1 本の WebSocket を共有します。別の `Front` を使わせたいときは `element.client = front` を設定します。`/vsil/` のファイルとローカルコピーを混ぜないでください（ライブラリが二重になると接続が 2 本になります）。
-- **ライト DOM と `data-*` スタイル属性**: shadow DOM は使わず `<span class="vsil">` 内に描画します。`[aria-disabled="true"]`、`[data-link]`、`[data-run]`、`[data-pacing]`、`[data-stale="true"]`、`[data-can-write]`、`[data-availability="inactive"]`、`[data-on]`、`[data-error]`、`[data-status]`、`[data-reason]`、`[data-caution]`、`[data-write-status]` で見た目を付けられます。
+- **ライト DOM と `data-*` スタイル属性**: shadow DOM は使わず `<span class="vsil">` 内に描画します。`[aria-disabled="true"]`、`[data-link]`、`[data-run]`、`[data-pacing]`、`[data-stale="true"]`、`[data-can-write]`、`[data-availability="inactive"]`、`[data-on]`、`[data-error]`、`[data-cases]`（`<vsil-case-select>`: `none` または `available`）、`[data-status]` と `[data-case]`（`<vsil-scenario-result>`、手順は `data-status`）、`[data-reason]`、`[data-caution]`、`[data-write-status]` で見た目を付けられます。
 - **書き込みライフサイクルイベント（`vsil-write-queued` と `vsil-write-result`）**: `<vsil-slider>` と `<vsil-write>` は、バブリング・composed（`bubbles: true, composed: true`）の小文字カスタムイベントを 2 つ発火します（切断・再バインド後は発火しません）。
   - `vsil-write-queued`: `CustomEvent<WriteQueuedInfo>`（`{ session, seq, peer, name, value }`）— 書き込みが ECU キューへ到達したとき。
   - `vsil-write-result`: `CustomEvent<WriteOutcome>` — 成功時は `WriteSuccess`（`{ ok: true, session, seq, peer, name, value, appliedAtMs, late }`）、失敗時は `WriteFailure`（`{ ok: false, peer, name, value, error: ActionError, seq? }`）。
@@ -355,7 +357,7 @@ if (controls) {
 
 ### 文言と次の実行
 
-`setReasonText(fn)` で英語の理由文を差し替えられます（`fn(reason)` が文字列を返すと置き換わり、`null`/`undefined` で英語のまま。`setReasonText(null)` で解除）。部品をページへ置く前に呼んでください。`pageIntent`（`get()`、`subscribe(fn)`、`update(patch)`）は**次の**実行の意図を保持します（実行中のセッションで上書きされません）。`<vsil-run-controls>` は `{ ...pageIntent.get(), ...controls.intent }` で開始します。
+`setReasonText(fn)` で英語の理由文を差し替えられます（`fn(reason)` が文字列を返すと置き換わり、`null`/`undefined` で英語のまま。`setReasonText(null)` で解除）。部品をページへ置く前に呼んでください。部品の自前の語（`ready`、`writing…`、`(no scenario)`、`(no cases)`、`(choose a case)`、`fastest`、`behind real time` 等）は英語固定です。`pageIntent`（`get()`、`subscribe(fn)`、`update(patch)`）は**次の**実行の意図を保持します（実行中のセッションで上書きされません）。`<vsil-scenario-select>` が `scenario` を書き（シナリオが変わると `case` を消去）、`<vsil-case-select>` は `pageIntent` の `scenario` と `variant` を読んでケース一覧を取得し `case` を書き込みます。`<vsil-run-controls>` は `{ ...pageIntent.get(), ...controls.intent }` で開始します。
 
 ### 部品でネットワークを外につなぐ
 
@@ -441,7 +443,7 @@ export class BenchComponent {
 
 ### React 18・19
 
-`@vehicle-sil/gui-client/react` を 1 回 import（`src/main.tsx` や `src/env.d.ts` など）すると、11 種の `vsil-*` 部品と `<vehicle-sil-timeline>` の JSX 型が登録されます。
+`@vehicle-sil/gui-client/react` を 1 回 import（`src/main.tsx` や `src/env.d.ts` など）すると、12 種の `vsil-*` 部品と `<vehicle-sil-timeline>` の JSX 型が登録されます。
 
 ```tsx
 import { useEffect, useRef } from 'react';

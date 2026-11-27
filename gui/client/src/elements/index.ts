@@ -18,6 +18,7 @@ import type {
 import { VsilConnectElement, VsilOutsideElement } from './outside-parts';
 import { VsilRunControlsElement, VsilStatusElement, VsilTimeControlsElement } from './run-parts';
 import {
+  VsilCaseSelectElement,
   VsilScenarioResultElement,
   VsilScenarioSelectElement,
   VsilTimelineElement,
@@ -38,6 +39,7 @@ export type {
   WriteSuccess,
 };
 export {
+  VsilCaseSelectElement,
   VsilConnectElement,
   VsilOutsideElement,
   VsilRunControlsElement,
@@ -60,6 +62,7 @@ declare global {
     'vsil-slider': VsilSliderElement;
     'vsil-write': VsilWriteElement;
     'vsil-scenario-select': VsilScenarioSelectElement;
+    'vsil-case-select': VsilCaseSelectElement;
     'vsil-scenario-result': VsilScenarioResultElement;
     'vsil-timeline': VsilTimelineElement;
     'vsil-connect': VsilConnectElement;
@@ -75,6 +78,7 @@ const PARTS: [string, CustomElementConstructor][] = [
   ['vsil-slider', VsilSliderElement],
   ['vsil-write', VsilWriteElement],
   ['vsil-scenario-select', VsilScenarioSelectElement],
+  ['vsil-case-select', VsilCaseSelectElement],
   ['vsil-scenario-result', VsilScenarioResultElement],
   ['vsil-timeline', VsilTimelineElement],
   ['vsil-connect', VsilConnectElement],

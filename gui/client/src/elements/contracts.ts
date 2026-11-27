@@ -9,6 +9,7 @@ import type {
   VsilTimeControlsElement,
 } from './run-parts';
 import type {
+  VsilCaseSelectElement,
   VsilScenarioResultElement,
   VsilScenarioSelectElement,
   VsilTimelineElement,
@@ -69,7 +70,7 @@ export interface VsilWriteEventMap {
   'vsil-write-result': CustomEvent<WriteOutcome>;
 }
 
-/** Contracts of all 11 `vsil-*` custom elements defined by `@vehicle-sil/gui-client/elements`. */
+/** Contracts of all 12 `vsil-*` custom elements defined by `@vehicle-sil/gui-client/elements`. */
 export interface VsilElementContracts {
   'vsil-status': ElementContract<VsilStatusElement, Record<never, never>, VsilPartProps>;
   'vsil-run-controls': ElementContract<
@@ -149,6 +150,7 @@ export interface VsilElementContracts {
     Record<never, never>,
     VsilPartProps
   >;
+  'vsil-case-select': ElementContract<VsilCaseSelectElement, Record<never, never>, VsilPartProps>;
   'vsil-scenario-result': ElementContract<
     VsilScenarioResultElement,
     Record<never, never>,

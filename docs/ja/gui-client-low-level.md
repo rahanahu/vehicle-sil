@@ -2,7 +2,7 @@
 
 [English](../gui-client-low-level.md)
 
-`@vehicle-sil/gui-client` の低水準リファレンスです。`createClient()`、`GuiClient`、公開 API の全一覧、プロトコルに近い ECU 変数の watch・書き込み、コンポーネント向け `bind`、ライフサイクルの詳細、開発者向けテスト手順をまとめています。入門手順、`connect()` と `createFront()` の選び方、高水準レシピ、5 フレームワーク対応の 11 部品（`@vehicle-sil/gui-client/elements`）については、まず [gui/client/README.ja.md](../../gui/client/README.ja.md) を参照してください。
+`@vehicle-sil/gui-client` の低水準リファレンスです。`createClient()`、`GuiClient`、公開 API の全一覧、プロトコルに近い ECU 変数の watch・書き込み、コンポーネント向け `bind`、ライフサイクルの詳細、開発者向けテスト手順をまとめています。入門手順、`connect()` と `createFront()` の選び方、高水準レシピ、5 フレームワーク対応の 12 部品（`@vehicle-sil/gui-client/elements`）については、まず [gui/client/README.ja.md](../../gui/client/README.ja.md) を参照してください。
 
 正面の口（`connect()` / `createFront()`）は `createClient()` の上に作られており、同じインスタンスを `front.low` として公開しています。生のイベント、ログ、指摘、participant の状態、複数変数の同時 `enqueue()` / `write()`、あるいは `variables.bind()` が必要なときに、この低水準 API を使います。
 
@@ -21,7 +21,7 @@
 | エントリーポイント | 名前 | 中身 |
 | --- | --- | --- |
 | `src/index.ts` | `@vehicle-sil/gui-client` | 公開 API（下の「[公開 API](#公開-api)」）。互換を保証するのはここと `./elements` |
-| `src/elements/index.ts`（`dist/index.js` を import する `dist/elements.js`） | `@vehicle-sil/gui-client/elements` | 11 個の `vsil-*` カスタム要素、`pageIntent`、`setReasonText`、および要素・イベント型（`VsilElementContracts`、`WriteQueuedInfo`、`WriteOutcome`、`WriteSuccess`、`WriteFailure`）。DOM を要します。本体の入口はこれを import しません |
+| `src/elements/index.ts`（`dist/index.js` を import する `dist/elements.js`） | `@vehicle-sil/gui-client/elements` | 12 個の `vsil-*` カスタム要素、`pageIntent`、`setReasonText`、および要素・イベント型（`VsilElementContracts`、`WriteQueuedInfo`、`WriteOutcome`、`WriteSuccess`、`WriteFailure`）。DOM を要します。本体の入口はこれを import しません |
 | `../timeline/vehicle-sil-timeline.js`（`timeline/vehicle-sil-timeline.mjs`） | `@vehicle-sil/gui-client/timeline` | `<vehicle-sil-timeline>` 要素と型（[docs/ja/gui.md](gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」） |
 | `types/frameworks/react.d.ts`（`dist/empty.js`） | `@vehicle-sil/gui-client/react` | `AllElementContracts` から導出された React 18/19 向け型専用の JSX 要素宣言（`react` への実行時依存なし） |
 | `types/frameworks/vue.d.ts`（`dist/empty.js`） | `@vehicle-sil/gui-client/vue` | `AllElementContracts` から導出された Vue 3 向け型専用の `GlobalComponents` 宣言（`vue` への実行時依存なし） |
@@ -164,8 +164,8 @@
 | 読み取り関数 | `readServerMessage`、`readAppInfo`、`readConfigList`、`readConfigText`、`readSavedConfig`、`readCheckResponse`、`readConnections`、`readDashboardResponse`、`readPrepareResponse`、`readRecording`、`readRunResponse`、`readRuntimeStatus`、`readScenarioList`、`readSessionAllowed`、`readSessionResponse`、`readSessionRuntime`、`readTimeResponse`、`readVariablesSummary`、`readWriteResponse` |
 | 変数の API の形 | `VariablesSummary`、`VariableSummary`、`ValuesMessage`、`OperationReport`、`VariableAvailability`、`WatchMessage`、`WriteAnswer` |
 | ダッシュボードのファイル（`dashboard(file)`） | `DashboardResponse`、`DashboardFile`、`DashboardFileSection`、`DashboardFileItem`、`DashboardFileError`、`DashboardPanelModule`、`DashboardVariable` |
-| シナリオ（`--scenario`、`scenarios(file)`、`recording()`） | `ScenarioStep`、`ScenarioStepStatus`、`ScenarioStatus`、`ScenarioCallFrame`、`CheckScenario`、`ScenarioResult`、`SummaryScenario`（任意の `handed_over` を含む）、`ScenarioList`、`ScenarioFile`、`Recording`（`end_ms: number \| null` を含む） |
-| リクエストの形 | `AfterScenario`、`CheckRequest`、`CheckTextRequest`、`DescribeRequest`、`PrepareRequest`、`SaveConfigRequest`、`RunRequest`、`ConnectionsRequest`、`Speed`、`StopRequest`、`StopSessionRequestBody`、`TimeCommand` |
+| シナリオ（`--scenario`、`scenarios(file)`、`recording()`） | `ScenarioStep`、`ScenarioStepStatus`、`ScenarioStatus`、`ScenarioCallFrame`、`ScenarioParamType`、`CheckScenario`、`CheckScenarioCaseDetail`、`CheckScenarioParam`、`CheckScenarioParamMeta`、`ScenarioResult`、`SummaryScenario`（任意の `handed_over`・`case`・`params` を含む）、`ScenarioList`、`ScenarioFile`、`Recording`（`end_ms: number \| null` を含む） |
+| リクエストの形 | `AfterScenario`、`CheckRequest`、`CheckTextRequest`、`DescribeRequest`、`PrepareRequest`、`SaveConfigRequest`、`RunRequest`、`SessionIntent`、`ConnectionsRequest`、`Speed`、`StopRequest`、`StopSessionRequestBody`、`TimeCommand` |
 | 設定ファイルの一覧 | `ConfigList`、`ConfigFile`、`ConfigText`、`SavedConfig` |
 | エラーの形 | `ServerProblem` |
 | 指摘 | `Finding`、`Severity` |
@@ -591,7 +591,7 @@ throttle.close();
 
 | 知りたいこと | ドキュメント |
 | --- | --- |
-| 入門、正面の口 `connect()`、レシピ、11 部品、5 フレームワーク設定 | [gui/client/README.ja.md](../../gui/client/README.ja.md) |
+| 入門、正面の口 `connect()`、レシピ、12 部品、5 フレームワーク設定 | [gui/client/README.ja.md](../../gui/client/README.ja.md) |
 | GUI に自分のコードを足す道（カスタムパネル、自分の画面、ツール）の使い分け | [docs/ja/gui.md](gui.md#自分の画面を作る) の「自分の画面を作る」 |
 | 自分の画面を作り、GUI サーバーに配信させる手順 | [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) |
 | サーバーの API（HTTP と WebSocket の形、バージョンと互換のルール、認証） | [gui/protocol/README.ja.md](../../gui/protocol/README.ja.md) |

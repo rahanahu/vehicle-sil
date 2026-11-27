@@ -1551,7 +1551,7 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 |---|---|
 | [external-api.md](external-api.md) | 外部 API の仕様、OpenAPI・JSON Schema、マニュアル、実行可能なサンプルへのタグ固定の入口 |
 | [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) | 画面のテンプレートから、変数を 1 つ表示する画面を作る手順 |
-| [gui/client/README.md](../../gui/client/README.ja.md) | クライアントのライブラリ（`connect()`、レシピ、11 部品、5 フレームワーク） |
+| [gui/client/README.md](../../gui/client/README.ja.md) | クライアントのライブラリ（`connect()`、レシピ、12 部品、5 フレームワーク） |
 | [gui-client-low-level.md](gui-client-low-level.md) | 低水準 `createClient()` API、公開エクスポート全一覧、`variables.bind()`、ライフサイクル |
 | [gui/protocol/README.md](../../gui/protocol/README.ja.md) | サーバーの HTTP と WebSocket の API |
 | [gui/web/README.md](../../gui/web/README.ja.md) | サンプルの画面の開発 |

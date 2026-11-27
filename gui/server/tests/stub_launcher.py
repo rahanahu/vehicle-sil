@@ -24,6 +24,7 @@ DEFAULT_FEATURES = [
     "events", "stdin-commands", "request", "check-variables", "speed", "start-paused",
     "time-commands", "stdin-run-until", "state", "control-links", "scenario",
     "manual-participants", "timeline", "run-stop-at", "scenario-end-ms", "scenario-handover",
+    "scenario-cases", "scenario-templates",
     "connections", "connect", "check-text", "compare-commands", "serve", "check-file-only",
     "serve-prepare", "control-metrics",
 ]
@@ -111,6 +112,7 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
     man = list(req.get("manual", []))
     variant = req.get("variant")
     scenario = req.get("scenario")
+    scenario_case = req.get("case")
     i = 0
     while i < len(argv):
         if argv[i] == "--disable" and i + 1 < len(argv):
@@ -123,6 +125,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
             variant = argv[i + 1]; i += 2
         elif argv[i] == "--scenario" and i + 1 < len(argv):
             scenario = argv[i + 1]; i += 2
+        elif argv[i] == "--case" and i + 1 < len(argv):
+            scenario_case = argv[i + 1]; i += 2
         else:
             i += 1
     if dis:
@@ -135,6 +139,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
         req["variant"] = variant
     if scenario is not None:
         req["scenario"] = scenario
+    if scenario_case is not None:
+        req["case"] = scenario_case
     return req, req_path
 
 
@@ -198,6 +204,7 @@ def inspect_config(
     manual = list(req.get("manual", ()))
     variant = req.get("variant")
     scenario = req.get("scenario")
+    scenario_case = req.get("case")
     connect = req.get("connect") or {}
     time_policy = req.get("time_policy")
     stop_at_ms = req.get("stop_at_ms")
@@ -263,6 +270,19 @@ def inspect_config(
                 "severity": "error", "code": "usage", "file": req_path or cfg_path, "line": 1,
                 "participant": None, "network": None,
                 "message": "a scenario run cannot start paused",
+            }],
+            "file_sha256": sha,
+            "hot_eligibility": {"eligible": True, "reason": None, "message": None},
+        }, fault
+
+    if scenario_case and not scenario and not file_only:
+        return 4, {
+            "vehicle_sil_check": 1, "vehicle_sil": _version(), "file": cfg_path,
+            "result": "usage", "strict": False, "errors": 1, "warnings": 0, "notes": 0,
+            "participants": [], "networks": [], "findings": [{
+                "severity": "error", "code": "usage", "file": req_path or cfg_path, "line": 1,
+                "participant": None, "network": None,
+                "message": "case chooses a case of a scenario: give \"scenario\" in the request, or leave case out",
             }],
             "file_sha256": sha,
             "hot_eligibility": {"eligible": True, "reason": None, "message": None},
@@ -432,7 +452,128 @@ def inspect_config(
         doc["time_lock"] = {"locked": False, "because": []}
     if scenario:
         sname = "impossible speed" if "fails" in scenario else "throttle up"
-        doc["scenario"] = {"file": scenario, "name": sname, "steps": 3, "inputs": [], "lines": [], "end_ms": None}
+        sc_obj: dict = {"file": scenario, "name": sname, "steps": 3, "inputs": [], "lines": [], "end_ms": None}
+        sc_path = p.parent / scenario
+        sc_data: dict | None = None
+        if sc_path.is_file():
+            try:
+                import yaml as _yaml
+                parsed = _yaml.safe_load(sc_path.read_text(encoding="utf-8"))
+                if isinstance(parsed, dict):
+                    sc_data = parsed
+            except Exception:
+                sc_data = None
+        if sc_data is not None:
+            if isinstance(sc_data.get("name"), str) and sc_data["name"]:
+                sc_obj["name"] = sc_data["name"]
+            raw_cases = sc_data.get("cases")
+            if isinstance(raw_cases, dict) and raw_cases:
+                case_names = [str(k) for k in raw_cases]
+                case_details = []
+                for cname, cbody in raw_cases.items():
+                    only_val = cbody.get("only") if isinstance(cbody, dict) else None
+                    if isinstance(only_val, str):
+                        only_list: list[str] | None = [only_val]
+                    elif isinstance(only_val, list):
+                        only_list = [str(x) for x in only_val]
+                    else:
+                        only_list = None
+                    case_details.append({"name": str(cname), "only": only_list})
+                sc_obj["cases"] = case_names
+                sc_obj["case_details"] = case_details
+                raw_sc_params = sc_data.get("params") if isinstance(sc_data.get("params"), dict) else {}
+                raw_param_defs = sc_data.get("parameters") if isinstance(sc_data.get("parameters"), dict) else {}
+                case_params: dict = {}
+                if scenario_case in raw_cases and isinstance(raw_cases[scenario_case], dict):
+                    cp = raw_cases[scenario_case].get("params")
+                    if isinstance(cp, dict):
+                        case_params = cp
+                param_meta: list[dict] = []
+                meta_by_name: dict[str, dict] = {}
+                defaults_by_name: dict[str, object] = {}
+                for pk, pdef in raw_param_defs.items():
+                    meta_entry: dict = {"name": str(pk)}
+                    if isinstance(pdef, dict):
+                        if isinstance(pdef.get("type"), str):
+                            meta_entry["type"] = pdef["type"]
+                        if isinstance(pdef.get("values"), list):
+                            meta_entry["values"] = list(pdef["values"])
+                        if isinstance(pdef.get("description"), str):
+                            meta_entry["description"] = pdef["description"]
+                        if "default" in pdef:
+                            defaults_by_name[str(pk)] = pdef["default"]
+                    param_meta.append(meta_entry)
+                    meta_by_name[str(pk)] = meta_entry
+                if param_meta:
+                    sc_obj["param_meta"] = param_meta
+                merged_params: list[dict] = []
+                missing_params: list[str] = []
+                all_keys = list(
+                    dict.fromkeys([
+                        *raw_param_defs.keys(),
+                        *raw_sc_params.keys(),
+                        *case_params.keys(),
+                        *params.keys(),
+                    ])
+                )
+                for pk in all_keys:
+                    sk = str(pk)
+                    entry: dict | None = None
+                    if pk in params:
+                        entry = {"name": sk, "value": params[pk], "from": "request"}
+                    elif pk in case_params:
+                        entry = {"name": sk, "value": case_params[pk], "from": "case"}
+                    elif pk in raw_sc_params:
+                        entry = {"name": sk, "value": raw_sc_params[pk], "from": "scenario"}
+                    elif sk in defaults_by_name:
+                        entry = {"name": sk, "value": defaults_by_name[sk], "from": "default"}
+                    elif sk in meta_by_name:
+                        missing_params.append(sk)
+                    if entry is not None:
+                        meta = meta_by_name.get(sk, {})
+                        for mk in ("type", "values", "description"):
+                            if mk in meta:
+                                entry[mk] = meta[mk]
+                        merged_params.append(entry)
+                if merged_params:
+                    sc_obj["params"] = merged_params
+                if missing_params:
+                    sc_obj["missing_params"] = missing_params
+                if scenario_case is None or scenario_case not in raw_cases:
+                    sc_obj["case"] = None
+                    if not file_only:
+                        msg = (
+                            f"{scenario} has cases ({', '.join(case_names)}): choose a case with --case"
+                            if scenario_case is None
+                            else f"{scenario} has no case {scenario_case!r}: the cases are {', '.join(case_names)}"
+                        )
+                        findings.insert(0, {
+                            "severity": "error", "code": "usage", "file": req_path or cfg_path, "line": None,
+                            "participant": None, "network": None, "message": msg,
+                        })
+                        doc["result"] = "usage"
+                        doc["errors"] = sum(1 for f in findings if f["severity"] == "error")
+                        doc["warnings"] = sum(1 for f in findings if f["severity"] == "warning")
+                        doc["notes"] = sum(1 for f in findings if f["severity"] == "note")
+                        exit_code = 4
+                else:
+                    sc_obj["case"] = scenario_case
+            elif scenario_case is not None and not file_only:
+                findings.insert(0, {
+                    "severity": "error", "code": "usage", "file": req_path or cfg_path, "line": None,
+                    "participant": None, "network": None,
+                    "message": f"{scenario} has no cases: leave case out",
+                })
+                doc["result"] = "usage"
+                doc["errors"] = sum(1 for f in findings if f["severity"] == "error")
+                exit_code = 4
+            elif params:
+                sc_obj["params"] = [{"name": str(pk), "value": pv, "from": "request"} for pk, pv in params.items()]
+        elif scenario_case is not None:
+            sc_obj["case"] = scenario_case
+            if params:
+                sc_obj["params"] = [{"name": str(pk), "value": pv, "from": "request"} for pk, pv in params.items()]
+        doc["scenario"] = sc_obj
     return exit_code, doc, fault
 
 
@@ -1492,6 +1633,10 @@ def _execute_run(
                     {"index": 3, "status": "not_run"},
                 ],
             }
+            if req_dict.get("case"):
+                sc_res["case"] = req_dict["case"]
+            if chk_doc.get("scenario", {}).get("params"):
+                sc_res["params"] = chk_doc["scenario"]["params"]
             _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
                 "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                 "result": "failed", "end": "failed", "ok": False, "simulation": "ended",
@@ -1644,13 +1789,17 @@ def _execute_run(
             }
             if has_scenario:
                 res_stop["scenario"] = {
-                    "file": scenario, "name": "throttle up",
+                    "file": scenario, "name": chk_doc.get("scenario", {}).get("name") or "throttle up",
                     "status": "passed" if handed_over else "incomplete",
                     "over_at_ms": scenario_over_at_ms if handed_over else None,
                     "end_ms": None,
                     "timeline": timeline_file,
                     "steps": [{"index": 1, "status": "passed"}, {"index": 2, "status": "passed"}, {"index": 3, "status": "passed"}],
                 }
+                if req_dict.get("case"):
+                    res_stop["scenario"]["case"] = req_dict["case"]
+                if chk_doc.get("scenario", {}).get("params"):
+                    res_stop["scenario"]["params"] = chk_doc["scenario"]["params"]
             _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result=res_stop))
             return 0 if once else None
         elif cname == "pause":
@@ -1757,12 +1906,16 @@ def _execute_run(
     }
     if has_scenario:
         sc_pass: dict = {
-            "file": scenario, "name": "throttle up", "status": "passed",
+            "file": scenario, "name": chk_doc.get("scenario", {}).get("name") or "throttle up", "status": "passed",
             "over_at_ms": scenario_over_at_ms if handed_over else sim_ms,
             "end_ms": None,
             "timeline": timeline_file,
             "steps": [{"index": 1, "status": "passed"}, {"index": 2, "status": "passed"}, {"index": 3, "status": "passed"}],
         }
+        if req_dict.get("case"):
+            sc_pass["case"] = req_dict["case"]
+        if chk_doc.get("scenario", {}).get("params"):
+            sc_pass["params"] = chk_doc["scenario"]["params"]
         res_obj["scenario"] = sc_pass
     if fault == "large-result":
         res_obj["blob"] = "z" * (5 * 1024 * 1024)

@@ -290,6 +290,48 @@
           "default": null,
           "title": "Result"
         },
+        "variant": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Variant"
+        },
+        "variants": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Variants"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CheckScenarioParam"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Params"
+        },
         "participants": {
           "items": {
             "$ref": "#/$defs/CheckParticipant"
@@ -370,6 +412,19 @@
           ],
           "default": null,
           "title": "Stop At Ms"
+        },
+        "time_step_ms": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Step Ms"
         },
         "commands": {
           "anyOf": [
@@ -577,6 +632,21 @@
           "default": null,
           "title": "Cases"
         },
+        "case_details": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CheckScenarioCaseDetail"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Case Details"
+        },
         "steps": {
           "anyOf": [
             {
@@ -619,6 +689,36 @@
           ],
           "default": null,
           "title": "Params"
+        },
+        "param_meta": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CheckScenarioParamMeta"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Param Meta"
+        },
+        "missing_params": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Missing Params"
         },
         "skipped_steps": {
           "anyOf": [
@@ -663,6 +763,35 @@
       "title": "CheckScenario",
       "type": "object"
     },
+    "CheckScenarioCaseDetail": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "only": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Only"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CheckScenarioCaseDetail",
+      "type": "object"
+    },
     "CheckScenarioParam": {
       "additionalProperties": true,
       "properties": {
@@ -690,6 +819,45 @@
         "from": {
           "title": "From",
           "type": "string"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        },
+        "values": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Values"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Description"
         }
       },
       "required": [
@@ -698,6 +866,59 @@
         "from"
       ],
       "title": "CheckScenarioParam",
+      "type": "object"
+    },
+    "CheckScenarioParamMeta": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        },
+        "values": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Values"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CheckScenarioParamMeta",
       "type": "object"
     },
     "CommandSummary": {
@@ -2420,6 +2641,138 @@
       "title": "ServerAllowed",
       "type": "object"
     },
+    "SessionIntentSummary": {
+      "additionalProperties": false,
+      "description": "Root-relative run intent suitable for re-submitting to `POST /api/run` with `session.file`.",
+      "properties": {
+        "variant": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Variant"
+        },
+        "disable": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true,
+          "title": "Disable"
+        },
+        "enable": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true,
+          "title": "Enable"
+        },
+        "manual": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true,
+          "title": "Manual"
+        },
+        "scenario": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Scenario"
+        },
+        "case": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Case"
+        },
+        "after_scenario": {
+          "enum": [
+            "stop",
+            "pause"
+          ],
+          "type": "string",
+          "title": "After Scenario"
+        },
+        "params": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "type": "object",
+          "title": "Params"
+        },
+        "strict": {
+          "type": "boolean",
+          "title": "Strict"
+        },
+        "connect": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "type": "object",
+          "title": "Connect"
+        },
+        "time_policy": {
+          "minLength": 1,
+          "type": "string",
+          "title": "Time Policy"
+        },
+        "speed": {
+          "anyOf": [
+            {
+              "const": "max",
+              "type": "string"
+            },
+            {
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "maximum": 1000000.0,
+              "minimum": 1e-06,
+              "type": "number"
+            }
+          ],
+          "title": "Speed"
+        },
+        "start_paused": {
+          "type": "boolean",
+          "title": "Start Paused"
+        },
+        "stop_at_ms": {
+          "maximum": 1000000000000,
+          "minimum": 1,
+          "type": "integer",
+          "title": "Stop At Ms"
+        },
+        "late_tolerance_ms": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer",
+          "title": "Late Tolerance Ms"
+        }
+      },
+      "title": "SessionIntentSummary",
+      "type": "object"
+    },
     "SessionLauncherSummary": {
       "additionalProperties": false,
       "properties": {
@@ -2551,6 +2904,21 @@
           ],
           "default": null,
           "title": "Case"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CheckScenarioParam"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Params"
         },
         "status": {
           "anyOf": [
@@ -2898,6 +3266,17 @@
           "default": null,
           "title": "Stop At Ms"
         },
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionIntentSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "variables": {
           "$ref": "#/$defs/VariablesSummary"
         }
@@ -3204,6 +3583,17 @@
           ],
           "default": null,
           "title": "Stop At Ms"
+        },
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionIntentSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

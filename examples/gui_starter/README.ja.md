@@ -74,7 +74,7 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | `<vsil-value>` | 単位つきの値。bool は `on` と `off` の文字で出ます（CSS でランプにできます）。 | `variable`、`on`、`off` |
 | `<vsil-slider>` | 変数の範囲の数。つまみを離したときに書き込みます。 | `variable` |
 | `<vsil-write>` | 1 つの値を書き込むボタン | `variable`、`value`、`label` |
-| `<vsil-scenario-select>`、`<vsil-scenario-result>` | 次の実行のシナリオと、そのステップと結果 | なし |
+| `<vsil-scenario-select>`、`<vsil-case-select>`、`<vsil-scenario-result>` | 次の実行のシナリオとケース、その手順・パラメーター・結果 | なし |
 | `<vsil-timeline>` | シナリオの実行の時間の軸。中に置いた `<vehicle-sil-timeline>` に出します（なければ 1 つ足します）。その属性（`compact`、`hide`、`lang`）は自分で決めます。要素のスクリプトはページが読みます: `<script src="/timeline/vehicle-sil-timeline.js">` | なし |
 
 変数は `<participant>.<variable>` と書き、最初のドットで切ります（`Engine.engine.throttle` は、participant `Engine` の変数 `engine.throttle`）。自分の ECU の名前を調べるには、ガイドの「手順 2: 表示する変数の名前を調べる」を見てください。名前が違うと、部品が `this variable is not in the current run: check the names (ECU and variable)` と言います。部品の一覧と、部品が守ること（接続、マークアップ、CSS を当てる `data-*` 属性）は、[gui/client/README.md](../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」にあります。

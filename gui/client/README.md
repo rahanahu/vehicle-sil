@@ -4,7 +4,7 @@
 
 Zero-dependency TypeScript client library and custom elements for the `vehicle-sil-gui` server. Runs in browsers and Node.js 22+.
 
-Use this page for onboarding, choosing between `connect()` and `createFront()`, high-level recipes, and embedding the 11 `vsil-*` custom elements across Vanilla JS/TS, Angular, React, Vue, and Svelte. For the low-level `createClient()` API, `variables.bind()`, full export tables, wire-adjacent details, and contributor tests, see [docs/gui-client-low-level.md](../../docs/gui-client-low-level.md).
+Use this page for onboarding, choosing between `connect()` and `createFront()`, high-level recipes, and embedding the 12 `vsil-*` custom elements across Vanilla JS/TS, Angular, React, Vue, and Svelte. For the low-level `createClient()` API, `variables.bind()`, full export tables, wire-adjacent details, and contributor tests, see [docs/gui-client-low-level.md](../../docs/gui-client-low-level.md).
 
 ## Contents
 
@@ -39,7 +39,7 @@ Package subpaths (`package.json` `exports`):
 | Import path                        | Purpose                                                                                                                                                                                                                     |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `@vehicle-sil/gui-client`          | High-level `connect()` / `createFront()`, low-level `createClient()`, `watch()`, `until()`, `ActionError`, `WriteError`, and protocol types                                                                                 |
-| `@vehicle-sil/gui-client/elements` | Registers the 11 `vsil-*` custom elements; exports `pageIntent`, `setReasonText`, element classes, `VsilElementContracts`, and write-event detail types (`WriteQueuedInfo`, `WriteOutcome`, `WriteSuccess`, `WriteFailure`) |
+| `@vehicle-sil/gui-client/elements` | Registers the 12 `vsil-*` custom elements; exports `pageIntent`, `setReasonText`, element classes, `VsilElementContracts`, and write-event detail types (`WriteQueuedInfo`, `WriteOutcome`, `WriteSuccess`, `WriteFailure`) |
 | `@vehicle-sil/gui-client/timeline` | Registers `<vehicle-sil-timeline>` and exports its element and event types                                                                                                                                                  |
 | `@vehicle-sil/gui-client/react`    | Type-only JSX intrinsic element types for React 18 and 19 (no runtime dependency on `react`)                                                                                                                                |
 | `@vehicle-sil/gui-client/vue`      | Type-only `GlobalComponents` types for Vue 3 (no runtime dependency on `vue`)                                                                                                                                               |
@@ -109,7 +109,7 @@ Data fields use the wire's snake_case names (`force_stop`, `sim_ms`, `can_write`
 
 ### `run`, `time`, and `until()`
 
-- **`run.start(intent?, { file?, onStarted? }?)`**: starts a run. `intent` uses the keys of `schema/run-request.schema.json` (`variant`, `params`, `scenario`, `after_scenario`, `disable`, `enable`, `manual`, `strict`, `speed`, `start_paused`, `stop_at_ms`, `late_tolerance_ms`, `connect`, `time_policy`); omit unset keys rather than sending `null`. Resolves once the server accepts the start — wait for `status.run !== 'starting'` with `until()` before reading the new run state.
+- **`run.start(intent?, { file?, onStarted? }?)`**: starts a run. `intent` uses the keys of `schema/run-request.schema.json` (`variant`, `params`, `scenario`, `case`, `after_scenario`, `disable`, `enable`, `manual`, `strict`, `speed`, `start_paused`, `stop_at_ms`, `late_tolerance_ms`, `connect`, `time_policy`); omit unset keys rather than sending `null`. To re-run the current or last session with the exact same options, pass `session.intent` directly: `await front.run.start(session.intent, { file: session.file })` (`session.intent.scenario` is already root-relative). Resolves once the server accepts the start — wait for `status.run !== 'starting'` with `until()` before reading the new run state.
 - **`run.stop()` / `run.forceStop(target?)`**: stops the run. If called right after `await connect()` while `link === 'connecting'`, `run.stop()`, `run.forceStop()`, `time.*()`, and `variable().enqueue()` / `write()` automatically wait for the initial WebSocket sync (up to `answerTimeoutMs`) instead of failing on a not-yet-synced state.
 - **`time.pause()` / `resume()` / `step(ms)` / `runUntil(ms)` / `setSpeed(value)`**: `step` and `runUntil` resolve once virtual time reaches the target and the run is paused again; another sender's command before arrival rejects with `ActionError('interrupted', ..., 'unknown')`.
 - **`until(source, test, { timeoutMs?, signal? })`**: resolves with the first value matching `test` (checking the current value immediately), or rejects with `ActionError('timeout' | 'aborted', ..., 'unknown')`. Options are strictly camelCase (`timeoutMs`, `signal`); unknown keys reject with `unknown-field`.
@@ -289,21 +289,22 @@ const stop = client.variable('Engine.engine.speed').subscribe(
 
 ## Parts (custom elements)
 
-`@vehicle-sil/gui-client/elements` defines 11 light-DOM custom elements built on `connect()` with no styles of their own. Every HTML attribute has a matching camelCase JS property (including boolean `noUnit`, falsy `value={false}` / `value={0}`, and numeric `stepMs`) so they bind cleanly in plain HTML and in Angular, React, Vue, and Svelte templates.
+`@vehicle-sil/gui-client/elements` defines 12 light-DOM custom elements built on `connect()` with no styles of their own. Every HTML attribute has a matching camelCase JS property (including boolean `noUnit`, falsy `value={false}` / `value={0}`, and numeric `stepMs`) so they bind cleanly in plain HTML and in Angular, React, Vue, and Svelte templates.
 
-| Element                  | What it shows or does                                                             | Attributes / JS properties                                                                                                                                                     | Custom events                            |
-| ------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `<vsil-status>`          | Connection, run state, virtual time (marked when late), and active problem        | `client` (prop)                                                                                                                                                                | —                                        |
-| `<vsil-run-controls>`    | Start (with page intent), Stop, and Force stop                                    | `label-start` (`labelStart`), `label-stop` (`labelStop`), `label-force-stop` (`labelForceStop`), `intent` (prop), `client` (prop)                                              | —                                        |
-| `<vsil-time-controls>`   | Pause, Resume, Step, Run until, and speed selector                                | `speeds`, `step-ms` (`stepMs`), `label-pause` (`labelPause`), `label-resume` (`labelResume`), `label-step` (`labelStep`), `label-run-until` (`labelRunUntil`), `client` (prop) | —                                        |
-| `<vsil-value>`           | Value with unit and non-live note; bool renders `on`/`off` text                   | `variable`, `on`, `off`, `no-unit` (`noUnit`), `client` (prop)                                                                                                                 | —                                        |
-| `<vsil-slider>`          | Numeric slider in variable's range; writes on release with single-slot coalescing | `variable`, `client` (prop)                                                                                                                                                    | `vsil-write-queued`, `vsil-write-result` |
-| `<vsil-write>`           | Button writing one value (disabled when variable already equals value)            | `variable`, `value` (`string \| number \| boolean \| null`), `label`, `client` (prop)                                                                                          | `vsil-write-queued`, `vsil-write-result` |
-| `<vsil-scenario-select>` | Scenario selector for the next run                                                | `client` (prop)                                                                                                                                                                | —                                        |
-| `<vsil-scenario-result>` | Scenario verdict and step table                                                   | `client` (prop)                                                                                                                                                                | —                                        |
-| `<vsil-timeline>`        | Ties an inner `<vehicle-sil-timeline>` to the run's `timeline_url`                | `client` (prop)                                                                                                                                                                | —                                        |
-| `<vsil-connect>`         | External bus target picker (`SIL Kit only` + bridge targets)                      | `network`, `file`, `client` (prop)                                                                                                                                             | —                                        |
-| `<vsil-outside>`         | Live rows of externally connected networks, condition, and frame counts           | `client` (prop)                                                                                                                                                                | —                                        |
+| Element                  | What it shows or does                                                                                                                   | Attributes / JS properties                                                                                                                                                     | Custom events                            |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `<vsil-status>`          | Connection, run state, virtual time (marked when late), and active problem                                                              | `client` (prop)                                                                                                                                                                | —                                        |
+| `<vsil-run-controls>`    | Start (with page intent), Stop, and Force stop                                                                                          | `label-start` (`labelStart`), `label-stop` (`labelStop`), `label-force-stop` (`labelForceStop`), `intent` (prop), `client` (prop)                                              | —                                        |
+| `<vsil-time-controls>`   | Pause, Resume, Step, Run until, and speed selector                                                                                      | `speeds`, `step-ms` (`stepMs`), `label-pause` (`labelPause`), `label-resume` (`labelResume`), `label-step` (`labelStep`), `label-run-until` (`labelRunUntil`), `client` (prop) | —                                        |
+| `<vsil-value>`           | Value with unit and non-live note; bool renders `on`/`off` text                                                                         | `variable`, `on`, `off`, `no-unit` (`noUnit`), `client` (prop)                                                                                                                 | —                                        |
+| `<vsil-slider>`          | Numeric slider in variable's range; writes on release with single-slot coalescing                                                       | `variable`, `client` (prop)                                                                                                                                                    | `vsil-write-queued`, `vsil-write-result` |
+| `<vsil-write>`           | Button writing one value (disabled when variable already equals value)                                                                  | `variable`, `value` (`string \| number \| boolean \| null`), `label`, `client` (prop)                                                                                          | `vsil-write-queued`, `vsil-write-result` |
+| `<vsil-scenario-select>` | Scenario selector for the next run                                                                                                      | `client` (prop)                                                                                                                                                                | —                                        |
+| `<vsil-case-select>`     | Case selector for the next run's scenario when it defines multiple cases (disables cases restricted by the active `variant` via `only`) | `client` (prop)                                                                                                                                                                | —                                        |
+| `<vsil-scenario-result>` | Scenario status, case, resolved parameters, and step table (including failed step `file:line` and template `call_stack`)                | `client` (prop)                                                                                                                                                                | —                                        |
+| `<vsil-timeline>`        | Ties an inner `<vehicle-sil-timeline>` to the run's `timeline_url`                                                                      | `client` (prop)                                                                                                                                                                | —                                        |
+| `<vsil-connect>`         | External bus target picker (`SIL Kit only` + bridge targets)                                                                            | `network`, `file`, `client` (prop)                                                                                                                                             | —                                        |
+| `<vsil-outside>`         | Live rows of externally connected networks, condition, and frame counts                                                                 | `client` (prop)                                                                                                                                                                | —                                        |
 
 ```html
 <script type="module" src="/vsil/vehicle-sil-gui-elements.mjs"></script>
@@ -320,6 +321,7 @@ const stop = client.variable('Engine.engine.speed').subscribe(
 </p>
 <vsil-time-controls speeds="0.5 1 5 max"></vsil-time-controls>
 <label>Scenario of the next run <vsil-scenario-select></vsil-scenario-select></label>
+<label>Case <vsil-case-select></vsil-case-select></label>
 <vsil-scenario-result></vsil-scenario-result>
 <script src="/timeline/vehicle-sil-timeline.js"></script>
 <vsil-timeline>
@@ -330,7 +332,7 @@ const stop = client.variable('Engine.engine.speed').subscribe(
 `<vsil-timeline>` only sets `src` and `hidden` on the `<vehicle-sil-timeline>` inside it (adding a default element if you omit one) and sets `data-timeline` (`shown` or `none`). Load the timeline script separately (`<script src="/timeline/vehicle-sil-timeline.js">` or `import '@vehicle-sil/gui-client/timeline'`).
 
 ```ts
-import '@vehicle-sil/gui-client/elements'; // defines the 11 parts
+import '@vehicle-sil/gui-client/elements'; // defines the 12 parts
 import { pageIntent, setReasonText } from '@vehicle-sil/gui-client/elements';
 
 setReasonText((reason) => (reason.code === 'busy' ? 'Wait a moment.' : null));
@@ -345,7 +347,7 @@ if (controls) {
 ### What the parts promise
 
 - **Shared page connection**: by default every part calls `connect()` without options, sharing one WebSocket with your script. Set `element.client = front` to bind a part to another `Front`. Never mix `/vsil/` files with local copies of the library (a second module copy opens a second connection).
-- **Light DOM and `data-*` styling hooks**: parts draw inside a `<span class="vsil">` with no shadow DOM. Style them via `[aria-disabled="true"]`, `[data-link]`, `[data-run]`, `[data-pacing]`, `[data-stale="true"]`, `[data-can-write]`, `[data-availability="inactive"]`, `[data-on]`, `[data-error]`, `[data-status]`, `[data-reason]`, `[data-caution]`, and `[data-write-status]`.
+- **Light DOM and `data-*` styling hooks**: parts draw inside a `<span class="vsil">` with no shadow DOM. Style them via `[aria-disabled="true"]`, `[data-link]`, `[data-run]`, `[data-pacing]`, `[data-stale="true"]`, `[data-can-write]`, `[data-availability="inactive"]`, `[data-on]`, `[data-error]`, `[data-cases]` (`<vsil-case-select>`: `none` or `available`), `[data-status]` and `[data-case]` (`<vsil-scenario-result>`, plus `data-status` on its steps), `[data-reason]`, `[data-caution]`, and `[data-write-status]`.
 - **Write lifecycle events (`vsil-write-queued` & `vsil-write-result`)**: `<vsil-slider>` and `<vsil-write>` dispatch two bubbling, composed (`bubbles: true, composed: true`) lowercase custom events (never fired after disconnect or rebind):
   - `vsil-write-queued`: `CustomEvent<WriteQueuedInfo>` (`{ session, seq, peer, name, value }`) when the write reaches the ECU queue.
   - `vsil-write-result`: `CustomEvent<WriteOutcome>` — either `WriteSuccess` (`{ ok: true, session, seq, peer, name, value, appliedAtMs, late }`) or `WriteFailure` (`{ ok: false, peer, name, value, error: ActionError, seq? }`).
@@ -355,7 +357,7 @@ if (controls) {
 
 ### Words and the next run
 
-`setReasonText(fn)` replaces English reason sentences (`fn(reason)` returns a string, or `null`/`undefined` to keep English; `setReasonText(null)` resets). Call it before inserting parts. `pageIntent` (`get()`, `subscribe(fn)`, `update(patch)`) stores the intent for the **next** run (never overwritten by the currently running session); `<vsil-run-controls>` merges `{ ...pageIntent.get(), ...controls.intent }`.
+`setReasonText(fn)` replaces English reason sentences (`fn(reason)` returns a string, or `null`/`undefined` to keep English; `setReasonText(null)` resets). Call it before inserting parts. Built-in part labels (such as `ready`, `writing…`, `(no scenario)`, `(no cases)`, `(choose a case)`, `fastest`, `behind real time`) are fixed English strings. `pageIntent` (`get()`, `subscribe(fn)`, `update(patch)`) stores the intent for the **next** run (never overwritten by the currently running session): `<vsil-scenario-select>` writes `scenario` and clears `case` when the scenario changes; `<vsil-case-select>` reads `scenario` and `variant` from `pageIntent`, checks the scenario to list its cases, and writes `case`; `<vsil-run-controls>` merges `{ ...pageIntent.get(), ...controls.intent }`.
 
 ### Connecting a network outside with the parts
 
@@ -441,7 +443,7 @@ export class BenchComponent {
 
 ### React 18 and 19
 
-Import `@vehicle-sil/gui-client/react` once (for example in `src/main.tsx` or `src/env.d.ts`) to register JSX types for all 11 `vsil-*` parts and `<vehicle-sil-timeline>`.
+Import `@vehicle-sil/gui-client/react` once (for example in `src/main.tsx` or `src/env.d.ts`) to register JSX types for all 12 `vsil-*` parts and `<vehicle-sil-timeline>`.
 
 ```tsx
 import { useEffect, useRef } from 'react';

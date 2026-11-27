@@ -1543,7 +1543,7 @@ If the launcher has a Control Server, the screen end-to-end tests also check tha
 |---|---|
 | [external-api.md](external-api.md) | Tag-pinned index of external API specs, OpenAPI/JSON Schemas, manuals, and runnable examples |
 | [Build your own screen for the browser GUI](howto/gui-screen.md) | How to build a screen that shows one variable, starting from the screen template |
-| [gui/client/README.md](../gui/client/README.md) | The client library (`connect()`, recipes, 11 parts, 5 frameworks) |
+| [gui/client/README.md](../gui/client/README.md) | The client library (`connect()`, recipes, 12 parts, 5 frameworks) |
 | [gui-client-low-level.md](gui-client-low-level.md) | Low-level `createClient()` API, full exports, `variables.bind()`, and lifecycle |
 | [gui/protocol/README.md](../gui/protocol/README.md) | The server's HTTP and WebSocket API |
 | [gui/web/README.md](../gui/web/README.md) | Developing the sample screens |
