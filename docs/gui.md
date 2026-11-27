@@ -411,9 +411,53 @@ The launcher advances time; the GUI only passes commands and shows the results. 
 
 - The launcher's `time-commands`, `stdin-run-until`, `state`, `speed` and `start-paused` are required when the server starts, so the server does not check them per command.
 - In a run that is connected outside the simulation (a `role: bridge` participant in the file, or `connect` in the request of the run), the launcher refuses pause, step and a speed other than 1 with the reason `outside-real-time`, as it does on the command line (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)). The rule is the launcher's: the GUI server has none of its own and passes the answer on. `time_policy` (`"free"`) in the request lifts it, and the check's `time_lock` says whether the run keeps real time. The **Time** card shows the launcher's reason under pause and step, and the speeds other than **Real time** cannot be chosen (the card says that this run can go at real time only).
-- Whether each time control can be used, why not, and the range of a step and of the speed come from the client library's `controls` (see [gui/client/README.md](../gui/client/README.md)); the screen has no rule of its own. A reason that the screen has words for appears in the screen's language; any other reason appears in the launcher's English sentence. A caution (the command is accepted, but something is worth knowing first, such as `outside-not-real-time`) appears in the same place.
+- Whether each time control can be used, why not, and the range of a step and of the speed come from the client library's `controls` (see [gui/client/README.md](../gui/client/README.md) and "[Control reason codes, caution codes, and `--time-policy`](#control-reason-codes-caution-codes-and---time-policy)" below); the screen has no rule of its own. A reason that the screen has words for appears in the screen's language; any other reason appears in the launcher's English sentence. A caution (the command is accepted, but something is worth knowing first, such as `outside-not-real-time`) appears in the same place.
 - A screen opened during a run, and other tabs, show the same time state (the server's summary holds the last `time` and `command` events).
 - The findings `behind-real-time` and `coarse-time-step` appear among the result's findings, like any other finding.
+
+### Control reason codes, caution codes, and `--time-policy`
+
+Each entry in `front.controls` (`start`, `stop`, `force_stop`, `pause`, `resume`, `step`, `run_until`, `speed`, `save`) is `{ ok, reason, caution }`. Always branch on `reason.code` and `caution.code` rather than matching the English `message`.
+
+**`controls.*.reason.code` (when `ok` is `false`):**
+
+| Code | Owner | Controls | Meaning |
+|---|---|---|---|
+| `connecting` | Client | All except `stop`/`force_stop` | WebSocket is still connecting or awaiting initial sync (`hello` + `synced`). |
+| `offline` | Client | All except `stop`/`force_stop` | Connection to the GUI server is down; the client reconnects automatically. |
+| `rejected` | Client | All except `stop`/`force_stop` | The GUI server rejected the token; reopen the URL the server printed. |
+| `incompatible` | Client | All except `stop`/`force_stop` | Protocol version mismatch between client and GUI server. |
+| `busy` | Client | All except `save` | An earlier request for the same operation from this page has not been answered yet. |
+| `starting` | GUI server / Client | `start`, `stop`, `force_stop` | A run start is in flight and cannot yet be identified or overlapped. |
+| `already-running` | GUI server / Client | `start` | A run is already active; stop it and wait for it to end before starting another. |
+| `launcher-unusable` | GUI server | `start` | The configured `vehicle_sil_launch` failed its probe or version/feature check. |
+| `shutting-down` | GUI server | `start`, `stop`, `force_stop`, `save` | The GUI server is shutting down and accepts no new operations. |
+| `not-running` | GUI server / Client / Launcher | `stop`, `force_stop`, `pause`, `resume`, `step`, `run_until`, `speed` | No active simulation run (or the simulation has already ended). |
+| `already-stopping` | GUI server / Client | `stop` | A graceful stop was already requested; wait for it to finish, or use `force_stop`. |
+| `not-stopping` | Client | `force_stop` | Request a graceful `stop` first; `force_stop` is the second step. |
+| `already-forced` | GUI server | `force_stop` | A forced stop was already requested; wait for the launcher to exit. |
+| `save-disabled` | GUI server | `save` | The GUI server was started with `--no-save`. |
+| `paused` | Client | `pause` | The simulation is already paused (pressing Pause would change nothing). |
+| `not-paused` | Client / Launcher | `resume`, `step` | On `resume` (Client): simulation is not paused. On `step` (Launcher): stepping requires a paused simulation. |
+| `not-set-up` | Launcher | `step`, `run_until` | Participants have not finished setting up yet (`step` and `run_until` unlock once setup completes). |
+| `outside-real-time` | Launcher | `pause`, `step`, `run_until` | Run is connected outside the simulation (`--connect` or enabled `role: bridge`) under `--time-policy realtime` (default). `controls.speed` remains `ok: true` with `min: 1, max: 1, fastest: false` (sending a speed other than `1` is refused by the launcher with `outside-real-time`). Only `resume`, `speed: 1`, and `stop` are accepted. |
+| `unsupported` | Client | `pause`, `resume`, `step`, `run_until`, `speed` (and variable `write`) | The launcher has not yet sent a `state` event for this run, or its `state.allowed` has no entry for the operation. |
+| `refused` | Client (fallback) | Any | Fallback code if a server or launcher `allowed` entry returned `ok: false` without a `reason` code. |
+
+On variable writes (`front.variable(ref).get().why.code` / `state.allowed.write`), the launcher also emits `scenario-running` (while a scenario runs prior to a passed `after_scenario: 'pause'` handover) and `no-control-server` (when the run has no Control Server). Commands sent with invalid arguments can also be refused by the launcher with `out-of-range`, `missing-argument`, or `not-a-time-command` (see "[Reason codes](simulation-events.md#reason-codes)" in `simulation-events.md`).
+
+**`controls.*.caution.code` (when `ok` is `true`, but something is worth warning about):**
+
+| Code | Owner | Controls | Meaning |
+|---|---|---|---|
+| `outside-not-real-time` | Launcher | `pause`, `step`, `run_until`, `speed` | Run is connected outside the simulation with `time_policy: 'free'`: the operation is accepted, but external devices do not pause for virtual time and bridge frames continue both ways (the run ends with the note `outside-time-changed` after the first such command). |
+| `command-changes-allowed` | GUI server | `save` | The GUI server was started with `--allow-command-changes`: saving can modify executable commands and create new files, so anyone with the token (or any local process under `--no-auth`) can run commands as this user. |
+
+**`--time-policy` precedence and `free` default speed (`max`):**
+
+- **Precedence**: on the CLI, an explicit `--time-policy` (including `--time-policy realtime`) overrides `time_policy` in a `--request` file. When omitted in both (or omitted in GUI `Intent.time_policy`), the default is `realtime`.
+- **Under `realtime` (default)**: when connected outside (`connect` or an enabled `role: bridge` participant), speed is locked to `1` (real time). Omitting speed runs at `1` with note `outside-speed-set`; requesting any speed other than `1`, `start_paused: true`, or `after_scenario: 'pause'` fails check with error `outside-real-time`.
+- **Under `free`**: the time lock is lifted, so speed falls back to the normal non-locked default — explicit `speed` / `--speed`, otherwise the configuration default, otherwise **`max` (as fast as possible)**, not `1`. If you want real-time pacing while keeping pause/step available, set both `time_policy: 'free'` and `speed: 1` explicitly.
 
 ### Start paused
 
@@ -556,11 +600,22 @@ The GUI reads and writes the variables that ECUs declare (see "ECU variables" in
 | To find | See |
 |---|---|
 | Shapes of notifications and requests, limits | "ECU variables" in [gui/protocol/README.md](../gui/protocol/README.md#ecu-variables) |
-| The library API (including `bind` for building widgets) | "ECU variables" in [gui/client/README.md](../gui/client/README.md#ecu-variables) |
+| The library API (including `bind` for building widgets) | "ECU variables" in [docs/gui-client-low-level.md](gui-client-low-level.md#ecu-variables) |
 | A working example | `examples/gui_client/variables.mjs` in the repository |
 | The Angular wrapper | `EcuVariables` (`gui/web/src/app/core/session/ecu-variables.ts`) |
 
 `EcuVariables` provides `session`, `status`, `reason`, `peers`, `operations`, `find(ref)`, `peerConnected(peer)`, `watch()` that ends automatically when its component is destroyed, `open()` (callers must call `close()` explicitly; it does not auto-dispose), and `write()`.
+
+### Live polling vs deterministic capture
+
+Choose the right observation mechanism for your goal:
+
+| Mechanism | How it works | What it gives you | What it does **not** guarantee |
+|---|---|---|---|
+| **Live GUI polling** (`watchPeriodMs` / `FrontVariable.subscribe(fn, { periodMs })` + `batchMs`) | Real-time latest-value snapshots (`GetSnapshot`) polled by the GUI server without blocking virtual time. Defaults: `100 ms` polling, `100 ms` WebSocket batching; configurable down to `20 ms` polling and `0..16 ms` batching for smoother gauges and animations. | Responsive live UI updates with low background overhead and zero interference with simulation determinism. | **Not a step-accurate recorder**: polling at 20 ms does **not** guarantee capturing pulses shorter than 20 ms or every intermediate step (especially when virtual time runs faster than real time at `speed > 1` or `max`). Actual update cadence and bandwidth depend on host load, variable count, and simulation speed. |
+| **Deterministic capture (`--timeline`, scenarios, `Spy`)** | Recorded on the virtual-time step boundary inside the simulation (`vehicle_sil_launch --timeline` viewed with `<vehicle-sil-timeline>`, scenario `expect`/`wait_until`, or a `Spy::watch<M>()` participant reporting `count`, `last_ms`, `period_ms`, `spy.missed`). | Step-accurate transitions, reliable detection of short pulses (e.g., 1 ms ECU pulses), and bus-frame statistics independent of browser or wall-clock load. | Not meant as an unbounded continuous raw-frame stream inside live browser polling. |
+
+If you need to inspect short pulses or verify exact step-by-step waveforms, record a scenario `--timeline` (or add a `Spy` participant / Control API test) rather than relying on 20 ms GUI polling.
 
 ## The sample screens
 
@@ -972,11 +1027,11 @@ The rules that apply to your own screen served with `--web`. For the steps to bu
 - **From the GUI server**: the server serves the bundled file and the parts as `/vsil/vehicle-sil-gui-client.mjs` and `/vsil/vehicle-sil-gui-elements.mjs`, so a screen without a build needs no copy of them (`<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs">`, `import { connect } from '/vsil/vehicle-sil-gui-client.mjs'`). Load both from `/vsil/` or both from copies, never one of each: the parts import the client library by its file name, and a second copy of it makes a second connection. See "[Files served under `vsil/`](#files-served-under-vsil)".
 - **Bundled file**: for a tool that runs outside a page (Node 22 or later), or a screen that is not served by the GUI server. Put it (and the parts, which import it by the name `./vehicle-sil-gui-client.mjs`) in one directory and import it with a relative path.
 - **Package**: run `npm install @vehicle-sil/gui-client@<version>` in your project, with the version of your GUI server, then import it as `@vehicle-sil/gui-client`. `npm install <that .tgz>` and `npm install <its URL>` also work. On the npm registry, the dist-tag `latest` is the newest release and `next` the newest pre-release (after a release, `next` is older than `latest`: install a version by its number); both are the file that the release carries.
-  - It contains the bundled ESM (`dist/index.js`), the types (`types/`), a `package.json` with `exports`, the README and the LICENSE, and has no dependencies. Its version is the same as the GUI server's.
+  - It contains the bundled ESM (`dist/index.js`, `dist/elements.js`), the types (`types/`, including type-only `./react`, `./vue`, and `./svelte` framework adapters), `<vehicle-sil-timeline>` (`timeline/`), a `package.json` with `exports`, the README and the LICENSE, and has no dependencies. Its version is the same as the GUI server's.
   - Its types use the browser types (`DOM` in `lib`: `WebSocket` and others).
-  - Before it finishes, `npm run pack:client` installs the package it built, imports it from Node, and type-checks the TypeScript example in the screen template's README with both `nodenext` and `bundler` module resolution.
+  - Before it finishes, `npm run pack:client` installs the package it built, imports it from Node, and type-checks the TypeScript examples with both `nodenext` and `bundler` module resolution (`npm run verify:consumers` further checks the real `.tgz` across Vanilla TS, Angular, React 18/19, Vue 3, and Svelte 5).
   - `--out <dir>` changes the output location and `--version <version>` the version (`node gui/client/pack.mjs --help`).
-- The public API is the list in "Public API" in [gui/client/README.md](../gui/client/README.md#public-api).
+- The full low-level public API is listed in "[Public API](gui-client-low-level.md#public-api)" in `docs/gui-client-low-level.md`.
 
 ### Files served with `--web`
 
@@ -1047,8 +1102,10 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 
 - Approaches that build templates at runtime (Vue builds that compile templates at runtime, for example) do not work; compile at build time.
 - A `<form>` works if its `submit` handler calls `preventDefault()` (nothing is sent to a URL). It is the simple way to send a field on Enter: the browser does not submit on the Enter that confirms an input-method (IME) conversion, which a `keydown` handler for Enter would take as a send unless it checks `isComposing`.
-- Install with npm what you used to load from a CDN, and include it in the build.
-- If your build embeds fonts into CSS, configure it to write them to files.
+- **External CDNs**: install packages with npm and bundle them into your `--web` build output instead of loading from a CDN (external origins are blocked by `default-src 'self'`).
+- **Local fonts (`font-src 'self'`)**: `data:` font URIs and external font hosts (such as Google Fonts) are blocked. Ship `.woff2`, `.woff`, `.ttf`, or `.otf` as separate static files in your `--web` directory (for Vite, set `build: { assetsInlineLimit: 0 }` or prevent font files from being inlined into CSS as `data:` URLs).
+- **Local images (`img-src 'self' data:`)**: same-origin image files (`.svg`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.ico`) and `data:` URLs are allowed, while `blob:` URLs for `<img>` and external image hosts are blocked. Use static assets or `data:` URLs instead of `URL.createObjectURL` for rendered images (using `URL.createObjectURL` solely on `<a download>` for exporting JSON/YAML files still works).
+- **Inline styles (`style-src 'self' 'unsafe-inline'`)**: `<style>` tags and `style="..."` attributes are permitted (supporting Angular/Vue/Svelte component styles and CSS-in-JS runtime styles), while `script-src 'self'` still blocks inline `<script>` tags and HTML event attributes such as `onclick="..."`.
 - The screen cannot be put in a frame (neither inside another page nor in an `<iframe>` of your own screen; every response carries `X-Frame-Options: DENY` and `frame-ancestors 'none'`).
 - There is no way to change the CSP. If your screen cannot work within these limits, open an issue that says what you need.
 
@@ -1121,7 +1178,7 @@ The logic of a widget that shows and writes one variable, such as a slider, a sw
 | `block` | Why it cannot be written now (`null` if it can) | `read-only`, `disconnected`, `ended`, `not-ready`, `missing`, `peer-disconnected`, `launcher` (the launcher does not take a write, or has not said yet that it does; its reason is in `launcherReason`), `parameter`, `no-range`, `no-value` |
 | `writeStatus`, `pending` | The status of the last write, and the value sent and waiting for its result | `writeStatus.kind`: `idle`, `sending`, `queued`, `applied` and others |
 
-The meanings of `condition.kind` are below. For the meanings of the values of `block` and `writeStatus` and the detailed rules, see "Build widgets (`bind`)" in [gui/client/README.md](../gui/client/README.md#build-widgets-bind).
+The meanings of `condition.kind` are below. For the meanings of the values of `block` and `writeStatus` and the detailed rules, see "Build widgets (`bind`)" in [docs/gui-client-low-level.md](gui-client-low-level.md#build-widgets-bind).
 
 | `condition.kind` | Meaning |
 |---|---|
@@ -1136,9 +1193,57 @@ The meanings of `condition.kind` are below. For the meanings of the values of `b
 - Writes are combined into one per variable and per run. However many places `bind` the same variable, nothing is sent twice, and every place sees the same state.
 - Of the values that come before the server has received the previous write, only the last is kept and sent afterward.
 - A write that got no answer is never resent automatically.
-- For a chart of a variable over time, create it with `{ history: 600 }`: `history()` returns the points (`sampleMs`, `value`), oldest first, and you draw them with the chart code of your choice. The library keeps the points; the limits are in "History" in [gui/client/README.md](../gui/client/README.md#history). No part draws a chart of live values; `<vsil-timeline>` shows the values of a run's scenario after the run.
+- For a chart of a variable over time, create it with `{ history: 600 }`: `history()` returns the points (`sampleMs`, `value`), oldest first, and you draw them with the chart code of your choice. The library keeps the points; the limits are in "History" in [docs/gui-client-low-level.md](gui-client-low-level.md#history). No part draws a chart of live values; `<vsil-timeline>` shows the values of a run's scenario after the run.
 - On a screen with many widgets, create them with `{ visible: false }` and call `setVisible()`, so that only the visible widgets receive values.
 - The parts `<vsil-slider>`, `<vsil-value>` and `<vsil-write>` cover the common widgets, and are built on this API (`gui/client/src/elements/variable-parts.ts` is the working model). Use `bind` for one the parts do not have (a switch, a number field, a choice). The widgets of the sample screens (Angular) also use it, turned into signals (see "[Add a widget](#add-a-widget)").
+
+### Styling parts and subscribing to write events
+
+`<vsil-slider>` and `<vsil-write>` emit bubbling, composed custom events (`vsil-write-queued` and `vsil-write-result`) and update `data-write-status` (`idle`, `sending`, `queued`, `applied`, `failed`) so your page can log write outcomes, show toasts, or style pending and failed writes without replacing the parts:
+
+```js
+// Subscribe directly on a part or on a parent container (both events bubble and are composed).
+const panel = document.querySelector('#controls-panel');
+panel.addEventListener('vsil-write-queued', (event) => {
+  const { seq, peer, name, value } = event.detail; // WriteQueuedInfo
+  console.log(`Queued #${seq}: ${peer}.${name} = ${value}`);
+});
+panel.addEventListener('vsil-write-result', (event) => {
+  const outcome = event.detail; // WriteOutcome (WriteSuccess | WriteFailure)
+  if (outcome.ok) {
+    console.log(`Applied #${outcome.seq} at ${outcome.appliedAtMs} ms (late=${outcome.late})`);
+  } else {
+    console.error(`Write failed (${outcome.error.code}): ${outcome.error.message}`);
+  }
+});
+```
+
+Control and variable parts render reason text in `<small class="vsil-why">` and `<small class="vsil-note">` linked via `aria-describedby`. Empty descriptions and self-evident `QUIET` codes (`not-running`, `offline`, `connecting`, `already-running`, `paused`, `not-paused`, `not-stopping`, `already-stopping`, `starting`, plus `already` on `<vsil-write>`) carry the HTML `hidden` attribute so screen readers still announce them while visual layout stays uncluttered. Always pair `.vsil-why` / `.vsil-note` display rules with `:not([hidden])` so your stylesheet does not unhide `QUIET` descriptions (see also [examples/gui_starter/style.css](../examples/gui_starter/style.css)):
+
+```css
+/* Keep [hidden] descriptions hidden visually while styling visible reasons */
+.vsil-why:not([hidden]),
+.vsil-note:not([hidden]) {
+  margin-left: 0.4rem;
+  font-size: 0.85em;
+  color: light-dark(#555, #bbb);
+}
+[aria-disabled='true'] {
+  opacity: 0.5;
+}
+[data-write-status='sending'],
+[data-write-status='queued'] {
+  opacity: 0.75;
+}
+[data-write-status='applied'] {
+  outline: 1px solid light-dark(#1b7a3d, #6ee7a0);
+  outline-offset: 2px;
+}
+[data-write-status='failed'] {
+  outline: 1px solid light-dark(#b00020, #ff8a80);
+  outline-offset: 2px;
+}
+```
 
 ### Putting a timeline on your own screen
 
@@ -1238,10 +1343,14 @@ export class RunTimeline {
 
 #### In React
 
-What holds for every React version: get the element with a `ref`, and in an effect set the object properties (`data`, `labels`, `messages`, `headers`, `token`), the boolean `compact`, and add the event listeners. String attributes (`src`, `lang`, `hide`, `variables`, `theme`, `cursor`, `from`, `to`, `step`) can be written in JSX. The repository's tests do not run React: the lines below are the pattern, not a tested example.
+Import `@vehicle-sil/gui-client/react` once to register the tested JSX intrinsic element types for all `vsil-*` parts and `<vehicle-sil-timeline>` (verified in CI against React 18 and React 19 with `npm run verify:consumers`).
+
+- **React 19**: pass properties (`variables`, `labels`, `compact`) and lowercase custom-event props (`onload`, `onerror`, `oncursorchange`) directly in JSX. Use lowercase `onload` / `onerror` (not PascalCase `onLoad` / `onError`, which React intercepts as synthetic events that never fire for custom-element `CustomEvent`s).
+- **React 18 (and 19)**: use a `ref` and `useEffect` to set object properties (`data`, `labels`, `messages`, `headers`, `token`), boolean `compact`, and `addEventListener` listeners:
 
 ```tsx
 import { useEffect, useRef } from 'react';
+import '@vehicle-sil/gui-client/react';
 import '@vehicle-sil/gui-client/timeline';
 import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
 
@@ -1262,23 +1371,7 @@ export function RunTimeline(props: { src: string; onCursor: (ms: number | null) 
 }
 ```
 
-With TypeScript, JSX knows the tag after a declaration such as this one in a `.d.ts` of your project (also not run by the repository's tests):
-
-```ts
-import type { DetailedHTMLProps, HTMLAttributes } from 'react';
-import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
-
-declare module 'react' {
-  namespace JSX {
-    interface IntrinsicElements {
-      'vehicle-sil-timeline': DetailedHTMLProps<
-        HTMLAttributes<VehicleSilTimelineElement>,
-        VehicleSilTimelineElement
-      > & { src?: string; hide?: string; variables?: string; theme?: string };
-    }
-  }
-}
-```
+For full 5-framework setup examples (Vanilla TS, Angular, React 18/19, Vue 3, and Svelte 5), see "[Framework setup (5 frameworks)](../gui/client/README.md#framework-setup-5-frameworks)" in `gui/client/README.md`.
 
 ### Screen template (`gui_starter`)
 
@@ -1315,7 +1408,7 @@ declare module 'react' {
 
 ### Read the launcher's results
 
-The check result, the run result, findings and launcher events come from the launcher. The GUI server relays them unchanged, and the client library passes on every key of them. Its typed fields (for example `traffic` of the run result) follow the launcher's format versions (`vehicle_sil_check`, `vehicle_sil_run`, `vehicle_sil_events`). Every object read from the launcher also has `raw`, the launcher's object as it arrived, so a screen or a panel can read a key that the types do not name without a new library. Values in `raw` are unchecked: check their type, and show them as text. An event that the library does not know reaches only `client.connection.onBatch`. See "The launcher's keys (`raw`)" in [gui/client/README.md](../gui/client/README.md#the-launchers-keys-raw).
+The check result, the run result, findings and launcher events come from the launcher. The GUI server relays them unchanged, and the client library passes on every key of them. Its typed fields (for example `traffic` of the run result) follow the launcher's format versions (`vehicle_sil_check`, `vehicle_sil_run`, `vehicle_sil_events`). Every object read from the launcher also has `raw`, the launcher's object as it arrived, so a screen or a panel can read a key that the types do not name without a new library. Values in `raw` are unchecked: check their type, and show them as text. An event that the library does not know reaches only `client.connection.onBatch`. See "The launcher's keys (`raw`)" in [docs/gui-client-low-level.md](gui-client-low-level.md#the-launchers-keys-raw).
 
 ```ts
 const result = client.session.session.get()?.result; // RunResult | null
@@ -1354,7 +1447,7 @@ The library does not enforce these rules for you. The sample screens follow them
 - When `client.variables.state` is `ready` and has a `reason`, reading values keeps failing (the values are the last ones read).
 - Values of a participant that is not connected are stale too.
 
-**Monitoring variables**: decide which variables the ECU did not declare (`ecu.connected`, `peer.`, `j1939.<network>.`) by `participants[].variables[].builtin` in the check result. Where there is no `builtin` (monitoring variables added during the run, older launchers), decide by the name prefix (`ecu.`, `peer.`, `j1939.`).
+**Monitoring variables**: decide which variables the ECU did not declare (`ecu.connected`, `peer.*`, `j1939.*`, `can.*`, `lin.*`, `eth.*`) by `builtin` — available both before a run in `participants[].variables[].builtin` of `check` and during a run in `client.variables.state.peers[].variables[].builtin` (`VariableInfo.builtin`). Fall back to the name prefix (`ecu.`, `peer.`, `j1939.`, `can.`, `lin.`, `eth.`) only for older launchers or servers that do not send `builtin`.
 
 **Why a handshake was rejected**: when the WebSocket handshake is rejected, the browser cannot see the reason. When `client.connection.failures` grows, call `client.loadApp()` again: the HTTP response (its error text) gives the reason.
 
@@ -1364,9 +1457,9 @@ The library does not enforce these rules for you. The sample screens follow them
 
 - **Held or momentary inputs**: the GUI server does not automatically reset variable values when a browser tab closes or a WebSocket disconnects (`POST api/write` is stateless HTTP, separate from `/ws`, so automatic server-side resets would overwrite other tabs or scripts and could fire late after a silent drop). Handle release according to your use case:
   1. **Held GUI controls (press-and-hold buttons, pedals)**: release on `blur` and `visibilitychange` with `front.variable(ref).write(0)` (or `front.low.variables.write(...)`). In `pagehide`, pass `{ keepalive: true }` (supported on both `front.variable(ref).write(value, { keepalive: true })` and `front.low.variables.write(writes, { keepalive: true })`) so `fetch()` keeps `Authorization` and `Origin` while the page unloads (`navigator.sendBeacon` fails with 401 when token authentication is enabled, and cross-origin `fetch` bypassing a dev proxy fails with 403). Limits: sudden network loss or a browser crash still leaves the last written value. Guarding against crashes requires an ECU-side watchdog (heartbeat variable), which means modifying the ECU, only works reliably near `x1` speed (browser wall-clock heartbeats false-trigger at `x4`/`max` and lag at `x0.1`), consumes operation history (256 server / 64 client) and recording capacity (`MAX_WRITES = 2000`), and requires multi-tab screens to send heartbeats only from the active tab.
-  2. **Deterministic virtual-time pulses (while paused)**: use low-level `front.low.variables.write(writes, { atMs, late, timeoutMs: Infinity })` (not `front.variable(ref).write()`, which does not accept `atMs` or `late`). While paused, queue both edges (`atMs: T` and `atMs: T + holdMs`) with `timeoutMs: Infinity` before advancing time so the pulse completes deterministically even if the browser disconnects. Do not use scheduled `atMs` pulses for live running buttons (`x1`/`x4`/`max`): `front.clock.sim_ms` lags by WebSocket batching (100 ms) plus RTT, so `late: 'reject'` drops writes and `late: 'apply'` collapses both writes onto the same step (zero width).
+  2. **Deterministic virtual-time pulses (while paused)**: use high-level `front.variable(ref).enqueue(value, { atMs, late })` (or `front.low.variables.enqueue(...)` for multi-variable atomic writes). While paused, `await` `enqueue()` for both edges (`atMs: T` and `atMs: T + holdMs`), then advance with `front.time.runUntil(...)` or `front.time.step(...)`, and finally `await` each `queued.applied()`. Because `enqueue()` awaits the ECU queue barrier (`WAIT_FOR_QUEUED`) and the client's virtual-time-aware watchdog suspends while healthy and paused/holding (finite `timeoutMs`, never `Infinity`; pass `signal: AbortSignal.timeout(ms)` for a wall-clock cap), the pulse completes deterministically with zero `sleep()` calls and even if the browser disconnects after queuing. Do not use scheduled `atMs` pulses for live running buttons (`x1`/`x4`/`max`): `front.clock.sim_ms` lags by WebSocket batching (`batchMs`, default 100 ms) plus RTT, so `late: 'reject'` drops writes and `late: 'apply'` collapses both writes onto the same step (zero width).
 - **Reconnect recovery**: the GUI server sends WebSocket heartbeats every 30 seconds (clients do not need to send their own ping, and a silent network drop can take up to about 30 seconds to detect). While reconnecting—including after the socket opens and before `hello` and `synced` arrive—`session.ready` stays `false`, `status.link` is not `online`, and `bind` keeps `block: 'disconnected'`. When `hello` and `synced` arrive, the client updates its variable state before marking `session.ready` `true` (and `status.link` `'online'`), so code reacting to reconnect immediately sees the current run's variables. On reconnect to the same running simulation, session sync (`session.ready` / `can_write`) unblocks writes immediately, while cached variable readings stay `stale` (`why: 'connection'`) until each variable receives its first post-reconnect `values` sample (runs that already ended report `ended`).
-- **Bus observation (`ecu.connected` vs `Spy`)**: setting an ECU's `ecu.connected` to `false` disconnects that participant from its buses while its steps keep running; it does not report what other ECUs actually transmit on the bus. To observe real bus traffic in the GUI, add a `Spy` participant (`Spy::watch<M>()`; see [j1939-guide.md](j1939-guide.md)): its variables (`count`, `last_ms`, `period_ms`, `size`, `invalid`, `spy.missed`, `stale`, `.state`) appear automatically on the dashboard. Remember that the GUI polls latest values every 20–100 ms rather than streaming every raw frame.
+- **Bus observation (`ecu.connected` vs `Spy`)**: setting an ECU's `ecu.connected` to `false` disconnects that participant from its buses while its steps keep running; it does not report what other ECUs actually transmit on the bus. To observe real bus traffic in the GUI, add a `Spy` participant (`Spy::watch<M>()`; see [j1939-guide.md](j1939-guide.md)): its variables (`count`, `last_ms`, `period_ms`, `size`, `invalid`, `spy.missed`, `stale`, `.state`) appear automatically on the dashboard. Remember that the GUI polls latest values rather than streaming every raw frame (see "[Live polling vs deterministic capture](#live-polling-vs-deterministic-capture)").
 
 ## Known limitations
 
@@ -1450,7 +1543,8 @@ If the launcher has a Control Server, the screen end-to-end tests also check tha
 |---|---|
 | [external-api.md](external-api.md) | Tag-pinned index of external API specs, OpenAPI/JSON Schemas, manuals, and runnable examples |
 | [Build your own screen for the browser GUI](howto/gui-screen.md) | How to build a screen that shows one variable, starting from the screen template |
-| [gui/client/README.md](../gui/client/README.md) | The client library API |
+| [gui/client/README.md](../gui/client/README.md) | The client library (`connect()`, recipes, 11 parts, 5 frameworks) |
+| [gui-client-low-level.md](gui-client-low-level.md) | Low-level `createClient()` API, full exports, `variables.bind()`, and lifecycle |
 | [gui/protocol/README.md](../gui/protocol/README.md) | The server's HTTP and WebSocket API |
 | [gui/web/README.md](../gui/web/README.md) | Developing the sample screens |
 | [examples/gui_starter/README.md](../examples/gui_starter/README.md) | How to use the screen template |

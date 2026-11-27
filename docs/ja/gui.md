@@ -419,9 +419,53 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 
 - ランチャーの `time-commands`、`stdin-run-until`、`state`、`speed`、`start-paused` は起動時に必須として確かめるので、サーバーはコマンドごとには確かめません。
 - シミュレーションの外につながる実行（ファイルに `role: bridge` の participant がいる、または実行の要求に `connect` がある）では、ランチャーが、一時停止、ステップ、1 以外の速さを、理由 `outside-real-time` で断ります。コマンドラインのときと同じです（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」）。これはランチャーの規則です。GUI サーバーは自分の規則を持たず、答えを中継します。要求の `time_policy`（`"free"`）がこれを外し、実行が実時間を守るかは、照合の `time_lock` が言います。「時刻」のカードは、一時停止とステップの下にランチャーの理由を出し、「等速」のほかの速さは選べません（カードが、この実行で選べる速さは等速だけだと言います）。
-- 時間の操作ごとの、使えるか、使えない理由、ステップと速さの範囲は、クライアントのライブラリの `controls` から来ます（[gui/client/README.ja.md](../../gui/client/README.ja.md)）。画面は自分の規則を持ちません。画面に言葉のある理由は画面の言語で、ほかの理由はランチャーの英語の文のままで出ます。注意（コマンドは受け付けるが、先に知っておくとよいこと。`outside-not-real-time` など）も同じ場所に出ます。
+- 時間の操作ごとの、使えるか、使えない理由、ステップと速さの範囲は、クライアントのライブラリの `controls` から来ます（[gui/client/README.ja.md](../../gui/client/README.ja.md) および下の「[操作の理由コード・注意コードと `--time-policy`](#操作の理由コード注意コードと---time-policy)」）。画面は自分の規則を持ちません。画面に言葉のある理由は画面の言語で、ほかの理由はランチャーの英語の文のままで出ます。注意（コマンドは受け付けるが、先に知っておくとよいこと。`outside-not-real-time` など）も同じ場所に出ます。
 - 途中から開いた画面や、別のタブも、同じ時間の状態を表示します（サーバーの要約に、最後の `time` と `command` のイベントがあるため）。
 - 指摘 `behind-real-time` と `coarse-time-step` は、ほかの指摘と同じく結果の指摘に表示されます。
+
+### 操作の理由コード・注意コードと `--time-policy`
+
+`front.controls` の各項目（`start`、`stop`、`force_stop`、`pause`、`resume`、`step`、`run_until`、`speed`、`save`）は `{ ok, reason, caution }` です。英語の `message` ではなく、必ず `reason.code` と `caution.code` で分岐してください。
+
+**`controls.*.reason.code`（`ok` が `false` のとき）:**
+
+| コード | 発行元 | 対象の操作 | 意味 |
+|---|---|---|---|
+| `connecting` | クライアント | `stop`/`force_stop` 以外すべて | WebSocket が接続中または初回同期（`hello` + `synced`）待ち。 |
+| `offline` | クライアント | `stop`/`force_stop` 以外すべて | GUI サーバーとの接続が切断中（クライアントが自動再接続する）。 |
+| `rejected` | クライアント | `stop`/`force_stop` 以外すべて | GUI サーバーがトークンを拒否した（サーバーが表示した URL を開き直す）。 |
+| `incompatible` | クライアント | `stop`/`force_stop` 以外すべて | クライアントと GUI サーバーの GUI プロトコル版が一致しない。 |
+| `busy` | クライアント | `save` 以外すべて | このページから送った同じ操作の応答がまだ返っていない。 |
+| `starting` | GUI サーバー / クライアント | `start`、`stop`、`force_stop` | 開始処理が進行中で、実行を識別または重複開始できない。 |
+| `already-running` | GUI サーバー / クライアント | `start` | すでに実行が動いている。停止して終了を待ってから次を開始する。 |
+| `launcher-unusable` | GUI サーバー | `start` | 指定された `vehicle_sil_launch` がプローブまたは版・機能検査に失敗した。 |
+| `shutting-down` | GUI サーバー | `start`、`stop`、`force_stop`、`save` | GUI サーバーが終了処理中のため新しい操作を受け付けない。 |
+| `not-running` | GUI サーバー / クライアント / ランチャー | `stop`、`force_stop`、`pause`、`resume`、`step`、`run_until`、`speed` | 実行中のシミュレーションがない（またはすでに終了した）。 |
+| `already-stopping` | GUI サーバー / クライアント | `stop` | すでに停止要求を送った。終了を待つか、`force_stop` を使う。 |
+| `not-stopping` | クライアント | `force_stop` | 先に通常の `stop` を送る必要がある（`force_stop` は 2 段階目）。 |
+| `already-forced` | GUI サーバー | `force_stop` | すでに強制停止を要求済み。ランチャーの終了を待つ。 |
+| `save-disabled` | GUI サーバー | `save` | GUI サーバーが `--no-save` で起動されている。 |
+| `paused` | クライアント | `pause` | すでに一時停止中（Pause を押しても何も変わらない）。 |
+| `not-paused` | クライアント / ランチャー | `resume`、`step` | `resume`（クライアント）: 一時停止していない。`step`（ランチャー）: ステップ実行には一時停止が必要。 |
+| `not-set-up` | ランチャー | `step`、`run_until` | 参加者の立ち上げがまだ終わっていない（セットアップ完了後に解放される）。 |
+| `outside-real-time` | ランチャー | `pause`、`step`、`run_until` | シミュレーションの外につながる実行（`--connect` または有効な `role: bridge`）が既定の `--time-policy realtime` で動いている。`controls.speed` は `ok: true` のまま `min: 1, max: 1, fastest: false` になる（`1` 以外の速度を送るとランチャーから `outside-real-time` で拒否される）。受け付けるのは `resume`、`speed: 1`、`stop` のみ。 |
+| `unsupported` | クライアント | `pause`、`resume`、`step`、`run_until`、`speed`（および変数の `write`） | この実行の `state` イベントがランチャーからまだ届いていない、または `state.allowed` にその操作の項目がない。 |
+| `refused` | クライアント（フォールバック） | 任意 | サーバーまたはランチャーの `allowed` が `reason` コードなしで `ok: false` を返した場合のフォールバック。 |
+
+変数の書き込み（`front.variable(ref).get().why.code` / `state.allowed.write`）では、ランチャーが `scenario-running`（`after_scenario: 'pause'` で合格引き継ぎされるまでのシナリオ実行中）と `no-control-server`（実行に Control Server がない）も返します。不正な引数でコマンドを送った場合はランチャーから `out-of-range`、`missing-argument`、`not-a-time-command` で拒否されることもあります（[simulation-events.md](simulation-events.md#理由のコード) の「理由のコード」）。
+
+**`controls.*.caution.code`（`ok` が `true` だが事前に知らせるべき注意があるとき）:**
+
+| コード | 発行元 | 対象の操作 | 意味 |
+|---|---|---|---|
+| `outside-not-real-time` | ランチャー | `pause`、`step`、`run_until`、`speed` | 外部接続された実行が `time_policy: 'free'` で動いている。操作は受け付けられるが、外部機器は仮想時間を待たずブリッジは双方向転送を続ける（最初の操作後、実行終了時に注記 `outside-time-changed` が付く）。 |
+| `command-changes-allowed` | GUI サーバー | `save` | GUI サーバーが `--allow-command-changes` で起動されている。保存で実行コマンドの変更や新規ファイル作成が可能になり、トークンを持つ者（`--no-auth` 下では任意のローカルプロセス）がこのユーザー権限でコマンドを実行できる。 |
+
+**`--time-policy` の優先順位と `free` 時の既定速度（`max`）:**
+
+- **優先順位**: CLI で明示した `--time-policy`（`--time-policy realtime` を明示した場合を含む）は、`--request` ファイル内の `time_policy` より優先されます。どちらにも指定がない場合（または GUI の `Intent.time_policy` を省略した場合）の既定は `realtime` です。
+- **`realtime`（既定）のとき**: 外部接続がある場合（`connect` または有効な `role: bridge`）、速度は `1`（実時間）に固定されます。速度を省略すると注記 `outside-speed-set` 付きで `1` で実行され、`1` 以外の速度・`start_paused: true`・`after_scenario: 'pause'` は照合エラー `outside-real-time` になります。
+- **`free` のとき**: 時間ロックが外れるため、速度は通常の非ロック時と同じ規則に従います — 明示した `speed` / `--speed`、なければ構成の既定、それもなければ `1` ではなく **`max`（最速）** になります。一時停止・ステップを許可しつつ等速で動かしたい場合は、`time_policy: 'free'` と `speed: 1` の両方を明示してください。
 
 ### 止めた状態で始める
 
@@ -564,11 +608,22 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 | 調べたいこと | 読む所 |
 |---|---|
 | 通知とリクエストの形、上限 | [gui/protocol/README.md](../../gui/protocol/README.ja.md) の「ECU の変数」 |
-| ライブラリの API（コンポーネントを作る `bind` も） | [gui/client/README.md](../../gui/client/README.ja.md) の「ECU の変数」 |
+| ライブラリの API（コンポーネントを作る `bind` も） | [docs/ja/gui-client-low-level.md](gui-client-low-level.md#ecu-の変数) の「ECU の変数」 |
 | 動く例 | リポジトリの `examples/gui_client/variables.mjs` |
 | Angular のラッパー | `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`） |
 
 `EcuVariables` が持つのは、`session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、コンポーネントが破棄されると自動で終了する `watch()`、呼び出し側が明示的に `close()` を呼んで終了する `open()`（自動では破棄されません）、`write()` です。
+
+### ライブポーリングと決定論的記録の使い分け
+
+目的に合わせて観測手段を選んでください。
+
+| 手段 | 仕組み | 得られるもの | 保証**しない**こと |
+|---|---|---|---|
+| **ライブ GUI ポーリング**（`watchPeriodMs` / `FrontVariable.subscribe(fn, { periodMs })` + `batchMs`） | GUI サーバーが仮想時間を止めずに最新値スナップショット（`GetSnapshot`）を実時間ポーリングで取得する。既定は `100 ms` ポーリング・`100 ms` WebSocket バッチで、滑らかなメーターやアニメーション向けに `20 ms` ポーリング・`0..16 ms` バッチまで短縮できる。 | 低負荷かつシミュレーションの決定性に一切干渉しない高応答ライブ UI 表示。 | **ステップ精度の記録器ではない**: 20 ms ポーリングでも 20 ms 未満のパルスや全中間ステップの捕捉は保証**されない**（特に `speed > 1` や `max` の高速実行では実時間 1 周期の間に多数の仮想ステップが進む）。実際の更新頻度や帯域はホスト負荷・変数数・実行速度に依存する。 |
+| **決定論的記録（`--timeline`、シナリオ、`Spy`）** | シミュレーション内部の仮想時間ステップ境界で記録する（`vehicle_sil_launch --timeline` を `<vehicle-sil-timeline>` で閲覧、シナリオの `expect`/`wait_until`、または `count`・`last_ms`・`period_ms`・`spy.missed` を出す `Spy::watch<M>()` participant）。 | ブラウザや実時間負荷に依存しない、ステップ精度の状態遷移・短パルス（例: 1 ms ECU パルス）の確実な検知・バスフレーム統計。 | ライブブラウザ向けポーリング経路での無制限な生フレーム連続ストリームではない。 |
+
+短いパルスの確認やステップ単位の正確な波形検証には、20 ms の GUI ポーリングに頼らず、シナリオの `--timeline` 記録（または `Spy` participant・Control API テスト）を使ってください。
 
 ## サンプルの画面
 
@@ -980,11 +1035,11 @@ sections:
 - **GUI サーバーから**: サーバーは、1 つにまとめたファイルと部品を `/vsil/vehicle-sil-gui-client.mjs` と `/vsil/vehicle-sil-gui-elements.mjs` で配ります。ビルドなしの画面は、写さずに使えます（`<script type="module" src="/vsil/vehicle-sil-gui-elements.mjs">`、`import { connect } from '/vsil/vehicle-sil-gui-client.mjs'`）。2 つとも `/vsil/` から読むか、2 つとも写しを読むかのどちらかにして、片方ずつは使いません。部品は client ライブラリをファイル名で import するので、写しが 2 つあると接続が 2 本になります。「[`vsil/` で配るファイル](#vsil-で配るファイル)」を見てください。
 - **1 つにまとめたファイル**: 画面の外で動かすツール（Node 22 以上）や、GUI サーバーが配信しない画面のためのものです。部品（これを `./vehicle-sil-gui-client.mjs` という名前で import します）と同じディレクトリに置いて、相対パスで import します。
 - **パッケージ**: 自分のプロジェクトで、GUI サーバーと同じ版を `npm install @vehicle-sil/gui-client@<version>` でインストールすると、`@vehicle-sil/gui-client` として import できます。`npm install <that .tgz>` や `npm install <its URL>` でもインストールできます。npm のレジストリでは、dist-tag の `latest` が最新のリリース、`next` が最新のプレリリースで（正式版の後は `next` が `latest` より古いので、版は番号で指定します）、どちらもリリースに添付したファイルと同じです。
-  - 中身は、1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。バージョンは GUI サーバーと同じです。
+  - 中身は、1 つにまとめた ESM（`dist/index.js`、`dist/elements.js`）、型（`types/`。型専用の `./react`・`./vue`・`./svelte` フレームワークアダプタを含む）、`<vehicle-sil-timeline>`（`timeline/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。バージョンは GUI サーバーと同じです。
   - 型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。
-  - `npm run pack:client` は、作ったパッケージをインストールした形で Node から import し、画面のテンプレートの README の TypeScript の例を、型の解決 `nodenext` と `bundler` で型の検査に通してから終わります。
+  - `npm run pack:client` は、作ったパッケージをインストールした形で Node から import し、TypeScript の例を型の解決 `nodenext` と `bundler` で検査してから終わります（さらに `npm run verify:consumers` が実 `.tgz` を Vanilla TS・Angular・React 18/19・Vue 3・Svelte 5 で検証します）。
   - `--out <dir>` で置き場所を、`--version <version>` でバージョンを変えられます（`node gui/client/pack.mjs --help`）。
-- 公開している API は [gui/client/README.md](../../gui/client/README.ja.md) の「公開 API」の一覧です。
+- 低水準の公開 API 全一覧は [docs/ja/gui-client-low-level.md](gui-client-low-level.md#公開-api) の「公開 API」にあります。
 
 ### `--web` で配信するファイル
 
@@ -1055,8 +1110,10 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 
 - テンプレートを実行時に組み立てる作り方（Vue のテンプレートを実行時にコンパイルするビルドなど）は使えないので、ビルドの時点でコンパイルします。
 - `<form>` は、`submit` の処理で `preventDefault()` を呼べば使えます（どこにも送りません）。欄を Enter で送るときは、これがいちばん簡単です。日本語入力の変換を確定する Enter では、ブラウザーは送信しません（Enter の `keydown` で送る作りは、`isComposing` を見ないと、確定の Enter でも送ります）。
-- CDN から読み込んでいたものは、npm でインストールしてビルドに含めます。
-- ビルドがフォントを CSS に埋め込むときは、ファイルに出力する設定にします。
+- **外部 CDN**: CDN から読み込んでいたパッケージは npm でインストールし、`--web` のビルド出力に含めます（外部オリジンは `default-src 'self'` でブロックされます）。
+- **ローカルフォント（`font-src 'self'`）**: `data:` URL のフォントと外部フォントホスト（Google Fonts 等）はブロックされます。`.woff2`・`.woff`・`.ttf`・`.otf` は `--web` ディレクトリ内の静的ファイルとして出力してください（Vite では `build: { assetsInlineLimit: 0 }` を設定するなど、フォントが CSS へ `data:` URL としてインライン展開されないようにします）。
+- **ローカル画像（`img-src 'self' data:`）**: 同一オリジンの画像ファイル（`.svg`・`.png`・`.jpg`・`.jpeg`・`.gif`・`.webp`・`.avif`・`.ico`）と `data:` URL は許可されますが、`<img>` 向けの `blob:` URL と外部画像ホストはブロックされます。描画画像には `URL.createObjectURL` ではなく静的ファイルまたは `data:` URL を使ってください（JSON/YAML 保存用の `<a download>` にだけ `URL.createObjectURL` を使うのは動作します）。
+- **インラインスタイル（`style-src 'self' 'unsafe-inline'`）**: `<style>` タグと `style="..."` 属性は許可されます（Angular・Vue・Svelte のコンポーネントスタイルや CSS-in-JS の実行時スタイル注入に対応）。一方 `script-src 'self'` によりインラインの `<script>` や `onclick="..."` 等の HTML イベント属性は引き続きブロックされます。
 - 画面を frame に入れることはできません（ほかのページの中にも、自分の画面の `<iframe>` の中にも。どのレスポンスにも `X-Frame-Options: DENY` と `frame-ancestors 'none'` が付きます）。
 - CSP を変える方法はありません。この範囲で動かない画面は、何が必要かを issue に書いてください。
 
@@ -1129,7 +1186,7 @@ headers: {
 | `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`launcher`（ランチャーが書き込みを受けない、または受けるとまだ言っていない。理由は `launcherReason`）、`parameter`、`no-range`、`no-value` |
 | `writeStatus`、`pending` | 最後の書き込みの状態と、送って結果を待っている値 | `writeStatus.kind`: `idle`、`sending`、`queued`、`applied` など |
 
-`condition.kind` の意味は次のとおりです。`block` と `writeStatus` の値の意味と細かいルールは、[gui/client/README.md](../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」にあります。
+`condition.kind` の意味は次のとおりです。`block` と `writeStatus` の値の意味と細かいルールは、[docs/ja/gui-client-low-level.md](gui-client-low-level.md#コンポーネントを作るbind) の「コンポーネントを作る（`bind`）」にあります。
 
 | `condition.kind` | 意味 |
 |---|---|
@@ -1144,9 +1201,57 @@ headers: {
 - 書き込みは、変数ごと・実行ごとに 1 つにまとめます。同じ変数を何か所で `bind` しても重ねて送らず、どこからも同じ状態が見えます。
 - サーバーが前の書き込みを受け取るまでの次の値は、最後の 1 つだけを覚えて後から送ります。
 - 応答がなかった書き込みを、自動で送り直すことはしません。
-- 変数の時系列のグラフには、`{ history: 600 }` で作ります。`history()` が点（`sampleMs`、`value`）を古い順に返すので、好きな描画のコードで描きます。点はライブラリが持ちます。上限は [gui/client/README.ja.md](../../gui/client/README.ja.md#履歴) の「履歴」にあります。走っている間の値をグラフにする部品はありません。`<vsil-timeline>` が見せるのは、実行の後の、シナリオの値です。
+- 変数の時系列のグラフには、`{ history: 600 }` で作ります。`history()` が点（`sampleMs`、`value`）を古い順に返すので、好きな描画のコードで描きます。点はライブラリが持ちます。上限は [docs/ja/gui-client-low-level.md](gui-client-low-level.md#履歴) の「履歴」にあります。走っている間の値をグラフにする部品はありません。`<vsil-timeline>` が見せるのは、実行の後の、シナリオの値です。
 - コンポーネントが多い画面では、`{ visible: false }` で作って `setVisible()` を呼ぶと、見えているコンポーネントだけが値を受信します。
 - 部品 `<vsil-slider>`、`<vsil-value>`、`<vsil-write>` が、よく使うコンポーネントをまかない、この API の上に作ってあります（動く見本は `gui/client/src/elements/variable-parts.ts`）。部品にないもの（スイッチ、数値の欄、選択肢）には `bind` を使います。サンプルの画面のコンポーネント（Angular）も、この API を signal に変換して使っています（「[コンポーネントを追加する](#コンポーネントを追加する)」）。
+
+### 部品のスタイリングと書き込みイベントの購読
+
+`<vsil-slider>` と `<vsil-write>` は、バブリング・composed のカスタムイベント（`vsil-write-queued` と `vsil-write-result`）を発火し、`data-write-status`（`idle`、`sending`、`queued`、`applied`、`failed`）を更新します。部品を書き換えずに書き込み結果のログ記録・トースト表示・保留中や失敗時の装飾を行えます。
+
+```js
+// 部品に直接、または親コンテナで購読できる（両イベントともバブリング・composed）。
+const panel = document.querySelector('#controls-panel');
+panel.addEventListener('vsil-write-queued', (event) => {
+  const { seq, peer, name, value } = event.detail; // WriteQueuedInfo
+  console.log(`Queued #${seq}: ${peer}.${name} = ${value}`);
+});
+panel.addEventListener('vsil-write-result', (event) => {
+  const outcome = event.detail; // WriteOutcome (WriteSuccess | WriteFailure)
+  if (outcome.ok) {
+    console.log(`Applied #${outcome.seq} at ${outcome.appliedAtMs} ms (late=${outcome.late})`);
+  } else {
+    console.error(`Write failed (${outcome.error.code}): ${outcome.error.message}`);
+  }
+});
+```
+
+操作部品と変数部品は、理由テキストを `aria-describedby` で紐づけた `<small class="vsil-why">` と `<small class="vsil-note">` に出します。空の説明や自明な `QUIET` コード（`not-running`、`offline`、`connecting`、`already-running`、`paused`、`not-paused`、`not-stopping`、`already-stopping`、`starting`、および `<vsil-write>` の `already`）には HTML の `hidden` 属性が付くため、スクリーンリーダーには読まれつつ見た目のレイアウトを崩しません。CSS で `.vsil-why` / `.vsil-note` に `display` 等を当てるときは、非表示の `QUIET` 説明を誤って表示しないよう必ず `:not([hidden])` と組み合わせてください（[examples/gui_starter/style.css](../../examples/gui_starter/style.css) も参照）。
+
+```css
+/* [hidden] の説明は非表示のまま保ち、表示中の理由だけ装飾する */
+.vsil-why:not([hidden]),
+.vsil-note:not([hidden]) {
+  margin-left: 0.4rem;
+  font-size: 0.85em;
+  color: light-dark(#555, #bbb);
+}
+[aria-disabled='true'] {
+  opacity: 0.5;
+}
+[data-write-status='sending'],
+[data-write-status='queued'] {
+  opacity: 0.75;
+}
+[data-write-status='applied'] {
+  outline: 1px solid light-dark(#1b7a3d, #6ee7a0);
+  outline-offset: 2px;
+}
+[data-write-status='failed'] {
+  outline: 1px solid light-dark(#b00020, #ff8a80);
+  outline-offset: 2px;
+}
+```
 
 ### 自分の画面に時間の軸を置く
 
@@ -1246,10 +1351,14 @@ export class RunTimeline {
 
 #### React で使う
 
-React のどの版でも言えること: 要素を `ref` で取り、effect の中で、オブジェクトのプロパティ（`data`、`labels`、`messages`、`headers`、`token`）と真偽の `compact` を設定し、事象のリスナーを付けます。文字列の属性（`src`、`lang`、`hide`、`variables`、`theme`、`cursor`、`from`、`to`、`step`）は JSX に書けます。リポジトリの試験は React を動かしていません。下は書き方の型で、試験で確かめた例ではありません。
+`@vehicle-sil/gui-client/react` を 1 回 import すると、全 `vsil-*` 部品と `<vehicle-sil-timeline>` の検証済み JSX 要素型が登録されます（CI の `npm run verify:consumers` で React 18・19 に対して検証済み）。
+
+- **React 19**: プロパティ（`variables`、`labels`、`compact`）と小文字カスタムイベント prop（`onload`、`onerror`、`oncursorchange`）を JSX にそのまま書けます。小文字の `onload` / `onerror` を使ってください（PascalCase の `onLoad` / `onError` は React が合成イベントとして横取りするため、カスタム要素の `CustomEvent` では発火しません）。
+- **React 18（および 19）**: `ref` と `useEffect` でオブジェクトのプロパティ（`data`、`labels`、`messages`、`headers`、`token`）、真偽の `compact`、および `addEventListener` リスナーを設定します。
 
 ```tsx
 import { useEffect, useRef } from 'react';
+import '@vehicle-sil/gui-client/react';
 import '@vehicle-sil/gui-client/timeline';
 import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
 
@@ -1270,23 +1379,7 @@ export function RunTimeline(props: { src: string; onCursor: (ms: number | null) 
 }
 ```
 
-TypeScript では、自分のプロジェクトの `.d.ts` に次のような宣言を置くと、JSX がタグを知ります（これもリポジトリの試験では動かしていません）。
-
-```ts
-import type { DetailedHTMLProps, HTMLAttributes } from 'react';
-import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
-
-declare module 'react' {
-  namespace JSX {
-    interface IntrinsicElements {
-      'vehicle-sil-timeline': DetailedHTMLProps<
-        HTMLAttributes<VehicleSilTimelineElement>,
-        VehicleSilTimelineElement
-      > & { src?: string; hide?: string; variables?: string; theme?: string };
-    }
-  }
-}
-```
+5 フレームワーク全体（Vanilla TS・Angular・React 18/19・Vue 3・Svelte 5）の完全な設定例は [gui/client/README.ja.md](../../gui/client/README.ja.md#5-フレームワークでのセットアップ) の「5 フレームワークでのセットアップ」にあります。
 
 ### 画面のテンプレート（`gui_starter`）
 
@@ -1323,7 +1416,7 @@ declare module 'react' {
 
 ### ランチャーの結果を読む
 
-チェックの結果、実行の結果、指摘、ランチャーのイベントはランチャーが書いたものです。GUI サーバーはそのまま中継し、クライアントのライブラリはそのキーをすべて渡します。型のあるフィールド（例: 実行の結果の `traffic`）は、ランチャーの形式の版（`vehicle_sil_check`、`vehicle_sil_run`、`vehicle_sil_events`）に従います。ランチャーから読んだオブジェクトには、どれにも `raw`（届いたままのランチャーのオブジェクト）があるので、画面やパネルは、型にないキーもライブラリの更新を待たずに読めます。`raw` の値は確かめていません。型を確かめ、文字列として出してください。ライブラリの知らないイベントは、`client.connection.onBatch` にだけ届きます。詳しくは [gui/client/README.md](../../gui/client/README.ja.md#ランチャーのキーraw) の「ランチャーのキー（`raw`）」にあります。
+チェックの結果、実行の結果、指摘、ランチャーのイベントはランチャーが書いたものです。GUI サーバーはそのまま中継し、クライアントのライブラリはそのキーをすべて渡します。型のあるフィールド（例: 実行の結果の `traffic`）は、ランチャーの形式の版（`vehicle_sil_check`、`vehicle_sil_run`、`vehicle_sil_events`）に従います。ランチャーから読んだオブジェクトには、どれにも `raw`（届いたままのランチャーのオブジェクト）があるので、画面やパネルは、型にないキーもライブラリの更新を待たずに読めます。`raw` の値は確かめていません。型を確かめ、文字列として出してください。ライブラリの知らないイベントは、`client.connection.onBatch` にだけ届きます。詳しくは [docs/ja/gui-client-low-level.md](gui-client-low-level.md#ランチャーのキーraw) の「ランチャーのキー（`raw`）」にあります。
 
 ```ts
 const result = client.session.session.get()?.result; // RunResult | null
@@ -1362,7 +1455,7 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 - `client.variables.state` が `ready` で `reason` があるときは、値の読み取りが失敗し続けています（値は最後に読めたもの）。
 - participant が接続していない間の値も古いものです。
 
-**監視用の変数**: ECU が宣言したのではない変数（`ecu.connected`、`peer.`、`j1939.<network>.`）は、照合の結果の `participants[].variables[].builtin` で判定します。`builtin` がない（実行中に追加される監視用の変数、古いランチャー）ときは、名前の接頭辞（`ecu.`、`peer.`、`j1939.`）で分けます。
+**監視用の変数**: ECU が宣言したのではない変数（`ecu.connected`、`peer.*`、`j1939.*`、`can.*`、`lin.*`、`eth.*`）は、`builtin` で判定します（実行前は `check` の `participants[].variables[].builtin`、実行中は `client.variables.state.peers[].variables[].builtin`〔`VariableInfo.builtin`〕に入ります）。名前の接頭辞（`ecu.`、`peer.`、`j1939.`、`can.`、`lin.`、`eth.`）にフォールバックするのは、`builtin` を送らない古いランチャーやサーバーのときだけです。
 
 **ハンドシェイクで拒否された理由**: WebSocket のハンドシェイクが拒否されると、ブラウザには理由が見えません。`client.connection.failures` が増えたら、`client.loadApp()` を呼び直すと、HTTP のレスポンス（エラーの文）で理由がわかります。
 
@@ -1372,9 +1465,9 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 
 - **保持入力・モーメンタリ操作**: GUI サーバーは、ブラウザのタブが閉じたり WebSocket が切れたりしたときに変数の値を自動で戻しません（`POST api/write` は `/ws` とは独立したステートレス HTTP であり、サーバー側の自動リセットは別タブやスクリプトの設定値を上書きしたり、無通知切断の後に遅れて発火したりするためです）。用途に合わせて次の 2 つを使い分けます。
   1. **押している間だけ効く GUI 操作（ホールドボタン・ペダル）**: `blur` と `visibilitychange` では `front.variable(ref).write(0)`（または `front.low.variables.write(...)`）で解除します。`pagehide` では `{ keepalive: true }` を渡します（`front.variable(ref).write(value, { keepalive: true })` と `front.low.variables.write(writes, { keepalive: true })` の両方で指定できます）。これによりページ離脱時も `Authorization` と `Origin` を付けたまま `fetch()` が完了できます（認証有効時の `navigator.sendBeacon` は 401 で失敗し、開発プロキシを迂回したクロスオリジン `fetch` は 403 になります）。限界として、突然の回線断やブラウザのクラッシュでは最後に書いた値が残ります。クラッシュまで防ぐには ECU 側のウォッチドッグ（ハートビート変数）が必要ですが、対象 ECU の変更が要る点、仮想時間ウォッチドッグに対するブラウザの実時間送信は `x1` 付近に限られる点（`x4`/`max` では誤検知、`x0.1` では遅延）、定期書き込みが操作履歴上限（サーバー 256 件・クライアント 64 件）と記録上限（`MAX_WRITES = 2000`）を圧迫する点、複数タブ時は操作中のタブだけ送る配慮が要る点に注意してください。
-  2. **仮想時間で長さを決める決定的なパルス（一時停止中）**: 低レベルの `front.low.variables.write(writes, { atMs, late, timeoutMs: Infinity })` を使います（高レベルの `front.variable(ref).write()` は `atMs` と `late` を受け付けません）。一時停止中に `atMs: T` と `atMs: T + holdMs` の 2 回を `timeoutMs: Infinity` で先にキューへ積んでから時間を進めると、ブラウザが切断しても確実に決定的パルスが入ります。走行中（`x1`/`x4`/`max`）のボタンには使わないでください。`front.clock.sim_ms` は WebSocket のバッチ間隔（100 ms）と RTT 分だけ遅れるため、`late: 'reject'` では落ち、`late: 'apply'` では 2 回の書き込みが同じステップの先頭に潰れて幅 0 ms になります。
+  2. **仮想時間で長さを決める決定的なパルス（一時停止中）**: 高レベルの `front.variable(ref).enqueue(value, { atMs, late })`（複数変数の同時書き込みには `front.low.variables.enqueue(...)`）を使います。一時停止中に `atMs: T` と `atMs: T + holdMs` の両エッジを `await enqueue(...)` してから `front.time.runUntil(...)` または `front.time.step(...)` で時間を進め、最後にそれぞれの `queued.applied()` を `await` します。`enqueue()` が ECU キュー到達（`WAIT_FOR_QUEUED`）まで待ち、仮想時間連動ウォッチドッグは健全かつ一時停止・保持中はタイマーを停止する（有限の `timeoutMs` で `Infinity` は不可。一時停止中の実時間上限が必要なら `signal: AbortSignal.timeout(ms)` を渡す）ため、`sleep()` なしで決定論的に完了し、キュー投入後にブラウザが切断してもパルスが完走します。走行中（`x1`/`x4`/`max`）のボタンには使わないでください。`front.clock.sim_ms` は WebSocket のバッチ間隔（`batchMs`、既定 100 ms）と RTT 分だけ遅れるため、`late: 'reject'` では落ち、`late: 'apply'` では 2 回の書き込みが同じステップの先頭に潰れて幅 0 ms になります。
 - **切断復帰**: GUI サーバーは 30 秒ごとに WebSocket の `heartbeat` を送ります（クライアント側から ping を送る必要はなく、無通知切断の検知には実時間で最大約 30 秒かかります）。再接続中（ソケットが開いてから `hello` と `synced` が届くまでの間を含む）は `session.ready` が `false`、`status.link` が `online` 以外、`bind` の `block` が `'disconnected'` のままになります。`hello` と `synced` が届くと、`session.ready` を `true` にする（`status.link` が `'online'` になる）前に変数状態が更新されるため、再接続に反応するコードは直ちに現在の実行の変数を参照できます。同じ実行中のシミュレーションへ再接続したときは、セッション同期（`session.ready` / `can_write`）で書き込みが直ちに可能になる一方、キャッシュされた変数の値は再接続後最初の `values` サンプルが届くまで `stale`（`why: 'connection'`）のままになります（すでに終了した実行は `ended` になります）。
-- **バス観測（`ecu.connected` と `Spy`）**: ECU の `ecu.connected` を `false` にすると、その participant だけがステップを続けたままバスから切り離されますが、ほかの ECU が実際にバスへ流している内容は分かりません。GUI で実際のバストラフィックを監視するには、`Spy` participant（`Spy::watch<M>()`。[j1939-guide.md](j1939-guide.md)）を追加します。出力変数（`count`、`last_ms`、`period_ms`、`size`、`invalid`、`spy.missed`、`stale`、`.state`）が自動でダッシュボードに載ります。なお GUI は実時間 20〜100 ms 間隔で最新値を取得する仕組みであり、すべての生フレームをストリーム配信するものではありません。
+- **バス観測（`ecu.connected` と `Spy`）**: ECU の `ecu.connected` を `false` にすると、その participant だけがステップを続けたままバスから切り離されますが、ほかの ECU が実際にバスへ流している内容は分かりません。GUI で実際のバストラフィックを監視するには、`Spy` participant（`Spy::watch<M>()`。[j1939-guide.md](j1939-guide.md)）を追加します。出力変数（`count`、`last_ms`、`period_ms`、`size`、`invalid`、`spy.missed`、`stale`、`.state`）が自動でダッシュボードに載ります。なお GUI はすべての生フレームをストリーム配信するのではなく最新値をポーリングする仕組みです（「[ライブポーリングと決定論的記録の使い分け](#ライブポーリングと決定論的記録の使い分け)」）。
 
 ## 既知の制限
 
@@ -1458,7 +1551,8 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 |---|---|
 | [external-api.md](external-api.md) | 外部 API の仕様、OpenAPI・JSON Schema、マニュアル、実行可能なサンプルへのタグ固定の入口 |
 | [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) | 画面のテンプレートから、変数を 1 つ表示する画面を作る手順 |
-| [gui/client/README.md](../../gui/client/README.ja.md) | クライアントのライブラリの API |
+| [gui/client/README.md](../../gui/client/README.ja.md) | クライアントのライブラリ（`connect()`、レシピ、11 部品、5 フレームワーク） |
+| [gui-client-low-level.md](gui-client-low-level.md) | 低水準 `createClient()` API、公開エクスポート全一覧、`variables.bind()`、ライフサイクル |
 | [gui/protocol/README.md](../../gui/protocol/README.ja.md) | サーバーの HTTP と WebSocket の API |
 | [gui/web/README.md](../../gui/web/README.ja.md) | サンプルの画面の開発 |
 | [examples/gui_starter/README.md](../../examples/gui_starter/README.ja.md) | 画面のテンプレートの使い方 |

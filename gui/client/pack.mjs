@@ -19,6 +19,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -298,6 +299,53 @@ function readmeExamples() {
   return examples;
 }
 
+const REPO_WEB_BASE = 'https://github.com/rahanahu/vehicle-sil';
+
+/**
+ * Stages a README into the npm package directory, rewriting repo-relative `../` links to absolute GitHub URLs so
+ * readers on npm or from an unpacked `.tgz` never hit broken links outside `package/`. Local links (`README.ja.md`,
+ * `README.md`, `#anchors`) stay relative.
+ */
+function stageReadme(filename, packageDir) {
+  const source = readFileSync(join(CLIENT, filename), 'utf8');
+  let fence = false;
+  const rewritten = source
+    .split('\n')
+    .map((line) => {
+      if (line.trimStart().startsWith('```')) {
+        fence = !fence;
+        return line;
+      }
+      if (fence) return line;
+      return line.replace(/\]\(((?:\.\.\/)+[^)\s]+)\)/g, (_match, target) => {
+        const hashIdx = target.indexOf('#');
+        const rawPath = hashIdx >= 0 ? target.slice(0, hashIdx) : target;
+        const hash = hashIdx >= 0 ? target.slice(hashIdx) : '';
+        const abs = resolve(CLIENT, rawPath);
+        const rel = relative(REPOSITORY, abs).replaceAll('\\', '/');
+        if (!rel || rel.startsWith('..') || !existsSync(abs)) {
+          fail(`${filename}: relative link '${target}' cannot be resolved inside the repository`);
+        }
+        const kind = statSync(abs).isDirectory() || rawPath.endsWith('/') ? 'tree' : 'blob';
+        return `](${REPO_WEB_BASE}/${kind}/main/${rel.replace(/\/$/, '')}${hash})`;
+      });
+    })
+    .join('\n');
+  let checkFence = false;
+  for (const line of rewritten.split('\n')) {
+    if (line.trimStart().startsWith('```')) {
+      checkFence = !checkFence;
+      continue;
+    }
+    if (!checkFence && /\]\(\.\.\//.test(line)) {
+      fail(
+        `${filename}: staged package README still contains a '../' relative link: ${line.trim()}`,
+      );
+    }
+  }
+  writeFileSync(join(packageDir, filename), rewritten);
+}
+
 /** The \`\`\`ts example of the parts' section of README.md, so that the README keeps to what the package types allow. */
 function elementsReadme() {
   const text = readFileSync(join(CLIENT, 'README.md'), 'utf8');
@@ -441,9 +489,9 @@ async function main() {
     engines: { node: '>=22' },
   };
   writeFileSync(join(packageDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  cpSync(join(CLIENT, 'README.md'), join(packageDir, 'README.md'));
+  stageReadme('README.md', packageDir);
   // README.md links to the Japanese edition, so it goes along.
-  cpSync(join(CLIENT, 'README.ja.md'), join(packageDir, 'README.ja.md'));
+  stageReadme('README.ja.md', packageDir);
   cpSync(join(REPOSITORY, 'LICENSE'), join(packageDir, 'LICENSE'));
 
   const checkDir = join(args.out, 'check');
