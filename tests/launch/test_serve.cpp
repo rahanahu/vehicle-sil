@@ -1351,3 +1351,50 @@ TEST_CASE(serve_concurrent_next_run_and_eof_during_result_flush_preserve_strict_
     CHECK(lines.back().event == "status");
     CHECK(lines.back().launcher_state == "ending");
 }
+
+TEST_CASE(serve_rejects_multi_case_scenario_intent_without_case)
+{
+    const std::filesystem::path dir = scratch_dir("serve_multicase_no_case");
+    {
+        std::ofstream out(dir / "sim.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Engine\n"
+               "    command: [missing/engine]\n"
+               "    describe: false\n";
+    }
+    {
+        std::ofstream out(dir / "cases.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\n"
+               "cases:\n"
+               "  low: { params: { lvl: 10 } }\n"
+               "  high: { params: { lvl: 90 } }\n"
+               "steps:\n"
+               "  - set: { Engine.level: \"${lvl}\" }\n";
+    }
+
+    CaptureStream cap;
+    LauncherEnd end;
+    ServeOptions options;
+    options.instance = "11223344aabbccdd";
+    options.base.host.config = (dir / "sim.yaml").string();
+    options.base.host.log_dir = dir / "logs";
+    options.base.host.stdin_commands = true;
+    options.single_run = true;
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
+
+    serve.command(cmd(R"({"command":"run","id":1,"intent":{"scenario":"cases.yaml"}})"));
+    const ServeEnd ended = done.get();
+    CHECK_EQ(ended.code, 4);
+
+    const auto lines = cap.lines();
+    const auto res = std::find_if(lines.begin(), lines.end(), [](const JsonLine& l) { return l.event == "result"; });
+    CHECK(res != lines.end());
+    CHECK(res->raw.find(R"("ok":false)") != std::string::npos);
+    CHECK(res->raw.find("--case") != std::string::npos);
+    CHECK(res->raw.find("low, high") != std::string::npos);
+}

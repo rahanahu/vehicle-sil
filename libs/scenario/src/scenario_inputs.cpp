@@ -6,19 +6,19 @@
 
 namespace vehicle_sil::scenario::reader {
 
-void Reader::note_base(std::size_t variable, double value, std::size_t line, bool stays)
+void Reader::note_base(StepReadState& state, std::size_t variable, double value, std::size_t line, bool stays)
 {
-    step_bases_.push_back(Base{variable, value, current_file(), line, stays});
+    state.bases.push_back(Base{variable, value, current_file(), line, stays});
 }
 
-void Reader::note_lines(const ScenarioStep& step, const std::optional<std::int64_t>& time)
+void Reader::note_lines(const ScenarioStep& step, const StepReadState& state, const std::optional<std::int64_t>& time)
 {
     const std::size_t index = scenario_.steps.size(); // (it is pushed after this)
-    for (const Base& base : step_bases_)
+    for (const Base& base : state.bases)
     {
         flow_.push_back(Flow{index, base, std::nullopt});
     }
-    for (const Dither& dither : step_dithers_)
+    for (const Dither& dither : state.dithers)
     {
         flow_.push_back(Flow{index, std::nullopt, dithers_.size()});
         dithers_.push_back(dither);
@@ -268,8 +268,8 @@ void Reader::read_inputs(ryml::id_type node)
         {
             continue;
         }
-        absent_.clear();
-        const auto v = variable(child);
+        std::vector<std::string> absent;
+        const auto v = variable(child, absent);
         const auto parts = parts_of(child, "inputs: " + name, kInputKeys,
                                     std::string("a mapping with the input's dither ({ dither: ") + kDitherExample + " })");
         if (!parts)
@@ -297,28 +297,28 @@ void Reader::read_inputs(ryml::id_type node)
         }
         if (!v)
         {
-            if (!absent_.empty())
+            if (!absent.empty())
             {
                 // As a step that uses the variable: not in this configuration, and said.
                 add(config::Severity::Note, "scenario-input-skipped", doc().line(child),
-                    "the dither of " + name + " is not used: " + skip_reason() +
+                    "the dither of " + name + " is not used: " + skip_reason(absent) +
                         "; the steps that write " + name + " are skipped too");
             }
             continue;
         }
+        const char* prevAsItIs = as_it_is_;
         as_it_is_ = kAsItIsInput;
+        ScopeGuard restoreAsItIs([this, prevAsItIs]() { as_it_is_ = prevAsItIs; });
         // (Known by the entry's line, also if its dither is on a line below.)
-        auto overlay = read_overlay(parts->at("dither"), *v, quiet, false, doc().line(child));
-        as_it_is_ = kAsItIs;
+        auto overlay = read_overlay(parts->at("dither"), *v, quiet, false, doc().line(child), nullptr);
         if (overlay)
         {
             scenario_.inputs.push_back(std::move(*overlay));
         }
     }
-    absent_.clear();
 }
 
-void Reader::read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
+void Reader::read_dither(ryml::id_type node, ScenarioStep& step, StepReadState& state, bool quiet)
 {
     if (!tree().is_map(node) || !tree().has_children(node))
     {
@@ -334,9 +334,9 @@ void Reader::read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
         {
             continue;
         }
-        if (const auto v = variable(child))
+        if (const auto v = variable(child, state.absent))
         {
-            if (auto overlay = read_overlay(child, *v, quiet, true, step.line))
+            if (auto overlay = read_overlay(child, *v, quiet, true, step.line, &state.dithers))
             {
                 overlay->name = step.name;
                 overlay->call_stack = step.call_stack;
@@ -346,7 +346,8 @@ void Reader::read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
     }
 }
 
-std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step, std::size_t shown)
+std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step, std::size_t shown,
+                                                    std::vector<Dither>* step_dithers)
 {
     const std::size_t line = doc().line(node);
     const ScenarioVariable& var = scenario_.variables[v];
@@ -374,7 +375,10 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
         const bool none = is_scalar(node) && !is_null(node) && param_at(node) == nullptr && text_of(node) == "none";
         if (none && in_step)
         {
-            step_dithers_.push_back(Dither{v, current_file(), shown, 0.0, false, std::nullopt, true, true, as_it_is_, {}, active_templates_});
+            if (step_dithers != nullptr)
+            {
+                step_dithers->push_back(Dither{v, current_file(), shown, 0.0, false, std::nullopt, true, true, as_it_is_, {}, active_templates_});
+            }
             out.text = name + " none";
             return good ? std::optional<ScenarioOverlay>(std::move(out)) : std::nullopt;
         }
@@ -490,7 +494,14 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
             }
         }
     }
-    (in_step ? step_dithers_ : dithers_).push_back(noted);
+    if (in_step && step_dithers != nullptr)
+    {
+        step_dithers->push_back(noted);
+    }
+    else
+    {
+        dithers_.push_back(noted);
+    }
     return out;
 }
 

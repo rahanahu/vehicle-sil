@@ -67,6 +67,8 @@ enum class Compare
     Lt,
     Near, ///< |value - x| <= tolerance
 };
+/// "eq", "ne", "ge", "le", "gt", "lt", "near".
+[[nodiscard]] const char* compare_name(Compare op);
 
 struct ScenarioComparison
 {
@@ -165,6 +167,35 @@ struct SourceFrame
     std::vector<SourceParam> params{}; ///< resolved arguments passed to this template call
 
     friend bool operator==(const SourceFrame&, const SourceFrame&) = default;
+};
+
+/// Formats `stack` as human-readable "called from: ..." lines (innermost caller first), joined by
+/// '\n' with no trailing newline. Each line starts with `line_prefix`. Empty string when `stack` is empty.
+[[nodiscard]] std::string format_call_stack_text(const std::vector<SourceFrame>& stack, std::string_view line_prefix = {});
+
+/// Optional metadata derived from called templates' `parameters:` definitions for a scenario parameter.
+struct ScenarioParamMeta
+{
+    std::string name;
+    /// "integer", "number", "boolean", or "string" (empty if unconstrained by any template parameter).
+    std::string type{};
+    /// Allowed values as strings (empty if unconstrained by `values:`).
+    std::vector<std::string> values{};
+    /// First non-empty `description:` from a called template's parameter definition (empty if none).
+    std::string description{};
+
+    friend bool operator==(const ScenarioParamMeta&, const ScenarioParamMeta&) = default;
+};
+
+/// Per-case summary for a scenario that defines `cases:`.
+struct ScenarioCaseDetail
+{
+    std::string name;
+    /// Effective `only` variant list for this case (scenario `only` intersected with case `only`),
+    /// or empty optional when unrestricted.
+    std::optional<std::vector<std::string>> only{};
+
+    friend bool operator==(const ScenarioCaseDetail&, const ScenarioCaseDetail&) = default;
 };
 
 /// A dither of one input: a shape around 0 without an end that is on top of whatever the scenario
@@ -380,11 +411,17 @@ struct ScenarioRead
     std::string name{};
     std::string case_name{};
     std::vector<std::string> cases{};
+    std::vector<ScenarioCaseDetail> case_details{};
     std::size_t steps = 0;
     std::optional<std::int64_t> end_ms{};
     /// The parameters the scenario declares ("params") or uses ("${name}"), each with the value in
     /// effect and where it comes from; in the order of "params", then of first use.
     std::vector<config::ParamValue> params{};
+    /// Optional parameter metadata (type, values, description) derived from called templates.
+    std::vector<ScenarioParamMeta> param_meta{};
+    /// Parameter names required by the scenario (undefined root `${name}` or omitted required
+    /// template parameters) that currently have no value.
+    std::vector<std::string> missing_params{};
     /// Its "only" (the variants it is for), if written and readable.
     std::optional<std::vector<std::string>> only{};
     /// The scenario is not for the chosen variant (`only` does not list it): an error
@@ -427,11 +464,21 @@ struct ScenarioRead
 [[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog,
                                          const ScenarioContext& context = {});
 
+/// Per-case inspection result recorded by inspect_scenario() so callers do not re-parse per case.
+struct CaseInspection
+{
+    std::string name;
+    std::vector<std::string> param_names{};
+    bool params_incomplete = false;
+    bool has_error = false;
+};
+
 /// Lightweight scenario inspection for `test` multi-case expansion and `unused_params()`.
 struct ScenarioInspection
 {
     bool has_cases = false;
     std::vector<std::string> cases{};
+    std::vector<CaseInspection> case_inspections{};
     std::vector<std::string> param_names{};
     bool params_incomplete = false;
     std::vector<config::Finding> findings{};

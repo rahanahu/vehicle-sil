@@ -940,3 +940,62 @@ TEST_CASE(batch_named_cases_expansion_filtering_rerun_and_formatting)
         CHECK(metaText.find("--case 'case '\\''q'\\'' \"dq\" $var \\bs'") != std::string::npos);
     }
 }
+
+TEST_CASE(batch_template_forwarded_params_and_only_intersection_with_case_filter)
+{
+    const auto dir = fresh_dir("batch-template-only");
+    std::filesystem::create_directories(dir / "templates");
+    write(dir / "sim.yaml", kConfig);
+    write(dir / "templates" / "forward.yaml",
+          "vehicle_sil_scenario_template: 1\n"
+          "parameters:\n"
+          "  v: { type: integer }\n"
+          "steps:\n"
+          "  - set: { Engine.level: \"${v}\" }\n");
+    // Parameter `fwd_only` is NOT declared in root `params:` and ONLY forwarded to `- template:`.
+    write(dir / "forwarded.yaml",
+          "vehicle_sil_scenario: 1\n"
+          "steps:\n"
+          "  - template: templates/forward.yaml\n"
+          "    params: { v: \"${fwd_only}\" }\n");
+    // Scenario only: [small, medium] intersected with case only: [medium] -> only medium matches.
+    write(dir / "inter.yaml",
+          "vehicle_sil_scenario: 1\n"
+          "only: [small, medium]\n"
+          "params: { lvl: 10 }\n"
+          "cases:\n"
+          "  med_only: { only: [medium], params: { lvl: 42 } }\n"
+          "  both: { params: { lvl: 20 } }\n"
+          "steps:\n"
+          "  - template: templates/forward.yaml\n"
+          "    params: { v: \"${lvl}\" }\n");
+
+    // 1. --param forwarded only to `- template:` is recognized as used by unused_params() (no exit 4 usage error).
+    {
+        TestOptions opts;
+        opts.variants = {"small"};
+        opts.scenarios = {{"forwarded.yaml"}};
+        opts.request.intent.strict = true;
+        opts.request.intent.params = {ParamValue{"fwd_only", "25", false, ParamSource::CommandLine, 0, true}};
+        const TestReport rep = test_in(dir, "sim.yaml", opts);
+        CHECK(!rep.usage);
+        CHECK(rep.exit_code() != 4);
+        CHECK_EQ(rep.runs.size(), std::size_t{1});
+    }
+
+    // 2. scenario.only ∩ case.only with --case filter and --param skips non-matching variants without usage error.
+    {
+        TestOptions opts;
+        opts.scenarios = {{"inter.yaml"}};
+        opts.cases = {"med_only"};
+        opts.request.intent.params = {ParamValue{"lvl", "55", false, ParamSource::CommandLine, 0, true}};
+        const TestReport rep = test_in(dir, "sim.yaml", opts);
+        CHECK(!rep.usage);
+        CHECK_EQ(rep.runs.size(), std::size_t{2});
+        // small: not_for_variant because med_only has effective only [medium]; medium: applicable for variant.
+        CHECK(rep.runs[0].variant == "small" && rep.runs[0].case_name == "med_only");
+        CHECK(rep.runs[0].run && rep.runs[0].run->check.scenario && rep.runs[0].run->check.scenario->not_for_variant);
+        CHECK(rep.runs[1].variant == "medium" && rep.runs[1].case_name == "med_only");
+        CHECK(rep.runs[1].run && rep.runs[1].run->check.scenario && !rep.runs[1].run->check.scenario->not_for_variant);
+    }
+}

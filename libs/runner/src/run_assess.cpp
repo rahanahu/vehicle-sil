@@ -732,35 +732,7 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
     {
         const scenario::ScenarioRun& scenario = *outcome.scenario.result;
         const auto format_provenance = [&scenario](const std::vector<scenario::SourceFrame>* call_stack) {
-            std::string detail;
-            if (call_stack != nullptr)
-            {
-                for (auto it = call_stack->rbegin(); it != call_stack->rend(); ++it)
-                {
-                    if (!detail.empty())
-                    {
-                        detail += '\n';
-                    }
-                    detail += "called from: " + (it->file.empty() ? "line " + std::to_string(it->line) : it->file + ":" + std::to_string(it->line));
-                    std::string meta;
-                    if (!it->name.empty())
-                    {
-                        meta += "step '" + it->name + "'";
-                    }
-                    for (const scenario::SourceParam& p : it->params)
-                    {
-                        if (!meta.empty())
-                        {
-                            meta += ", ";
-                        }
-                        meta += p.name + " = " + (p.quoted ? "\"" + p.text + "\"" : p.text);
-                    }
-                    if (!meta.empty())
-                    {
-                        detail += " (" + meta + ")";
-                    }
-                }
-            }
+            std::string detail = call_stack != nullptr ? scenario::format_call_stack_text(*call_stack) : std::string{};
             if (!scenario.case_name.empty())
             {
                 if (!detail.empty())

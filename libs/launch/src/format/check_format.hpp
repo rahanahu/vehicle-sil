@@ -38,11 +38,17 @@ void write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view key, co
 /// The array "networks" of a participant's "reported": what its executable described, under the
 /// executable's names (check_networks.cpp).
 void write_reported_networks(vehicle_sil::json::JsonWriter& w, const EcuDescription& ecu);
-/// Writes a single parameter value (`key`: boolean, integer, real, or string) into the object `w` is in.
+/// Writes a single parameter value (`key`: boolean, integer (decimal or hex), real, or string) into the object `w` is in.
 void write_param_scalar(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::string& text, bool quoted);
+/// Writes one value of ScenarioShapeText into the object `w` is in.
+void write_shape_value(vehicle_sil::json::JsonWriter& w, std::string_view key, const scenario::ScenarioShapeText::Value& value);
+/// Writes a non-empty `call_stack` array (`key`) into the object `w` is in; does nothing if `stack` is empty.
+void write_call_stack_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<scenario::SourceFrame>& stack);
 /// An array `key` of parameters: each with "name", "value" (as a scenario reads it: true or false,
-/// a number, or a text) and "from" (param_source_name()).
-void write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<config::ParamValue>& params);
+/// a number, or a text) and "from" (param_source_name()), plus optional "type", "values", and
+/// "description" when `meta` provides template-derived metadata for that parameter.
+void write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<config::ParamValue>& params,
+                       const std::vector<scenario::ScenarioParamMeta>* meta = nullptr);
 /// The array "findings".
 void write_findings_json(vehicle_sil::json::JsonWriter& w, const std::string& file, const std::vector<config::Finding>& findings);
 /// The members of one finding of "findings" (severity, code, file, ...), into the object `w` is in.

@@ -283,10 +283,13 @@ namespace {
         check.name = std::move(read.name);
         check.case_name = std::move(read.case_name);
         check.cases = std::move(read.cases);
+        check.case_details = std::move(read.case_details);
         check.steps = read.steps;
         check.end_ms = read.end_ms;
         check.scenario = std::move(read.scenario);
         check.params = std::move(read.params);
+        check.param_meta = std::move(read.param_meta);
+        check.missing_params = std::move(read.missing_params);
         check.only = std::move(read.only);
         check.skipped = read.skipped;
         check.unchecked_expects = read.unchecked_expects;

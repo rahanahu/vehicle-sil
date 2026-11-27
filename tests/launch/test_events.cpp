@@ -1900,3 +1900,45 @@ TEST_CASE(stdin_command_rejects_integers_that_overflow_before_range_checks)
         CHECK(parsed->reason == "invalid-argument");
     }
 }
+
+TEST_CASE(events_v4_scenario_step_and_result_preserve_optional_step_name)
+{
+    Sink sink;
+    EventStream& stream = sink.start();
+
+    scenario::ScenarioStepRun named;
+    named.index = 1;
+    named.line = 4;
+    named.kind = scenario::StepKind::Set;
+    named.name = "apply throttle";
+    named.text = "set Engine.engine.throttle = 50";
+    named.status = scenario::StepStatus::Passed;
+    named.start = SimTime{0ms};
+    named.at = SimTime{0ms};
+    named.end = SimTime{0ms};
+
+    scenario::ScenarioStepRun unnamed = named;
+    unnamed.index = 2;
+    unnamed.line = 6;
+    unnamed.name.clear();
+
+    stream.scenario_step(named);
+    stream.scenario_step(unnamed);
+
+    RunReport report;
+    report.run.emplace();
+    report.run->scenario.result.emplace();
+    report.run->scenario.result->file = "scenarios/s.yaml";
+    report.run->scenario.result->status = scenario::ScenarioStatus::Passed;
+    report.run->scenario.result->steps = {named, unnamed};
+
+    CHECK(stream.result(format_result_event(report, true)));
+    const auto out = sink.lines();
+    CHECK_EQ(out.size(), std::size_t{3});
+    CHECK(out[0].find(R"("event":"scenario_step")") != std::string::npos);
+    CHECK(out[0].find(R"("name":"apply throttle")") != std::string::npos);
+    CHECK(out[1].find(R"("event":"scenario_step")") != std::string::npos);
+    CHECK(out[1].find(R"("name":)") == std::string::npos);
+    CHECK(out[2].find(R"("event":"result")") != std::string::npos);
+    CHECK(out[2].find(R"("name":"apply throttle")") != std::string::npos);
+}

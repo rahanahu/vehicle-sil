@@ -4477,3 +4477,755 @@ TEST_CASE(scenario_tier5_adversarial_template_boundaries_and_dithers)
         CHECK(it2->message.find("(line scenarios/templates/") == std::string::npos);
     }
 }
+
+TEST_CASE(scenario_invalid_cached_template_reports_error_at_every_call_site)
+{
+    std::map<std::string, std::string> files;
+    files["templates/bad_syntax.yaml"] = "vehicle_sil_scenario_template: 1\nsteps: [unclosed\n";
+    files["templates/bad_schema.yaml"] = "vehicle_sil_scenario_template: 1\nsteps: []\n";
+    int readsSyntax = 0;
+    int readsSchema = 0;
+
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/main.yaml";
+    ctx.read_template = [&](const std::string& path, std::string& problem) -> std::optional<std::string> {
+        if (path == "templates/bad_syntax.yaml")
+        {
+            ++readsSyntax;
+        }
+        else if (path == "templates/bad_schema.yaml")
+        {
+            ++readsSchema;
+        }
+        const auto it = files.find(path);
+        if (it == files.end())
+        {
+            problem = "not found";
+            return std::nullopt;
+        }
+        return it->second;
+    };
+
+    const std::string syntaxScenario =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - template: templates/bad_syntax.yaml\n"
+        "  - template: templates/bad_syntax.yaml\n";
+    const ScenarioRead r1 = read_scenario(syntaxScenario, catalog(), ctx);
+    CHECK(!r1.scenario.has_value());
+    CHECK_EQ(readsSyntax, 1);
+    CHECK_EQ(r1.findings.size(), std::size_t{2});
+    CHECK(r1.findings[0].code == "syntax");
+    CHECK(r1.findings[0].file == "scenarios/templates/bad_syntax.yaml");
+    CHECK(r1.findings[1].code == "scenario-template-file");
+    CHECK(r1.findings[1].file.empty());
+    CHECK_EQ(r1.findings[1].line, std::size_t{4});
+    CHECK(r1.findings[1].message.find("templates/bad_syntax.yaml") != std::string::npos);
+    CHECK(r1.findings[1].message.find("syntax") != std::string::npos);
+
+    const std::string schemaScenario =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - template: templates/bad_schema.yaml\n"
+        "  - template: templates/bad_schema.yaml\n"
+        "  - template: templates/bad_schema.yaml\n";
+    const ScenarioRead r2 = read_scenario(schemaScenario, catalog(), ctx);
+    CHECK(!r2.scenario.has_value());
+    CHECK_EQ(readsSchema, 1);
+    CHECK_EQ(r2.findings.size(), std::size_t{3});
+    CHECK(r2.findings[0].code == "value");
+    CHECK(r2.findings[0].file == "scenarios/templates/bad_schema.yaml");
+    CHECK(r2.findings[1].code == "scenario-template-file");
+    CHECK_EQ(r2.findings[1].line, std::size_t{4});
+    CHECK(r2.findings[2].code == "scenario-template-file");
+    CHECK_EQ(r2.findings[2].line, std::size_t{5});
+}
+
+TEST_CASE(scenario_template_paths_normalize_windows_backslashes)
+{
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios\\nested\\main.yaml";
+    ctx.read_template = [](const std::string& path, std::string& problem) -> std::optional<std::string> {
+        if (path == "templates/step.yaml")
+        {
+            return "vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Body.level: 10 }\n";
+        }
+        problem = "missing";
+        return std::nullopt;
+    };
+    const ScenarioRead r = read_scenario(
+        "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/step.yaml\n", catalog(), ctx);
+    CHECK(r.scenario.has_value());
+    CHECK_EQ(r.scenario->steps.size(), std::size_t{1});
+    CHECK(r.scenario->steps[0].file == "scenarios/nested/templates/step.yaml");
+    CHECK(r.scenario->steps[0].file.find('\\') == std::string::npos);
+}
+
+TEST_CASE(scenario_parameter_type_lattice_metadata_conflicts_and_cli_string_quoting)
+{
+    std::map<std::string, std::string> files;
+    files["templates/num.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  x:\n"
+        "    type: number\n"
+        "    values: [10, 20, 30]\n"
+        "    description: Number constraint\n"
+        "steps:\n"
+        "  - expect: { Body.body.speed: { ge: \"${x}\" } }\n";
+    files["templates/int.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  y:\n"
+        "    type: integer\n"
+        "    values: [0x14, 30, 40]\n"
+        "    description: Integer constraint\n"
+        "steps:\n"
+        "  - set: { Body.level: \"${y}\" }\n";
+    files["templates/disjoint.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  z:\n"
+        "    type: integer\n"
+        "    values: [50, 60]\n"
+        "steps:\n"
+        "  - set: { Body.level: \"${z}\" }\n";
+    files["templates/str.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  tag:\n"
+        "    type: string\n"
+        "    description: Tag label\n"
+        "steps:\n"
+        "  - name: \"Tag ${tag}\"\n"
+        "    set: { Body.level: 10 }\n";
+    files["templates/bool.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  flag:\n"
+        "    type: boolean\n"
+        "    description: Enable flag\n"
+        "steps:\n"
+        "  - set: { Door.lamp: \"${flag}\" }\n";
+    files["templates/outer_forward.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  p:\n"
+        "    type: number\n"
+        "    description: Outer description\n"
+        "steps:\n"
+        "  - template: int.yaml\n"
+        "    params: { y: \"${p}\" }\n";
+
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/main.yaml";
+    ctx.read_template = [&](const std::string& path, std::string& problem) -> std::optional<std::string> {
+        const auto it = files.find(path);
+        if (it == files.end())
+        {
+            problem = "missing";
+            return std::nullopt;
+        }
+        return it->second;
+    };
+
+    // 1. Direct untyped root step produces no inferred param_meta.
+    {
+        const ScenarioRead direct = read_scenario(
+            "vehicle_sil_scenario: 1\nparams: { lvl: 20 }\nsteps:\n  - set: { Body.level: \"${lvl}\" }\n",
+            catalog(), ctx);
+        CHECK(direct.scenario.has_value());
+        CHECK(direct.param_meta.empty());
+    }
+
+    // 2. number + integer narrows to integer, intersects values ([20, 30]), preserves first description,
+    //    and string interpolation in step name adds no type constraint.
+    {
+        const ScenarioRead narrowed = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 20 }\n"
+            "steps:\n"
+            "  - name: \"Run ${p}\"\n"
+            "    template: templates/num.yaml\n"
+            "    params: { x: \"${p}\" }\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(narrowed.scenario.has_value());
+        CHECK_EQ(narrowed.param_meta.size(), std::size_t{1});
+        CHECK(narrowed.param_meta[0].name == "p");
+        CHECK(narrowed.param_meta[0].type == "integer");
+        CHECK((narrowed.param_meta[0].values == std::vector<std::string>{"20", "30"}));
+        CHECK(narrowed.param_meta[0].description == "Number constraint");
+    }
+
+    // 3. Transitive narrowing through nested templates (outer number -> inner integer) canonicalizes hex values to decimal.
+    {
+        const ScenarioRead nested = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 30 }\n"
+            "steps:\n"
+            "  - template: templates/outer_forward.yaml\n"
+            "    params: { p: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(nested.scenario.has_value());
+        CHECK_EQ(nested.param_meta.size(), std::size_t{1});
+        CHECK(nested.param_meta[0].type == "integer");
+        CHECK((nested.param_meta[0].values == std::vector<std::string>{"20", "30", "40"}));
+        CHECK(nested.param_meta[0].description == "Outer description");
+    }
+
+    // 4. Empty values intersection is a static scenario-param error.
+    {
+        const ScenarioRead emptyInter = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 20 }\n"
+            "steps:\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n"
+            "  - template: templates/disjoint.yaml\n"
+            "    params: { z: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(!emptyInter.scenario.has_value());
+        CHECK(lines(emptyInter.findings).find("scenario-param:") != std::string::npos);
+        CHECK(lines(emptyInter.findings).find("intersection is empty") != std::string::npos);
+    }
+
+    // 5. Incompatible types: string + numeric (both template+template and template+direct step with from_cli),
+    //    and boolean + numeric -> static scenario-param error.
+    {
+        ScenarioContext cliCtx = ctx;
+        cliCtx.params = {ParamValue{"x", "10", false, ParamSource::CommandLine, 0, true}};
+        const ScenarioRead strAndDirect = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - set: { Body.level: \"${x}\" }\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${x}\" }\n",
+            catalog(), cliCtx);
+        CHECK(!strAndDirect.scenario.has_value());
+        CHECK(lines(strAndDirect.findings).find("incompatible types") != std::string::npos);
+
+        const ScenarioRead strAndBool = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - template: templates/bool.yaml\n"
+            "    params: { flag: \"${x}\" }\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${x}\" }\n",
+            catalog(), cliCtx);
+        CHECK(!strAndBool.scenario.has_value());
+        CHECK(lines(strAndBool.findings).find("incompatible types") != std::string::npos);
+
+        const ScenarioRead boolAndInt = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - template: templates/bool.yaml\n"
+            "    params: { flag: \"${x}\" }\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${x}\" }\n",
+            catalog(), cliCtx);
+        CHECK(!boolAndInt.scenario.has_value());
+        CHECK(lines(boolAndInt.findings).find("incompatible types") != std::string::npos);
+    }
+
+    // 6. CLI --param p=123 bound only to type: string sets quoted = true on out.params and scenario.params.
+    {
+        ScenarioContext cliCtx = ctx;
+        cliCtx.params = {ParamValue{"p", "123", false, ParamSource::CommandLine, 0, true}};
+        const ScenarioRead strOnly = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - name: \"Label ${p}\"\n"
+            "    template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n",
+            catalog(), cliCtx);
+        CHECK(strOnly.scenario.has_value());
+        CHECK_EQ(strOnly.params.size(), std::size_t{1});
+        CHECK(strOnly.params[0].text == "123");
+        CHECK(strOnly.params[0].quoted == true);
+        CHECK(strOnly.scenario->params[0].quoted == true);
+        CHECK_EQ(strOnly.param_meta.size(), std::size_t{1});
+        CHECK(strOnly.param_meta[0].type == "string");
+    }
+
+    // 7. Narrowing number values containing float/scientific whole numbers (16.0, 1e1) with unconstrained integer
+    //    succeeds in both call orders and canonicalizes values to decimal integers.
+    {
+        files["templates/num_float_whole.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  y:\n"
+            "    type: number\n"
+            "    values: [1.5, 16.0, 1e1]\n"
+            "steps:\n"
+            "  - expect: { Body.body.speed: { ge: \"${y}\" } }\n";
+        files["templates/int_plain.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  x:\n"
+            "    type: integer\n"
+            "steps:\n"
+            "  - set: { Body.level: \"${x}\" }\n";
+
+        const ScenarioRead numFirst = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 16 }\n"
+            "steps:\n"
+            "  - template: templates/num_float_whole.yaml\n"
+            "    params: { y: \"${p}\" }\n"
+            "  - template: templates/int_plain.yaml\n"
+            "    params: { x: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(numFirst.scenario.has_value());
+        CHECK_EQ(numFirst.param_meta.size(), std::size_t{1});
+        CHECK(numFirst.param_meta[0].type == "integer");
+        CHECK((numFirst.param_meta[0].values == std::vector<std::string>{"16", "10"}));
+
+        const ScenarioRead intFirst = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 10 }\n"
+            "steps:\n"
+            "  - template: templates/int_plain.yaml\n"
+            "    params: { x: \"${p}\" }\n"
+            "  - template: templates/num_float_whole.yaml\n"
+            "    params: { y: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(intFirst.scenario.has_value());
+        CHECK_EQ(intFirst.param_meta.size(), std::size_t{1});
+        CHECK(intFirst.param_meta[0].type == "integer");
+        CHECK((intFirst.param_meta[0].values == std::vector<std::string>{"16", "10"}));
+    }
+
+    // 8. Integer hex values combined with type: number canonicalize to decimal regardless of call order,
+    //    and every advertised value is accepted when supplied.
+    {
+        files["templates/num_plain.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  x: { type: number }\n"
+            "steps:\n"
+            "  - expect: { Body.body.speed: { ge: \"${x}\" } }\n";
+
+        const ScenarioRead intThenNumVals = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 20 }\n"
+            "steps:\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n"
+            "  - template: templates/num.yaml\n"
+            "    params: { x: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(intThenNumVals.scenario.has_value());
+        CHECK_EQ(intThenNumVals.param_meta.size(), std::size_t{1});
+        CHECK(intThenNumVals.param_meta[0].type == "integer");
+        CHECK((intThenNumVals.param_meta[0].values == std::vector<std::string>{"20", "30"}));
+
+        const ScenarioRead intThenNumPlain = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 20 }\n"
+            "steps:\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n"
+            "  - template: templates/num_plain.yaml\n"
+            "    params: { x: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(intThenNumPlain.scenario.has_value());
+        CHECK_EQ(intThenNumPlain.param_meta.size(), std::size_t{1});
+        CHECK((intThenNumPlain.param_meta[0].values == std::vector<std::string>{"20", "30", "40"}));
+    }
+
+    // 9. CLI --param p=123 bound to type: string and a numeric-looking enum item ("123") succeeds in both
+    //    step orders and preserves quoted string output, matching YAML params: { p: "123" }.
+    {
+        ScenarioCatalog weirdCat = catalog();
+        control::VariableInfo weirdMode;
+        weirdMode.name = "weird_mode";
+        weirdMode.type = control::ValueType::Enum;
+        weirdMode.causality = control::Causality::Input;
+        weirdMode.items = {{"off", 0}, {"123", 1}, {"true", 2}};
+        weirdCat[0].variables.push_back(std::move(weirdMode));
+
+        ScenarioContext cliCtx = ctx;
+        cliCtx.params = {ParamValue{"p", "123", false, ParamSource::CommandLine, 0, true}};
+
+        const ScenarioRead tplFirst = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: \"off\" }\n"
+            "steps:\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n"
+            "  - set: { Body.weird_mode: \"${p}\" }\n",
+            weirdCat, cliCtx);
+        CHECK(tplFirst.scenario.has_value());
+        CHECK_EQ(tplFirst.params.size(), std::size_t{1});
+        CHECK(tplFirst.params[0].text == "123" && tplFirst.params[0].quoted == true);
+        CHECK_EQ(tplFirst.param_meta.size(), std::size_t{1});
+        CHECK(tplFirst.param_meta[0].type == "string");
+        CHECK(std::get<std::int64_t>(tplFirst.scenario->steps[1].writes[0].value) == 1);
+
+        const ScenarioRead setFirst = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: \"off\" }\n"
+            "steps:\n"
+            "  - set: { Body.weird_mode: \"${p}\" }\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n",
+            weirdCat, cliCtx);
+        CHECK(setFirst.scenario.has_value());
+        CHECK_EQ(setFirst.params.size(), std::size_t{1});
+        CHECK(setFirst.params[0].text == "123" && setFirst.params[0].quoted == true);
+        CHECK_EQ(setFirst.param_meta.size(), std::size_t{1});
+        CHECK(setFirst.param_meta[0].type == "string");
+        CHECK(std::get<std::int64_t>(setFirst.scenario->steps[0].writes[0].value) == 1);
+    }
+
+    // 10. Conflicted parameter types omit first-wins type/values metadata in both full check and
+    //     unselected-case lightweight metadata scan.
+    {
+        const ScenarioRead fullConflict = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: \"20\" }\n"
+            "steps:\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(!fullConflict.scenario.has_value());
+        CHECK(fullConflict.param_meta.empty());
+
+        const ScenarioRead unselectedConflict = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "cases:\n"
+            "  c1: { params: { p: 20 } }\n"
+            "steps:\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(!unselectedConflict.scenario.has_value());
+        CHECK(unselectedConflict.param_meta.empty());
+    }
+}
+
+TEST_CASE(scenario_unselected_case_metadata_scan_and_shared_inspect_cache)
+{
+    int templateReads = 0;
+    const std::string tplText =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  lvl:\n"
+        "    type: integer\n"
+        "    values: [10, 50, 80]\n"
+        "    description: Target body level\n"
+        "  wait_ms:\n"
+        "    type: integer\n"
+        "    default: 100\n"
+        "    description: Optional wait\n"
+        "  extra_req:\n"
+        "    type: string\n"
+        "steps:\n"
+        "  - set: { Body.level: \"${lvl}\" }\n"
+        "    after_ms: \"${wait_ms}\"\n";
+
+    ScenarioContext ctx;
+    ctx.variants = {"small", "medium", "large"};
+    ctx.variant = "small";
+    ctx.scenario_file = "scenarios/multi.yaml";
+    ctx.read_template = [&](const std::string& path, std::string& problem) -> std::optional<std::string> {
+        if (path == "templates/step.yaml")
+        {
+            ++templateReads;
+            return tplText;
+        }
+        problem = "missing";
+        return std::nullopt;
+    };
+
+    const std::string scenarioText =
+        "vehicle_sil_scenario: 1\n"
+        "only: [small, medium]\n"
+        "params: { base_p: 10 }\n"
+        "cases:\n"
+        "  c_all: { params: { lvl: 10, extra: \"a\" } }\n"
+        "  c_small: { only: [small], params: { lvl: 50, extra: \"b\" } }\n"
+        "  c_disjoint: { only: [large], params: { lvl: 80, extra: \"c\" } }\n"
+        "steps:\n"
+        "  - set: { Body.level: \"${base_p}\" }\n"
+        "  - template: templates/step.yaml\n"
+        "    params:\n"
+        "      lvl: \"${lvl}\"\n"
+        "      extra_req: \"${extra}\"\n";
+
+    // Unselected case: lightweight scan collects case_details, root params, param_meta, and missing_params
+    // without mixing in any case's defaults and without reporting template default wait_ms as missing.
+    {
+        const ScenarioRead unselected = read_scenario(scenarioText, catalog(), ctx);
+        CHECK(!unselected.scenario.has_value());
+        CHECK(!unselected.usage_errors.empty());
+        CHECK_EQ(unselected.case_details.size(), std::size_t{3});
+        CHECK(unselected.case_details[0].name == "c_all");
+        CHECK(unselected.case_details[0].only == std::optional<std::vector<std::string>>({"small", "medium"}));
+        CHECK(unselected.case_details[1].name == "c_small");
+        CHECK(unselected.case_details[1].only == std::optional<std::vector<std::string>>({"small"}));
+        CHECK(unselected.case_details[2].name == "c_disjoint");
+        CHECK(unselected.case_details[2].only.has_value() && unselected.case_details[2].only->empty());
+        // Only root param base_p is in params (no case params leaked).
+        CHECK_EQ(unselected.params.size(), std::size_t{1});
+        CHECK(unselected.params[0].name == "base_p");
+        // Missing root refs: lvl, extra (not wait_ms which has a template default).
+        CHECK((unselected.missing_params == std::vector<std::string>{"lvl", "extra"}));
+        // Template param metadata collected even before case selection.
+        CHECK_EQ(unselected.param_meta.size(), std::size_t{2});
+        CHECK(unselected.param_meta[0].name == "lvl");
+        CHECK(unselected.param_meta[0].type == "integer");
+        CHECK((unselected.param_meta[0].values == std::vector<std::string>{"10", "50", "80"}));
+        CHECK(unselected.param_meta[0].description == "Target body level");
+        CHECK(unselected.param_meta[1].name == "extra");
+        CHECK(unselected.param_meta[1].type == "string");
+    }
+
+    // Selected case: exact effective values for c_small only, no missing_params.
+    {
+        ScenarioContext selCtx = ctx;
+        selCtx.case_name = "c_small";
+        const ScenarioRead selected = read_scenario(scenarioText, catalog(), selCtx);
+        CHECK(selected.scenario.has_value());
+        CHECK(selected.missing_params.empty());
+        CHECK_EQ(selected.params.size(), std::size_t{3});
+        CHECK(selected.params[1].name == "lvl" && selected.params[1].text == "50");
+        CHECK(selected.params[2].name == "extra" && selected.params[2].text == "b");
+    }
+
+    // Omitted required template parameter (no default) is reported in missing_params; template default is not.
+    {
+        const std::string omittedText =
+            "vehicle_sil_scenario: 1\n"
+            "cases:\n  c1: {}\n"
+            "steps:\n"
+            "  - template: templates/step.yaml\n"
+            "    params: { lvl: 10 }\n";
+        const ScenarioRead omitted = read_scenario(omittedText, catalog(), ctx);
+        CHECK((omitted.missing_params == std::vector<std::string>{"extra_req"}));
+    }
+
+    // inspect_scenario shares template cache across all cases (template read only once across 3 cases)
+    // and records per-case param_names in case_inspections.
+    templateReads = 0;
+    const ScenarioInspection insp = inspect_scenario(scenarioText, ctx);
+    CHECK(insp.has_cases);
+    CHECK_EQ(templateReads, 1);
+    CHECK_EQ(insp.case_inspections.size(), std::size_t{3});
+    CHECK(insp.case_inspections[0].name == "c_all");
+    CHECK(!insp.case_inspections[0].params_incomplete);
+    CHECK(std::find(insp.case_inspections[0].param_names.begin(), insp.case_inspections[0].param_names.end(), "lvl") !=
+          insp.case_inspections[0].param_names.end());
+}
+
+TEST_CASE(scenario_template_multiple_calls_isolation_timing_hex_and_quoting)
+{
+    std::map<std::string, std::string> files;
+    files["templates/set_lvl.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  target: { type: integer }\n"
+        "steps:\n"
+        "  - set: { Body.level: \"${target}\" }\n";
+    files["templates/timed.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - set: { Body.level: 40 }\n"
+        "  - after_ms: 20\n"
+        "    set: { Body.level: 60 }\n";
+    files["templates/default_wait.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  timeout_ms: { type: integer, default: 200 }\n"
+        "steps:\n"
+        "  - wait_until: { Body.body.speed: { ge: 100 } }\n"
+        "    timeout_ms: \"${timeout_ms}\"\n";
+    files["templates/bad_wave.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - wave:\n"
+        "      Body.level: { square: { low: 0, high: 999, period_ms: 40 }, for_ms: 80 }\n";
+    files["templates/typed_args.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  i: { type: integer }\n"
+        "  n: { type: number }\n"
+        "  b: { type: boolean }\n"
+        "steps:\n"
+        "  - set: { Body.level: \"${i}\", Body.ratio: \"${n}\", Door.lamp: \"${b}\" }\n";
+
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/main.yaml";
+    ctx.read_template = [&](const std::string& path, std::string& problem) -> std::optional<std::string> {
+        const auto it = files.find(path);
+        if (it == files.end())
+        {
+            problem = "missing";
+            return std::nullopt;
+        }
+        return it->second;
+    };
+
+    // 1. Multiple invocations of the same template with different arguments do not interfere.
+    {
+        const ScenarioRead r = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - template: templates/set_lvl.yaml\n"
+            "    params: { target: 30 }\n"
+            "  - after_ms: 20\n"
+            "    template: templates/set_lvl.yaml\n"
+            "    params: { target: 70 }\n",
+            catalog(), ctx);
+        CHECK(r.scenario.has_value());
+        CHECK_EQ(r.scenario->steps.size(), std::size_t{2});
+        CHECK(std::get<std::int64_t>(r.scenario->steps[0].writes[0].value) == 30);
+        CHECK(std::get<std::int64_t>(r.scenario->steps[1].writes[0].value) == 70);
+    }
+
+    // 2. Inherited timing equivalence between template call with at_ms and inline steps.
+    {
+        const ScenarioRead tplRead = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - at_ms: 100\n"
+            "    template: templates/timed.yaml\n"
+            "  - after_ms: 30\n"
+            "    set: { Body.level: 80 }\n",
+            catalog(), ctx);
+        const ScenarioRead inlineRead = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - at_ms: 100\n"
+            "    set: { Body.level: 40 }\n"
+            "  - after_ms: 20\n"
+            "    set: { Body.level: 60 }\n"
+            "  - after_ms: 30\n"
+            "    set: { Body.level: 80 }\n",
+            catalog(), ctx);
+        CHECK(tplRead.scenario.has_value() && inlineRead.scenario.has_value());
+        World w1, w2;
+        const ScenarioRun runTpl = w1.run(*tplRead.scenario);
+        const ScenarioRun runInline = w2.run(*inlineRead.scenario);
+        CHECK(runTpl.over_at == runInline.over_at);
+        CHECK_EQ(runTpl.steps.size(), runInline.steps.size());
+        for (std::size_t i = 0; i < runTpl.steps.size(); ++i)
+        {
+            CHECK(runTpl.steps[i].start == runInline.steps[i].start);
+            CHECK(runTpl.steps[i].at == runInline.steps[i].at);
+            CHECK(runTpl.steps[i].end == runInline.steps[i].end);
+        }
+    }
+
+    // 3. Strict lexical isolation: outer params do not override template default unless passed explicitly.
+    {
+        const ScenarioRead r = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { timeout_ms: 999 }\n"
+            "steps:\n"
+            "  - template: templates/default_wait.yaml\n"
+            "  - template: templates/default_wait.yaml\n"
+            "    params: { timeout_ms: \"${timeout_ms}\" }\n",
+            catalog(), ctx);
+        CHECK(r.scenario.has_value());
+        CHECK_EQ(r.scenario->steps.size(), std::size_t{2});
+        CHECK(r.scenario->steps[0].within_ms == std::optional<std::int64_t>(200));
+        CHECK(r.scenario->steps[1].within_ms == std::optional<std::int64_t>(999));
+    }
+
+    // 4. Mixed direct -> template -> direct steps keep provenance and cumulative times (10, 40, 60).
+    {
+        const ScenarioRead r = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - at_ms: 10\n"
+            "    set: { Body.level: 10 }\n"
+            "  - after_ms: 30\n"
+            "    template: templates/set_lvl.yaml\n"
+            "    params: { target: 40 }\n"
+            "  - after_ms: 20\n"
+            "    set: { Body.level: 60 }\n",
+            catalog(), ctx);
+        CHECK(r.scenario.has_value());
+        CHECK_EQ(r.scenario->steps.size(), std::size_t{3});
+        CHECK(r.scenario->steps[0].file.empty() && r.scenario->steps[0].call_stack.empty());
+        CHECK(!r.scenario->steps[1].file.empty() && r.scenario->steps[1].call_stack.size() == 1);
+        CHECK(r.scenario->steps[2].file.empty() && r.scenario->steps[2].call_stack.empty());
+        World w;
+        const ScenarioRun run = w.run(*r.scenario);
+        CHECK(run.steps[0].start == std::optional<SimTime>(SimTime{10ms}));
+        CHECK(run.steps[1].start == std::optional<SimTime>(SimTime{40ms}));
+        CHECK(run.steps[2].start == std::optional<SimTime>(SimTime{60ms}));
+    }
+
+    // 5. Wave range error inside template attributes Finding::file and line to template.
+    {
+        ScenarioContext noPrefix = ctx;
+        noPrefix.scenario_file = "main.yaml";
+        const ScenarioRead r = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/bad_wave.yaml\n", catalog(), noPrefix);
+        CHECK(!r.scenario.has_value());
+        CHECK_EQ(r.findings.size(), std::size_t{1});
+        CHECK(r.findings[0].file == "templates/bad_wave.yaml");
+        CHECK_EQ(r.findings[0].line, std::size_t{4});
+        CHECK(r.findings[0].code == "scenario-value");
+    }
+
+    // 6. Hex integer param accepted for Body.level, rejected for decimal-only after_ms, timeout_ms, and seed.
+    {
+        const ScenarioRead okHex = read_scenario(
+            "vehicle_sil_scenario: 1\nparams: { h: 0x10 }\nsteps:\n  - set: { Body.level: \"${h}\" }\n",
+            catalog(), ctx);
+        CHECK(okHex.scenario.has_value());
+        CHECK(std::get<std::int64_t>(okHex.scenario->steps[0].writes[0].value) == 16);
+
+        const ScenarioRead badAfter = read_scenario(
+            "vehicle_sil_scenario: 1\nparams: { h: 0x10 }\nsteps:\n  - after_ms: \"${h}\"\n    set: { Body.level: 1 }\n",
+            catalog(), ctx);
+        CHECK(!badAfter.scenario.has_value());
+        CHECK(lines(badAfter.findings).find("after_ms must be a whole number") != std::string::npos);
+
+        const ScenarioRead badTimeout = read_scenario(
+            "vehicle_sil_scenario: 1\nparams: { h: 0x10 }\nsteps:\n  - wait_until: { Body.body.speed: 10 }\n    timeout_ms: \"${h}\"\n",
+            catalog(), ctx);
+        CHECK(!badTimeout.scenario.has_value());
+        CHECK(lines(badTimeout.findings).find("timeout_ms must be a whole number") != std::string::npos);
+
+        const ScenarioRead badSeed = read_scenario(
+            "vehicle_sil_scenario: 1\nparams: { h: 0x10 }\nsteps:\n"
+            "  - dither: { Body.level: { noise: { amplitude: 1, hold_ms: 10, seed: \"${h}\" } } }\n",
+            catalog(), ctx);
+        CHECK(!badSeed.scenario.has_value());
+        CHECK(lines(badSeed.findings).find("must be a whole number from 0") != std::string::npos);
+    }
+
+    // 7. Numeric and boolean template parameters reject quoted literals while accepting "${ref}" forwarding.
+    {
+        const ScenarioRead badQuoted = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - template: templates/typed_args.yaml\n"
+            "    params: { i: \"30\", n: \"0.5\", b: \"false\" }\n",
+            catalog(), ctx);
+        CHECK(!badQuoted.scenario.has_value());
+        CHECK(lines(badQuoted.findings).find("write the integer without quotes") != std::string::npos);
+        CHECK(lines(badQuoted.findings).find("write the number without quotes") != std::string::npos);
+        CHECK(lines(badQuoted.findings).find("write true or false without quotes") != std::string::npos);
+
+        const ScenarioRead okRef = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { ri: 30, rn: 0.5, rb: false }\n"
+            "steps:\n"
+            "  - template: templates/typed_args.yaml\n"
+            "    params: { i: \"${ri}\", n: \"${rn}\", b: \"${rb}\" }\n",
+            catalog(), ctx);
+        CHECK(okRef.scenario.has_value());
+        CHECK(std::get<std::int64_t>(okRef.scenario->steps[0].writes[0].value) == 30);
+    }
+}

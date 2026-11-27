@@ -264,10 +264,10 @@ public:
     /// Empty if the file is not a configuration of a known version (the finding says why).
     std::optional<SimulationConfig> read()
     {
-        const ryml::id_type root = doc_.root();
-        if (root == ryml::NONE || !tree_.is_map(root))
+        const ryml::id_type root = doc().root();
+        if (root == ryml::NONE || !tree().is_map(root))
         {
-            unreadable("not-a-configuration", root == ryml::NONE ? 0 : doc_.line(root),
+            unreadable("not-a-configuration", root == ryml::NONE ? 0 : doc().line(root),
                        "the file is not a configuration: it must be a mapping with vehicle_sil_simulation: 2, networks "
                        "and participants (docs/simulation-config.md)");
             return std::nullopt;
@@ -288,9 +288,9 @@ public:
             return std::nullopt;
         }
         SimulationConfig config;
-        if (const ryml::id_type second = doc_.second_document(); second != ryml::NONE)
+        if (const ryml::id_type second = doc().second_document(); second != ryml::NONE)
         {
-            error("unsupported-yaml", doc_.line(second),
+            error("unsupported-yaml", doc().line(second),
                   "a second document (after ---): a file has one configuration; only the first is read, so remove the "
                   "others or put them in files of their own");
         }
@@ -300,9 +300,9 @@ public:
         std::size_t participantsLine = 0;
         ryml::id_type variantsNode = ryml::NONE;
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(root); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            const std::string key = detail::to_string(tree_.key(child));
+            const std::string key = detail::to_string(tree().key(child));
             if (!first_occurrence(seen, key, child, ""))
             {
                 note_command_part(key, findings_.size() - 1); // the error duplicate-key: which one is meant is not known
@@ -322,7 +322,7 @@ public:
                 std::int64_t version = 0;
                 if (plain_integer(child, version) && version != kSimulationFormat)
                 {
-                    unreadable("format-version", doc_.line(child),
+                    unreadable("format-version", doc().line(child),
                                "vehicle_sil_simulation is " + std::to_string(version) +
                                    ", but this vehicle_sil_launch reads format " + std::to_string(kSimulationFormat) +
                                    " only: use the vehicle-sil that the file was written for");
@@ -330,7 +330,7 @@ public:
                 }
                 if (!plain_integer(child, version))
                 {
-                    error("format-version", doc_.line(child),
+                    error("format-version", doc().line(child),
                           "vehicle_sil_simulation must be the format version " + std::to_string(kSimulationFormat) +
                               ", not " + shown_value(child) + ": write vehicle_sil_simulation: " +
                               std::to_string(kSimulationFormat));
@@ -343,7 +343,7 @@ public:
                 note_command_part(key, before);
                 if (config.registry_uri && !is_loopback_registry_uri(*config.registry_uri))
                 {
-                    note("registry-on-network", doc_.line(child),
+                    note("registry-on-network", doc().line(child),
                          "registry_uri " + *config.registry_uri +
                              " is not a loopback address: the registry and the participants listen on the network, where "
                              "anyone who reaches this computer can join the simulation (SIL Kit does not authenticate); run "
@@ -366,7 +366,7 @@ public:
             else if (key == "participants")
             {
                 hasParticipants = true;
-                participantsLine = doc_.line(child);
+                participantsLine = doc().line(child);
                 const std::size_t before = findings_.size();
                 read_participants(child, config);
                 note_command_part(key, before);
@@ -425,20 +425,20 @@ private:
         std::int64_t value = 0;
         if (!plain_integer(node, value))
         {
-            const bool quoted = is_scalar(node) && tree_.is_val_quoted(node);
-            const std::string text = is_scalar(node) ? detail::to_string(tree_.val(node)) : std::string{};
+            const bool quoted = is_scalar(node) && tree().is_val_quoted(node);
+            const std::string text = is_scalar(node) ? detail::to_string(tree().val(node)) : std::string{};
             const bool digits = !quoted && !text.empty() && std::all_of(text.begin() + (text[0] == '-' ? 1 : 0), text.end(), [](char c) {
                 return std::isdigit(static_cast<unsigned char>(c)) != 0;
             }) && text != "-";
             if (digits) // only too many digits for an integer
             {
-                error("value", doc_.line(node),
+                error("value", doc().line(node),
                       prefix + key + " is " + text + ", but it must be from 1 to " + std::to_string(kMaxMillis) + " (" +
                           meaning + ")",
                       participant);
                 return std::nullopt;
             }
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + key + " must be a whole number (" + meaning + "), not " + shown_value(node) +
                       (quoted ? ": write the number without quotes" : ""),
                   participant);
@@ -446,7 +446,7 @@ private:
         }
         if (value < 1 || value > kMaxMillis)
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + key + " is " + std::to_string(value) + ", but it must be from 1 to " +
                       std::to_string(kMaxMillis) + " (" + meaning + ")",
                   participant);
@@ -458,9 +458,9 @@ private:
     std::optional<bool> boolean(ryml::id_type node, const std::string& prefix, const std::string& key,
                                 const std::string& participant)
     {
-        if (is_scalar(node) && !tree_.is_val_quoted(node))
+        if (is_scalar(node) && !tree().is_val_quoted(node))
         {
-            const std::string text = detail::to_string(tree_.val(node));
+            const std::string text = detail::to_string(tree().val(node));
             if (text == "true" || text == "True" || text == "TRUE")
             {
                 return true;
@@ -470,14 +470,14 @@ private:
                 return false;
             }
         }
-        error("value", doc_.line(node), prefix + key + " must be true or false, not " + shown_value(node), participant);
+        error("value", doc().line(node), prefix + key + " must be true or false, not " + shown_value(node), participant);
         return std::nullopt;
     }
 
     /// "silkit://<host>:<port>" (port 0: the registry takes a free port), or empty (and an error).
     std::optional<std::string> registry_uri(ryml::id_type node)
     {
-        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
+        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree().val(node)) : std::string{};
         const std::string scheme = "silkit://";
         const auto colon = text.rfind(':');
         std::int64_t port = -1;
@@ -492,7 +492,7 @@ private:
         });
         if (text.rfind(scheme, 0) != 0 || !hasPort || port < 0 || port > 65535 || !plain)
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   "registry_uri must be where the registry of the simulation listens, silkit://<host>:<port> with a port "
                   "from 0 to 65535 (e.g. silkit://127.0.0.1:8500, or silkit://0.0.0.0:8500 for other computers too; port "
                   "0: a free port, chosen when the run starts), not " +
@@ -506,13 +506,13 @@ private:
     std::optional<std::string> name(ryml::id_type node, const std::string& prefix, const std::string& what,
                                     const std::string& participant = {})
     {
-        if (!is_scalar(node) || is_null(node) || tree_.val(node).empty())
+        if (!is_scalar(node) || is_null(node) || tree().val(node).empty())
         {
-            error("value", doc_.line(node), prefix + "name must be the " + what + "'s name, not " + shown_value(node),
+            error("value", doc().line(node), prefix + "name must be the " + what + "'s name, not " + shown_value(node),
                   participant);
             return std::nullopt;
         }
-        const std::string text = detail::to_string(tree_.val(node));
+        const std::string text = detail::to_string(tree().val(node));
         const auto control = std::find_if(text.begin(), text.end(), [](char c) {
             return static_cast<unsigned char>(c) < 0x20 || c == 0x7F;
         });
@@ -520,7 +520,7 @@ private:
         {
             char code[8];
             std::snprintf(code, sizeof(code), "%02X", control != text.end() ? static_cast<unsigned char>(*control) : 0);
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "the " + what + "'s name must be text on one line" +
                       (control != text.end() ? std::string(" (it has the control character U+00") + code + ")"
                                              : std::string(" (it is not UTF-8)")) +
@@ -535,36 +535,36 @@ private:
 
     void read_networks(ryml::id_type node, SimulationConfig& config)
     {
-        if (!tree_.is_seq(node))
+        if (!tree().is_seq(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   "networks must be a list of networks (\"- name: <name>\" and " + kinds_text("\"kind: ", "\"") + "), not " +
                       shown_value(node));
             return;
         }
         std::map<std::string, std::size_t> names;
         std::size_t index = 0;
-        for (auto item = tree_.first_child(node); item != ryml::NONE; item = tree_.next_sibling(item), ++index)
+        for (auto item = tree().first_child(node); item != ryml::NONE; item = tree().next_sibling(item), ++index)
         {
             const std::string at = "networks[" + std::to_string(index) + "]";
-            if (!tree_.is_map(item))
+            if (!tree().is_map(item))
             {
-                error("value", doc_.line(item),
+                error("value", doc().line(item),
                       at + " must be a network with name and kind (" + kinds_text() + "), not " + shown_value(item));
                 continue;
             }
             NetworkConfig network;
-            network.line = doc_.line(item);
-            const auto nameNode = tree_.find_child(item, "name");
+            network.line = doc().line(item);
+            const auto nameNode = tree().find_child(item, "name");
             const auto name = nameNode == ryml::NONE ? std::nullopt : this->name(nameNode, at + ": ", "network");
             const std::string prefix = name ? "network '" + *name + "': " : at + ": ";
             bool kindRead = false;
             bool hasKind = false;
             ryml::id_type externalNode = ryml::NONE;
             std::map<std::string, std::size_t> seen;
-            for (auto child = tree_.first_child(item); child != ryml::NONE; child = tree_.next_sibling(child))
+            for (auto child = tree().first_child(item); child != ryml::NONE; child = tree().next_sibling(child))
             {
-                const std::string key = detail::to_string(tree_.key(child));
+                const std::string key = detail::to_string(tree().key(child));
                 if (!first_occurrence(seen, key, child, prefix))
                 {
                     continue;
@@ -588,7 +588,7 @@ private:
                 }
                 else if (is_external_key(key))
                 {
-                    error("unknown-key", doc_.line(child),
+                    error("unknown-key", doc().line(child),
                           prefix + "unknown key '" + key + "': move it into external (external: { " + key +
                               ": ... }), which says how the network behaves when it is connected outside (the keys "
                               "here: " + join(kNetworkKeys) + ")",
@@ -634,13 +634,13 @@ private:
 
     std::optional<NetworkKind> read_kind(ryml::id_type node, const std::string& prefix, const std::string& network)
     {
-        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
+        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree().val(node)) : std::string{};
         if (const auto kind = network_kind_named(text))
         {
             return kind;
         }
         const std::string low = lower(text);
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               prefix + "kind is " + shown_value(node) + ": write " +
                   (network_kind_named(low) ? low + " (lower case)" : kinds_text() + " (the kinds of network there are)"),
               "", network);
@@ -654,7 +654,7 @@ private:
     {
         if (kind != NetworkKind::Can && kind != NetworkKind::Ethernet)
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "external is for a network that can be connected outside (can, ethernet); there is no bridge "
                            "for a " + to_string(kind) + " network, so it runs on SIL Kit only: remove external",
                   "", network);
@@ -664,9 +664,9 @@ private:
         const std::vector<std::string>& keys = can ? kExternalCanKeys : kExternalEthernetKeys;
         const std::vector<std::string>& otherKeys = can ? kExternalEthernetKeys : kExternalCanKeys;
         const std::string example = can ? "external: { bitrate: 500000 }" : "external: { ethertypes: [0x88b5] }";
-        if (!tree_.is_map(node))
+        if (!tree().is_map(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "external must be a mapping (the keys of " + (can ? "a can" : "an ethernet") +
                       " network: " + join(keys) + "), e.g. " + example + ", not " + shown_value(node),
                   "", network);
@@ -674,13 +674,13 @@ private:
         }
         const std::string at = prefix + "external.";
         NetworkExternal external;
-        external.line = doc_.line(node);
+        external.line = doc().line(node);
         bool ok = true;
         ryml::id_type allFramesNode = ryml::NONE;
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            const std::string key = detail::to_string(tree_.key(child));
+            const std::string key = detail::to_string(tree().key(child));
             if (!first_occurrence(seen, key, child, prefix + "external: "))
             {
                 ok = false;
@@ -695,7 +695,7 @@ private:
             {
                 if (std::find(otherKeys.begin(), otherKeys.end(), key) != otherKeys.end())
                 {
-                    error("unknown-key", doc_.line(child),
+                    error("unknown-key", doc().line(child),
                           prefix + "external: unknown key '" + key + "': it is for " + (can ? "an ethernet" : "a can") +
                               " network, and this one is " + to_string(kind) + " (the keys here: " + join(keys) + ")",
                           "", network);
@@ -711,7 +711,7 @@ private:
                 const auto value = whole_number(child, kMaxCanBitrate);
                 if (!value || *value == 0)
                 {
-                    error("value", doc_.line(child),
+                    error("value", doc().line(child),
                           at + "bitrate must be the bit rate in bit/s, a whole number from 1 to " +
                               std::to_string(kMaxCanBitrate) + " (e.g. 500000), not " + shown_value(child),
                           "", network);
@@ -738,7 +738,7 @@ private:
         }
         if (external.all_frames && !external.ethertypes.empty())
         {
-            error("value", doc_.line(allFramesNode),
+            error("value", doc().line(allFramesNode),
                   at + "all_frames: true passes every frame, so it cannot go with ethertypes: keep one or the other",
                   "", network);
             ok = false;
@@ -750,7 +750,7 @@ private:
     void connect_in_file(ryml::id_type node, const std::string& what, const std::vector<std::string>& keys,
                          const std::string& network)
     {
-        error("unknown-key", doc_.line(node),
+        error("unknown-key", doc().line(node),
               what + ": where a network is connected is not written in the file, since it differs from PC to PC: "
                      "remove connect, and give it when you start: vehicle_sil_launch check|run --connect " +
                   (network.empty() ? std::string("<network>") : network) +
@@ -769,29 +769,29 @@ private:
                          std::vector<std::uint16_t>& out)
     {
         constexpr const char* kForms = "0x88b5, 34997, or \"0x88b5\" in quotes";
-        if (!tree_.is_seq(node))
+        if (!tree().is_seq(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   at + "ethertypes must be a list of EtherTypes (" + kForms + "), e.g. ethertypes: [0x88b5, 0x0800], not " +
                       shown_value(node),
                   "", network);
             return false;
         }
-        if (tree_.first_child(node) == ryml::NONE)
+        if (tree().first_child(node) == ryml::NONE)
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   at + "ethertypes is empty: list the EtherTypes to pass, e.g. ethertypes: [0x88b5], or remove ethertypes",
                   "", network);
             return false;
         }
         bool ok = true;
         std::size_t index = 0;
-        for (auto item = tree_.first_child(node); item != ryml::NONE; item = tree_.next_sibling(item), ++index)
+        for (auto item = tree().first_child(node); item != ryml::NONE; item = tree().next_sibling(item), ++index)
         {
             const auto value = ethertype(item);
             if (!value)
             {
-                error("value", doc_.line(item),
+                error("value", doc().line(item),
                       at + "ethertypes[" + std::to_string(index) + "] must be an EtherType from 0 to 0xFFFF (" + kForms +
                           "), not " + shown_value(item),
                       "", network);
@@ -802,7 +802,7 @@ private:
             {
                 char text[8];
                 std::snprintf(text, sizeof(text), "0x%04x", static_cast<unsigned>(*value));
-                error("value", doc_.line(item), at + "ethertypes lists " + text + " twice: keep one", "", network);
+                error("value", doc().line(item), at + "ethertypes lists " + text + " twice: keep one", "", network);
                 ok = false;
                 continue;
             }
@@ -815,9 +815,9 @@ private:
     /// digits (JSON cannot write a hexadecimal number); empty if it is neither.
     std::optional<std::uint16_t> ethertype(ryml::id_type node) const
     {
-        if (is_scalar(node) && tree_.is_val_quoted(node))
+        if (is_scalar(node) && tree().is_val_quoted(node))
         {
-            const std::string text = detail::to_string(tree_.val(node));
+            const std::string text = detail::to_string(tree().val(node));
             const Hex hex = read_hex(text);
             return hex.kind == Hex::Kind::Read && text.size() <= 6 ? std::optional(static_cast<std::uint16_t>(hex.magnitude))
                                                                    : std::nullopt;
@@ -828,13 +828,13 @@ private:
 
     std::optional<ParticipantRole> read_role(ryml::id_type node, const std::string& prefix, const std::string& participant)
     {
-        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
+        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree().val(node)) : std::string{};
         if (const auto role = participant_role_named(text))
         {
             return role;
         }
         const std::string low = lower(text);
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               prefix + "role is " + shown_value(node) + ": write " +
                   (participant_role_named(low) ? low + " (lower case)" : roles_text() + " (" + kRoleMeanings + ")"),
               participant);
@@ -845,34 +845,34 @@ private:
 
     void read_participants(ryml::id_type node, SimulationConfig& config)
     {
-        if (!tree_.is_seq(node))
+        if (!tree().is_seq(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   "participants must be a list of participants (\"- name: <name>\" and \"command: [<executable>]\"), not " +
                       shown_value(node));
             return;
         }
-        if (tree_.num_children(node) == 0)
+        if (tree().num_children(node) == 0)
         {
-            error("value", doc_.line(node), "participants is empty: list the participants of the simulation");
+            error("value", doc().line(node), "participants is empty: list the participants of the simulation");
             return;
         }
         std::map<std::string, std::size_t> names;
         std::size_t index = 0;
-        for (auto item = tree_.first_child(node); item != ryml::NONE; item = tree_.next_sibling(item), ++index)
+        for (auto item = tree().first_child(node); item != ryml::NONE; item = tree().next_sibling(item), ++index)
         {
             const std::string at = "participants[" + std::to_string(index) + "]";
-            if (!tree_.is_map(item))
+            if (!tree().is_map(item))
             {
-                error("value", doc_.line(item),
+                error("value", doc().line(item),
                       at + " must be a participant with name and command, not " + shown_value(item));
                 continue;
             }
             ParticipantConfig participant;
-            participant.line = doc_.line(item);
+            participant.line = doc().line(item);
             participant.command_line = participant.line;
             participant.step_line = participant.line;
-            const auto nameNode = tree_.find_child(item, "name");
+            const auto nameNode = tree().find_child(item, "name");
             const auto name = nameNode == ryml::NONE ? std::nullopt : this->name(nameNode, at + ": ", "participant");
             const std::string who = name.value_or("");
             const std::string prefix = name ? "participant '" + *name + "': " : at + ": ";
@@ -883,9 +883,9 @@ private:
             bool describeRead = true;
             std::size_t requiredLine = 0;
             std::map<std::string, std::size_t> seen;
-            for (auto child = tree_.first_child(item); child != ryml::NONE; child = tree_.next_sibling(child))
+            for (auto child = tree().first_child(item); child != ryml::NONE; child = tree().next_sibling(child))
             {
-                const std::string key = detail::to_string(tree_.key(child));
+                const std::string key = detail::to_string(tree().key(child));
                 if (!first_occurrence(seen, key, child, prefix))
                 {
                     continue;
@@ -893,13 +893,13 @@ private:
                 if (key == "command")
                 {
                     hasCommand = true;
-                    participant.command_line = doc_.line(child);
+                    participant.command_line = doc().line(child);
                     read_command(child, prefix, who, participant);
                     usable = usable && !participant.command.empty();
                 }
                 else if (key == "step_ms")
                 {
-                    participant.step_line = doc_.line(child);
+                    participant.step_line = doc().line(child);
                     participant.step_ms = millis(child, prefix, key, "the step the executable reports", who);
                 }
                 else if (key == "describe")
@@ -911,7 +911,7 @@ private:
                 }
                 else if (key == "required")
                 {
-                    requiredLine = doc_.line(child);
+                    requiredLine = doc().line(child);
                     participant.required = boolean(child, prefix, key, who).value_or(true);
                 }
                 else if (key == "enabled")
@@ -955,14 +955,14 @@ private:
             }
             else if (name && name->front() == '-')
             {
-                error("value", doc_.line(nameNode),
+                error("value", doc().line(nameNode),
                       prefix + "a participant's name must not start with '-' (the executable would read it as an option)",
                       who);
                 usable = false;
             }
             else if (name && *name == kControllerName)
             {
-                error("reserved-name", doc_.line(nameNode),
+                error("reserved-name", doc().line(nameNode),
                       prefix + "the name " + std::string(kControllerName) +
                           " is the controller's, which vehicle_sil_launch runs: choose another name",
                       who);
@@ -1029,20 +1029,20 @@ private:
 
     void read_variants(ryml::id_type node, SimulationConfig& config)
     {
-        if (!tree_.is_map(node) || tree_.num_children(node) == 0)
+        if (!tree().is_map(node) || tree().num_children(node) == 0)
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   std::string("variants must be a mapping of variant names to what each changes of the common part (") +
-                      kVariantsForm + "), not " + (tree_.is_map(node) ? std::string("an empty mapping") : shown_value(node)) +
+                      kVariantsForm + "), not " + (tree().is_map(node) ? std::string("an empty mapping") : shown_value(node)) +
                       "; for a simulation without variants, remove variants");
             return;
         }
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
             VariantConfig variant;
-            variant.name = detail::to_string(tree_.key(child));
-            variant.line = doc_.line(child);
+            variant.name = detail::to_string(tree().key(child));
+            variant.line = doc().line(child);
             if (!first_occurrence(seen, variant.name, child, "variants: "))
             {
                 continue;
@@ -1069,17 +1069,17 @@ private:
         {
             return; // "small:" is the common part as it is, as "small: {}"
         }
-        if (!tree_.is_map(node))
+        if (!tree().is_map(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "must be a mapping of what the variant changes (" + join(kVariantKeys) +
                       "), or {} for the common part as it is, not " + shown_value(node));
             return;
         }
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            const std::string key = detail::to_string(tree_.key(child));
+            const std::string key = detail::to_string(tree().key(child));
             if (!first_occurrence(seen, key, child, prefix))
             {
                 continue;
@@ -1102,9 +1102,9 @@ private:
     void read_variant_participants(ryml::id_type node, const std::string& prefix, const SimulationConfig& config,
                                    VariantConfig& variant)
     {
-        if (!tree_.is_map(node))
+        if (!tree().is_map(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "participants must be a mapping of the participants' names to what the variant changes of each "
                            "(participants: { Engine: { command: [./engine_medium] } }), not " + shown_value(node));
             return;
@@ -1118,11 +1118,11 @@ private:
             }
         }
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
             VariantParticipant change;
-            change.name = detail::to_string(tree_.key(child));
-            change.line = doc_.line(child);
+            change.name = detail::to_string(tree().key(child));
+            change.line = doc().line(child);
             if (!first_occurrence(seen, change.name, child, prefix + "participants: "))
             {
                 continue;
@@ -1142,7 +1142,7 @@ private:
             }
             const std::string who = change.name;
             const std::string at = prefix + "participant '" + who + "': ";
-            if (!tree_.is_map(child))
+            if (!tree().is_map(child))
             {
                 error("value", change.line,
                       at + "must be a mapping of what the variant changes of it (" + join(kVariantParticipantKeys) + "), not " +
@@ -1151,9 +1151,9 @@ private:
                 continue;
             }
             std::map<std::string, std::size_t> keys;
-            for (auto part = tree_.first_child(child); part != ryml::NONE; part = tree_.next_sibling(part))
+            for (auto part = tree().first_child(child); part != ryml::NONE; part = tree().next_sibling(part))
             {
-                const std::string key = detail::to_string(tree_.key(part));
+                const std::string key = detail::to_string(tree().key(part));
                 if (!first_occurrence(keys, key, part, at))
                 {
                     continue;
@@ -1164,7 +1164,7 @@ private:
                     ParticipantConfig with;
                     with.name = who;
                     with.describe = base->describe;
-                    with.command_line = doc_.line(part);
+                    with.command_line = doc().line(part);
                     read_command(part, at, who, with);
                     change.command_line = with.command_line;
                     change.valid = !with.command.empty() && check_arguments(at, who, with) && change.valid;
@@ -1208,9 +1208,9 @@ private:
     bool read_network_names(ryml::id_type node, const std::string& prefix, const std::string& who,
                             std::vector<NetworkName>& names)
     {
-        if (!tree_.is_map(node))
+        if (!tree().is_map(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "network_names must be a mapping of the simulation's network names (the names in networks) "
                            "to the names the executable's code gives them (network_names: { VehicleCAN: J1939_CAN }), "
                            "not " + shown_value(node),
@@ -1219,17 +1219,17 @@ private:
         }
         bool ok = true;
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
             NetworkName entry;
-            entry.name = detail::to_string(tree_.key(child));
-            entry.line = doc_.line(child);
+            entry.name = detail::to_string(tree().key(child));
+            entry.line = doc().line(child);
             if (!first_occurrence(seen, entry.name, child, prefix + "network_names: "))
             {
                 ok = false;
                 continue;
             }
-            if (!is_scalar(child) || is_null(child) || tree_.val(child).empty())
+            if (!is_scalar(child) || is_null(child) || tree().val(child).empty())
             {
                 error("value", entry.line,
                       prefix + "network_names: '" + entry.name + "' must have the name the executable's code gives this "
@@ -1238,7 +1238,7 @@ private:
                 ok = false;
                 continue;
             }
-            entry.from = detail::to_string(tree_.val(child));
+            entry.from = detail::to_string(tree().val(child));
             // run gives "--map-network <key>=<value>", which the executable splits at the first '='.
             if (entry.name.empty() || entry.name.front() == '-' || entry.name.find('=') != std::string::npos)
             {
@@ -1449,11 +1449,11 @@ private:
     /// if the value is not one.
     std::optional<std::uint32_t> whole_number(ryml::id_type node, std::uint32_t max) const
     {
-        if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
+        if (!is_scalar(node) || tree().is_val_quoted(node) || is_null(node))
         {
             return std::nullopt;
         }
-        std::string text = detail::to_string(tree_.val(node));
+        std::string text = detail::to_string(tree().val(node));
         if (text.size() > 1 && (text[1] == 'X' || text[1] == 'O'))
         {
             return std::nullopt;
@@ -1495,20 +1495,20 @@ private:
     bool read_j1939_nodes(ryml::id_type node, const std::string& prefix, const std::string& who,
                           std::vector<J1939NodeEntry>& entries)
     {
-        if (!tree_.is_seq(node))
+        if (!tree().is_seq(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "j1939_nodes must be a list of the J1939 nodes to change, each with its network and the "
                            "settings to change (j1939_nodes: [" + kJ1939NodeForm + "]), not " + shown_value(node),
                   who);
             return false;
         }
         bool ok = true;
-        for (auto item = tree_.first_child(node); item != ryml::NONE; item = tree_.next_sibling(item))
+        for (auto item = tree().first_child(node); item != ryml::NONE; item = tree().next_sibling(item))
         {
-            if (!tree_.is_map(item))
+            if (!tree().is_map(item))
             {
-                error("value", doc_.line(item),
+                error("value", doc().line(item),
                       prefix + "j1939_nodes: an entry must be a mapping with network and the settings to change (" +
                           kJ1939NodeForm + "), not " + shown_value(item),
                       who);
@@ -1531,13 +1531,13 @@ private:
     std::optional<J1939NodeEntry> read_j1939_node(ryml::id_type node, const std::string& prefix, const std::string& who)
     {
         J1939NodeEntry entry;
-        entry.line = doc_.line(node);
+        entry.line = doc().line(node);
         bool ok = true;
         bool hasNetwork = false;
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            const std::string key = detail::to_string(tree_.key(child));
+            const std::string key = detail::to_string(tree().key(child));
             if (!first_occurrence(seen, key, child, prefix))
             {
                 ok = false;
@@ -1546,20 +1546,20 @@ private:
             if (key == "network")
             {
                 hasNetwork = true;
-                if (!is_scalar(child) || is_null(child) || tree_.val(child).empty())
+                if (!is_scalar(child) || is_null(child) || tree().val(child).empty())
                 {
-                    error("value", doc_.line(child),
+                    error("value", doc().line(child),
                           prefix + "network must be the simulation's name of the node's CAN network (a name in "
                                    "networks), not " + shown_value(child),
                           who);
                     ok = false;
                     continue;
                 }
-                entry.network = detail::to_string(tree_.val(child));
+                entry.network = detail::to_string(tree().val(child));
                 // run gives "--j1939-node <network>=<settings>", which the executable splits at the first '='.
                 if (entry.network.front() == '-' || entry.network.find('=') != std::string::npos)
                 {
-                    error("value", doc_.line(child),
+                    error("value", doc().line(child),
                           prefix + "the network '" + entry.network + "' cannot be given to the executable (run passes "
                                    "--j1939-node <network>=<settings>, which is split at the first '='): a network with "
                                    "j1939_nodes needs a name that has no '=' and does not start with '-'; change the "
@@ -1591,7 +1591,7 @@ private:
                 const std::string any = key == "from"      ? "; 254: a node that takes any free address"
                                         : key == "address" ? "; 254: any free address"
                                                            : std::string{};
-                error("value", doc_.line(child),
+                error("value", doc().line(child),
                       prefix + key + " must be " + meaning + "a number from 0 to " + std::to_string(max) +
                           " (decimal, or 0x.. in hexadecimal" + any + "), not " + shown_value(child),
                       who, entry.network);
@@ -1901,18 +1901,18 @@ private:
 
     void read_variables(ryml::id_type node, const std::string& prefix, const std::string& who, ParticipantConfig& participant)
     {
-        if (!tree_.is_map(node))
+        if (!tree().is_map(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "variables must be a mapping of the names the simulation uses to the executable's variables "
                            "(engine.speed: rpm), not " + shown_value(node),
                   who);
             return;
         }
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            const std::string name = detail::to_string(tree_.key(child));
+            const std::string name = detail::to_string(tree().key(child));
             if (!first_occurrence(seen, name, child, prefix + "variables: "))
             {
                 continue;
@@ -1920,7 +1920,7 @@ private:
             if (auto mapping = read_variable(child, name, prefix + "variables: " + name + ": ", who))
             {
                 participant.variables.push_back(std::move(*mapping));
-                participant.variable_lines.push_back(doc_.line(child));
+                participant.variable_lines.push_back(doc().line(child));
             }
         }
     }
@@ -1929,7 +1929,7 @@ private:
     std::optional<control::VariableMapping> read_variable(ryml::id_type node, const std::string& name,
                                                           const std::string& prefix, const std::string& who)
     {
-        const std::size_t line = doc_.line(node);
+        const std::size_t line = doc().line(node);
         control::VariableMapping out;
         out.name = name;
         if (name.empty())
@@ -1937,38 +1937,38 @@ private:
             error("value", line, prefix + "the name the simulation uses for the variable is empty: write it before the ':'", who);
             return std::nullopt;
         }
-        if (is_scalar(node) && !is_null(node) && !tree_.val(node).empty())
+        if (is_scalar(node) && !is_null(node) && !tree().val(node).empty())
         {
-            out.from = detail::to_string(tree_.val(node));
+            out.from = detail::to_string(tree().val(node));
             return out;
         }
-        if (!tree_.is_map(node))
+        if (!tree().is_map(node))
         {
             error("value", line, prefix + "must be " + kVariableForms + ", not " + shown_value(node), who);
             return std::nullopt;
         }
         bool ok = true;
         const auto bad = [&](ryml::id_type at, const std::string& text) {
-            error("value", doc_.line(at), prefix + text, who);
+            error("value", doc().line(at), prefix + text, who);
             ok = false;
         };
         std::map<std::string, std::size_t> seen;
         bool absentWritten = false;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
-            const std::string key = detail::to_string(tree_.key(child));
+            const std::string key = detail::to_string(tree().key(child));
             if (!first_occurrence(seen, key, child, prefix))
             {
                 ok = false;
             }
             else if (key == "from")
             {
-                if (!is_scalar(child) || is_null(child) || tree_.val(child).empty())
+                if (!is_scalar(child) || is_null(child) || tree().val(child).empty())
                 {
                     bad(child, "from must be the executable's name of the variable, not " + shown_value(child));
                     continue;
                 }
-                out.from = detail::to_string(tree_.val(child));
+                out.from = detail::to_string(tree().val(child));
             }
             else if (key == "scale" || key == "offset")
             {
@@ -1993,7 +1993,7 @@ private:
                     bad(child, "unit must be the unit of the value seen (a text such as rpm), not " + shown_value(child));
                     continue;
                 }
-                out.unit = is_null(child) ? std::string{} : detail::to_string(tree_.val(child));
+                out.unit = is_null(child) ? std::string{} : detail::to_string(tree().val(child));
             }
             else if (key == "absent")
             {
@@ -2042,19 +2042,19 @@ private:
     std::optional<std::vector<control::EnumItem>> read_value_names(ryml::id_type node, const std::string& prefix,
                                                                    const std::string& who)
     {
-        if (!tree_.is_map(node) || tree_.num_children(node) == 0)
+        if (!tree().is_map(node) || tree().num_children(node) == 0)
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "map must give the names of the executable's values ({ P: 0, R: 1 }), not " + shown_value(node), who);
             return std::nullopt;
         }
         std::vector<control::EnumItem> items;
         std::map<std::string, std::size_t> seen;
         bool ok = true;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
             control::EnumItem item;
-            item.name = detail::to_string(tree_.key(child));
+            item.name = detail::to_string(tree().key(child));
             if (!first_occurrence(seen, item.name, child, prefix + "map: "))
             {
                 ok = false;
@@ -2062,7 +2062,7 @@ private:
             }
             if (item.name.empty() || !plain_integer(child, item.value))
             {
-                error("value", doc_.line(child),
+                error("value", doc().line(child),
                       prefix + "map: " + (item.name.empty() ? "a name is empty" : item.name + " must be the executable's value "
                                                                                   "for that name, a whole number, not " +
                                                                                       shown_value(child)),
@@ -2074,7 +2074,7 @@ private:
                                            [&](const control::EnumItem& e) { return e.value == item.value; });
             if (same != items.end())
             {
-                error("value", doc_.line(child),
+                error("value", doc().line(child),
                       prefix + "map: " + same->name + " and " + item.name + " are both " + std::to_string(item.value) +
                           ": give each value one name",
                       who);
@@ -2088,29 +2088,29 @@ private:
 
     void read_command(ryml::id_type node, const std::string& prefix, const std::string& who, ParticipantConfig& participant)
     {
-        const std::size_t line = doc_.line(node);
+        const std::size_t line = doc().line(node);
         if (is_scalar(node) && !is_null(node))
         {
-            participant.command.push_back(detail::to_string(tree_.val(node)));
+            participant.command.push_back(detail::to_string(tree().val(node)));
         }
-        else if (tree_.is_seq(node))
+        else if (tree().is_seq(node))
         {
             std::size_t index = 0;
-            for (auto item = tree_.first_child(node); item != ryml::NONE; item = tree_.next_sibling(item), ++index)
+            for (auto item = tree().first_child(node); item != ryml::NONE; item = tree().next_sibling(item), ++index)
             {
                 if (is_scalar(item) && !is_null(item))
                 {
-                    participant.command.push_back(detail::to_string(tree_.val(item)));
+                    participant.command.push_back(detail::to_string(tree().val(item)));
                     continue;
                 }
                 // "- {name}" or "[..., {name}]" without quotes is a YAML mapping.
                 std::string hint;
-                if (tree_.is_map(item) && tree_.num_children(item) == 1)
+                if (tree().is_map(item) && tree().num_children(item) == 1)
                 {
-                    const std::string word = "{" + detail::to_string(tree_.key(tree_.first_child(item))) + "}";
+                    const std::string word = "{" + detail::to_string(tree().key(tree().first_child(item))) + "}";
                     hint = ": write \"" + word + "\" in quotes (without them, YAML reads {...} as a mapping)";
                 }
-                error("value", doc_.line(item),
+                error("value", doc().line(item),
                       prefix + "command[" + std::to_string(index) + "] must be a text, not " + shown_value(item) + hint, who);
                 participant.command.clear();
                 return;

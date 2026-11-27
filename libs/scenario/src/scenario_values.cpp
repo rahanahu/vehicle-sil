@@ -85,17 +85,17 @@ std::string Reader::written(ryml::id_type node, double value) const
     return hex_of(node).kind == Hex::Kind::Read ? text_of(node) + " (" + number_text(value) + ")" : number_text(value);
 }
 
-std::optional<std::size_t> Reader::variable(ryml::id_type node)
+std::optional<std::size_t> Reader::variable_by_name(std::string_view raw_name, std::size_t line,
+                                                    std::vector<std::string>& absent)
 {
-    const std::string text = config::detail::to_string(tree().key(node));
-    const std::size_t line = doc().line(node);
+    const std::string text(raw_name);
     if (const auto known = variable_index_.find(text); known != variable_index_.end())
     {
         return known->second;
     }
     if (absent_variables_.count(text) > 0)
     {
-        absent_.push_back(text);
+        absent.push_back(text);
         return std::nullopt;
     }
     if (bad_variables_.count(text) > 0)
@@ -139,7 +139,7 @@ std::optional<std::size_t> Reader::variable(ryml::id_type node)
         bad_variables_.erase(text);
         absent_variables_.emplace(text, participant);
         left_out_.insert(participant);
-        absent_.push_back(text);
+        absent.push_back(text);
         return std::nullopt;
     }
     if (!p->unusable.empty())
@@ -154,7 +154,7 @@ std::optional<std::size_t> Reader::variable(ryml::id_type node)
         // Said to be missing on purpose: no error, the step is skipped (read_step()).
         bad_variables_.erase(text);
         absent_variables_.emplace(text, participant);
-        absent_.push_back(text);
+        absent.push_back(text);
         return std::nullopt;
     }
     if (v == p->variables.end())
@@ -196,6 +196,11 @@ std::optional<std::size_t> Reader::variable(ryml::id_type node)
     return scenario_.variables.size() - 1;
 }
 
+std::optional<std::size_t> Reader::variable(ryml::id_type node, std::vector<std::string>& absent)
+{
+    return variable_by_name(config::detail::to_string(tree().key(node)), doc().line(node), absent);
+}
+
 std::string Reader::example_variable() const
 {
     for (const auto& c : catalog_)
@@ -208,7 +213,8 @@ std::string Reader::example_variable() const
     return "Engine.engine.speed";
 }
 
-std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t variable, const std::string& what, bool write)
+std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t variable, const std::string& what, bool write,
+                                               StepReadState* state)
 {
     const ScenarioVariable& v = scenario_.variables[variable];
     const control::VariableInfo& info = *info_of(variable);
@@ -225,6 +231,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
     switch (v.type)
     {
     case control::ValueType::Bool:
+        record_direct_param_usage(node, ParamType::Boolean);
         if (!quoted && (text == "true" || text == "false"))
         {
             out = control::Value{text == "true"};
@@ -236,6 +243,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
         break;
     case control::ValueType::Integer:
     {
+        record_direct_param_usage(node, write ? ParamType::Integer : ParamType::Number);
         std::int64_t i = 0;
         double d = 0;
         if (whole_number(node, i))
@@ -256,6 +264,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
     }
     case control::ValueType::Real:
     {
+        record_direct_param_usage(node, ParamType::Number);
         double d = 0;
         if (plain_number(node, d))
         {
@@ -271,8 +280,13 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
     }
     case control::ValueType::Enum:
     {
+        const bool cliString = is_cli_string_param(node);
         std::int64_t i = 0;
-        const bool number = whole_number(node, i);
+        const bool number = !cliString && whole_number(node, i);
+        if (number)
+        {
+            record_direct_param_usage(node, ParamType::Integer);
+        }
         const auto item = std::find_if(info.items.begin(), info.items.end(), [&](const control::EnumItem& e) {
             return number ? e.value == i : e.name == text;
         });
@@ -305,9 +319,9 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
                                           ", outside its range (" + range_text(info) + ")");
         return std::nullopt;
     }
-    if (out && write && (v.type == control::ValueType::Integer || v.type == control::ValueType::Real))
+    if (out && write && state != nullptr && (v.type == control::ValueType::Integer || v.type == control::ValueType::Real))
     {
-        note_base(variable, as_number(*out), line, true);
+        note_base(*state, variable, as_number(*out), line, true);
     }
     return out;
 }
