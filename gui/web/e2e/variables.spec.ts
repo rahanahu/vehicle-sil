@@ -21,10 +21,8 @@ const CONTROL_FEATURES =
 let server: GuiServer;
 let target: Target;
 
-test.beforeAll(async () => {
-  // 開発サーバーの形（e2e:dev）では回さない（同じ画面。サーバーを別に起動するので、ビルドした画面で 1 回）
-  test.skip(test.info().project.name !== 'static', 'only with the built screen');
-  server = await launchGuiServer({
+function startServer(): Promise<GuiServer> {
+  return launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
     env: {
@@ -34,6 +32,12 @@ test.beforeAll(async () => {
     },
     port: 0,
   });
+}
+
+test.beforeAll(async () => {
+  // 開発サーバーの形（e2e:dev）では回さない（同じ画面。サーバーを別に起動するので、ビルドした画面で 1 回）
+  test.skip(test.info().project.name !== 'static', 'only with the built screen');
+  server = await startServer();
   target = { base: new URL('/', server.url).href, token: server.token };
 });
 
@@ -164,17 +168,27 @@ test.describe('in English', () => {
   test.use({ locale: 'en-US' });
 
   test('the variables page has no Japanese left, with and without a run', async ({ page }) => {
-    await page.goto(`${target.base}variables#token=${target.token}`);
-    await expect(page.getByRole('heading', { level: 1, name: 'Variables' })).toBeVisible();
-    await expect(page).toHaveTitle('Variables - vehicle-sil');
-    const content = page.locator('app-variables-page');
-    await expect(page.getByTestId('variables-no-run')).toBeVisible();
-    expect(await content.innerText()).not.toMatch(/[぀-ヿ一-鿿]/);
+    const freshServer = await startServer();
+    const freshTarget: Target = {
+      base: new URL('/', freshServer.url).href,
+      token: freshServer.token,
+    };
+    try {
+      await page.goto(`${freshTarget.base}variables#token=${freshTarget.token}`);
+      await expect(page.getByRole('heading', { level: 1, name: 'Variables' })).toBeVisible();
+      await expect(page).toHaveTitle('Variables - vehicle-sil');
+      const content = page.locator('app-variables-page');
+      await expect(page.getByTestId('variables-no-run')).toBeVisible();
+      expect(await content.innerText()).not.toMatch(/[぀-ヿ一-鿿]/);
 
-    await startRun(page, target, 'forever.yaml');
-    await expect(page.getByTestId('dashboard-section')).toHaveText(['Engine', 'Dashboard']);
-    await expect(widgetValue(page, 'Engine', 'engine.speed')).not.toHaveText('');
-    // 変数の名前、型、値はランチャーと ECU のもの（英字）
-    expect(await content.innerText()).not.toMatch(/[぀-ヿ一-鿿]/);
+      await startRun(page, freshTarget, 'forever.yaml');
+      await expect(page.getByTestId('dashboard-section')).toHaveText(['Engine', 'Dashboard']);
+      await expect(widgetValue(page, 'Engine', 'engine.speed')).not.toHaveText('');
+      // 変数の名前、型、値はランチャーと ECU のもの（英字）
+      expect(await content.innerText()).not.toMatch(/[぀-ヿ一-鿿]/);
+    } finally {
+      await stopRun(page, freshTarget).catch(() => undefined);
+      await freshServer.stop();
+    }
   });
 });

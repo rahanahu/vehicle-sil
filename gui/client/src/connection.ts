@@ -45,6 +45,25 @@ export const STEADY_MS = 30_000;
 const NOT_OPENED = 1006;
 
 /**
+ * Notifications whose arrival settles initial sync, a command acknowledgement, a write operation, or an error:
+ * flushed on a microtask rather than waiting up to BATCH_MS.
+ */
+function isImmediateMessage(message: unknown): boolean {
+  if (typeof message !== 'object' || message === null) return false;
+  const type = (message as { type?: unknown }).type;
+  if (type === 'synced' || type === 'operation' || type === 'error') return true;
+  if (type === 'event') {
+    const inner = (message as { event?: unknown }).event;
+    return (
+      typeof inner === 'object' &&
+      inner !== null &&
+      (inner as { event?: unknown }).event === 'command'
+    );
+  }
+  return false;
+}
+
+/**
  * SocketFactory that opens the standard WebSocket (browsers, Web Workers, globalThis.WebSocket of Node 22 or later).
  * With origin, the handshake carries Origin (for Node; uses the `{headers}` extension of Node's WebSocket; browser and
  * Worker WebSockets read a second argument as subprotocols, so it is not passed there). If the socket cannot be opened
@@ -162,6 +181,7 @@ export class Connection implements ClientConnection {
   private steadyTimer: ReturnType<typeof setTimeout> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private batchTimer: ReturnType<typeof setTimeout> | undefined;
+  private flushQueued = false;
   private pending: unknown[] = [];
 
   readonly state: Readable<ConnectionState>;
@@ -266,6 +286,7 @@ export class Connection implements ClientConnection {
   flush(): void {
     clearTimeout(this.batchTimer);
     this.batchTimer = undefined;
+    this.flushQueued = false;
     const batch = this.pending;
     this.pending = [];
     if (batch.length === 0) return;
@@ -275,9 +296,20 @@ export class Connection implements ClientConnection {
     if (!this.restartAsked) this.restarts = 0;
   }
 
+  private scheduleImmediateFlush(): void {
+    if (this.flushQueued) return;
+    this.flushQueued = true;
+    const revision = this.attemptRevision;
+    queueMicrotask(() => {
+      if (!this.wanted || !this.flushQueued || this.attemptRevision !== revision) return;
+      this.flush();
+    });
+  }
+
   private dropPending(): void {
     clearTimeout(this.batchTimer);
     this.batchTimer = undefined;
+    this.flushQueued = false;
     this.pending = [];
   }
 
@@ -353,6 +385,9 @@ export class Connection implements ClientConnection {
         if (this.lastCloseValue.get() !== null) this.lastCloseValue.set(null);
         if (!current()) return;
         this.pending.push(message);
+        if (isImmediateMessage(message)) {
+          this.scheduleImmediateFlush();
+        }
         this.batchTimer ??= setTimeout(() => this.flush(), this.options.batchMs ?? BATCH_MS);
       },
       close: (code, reason) => {
@@ -361,6 +396,7 @@ export class Connection implements ClientConnection {
         // acknowledgements must arrive before closed subscribers can adopt another server.
         this.flush();
         if (!current()) return;
+        ++this.attemptRevision;
         this.socket = null;
         const closedEpoch = this.connectionEpoch;
         clearTimeout(this.steadyTimer);

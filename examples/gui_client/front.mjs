@@ -79,7 +79,7 @@ function finish(code, message) {
 
 async function main() {
   // In Node, pass the server's URL and token. In a browser page the server served, connect() needs no options
-  front = await connect({ base_url: printed.href, token });
+  front = await connect({ baseUrl: printed.href, token });
 
   // The state of the run, one line per change. watch() calls now and on every change; the return value stops it
   watch(front.status, (status) => {
@@ -91,7 +91,7 @@ async function main() {
 
   // Wait until the connection is in step with the server: the controls are those of the run, not a guess
   await until(front.status, (status) => status.link === "online", {
-    timeout_ms: 15_000,
+    timeoutMs: 15_000,
   });
 
   // controls say, before the call, whether a button would work (and why not, in the server's words)
@@ -104,7 +104,7 @@ async function main() {
   const status = await until(
     front.status,
     (s) => s.run === "ended" || s.run === "crashed",
-    { timeout_ms: timeoutS * 1000 },
+    { timeoutMs: timeoutS * 1000 },
   );
   const { result } = status;
   finish(

@@ -246,3 +246,188 @@ def test_time_and_stop_example_with_no_auth_and_usage_errors(tmp_path: Path) -> 
     assert bad_step.returncode == 2 and "--step needs an integer" in bad_step.stderr
     missing_url = run_example("time-and-stop.mjs", None, "forever.yaml")
     assert missing_url.returncode == 2 and "VEHICLE_SIL_GUI_URL" in missing_url.stderr
+
+
+# ---------------------------------------------------------------- out-of-process connect() -> stop() & immediate flush
+
+
+def _run_node_module(bundle: Path, url: str, code: str) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k != "VEHICLE_SIL_GUI_URL"}
+    env["VEHICLE_SIL_GUI_URL"] = url
+    env["VEHICLE_SIL_GUI_CLIENT_URL"] = bundle.as_uri()
+    return subprocess.run(
+        [NODE, "--input-type=module", "-e", code],
+        capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL,
+        env=env, timeout=scaled(60),
+    )
+
+
+def test_connect_immediate_actions_and_flushing_end_to_end(tmp_path: Path, bundle: Path, control_env: dict) -> None:
+    """Sender (WsGateway/Hub) + receiver (Connection/Front) end-to-end:
+    - connect() -> stop() when idle rejects with ActionError('not-running', ..., 'refused')
+    - separate process connect() -> time.pause() / variable.write() / run.stop() awaits initial WS sync
+      and flushes synced, command, operation, and error frames immediately (< BATCH_MS).
+    """
+    idle_stop_code = """
+const { ActionError, connect } = await import(process.env.VEHICLE_SIL_GUI_CLIENT_URL);
+const u = new URL(process.env.VEHICLE_SIL_GUI_URL);
+const token = new URLSearchParams(u.hash.slice(1)).get('token') ?? '';
+u.hash = '';
+const front = await connect({ baseUrl: u.href, token });
+try {
+  await front.run.stop();
+  console.log('UNEXPECTED_OK');
+  process.exit(1);
+} catch (err) {
+  if (!(err instanceof ActionError) || err.code !== 'not-running' || err.outcome !== 'refused') {
+    console.error('WRONG_ERROR', err);
+    process.exit(1);
+  }
+  console.log(`idle-stop: ${err.code} (${err.outcome})`);
+} finally {
+  front.close();
+}
+"""
+    start_and_wait_code = """
+const { connect, until } = await import(process.env.VEHICLE_SIL_GUI_CLIENT_URL);
+const u = new URL(process.env.VEHICLE_SIL_GUI_URL);
+const token = new URLSearchParams(u.hash.slice(1)).get('token') ?? '';
+u.hash = '';
+const front = await connect({ baseUrl: u.href, token });
+try {
+  await front.run.start({}, { file: 'forever.yaml' });
+  await until(
+    front.status,
+    (s) => s.link === 'online' && (s.run === 'running' || s.run === 'paused'),
+    { timeoutMs: 15_000 },
+  );
+  await until(
+    front.low.variables.state,
+    (v) => v.status === 'ready',
+    { timeoutMs: 15_000 },
+  );
+  console.log('READY');
+} finally {
+  front.close();
+}
+"""
+    immediate_control_and_stop_code = """
+const { connect, until, webSocketFactory } = await import(process.env.VEHICLE_SIL_GUI_CLIENT_URL);
+const u = new URL(process.env.VEHICLE_SIL_GUI_URL);
+const token = new URLSearchParams(u.hash.slice(1)).get('token') ?? '';
+u.hash = '';
+
+// 1. Fresh client calls variable.write() immediately after connect() while link === 'connecting':
+const tWrite = performance.now();
+const writer = await connect({ baseUrl: u.href, token });
+await writer.variable('Engine.engine.demand').write(40);
+const writeMs = performance.now() - tWrite;
+writer.close();
+
+// 2. Fresh client calls time.pause() immediately after connect() while link === 'connecting',
+//    and also verifies WS error frame flushes immediately end-to-end:
+const tPause = performance.now();
+let rawSocket = null;
+const baseSocket = webSocketFactory({ origin: u.origin });
+const front = await connect({
+  baseUrl: u.href,
+  token,
+  socket: (wsUrl, handlers) => {
+    rawSocket = baseSocket(wsUrl, handlers);
+    return rawSocket;
+  },
+});
+await front.time.pause();
+const pauseMs = performance.now() - tPause;
+
+const errorSeen = new Promise((resolve) => {
+  const off = front.low.connection.onBatch((batch) => {
+    if (batch.some((m) => m && typeof m === 'object' && m.type === 'error' && m.code === 'invalid-watch')) {
+      off();
+      resolve(performance.now());
+    }
+  });
+});
+const tErr = performance.now();
+rawSocket.send(JSON.stringify({ type: 'watch', id: -1 }));
+const errorMs = (await errorSeen) - tErr;
+
+// 3. Fresh client calls run.stop() immediately after connect() while link === 'connecting':
+const stopper = await connect({ baseUrl: u.href, token });
+await stopper.run.stop();
+const ended = await until(
+  front.status,
+  (s) => s.run === 'ended' || s.run === 'crashed',
+  { timeoutMs: 15_000 },
+);
+console.log(JSON.stringify({ pauseMs, writeMs, errorMs, end: ended.result?.end, ok: ended.result?.ok }));
+stopper.close();
+front.close();
+"""
+    with gui_server(tmp_path, env=control_env) as gui:
+        idle = _run_node_module(bundle, gui.url, idle_stop_code)
+        assert idle.returncode == 0, idle.stdout + idle.stderr
+        assert idle.stdout.strip() == "idle-stop: not-running (refused)", idle.stdout
+
+        started = _run_node_module(bundle, gui.url, start_and_wait_code)
+        assert started.returncode == 0 and started.stdout.strip() == "READY", started.stdout + started.stderr
+
+        stopped = _run_node_module(bundle, gui.url, immediate_control_and_stop_code)
+        assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+        import json
+        payload = json.loads(stopped.stdout.strip().splitlines()[-1])
+        assert payload["end"] == "stopped" and payload["ok"] is True, payload
+        assert isinstance(payload["errorMs"], (int, float)) and payload["errorMs"] >= 0, payload
+
+        idle_after = _run_node_module(bundle, gui.url, idle_stop_code)
+        assert idle_after.returncode == 0, idle_after.stdout + idle_after.stderr
+        assert idle_after.stdout.strip() == "idle-stop: not-running (refused)", idle_after.stdout
+
+
+@pytest.mark.skipif(not REAL or not real_configs.usable(real_configs.examples_dir(REAL)),
+                    reason="no real launcher with the ecu_main example next to it (scripts/verify-gui.py --launcher)")
+def test_connect_then_stop_immediately_with_the_real_launcher(tmp_path: Path, bundle: Path) -> None:
+    """Out-of-process verification against the real C++ launcher:
+    Process 1 starts simulation.yaml; Process 2 calls connect() -> front.run.stop() immediately."""
+    configs = tmp_path / "configs"
+    real_configs.write(configs, real_configs.examples_dir(REAL))
+    start_code = """
+const { connect, until } = await import(process.env.VEHICLE_SIL_GUI_CLIENT_URL);
+const u = new URL(process.env.VEHICLE_SIL_GUI_URL);
+const token = new URLSearchParams(u.hash.slice(1)).get('token') ?? '';
+u.hash = '';
+const front = await connect({ baseUrl: u.href, token });
+try {
+  await front.run.start({ speed: 0.5 }, { file: 'simulation.yaml' });
+  await until(front.status, (s) => s.run === 'running', { timeoutMs: 30_000 });
+  console.log('RUNNING');
+} finally {
+  front.close();
+}
+"""
+    stop_code = """
+const { connect, until } = await import(process.env.VEHICLE_SIL_GUI_CLIENT_URL);
+const u = new URL(process.env.VEHICLE_SIL_GUI_URL);
+const token = new URLSearchParams(u.hash.slice(1)).get('token') ?? '';
+u.hash = '';
+const front = await connect({ baseUrl: u.href, token });
+try {
+  await front.run.stop();
+  const settled = await until(
+    front.status,
+    (s) => s.run === 'ended' || s.run === 'crashed',
+    { timeoutMs: 30_000 },
+  );
+  console.log(`stopped: end=${settled.result?.end} ok=${settled.result?.ok}`);
+} finally {
+  front.close();
+}
+"""
+    with gui_server(tmp_path, root=configs, launcher=Path(REAL)) as gui:
+        started = _run_node_module(bundle, gui.url, start_code)
+        assert started.returncode == 0 and started.stdout.strip() == "RUNNING", started.stdout + started.stderr
+        stopped = _run_node_module(bundle, gui.url, stop_code)
+        assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+        assert stopped.stdout.strip() == "stopped: end=stopped ok=True" or \
+            stopped.stdout.strip() == "stopped: end=stopped ok=true", stopped.stdout
+

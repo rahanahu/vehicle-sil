@@ -321,4 +321,30 @@ describe('createClient', () => {
     client.close();
     expect(fake.last().closedByClient).toBe(true);
   });
+
+  it('rejects unknown and invalid ClientOptions fields at runtime', () => {
+    expect(() =>
+      createClient({ base_url: 'http://127.0.0.1:8765/' } as unknown as Parameters<
+        typeof createClient
+      >[0]),
+    ).toThrow(expect.objectContaining({ code: 'unknown-field', outcome: 'refused' }));
+    expect(() =>
+      createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        answer_timeout_ms: 1000,
+      } as unknown as Parameters<typeof createClient>[0]),
+    ).toThrow(expect.objectContaining({ code: 'unknown-field', outcome: 'refused' }));
+    expect(() =>
+      createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        on_error: () => undefined,
+      } as unknown as Parameters<typeof createClient>[0]),
+    ).toThrow(expect.objectContaining({ code: 'unknown-field', outcome: 'refused' }));
+    expect(() =>
+      createClient({ baseUrl: '' } as unknown as Parameters<typeof createClient>[0]),
+    ).toThrow(expect.objectContaining({ code: 'invalid-argument', outcome: 'refused' }));
+    expect(() => createClient({ baseUrl: 'http://127.0.0.1:8765/', answerTimeoutMs: 0 })).toThrow(
+      expect.objectContaining({ code: 'invalid-argument', outcome: 'refused' }),
+    );
+  });
 });

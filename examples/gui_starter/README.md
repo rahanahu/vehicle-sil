@@ -128,7 +128,7 @@ const front = await connect();
 let unsubscribe = () => {};
 try {
   await front.run.start({ start_paused: true }); // resolves when the server has accepted the start, not when the run is up
-  await until(front.status, (status) => status.run === 'paused', { timeout_ms: 30_000 });
+  await until(front.status, (status) => status.run === 'paused', { timeoutMs: 30_000 });
   unsubscribe = front.variable('Engine.engine.speed').subscribe((view) => console.log(view.text, view.unit)); // values arrive while you subscribe
   const written = front.variable('Engine.engine.throttle').write(60); // not awaited yet: a paused run applies it in the next step
   written.catch(() => undefined); // no unhandled rejection if the step fails first; `await written` below still throws
@@ -156,7 +156,7 @@ const [scenario] = await front.scenarios(); // the list is empty if there are no
 if (scenario) {
   await front.run.start({ scenario: scenario.path }); // when it resolves, `status` already shows this run, not an earlier one that ended
   const status = await until(front.status, (s) => s.run === 'ended' || s.run === 'crashed', {
-    timeout_ms: 600_000,
+    timeoutMs: 600_000,
   });
   console.log(status.result?.ok, status.result?.message);
 }
