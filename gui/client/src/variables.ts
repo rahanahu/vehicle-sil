@@ -518,6 +518,7 @@ interface Pending {
    * answer).
    */
   session: string;
+  epoch: number;
   seq: number | null;
   resolve: (operation: OperationView) => void;
   reject: (error: WriteError) => void;
@@ -590,6 +591,7 @@ const runIdOf = (value: unknown): string | null =>
  */
 export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private instanceId: string | null = null;
+  private epoch = 0;
   private readonly stateValue: Writable<VariablesState>;
   private readonly operationsValue: Writable<readonly OperationView[]>;
   private readonly handles = new Set<Handle>();
@@ -674,6 +676,58 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (hadInstance) this.enter(null, true);
   }
 
+  /**
+   * Applies messages belonging to the previous session (`beforeBatch`) while `SessionFeed`
+   * still holds that session, and processes connection-level resyncs/watch errors across any
+   * superseded intermediate runs (`skippedBatch`) before `SessionFeed` commits the final run.
+   */
+  beforeRunSwitch(
+    beforeBatch: readonly unknown[],
+    skippedBatch: readonly unknown[],
+    current: () => boolean = () => true,
+  ): void {
+    let sawResync = false;
+    const preSwitch: unknown[] = [];
+    for (const message of beforeBatch) {
+      if (isObject(message) && message['type'] === 'resync') {
+        sawResync = true;
+      } else {
+        preSwitch.push(message);
+      }
+    }
+    if (preSwitch.length > 0) {
+      this.receive(preSwitch, current);
+      if (!current()) return;
+    }
+    for (const message of skippedBatch) {
+      if (!current()) return;
+      if (!isObject(message)) continue;
+      const type = message['type'];
+      if (type === 'resync') {
+        sawResync = true;
+      } else if (type === 'error') {
+        const code = message['code'];
+        if (code === 'invalid-watch' || code === 'too-many-watches') {
+          this.problemValue.set({ code, message: text(message['message']) });
+        }
+      }
+    }
+    if (sawResync && current()) this.resyncWatches();
+  }
+
+  /**
+   * Clears the previous run's observable variable state synchronously before `SessionFeed`
+   * notifies `session` subscribers of a new run, returning the deferred variable notifications.
+   */
+  stageRunSwitch(
+    instance: string | null,
+    sessionId: string | null,
+    instanceChanged: boolean,
+  ): () => void {
+    if (instance !== null) this.instanceId = instance;
+    return this.prepareEnter(sessionId, instanceChanged, sessionId === null ? 'off' : 'unknown');
+  }
+
   private receive(batch: readonly unknown[], current: () => boolean = () => true): void {
     const touched = new Set<string>();
     let touchedAll = false;
@@ -690,6 +744,14 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       if (!current()) return;
       if (!isObject(message)) continue;
       switch (message['type']) {
+        case 'resync': {
+          flush();
+          if (!current()) return;
+          for (const key of this.readings.keys()) this.awaitingRefresh.add(key);
+          this.resyncWatches();
+          touchedAll = true;
+          break;
+        }
         case 'hello': {
           flush();
           if (!current()) return;
@@ -746,9 +808,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
               }
             }
           } else {
-            this.enter(null);
-            if (!current()) return;
-            this.stateValue.set({ ...NO_VARIABLES, status: 'off' });
+            this.enter(null, false, 'off');
           }
           touchedAll = true;
           break;
@@ -871,20 +931,37 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
    * are dropped with their memory, so they do not keep growing as the variables change from run to run). Writes
    * waiting for the previous run's result are failed, since the result will not come.
    */
-  private enter(session: string | null, force = false): VariablesState {
-    if (!force && session === this.stateValue.get().session) return this.stateValue.get();
+  private enter(
+    session: string | null,
+    force = false,
+    status: VariablesStatus = 'unknown',
+  ): VariablesState {
+    this.prepareEnter(session, force, status)();
+    return this.stateValue.get();
+  }
+
+  private prepareEnter(
+    session: string | null,
+    force = false,
+    status: VariablesStatus = 'unknown',
+  ): () => void {
+    const current = this.stateValue.get();
+    if (!force && session === current.session && status === current.status) {
+      return () => undefined;
+    }
     // Clear every observable part before notifying any subscriber. A subscriber can synchronously
     // fetch the new run, so it must never observe or revive the previous run's values or schema.
+    this.epoch += 1;
     this.readings.clear();
     this.awaitingRefresh.clear();
     this.histories.clear();
     this.historyReserved = 0;
-    const initial = { ...NO_VARIABLES, session };
+    const initial = { ...NO_VARIABLES, session, status };
     const notifyOperations = this.operationsValue.setDeferred([]);
     const notifyState = this.stateValue.setDeferred(initial);
     const notifyWatches = [...this.handles].map((handle) => handle.values.setDeferred({}));
     for (const pending of [...this.pending]) {
-      if (pending.session !== session) {
+      if (force || pending.session !== session) {
         this.settle(
           pending,
           new WriteError(
@@ -896,10 +973,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         );
       }
     }
-    notifyOperations();
-    notifyState();
-    for (const notify of notifyWatches) notify();
-    return initial;
+    return () => {
+      notifyOperations();
+      notifyState();
+      for (const notify of notifyWatches) notify();
+    };
   }
 
   private takeValues(message: Fields, touched: Set<string>): void {
@@ -1074,6 +1152,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           : WRITE_TIMEOUT_MS;
     // Aim the write at the current run. The server refuses if that run is no longer running (session-changed)
     const session = this.stateValue.get().session;
+    const epoch = this.epoch;
     if (session === null) {
       return Promise.reject(
         new WriteError('refused', 'there is no run to write to', 'not-running'),
@@ -1084,7 +1163,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (options.atMs !== undefined) body['at_ms'] = options.atMs;
     if (options.late !== undefined) body['late'] = options.late;
     return new Promise<OperationView>((resolve, reject) => {
-      const pending: Pending = { session, seq: null, resolve, reject, timer: undefined };
+      const pending: Pending = { session, epoch, seq: null, resolve, reject, timer: undefined };
       this.pending.add(pending);
       const known = () =>
         this.operationsValue
@@ -1129,7 +1208,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         }
         // The run changed before the answer (normally enter() fails it first): that run's result will not arrive any
         // more
-        if (answered !== pending.session || this.stateValue.get().session !== pending.session) {
+        if (
+          answered !== pending.session ||
+          this.stateValue.get().session !== pending.session ||
+          this.epoch !== pending.epoch
+        ) {
           this.settle(
             pending,
             new WriteError(
@@ -1227,6 +1310,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
 
   isStale(ref: VariableRef): boolean {
     return this.awaitingRefresh.has(keyOf(ref.peer, ref.name));
+  }
+
+  runEpoch(): number {
+    return this.epoch;
   }
 
   /**
@@ -1345,6 +1432,20 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       this.syncQueued = false;
       this.sync();
     });
+  }
+
+  private resyncWatches(): void {
+    this.syncQueued = false;
+    const wanted = this.wanted();
+    for (const [periodMs, bucket] of [...this.buckets]) {
+      if (!wanted.has(periodMs)) {
+        this.buckets.delete(periodMs);
+        if (bucket.asked !== null) this.link.send({ type: 'unwatch', id: bucket.id });
+      } else {
+        bucket.asked = null;
+      }
+    }
+    this.sync();
   }
 
   private sync(): void {
