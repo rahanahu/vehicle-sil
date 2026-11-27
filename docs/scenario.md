@@ -162,6 +162,7 @@ A step has one action and a time. Only `ramp` and `wave` can also have an `expec
 
 | Key that goes with an action | Actions | Meaning |
 |---|---|---|
+| `name` | Any | Optional human-assigned name for the step, shown in run output and failure messages. Must be non-empty, non-whitespace-only, and contain no control characters; supports `${name}` parameter interpolation. |
 | `at_ms` | Any | The time of the step (virtual time in milliseconds, 0 or more). |
 | `after_ms` | Any | The time of the step, in milliseconds (0 or more) after the end of the previous step. |
 | `timeout_ms: <ms>` | `wait_until` (required) | If the condition does not hold within this time, the step fails. |
@@ -683,8 +684,8 @@ Write `${name}` where a step takes a value, as the whole value. It reads as if t
 
 | Topic | Rule |
 |---|---|
-| Where it is allowed | The value of `set`, the value and `tolerance` of a condition, `to`, `from` and `over_ms` of `ramp`, the numbers and durations of `wave`, `at_ms`, `after_ms`, `timeout_ms`, `within_ms` and `hold_for_ms`. |
-| Where it is not allowed | Keys, variable names and part of a value (`"${a} rpm"`). These give the error `scenario-param`. |
+| Where it is allowed | The value of `set`, the value and `tolerance` of a condition, `to`, `from` and `over_ms` of `ramp`, the numbers and durations of `wave`, `at_ms`, `after_ms`, `timeout_ms`, `within_ms` and `hold_for_ms`, and embedded `${name}` inside step `name`. |
+| Where it is not allowed | Keys, variable names and part of any value other than step `name` (`"${a} rpm"`). These give the error `scenario-param`. Every `${` in `name` must be a valid `${name}` (there is no escape). |
 | Expressions | None (`${a+1}` gives the error `scenario-param`). If you need a calculated value, make it another parameter. |
 | Inside `{ ... }` or `[ ... ]` | Quote it (`{ near: "${idle_rpm}" }`). YAML cannot read an unquoted `${` there. |
 | JSON | Write it as a string. |
@@ -985,7 +986,7 @@ How to read them:
 |---|---|
 | Check | The line `scenario <file> (<name>): <n> steps`. |
 | Check (with parameters) | The line `parameters: <name> = <value> (<source>), ...`. |
-| Run | One result line and the table of steps (line, step, result, and the virtual time at which the result was decided). |
+| Run | One result line and the table of steps (line, optional `name` column when any step has one, step, result, and the virtual time at which the result was decided; `where` as `<file>:<line>` instead of `line` when any step comes from another file). |
 | Run (for each skipped step) | `line <line> skipped: <reason>`. |
 | Run (for each step whose `expect` beside it was skipped) | `line <line> expect not checked: <reason>`. |
 | During the run (stderr) | One line each time the result of a step is decided. |
@@ -1051,8 +1052,10 @@ A step counted in `unchecked_expects` did run, so it is not counted in `skipped_
 | `steps[]` key | Meaning |
 |---|---|
 | `index` | The number of the step, from 1. |
-| `line` | The line in the scenario file. |
+| `file` | Present only when the step is defined in another file (for example, a template): that file's path. |
+| `line` | The line in the scenario (or source) file. |
 | `kind` | One of `set`, `ramp`, `wave`, `dither`, `expect` and `wait_until`. |
+| `name` | Present only when the step has a `name:`. |
 | `text` | The text of the step. |
 | `status` | The result of the step (next table). |
 | `start_ms` | The time of the step. |
@@ -1060,6 +1063,7 @@ A step counted in `unchecked_expects` did run, so it is not counted in `skipped_
 | `end_ms` | The end time. |
 | `code`, `message` | Present when the step failed or was skipped (null otherwise). |
 | `expect_skipped` | Present only on a `ramp` or `wave` that ran with the `expect` beside it skipped: the reason it was skipped. |
+| `call_stack` | Present only for steps expanded from templates: list of caller frames (`file`, `line`, `name`, `params`) from outermost to immediate caller. |
 
 | Step `status` | Meaning |
 |---|---|

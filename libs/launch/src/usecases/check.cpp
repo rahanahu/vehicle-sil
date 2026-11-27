@@ -250,7 +250,10 @@ namespace {
     scenario::ScenarioCheck check;
     check.file = named;
     const auto add = [&](config::Finding finding) {
-        finding.file = check.file;
+        if (finding.file.empty())
+        {
+            finding.file = check.file;
+        }
         report.findings.push_back(std::move(finding));
     };
     const std::filesystem::path path = process::path_from_utf8(check.file);

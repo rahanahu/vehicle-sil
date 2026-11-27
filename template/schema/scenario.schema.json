@@ -94,11 +94,18 @@
         { "$ref": "#/definitions/step_expect" }
       ]
     },
+    "step_name": {
+      "type": ["string", "number", "boolean"],
+      "minLength": 1,
+      "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$(?!\\n)",
+      "description": "A name for this step, shown in run output and failure messages. Supports ${name} parameter references."
+    },
     "step_set": {
       "type": "object",
       "additionalProperties": false,
       "required": ["set"],
       "properties": {
+        "name": { "$ref": "#/definitions/step_name" },
         "at_ms": { "$ref": "#/definitions/at_ms" },
         "after_ms": { "$ref": "#/definitions/after_ms" },
         "set": {
@@ -116,6 +123,7 @@
       "additionalProperties": false,
       "required": ["ramp"],
       "properties": {
+        "name": { "$ref": "#/definitions/step_name" },
         "at_ms": { "$ref": "#/definitions/at_ms" },
         "after_ms": { "$ref": "#/definitions/after_ms" },
         "ramp": {
@@ -156,6 +164,7 @@
       "additionalProperties": false,
       "required": ["wave"],
       "properties": {
+        "name": { "$ref": "#/definitions/step_name" },
         "at_ms": { "$ref": "#/definitions/at_ms" },
         "after_ms": { "$ref": "#/definitions/after_ms" },
         "wave": {
@@ -402,6 +411,7 @@
       "additionalProperties": false,
       "required": ["dither"],
       "properties": {
+        "name": { "$ref": "#/definitions/step_name" },
         "at_ms": { "$ref": "#/definitions/at_ms" },
         "after_ms": { "$ref": "#/definitions/after_ms" },
         "dither": {
@@ -519,6 +529,7 @@
       "additionalProperties": false,
       "required": ["wait_until", "timeout_ms"],
       "properties": {
+        "name": { "$ref": "#/definitions/step_name" },
         "at_ms": { "$ref": "#/definitions/at_ms" },
         "after_ms": { "$ref": "#/definitions/after_ms" },
         "wait_until": {
@@ -541,6 +552,7 @@
         "description": "within_ms (true at some time) or hold_for_ms (true all the time), not both: make a step of each."
       },
       "properties": {
+        "name": { "$ref": "#/definitions/step_name" },
         "at_ms": { "$ref": "#/definitions/at_ms" },
         "after_ms": { "$ref": "#/definitions/after_ms" },
         "expect": {

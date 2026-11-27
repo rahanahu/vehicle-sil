@@ -1645,9 +1645,9 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `vehicle_sil`, `stage` | The vehicle-sil version; `"run"` (the record of an actual run) |
 | `file`, `variant`, `params` | The configuration file (as given in the arguments), the variant (`null` if none), and the scenario parameters with the values in effect (the same form as `scenario.params` of `check --json`) |
 | `time_step_ms` | The controller's time step (the same as `timing.time_step_ms` of `run --json`) |
-| `scenario` | `file`, `name`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
+| `scenario` | `file`, `name`, optional `case`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
 | `variables[]` | The variables that the scenario uses, in order of first use: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it) |
-| `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json`, plus `lines`, `watch` and `failed` |
+| `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json` (including optional `file`, `name`, `call_stack`), plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
 | `lines[]` | The line of each input: the values and motions that steps placed (see "Input lines" below) |
 | `findings[]` | The check and run findings whose `code` starts with `scenario-` (the same form as in `run --json`). The finding `control-link-late-values`, which says that ECU values arrived later than guaranteed, appears with its `severity` and `code` only, the other keys `null` (in a run with this finding, the record can differ from run to run). Other findings, such as the real-time speed finding `behind-real-time`, are left out |
@@ -1655,7 +1655,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 
 A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version. A step's `status` is not one of them: see [Values that carry the result](scenario.md#values-that-carry-the-result).
 
-Every key in this section is in every file. A key that does not apply has the value `null`. The one exception is `expect_skipped` of a step, which, as in `run --json`, is there only when the step has it.
+Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: `expect_skipped`, `file`, `name` and `call_stack` on a step, `file` on a line, and `case` on `scenario`, which are emitted only when non-empty.
 
 The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write.
 
@@ -1815,7 +1815,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 | Key | Value |
 |---|---|
 | `variable` | The variable |
-| `kind`, `line`, `step` | The kind of step that placed it (`set`, `ramp`, `wave`; for `dither`, see below), the line in the scenario file, and the step's `index` |
+| `kind`, `file`, `line`, `step` | The kind of step that placed it (`set`, `ramp`, `wave`; for `dither`, see below), the optional source file (omitted when it is the root scenario file), the line in that file, and the step's `index` |
 | `from_ms`, `to_ms` | The step's time and the end of the motion as written (`from_ms` + the duration). The same value for `set`. If the run ended first, points exist only up to `recorded_to_ms` |
 | `base` | For `set`, the value written. For `ramp` and `wave`, the start value or the center of the swing (`from` and `around` in [scenario.md](scenario.md)). Written the same way as the series points (a number that the step wrote stays as written). `null` for shapes that carry their own values (`square` with `low` and `high`, `points` that start at 0 ms, and so on) |
 | `base_source` | Where `base` came from (see the table below). `null` if `base` is `null` |

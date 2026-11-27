@@ -886,3 +886,70 @@ test('the types (vehicle-sil-timeline.d.ts) name every option of the element, an
   );
   assert.match(source, new RegExp(`const PARTS = \\[${parts.map((p) => `'${p}'`).join(', ')}\\]`));
 });
+
+test('provenance helpers resolve scenario case, step file/name/call_stack, and line file in EN and JA', () => {
+  const data = JSON.parse(JSON.stringify(reference('fails_beside')));
+  data.scenario.case = '上限直前';
+  data.steps[1].file = 'templates/init.yaml';
+  data.steps[1].name = '通信確立';
+  data.steps[1].call_stack = [
+    {
+      file: 'scenarios/load.yaml',
+      line: 22,
+      name: '初期化',
+      params: { timeout_ms: 50, mode: 'auto' },
+    },
+  ];
+  data.lines[1].file = 'templates/init.yaml';
+
+  const m = model(data);
+  assert.equal(m.caseName, '上限直前');
+  assert.equal(m.failure.file, 'templates/init.yaml');
+  assert.equal(m.failure.name, '通信確立');
+  assert.equal(m.failure.callStack.length, 1);
+  assert.equal(T.stepFile(m.steps[1], m.tl.scenario.file), 'templates/init.yaml');
+  assert.equal(T.stepFile(m.steps[0], m.tl.scenario.file), m.tl.scenario.file);
+  assert.equal(T.lineFile(m.lines[1], m.tl.scenario.file), 'templates/init.yaml');
+  assert.equal(T.lineFile(m.lines[0], m.tl.scenario.file), m.tl.scenario.file);
+
+  assert.match(
+    T.stepTitle(m.steps[1], m.tl.scenario.file),
+    new RegExp(`templates/init\\.yaml line ${m.steps[1].line}`),
+  );
+  assert.match(T.stepTitle(m.steps[0], m.tl.scenario.file), /^Step 1 \(set, line \d+\): /);
+  assert.match(T.lineTitle(m.lines[1], m.tl.scenario.file), /templates\/init\.yaml line /);
+  assert.doesNotMatch(T.lineTitle(m.lines[0], m.tl.scenario.file), /templates\/init\.yaml/);
+  assert.deepEqual(T.callStackFrames(m.steps[1].call_stack, m.tl.scenario.file), [
+    'line 22 of scenarios/load.yaml · 初期化 · timeout_ms = 50, mode = auto',
+  ]);
+
+  T.setLanguage('ja');
+  try {
+    assert.match(
+      T.stepTitle(m.steps[1], m.tl.scenario.file),
+      new RegExp(`templates/init\\.yaml ${m.steps[1].line} 行`),
+    );
+    assert.match(T.lineTitle(m.lines[1], m.tl.scenario.file), /templates\/init\.yaml .* 行/);
+    assert.deepEqual(T.callStackFrames(m.steps[1].call_stack, m.tl.scenario.file), [
+      'scenarios/load.yaml の 22 行 · 初期化 · timeout_ms = 50, mode = auto',
+    ]);
+  } finally {
+    T.setLanguage('en');
+  }
+});
+
+test('provenance helpers guard empty or absent case, file, name, and call_stack', () => {
+  const data = JSON.parse(JSON.stringify(reference('fails_beside')));
+  data.scenario.case = '';
+  data.steps[0].file = '';
+  data.steps[0].name = '';
+  data.steps[0].call_stack = [];
+  data.lines[0].file = '';
+
+  const m = model(data);
+  assert.equal(m.caseName, null);
+  assert.equal(T.stepFile(m.steps[0], m.tl.scenario.file), m.tl.scenario.file);
+  assert.equal(T.lineFile(m.lines[0], m.tl.scenario.file), m.tl.scenario.file);
+  assert.deepEqual(T.callStackFrames(m.steps[0].call_stack, m.tl.scenario.file), []);
+  assert.deepEqual(T.callStackFrames(undefined, m.tl.scenario.file), []);
+});

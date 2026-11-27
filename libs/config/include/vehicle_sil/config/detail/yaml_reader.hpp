@@ -29,11 +29,12 @@ class YamlReader
 protected:
     /// Reads `doc`; the findings go to `findings`.
     YamlReader(const YamlDocument& doc, std::vector<Finding>& findings) : doc_(doc), tree_(doc.tree()), findings_(findings) {}
+    virtual ~YamlReader() = default;
 
     // --- findings ---
 
-    void add(Severity severity, std::string code, std::size_t line, std::string message, std::string participant = {},
-             std::string network = {})
+    virtual void add(Severity severity, std::string code, std::size_t line, std::string message, std::string participant = {},
+                     std::string network = {})
     {
         findings_.push_back(Finding{severity, std::move(code), std::move(message), line, std::move(participant),
                                     std::move(network)});

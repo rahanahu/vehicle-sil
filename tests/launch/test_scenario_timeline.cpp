@@ -1520,3 +1520,43 @@ TEST_CASE(timeline_columns_of_a_dithered_input_do_not_depend_on_how_far_the_run_
     check_text(recorded(timeline_of(waiting, 30ms)), recorded(timedOut), "a dither step after a wait that runs out");
     CHECK(timedOut.find("      \"columns\": [\"at_ms\", \"value\", \"base\"],\n") != std::string::npos);
 }
+
+TEST_CASE(timeline_json_omits_empty_provenance_and_emits_non_empty_provenance)
+{
+    Scenario s = read(kHead + "  - name: step one\n    set: { Body.level: 10 }\n");
+    s.steps[0].file = "scenarios/templates/init.yaml";
+    s.steps[0].line = 9;
+    s.steps[0].call_stack.push_back(SourceFrame{
+        "scenario.yaml",
+        4,
+        "call init",
+        {SourceParam{"lvl", "10", false, ParamSource::TemplateCall},
+         SourceParam{"label", "hi", true, ParamSource::TemplateCall}},
+    });
+    World world;
+    world.tick = 10ms;
+    TimelineRecord record(s);
+    world.record = &record;
+    ScenarioRun run = world.run(s);
+    run.file = "scenario.yaml";
+
+    TimelineInput input;
+    input.file = "simulation.yaml";
+    input.time_step_ms = 10.0;
+    input.scenario = &s;
+    input.run = &run;
+    const auto desc = catalog();
+    input.catalog = &desc;
+    input.record = &record;
+
+    const std::string tl = format_timeline_json(input);
+    CHECK(tl.find("\"file\": \"scenarios/templates/init.yaml\"") != std::string::npos);
+    CHECK(tl.find("\"name\": \"step one\"") != std::string::npos);
+    CHECK(tl.find("\"call_stack\": [") != std::string::npos);
+    CHECK(tl.find("\"lvl\": 10") != std::string::npos);
+    CHECK(tl.find("\"label\": \"hi\"") != std::string::npos);
+    // lines[] also carries file when non-empty.
+    const auto linesPos = tl.find("  \"lines\": [");
+    CHECK(linesPos != std::string::npos);
+    CHECK(tl.substr(linesPos).find("\"file\": \"scenarios/templates/init.yaml\"") != std::string::npos);
+}

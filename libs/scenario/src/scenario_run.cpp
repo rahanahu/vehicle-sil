@@ -148,10 +148,13 @@ ScenarioRun scenario_not_run(const Scenario& scenario)
     {
         ScenarioStepRun step;
         step.index = i + 1;
+        step.file = scenario.steps[i].file;
         step.line = scenario.steps[i].line;
         step.kind = scenario.steps[i].kind;
         step.text = scenario.steps[i].text;
         step.expect_skipped = scenario.steps[i].expect_skipped;
+        step.name = scenario.steps[i].name;
+        step.call_stack = scenario.steps[i].call_stack;
         if (!scenario.steps[i].skipped.empty())
         {
             step.status = StepStatus::Skipped;
@@ -1179,8 +1182,13 @@ void ScenarioEngine::fail_grid(const Write& write, const control::OperationResul
     {
         const ScenarioVariable& v = scenario_.variables[named->variable];
         const ScenarioOverlay* dither = lines_->dither[named->variable];
-        message = "the dither of " + v.text + (dither != nullptr ? " (line " + std::to_string(dither->line) + ")" : "") + " wrote " +
-                  value_text(named->value, &v) + " at " + ms_text(write.at) + " ms, ";
+        message = "the dither of " + v.text +
+                  (dither != nullptr ? " (" +
+                                           (dither->file.empty() ? "line " + std::to_string(dither->line)
+                                                                 : dither->file + ":" + std::to_string(dither->line)) +
+                                           ")"
+                                     : "") +
+                  " wrote " + value_text(named->value, &v) + " at " + ms_text(write.at) + " ms, ";
         // Beyond its range, if that is what the agent says (not for a value that happens to be
         // outside while the write failed of something else: no link, no room, a setter).
         // This find("out of range") is the one place left that reads a reason's text to learn

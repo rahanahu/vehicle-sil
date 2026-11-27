@@ -269,11 +269,12 @@ enum class ParamSource
     Variant,       ///< the chosen variant's "params"
     CommandLine,   ///< --param <name>=<value>
     RequestFile,   ///< the "params" of the request file (--request); --param replaces it by name
+    TemplateCall,  ///< the arguments of a `- template:` call (params:)
 };
-/// "scenario", "configuration", "variant", "command_line", "request_file" (the outputs' "from").
+/// "scenario", "configuration", "variant", "command_line", "request_file", "template_call" (the outputs' "from").
 [[nodiscard]] const char* param_source_name(ParamSource source);
 /// For a message: "the scenario's params", "the configuration's params", "the variant's params", "--param",
-/// "the request file's params".
+/// "the request file's params", "the template call's params".
 [[nodiscard]] const char* param_source_text(ParamSource source);
 
 /// Which values of a request came from a request file (--request) and not from the command line: a

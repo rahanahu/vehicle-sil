@@ -41,6 +41,7 @@ enum class StepStatus
 struct ScenarioStepRun
 {
     std::size_t index = 0; ///< from 1, in the order of the file
+    std::string file{};
     std::size_t line = 0;
     StepKind kind = StepKind::Set;
     std::string text; ///< ScenarioStep::text
@@ -64,6 +65,8 @@ struct ScenarioStepRun
     /// A ramp or a wave whose expect is not checked in this configuration: why
     /// (ScenarioStep::expect_skipped), or "". Known before the run, whatever its status.
     std::string expect_skipped{};
+    std::string name{};
+    std::vector<SourceFrame> call_stack{};
 };
 
 enum class ScenarioStatus

@@ -101,6 +101,13 @@
           ],
           "description": "The scenario's name; null without one."
         },
+        "case": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The named case that ran; omitted or null when the scenario has no cases."
+        },
         "status": {
           "type": "string",
           "description": "\"passed\", \"failed\", \"incomplete\" (the simulation ended for another reason) or \"not_run\" (the simulation did not start)."
@@ -249,13 +256,24 @@
             "minimum": 1,
             "description": "From 1, in the order of the file."
           },
+          "file": {
+            "type": "string",
+            "description": "The scenario or template file that defines this step (omitted when it is the root scenario file)."
+          },
           "line": {
             "type": "integer",
-            "description": "Its line in the scenario file."
+            "description": "Its line in the scenario or template file."
           },
           "kind": {
             "type": "string",
             "description": "\"set\", \"ramp\", \"wave\", \"expect\" or \"wait_until\"."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The human-assigned name of this step (omitted when the step has no name)."
           },
           "text": {
             "type": "string",
@@ -303,6 +321,47 @@
           "expect_skipped": {
             "type": "string",
             "description": "A ramp or a wave whose expect is not checked in this configuration: why."
+          },
+          "call_stack": {
+            "type": "array",
+            "description": "Template call chain from the root scenario down to this step (omitted for direct steps).",
+            "items": {
+              "type": "object",
+              "required": [
+                "file",
+                "line",
+                "name",
+                "params"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "description": "Calling scenario or template file."
+                },
+                "line": {
+                  "type": "integer",
+                  "description": "Line of the template call in that file."
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional name on the template call step; null when omitted."
+                },
+                "params": {
+                  "type": "object",
+                  "description": "Resolved parameter values passed at this call site.",
+                  "additionalProperties": {
+                    "type": [
+                      "boolean",
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              }
+            }
           },
           "lines": {
             "type": "array",
@@ -628,9 +687,13 @@
             "type": "string",
             "description": "The kind of the step: \"set\", \"ramp\" or \"wave\"; \"dither\" for a dither (of a dither step, or one that the scenario's inputs declare). A reader skips a line of a kind it does not know."
           },
+          "file": {
+            "type": "string",
+            "description": "The scenario or template file that defines this step or input entry (omitted when it is the root scenario file)."
+          },
           "line": {
             "type": "integer",
-            "description": "The step's line in the scenario file; of a dither that the inputs declare, the line of its entry."
+            "description": "The step's line in the scenario or template file; of a dither that the inputs declare, the line of its entry."
           },
           "step": {
             "type": [

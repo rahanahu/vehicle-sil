@@ -307,6 +307,10 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
     {
         w.begin_object();
         w.string("variable", input.variable);
+        if (!input.file.empty())
+        {
+            w.string("file", input.file);
+        }
         w.integer("line", static_cast<std::int64_t>(input.line));
         w.begin_object("dither");
         shape(input.shape);
@@ -321,11 +325,19 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
         w.begin_object();
         w.string("variable", line.variable);
         w.string("kind", line.kind);
+        if (!line.file.empty())
+        {
+            w.string("file", line.file);
+        }
         w.integer("line", static_cast<std::int64_t>(line.line));
         number("step", line.step ? std::optional<std::int64_t>(static_cast<std::int64_t>(*line.step)) : std::nullopt);
         number("from_ms", line.from_ms);
         number("to_ms", line.to_ms);
         w.string("time_source", scenario::line_time_source_name(line.time_source));
+        if (line.time_source == scenario::ScenarioLineText::TimeSource::AfterWait && !line.after_wait_file.empty())
+        {
+            w.string("after_file", line.after_wait_file);
+        }
         number("after_line", line.time_source == scenario::ScenarioLineText::TimeSource::AfterWait
                                  ? std::optional<std::int64_t>(static_cast<std::int64_t>(line.after_wait))
                                  : std::nullopt);
@@ -338,7 +350,10 @@ void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const s
 
 std::string detail::scenario_lines_text(const std::vector<scenario::ScenarioLineText>& lines)
 {
-    std::vector<std::vector<std::string>> rows{{"input", "from", "to", "what", "line"}};
+    const bool hasFile = std::any_of(lines.begin(), lines.end(), [](const scenario::ScenarioLineText& l) {
+        return !l.file.empty() || !l.after_wait_file.empty();
+    });
+    std::vector<std::vector<std::string>> rows{{"input", "from", "to", "what", hasFile ? "where" : "line"}};
     for (const scenario::ScenarioLineText& line : lines)
     {
         // A time that the text does not give ("?": after a step that waits; "first write": a
@@ -347,13 +362,17 @@ std::string detail::scenario_lines_text(const std::vector<scenario::ScenarioLine
         const bool dither = line.kind == "dither";
         // (The text without the variable, which has its own column.)
         const std::string what = line.text.rfind(line.variable + " ", 0) == 0 ? line.text.substr(line.variable.size() + 1) : line.text;
+        const std::string afterWhere = line.after_wait_file.empty()
+                                           ? "line " + std::to_string(line.after_wait)
+                                           : line.after_wait_file + ":" + std::to_string(line.after_wait);
+        const std::string where = line.file.empty() ? std::to_string(line.line) : line.file + ":" + std::to_string(line.line);
         rows.push_back({line.variable, line.time_source == scenario::ScenarioLineText::TimeSource::FirstWrite ? "first write" : ms(line.from_ms),
                         dither ? "-" : ms(line.to_ms),
                         line.kind + " " + what +
                             (line.time_source == scenario::ScenarioLineText::TimeSource::AfterWait
-                                 ? " (after the wait of line " + std::to_string(line.after_wait) + ")"
+                                 ? " (after the wait of " + afterWhere + ")"
                                  : ""),
-                        std::to_string(line.line)});
+                        where});
     }
     return table(rows);
 }
@@ -449,6 +468,36 @@ void detail::write_finding_members(vehicle_sil::json::JsonWriter& w, const std::
     optional_text("detail", finding.detail);
 }
 
+void detail::write_param_scalar(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::string& text, bool quoted)
+{
+    // As a scenario reads it: true, false, a whole number, a number, or a text.
+    std::int64_t integer = 0;
+    double number = 0;
+    const char* end = text.data() + text.size();
+    const bool plain = !quoted && !text.empty() &&
+                       (std::isdigit(static_cast<unsigned char>(text.front())) != 0 || text.front() == '-') &&
+                       std::all_of(text.begin(), text.end(), [](char c) {
+                           return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
+                       });
+    if (!quoted && (text == "true" || text == "false"))
+    {
+        w.boolean(key, text == "true");
+    }
+    else if (const auto [ptr, ec] = std::from_chars(text.data(), end, integer); plain && ec == std::errc{} && ptr == end)
+    {
+        w.integer(key, integer);
+    }
+    else if (const auto [at, bad] = std::from_chars(text.data(), end, number);
+             plain && bad == std::errc{} && at == end && std::isfinite(number))
+    {
+        w.real(key, number);
+    }
+    else
+    {
+        w.string(key, text);
+    }
+}
+
 void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<config::ParamValue>& params)
 {
     w.begin_array(key);
@@ -456,33 +505,7 @@ void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_vie
     {
         w.begin_object();
         w.string("name", param.name);
-        // As a scenario reads it: true, false, a whole number, a number, or a text.
-        const std::string& text = param.text;
-        std::int64_t integer = 0;
-        double number = 0;
-        const char* end = text.data() + text.size();
-        const bool plain = !param.quoted && !text.empty() &&
-                           (std::isdigit(static_cast<unsigned char>(text.front())) != 0 || text.front() == '-') &&
-                           std::all_of(text.begin(), text.end(), [](char c) {
-                               return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
-                           });
-        if (!param.quoted && (text == "true" || text == "false"))
-        {
-            w.boolean("value", text == "true");
-        }
-        else if (const auto [ptr, ec] = std::from_chars(text.data(), end, integer); plain && ec == std::errc{} && ptr == end)
-        {
-            w.integer("value", integer);
-        }
-        else if (const auto [at, bad] = std::from_chars(text.data(), end, number);
-                 plain && bad == std::errc{} && at == end && std::isfinite(number))
-        {
-            w.real("value", number);
-        }
-        else
-        {
-            w.string("value", text);
-        }
+        write_param_scalar(w, "value", param.text, param.quoted);
         w.string("from", config::param_source_name(param.source));
         w.end_object();
     }

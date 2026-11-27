@@ -372,6 +372,10 @@ void write_dither_line(JsonWriter& w, const scenario::Scenario& scenario, const 
     w.begin_object();
     w.string("variable", scenario.variables[line.variable].text);
     w.string("kind", "dither");
+    if (!overlay.file.empty())
+    {
+        w.string("file", overlay.file);
+    }
     w.integer("line", static_cast<std::int64_t>(overlay.line));
     if (declared)
     {
@@ -422,6 +426,10 @@ void write_lines(JsonWriter& w, const TimelineInput& input)
             w.begin_object();
             w.string("variable", scenario.variables[line.variable].text);
             w.string("kind", scenario::step_kind_name(step.kind));
+            if (!step.file.empty())
+            {
+                w.string("file", step.file);
+            }
             w.integer("line", static_cast<std::int64_t>(step.line));
             w.integer("step", static_cast<std::int64_t>(line.step + 1));
             write_ms(w, "from_ms", line.from);

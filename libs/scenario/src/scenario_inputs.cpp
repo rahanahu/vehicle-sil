@@ -8,7 +8,7 @@ namespace vehicle_sil::scenario::reader {
 
 void Reader::note_base(std::size_t variable, double value, std::size_t line, bool stays)
 {
-    step_bases_.push_back(Base{variable, value, line, stays});
+    step_bases_.push_back(Base{variable, value, current_file_, line, stays});
 }
 
 void Reader::note_lines(const ScenarioStep& step, const std::optional<std::int64_t>& time)
@@ -28,6 +28,7 @@ void Reader::note_lines(const ScenarioStep& step, const std::optional<std::int64
         ScenarioLineText line;
         line.variable = scenario_.variables[variable].text;
         line.kind = step_kind_name(step.kind);
+        line.file = step.file;
         line.line = step.line;
         line.step = index + 1;
         line.from_ms = time;
@@ -36,6 +37,7 @@ void Reader::note_lines(const ScenarioStep& step, const std::optional<std::int64
             line.to_ms = *time + *length;
         }
         line.time_source = time ? ScenarioLineText::TimeSource::Text : ScenarioLineText::TimeSource::AfterWait;
+        line.after_wait_file = time ? std::string{} : wait_file_;
         line.after_wait = time ? 0 : wait_line_;
         line.text = text;
         if (shape != nullptr && !shape->type.empty())
@@ -133,7 +135,8 @@ void Reader::check_dithers()
         std::vector<const Base*> outside;
         for (const Base& base : under[i])
         {
-            const bool said = std::any_of(outside.begin(), outside.end(), [&base](const Base* b) { return b->value == base.value && b->line == base.line; });
+            const bool said = std::any_of(outside.begin(), outside.end(),
+                                          [&base](const Base* b) { return b->value == base.value && b->file == base.file && b->line == base.line; });
             if (!said && reaches_outside(base.value, dither.reach, dither.variable))
             {
                 outside.push_back(&base);
@@ -149,7 +152,7 @@ void Reader::check_dithers()
                 std::vector<std::string> where;
                 for (std::size_t k = 1; k < outside.size(); ++k)
                 {
-                    const std::string line = std::to_string(outside[k]->line);
+                    const std::string line = short_loc(outside[k]->file, outside[k]->line);
                     if (std::find(where.begin(), where.end(), line) == where.end())
                     {
                         where.push_back(line);
@@ -158,16 +161,16 @@ void Reader::check_dithers()
                 others = "; so on " + std::to_string(outside.size() - 1) + " other value" + (outside.size() > 2 ? "s" : "") + " (line" +
                          (where.size() > 1 ? "s " : " ") + config::detail::join(where) + ")";
             }
-            add(config::Severity::Warning, "scenario-dither-range", dither.line,
-                "the dither of " + var.text + " may take it out of its range (" + range + "): on the " + number_text(first.value) +
-                    " of line " + std::to_string(first.line) + ", the values written go " + (dither.about ? "about " : "") + "from " +
-                    number_text(as_written(first.value - dither.reach, dither.variable)) + " to " +
-                    number_text(as_written(first.value + dither.reach, dither.variable)) +
-                    (dither.about ? " (three times the amplitude of a gaussian noise, which is its standard deviation)" : "") + others +
-                    ". This is an estimate from the text (the dither that is on when the step comes, not the times): if it is "
-                    "right, the run fails at the write that is outside. Lower the amplitude, keep the values of " + var.text +
-                    " further from the ends of its range, or take the dither off before them (dither: { " + var.text + ": none })",
-                owner_of(dither.variable));
+            add_at(config::Severity::Warning, "scenario-dither-range", dither.file, dither.line,
+                   "the dither of " + var.text + " may take it out of its range (" + range + "): on the " + number_text(first.value) +
+                       " of " + loc_text(first.file, first.line) + ", the values written go " + (dither.about ? "about " : "") + "from " +
+                       number_text(as_written(first.value - dither.reach, dither.variable)) + " to " +
+                       number_text(as_written(first.value + dither.reach, dither.variable)) +
+                       (dither.about ? " (three times the amplitude of a gaussian noise, which is its standard deviation)" : "") + others +
+                       ". This is an estimate from the text (the dither that is on when the step comes, not the times): if it is "
+                       "right, the run fails at the write that is outside. Lower the amplitude, keep the values of " + var.text +
+                       " further from the ends of its range, or take the dither off before them (dither: { " + var.text + ": none })",
+                   owner_of(dither.variable));
         }
         if (var.type == control::ValueType::Integer && dither.swing && *dither.swing < 0.5 && !dither.quiet)
         {
@@ -175,17 +178,17 @@ void Reader::check_dithers()
             // more" where a value under the dither is so near an end that 0.5 leaves the range.
             const auto end = std::find_if(under[i].begin(), under[i].end(),
                                           [&](const Base& base) { return reaches_outside(base.value, 0.5, dither.variable); });
-            add(config::Severity::Warning, "scenario-wave-undersampled", dither.line,
-                "the " + dither.shape + " dither of " + var.text + " has an amplitude of " + number_text(*dither.swing) + ", but " +
-                    var.text +
-                    " is an integer: on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only "
-                    "where a ramp or a wave is between two whole values). " +
-                    (end == under[i].end() ? std::string("Make the amplitude 0.5 or more")
-                                           : "An amplitude of 0.5 or more would show, but on the " + number_text(end->value) + " of line " +
-                                                 std::to_string(end->line) + " it would leave the range (" + range +
-                                                 "): keep that value further from the end of the range first, or remove the dither") +
-                    dither.as_it_is,
-                owner_of(dither.variable));
+            add_at(config::Severity::Warning, "scenario-wave-undersampled", dither.file, dither.line,
+                   "the " + dither.shape + " dither of " + var.text + " has an amplitude of " + number_text(*dither.swing) + ", but " +
+                       var.text +
+                       " is an integer: on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only "
+                       "where a ramp or a wave is between two whole values). " +
+                       (end == under[i].end() ? std::string("Make the amplitude 0.5 or more")
+                                              : "An amplitude of 0.5 or more would show, but on the " + number_text(end->value) + " of " +
+                                                    loc_text(end->file, end->line) + " it would leave the range (" + range +
+                                                    "): keep that value further from the end of the range first, or remove the dither") +
+                       dither.as_it_is,
+                   owner_of(dither.variable));
         }
     }
     for (const ScenarioOverlay& input : scenario_.inputs)
@@ -193,17 +196,19 @@ void Reader::check_dithers()
         if (placed_.count(input.variable) == 0)
         {
             const std::string& name = scenario_.variables[input.variable].text;
-            add(config::Severity::Warning, "scenario-dither-unused", input.line,
-                "the dither of " + name + " is never written: no step that runs puts a value on " + name +
-                    " (set, ramp or wave), and a dither is added to what the steps put; add a set of " + name +
-                    ", or remove the entry",
-                owner_of(input.variable));
+            add_at(config::Severity::Warning, "scenario-dither-unused", input.file, input.line,
+                   "the dither of " + name + " is never written: no step that runs puts a value on " + name +
+                       " (set, ramp or wave), and a dither is added to what the steps put; add a set of " + name +
+                       ", or remove the entry",
+                   owner_of(input.variable));
         }
     }
     if (findings_.size() > before)
     {
         // Among the findings of the steps, which are in the order of the file.
-        std::stable_sort(findings_.begin(), findings_.end(), [](const config::Finding& x, const config::Finding& y) { return x.line < y.line; });
+        std::stable_sort(findings_.begin(), findings_.end(), [](const config::Finding& x, const config::Finding& y) {
+            return x.file != y.file ? x.file < y.file : x.line < y.line;
+        });
     }
     // The list of the lines is for a scenario with a dither: another one's output for people is
     // as it was, and its JSON has the lists empty. It has the inputs that a dither is ever put on or taken off: what is under
@@ -334,6 +339,7 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     }
     ScenarioOverlay out;
     out.variable = v;
+    out.file = current_file_;
     out.line = shown;
     if (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum)
     {
@@ -348,7 +354,7 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
         const bool none = is_scalar(node) && !is_null(node) && param_at(node) == nullptr && text_of(node) == "none";
         if (none && in_step)
         {
-            step_dithers_.push_back(Dither{v, shown, 0.0, false, std::nullopt, true, true, as_it_is_, {}});
+            step_dithers_.push_back(Dither{v, current_file_, shown, 0.0, false, std::nullopt, true, true, as_it_is_, {}});
             out.text = name + " none";
             return good ? std::optional<ScenarioOverlay>(std::move(out)) : std::nullopt;
         }
@@ -451,7 +457,7 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     out.described.type = shape;
     // How far from the value under it the dither goes: its amplitude, or for a gaussian noise
     // (whose amplitude is the standard deviation) three times that, which nearly every value is within.
-    Dither noted{v, shown, swing.value_or(0.0), !swing.has_value(), swing, quiet, false, as_it_is_, shape};
+    Dither noted{v, current_file_, shown, swing.value_or(0.0), !swing.has_value(), swing, quiet, false, as_it_is_, shape};
     if (!swing)
     {
         for (const auto& [key, value] : out.described.values)

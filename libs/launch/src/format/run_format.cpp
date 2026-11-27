@@ -341,24 +341,47 @@ std::string detail::scenario_text(const scenario::ScenarioRun& scenario)
                                  (scenario.unchecked_expects() == 1 ? " expect not checked" : " expects not checked")
                            : std::string{}) +
                       "\n\n";
-    std::vector<std::vector<std::string>> rows{{"line", "step", "result", "at"}};
+    const bool hasFile = std::any_of(scenario.steps.begin(), scenario.steps.end(), [&](const scenario::ScenarioStepRun& s) {
+        return !s.file.empty() && s.file != scenario.file;
+    });
+    const bool hasName = std::any_of(scenario.steps.begin(), scenario.steps.end(),
+                                     [](const scenario::ScenarioStepRun& s) { return !s.name.empty(); });
+    std::vector<std::string> header{hasFile ? "where" : "line"};
+    if (hasName)
+    {
+        header.push_back("name");
+    }
+    header.push_back("step");
+    header.push_back("result");
+    header.push_back("at");
+    std::vector<std::vector<std::string>> rows{std::move(header)};
     for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
-        rows.push_back({std::to_string(step.line), step.text, scenario::step_result_text(step.status),
-                        step.at ? sim_millis_text(*step.at) + " ms" : "-"});
+        std::vector<std::string> row;
+        row.push_back(hasFile ? ((step.file.empty() ? scenario.file : step.file) + ":" + std::to_string(step.line))
+                              : std::to_string(step.line));
+        if (hasName)
+        {
+            row.push_back(step.name.empty() ? std::string("-") : step.name);
+        }
+        row.push_back(step.text);
+        row.push_back(scenario::step_result_text(step.status));
+        row.push_back(step.at ? sim_millis_text(*step.at) + " ms" : "-");
+        rows.push_back(std::move(row));
     }
     out += detail::table_text(rows);
     // Why, for the steps that were skipped and the expects that were not checked: the table has no
     // room for it.
     for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
+        const std::string where = step.file.empty() ? "line " + std::to_string(step.line) : step.file + ":" + std::to_string(step.line);
         if (step.status == scenario::StepStatus::Skipped)
         {
-            out += "line " + std::to_string(step.line) + " skipped: " + step.message + "\n";
+            out += where + " skipped: " + step.message + "\n";
         }
         else if (!step.expect_skipped.empty())
         {
-            out += "line " + std::to_string(step.line) + " expect not checked: " + step.expect_skipped + "\n";
+            out += where + " expect not checked: " + step.expect_skipped + "\n";
         }
     }
     return out;
@@ -676,8 +699,16 @@ void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const
         w.real(key, t ? std::optional<double>(static_cast<double>(to_ns(*t)) / static_cast<double>(config::detail::kNanosPerMilli)) : std::nullopt);
     };
     w.integer("index", static_cast<std::int64_t>(step.index));
+    if (!step.file.empty())
+    {
+        w.string("file", step.file);
+    }
     w.integer("line", static_cast<std::int64_t>(step.line));
     w.string("kind", scenario::step_kind_name(step.kind));
+    if (!step.name.empty())
+    {
+        w.string("name", step.name);
+    }
     w.string("text", step.text);
     w.string("status", scenario::step_status_name(step.status));
     time("start_ms", step.start);
@@ -697,6 +728,32 @@ void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const
     {
         // Only when there is one: the steps of a scenario without it are as they were.
         w.string("expect_skipped", step.expect_skipped);
+    }
+    if (!step.call_stack.empty())
+    {
+        w.begin_array("call_stack");
+        for (const scenario::SourceFrame& frame : step.call_stack)
+        {
+            w.begin_object();
+            w.string("file", frame.file);
+            w.integer("line", static_cast<std::int64_t>(frame.line));
+            if (frame.name.empty())
+            {
+                w.null("name");
+            }
+            else
+            {
+                w.string("name", frame.name);
+            }
+            w.begin_object("params");
+            for (const scenario::SourceParam& param : frame.params)
+            {
+                detail::write_param_scalar(w, param.name, param.text, param.quoted);
+            }
+            w.end_object();
+            w.end_object();
+        }
+        w.end_array();
     }
 }
 
