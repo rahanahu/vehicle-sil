@@ -326,7 +326,17 @@ private:
 | `output(name, get, options)` | A variable that can only be read from outside, whose value a getter returns. |
 | `output_enum(name, get, items, options)` | An enumerated variable that can only be read from outside. |
 
-The types are bool, integer, real and enum. Values are read and written on the ECU's step thread, so the model needs no locks.
+The types are bool, integer, real and enum (`vehicle_sil::control::Value` is `std::variant<bool, std::int64_t, double>`). Values are read and written on the ECU's step thread, so the model needs no locks.
+
+| C++ type | Variable type (`ValueType`) | `input()` / `output()` | `input_enum()` / `output_enum()` | Notes |
+|---|---|---|---|---|
+| `bool` | `bool` (`Bool`) | Supported | Compile error (`static_assert`) | — |
+| Signed integers (`std::int8_t` .. `std::int64_t`, `int`, etc.) | `integer` (`Integer`) / `enum` (`Enum`) | Supported (`Integer`) | Supported (`Enum`) | Stored as `std::int64_t`; writes are checked against the C++ type range and `min`/`max`. |
+| Unsigned integers up to 32 bits (`std::uint8_t`, `std::uint16_t`, `std::uint32_t`) | `integer` (`Integer`) / `enum` (`Enum`) | Supported (`Integer`) | Supported (`Enum`) | Range `0`..type max; stored as `std::int64_t`. |
+| 64-bit unsigned integer (`std::uint64_t`) | `integer` (`Integer`) | `input()`: **Compile error (`static_assert`)**<br>`output()` without `min`/`max`: Supported (clamped) | `input_enum()`: **Compile error (`static_assert`)**<br>`output_enum()`: **Throws `std::invalid_argument` at runtime** | Control values are carried as `std::int64_t`, which cannot hold the full `uint64_t` range; use `std::int64_t` for writable inputs or enum values. Plain `output()` (with no `min`/`max`) saturates reads above `INT64_MAX` to `INT64_MAX`; `output()` with explicit `min`/`max` or `output_enum()` fails range checks (`std::invalid_argument`). |
+| Floating-point (`float`, `double`, `long double`) | `real` (`Real`) | Supported | Compile error (`static_assert`) | Stored as `double` via `static_cast<double>(v)` on read (not clamped); writes are checked (not clamped) against finite `float` or `double` range (`real_max`) and `min`/`max`. |
+| `enum` types | `enum` (`Enum`) | Compile error (`static_assert`) | `input_enum()`: Supported (except 64-bit unsigned underlying type)<br>`output_enum()`: Supported (except 64-bit unsigned underlying type, throws at runtime) | Values are carried as `std::int64_t`. Plain `input()` / `output()` accept only `bool`, integral, and floating-point types. |
+| Other types (`std::string`, structs, pointers) | — | Compile error (`static_assert`) | Compile error (`static_assert`) | Only `bool`, integral, floating-point, and `enum` types are supported. |
 
 | `VariableOptions` member | Meaning |
 |---|---|
@@ -347,7 +357,33 @@ The types are bool, integer, real and enum. Values are read and written on the E
 
 ### Agent options (`set_agent_options()`)
 
-`set_agent_options()` sets the read period (`sample_period`: 10 ms by default, 0 for every step) and the queue sizes. Call it only before the first `input()`, `output()` or `agent()`. An invalid value throws `std::invalid_argument` at once. The message names the ECU.
+`set_agent_options(vehicle_sil::control::AgentOptions)` configures the sampling period and the bounded queue capacities of the ECU's Control Agent. Call it only before the first `input()`, `output()` or `agent()`. Calling it afterwards throws `std::logic_error`, and an invalid value throws `std::invalid_argument` at once; the message names the ECU.
+
+| `AgentOptions` member | Default | Constraint | Meaning |
+|---|---|---|---|
+| `max_pending` | `256` | `> 0` | Maximum commands in flight (submitted and not yet consumed by `drain_results()`), and capacity of the command and result queues. |
+| `max_events` | `1024` | `> 0` | Capacity of the `Agent::log()` event queue. Events beyond this limit are dropped and counted in `AgentStats::events_dropped`. |
+| `sample_period` | `10ms` | `>= 0` | Variables are sampled in the first step at or after `0`, `sample_period`, `2 * sample_period`, ...; `0ms` (`SimDuration::zero()`) samples every step. |
+
+```cpp
+class Engine {
+public:
+    explicit Engine(vehicle_sil::Ecu& ecu) {
+        ecu.set_agent_options({
+            .max_pending = 512,
+            .max_events = 2048,
+            .sample_period = 20ms,   // or 0ms to sample every step
+        });
+        ecu.input("engine.throttle", &throttle_, {.unit = "%", .min = 0.0, .max = 100.0});
+        ecu.output("engine.speed", &rpm_, {.unit = "rpm"});
+    }
+private:
+    double throttle_ = 0.0;
+    double rpm_ = 800.0;
+};
+```
+
+When `vehicle_sil_launch` runs a scenario on `ecu_main()` ECUs whose variables the scenario reads (unless `samples: as_sent`), it passes `--sample-every-step`, which calls `ecu.sample_every_step()` to override `sample_period` to `0` while keeping the other `AgentOptions` fields.
 
 Every ECU has an Agent, because every ECU has the input `ecu.connected`, even if it declares no variables. So even in an ECU without declared variables, the Agent's work (applying writes, and reading the values every `sample_period`) runs in each step. An `ecu_main` ECU sends one values message every `sample_period` (10 ms by default). With `Peer`, the monitoring outputs (`PeerOptions::monitor`) are added as well.
 

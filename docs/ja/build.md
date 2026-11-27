@@ -21,7 +21,20 @@ vehicle-sil 自体のビルド方法と、自分の CMake プロジェクトに 
 | Python 3.11 以上と PyYAML | テストとサンプルのビルド、型付きメッセージの生成 | [uv](https://docs.astral.sh/uv/) でのインストールを勧めます。 | MSYS2 のパッケージ |
 | Python 3.11 以上と grpcio、grpcio-tools、protobuf | Control API の Python クライアント | uv でのインストールを勧めます。 | MSYS2 のパッケージ |
 
-Control Server をビルドし、gRPC を FetchContent で取り込むときは、CMake 3.28 以上が必要です（[dependencies.md](dependencies.md) の「gRPC と Protocol Buffers」）。Visual Studio と MSVC は不要です。
+Control Server をビルドし、gRPC を FetchContent で取り込むときは、CMake 3.28 以上が必要です（[dependencies.md](dependencies.md) の「gRPC と Protocol Buffers」）。
+
+### コンパイラ方針（MSVC 非対応）とプロセス境界
+
+**MSVC（Visual Studio の C++ コンパイラ）は、vehicle-sil のライブラリと C++ の ECU 実行ファイルのビルドに対して公式に非対応です。** 対応するツールチェーンは、Linux の GCC / Clang と、Windows の MSYS2 UCRT64 の MinGW-w64 GCC です。
+
+ただし、vehicle-sil の各要素は、プロセス内での C++ ABI リンクではなく、**OS のプロセス境界**をまたいだ通信プロトコルと IPC でつながります。
+
+| 境界 | プロトコル / 形式 | できること |
+|---|---|---|
+| participant（`ecu_main`、ブリッジ、外部モデル）↔ `vehicle_sil_launch` | SIL Kit（TCP / ドメインソケット） | 別プロセスであれば、SIL Kit を直接使う既存の Windows / MSVC モデル（`manual: true`、`describe: false`）でも、vehicle-sil の C++ ライブラリをリンクせずに同じシミュレーションへ参加できます。 |
+| 外部ツール / スクリプト ↔ `vehicle_sil_launch --control` | gRPC / Protocol Buffers | gRPC に対応した任意の言語・コンパイラから、プロセス境界越しに仮想時間と ECU 変数を操作できます。 |
+| ランチャー / GUI サーバー ↔ `vehicle_sil_launch` | CLI、`--describe` JSON、Events v4 NDJSON | 言語・コンパイラに依存しない子プロセス連携です（`vehicle-sil-tools-*-windows-x86_64.zip` の `vehicle_sil_launch` はランタイム DLL に依存しない独立した静的 MinGW 実行ファイルです）。 |
+| 自作画面 / ツール ↔ `vehicle-sil-gui` | HTTP / WebSocket | C++ ツールチェーンなしでブラウザーや Node.js クライアントから接続できます。 |
 
 必要なものがそろっているかは、クローンした後に `scripts/doctor.py` で確認できます。読むだけのスクリプトで、足りないものにはインストールの方法を表示します。
 
@@ -50,7 +63,26 @@ CMake が使う Python は、ビルドのしかたで決まります（[dependen
 
 対応する最も古いバージョン（3.11）と `.python-version` のバージョンで Python のコードを確認するには、`scripts/verify-python.py` を使います（C++ のビルドは不要です）。このスクリプトは、`pyproject.toml` に書いた依存の下限そのものでも 3.11 で確認します。そのため、下限は、テストを実行したバージョンになります。
 
-uv を使わない場合は、`pyproject.toml` の `[dependency-groups]` にあるパッケージを pip でインストールしても構いません。Windows（MSYS2 UCRT64）では、uv を使わずに、下の pacman のパッケージの Python のままで構いません。
+uv を使わない場合は、`pyproject.toml` の `[dependency-groups]` にあるパッケージを pip でインストールしても構いません。
+
+### Python と Node.js のバージョン要件
+
+| ツール | 要件 | 根拠と検証 |
+|---|---|---|
+| Python（リポジトリ、GUI、Control API、コード生成） | `>= 3.11`（`pyproject.toml`、`.python-version` は `3.14` を固定） | スクリプトとテストが Python 3.11 以降の標準ライブラリ機能（`tomllib` など）と型注釈を使います。CI（`scripts/verify-python.py`）は `3.11`（`pyproject.toml` の下限そのものを含む）と `.python-version`（`3.14`）の両方で検証します。 |
+| Python（`template/get_tools.py` のみ） | `>= 3.9`（標準ライブラリのみ） | テンプレート利用者がビルド済みツールを展開するだけなら 3.9 以上で足りますが、`vehicle-sil-gui` や `vehicle_sil_control` の実行には `3.11`〜`3.14`（`uv` 経由）が要ります。 |
+| Node.js と npm（`gui/web` と `gui/client` のビルドのみ） | Node.js `^24.15.0 \|\| ^26.0.0`（`gui/web/.nvmrc`: `24`）、npm `>= 11.12.1` | Angular 22、TypeScript 6、Vitest 5、Playwright が要求します（`gui/web/package.json`）。`gui/web/.npmrc` が `engine-strict=true` を設定しているため範囲外では `npm ci` が止まり、CI の Node 24 Active LTS 環境と一致します。ビルド済みの画面を使うだけなら Node.js は不要です。 |
+
+### Windows の Python と `uv` の使い分け
+
+Windows では、CMake のコード生成／CTest と、ブラウザー GUI／Control API で **2 つの別々の Python を使います**（`cmake/VehicleSilPython.cmake` は Windows では意図的に `.venv` を使いません）。
+
+| Windows での作業 | 使う Python | パッケージ / 準備 | 理由 |
+|---|---|---|---|
+| CMake ビルド（`vehicle_sil_add_j1939_codec`）、CTest のスキーマ・Control API テスト | MSYS2 UCRT64 の Python（`mingw-w64-ucrt-x86_64-python`） | `pacman -S mingw-w64-ucrt-x86_64-python-yaml`（テスト時は `-python-jsonschema`、`-python-grpcio`、`-python-grpcio-tools` も） | MinGW の CMake / CTest は MSYS2 UCRT64 環境で動き、Windows の `uv` の `.venv` に入る標準 Windows 版 CPython は MinGW ビルドでは未検証のためです。 |
+| ブラウザー GUI（`vehicle-sil-gui`）、gRPC 付き `vehicle_sil_control`、`scripts/verify-python.py` | `uv`（`mingw-w64-ucrt-x86_64-uv` または Windows 版 `uv`）が管理する標準 Windows 版 CPython | `uv sync`（リポジトリ）、または `uv run ...`（ビルド済みツール） | PyPI のビルド済み wheel（`aiohttp`、`pydantic-core`、`grpcio`）は標準 Windows 版 CPython 向けであり、MSYS2 の Python にはインストールできないためです。 |
+| テンプレートの `get_tools.py` | MSYS2 の Python と標準 Windows 版 Python のどちらでも可（`>= 3.9`） | なし（標準ライブラリのみ） | どちらでも動き、呼び出したシェルに合う `PATH` 設定行を表示します。 |
+| GUI 画面のビルドとテスト（`scripts/verify-web.py`） | Windows 版 Python（python.org または MSYS2）＋ Windows 版 Node.js | `npm --prefix gui/web ci` | Windows 版 Node.js（`^24.15.0 \|\| ^26.0.0`）と Chromium を使います。 |
 
 ## vehicle-sil 自体をビルドする
 
@@ -74,12 +106,12 @@ ctest --preset linux-gcc-debug
 
 | プリセット | 内容 | 追加で必要なもの |
 |---|---|---|
-| `linux-gcc-debug`、`linux-gcc-release` | GCC | なし |
-| `linux-clang-debug` | Clang | なし |
-| `linux-clang-asan`、`linux-clang-tsan` | Clang と、AddressSanitizer + UBSan または ThreadSanitizer | なし |
-| `linux-gcc-asan`、`linux-gcc-tsan` | GCC とサニタイザー | `libasan`、`libubsan`、`libtsan` のパッケージ |
+| `linux-gcc-debug`、`linux-gcc-release` | GCC（Debug / Release） | なし |
+| `linux-clang-debug` | Clang（Debug） | なし |
+| `linux-clang-asan`、`linux-clang-tsan` | Clang の Debug と、AddressSanitizer + UBSan または ThreadSanitizer | なし |
+| `linux-gcc-asan`、`linux-gcc-tsan` | GCC の Debug とサニタイザー | `libasan`、`libubsan`、`libtsan` のパッケージ |
 | `linux-gcc-static` | Release で `VEHICLE_SIL_STATIC=ON`（下の「1 つの実行ファイルにする（`VEHICLE_SIL_STATIC`）」） | 静的な libstdc++（Fedora は `libstdc++-static`） |
-| `linux-gcc-control` | GCC の Debug で `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` | gRPC が PC になければ、CMake 3.28 以上と、最初の configure のときの Git とネットワーク |
+| `linux-gcc-control` | GCC の Debug で `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`、`VEHICLE_SIL_FAULT_INJECTION=ON`（テスト専用） | gRPC が PC になければ、CMake 3.28 以上と、最初の configure のときの Git とネットワーク |
 
 `linux-gcc-control` は、Control Server とそのテストもビルドします（[control-api.md](control-api.md) の「ビルド」）。gRPC が見つからなければ、固定したバージョンを FetchContent で取り込んでビルドします。Python のクライアントのテストは、grpcio と grpcio-tools のある Python（`uv sync`）があるときだけ登録します。
 
@@ -114,21 +146,30 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-プリセットは `windows-mingw-debug`、`windows-mingw-release`、`windows-mingw-static`（Release で `VEHICLE_SIL_STATIC=ON`）、`windows-mingw-control`（Debug で `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`。[control-api.md](control-api.md) の「ビルド」）の 4 つです。
+Windows のプリセットは次の 4 つです（いずれも MSYS2 UCRT64 の GCC と Ninja を使います）。
 
-実行ファイルが読み込む DLL は、次の場所にあります。
+| プリセット | ビルド種別 | オプション | 追加で必要なもの |
+|---|---|---|---|
+| `windows-mingw-debug` | Debug | 既定の共有 SIL Kit とランタイム DLL | MSYS2 UCRT64 ツールチェーン＋`python`＋`python-yaml` |
+| `windows-mingw-release` | Release | 既定の共有 SIL Kit とランタイム DLL | MSYS2 UCRT64 ツールチェーン＋`python`＋`python-yaml` |
+| `windows-mingw-static` | Release | `VEHICLE_SIL_STATIC=ON`（ランタイム DLL は 0 個） | MSYS2 UCRT64 ツールチェーン＋`python`＋`python-yaml` |
+| `windows-mingw-control` | Debug | `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`、`VEHICLE_SIL_FAULT_INJECTION=ON` | `mingw-w64-ucrt-x86_64-grpc`（または CMake 3.28 以上＋最初の configure 時の Git とネットワークで FetchContent） |
 
-| DLL | 場所 |
+実行ファイルが読み込む DLL の扱いは次のとおりです。
+
+| ビルド | DLL の扱い（`vehicle_sil_copy_runtime_dlls(<target>)`） |
 |---|---|
-| `SilKit.dll` | ビルド後に、各実行ファイルの隣へ自動でコピーされます。 |
-| MinGW のランタイム DLL（`libstdc++-6.dll` など） | UCRT64 シェルの `PATH` から読み込まれます。 |
+| 非静的 MinGW（`VEHICLE_SIL_STATIC=OFF`、既定） | `POST_BUILD` で、`SilKit.dll`（または `SilKitd.dll`）と、使用中のツールチェーンに一致する MinGW ランタイム DLL（GCC は `libstdc++-6.dll`、`libgcc_s_{seh,dw2,sjlj}-1.dll` — UCRT64 x86_64 では `libgcc_s_seh-1.dll` — と `libwinpthread-1.dll`。Clang は `libc++.dll`、`libunwind.dll`、`libwinpthread-1.dll` だが Windows CI では未検証）の両方を各実行ファイルの隣へコピーします（`cmake/VehicleSilHelpers.cmake` / `cmake/VehicleSilCopyDlls.cmake` で並列 Ninja ビルド向けにプロセスロック付き）。ビルドした実行ファイルは、`C:\msys64\ucrt64\bin` を `PATH` に足さなくても UCRT64 シェルの外（PowerShell や `vehicle_sil_launch` など）から起動できます。 |
+| 静的（`VEHICLE_SIL_STATIC=ON`、`windows-mingw-static` など） | SIL Kit と MinGW/C++ ランタイムを静的にリンクするため、`vehicle_sil_copy_runtime_dlls()` は **0 個の DLL** をコピーします。 |
 
-UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\msys64\ucrt64\bin` を `PATH` に追加します。ほかの MinGW の `bin` より前に置きます。DLL の読み込みに失敗すると、実行ファイルは何も表示せずに終了します。
+検証済みの Windows MinGW 構成は **MSYS2 UCRT64 GCC** です（Windows CI で不要なパスを除いた最小限の `PATH` によりテストしています）。Clang-MinGW のランタイム DLL コピー（`libc++.dll` / `libunwind.dll`、または `--target` / `--sysroot` 経由で解決される `libstdc++`）は CMake ヘルパーに実装されていますが、**ネイティブ Windows CI でのエンドツーエンド検証はまだ完了していません**（今後のフォローアップで検証予定）。
 
-| 終了コード | 原因 |
-|---|---|
-| `0xC0000135` | DLL が見つかりません。 |
-| `0xC0000139` | 別のバージョンの GCC の DLL を先に読み込みました。 |
+それでも Windows で実行ファイルが何も表示せずに終了する場合の切り分け方は次のとおりです。
+
+| 終了コード | 原因 | 切り分けと直し方 |
+|---|---|---|
+| `0xC0000135` | 必要な DLL が見つかりません。 | ターゲットに `vehicle_sil_copy_runtime_dlls(<target>)` があるか確認します（または `VEHICLE_SIL_STATIC=ON` でビルドします）。`vxlapi64.dll`（Vector XL）など外部ドライバーの DLL は自動コピーされないため、`PATH` 上かブリッジの隣に置きます。 |
+| `0xC0000139` | 互換性のない別バージョンの GCC/MinGW の DLL が読み込まれた（実行ファイルの隣に残った古い DLL や `PATH` 上の不一致 DLL などにより、エントリーポイントが不足している）。 | Windows は通常、`PATH` を検索する**前に**実行ファイルの隣にある DLL を読み込みます。まず実行ファイルの隣にある DLL を確認し、ビルドに使ったツールチェーンと一致しているか確かめてください。古い DLL や別ツールチェーンの DLL が残っている場合は、同じツールチェーンでクリーンリビルドし、`vehicle_sil_copy_runtime_dlls()` に一致する DLL をコピーし直させます。MSYS2 UCRT64 シェルの `ldd <exe>` はインポートされる DLL の一覧を表示し、PowerShell/cmd の `where.exe <dll>` は `PATH` 上の候補 DLL を調べるだけのコマンドです（Windows が実際にどの DLL を読み込んだかを示すものではありません）。解決が `PATH` にフォールバックする場合は、`C:\msys64\ucrt64\bin` をほかの MinGW ツールチェーンより前に置いてください。 |
 
 ## ビルド済みのツール
 
@@ -180,13 +221,13 @@ include(FetchContent)
 FetchContent_Declare(
   vehicle_sil
   GIT_REPOSITORY https://github.com/rahanahu/vehicle-sil.git
-  GIT_TAG <固定するリリースタグまたはコミットハッシュ>)   # v0.4.0 のようなリリースタグか完全なコミットハッシュを指定する
+  GIT_TAG <固定するリリースタグまたはコミットハッシュ>)   # ツールとそろえたリリースタグ（例: v0.5.0）か完全なコミットハッシュを指定する
 
 FetchContent_MakeAvailable(vehicle_sil)
 
 add_executable(example main.cpp)
 target_link_libraries(example PRIVATE vehicle_sil::simulation vehicle_sil::j1939_periodic_sender)   # core だけなら vehicle_sil::core
-vehicle_sil_copy_runtime_dlls(example)   # Windows: SilKit.dll をコピーする（ほかの OS では何もしない）
+vehicle_sil_copy_runtime_dlls(example)   # Windows: 非静的ビルドでは SilKit.dll と MinGW ランタイム DLL をコピーする（VEHICLE_SIL_STATIC=ON では 0 個、ほかでは何もしない）
 ```
 
 新しく始めるときは、これを書いてあるテンプレート [template/](../../template) をコピーするのが早道です（README の「[クイックスタート](../../README.ja.md#クイックスタート)」）。完全な例は [examples/fetchcontent_consumer](../../examples/fetchcontent_consumer) にあります。
@@ -258,7 +299,7 @@ ECU の実行ファイルを、ほかのファイルなしで配布したいと�
 
 Linux の glibc は共有ライブラリのままです。glibc を静的にリンクしたプログラムは、名前の解決などのモジュールを読み込めず、かえって動く環境が限られるためです。
 
-Windows では、コピーする DLL がなくなるので、`vehicle_sil_copy_runtime_dlls()` は何もしません。
+Windows で `VEHICLE_SIL_STATIC=ON` のときは、コピーするランタイム DLL がなくなるので、`vehicle_sil_copy_runtime_dlls()` は 0 個をコピーします。
 
 実行ファイルは、SIL Kit の分だけ大きくなります。
 

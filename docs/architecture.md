@@ -38,6 +38,8 @@ Each line in the diagram is a connection. The table lists what each one carries.
 | Vector XL CAN Bridge and the real CAN bus | The bridge connects them in real time. | [bridges.md](bridges.md) |
 | Ethernet Bridge and external Ethernet | `vehicle_sil_ethernet_bridge` forwards frames between SIL Kit Ethernet and external Ethernet. The external interfaces are TAP devices, packet sockets and libpcap on Linux, and Npcap on Windows. | [ethernet-bridge.md](ethernet-bridge.md) |
 
+Because every boundary above is a **process boundary** (SIL Kit sockets, gRPC, CLI JSON/NDJSON, or HTTP/WebSocket), participants and tools do not share a C++ ABI. Building vehicle-sil's own C++ libraries and ECU executables requires GCC/Clang on Linux or MinGW-w64 GCC on Windows (MSVC is officially unsupported), while external executables built with MSVC or any other toolchain/language can still join as separate SIL Kit participants (`manual: true`, `describe: false`) or Control API / GUI clients.
+
 ## Directories and targets
 
 ### Directories

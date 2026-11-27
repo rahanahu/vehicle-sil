@@ -21,7 +21,20 @@ This page explains how to build vehicle-sil itself and how to include vehicle-si
 | Python 3.11 or later with PyYAML | Building the tests and examples, generating typed messages | Install with [uv](https://docs.astral.sh/uv/) (recommended) | MSYS2 packages |
 | Python 3.11 or later with grpcio, grpcio-tools and protobuf | The Python client of the Control API | Install with uv (recommended) | MSYS2 packages |
 
-To build the Control Server and pull in gRPC with FetchContent, you need CMake 3.28 or later (see "gRPC and Protocol Buffers (Control Server, optional)" in [dependencies.md](dependencies.md#grpc-and-protocol-buffers-control-server-optional)). You do not need Visual Studio or MSVC.
+To build the Control Server and pull in gRPC with FetchContent, you need CMake 3.28 or later (see "gRPC and Protocol Buffers (Control Server, optional)" in [dependencies.md](dependencies.md#grpc-and-protocol-buffers-control-server-optional)).
+
+### Compiler policy (MSVC unsupported) and process boundaries
+
+**MSVC (Visual Studio C++ compiler) is officially unsupported** for building vehicle-sil libraries and C++ ECU executables. Supported toolchains are GCC and Clang on Linux, and MinGW-w64 GCC (MSYS2 UCRT64) on Windows.
+
+However, vehicle-sil components communicate across **OS process boundaries** using wire and IPC protocols rather than in-process C++ ABI linking:
+
+| Boundary | Protocol / Format | What it enables |
+|---|---|---|
+| Participants (`ecu_main`, bridges, external models) ↔ `vehicle_sil_launch` | SIL Kit (TCP / domain sockets) | Separate processes—including existing Windows/MSVC models using SIL Kit directly (`manual: true`, `describe: false`)—can join the same simulation without linking vehicle-sil's C++ libraries. |
+| External tools / scripts ↔ `vehicle_sil_launch --control` | gRPC / Protocol Buffers | Any language or compiler with gRPC can control virtual time and ECU variables across the process boundary. |
+| Launchers / GUI server ↔ `vehicle_sil_launch` | CLI, `--describe` JSON, Events v4 NDJSON | Language- and compiler-independent subprocess integration (`vehicle_sil_launch` in `vehicle-sil-tools-*-windows-x86_64.zip` is a standalone static MinGW executable with no runtime DLL dependencies). |
+| Custom screens / tools ↔ `vehicle-sil-gui` | HTTP / WebSocket | Browser and Node.js clients integrate without C++ toolchains. |
 
 After you clone, run `scripts/doctor.py` to see whether everything is in place. The script changes nothing; for anything missing, it prints how to install it.
 
@@ -50,7 +63,26 @@ When you change the Python packages, update `uv.lock` with `uv lock` and commit 
 
 To check the Python code with the oldest supported version (3.11) and with the version in `.python-version`, run `scripts/verify-python.py` (no C++ build needed). On 3.11, it also runs with exactly the lower bounds of the packages in `pyproject.toml`, so the lower bounds are versions that the tests have run on.
 
-Without uv, you can install the packages listed in `[dependency-groups]` of `pyproject.toml` with pip. On Windows (MSYS2 UCRT64), you can skip uv and keep the Python from the pacman packages below.
+Without uv, you can install the packages listed in `[dependency-groups]` of `pyproject.toml` with pip.
+
+### Python and Node.js version requirements
+
+| Tool | Requirement | Rationale & verification |
+|---|---|---|
+| Python (repository, GUI, Control API, codegen) | `>= 3.11` (`pyproject.toml`; `.python-version` pins `3.14`) | Scripts and tests rely on Python 3.11+ standard library features (such as `tomllib`) and typing syntax. CI (`scripts/verify-python.py`) verifies both `3.11` (with the exact lower-bound dependency versions in `pyproject.toml`) and the pinned `.python-version` (`3.14`). |
+| Python (`template/get_tools.py` only) | `>= 3.9` (standard library only) | Template users only need Python 3.9+ to unpack prebuilt tools, though running `vehicle-sil-gui` or `vehicle_sil_control` requires `3.11`–`3.14` (via `uv`). |
+| Node.js & npm (building `gui/web` and `gui/client` only) | Node.js `^24.15.0 \|\| ^26.0.0` (`gui/web/.nvmrc`: `24`), npm `>= 11.12.1` | Required by Angular 22, TypeScript 6, Vitest 5, and Playwright (`gui/web/package.json`). `gui/web/.npmrc` sets `engine-strict=true` so `npm ci` stops outside this range, matching the Node 24 Active LTS environment in CI. Using prebuilt GUI screens requires no Node.js. |
+
+### Windows Python and `uv` matrix
+
+On Windows, CMake code generation / CTest and the browser GUI / Control API use **two separate Python installations** (`cmake/VehicleSilPython.cmake` intentionally skips `.venv` on Windows):
+
+| Task on Windows | Python used | Packages / setup | Why |
+|---|---|---|---|
+| CMake build (`vehicle_sil_add_j1939_codec`), CTest schema & Control API tests | MSYS2 UCRT64 Python (`mingw-w64-ucrt-x86_64-python`) | `pacman -S mingw-w64-ucrt-x86_64-python-yaml` (plus `-python-jsonschema`, `-python-grpcio`, `-python-grpcio-tools` for tests) | MinGW CMake/CTest runs inside the MSYS2 UCRT64 environment; Windows `uv` `.venv` holds standard Windows CPython, which is not verified for MinGW builds. |
+| Browser GUI (`vehicle-sil-gui`), `vehicle_sil_control` with gRPC, `scripts/verify-python.py` | Standard Windows CPython managed by `uv` (`mingw-w64-ucrt-x86_64-uv` or Windows `uv`) | `uv sync` (repository) or `uv run ...` (prebuilt tools) | Prebuilt PyPI wheels (`aiohttp`, `pydantic-core`, `grpcio`) target standard Windows CPython and cannot be installed into MSYS2 Python. |
+| Template `get_tools.py` | Either MSYS2 Python or Windows Python (`>= 3.9`) | None (standard library only) | Runs everywhere; prints the `PATH` line matching the shell it was invoked from. |
+| GUI web build & tests (`scripts/verify-web.py`) | Windows Python (python.org or MSYS2) + Windows Node.js | `npm --prefix gui/web ci` | Uses the Windows build of Node.js (`^24.15.0 \|\| ^26.0.0`) and Chromium. |
 
 ## Build vehicle-sil itself
 
@@ -74,12 +106,12 @@ In the 3 commands that name `linux-gcc-debug`, you can replace it with any prese
 
 | Preset | Contents | Additional requirements |
 |---|---|---|
-| `linux-gcc-debug`, `linux-gcc-release` | GCC | None |
-| `linux-clang-debug` | Clang | None |
-| `linux-clang-asan`, `linux-clang-tsan` | Clang with AddressSanitizer + UBSan, or with ThreadSanitizer | None |
-| `linux-gcc-asan`, `linux-gcc-tsan` | GCC with sanitizers | The packages `libasan`, `libubsan` and `libtsan` |
+| `linux-gcc-debug`, `linux-gcc-release` | GCC (Debug / Release) | None |
+| `linux-clang-debug` | Clang (Debug) | None |
+| `linux-clang-asan`, `linux-clang-tsan` | Clang Debug with AddressSanitizer + UBSan, or with ThreadSanitizer | None |
+| `linux-gcc-asan`, `linux-gcc-tsan` | GCC Debug with sanitizers | The packages `libasan`, `libubsan` and `libtsan` |
 | `linux-gcc-static` | Release with `VEHICLE_SIL_STATIC=ON` ("Build a single executable (`VEHICLE_SIL_STATIC`)" below) | A static libstdc++ (`libstdc++-static` on Fedora) |
-| `linux-gcc-control` | GCC Debug with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` | If the computer has no gRPC: CMake 3.28 or later, and Git and a network connection for the first configure |
+| `linux-gcc-control` | GCC Debug with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` and `VEHICLE_SIL_FAULT_INJECTION=ON` (tests only) | If the computer has no gRPC: CMake 3.28 or later, and Git and a network connection for the first configure |
 
 `linux-gcc-control` also builds the Control Server and its tests (see "Build" in [control-api.md](control-api.md#build)). If CMake does not find gRPC, it pulls in a pinned version with FetchContent and builds it. The tests of the Python client are registered only if a Python with grpcio and grpcio-tools is available (`uv sync`).
 
@@ -114,21 +146,30 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-There are 4 presets: `windows-mingw-debug`, `windows-mingw-release`, `windows-mingw-static` (Release with `VEHICLE_SIL_STATIC=ON`) and `windows-mingw-control` (Debug with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; see "Build" in [control-api.md](control-api.md#build)).
+There are 4 Windows presets (all use MSYS2 UCRT64 GCC and Ninja):
 
-Where the executables find the DLLs they load:
+| Preset | Build type | Options | Additional requirements |
+|---|---|---|---|
+| `windows-mingw-debug` | Debug | Default shared SIL Kit & runtime DLLs | MSYS2 UCRT64 toolchain + `python` + `python-yaml` |
+| `windows-mingw-release` | Release | Default shared SIL Kit & runtime DLLs | MSYS2 UCRT64 toolchain + `python` + `python-yaml` |
+| `windows-mingw-static` | Release | `VEHICLE_SIL_STATIC=ON` (0 runtime DLLs) | MSYS2 UCRT64 toolchain + `python` + `python-yaml` |
+| `windows-mingw-control` | Debug | `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`, `VEHICLE_SIL_FAULT_INJECTION=ON` | `mingw-w64-ucrt-x86_64-grpc` (or CMake 3.28+ with Git and network to build gRPC with FetchContent) |
 
-| DLL | Location |
+Where executables find the DLLs they load:
+
+| Build | DLL behavior (`vehicle_sil_copy_runtime_dlls(<target>)`) |
 |---|---|
-| `SilKit.dll` | Copied next to each executable automatically after the build. |
-| MinGW runtime DLLs (`libstdc++-6.dll` and others) | Loaded from the `PATH` of the UCRT64 shell. |
+| Non-static MinGW (`VEHICLE_SIL_STATIC=OFF`, default) | `POST_BUILD` copies both `SilKit.dll` (or `SilKitd.dll`) and the active toolchain's MinGW runtime DLLs (`libstdc++-6.dll`, `libgcc_s_{seh,dw2,sjlj}-1.dll` — `libgcc_s_seh-1.dll` on UCRT64 x86_64 — and `libwinpthread-1.dll` for GCC; `libc++.dll`, `libunwind.dll`, and `libwinpthread-1.dll` for Clang, not yet verified on Windows CI) next to each executable (`cmake/VehicleSilHelpers.cmake` / `cmake/VehicleSilCopyDlls.cmake` with a process lock for parallel Ninja builds). Built executables start outside the UCRT64 shell (e.g., PowerShell or `vehicle_sil_launch`) without adding `C:\msys64\ucrt64\bin` to `PATH`. |
+| Static (`VEHICLE_SIL_STATIC=ON`, e.g., `windows-mingw-static`) | SIL Kit and the MinGW/C++ runtime are linked statically; `vehicle_sil_copy_runtime_dlls()` copies **0 DLLs**. |
 
-To run the executables outside the UCRT64 shell (in PowerShell, for example), add `C:\msys64\ucrt64\bin` to `PATH`, before the `bin` directory of any other MinGW. If a DLL fails to load, the executable exits without printing anything.
+The verified Windows MinGW configuration is **MSYS2 UCRT64 GCC** (tested in Windows CI with a stripped `PATH`). Clang-MinGW runtime DLL copying (`libc++.dll` / `libunwind.dll`, or `libstdc++` resolved via `--target` / `--sysroot`) is implemented in the CMake helpers, but it is **not yet verified end-to-end on native Windows CI** (planned follow-up).
 
-| Exit code | Cause |
-|---|---|
-| `0xC0000135` | A DLL was not found. |
-| `0xC0000139` | A DLL from a different GCC version was loaded first. |
+If an executable still fails to start on Windows without printing anything:
+
+| Exit code | Cause | How to diagnose & fix |
+|---|---|---|
+| `0xC0000135` | A required DLL was not found. | Confirm `vehicle_sil_copy_runtime_dlls(<target>)` is called for the target (or build with `VEHICLE_SIL_STATIC=ON`). External driver DLLs such as `vxlapi64.dll` (Vector XL) are not copied automatically and must be on `PATH` or next to the bridge. |
+| `0xC0000139` | An incompatible MinGW/GCC runtime DLL was loaded (for example, stale DLLs next to the executable or mismatched DLLs on `PATH`), leaving an expected entry point missing. | Windows normally loads DLLs next to the executable **before** searching `PATH`. First inspect the DLLs next to the executable and confirm they match the toolchain used to build it; if stale or mismatched DLLs are present, perform a clean rebuild with that same toolchain so `vehicle_sil_copy_runtime_dlls()` copies matching DLLs. In the MSYS2 UCRT64 shell, `ldd <exe>` lists imported DLLs; `where.exe <dll>` in PowerShell/cmd only lists candidate DLLs on `PATH` (it does not tell you which DLL Windows actually loaded). If resolution still falls back to `PATH`, put `C:\msys64\ucrt64\bin` ahead of other MinGW toolchains. |
 
 ## Prebuilt tools
 
@@ -180,13 +221,13 @@ include(FetchContent)
 FetchContent_Declare(
   vehicle_sil
   GIT_REPOSITORY https://github.com/rahanahu/vehicle-sil.git
-  GIT_TAG <release tag or commit hash to pin>)   # pin a release tag such as v0.4.0 or a full commit hash
+  GIT_TAG <release tag or commit hash to pin>)   # pin a release tag matching your tools (e.g., v0.5.0) or a full commit hash
 
 FetchContent_MakeAvailable(vehicle_sil)
 
 add_executable(example main.cpp)
 target_link_libraries(example PRIVATE vehicle_sil::simulation vehicle_sil::j1939_periodic_sender)   # vehicle_sil::core if you need only core
-vehicle_sil_copy_runtime_dlls(example)   # Windows: copies SilKit.dll (does nothing on other OSes)
+vehicle_sil_copy_runtime_dlls(example)   # Windows: copies SilKit.dll and MinGW runtime DLLs for non-static builds (0 DLLs with VEHICLE_SIL_STATIC=ON; no-op elsewhere)
 ```
 
 To start a new project, the quickest way is to copy the template [template/](../template), which already contains this (see "[Quick start](../README.md#quick-start)" in the README). [examples/fetchcontent_consumer](../examples/fetchcontent_consumer) is a complete example.
@@ -258,7 +299,7 @@ To ship an ECU executable without any other files, configure with `-DVEHICLE_SIL
 
 On Linux, glibc stays a shared library. A program with glibc linked statically cannot load modules such as those for name resolution, which narrows the environments it runs in instead of widening them.
 
-On Windows there are no DLLs left to copy, so `vehicle_sil_copy_runtime_dlls()` does nothing.
+On Windows with `VEHICLE_SIL_STATIC=ON`, there are no runtime DLLs left to copy, so `vehicle_sil_copy_runtime_dlls()` copies 0 DLLs.
 
 The executable grows by the size of SIL Kit.
 

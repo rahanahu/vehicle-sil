@@ -726,6 +726,17 @@ The code of the Dashboard ECU does the detection; the scenario only reads its ou
 | What keeps running inside an ECU while it is disconnected | "Disconnecting from the bus (`ecu.connected`)" in [internals/execution.md](../internals/execution.md#disconnecting-from-the-bus-ecuconnected) |
 | How J1939 behaves on disconnect and reconnect | "Disconnect an ECU from the bus (`ecu.connected`)" in [j1939-guide.md](../j1939-guide.md#disconnect-an-ecu-from-the-bus-ecuconnected) |
 
+### Choosing between `ecu.connected` and `LocalBench` fault injection
+
+`ecu.connected` is designed for scenario tests, the Control API, and multi-process SIL Kit simulations. When you need per-frame CAN fault injection or raw frame/event injection, write a C++ test using `Simulation()` (`LocalBench`) and `vehicle_sil::testkit::faults`:
+
+| Fault mechanism | Works in scenarios / SIL Kit? | What it controls |
+|---|---|---|
+| `ecu.connected` (boolean variable) | Yes (scenarios, Control API, GUI, multi-process SIL Kit, and `LocalBench`) | Connects/disconnects an entire ECU across all its CAN, LIN, and Ethernet buses while its steps keep running. |
+| `LocalBench` + `vehicle_sil::testkit::faults` | No (in-process `Simulation()` / `LocalBench` C++ tests only) | Per-endpoint directional outages (`endpoint().add_outage()`), per-frame drop/duplicate/delay/failure (`endpoint().set_fault_injector()` with `can::FaultAction`), raw frame injection (`inject()`), and port error events (`endpoint().inject_event()`). |
+
+See "Test an ECU" in [j1939-guide.md](../j1939-guide.md#test-an-ecu) and [examples/fault_injection/main.cpp](../../examples/fault_injection/main.cpp).
+
 ## Replay to an end time and hand over to manual control
 
 When you want a scenario to keep running after its last `set` or check — for example, a scenario recorded from an interactive run so that downstream ECUs like `Dashboard` finish reacting to the final `Engine.engine.throttle` write — set `end_ms` at the top level instead of adding dummy `set` or always-true `expect` steps:

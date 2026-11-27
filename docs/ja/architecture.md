@@ -38,6 +38,8 @@ flowchart LR
 | Vector XL CAN Bridge と実機の CAN | ブリッジが、実時間で接続します。 | [bridges.md](bridges.md) |
 | イーサネットのブリッジと外のイーサネット | `vehicle_sil_ethernet_bridge` が、SIL Kit の Ethernet と外のイーサネットの間でフレームを転送します（外部のインターフェースは、Linux の TAP デバイス、packet ソケット、libpcap と、Windows の Npcap です）。 | [ethernet-bridge.md](ethernet-bridge.md) |
 
+上のどの境界も **プロセス境界**（SIL Kit ソケット、gRPC、CLI の JSON/NDJSON、HTTP/WebSocket）であるため、participant とツールは C++ の ABI を共有しません。vehicle-sil 自身の C++ ライブラリと ECU 実行ファイルのビルドには Linux の GCC/Clang または Windows の MinGW-w64 GCC が必要です（MSVC は公式に非対応）が、MSVC や別のツールチェーン・言語で作った外部の実行ファイルも、独立した SIL Kit participant（`manual: true`、`describe: false`）や Control API / GUI クライアントとして参加できます。
+
 ## ディレクトリとターゲット
 
 ### ディレクトリ

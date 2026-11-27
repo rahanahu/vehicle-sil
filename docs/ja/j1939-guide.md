@@ -119,6 +119,18 @@ inline j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 
 `j1939::Network` を自分で作るプログラム（`Ecu` を使わないもの）は、`NetworkOptions::node_overrides` で、ノードのコードを変えずにアドレスと NAME の一部（identity number、function instance、ECU instance）を替えられます。同じノードのコードを 1 本のバスに 2 つ載せるための口です。行は、コードのアドレス（`from`。省くと、そのネットワークのただ 1 つのノード）でノードを指します。`add_node()` は、指されたノードを替えた後の値で作ります（`Node::address()`、`requested_address()`、`name()` は替えた後の値、`Node::coded_address()` だけがコードのアドレス）。行が当たるのは、最初の `begin()` より前に追加したノードだけです（`Network::close_node_overrides()` でも閉じられます。使われなかった行の番号を返します）。その後に追加したノードは、コードの値のままです。当てられない行（NAME のないノードに NAME の欄、など）と、1 つの行が 2 つ目のノードに当たる場合は、`add_node()` が `std::invalid_argument` を投げます。`Ecu::j1939()` で作るネットワークは `node_overrides` を受け付けません（`std::invalid_argument`）。ECU のノードの値は、ECU を動かす側が外から替えます（下の「シミュレーションで実行する」の `SilKitOptions::j1939_nodes`、`PeerOptions::j1939_nodes`）。
 
+### 仮想時間（`SimTime`）
+
+シミュレーションの時刻は、壁時計の型ではなく、`vehicle_sil::SimTime` と `vehicle_sil::SimDuration`（`vehicle_sil/core/sim_time.hpp`）で表します。
+
+| シンボル | 型 / 戻り値 | 意味 |
+|---|---|---|
+| `vehicle_sil::SimTime` | `SimClock::time_point`（`std::chrono::nanoseconds`） | 仮想シミュレーション時間の時刻。`SimTime{}` がシミュレーション開始（`T = 0`）です。独立したクロック型のため、`std::chrono::steady_clock` や `system_clock` との混在はコンパイルエラーになり、`SimClock` には `now()` がありません。 |
+| `vehicle_sil::SimDuration` | `std::chrono::nanoseconds` | シミュレーション時間の長さ（SIL Kit のナノ秒分解能）。 |
+| `vehicle_sil::to_ns(SimTime)` | `std::int64_t` | `SimTime` をシミュレーション開始（`T = 0`）からの経過ナノ秒に変換します（ログ出力、トレース、比較用）。 |
+
+`ecu.on_step()`、`ecu.every()`、`ecu.at()` などのハンドラには、現在ステップの開始時刻が `SimTime now` として渡されます。一方、受信したメッセージや CAN フレームに付いている時刻（`TimedFrame::time`、`Message::time`）は、受信側の現在ステップの `now` ではなく **バス到着時刻** です（以下を参照）。
+
 ### 複数のネットワークを持つ ECU
 
 ゲートウェイは、`j1939()` を異なるネットワーク名で呼びます。片方のハンドラから他方へ送信すると、同じステップで送信されます。
@@ -160,7 +172,8 @@ ecu.every(100ms, [&raw](vehicle_sil::SimTime) {
 |---|---|
 | `send()` を呼べる所 | ステップの中だけです（コンストラクターから呼ぶと `std::logic_error`）。 |
 | `send()` の結果 | `RawSendStatus`（`Ok`、`QueueFull`、`InvalidFrame`）で返ります。 |
-| 送信の時刻 | フレームは、そのステップの最後に、ステップの時刻で送信されます。 |
+| 送信の時刻 | フレームは、そのステップの最後に、送信ステップの開始時刻（`now`）で送信されます。 |
+| 受信した `TimedFrame::time` | 受信ステップの `now` ではなく、バックエンドが付与した **バス到着時刻**（受信ステップの `now` より前: `< now`）です。バスのタイミングモデルがない場合（SIL Kit の trivial シミュレーションまたは既定の `VirtualCanBus`）は送信側のステップ時刻、タイミングモデルあり（`VirtualCanBusOptions::timing` または `CanBusSimulator`）はバス送信完了時刻、`FaultAction::delay_by(d)` では `+ d` が加算された時刻、実時間ポート（`TimeDomain::RealTime`）では `RealTimeDriver` の時計上の到着時刻になります。ナノ秒で記録するときは `vehicle_sil::to_ns(f.time)` を使います。 |
 | 違う ECU から同じ時刻に受信したフレームの順 | SIL Kit では決まらないので、順に依存する処理を書かないでください。 |
 
 同じ ECU が同じネットワーク名で `j1939()` と `can()` の両方を持ってもかまいません。別のコントローラーになるので、互いのフレームを受信します（J1939 のネットワークは 11 ビットのフレームを無視します）。
@@ -185,7 +198,7 @@ node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // �
 | 解除が必要な登録 | `j1939::Subscription` に持たせます（破棄で解除します）。 |
 | 最新の値と途絶だけが必要なとき | `Monitor` を使います（「受信を監視する」）。 |
 
-組み立てたメッセージの `Message::time` は転送が終わった時刻（最後のパケットの時刻）で、相手が送信を始めた時刻ではありません。相手の送信の周期を受信の時刻から確認するときは、単一フレームのメッセージで確認します。
+単一フレームのメッセージでは、`Message::time` は受信フレームの `TimedFrame::time`（バス到着時刻）です。組み立てたメッセージの `Message::time` は転送が終わった時刻（最後のパケットの `TimedFrame::time`）で、相手が送信を始めた時刻ではありません。相手の送信の周期を受信の時刻から確認するときは、単一フレームのメッセージで確認します。
 
 ## メッセージを送信する
 
@@ -844,6 +857,17 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 | `Monitor` | 通信の途絶を見る |
 | `testkit::J1939Events` | 送信の要求、フレームの送出、転送の終わり、アドレスの変化を見る |
 | `testkit::FrameLog` | バス上のフレームを見る |
+
+注入したい故障の内容と実行環境に応じて、`ecu.connected` と `LocalBench`（`Simulation::local()`、`vehicle_sil::testkit::faults`）を使い分けます。
+
+| 目的 | 使うもの | 対象範囲と主な API |
+|---|---|---|
+| シナリオ、Control API、GUI、複数プロセスの SIL Kit 実行で ECU 全体の通信を切る／戻す | `ecu.connected` | すべての `Ecu`（SIL Kit の `Peer` と `LocalBench`）、シナリオ、Control API、GUI で使えます。ステップを実行したまま、その ECU の全 CAN・LIN・Ethernet ポートをまとめて切断します。個別フレームの欠落や遅延はできません。 |
+| 決定論的な時間区間で片方向／バス単位の CAN 通信断を起こす | `LocalBench`（`add_outage`） | 同一プロセス内の `Simulation()` / `LocalBench` 専用（複数プロセスの SIL Kit では使えません）。`bus.endpoint(ecu[, network]).add_outage(from, until[, can::OutageDirection::{Receive, Send, Both}])`。 |
+| 特定の CAN フレーム（PGN、送信元アドレス、CAN ID、回数、時間帯）を欠落・複製・遅延・送信失敗させる | `LocalBench` + `vehicle_sil::testkit::faults` | 同一プロセス内の `Simulation()` / `LocalBench` 専用。`bus.endpoint(ecu[, network]).set_fault_injector(...)` に `testkit::faults`（`when`、`between`、`nth`、`sequence`、`first_of`、`j1939_pgn`、`j1939_source`、`can_id`）と `can::FaultAction::{deliver, drop, duplicate, delay_by, queue_full, failed, transmit_failed}` を組み合わせます。 |
+| 任意の 11 ビット / 29 ビット CAN フレームやコントローラー／バスイベント（`BusStateChanged`、`ErrorFrame`）を注入する | `LocalBench`（`inject`、`inject_event`） | 同一プロセス内の `Simulation()` / `LocalBench` 専用。`bus.inject([network, ]time, frame)` と `bus.endpoint(ecu[, network]).inject_event(can::PortEvent)`。 |
+
+`add_outage`、`set_fault_injector`（`testkit::faults`）、`inject`、およびアドレス競合の観測を動かせる例は、[examples/fault_injection/main.cpp](../../examples/fault_injection/main.cpp) にあります（`ecu.connected` は [examples/ecu_main/scenarios/engine_disconnect.yaml](../../examples/ecu_main/scenarios/engine_disconnect.yaml) と `tests/simulation/test_disconnect.cpp` にあります）。
 
 `J1939Events` はネットワークごとに、`FrameLog` はタップごとに 1 つです。同じネットワークかタップに 2 つ目を作ると `std::logic_error` になるので、1 つ目を要る補助関数と共有します。
 

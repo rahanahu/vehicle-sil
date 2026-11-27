@@ -233,9 +233,9 @@ GUI に自分のコードを足す道は 3 つあります。サンプルの画�
 | 画面 | サンプルの画面のビルド（`gui/web` の `npm run build` の出力）か、自分の画面のビルド（`--web`） |
 | ブラウザー | デスクトップのブラウザー。新しい版の Chromium 系（Chrome、Edge。試験はこれで回します）。Firefox でも動くはずです。画面と時間の軸が使う機能には、Chrome か Edge の 123 以降（`light-dark()`）、Firefox の 121 以降（`:has()`）が要ります |
 
-- ビルド済みのツール（README の「[クイックスタート](../../README.ja.md#クイックスタート)」）には、Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。必要なのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv がインストールします。
+- ビルド済みのツール（README の「[クイックスタート](../../README.ja.md#クイックスタート)」）には、Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。必要なのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv がインストールします。Windows では `uv`（`mingw-w64-ucrt-x86_64-uv` または Windows 版 `uv`）を使い、PyPI のビルド済み wheel（`aiohttp`、`pydantic-core`、`grpcio`）が動く標準 Windows 版 Python で実行してください。MSYS2 の `mingw-w64-ucrt-x86_64-python` には GUI のパッケージをインストールできません（[build.md](build.md) の「Windows の Python と `uv` の使い分け」）。
 - 変数の読み書きに必要なもののどちらかがなくても、ほかの機能はそのまま使えます。変数だけが「使えない」になり、理由を表示します。
-- 画面を使うだけなら Node.js は不要です。画面のビルドには必要です（[gui/web/README.md](../../gui/web/README.ja.md)）。
+- 画面を使うだけなら Node.js は不要です。画面のビルドには、`gui/web/package.json` が定め `gui/web/.npmrc`（`engine-strict=true`）が強制する Node.js `^24.15.0 || ^26.0.0`（`gui/web/.nvmrc`: `24`）と npm `>= 11.12.1` が必要です（[gui/web/README.md](../../gui/web/README.ja.md)）。
 
 ## 起動の引数と終了コード
 

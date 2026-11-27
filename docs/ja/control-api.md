@@ -326,7 +326,17 @@ private:
 | `output(name, get, options)` | 外から読むだけの変数で、値を getter で返します。 |
 | `output_enum(name, get, items, options)` | 外から読むだけの、列挙の変数です。 |
 
-型は、bool、整数、実数、列挙です。値は ECU のステップのスレッドで読み書きするので、モデルにロックは不要です。
+型は、bool、整数、実数、列挙です（`vehicle_sil::control::Value` は `std::variant<bool, std::int64_t, double>`）。値は ECU のステップのスレッドで読み書きするので、モデルにロックは不要です。
+
+| C++ の型 | 変数の型（`ValueType`） | `input()` / `output()` | `input_enum()` / `output_enum()` | 補足 |
+|---|---|---|---|---|
+| `bool` | `bool`（`Bool`） | 対応 | コンパイルエラー（`static_assert`） | — |
+| 符号付き整数（`std::int8_t` .. `std::int64_t`、`int` など） | `integer`（`Integer`） / `enum`（`Enum`） | 対応（`Integer`） | 対応（`Enum`） | `std::int64_t` として保持し、書き込みは C++ の型の範囲と `min` / `max` で確認します。 |
+| 32 ビットまでの符号なし整数（`std::uint8_t`、`std::uint16_t`、`std::uint32_t`） | `integer`（`Integer`） / `enum`（`Enum`） | 対応（`Integer`） | 対応（`Enum`） | 範囲は `0`..その型の最大値で、`std::int64_t` として保持します。 |
+| 64 ビットの符号なし整数（`std::uint64_t`） | `integer`（`Integer`） | `input()`: **コンパイルエラー（`static_assert`）**<br>`output()`（`min`/`max` なし）: 対応（飽和） | `input_enum()`: **コンパイルエラー（`static_assert`）**<br>`output_enum()`: **実行時に `std::invalid_argument`** | 制御の値は `std::int64_t` で運ぶため `uint64_t` の全範囲を表せず、書き込める入力や列挙の値には `std::int64_t` を使います。`min`/`max` なしの `output()` だけは登録でき、読み出し時に `INT64_MAX` を超える値を `INT64_MAX` に飽和させます（`min`/`max` 指定の `output()` や `output_enum()` は範囲検査で `std::invalid_argument` になります）。 |
+| 浮動小数点数（`float`、`double`、`long double`） | `real`（`Real`） | 対応 | コンパイルエラー（`static_assert`） | 読み出し時は `static_cast<double>(v)` で `double` に変換し（丸め・飽和はしません）、書き込みは有限な `float` または `double` の範囲（`real_max`）と `min`/`max` で拒否判定します（クランプしません）。 |
+| `enum` 型 | `enum`（`Enum`） | コンパイルエラー（`static_assert`） | `input_enum()`: 対応（64 ビット符号なしの基底型を除く）<br>`output_enum()`: 対応（64 ビット符号なしの基底型は実行時に例外） | 値は `std::int64_t` で運びます。通常の `input()` / `output()` が受け付けるのは `bool`、整数、浮動小数点数だけです。 |
+| そのほかの型（`std::string`、構造体、ポインター） | — | コンパイルエラー（`static_assert`） | コンパイルエラー（`static_assert`） | `bool`、整数、浮動小数点数、`enum` だけに対応しています。 |
 
 | `VariableOptions` のメンバー | 意味 |
 |---|---|
@@ -347,7 +357,33 @@ private:
 
 ### Agent の設定（`set_agent_options()`）
 
-`set_agent_options()` で、読み出しの周期（`sample_period`、既定 10 ms、0 で毎ステップ）とキューの大きさを選べます。呼べるのは、最初の `input()`、`output()`、`agent()` より前だけです。不正な値は、その場で `std::invalid_argument` です（メッセージに ECU の名前があります）。
+`set_agent_options(vehicle_sil::control::AgentOptions)` で、ECU の Control Agent の読み出し周期と有界キューの大きさを設定します。呼べるのは、最初の `input()`、`output()`、`agent()` より前だけです。その後に呼ぶと `std::logic_error`、不正な値を渡すとその場で `std::invalid_argument` になります（メッセージに ECU の名前があります）。
+
+| `AgentOptions` のメンバー | 既定値 | 制約 | 意味 |
+|---|---|---|---|
+| `max_pending` | `256` | `> 0` | 処理中のコマンドの最大数（送信済みで `drain_results()` で回収前のもの）と、コマンド・結果キューの容量。 |
+| `max_events` | `1024` | `> 0` | `Agent::log()` のイベントキューの容量。これを超えたイベントは捨てられ、`AgentStats::events_dropped` に数えられます。 |
+| `sample_period` | `10ms` | `>= 0` | `0`、`sample_period`、`2 * sample_period`、… 以後の最初のステップで変数を読み出します。`0ms`（`SimDuration::zero()`）で毎ステップ読み出します。 |
+
+```cpp
+class Engine {
+public:
+    explicit Engine(vehicle_sil::Ecu& ecu) {
+        ecu.set_agent_options({
+            .max_pending = 512,
+            .max_events = 2048,
+            .sample_period = 20ms,   // or 0ms to sample every step
+        });
+        ecu.input("engine.throttle", &throttle_, {.unit = "%", .min = 0.0, .max = 100.0});
+        ecu.output("engine.speed", &rpm_, {.unit = "rpm"});
+    }
+private:
+    double throttle_ = 0.0;
+    double rpm_ = 800.0;
+};
+```
+
+`vehicle_sil_launch` がシナリオを実行するときは（`samples: as_sent` でない限り）シナリオが変数を読み取る `ecu_main()` の ECU に `--sample-every-step` を渡し、内部で `ecu.sample_every_step()` が呼ばれて、ほかの `AgentOptions` の設定を保ったまま `sample_period` だけが `0` に上書きされます。
 
 どの ECU にも Agent があります。変数を宣言しなくても、どの ECU にもある入力 `ecu.connected` を持つためです。そのため、変数を宣言しない ECU でも、ステップごとに Agent の処理（書き込みの反映と、`sample_period` ごとの値の読み出し）が動きます。`ecu_main` の ECU は、`sample_period` ごと（既定 10 ms）に値のメッセージを 1 通送信します。`Peer` では、監視の出力（`PeerOptions::monitor`）も付きます。
 

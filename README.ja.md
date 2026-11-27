@@ -134,7 +134,7 @@ failed: 2 errors, 1 warning, 0 notes
 
 | 必要なもの | バージョン | 用途 |
 |---|---|---|
-| C++ のコンパイラ | C++20 に対応した GCC か Clang | すべてのビルドに使います。 |
+| C++ のコンパイラ | C++20 に対応した GCC か Clang（Windows: MSYS2 UCRT64 の MinGW-w64 GCC。MSVC は非対応） | すべてのビルドに使います。 |
 | CMake | 3.21 以上（gRPC をビルドするときは 3.28 以上） | configure とビルドに使います。 |
 | Ninja、Git | 指定なし | ビルドと、SIL Kit の取得に使います。 |
 | [uv](https://docs.astral.sh/uv/) | 指定なし | ビルドと GUI が使う Python（3.11 以上）とパッケージをインストールします。 |
@@ -259,6 +259,7 @@ int main(int argc, char** argv)
 | ツールとビルド | テスト用のライブラリ（`vehicle_sil::testkit`）に、LIN の故障注入と記録の機能はありません。 | 記録は仮想 LIN バスの観測、ECU ごとの通信断は `ecu.connected` でできます。 |
 | ツールとビルド | `LocalBench`（`vehicle_sil::local`）、`vehicle_sil::testkit`、`vehicle_sil::spy` の API は安定していません。 | ターゲットの区分と安定度の段階は [ターゲット](docs/ja/architecture.md#ターゲット) を参照してください（冒頭の 0.x の API 注記も参照）。 |
 | ツールとビルド | `install()` とパッケージ化（`find_package`）には未対応です。 | FetchContent か `add_subdirectory` で組み込みます（[docs/build.md](docs/ja/build.md) の「外部プロジェクトから使う（FetchContent）」）。 |
+| OS と機器 | vehicle-sil のライブラリと C++ の ECU のビルドは MSVC 公式非対応です。 | Windows では MSYS2 UCRT64 の MinGW-w64 GCC を使います。別プロセス（外部の SIL Kit participant、gRPC Control API クライアント、CLI/GUI ツール）はプロセス境界を越えて ABI 非依存で連携できます（[docs/build.md](docs/ja/build.md) の「コンパイラ方針（MSVC 非対応）とプロセス境界」）。 |
 | OS と機器 | Windows 10 は未確認です。 | Windows 11 の MSYS2 UCRT64 で確認しています。 |
 | OS と機器 | Vector XL CAN Bridge が扱うのは、クラシック CAN だけです。 | 使い方と仕様は [bridges.md](docs/ja/bridges.md) にあります。 |
 | OS と機器 | Vector XL CAN Bridge は、ほかの物理 CAN の構成や機器では未確認です。 | Vector Virtual CAN と VN5620 の物理ループバックで確認しています。 |

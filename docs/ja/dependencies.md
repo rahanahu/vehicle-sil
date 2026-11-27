@@ -22,7 +22,7 @@ vehicle-sil は上流ライブラリの SIL Kit を Git サブモジュールと
 
 SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`、`googletest`）を持つため、`git submodule update --init --recursive` が必要です。FetchContent はこれを自動で行います。
 
-SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみで C API を包む構成なので、利用側を C++20 でコンパイルしても問題ありません。MinGW-w64 は上流が対応しています（`-Wa,-mbig-obj` など）。
+SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみで C API を包む構成なので、利用側を C++20 でコンパイルしても問題ありません。MinGW-w64 は上流が対応しています（`-Wa,-mbig-obj` など）。vehicle-sil のライブラリと C++ の ECU を MSVC でビルドすることは公式に非対応ですが、外部の MSVC 実行ファイルは SIL Kit や gRPC を介してプロセス境界越しに参加できます（[build.md](build.md) の「コンパイラ方針（MSVC 非対応）とプロセス境界」）。
 
 ### gRPC と Protocol Buffers（Control Server、任意）
 
@@ -75,7 +75,7 @@ Windows の `find_package(Python3)` は、レジストリに登録された Pyth
 |---|---|
 | `uv sync` で `.venv` を作った、`.venv` にパッケージを追加した | 生成器の Python は configure のたびに探し直すので、普通に configure し直せば使います（`--fresh` は不要です）。 |
 | FetchContent や `add_subdirectory` で取り込んだ利用側のビルド | vehicle-sil の `.venv` を使わず、利用側の Python（有効にした仮想環境、`Python3_EXECUTABLE`、`PATH`）を使います。 |
-| Windows | `.venv` を候補にせず（uv の Python を MinGW のビルドから使うことは確認していないため）、MSYS2 UCRT64 の pacman のパッケージの Python を、今までどおり探して使います。 |
+| Windows | `.venv` を候補にせず（uv の標準 Windows 版 CPython を MinGW のビルドから使うことは確認していないため）、CMake と CTest では今までどおり MSYS2 UCRT64 の pacman パッケージの Python を探して使います。一方、`vehicle-sil-gui` と `scripts/verify-python.py` は `uv` 経由で実行します（[build.md](build.md) の「Windows の Python と `uv` の使い分け」）。 |
 
 ### Python 3 と PyYAML（J1939 の型付きメッセージの生成）
 
@@ -257,7 +257,7 @@ SIL Kit のバージョン情報の Git ハッシュ（`SilKit::Version::GitHash
 
 SIL Kit をサブモジュールから追加しないとき（利用側が `SilKit::SilKit` を定義済み）は `rapidyaml` のターゲットがないので、`vehicle_sil::can_netsim`、`vehicle_sil_can_bus_simulator`、`vehicle_sil::launch`、`vehicle_sil_launch` を作りません。`vehicle_sil::core` は作りますが、渡された SIL Kit の構成をそのまま使います（既定を追加せず、名前、registry の URI、`DynamicSimulationStep` の検査もしない。[internals/core.md](internals/core.md) の「SIL Kit の設定の既定」）。
 
-Windows では `SilKit.dll` が実行ファイルと別のディレクトリに出力されます。`vehicle_sil_copy_runtime_dlls(<target>)` を呼ぶと、ビルド後に DLL が実行ファイルの隣へコピーされます。
+Windows（非静的 MinGW ビルド）では `SilKit.dll` が実行ファイルと別のディレクトリに出力されます。`vehicle_sil_copy_runtime_dlls(<target>)` を呼ぶと、ビルド後に `SilKit.dll` とツールチェーンに一致する MinGW ランタイム DLL が実行ファイルの隣へコピーされます（`VEHICLE_SIL_STATIC=ON` では 0 個をコピーします）。
 
 ## 使っている API
 
