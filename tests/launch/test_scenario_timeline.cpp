@@ -69,6 +69,10 @@ TEST_CASE(scenario_files_are_read_beside_the_scenario_file)
     CHECK(!read("none.csv", problem).has_value());
     CHECK(problem.rfind("does not exist (looked for ", 0) == 0);
     CHECK(problem.find("): the path is from the scenario file's directory; check it") != std::string::npos);
+
+    const auto readTpl = files_beside(dir / "s.yaml", "the template file");
+    CHECK(!readTpl("traces", problem).has_value());
+    check_text(problem, "is not a regular file: name the template file");
 }
 
 /// The timeline file of `text` run against the model, as `vehicle_sil_launch run --timeline`
@@ -1559,4 +1563,52 @@ TEST_CASE(timeline_json_omits_empty_provenance_and_emits_non_empty_provenance)
     const auto linesPos = tl.find("  \"lines\": [");
     CHECK(linesPos != std::string::npos);
     CHECK(tl.substr(linesPos).find("\"file\": \"scenarios/templates/init.yaml\"") != std::string::npos);
+}
+
+TEST_CASE(timeline_json_records_real_expanded_template_provenance)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "template-timeline";
+    fs::remove_all(dir);
+    fs::create_directories(dir / "templates");
+    std::ofstream(dir / "templates" / "ramp.yaml", std::ios::binary)
+        << "vehicle_sil_scenario_template: 1\n"
+        << "parameters:\n"
+        << "  to_val: { type: integer }\n"
+        << "steps:\n"
+        << "  - name: ramp level\n"
+        << "    ramp: { Body.level: { to: \"${to_val}\", over_ms: 20 } }\n";
+    const std::string scenarioText =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - name: call ramp\n"
+        "    template: templates/ramp.yaml\n"
+        "    params: { to_val: 40 }\n";
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/s.yaml";
+    ctx.read_template = files_beside(dir / "s.yaml", "the template file");
+    const ScenarioRead read = read_scenario(scenarioText, catalog(), ctx);
+    CHECK(read.scenario.has_value());
+
+    World world;
+    world.tick = 10ms;
+    TimelineRecord record(*read.scenario);
+    world.record = &record;
+    ScenarioRun run = world.run(*read.scenario);
+    run.file = "scenarios/s.yaml";
+
+    TimelineInput input;
+    input.file = "simulation.yaml";
+    input.time_step_ms = 10.0;
+    input.scenario = &*read.scenario;
+    input.run = &run;
+    const auto desc = catalog();
+    input.catalog = &desc;
+    input.record = &record;
+
+    const std::string tl = format_timeline_json(input);
+    CHECK(tl.find("\"file\": \"scenarios/templates/ramp.yaml\"") != std::string::npos);
+    CHECK(tl.find("\"name\": \"ramp level\"") != std::string::npos);
+    CHECK(tl.find("\"call_stack\": [") != std::string::npos);
+    CHECK(tl.find("\"to_val\": 40") != std::string::npos);
 }

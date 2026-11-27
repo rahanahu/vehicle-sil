@@ -80,11 +80,11 @@
 
 | 内容 | 場所 |
 |---|---|
-| 読み方と照合 | `libs/scenario/src/scenario.cpp`（ファイル、パラメーター、variant、手順）、`scenario_values.cpp`（変数と値）、`scenario_waves.cpp`（波形と点）、`scenario_inputs.cpp`（`inputs` と dither）。クラス `Reader` は `scenario_reader.hpp` |
+| 読み方と照合 | `libs/scenario/src/scenario.cpp`（ファイル、パラメーター、variant、手順）、`scenario_templates.cpp`（手順テンプレート、スコープ、相対パス検証、`call_stack`）、`scenario_values.cpp`（変数と値）、`scenario_waves.cpp`（波形と点）、`scenario_inputs.cpp`（`inputs` と dither）。クラス `Reader` は `scenario_reader.hpp` |
 | 手順を進める処理 | `libs/scenario/src/scenario_run.cpp` |
 | 手順が失敗した理由: 満たさなかった条件と、反映されなかった書き込み。メッセージと記録（`failed.conditions[]`、`failed.writes[]`）の両方 | `libs/scenario/src/scenario_failure.cpp`（`unmet()`、`unmet_values()`、`failed_write()`、`applied_text()`、`during()`） |
 | `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/scenario/src/scenario_shapes.cpp` |
-| `points` の CSV ファイル | 分けるのは `libs/scenario/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `libs/launch/src/probe/probe.cpp` の `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
+| `points` の CSV ファイル | 分けるのは `libs/scenario/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `libs/launch/src/probe/probe.cpp` の `files_beside()`、パスの検査は `scenario_templates.cpp` の `resolve_scoped_path()`、セルの意味は `scenario_waves.cpp` の `file_points()` と `cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
 | ランチャーへの組み込み | `libs/runner/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
 | シナリオが判定に使うサンプル（`samples`）: シナリオが値を読む participant | `libs/scenario/src/scenario.cpp` の `participants_read()` |
@@ -114,6 +114,7 @@
 - `wave` の例は `examples/ecu_main/scenarios/throttle_wave.yaml` で、`launch_run.scenario_wave` が実行します。
 - `dither` の例は `examples/ecu_main/scenarios/throttle_dither.yaml` で、`launch_run.scenario_dither` が実行します。
 - CSV ファイルの `points` の例は `examples/ecu_main/scenarios/throttle_trace.yaml` と `.csv` で、`launch_run.scenario_wave` が実行します。
+- 手順テンプレートの例は `examples/ecu_main/scenarios/templates/throttle_check.yaml` を呼び出す `examples/ecu_main/scenarios/throttle_template.yaml` です。
 - ガイド howto/scenario-tests.md は、`throttle_step.yaml`、`engine_disconnect.yaml` と、`examples/scenario_tests` のファイルを載せています（「[`examples/scenario_tests`](#examplesscenario_testsガイドシナリオでテストを書くの例)」）。
 - エラーのある例と失敗する例は、ファイルも scenario.md のブロックです。`launch_run.scenario` が書き出して、`check --scenario` の出力、`run --scenario` の出力、`--json` の `scenario` を照合します。
 

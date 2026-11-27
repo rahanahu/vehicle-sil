@@ -154,6 +154,78 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
     CHECK(test_in(dir, "sim.yaml", options).result() == TestResult::Failed);
     options.request.intent.params.clear();
 
+    // --param passed to a scenario whose template call fails does not raise a false usage error (exit 4);
+    // the test runs and reports the template failure (exit 1).
+    std::filesystem::create_directories(dir / "templates");
+    write(dir / "missing_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/missing.yaml\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "templates" / "cyc_a.yaml",
+          "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer }\nsteps:\n  - template: cyc_b.yaml\n");
+    write(dir / "templates" / "cyc_b.yaml",
+          "vehicle_sil_scenario_template: 1\nsteps:\n  - template: cyc_a.yaml\n    params: { throttle: 10 }\n");
+    write(dir / "cyclic_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/cyc_a.yaml\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "templates" / "empty_steps.yaml",
+          "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer }\nsteps: []\n");
+    write(dir / "empty_steps_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/empty_steps.yaml\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "templates" / "bad_desc.yaml",
+          "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer, description: 123 }\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "bad_desc_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/bad_desc.yaml\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "templates" / "missing_type.yaml",
+          "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { default: 1 }\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "missing_type_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/missing_type.yaml\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "templates" / "unknown_key.yaml",
+          "vehicle_sil_scenario_template: 1\nonly: [small]\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "unknown_key_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/unknown_key.yaml\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "templates" / "dup_key.yaml",
+          "vehicle_sil_scenario_template: 1\nname: a\nname: b\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "dup_key_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/dup_key.yaml\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "templates" / "healthy.yaml",
+          "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer }\nsteps:\n  - set: { Engine.level: \"${throttle}\" }\n");
+    write(dir / "mixed_action_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/healthy.yaml\n    set: { Engine.level: 1 }\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "null_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: null\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "params_on_set.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - set: { Engine.level: 1 }\n    params: { throttle: \"${cli_param}\" }\n");
+    write(dir / "syntax_err.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - set: [1\n");
+    write(dir / "healthy_tpl.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/healthy.yaml\n    params: { throttle: 10 }\n");
+    write(dir / "bad_time.yaml",
+          "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: \"bad\"\n    set: { Engine.level: 1 }\n");
+    for (const char* brokenScenario : {"missing_tpl.yaml", "cyclic_tpl.yaml", "empty_steps_tpl.yaml", "bad_desc_tpl.yaml",
+                                       "missing_type_tpl.yaml", "unknown_key_tpl.yaml", "dup_key_tpl.yaml",
+                                       "mixed_action_tpl.yaml", "null_tpl.yaml", "params_on_set.yaml", "syntax_err.yaml"})
+    {
+        TestOptions tplOpts;
+        tplOpts.scenarios = {{brokenScenario}};
+        tplOpts.request.intent.params = {ParamValue{"cli_param", "50", false, ParamSource::CommandLine, 0, true}};
+        const TestReport tplReport = test_in(dir, "sim.yaml", tplOpts);
+        CHECK(tplReport.result() == TestResult::Failed);
+        CHECK(tplReport.exit_code() == 1);
+        CHECK(!tplReport.usage);
+        CHECK(tplReport.runs.size() == 2);
+    }
+    // Genuinely unused --param on a healthy template or a non-template bad_time scenario still returns Usage (exit 4).
+    for (const auto& [sc, unusedName] : std::vector<std::pair<std::string, std::string>>{{"healthy_tpl.yaml", "genuinely_unused"},
+                                                                                          {"bad_time.yaml", "unused"}})
+    {
+        TestOptions usageOpts;
+        usageOpts.scenarios = {{sc}};
+        usageOpts.request.intent.params = {ParamValue{unusedName, "1", false, ParamSource::CommandLine, 0, true}};
+        const TestReport usageReport = test_in(dir, "sim.yaml", usageOpts);
+        CHECK(usageReport.result() == TestResult::Usage);
+        CHECK(usageReport.exit_code() == 4);
+        CHECK(usageReport.usage);
+        CHECK(usageReport.runs.empty());
+    }
+
     // A participant that someone starts by hand: every run would wait for a person. Refused
     // before the first run, with what to do; left out with --disable, the test runs.
     write(dir / "manual.yaml", "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"

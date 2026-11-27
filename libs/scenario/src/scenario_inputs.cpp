@@ -8,7 +8,7 @@ namespace vehicle_sil::scenario::reader {
 
 void Reader::note_base(std::size_t variable, double value, std::size_t line, bool stays)
 {
-    step_bases_.push_back(Base{variable, value, current_file_, line, stays});
+    step_bases_.push_back(Base{variable, value, current_file(), line, stays});
 }
 
 void Reader::note_lines(const ScenarioStep& step, const std::optional<std::int64_t>& time)
@@ -170,7 +170,7 @@ void Reader::check_dithers()
                        ". This is an estimate from the text (the dither that is on when the step comes, not the times): if it is "
                        "right, the run fails at the write that is outside. Lower the amplitude, keep the values of " + var.text +
                        " further from the ends of its range, or take the dither off before them (dither: { " + var.text + ": none })",
-                   owner_of(dither.variable));
+                   owner_of(dither.variable), {}, format_call_stack(dither.call_stack));
         }
         if (var.type == control::ValueType::Integer && dither.swing && *dither.swing < 0.5 && !dither.quiet)
         {
@@ -188,7 +188,7 @@ void Reader::check_dithers()
                                                     loc_text(end->file, end->line) + " it would leave the range (" + range +
                                                     "): keep that value further from the end of the range first, or remove the dither") +
                        dither.as_it_is,
-                   owner_of(dither.variable));
+                   owner_of(dither.variable), {}, format_call_stack(dither.call_stack));
         }
     }
     for (const ScenarioOverlay& input : scenario_.inputs)
@@ -235,17 +235,17 @@ void Reader::check_dithers()
 
 void Reader::read_inputs(ryml::id_type node)
 {
-    if (!tree_.is_map(node))
+    if (!tree().is_map(node))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               "inputs must be a mapping of inputs to what is on top of them ({ " + example_variable() + ": { dither: " +
                   kDitherExample + " } }), not " + shown_value(node));
         return;
     }
     std::map<std::string, std::size_t> seen;
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        const std::string name = config::detail::to_string(tree_.key(child));
+        const std::string name = config::detail::to_string(tree().key(child));
         if (!first_occurrence(seen, name, child, "inputs: "))
         {
             continue;
@@ -265,14 +265,14 @@ void Reader::read_inputs(ryml::id_type node)
             quiet = is_scalar(said) && !is_null(said) && text_of(said) == "ok";
             if (!quiet)
             {
-                error("value", doc_.line(said),
+                error("value", doc().line(said),
                       "undersampled must be ok (run the input's dither as it is, also where it changes faster than its ECU "
                       "steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
             }
         }
         if (parts->count("dither") == 0)
         {
-            error("missing-key", doc_.line(child),
+            error("missing-key", doc().line(child),
                   "inputs: " + name + " has no dither: say what is on top of the input (dither: " + kDitherExample +
                       "), or remove the entry");
             continue;
@@ -282,7 +282,7 @@ void Reader::read_inputs(ryml::id_type node)
             if (!absent_.empty())
             {
                 // As a step that uses the variable: not in this configuration, and said.
-                add(config::Severity::Note, "scenario-input-skipped", doc_.line(child),
+                add(config::Severity::Note, "scenario-input-skipped", doc().line(child),
                     "the dither of " + name + " is not used: " + skip_reason() +
                         "; the steps that write " + name + " are skipped too");
             }
@@ -290,7 +290,7 @@ void Reader::read_inputs(ryml::id_type node)
         }
         as_it_is_ = kAsItIsInput;
         // (Known by the entry's line, also if its dither is on a line below.)
-        auto overlay = read_overlay(parts->at("dither"), *v, quiet, false, doc_.line(child));
+        auto overlay = read_overlay(parts->at("dither"), *v, quiet, false, doc().line(child));
         as_it_is_ = kAsItIs;
         if (overlay)
         {
@@ -302,17 +302,17 @@ void Reader::read_inputs(ryml::id_type node)
 
 void Reader::read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
 {
-    if (!tree_.is_map(node) || !tree_.has_children(node))
+    if (!tree().is_map(node) || !tree().has_children(node))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               "dither must be a mapping of inputs to a shape or none ({ " + example_variable() + ": " + kDitherExample + " }, or { " +
                   example_variable() + ": none } to take a dither off), not " + shown_value(node));
         return;
     }
     std::map<std::string, std::size_t> seen;
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        if (!first_occurrence(seen, config::detail::to_string(tree_.key(child)), child, "dither: "))
+        if (!first_occurrence(seen, config::detail::to_string(tree().key(child)), child, "dither: "))
         {
             continue;
         }
@@ -328,7 +328,7 @@ void Reader::read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
 
 std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step, std::size_t shown)
 {
-    const std::size_t line = doc_.line(node);
+    const std::size_t line = doc().line(node);
     const ScenarioVariable& var = scenario_.variables[v];
     const std::string& name = var.text;
     const std::string what = "the dither of " + name;
@@ -339,7 +339,7 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     }
     ScenarioOverlay out;
     out.variable = v;
-    out.file = current_file_;
+    out.file = current_file();
     out.line = shown;
     if (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum)
     {
@@ -348,13 +348,13 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
                   ": a dither needs a number (an integer or a real input); remove it");
         return std::nullopt;
     }
-    if (!tree_.is_map(node))
+    if (!tree().is_map(node))
     {
         // none takes it off. (Not "off": a YAML 1.1 tool reads that as false.)
         const bool none = is_scalar(node) && !is_null(node) && param_at(node) == nullptr && text_of(node) == "none";
         if (none && in_step)
         {
-            step_dithers_.push_back(Dither{v, current_file_, shown, 0.0, false, std::nullopt, true, true, as_it_is_, {}});
+            step_dithers_.push_back(Dither{v, current_file(), shown, 0.0, false, std::nullopt, true, true, as_it_is_, {}, active_templates_});
             out.text = name + " none";
             return good ? std::optional<ScenarioOverlay>(std::move(out)) : std::nullopt;
         }
@@ -375,9 +375,9 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     Parts parts;
     std::vector<std::string> shapes;
     std::map<std::string, std::size_t> seen;
-    for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
+    for (auto part = tree().first_child(node); part != ryml::NONE; part = tree().next_sibling(part))
     {
-        const std::string key = config::detail::to_string(tree_.key(part));
+        const std::string key = config::detail::to_string(tree().key(part));
         if (!first_occurrence(seen, key, part, "dither of " + name + ": "))
         {
             continue;
@@ -391,19 +391,19 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
         good = false;
         if (key == "for_ms")
         {
-            error("value", doc_.line(part),
+            error("value", doc().line(part),
                   what + " has for_ms: a dither has no end, it stays until a dither step changes it; remove for_ms (dither: { " +
                       name + ": none } takes it off)");
         }
         else if (key == "around")
         {
-            error("value", doc_.line(part),
+            error("value", doc().line(part),
                   what + " has around: a dither swings around the value the scenario puts on the input (set, ramp, wave); "
                          "remove around");
         }
         else if (std::find(kWaveShapes.begin(), kWaveShapes.end(), key) != kWaveShapes.end())
         {
-            error("value", doc_.line(part),
+            error("value", doc().line(part),
                   key + " cannot be a dither (it has a length): use sine, triangle, sawtooth, square with amplitude or noise, or "
                         "write it as a wave step");
         }
@@ -424,14 +424,14 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     }
     const std::string& shape = shapes.front();
     const ryml::id_type body = parts.at(shape);
-    if (shape == "square" && tree_.is_map(body))
+    if (shape == "square" && tree().is_map(body))
     {
-        for (auto part = tree_.first_child(body); part != ryml::NONE; part = tree_.next_sibling(part))
+        for (auto part = tree().first_child(body); part != ryml::NONE; part = tree().next_sibling(part))
         {
-            const std::string key = config::detail::to_string(tree_.key(part));
+            const std::string key = config::detail::to_string(tree().key(part));
             if (key == "low" || key == "high")
             {
-                error("value", doc_.line(part),
+                error("value", doc().line(part),
                       what + " is a square with " + key + ": a dither swings around the value of the input, it has no values of "
                              "its own; give the square amplitude instead (square: { amplitude: 1, period_ms: 100 })");
                 return std::nullopt;
@@ -457,7 +457,7 @@ std::optional<ScenarioOverlay> Reader::read_overlay(ryml::id_type node, std::siz
     out.described.type = shape;
     // How far from the value under it the dither goes: its amplitude, or for a gaussian noise
     // (whose amplitude is the standard deviation) three times that, which nearly every value is within.
-    Dither noted{v, current_file_, shown, swing.value_or(0.0), !swing.has_value(), swing, quiet, false, as_it_is_, shape};
+    Dither noted{v, current_file(), shown, swing.value_or(0.0), !swing.has_value(), swing, quiet, false, as_it_is_, shape, active_templates_};
     if (!swing)
     {
         for (const auto& [key, value] : out.described.values)

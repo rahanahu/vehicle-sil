@@ -1186,6 +1186,7 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
         config::ParamValue param;
         param.name = given.substr(0, equals);
         param.source = config::ParamSource::CommandLine;
+        param.from_cli = true;
         if (equals == std::string::npos || !config::is_param_name(param.name))
         {
             throw cli::UsageError("--param " + given + ": write --param <name>=<value> (the name as the scenario has it in "

@@ -141,12 +141,13 @@ std::string items_text(const std::vector<control::EnumItem>& items)
 
 void Reader::read()
 {
-    const ryml::id_type root = doc_.root();
-    if (root == ryml::NONE || !tree_.is_map(root))
+    const ryml::id_type root = doc().root();
+    if (root == ryml::NONE || !tree().is_map(root))
     {
-        error("not-a-scenario", root == ryml::NONE ? 0 : doc_.line(root),
+        error("not-a-scenario", root == ryml::NONE ? 0 : doc().line(root),
               std::string("the file is not a scenario: it must be a mapping with vehicle_sil_scenario: 1 and steps (") +
                   kDocs + ")");
+        out_.params_incomplete = true;
         return;
     }
     std::vector<std::size_t> refs;
@@ -159,24 +160,26 @@ void Reader::read()
                   "anchors and aliases (&name, *name, <<) are not read: write the values out (a value that "
                   "starts with * or & must be in quotes)");
         }
+        out_.params_incomplete = true;
         return;
     }
-    if (const ryml::id_type second = doc_.second_document(); second != ryml::NONE)
+    if (const ryml::id_type second = doc().second_document(); second != ryml::NONE)
     {
-        error("unsupported-yaml", doc_.line(second),
+        error("unsupported-yaml", doc().line(second),
               "a second document (after ---): a file has one scenario; remove the others or put them in files of "
               "their own");
     }
     bool hasVersion = false;
+    bool hasTemplateVersion = false;
     ryml::id_type paramsNode = ryml::NONE;
     ryml::id_type onlyNode = ryml::NONE;
     ryml::id_type stepsNode = ryml::NONE;
     ryml::id_type inputsNode = ryml::NONE;
     ryml::id_type endMsNode = ryml::NONE;
     std::map<std::string, std::size_t> seen;
-    for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(root); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        const std::string key = config::detail::to_string(tree_.key(child));
+        const std::string key = config::detail::to_string(tree().key(child));
         if (!first_occurrence(seen, key, child))
         {
             continue;
@@ -189,22 +192,27 @@ void Reader::read()
         {
             onlyNode = child;
         }
+        else if (key == "vehicle_sil_scenario_template")
+        {
+            hasTemplateVersion = true;
+        }
         else if (key == "vehicle_sil_scenario")
         {
             hasVersion = true;
             std::int64_t version = 0;
             if (!plain_integer(child, version))
             {
-                error("format-version", doc_.line(child),
+                error("format-version", doc().line(child),
                       "vehicle_sil_scenario must be the format version " + std::to_string(kScenarioFormat) + ", not " +
                           shown_value(child) + ": write vehicle_sil_scenario: " + std::to_string(kScenarioFormat));
             }
             else if (version != kScenarioFormat)
             {
                 out_.findings.clear();
-                error("format-version", doc_.line(child),
+                error("format-version", doc().line(child),
                       "vehicle_sil_scenario is " + std::to_string(version) + ", but this vehicle_sil_launch reads format " +
                           std::to_string(kScenarioFormat) + " only: use the vehicle-sil that the file was written for");
+                out_.params_incomplete = true;
                 return;
             }
         }
@@ -212,17 +220,17 @@ void Reader::read()
         {
             if (!is_scalar(child) || is_null(child))
             {
-                error("value", doc_.line(child), "name must be a text (what the scenario is about), not " + shown_value(child));
+                error("value", doc().line(child), "name must be a text (what the scenario is about), not " + shown_value(child));
             }
             else
             {
-                scenario_.name = config::detail::to_string(tree_.val(child));
+                scenario_.name = config::detail::to_string(tree().val(child));
                 out_.name = scenario_.name;
             }
         }
         else if (key == "samples")
         {
-            const std::string word = is_scalar(child) && !is_null(child) ? config::detail::to_string(tree_.val(child)) : std::string{};
+            const std::string word = is_scalar(child) && !is_null(child) ? config::detail::to_string(tree().val(child)) : std::string{};
             if (word == scenario_samples_name(ScenarioSamples::EveryStep))
             {
                 scenario_.samples = ScenarioSamples::EveryStep;
@@ -233,7 +241,7 @@ void Reader::read()
             }
             else
             {
-                error("value", doc_.line(child),
+                error("value", doc().line(child),
                       "samples must be every_step or as_sent, not " + shown_value(child) +
                           ": every_step (the default) makes the ECUs whose values the scenario reads send them after "
                           "every step of theirs; as_sent takes the values as often as each ECU sends them");
@@ -258,6 +266,15 @@ void Reader::read()
             unknown_key(child, key, "", kTopKeys);
         }
     }
+    if (hasTemplateVersion && !hasVersion)
+    {
+        out_.findings.clear();
+        error("not-a-scenario", doc().line(root),
+              "this file is a scenario template (vehicle_sil_scenario_template: 1), not a runnable scenario: call it from "
+              "a scenario's steps with '- template: ...'");
+        out_.params_incomplete = true;
+        return;
+    }
     // The steps last, wherever the file has them: they use the parameters, and are read only
     // for a variant the scenario is for.
     take_params(paramsNode);
@@ -269,34 +286,42 @@ void Reader::read()
     // The inputs before the steps, wherever the file has them: what they declare is there
     // from the start. (Both are looked through for parameters before either is read.)
     const bool inputsOk = inputsNode == ryml::NONE || out_.not_for_variant || resolve_params(inputsNode);
-    if (hasSteps)
+    if (hasSteps && !out_.not_for_variant && resolve_step_params(stepsNode) && inputsOk)
     {
-        if (!out_.not_for_variant && resolve_step_params(stepsNode) && inputsOk)
+        if (inputsNode != ryml::NONE)
         {
-            if (inputsNode != ryml::NONE)
-            {
-                inputs_written_ = true;
-                read_inputs(inputsNode);
-            }
-            declared_ = dithers_.size(); // (the steps' dithers come after those of "inputs")
-            read_steps(stepsNode);
-            if (scenario_.end_ms && *scenario_.end_ms < min_end_ms_)
-            {
-                error("scenario-time", doc_.line(endMsNode),
-                      "end_ms is " + std::to_string(*scenario_.end_ms) + ", before " +
-                          (end_known_ ? "the end of the last step (" : "the earliest possible end of the steps (") +
-                          std::to_string(min_end_ms_) + " ms): raise end_ms or shorten the steps");
-            }
-            check_dithers();
-            check_given_params();
-            check_something_is_checked();
+            inputs_written_ = true;
+            read_inputs(inputsNode);
         }
-        else if (tree_.is_seq(stepsNode))
+        declared_ = dithers_.size(); // (the steps' dithers come after those of "inputs")
+        read_steps(stepsNode);
+        if (scenario_.end_ms && *scenario_.end_ms < min_end_ms_)
         {
-            out_.steps = static_cast<std::size_t>(tree_.num_children(stepsNode));
+            error("scenario-time", doc().line(endMsNode),
+                  "end_ms is " + std::to_string(*scenario_.end_ms) + ", before " +
+                      (end_known_ ? "the end of the last step (" : "the earliest possible end of the steps (") +
+                      std::to_string(min_end_ms_) + " ms): raise end_ms or shorten the steps");
+        }
+        check_dithers();
+        if (caller_template_params_incomplete_)
+        {
+            out_.params_incomplete = true;
+        }
+        else
+        {
+            check_given_params();
+        }
+        check_something_is_checked();
+    }
+    else
+    {
+        out_.params_incomplete = true;
+        if (hasSteps && tree().is_seq(stepsNode))
+        {
+            out_.steps = static_cast<std::size_t>(tree().num_children(stepsNode));
         }
     }
-    for (const Known& known : params_)
+    for (const Known& known : scope().params)
     {
         if (known.declared || known.used)
         {
@@ -326,15 +351,16 @@ void Reader::take_params(ryml::id_type node)
     {
         for (config::ParamValue& param : read_params(node, "", config::ParamSource::Scenario))
         {
-            params_.push_back(Known{std::move(param), true, false});
+            scope().params.push_back(Known{std::move(param), true, false});
         }
     }
     for (const config::ParamValue& param : context_.params)
     {
-        const auto same = std::find_if(params_.begin(), params_.end(), [&param](const Known& k) { return k.value.name == param.name; });
-        if (same == params_.end())
+        const auto same =
+            std::find_if(scope().params.begin(), scope().params.end(), [&param](const Known& k) { return k.value.name == param.name; });
+        if (same == scope().params.end())
         {
-            params_.push_back(Known{param, false, false});
+            scope().params.push_back(Known{param, false, false});
         }
         else
         {
@@ -343,15 +369,36 @@ void Reader::take_params(ryml::id_type node)
     }
 }
 
+void Reader::report_undefined_param(const std::string& name, std::size_t line)
+{
+    if (!scope().undefined.insert(name).second)
+    {
+        return; // said once
+    }
+    std::vector<std::string> names;
+    for (const Known& k : scope().params)
+    {
+        names.push_back(k.value.name);
+    }
+    const std::string guess = config::detail::closest(name, names);
+    const std::string how =
+        scopes_.size() <= 1
+            ? ": give it a default in the scenario (params: { " + name + ": <value> }), or a value in the "
+              "configuration's params, in a variant's params or with --param " + name + "=<value>"
+            : ": declare it in the template's parameters (" + name + ": { type: ... }) and pass it from the caller's params";
+    error("scenario-param", line,
+          "${" + name + "} has no value" + (guess.empty() ? "" : " (did you mean ${" + guess + "}?)") + how);
+}
+
 bool Reader::resolve_params(ryml::id_type node)
 {
     bool ok = true;
-    if (tree_.has_key(node))
+    if (tree().has_key(node))
     {
-        const std::string key = config::detail::to_string(tree_.key(node));
+        const std::string key = config::detail::to_string(tree().key(node));
         if (key.find("${") != std::string::npos)
         {
-            error("scenario-param", doc_.line(node),
+            error("scenario-param", doc().line(node),
                   "'" + key + "': a parameter (${...}) stands for a value, not for a key or for a variable's name: write "
                               "the name out");
             ok = false;
@@ -359,7 +406,7 @@ bool Reader::resolve_params(ryml::id_type node)
     }
     if (is_scalar(node))
     {
-        const std::string text = is_null(node) ? std::string{} : config::detail::to_string(tree_.val(node));
+        const std::string text = is_null(node) ? std::string{} : config::detail::to_string(tree().val(node));
         if (text.find("${") == std::string::npos)
         {
             return ok;
@@ -367,35 +414,23 @@ bool Reader::resolve_params(ryml::id_type node)
         const std::string name = text.size() > 3 && text.rfind("${", 0) == 0 && text.back() == '}' ? text.substr(2, text.size() - 3) : std::string{};
         if (!config::is_param_name(name))
         {
-            error("scenario-param", doc_.line(node),
+            error("scenario-param", doc().line(node),
                   "'" + text + "': a parameter is written ${name} (letters, digits and _) and is the whole value: it "
                                "cannot be a part of a text, and there are no expressions; work the value out and give it "
                                "as a parameter of its own");
             return false;
         }
-        const auto known = std::find_if(params_.begin(), params_.end(), [&name](const Known& k) { return k.value.name == name; });
-        if (known == params_.end())
+        const auto known = std::find_if(scope().params.begin(), scope().params.end(), [&name](const Known& k) { return k.value.name == name; });
+        if (known == scope().params.end())
         {
-            if (undefined_.insert(name).second) // said once
-            {
-                std::vector<std::string> names;
-                for (const Known& k : params_)
-                {
-                    names.push_back(k.value.name);
-                }
-                const std::string guess = config::detail::closest(name, names);
-                error("scenario-param", doc_.line(node),
-                      "${" + name + "} has no value" + (guess.empty() ? "" : " (did you mean ${" + guess + "}?)") +
-                          ": give it a default in the scenario (params: { " + name + ": <value> }), or a value in the "
-                          "configuration's params, in a variant's params or with --param " + name + "=<value>");
-            }
+            report_undefined_param(name, doc().line(node));
             return false;
         }
         known->used = true;
-        substituted_.emplace(node, static_cast<std::size_t>(known - params_.begin()));
+        scope().substituted.emplace(node, static_cast<std::size_t>(known - scope().params.begin()));
         return ok;
     }
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
         ok = resolve_params(child) && ok;
     }
@@ -404,23 +439,80 @@ bool Reader::resolve_params(ryml::id_type node)
 
 bool Reader::resolve_step_params(ryml::id_type steps_node)
 {
-    if (!tree_.is_seq(steps_node))
+    if (!tree().is_seq(steps_node))
     {
         return resolve_params(steps_node);
     }
     bool ok = true;
-    for (auto step = tree_.first_child(steps_node); step != ryml::NONE; step = tree_.next_sibling(step))
+    const auto check_key = [&](ryml::id_type node) {
+        if (tree().has_key(node))
+        {
+            const std::string key = config::detail::to_string(tree().key(node));
+            if (key.find("${") != std::string::npos)
+            {
+                error("scenario-param", doc().line(node),
+                      "'" + key + "': a parameter (${...}) stands for a value, not for a key or for a variable's name: write "
+                                  "the name out");
+                ok = false;
+            }
+        }
+    };
+    for (auto step = tree().first_child(steps_node); step != ryml::NONE; step = tree().next_sibling(step))
     {
-        if (!tree_.is_map(step))
+        if (!tree().is_map(step))
         {
             ok = resolve_params(step) && ok;
             continue;
         }
-        for (auto field = tree_.first_child(step); field != ryml::NONE; field = tree_.next_sibling(field))
+        for (auto field = tree().first_child(step); field != ryml::NONE; field = tree().next_sibling(field))
         {
-            if (tree_.has_key(field) && config::detail::to_string(tree_.key(field)) == "name" && is_scalar(field))
+            const std::string fieldKey = tree().has_key(field) ? config::detail::to_string(tree().key(field)) : std::string{};
+            if (fieldKey == "template" || fieldKey == "params")
+            {
+                check_key(field);
+                continue;
+            }
+            if (fieldKey == "name" && is_scalar(field))
             {
                 ok = resolve_interpolated_string(field) && ok;
+            }
+            else if (fieldKey == "wave" && tree().is_map(field))
+            {
+                check_key(field);
+                for (auto varNode = tree().first_child(field); varNode != ryml::NONE; varNode = tree().next_sibling(varNode))
+                {
+                    if (!tree().is_map(varNode))
+                    {
+                        ok = resolve_params(varNode) && ok;
+                        continue;
+                    }
+                    check_key(varNode);
+                    for (auto part = tree().first_child(varNode); part != ryml::NONE; part = tree().next_sibling(part))
+                    {
+                        const std::string partKey = tree().has_key(part) ? config::detail::to_string(tree().key(part)) : std::string{};
+                        if (partKey == "points" && tree().is_map(part))
+                        {
+                            check_key(part);
+                            for (auto pf = tree().first_child(part); pf != ryml::NONE; pf = tree().next_sibling(pf))
+                            {
+                                const std::string pfKey = tree().has_key(pf) ? config::detail::to_string(tree().key(pf)) : std::string{};
+                                if ((pfKey == "file" || pfKey == "value" || pfKey == "time") && is_scalar(pf))
+                                {
+                                    check_key(pf);
+                                    ok = resolve_interpolated_string(pf) && ok;
+                                }
+                                else
+                                {
+                                    ok = resolve_params(pf) && ok;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            ok = resolve_params(part) && ok;
+                        }
+                    }
+                }
             }
             else
             {
@@ -431,18 +523,14 @@ bool Reader::resolve_step_params(ryml::id_type steps_node)
     return ok;
 }
 
-bool Reader::resolve_interpolated_string(ryml::id_type node)
+bool Reader::resolve_interpolated_string_text(const std::string& text, std::size_t line, std::string& out)
 {
-    if (!is_scalar(node) || is_null(node))
-    {
-        return true;
-    }
-    const std::string text = config::detail::to_string(tree_.val(node));
+    out.clear();
     if (text.find("${") == std::string::npos)
     {
+        out = text;
         return true;
     }
-    std::string out;
     bool ok = true;
     std::size_t pos = 0;
     while (pos < text.size())
@@ -457,33 +545,21 @@ bool Reader::resolve_interpolated_string(ryml::id_type node)
         const std::size_t close = text.find('}', open + 2);
         if (close == std::string::npos)
         {
-            error("scenario-param", doc_.line(node),
+            error("scenario-param", line,
                   "'" + text + "': unclosed '${' in text: write a parameter as ${name} (letters, digits and _)");
             return false;
         }
         const std::string name = text.substr(open + 2, close - (open + 2));
         if (!config::is_param_name(name))
         {
-            error("scenario-param", doc_.line(node),
+            error("scenario-param", line,
                   "'" + text + "': '${" + name + "}' is not a parameter: write ${name} with letters, digits and _ (not a digit first)");
             return false;
         }
-        const auto known = std::find_if(params_.begin(), params_.end(), [&name](const Known& k) { return k.value.name == name; });
-        if (known == params_.end())
+        const auto known = std::find_if(scope().params.begin(), scope().params.end(), [&name](const Known& k) { return k.value.name == name; });
+        if (known == scope().params.end())
         {
-            if (undefined_.insert(name).second)
-            {
-                std::vector<std::string> names;
-                for (const Known& k : params_)
-                {
-                    names.push_back(k.value.name);
-                }
-                const std::string guess = config::detail::closest(name, names);
-                error("scenario-param", doc_.line(node),
-                      "${" + name + "} has no value" + (guess.empty() ? "" : " (did you mean ${" + guess + "}?)") +
-                          ": give it a default in the scenario (params: { " + name + ": <value> }), or a value in the "
-                          "configuration's params, in a variant's params or with --param " + name + "=<value>");
-            }
+            report_undefined_param(name, line);
             ok = false;
         }
         else
@@ -493,11 +569,27 @@ bool Reader::resolve_interpolated_string(ryml::id_type node)
         }
         pos = close + 1;
     }
-    if (ok)
-    {
-        interpolated_.emplace(node, std::move(out));
-    }
     return ok;
+}
+
+bool Reader::resolve_interpolated_string(ryml::id_type node)
+{
+    if (!is_scalar(node) || is_null(node))
+    {
+        return true;
+    }
+    const std::string text = config::detail::to_string(tree().val(node));
+    if (text.find("${") == std::string::npos)
+    {
+        return true;
+    }
+    std::string out;
+    if (!resolve_interpolated_string_text(text, doc().line(node), out))
+    {
+        return false;
+    }
+    scope().interpolated.emplace(node, std::move(out));
+    return true;
 }
 
 void Reader::check_given_params()
@@ -507,14 +599,14 @@ void Reader::check_given_params()
         return;
     }
     std::vector<std::string> names;
-    for (const Known& k : params_)
+    for (const Known& k : scope().params)
     {
         if (k.declared || k.used)
         {
             names.push_back(k.value.name);
         }
     }
-    for (const Known& k : params_)
+    for (const Known& k : scope().params)
     {
         if (k.value.source == config::ParamSource::RequestFile && !k.declared && !k.used)
         {
@@ -595,20 +687,28 @@ void Reader::check_something_is_checked()
 
 const config::ParamValue* Reader::param_at(ryml::id_type node) const
 {
-    const auto it = substituted_.find(node);
-    return it == substituted_.end() ? nullptr : &params_[it->second].value;
+    const auto it = scope().substituted.find(node);
+    return it == scope().substituted.end() ? nullptr : &scope().params[it->second].value;
 }
 
 std::string Reader::text_of(ryml::id_type node) const
 {
+    if (const auto it = scope().interpolated.find(node); it != scope().interpolated.end())
+    {
+        return it->second;
+    }
     const config::ParamValue* param = param_at(node);
-    return param != nullptr ? param->text : config::detail::to_string(tree_.val(node));
+    return param != nullptr ? param->text : config::detail::to_string(tree().val(node));
 }
 
 bool Reader::quoted(ryml::id_type node) const
 {
+    if (scope().interpolated.count(node) > 0)
+    {
+        return true;
+    }
     const config::ParamValue* param = param_at(node);
-    return param != nullptr ? param->quoted : is_scalar(node) && tree_.is_val_quoted(node);
+    return param != nullptr ? param->quoted : is_scalar(node) && tree().is_val_quoted(node);
 }
 
 bool Reader::plain_integer(ryml::id_type node, std::int64_t& value) const
@@ -625,6 +725,10 @@ bool Reader::plain_number(ryml::id_type node, double& value) const
 
 std::string Reader::shown_value(ryml::id_type node) const
 {
+    if (const auto it = scope().interpolated.find(node); it != scope().interpolated.end())
+    {
+        return "the text \"" + it->second + "\"";
+    }
     const config::ParamValue* param = param_at(node);
     if (param == nullptr)
     {
@@ -636,24 +740,24 @@ std::string Reader::shown_value(ryml::id_type node) const
 
 void Reader::read_only(ryml::id_type node)
 {
-    const std::size_t line = doc_.line(node);
-    if (!tree_.is_seq(node) || !tree_.has_children(node))
+    const std::size_t line = doc().line(node);
+    if (!tree().is_seq(node) || !tree().has_children(node))
     {
         error("value", line,
               "only must be a list of the variants the scenario is for (only: [small, medium]), not " +
-                  (tree_.is_seq(node) ? std::string("an empty list") : shown_value(node)) +
+                  (tree().is_seq(node) ? std::string("an empty list") : shown_value(node)) +
                   "; remove it for a scenario for every variant");
         return;
     }
     std::vector<std::string> names;
-    for (auto item = tree_.first_child(node); item != ryml::NONE; item = tree_.next_sibling(item))
+    for (auto item = tree().first_child(node); item != ryml::NONE; item = tree().next_sibling(item))
     {
-        if (!is_scalar(item) || is_null(item) || tree_.val(item).empty())
+        if (!is_scalar(item) || is_null(item) || tree().val(item).empty())
         {
-            error("value", doc_.line(item), "only must list variants by name (only: [small, medium]), not " + shown_value(item));
+            error("value", doc().line(item), "only must list variants by name (only: [small, medium]), not " + shown_value(item));
             return;
         }
-        const std::string name = config::detail::to_string(tree_.val(item));
+        const std::string name = config::detail::to_string(tree().val(item));
         if (std::find(names.begin(), names.end(), name) == names.end())
         {
             names.push_back(name);
@@ -698,14 +802,14 @@ std::optional<std::int64_t> Reader::millis(ryml::id_type node, const std::string
     std::int64_t value = 0;
     if (!plain_integer(node, value))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               key + " must be a whole number (" + meaning + "), not " + shown_value(node) +
                   (quoted(node) ? ": write the number without quotes" : ""));
         return std::nullopt;
     }
     if (value < least || value > config::kMaxMillis)
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               key + " is " + std::to_string(value) + ", but it must be from " + std::to_string(least) + " to " +
                   std::to_string(config::kMaxMillis) + " (" + meaning + ")");
         return std::nullopt;
@@ -713,49 +817,94 @@ std::optional<std::int64_t> Reader::millis(ryml::id_type node, const std::string
     return value;
 }
 
-void Reader::read_steps(ryml::id_type node)
+void Reader::read_steps(ryml::id_type node, std::optional<InheritedTiming> first_timing, bool* aborted)
 {
-    if (!tree_.is_seq(node) || !tree_.has_children(node))
+    if (!tree().is_seq(node) || !tree().has_children(node))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               "steps must be a list with at least one step (- set: ..., - expect: ...), not " +
-                  (tree_.is_seq(node) ? std::string("an empty list") : shown_value(node)));
+                  (tree().is_seq(node) ? std::string("an empty list") : shown_value(node)));
         return;
     }
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    bool first = true;
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        ++out_.steps;
-        read_step(child);
+        if (scopes_.size() > 1)
+        {
+            if (expanded_steps_ >= kMaxExpandedSteps)
+            {
+                if (!too_many_expanded_steps_)
+                {
+                    too_many_expanded_steps_ = true;
+                    error("scenario-template-steps", doc().line(child),
+                          "template expansion exceeded the maximum of " + std::to_string(kMaxExpandedSteps) +
+                              " steps: reduce template nesting or step counts");
+                }
+                caller_template_params_incomplete_ = true;
+                end_known_ = false;
+                if (aborted != nullptr)
+                {
+                    *aborted = true;
+                }
+                return;
+            }
+            ++expanded_steps_;
+        }
+        read_step(child, first ? first_timing : std::nullopt);
+        first = false;
+        if (too_many_expanded_steps_)
+        {
+            caller_template_params_incomplete_ = true;
+            if (aborted != nullptr)
+            {
+                *aborted = true;
+            }
+            return;
+        }
     }
 }
 
-void Reader::read_step(ryml::id_type node)
+void Reader::read_step(ryml::id_type node, std::optional<InheritedTiming> inherited)
 {
-    const std::size_t line = doc_.line(node);
-    if (!tree_.is_map(node))
+    const std::size_t line = doc().line(node);
+    if (!tree().is_map(node))
     {
+        ++out_.steps;
         error("value", line, "a step must be a mapping with one of " + config::detail::join(kActionKeys) + ", not " + shown_value(node));
         end_known_ = false; // what it would have been is not known
         return;
     }
     ScenarioStep step;
-    step.file = current_file_;
+    step.file = current_file();
     step.line = line;
+    step.call_stack = active_templates_;
     absent_.clear();
     step_bases_.clear();
     step_dithers_.clear();
     std::map<std::string, std::size_t> seen;
     std::map<std::string, ryml::id_type> nodes;
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        const std::string key = config::detail::to_string(tree_.key(child));
+        const std::string key = config::detail::to_string(tree().key(child));
         if (!first_occurrence(seen, key, child))
         {
+            if (key == "template" || key == "params")
+            {
+                caller_template_params_incomplete_ = true;
+            }
             continue;
         }
         if (std::find(kStepKeys.begin(), kStepKeys.end(), key) == kStepKeys.end())
         {
-            unknown_key(child, key, "", kStepKeys);
+            if (key == "parameters")
+            {
+                error("unknown-key", doc().line(child),
+                      "unknown key 'parameters': pass template arguments with 'params:' (parameters: declares formal parameters inside a template file)");
+            }
+            else
+            {
+                unknown_key(child, key, "", kStepKeys);
+            }
             continue;
         }
         nodes.emplace(key, child);
@@ -776,6 +925,11 @@ void Reader::read_step(ryml::id_type node)
     }
     if (actions.size() != 1)
     {
+        ++out_.steps;
+        if (nodes.count("template") > 0 || nodes.count("params") > 0)
+        {
+            caller_template_params_incomplete_ = true;
+        }
         error("value", line,
               actions.empty() ? "the step does nothing: give it one of " + config::detail::join(kActionKeys)
                               : "the step has " + config::detail::join(actions) + ": a step does one thing; make a step of each");
@@ -783,24 +937,29 @@ void Reader::read_step(ryml::id_type node)
         return;
     }
     const std::string& action = actions.front();
-    step.kind = action == "set"      ? StepKind::Set
-                : action == "ramp"   ? StepKind::Ramp
-                : action == "wave"   ? StepKind::Wave
-                : action == "dither" ? StepKind::Dither
-                : action == "expect" ? StepKind::Expect
-                                     : StepKind::WaitUntil;
+    const bool isTemplate = action == "template";
+    if (!isTemplate)
+    {
+        ++out_.steps;
+        step.kind = action == "set"      ? StepKind::Set
+                    : action == "ramp"   ? StepKind::Ramp
+                    : action == "wave"   ? StepKind::Wave
+                    : action == "dither" ? StepKind::Dither
+                    : action == "expect" ? StepKind::Expect
+                                         : StepKind::WaitUntil;
+    }
 
     if (nodes.count("name") > 0)
     {
         const ryml::id_type nameNode = nodes.at("name");
         if (!is_scalar(nameNode) || is_null(nameNode))
         {
-            error("value", doc_.line(nameNode), "step name must be a non-empty text, not " + shown_value(nameNode));
+            error("value", doc().line(nameNode), "step name must be a non-empty text, not " + shown_value(nameNode));
         }
         else
         {
-            const auto it = interpolated_.find(nameNode);
-            std::string resolved = it != interpolated_.end() ? it->second : config::detail::to_string(tree_.val(nameNode));
+            const auto it = scope().interpolated.find(nameNode);
+            std::string resolved = it != scope().interpolated.end() ? it->second : config::detail::to_string(tree().val(nameNode));
             const auto control = std::find_if(resolved.begin(), resolved.end(), [](char c) {
                 return static_cast<unsigned char>(c) < 0x20 || c == 0x7F;
             });
@@ -808,7 +967,7 @@ void Reader::read_step(ryml::id_type node)
             {
                 char code[8];
                 std::snprintf(code, sizeof(code), "%02X", control != resolved.end() ? static_cast<unsigned char>(*control) : 0);
-                error("value", doc_.line(nameNode),
+                error("value", doc().line(nameNode),
                       std::string("step name must be text on one line") +
                           (control != resolved.end() ? std::string(" (it has the control character U+00") + code + ")"
                                                      : std::string(" (it is not UTF-8)")) +
@@ -816,7 +975,7 @@ void Reader::read_step(ryml::id_type node)
             }
             else if (!has_non_whitespace_utf8(resolved))
             {
-                error("value", doc_.line(nameNode), "step name must not be empty or whitespace-only");
+                error("value", doc().line(nameNode), "step name must not be empty or whitespace-only");
             }
             else
             {
@@ -829,7 +988,7 @@ void Reader::read_step(ryml::id_type node)
     const auto only_with = [&](const std::string& key, bool allowed, const std::string& with) {
         if (nodes.count(key) > 0 && !allowed)
         {
-            error("value", doc_.line(nodes.at(key)), key + " goes with " + with + ", not with " + action + ": remove it");
+            error("value", doc().line(nodes.at(key)), key + " goes with " + with + ", not with " + action + ": remove it");
             nodes.erase(key);
         }
     };
@@ -840,7 +999,7 @@ void Reader::read_step(ryml::id_type node)
             const std::string key = name;
             if (nodes.count(key) > 0)
             {
-                error("value", doc_.line(nodes.at(key)),
+                error("value", doc().line(nodes.at(key)),
                       key + " does not go with an expect beside a " + action + ": that expect must be true all through the " +
                           action + ", from its time to its end; remove " + key + ", or make the expect a step of its own after the " +
                           action);
@@ -848,10 +1007,15 @@ void Reader::read_step(ryml::id_type node)
             }
         }
     }
-    only_with("timeout_ms", step.kind == StepKind::WaitUntil, "wait_until");
-    only_with("within_ms", step.kind == StepKind::Expect, "expect");
-    only_with("hold_for_ms", step.kind == StepKind::Expect, "expect");
-    only_with("undersampled", step.kind == StepKind::Wave || step.kind == StepKind::Dither, "wave and dither");
+    only_with("timeout_ms", !isTemplate && step.kind == StepKind::WaitUntil, "wait_until");
+    only_with("within_ms", !isTemplate && step.kind == StepKind::Expect, "expect");
+    only_with("hold_for_ms", !isTemplate && step.kind == StepKind::Expect, "expect");
+    only_with("undersampled", !isTemplate && (step.kind == StepKind::Wave || step.kind == StepKind::Dither), "wave and dither");
+    if (!isTemplate && nodes.count("params") > 0)
+    {
+        caller_template_params_incomplete_ = true;
+    }
+    only_with("params", isTemplate, "template");
     bool undersampledOk = false;
     if (nodes.count("undersampled") > 0)
     {
@@ -859,7 +1023,7 @@ void Reader::read_step(ryml::id_type node)
         undersampledOk = is_scalar(said) && !is_null(said) && text_of(said) == "ok";
         if (!undersampledOk)
         {
-            error("value", doc_.line(said),
+            error("value", doc().line(said),
                   std::string("undersampled must be ok (run the step's ") + (step.kind == StepKind::Dither ? "dithers" : "waves") +
                       " as they are, also where they change faster than their ECU steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
         }
@@ -869,49 +1033,99 @@ void Reader::read_step(ryml::id_type node)
     std::optional<std::int64_t> time; // as far as it is known before the run
     const bool hasAt = nodes.count("at_ms") > 0;
     const bool hasAfter = nodes.count("after_ms") > 0;
+    bool validCallTime = true;
     if (hasAt && hasAfter)
     {
-        error("value", doc_.line(nodes.at("after_ms")),
+        error("value", doc().line(nodes.at("after_ms")),
               "the step has at_ms and after_ms: give it one time, at_ms (the virtual time) or after_ms (from the end of "
               "the step before it)");
+        validCallTime = false;
     }
     else if (hasAt)
     {
-        step.at_ms = millis(nodes.at("at_ms"), "at_ms", 0, "the virtual time of the step in milliseconds");
-        if (step.at_ms)
+        const auto ownAt = millis(nodes.at("at_ms"), "at_ms", 0, "the virtual time of the step in milliseconds");
+        const std::string templateHint =
+            scopes_.size() > 1
+                ? " (inside a template, at_ms is still the scenario's absolute time; use after_ms for time from the previous step)"
+                : "";
+        if (!ownAt)
         {
-            if (!end_known_)
+            validCallTime = false;
+        }
+        else if (inherited && inherited->at_ms && *ownAt < *inherited->at_ms)
+        {
+            error("scenario-time", doc().line(nodes.at("at_ms")),
+                  "at_ms is " + std::to_string(*ownAt) + ", before the template call's at_ms (" +
+                      std::to_string(*inherited->at_ms) + " ms)" + templateHint);
+            validCallTime = false;
+        }
+        else if (!end_known_)
+        {
+            if (wait_line_ > 0)
             {
-                error("scenario-time", doc_.line(nodes.at("at_ms")),
+                error("scenario-time", doc().line(nodes.at("at_ms")),
                       "at_ms after a step that waits (" + loc_text(wait_file_, wait_line_) +
                           "): when that step ends is not known before the run; give this step after_ms (from the end of "
-                          "the step before it) instead");
+                          "the step before it) instead" +
+                          templateHint);
             }
-            else if (*step.at_ms < end_ms_)
+            validCallTime = false;
+        }
+        else
+        {
+            const std::int64_t prevEnd = end_ms_ + (inherited ? inherited->after_ms : 0);
+            if (*ownAt < prevEnd)
             {
-                error("scenario-time", doc_.line(nodes.at("at_ms")),
-                      "at_ms is " + std::to_string(*step.at_ms) + ", before the end of the step before it (" +
-                          std::to_string(end_ms_) + " ms): the steps run in the order of the file, and time does not go "
-                                                    "back; reorder the steps or raise at_ms");
+                error("scenario-time", doc().line(nodes.at("at_ms")),
+                      "at_ms is " + std::to_string(*ownAt) + ", before the end of the step before it (" +
+                          std::to_string(prevEnd) + " ms): the steps run in the order of the file, and time does not go "
+                                                    "back; reorder the steps or raise at_ms" +
+                          templateHint);
+                validCallTime = false;
             }
             else
             {
-                time = *step.at_ms;
+                step.at_ms = ownAt;
+                time = *ownAt;
             }
         }
     }
     else
     {
+        std::int64_t ownAfter = 0;
         if (hasAfter)
         {
-            step.after_ms = millis(nodes.at("after_ms"), "after_ms", 0,
-                                   "milliseconds of virtual time from the end of the step before it")
-                                .value_or(0);
+            ownAfter = millis(nodes.at("after_ms"), "after_ms", 0,
+                              "milliseconds of virtual time from the end of the step before it")
+                           .value_or(0);
         }
-        if (end_known_)
+        if (inherited && inherited->at_ms)
         {
-            time = end_ms_ + step.after_ms;
+            step.at_ms = *inherited->at_ms + ownAfter;
+            if (end_known_)
+            {
+                time = *step.at_ms;
+            }
         }
+        else
+        {
+            step.after_ms = (inherited ? inherited->after_ms : 0) + ownAfter;
+            if (end_known_)
+            {
+                time = end_ms_ + step.after_ms;
+            }
+        }
+    }
+
+    if (isTemplate)
+    {
+        std::optional<InheritedTiming> callTiming;
+        if (validCallTime)
+        {
+            callTiming = InheritedTiming{step.at_ms, step.after_ms};
+        }
+        read_template_step(nodes, step.name, callTiming, validCallTime, line);
+        return;
     }
 
     std::int64_t length = 0; // of a step whose end is known before the run
@@ -940,7 +1154,7 @@ void Reader::read_step(ryml::id_type node)
         }
         else if (nodes.count("within_ms") > 0 && nodes.count("hold_for_ms") > 0)
         {
-            error("value", doc_.line(nodes.at("hold_for_ms")),
+            error("value", doc().line(nodes.at("hold_for_ms")),
                   "the step has within_ms and hold_for_ms: within_ms says \"true at some time within\", hold_for_ms \"true all "
                   "the time\"; make a step of each");
         }
@@ -1006,7 +1220,7 @@ void Reader::read_step(ryml::id_type node)
     {
         if (end_known_)
         {
-            wait_file_ = current_file_;
+            wait_file_ = current_file();
             wait_line_ = line;
         }
         end_known_ = false;
@@ -1077,21 +1291,21 @@ std::string Reader::skip_reason() const
 
 void Reader::read_set(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time)
 {
-    if (!tree_.is_map(node) || !tree_.has_children(node))
+    if (!tree().is_map(node) || !tree().has_children(node))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               "set must be a mapping of variables to values ({ " + example_variable() + ": 1 }), not " + shown_value(node));
         return;
     }
     std::map<std::string, std::size_t> seen;
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        if (!first_occurrence(seen, config::detail::to_string(tree_.key(child)), child, "set: "))
+        if (!first_occurrence(seen, config::detail::to_string(tree().key(child)), child, "set: "))
         {
             continue;
         }
         const auto v = variable(child);
-        if (!v || !writable(*v, doc_.line(child), time))
+        if (!v || !writable(*v, doc().line(child), time))
         {
             continue;
         }
@@ -1105,13 +1319,13 @@ void Reader::read_set(ryml::id_type node, ScenarioStep& step, const std::optiona
 
 std::int64_t Reader::skipped_over_ms(ryml::id_type node)
 {
-    if (!tree_.is_map(node))
+    if (!tree().is_map(node))
     {
         return 0;
     }
-    for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
+    for (auto part = tree().first_child(node); part != ryml::NONE; part = tree().next_sibling(part))
     {
-        if (config::detail::to_string(tree_.key(part)) == "over_ms")
+        if (config::detail::to_string(tree().key(part)) == "over_ms")
         {
             return millis(part, "over_ms", 1, "milliseconds of virtual time the ramp takes").value_or(0);
         }
@@ -1122,16 +1336,16 @@ std::int64_t Reader::skipped_over_ms(ryml::id_type node)
 std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time)
 {
     std::int64_t longest = 0;
-    if (!tree_.is_map(node) || !tree_.has_children(node))
+    if (!tree().is_map(node) || !tree().has_children(node))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               "ramp must be a mapping of variables to { to: <value>, over_ms: <milliseconds> }, not " + shown_value(node));
         return longest;
     }
     std::map<std::string, std::size_t> seen;
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        const std::string name = config::detail::to_string(tree_.key(child));
+        const std::string name = config::detail::to_string(tree().key(child));
         if (!first_occurrence(seen, name, child, "ramp: "))
         {
             continue;
@@ -1146,7 +1360,7 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
             }
             continue;
         }
-        const std::size_t line = doc_.line(child);
+        const std::size_t line = doc().line(child);
         bool good = writable(*v, line, time, "ramp");
         const ScenarioVariable& var = scenario_.variables[*v];
         if (good && var.type != control::ValueType::Integer && var.type != control::ValueType::Real)
@@ -1156,7 +1370,7 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
                       ": use set");
             good = false;
         }
-        if (!tree_.is_map(child))
+        if (!tree().is_map(child))
         {
             error("value", line, "ramp of " + name + " must be { to: <value>, over_ms: <milliseconds> }, not " + shown_value(child));
             continue;
@@ -1167,9 +1381,9 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
         bool hasTo = false;
         bool hasOver = false;
         std::map<std::string, std::size_t> keys;
-        for (auto part = tree_.first_child(child); part != ryml::NONE; part = tree_.next_sibling(part))
+        for (auto part = tree().first_child(child); part != ryml::NONE; part = tree().next_sibling(part))
         {
-            const std::string key = config::detail::to_string(tree_.key(part));
+            const std::string key = config::detail::to_string(tree().key(part));
             if (!first_occurrence(keys, key, part, "ramp of " + name + ": "))
             {
                 continue;
@@ -1197,13 +1411,13 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
                 double d = 0;
                 if (!number_of(part, *v, d))
                 {
-                    error("scenario-value", doc_.line(part),
+                    error("scenario-value", doc().line(part),
                           key + " of the ramp of " + var.text + " must be a number, not " + shown_value(part) + hex_hint(part, var.type));
                     good = false;
                 }
                 else if (!in_range(d, *v))
                 {
-                    error("scenario-value", doc_.line(part),
+                    error("scenario-value", doc().line(part),
                           key + " of the ramp of " + var.text + " is " + written(part, d) + ", outside its range (" +
                               range_text(*info_of(*v)) + ")");
                     good = false;
@@ -1211,12 +1425,12 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
                 else if (key == "to")
                 {
                     to = d;
-                    note_base(*v, d, doc_.line(part), true);
+                    note_base(*v, d, doc().line(part), true);
                 }
                 else
                 {
                     ramp.base = d;
-                    note_base(*v, d, doc_.line(part), false);
+                    note_base(*v, d, doc().line(part), false);
                 }
                 hasTo = hasTo || key == "to";
             }
@@ -1255,17 +1469,17 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, const std
 
 void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::string& action)
 {
-    if (!tree_.is_map(node) || !tree_.has_children(node))
+    if (!tree().is_map(node) || !tree().has_children(node))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               action + " must be a mapping of variables to what they must be ({ " + example_variable() +
                   ": { ge: 1 } }), not " + shown_value(node));
         return;
     }
     std::map<std::string, std::size_t> seen;
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        const std::string name = config::detail::to_string(tree_.key(child));
+        const std::string name = config::detail::to_string(tree().key(child));
         if (!first_occurrence(seen, name, child, action + ": "))
         {
             continue;
@@ -1279,15 +1493,15 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
         ScenarioCondition condition;
         condition.variable = *v;
         bool good = true;
-        if (tree_.is_map(child))
+        if (tree().is_map(child))
         {
             std::optional<double> tolerance;
             std::size_t toleranceLine = 0;
             bool hasNear = false;
             std::map<std::string, std::size_t> keys;
-            for (auto part = tree_.first_child(child); part != ryml::NONE; part = tree_.next_sibling(part))
+            for (auto part = tree().first_child(child); part != ryml::NONE; part = tree().next_sibling(part))
             {
-                const std::string key = config::detail::to_string(tree_.key(part));
+                const std::string key = config::detail::to_string(tree().key(part));
                 if (!first_occurrence(keys, key, part, name + ": "))
                 {
                     continue;
@@ -1297,11 +1511,11 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
                     double d = 0;
                     if (!plain_number(part, d) || d < 0)
                     {
-                        error("value", doc_.line(part), "tolerance must be a number that is not negative, not " + shown_value(part));
+                        error("value", doc().line(part), "tolerance must be a number that is not negative, not " + shown_value(part));
                         good = false;
                     }
                     tolerance = d;
-                    toleranceLine = doc_.line(part);
+                    toleranceLine = doc().line(part);
                     continue;
                 }
                 const auto op = compare_of(key);
@@ -1314,7 +1528,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
                 const bool ordered = *op != Compare::Eq && *op != Compare::Ne;
                 if (ordered && (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum))
                 {
-                    error("scenario-value", doc_.line(part),
+                    error("scenario-value", doc().line(part),
                           key + " compares numbers, and " + var.text + " is " +
                               (var.type == control::ValueType::Bool ? "a bool" : "an enum") + ": use eq or ne");
                     good = false;
@@ -1331,7 +1545,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
             }
             if (hasNear != tolerance.has_value())
             {
-                error("value", hasNear ? doc_.line(child) : toleranceLine,
+                error("value", hasNear ? doc().line(child) : toleranceLine,
                       hasNear ? name + ": near needs tolerance (how far from the value it may be): add tolerance: <number>"
                               : name + ": tolerance goes with near (near: <value>, tolerance: <number>): add near or remove it");
                 good = false;
@@ -1345,7 +1559,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, const std::
             }
             if (good && condition.all.empty())
             {
-                error("value", doc_.line(child),
+                error("value", doc().line(child),
                       name + ": nothing to compare with: give one of " + config::detail::join(kCompareKeys) + ", or the value itself");
                 good = false;
             }
@@ -1591,6 +1805,7 @@ ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog
         out.findings.push_back(config::Finding{config::Severity::Error, "encoding",
                                        "the file is not UTF-8 text (it looks like UTF-16, or has NUL bytes): save it as UTF-8", 0,
                                        "", ""});
+        out.params_incomplete = true;
         return out;
     }
     try
@@ -1601,6 +1816,7 @@ ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog
             out.findings.push_back(config::Finding{config::Severity::Error, "not-a-scenario",
                                            std::string("the file is empty: write vehicle_sil_scenario: 1 and steps (") + kDocs + ")",
                                            0, "", ""});
+            out.params_incomplete = true;
             return out;
         }
         Reader(doc, catalog, context, out).read();
@@ -1614,6 +1830,7 @@ ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog
                                        "syntax error: " + e.message() +
                                            (param ? ": inside { ... } or [ ... ], write a parameter in quotes (\"${name}\")" : ""),
                                        e.line(), "", "", e.context()});
+        out.params_incomplete = true;
     }
     return out;
 }

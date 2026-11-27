@@ -275,7 +275,9 @@ namespace {
         {
             context.request_file = origin.file; // the file's own scenario: its params must fit it
         }
+        context.scenario_file = check.file;
         context.read_file = files_beside(path);
+        context.read_template = files_beside(path, "the template file");
         scenario::ScenarioRead read = scenario::read_scenario(text, scenario::scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.steps = read.steps;

@@ -1386,3 +1386,63 @@ TEST_CASE(file_only_check_computes_raw_sha256_eligibility_and_sorted_findings_wi
                           "    \"message\": \"bad flag\"\n"
                           "  }\n") != std::string::npos);
 }
+
+TEST_CASE(check_with_param_on_failing_template_call_reports_template_error_not_usage)
+{
+    const std::filesystem::path dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "check_template_param_error";
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir / "templates");
+
+    {
+        std::ofstream out(dir / "sim.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Engine\n"
+               "    command: [\"./does_not_exist_ecu\"]\n"
+               "    describe: false\n";
+    }
+    {
+        std::ofstream out(dir / "missing_tpl.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\n"
+               "steps:\n"
+               "  - template: templates/missing.yaml\n"
+               "    params: { throttle: \"${cli_param}\" }\n";
+    }
+    {
+        std::ofstream out(dir / "templates" / "cyc_a.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer }\nsteps:\n  - template: cyc_b.yaml\n";
+    }
+    {
+        std::ofstream out(dir / "templates" / "cyc_b.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario_template: 1\nsteps:\n  - template: cyc_a.yaml\n    params: { throttle: 10 }\n";
+    }
+    {
+        std::ofstream out(dir / "cyclic_tpl.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\n"
+               "steps:\n"
+               "  - template: templates/cyc_a.yaml\n"
+               "    params: { throttle: \"${cli_param}\" }\n";
+    }
+
+    const vehicle_sil::config::test::InDirectory there(dir);
+
+    RunRequest missingReq;
+    missingReq.host.config = "sim.yaml";
+    missingReq.intent.scenario = "missing_tpl.yaml";
+    missingReq.intent.params = {ParamValue{"cli_param", "50", false, ParamSource::CommandLine, 0, true}};
+    const Checked missingChecked = check_file(missingReq);
+    CHECK(!missingChecked.usage);
+    CHECK_EQ(check_exit_code(missingChecked), 1);
+    CHECK(std::any_of(missingChecked.findings.begin(), missingChecked.findings.end(),
+                      [](const Finding& f) { return f.code == "scenario-template-file"; }));
+
+    RunRequest cyclicReq = missingReq;
+    cyclicReq.intent.scenario = "cyclic_tpl.yaml";
+    const Checked cyclicChecked = check_file(cyclicReq);
+    CHECK(!cyclicChecked.usage);
+    CHECK_EQ(check_exit_code(cyclicChecked), 1);
+    CHECK(std::any_of(cyclicChecked.findings.begin(), cyclicChecked.findings.end(),
+                      [](const Finding& f) { return f.code == "scenario-template-cycle"; }));
+}

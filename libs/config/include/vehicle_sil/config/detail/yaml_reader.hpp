@@ -31,6 +31,9 @@ protected:
     YamlReader(const YamlDocument& doc, std::vector<Finding>& findings) : doc_(doc), tree_(doc.tree()), findings_(findings) {}
     virtual ~YamlReader() = default;
 
+    virtual const YamlDocument& doc() const noexcept { return doc_; }
+    virtual const ryml::Tree& tree() const noexcept { return tree_; }
+
     // --- findings ---
 
     virtual void add(Severity severity, std::string code, std::size_t line, std::string message, std::string participant = {},
@@ -47,11 +50,11 @@ protected:
     /// The lines of the anchors and aliases under `node` (and of `node` itself), in order.
     void find_references(ryml::id_type node, std::vector<std::size_t>& lines) const
     {
-        if (tree_.is_ref(node) || tree_.has_anchor(node) || (tree_.has_key(node) && tree_.key(node) == "<<"))
+        if (tree().is_ref(node) || tree().has_anchor(node) || (tree().has_key(node) && tree().key(node) == "<<"))
         {
-            lines.push_back(doc_.line(node));
+            lines.push_back(doc().line(node));
         }
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
             find_references(child, lines);
         }
@@ -61,10 +64,10 @@ protected:
     bool first_occurrence(std::map<std::string, std::size_t>& seen, const std::string& key, ryml::id_type node,
                           const std::string& prefix = {})
     {
-        const auto [it, inserted] = seen.emplace(key, doc_.line(node));
+        const auto [it, inserted] = seen.emplace(key, doc().line(node));
         if (!inserted)
         {
-            error("duplicate-key", doc_.line(node),
+            error("duplicate-key", doc().line(node),
                   prefix + "'" + key + "' appears twice (first at line " + std::to_string(it->second) +
                       "); keep one of them");
         }
@@ -76,7 +79,7 @@ protected:
                      const std::vector<std::string>& known)
     {
         const std::string guess = detail::closest(key, known);
-        error("unknown-key", doc_.line(node),
+        error("unknown-key", doc().line(node),
               prefix + "unknown key '" + key + "': " +
                   (guess.empty() ? "remove it, or use one of the keys here (" + join(known) + ")"
                                  : "did you mean '" + guess + "'? (the keys here: " + join(known) + ")"));
@@ -84,17 +87,17 @@ protected:
 
     // --- values ---
 
-    bool is_scalar(ryml::id_type node) const { return tree_.has_val(node) && !tree_.is_container(node); }
-    bool is_null(ryml::id_type node) const { return is_scalar(node) && tree_.val_is_null(node); }
+    bool is_scalar(ryml::id_type node) const { return tree().has_val(node) && !tree().is_container(node); }
+    bool is_null(ryml::id_type node) const { return is_scalar(node) && tree().val_is_null(node); }
 
     /// How a value is shown in a message: 'text', the text "text" (quoted), or what it is.
     std::string shown_value(ryml::id_type node) const
     {
-        if (tree_.is_map(node))
+        if (tree().is_map(node))
         {
             return "a mapping";
         }
-        if (tree_.is_seq(node))
+        if (tree().is_seq(node))
         {
             return "a list";
         }
@@ -102,8 +105,8 @@ protected:
         {
             return "empty";
         }
-        const std::string text = detail::to_string(tree_.val(node));
-        return tree_.is_val_quoted(node) ? "the text \"" + text + "\"" : "'" + text + "'";
+        const std::string text = detail::to_string(tree().val(node));
+        return tree().is_val_quoted(node) ? "the text \"" + text + "\"" : "'" + text + "'";
     }
 
     /// `text` as a decimal integer (with an optional '-').
@@ -166,15 +169,15 @@ protected:
     /// An unquoted decimal integer (with an optional '-').
     bool plain_integer(ryml::id_type node, std::int64_t& value) const
     {
-        return is_scalar(node) && !tree_.is_val_quoted(node) && !is_null(node) &&
-               read_integer(detail::to_string(tree_.val(node)), value);
+        return is_scalar(node) && !tree().is_val_quoted(node) && !is_null(node) &&
+               read_integer(detail::to_string(tree().val(node)), value);
     }
 
     /// An unquoted finite decimal number ("1", "-2.5", "1e3").
     bool plain_number(ryml::id_type node, double& value) const
     {
-        return is_scalar(node) && !tree_.is_val_quoted(node) && !is_null(node) &&
-               read_number(detail::to_string(tree_.val(node)), value);
+        return is_scalar(node) && !tree().is_val_quoted(node) && !is_null(node) &&
+               read_number(detail::to_string(tree().val(node)), value);
     }
 
     // --- parameters ---
@@ -184,20 +187,20 @@ protected:
     std::vector<ParamValue> read_params(ryml::id_type node, const std::string& prefix, ParamSource source)
     {
         std::vector<ParamValue> out;
-        if (!tree_.is_map(node))
+        if (!tree().is_map(node))
         {
-            error("value", doc_.line(node),
+            error("value", doc().line(node),
                   prefix + "params must be a mapping of parameter names to values (params: { idle_rpm: 800 }), not " +
                       shown_value(node));
             return out;
         }
         std::map<std::string, std::size_t> seen;
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
         {
             ParamValue param;
-            param.name = detail::to_string(tree_.key(child));
+            param.name = detail::to_string(tree().key(child));
             param.source = source;
-            param.line = doc_.line(child);
+            param.line = doc().line(child);
             if (!first_occurrence(seen, param.name, child, prefix + "params: "))
             {
                 continue;
@@ -217,8 +220,8 @@ protected:
                           shown_value(child));
                 continue;
             }
-            param.text = detail::to_string(tree_.val(child));
-            param.quoted = tree_.is_val_quoted(child);
+            param.text = detail::to_string(tree().val(child));
+            param.quoted = tree().is_val_quoted(child);
             if (param.text.find("${") != std::string::npos)
             {
                 error("value", param.line,

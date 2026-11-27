@@ -739,7 +739,7 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                 {
                     detail += '\n';
                 }
-                detail += "called from: " + it->file + ":" + std::to_string(it->line);
+                detail += "called from: " + (it->file.empty() ? "line " + std::to_string(it->line) : it->file + ":" + std::to_string(it->line));
                 std::string meta;
                 if (!it->name.empty())
                 {

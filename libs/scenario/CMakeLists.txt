@@ -16,6 +16,7 @@ add_library(vehicle_sil_scenario STATIC
   src/scenario_line.cpp
   src/scenario_run.cpp
   src/scenario_shapes.cpp
+  src/scenario_templates.cpp
   src/scenario_values.cpp
   src/scenario_waves.cpp
   src/timeline.cpp

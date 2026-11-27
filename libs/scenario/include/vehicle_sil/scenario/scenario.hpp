@@ -28,6 +28,8 @@ namespace vehicle_sil::scenario {
 
 /// The version of the scenario format (its "vehicle_sil_scenario" key).
 inline constexpr int kScenarioFormat = 1;
+/// The version of the scenario template format (its "vehicle_sil_scenario_template" key).
+inline constexpr int kScenarioTemplateFormat = 1;
 
 /// A variable a scenario uses: "<participant>.<name>" (the participant ends at the first '.').
 struct ScenarioVariable
@@ -349,12 +351,18 @@ struct ScenarioContext
     /// error too, naming the file. Empty: they are left alone and named in
     /// ScenarioRead::unused_request_params (one file serves several scenarios).
     std::string request_file{};
-    /// Reads a file the scenario names (a wave's `points: { file: <path> }`). `path` is as the
-    /// scenario writes it, already checked: relative, '/' between directories, no "..". Returns the
-    /// bytes, or empty and `problem` (what is wrong and how to fix it, after "<path> ").
+    /// Reads a file the scenario names (a wave's `points: { file: <path> }`). `path` is relative to
+    /// the root scenario's directory, '/' between directories, normalized without escaping above it.
+    /// Returns the bytes, or empty and `problem` (what is wrong and how to fix it, after "<path> ").
     /// files_beside() (probe.hpp) gives the one of a scenario file. Not set: a scenario that names a
     /// file is an error ("scenario-points-file").
     std::function<std::optional<std::string>(const std::string& path, std::string& problem)> read_file{};
+    /// The root scenario path as shown (e.g. "scenarios/load.yaml"), used to display template file
+    /// paths in findings and call stacks. Empty when reading in-memory text without a file path.
+    std::string scenario_file{};
+    /// Optional callback to read a template file (by path relative to the root scenario's directory).
+    /// When empty, `read_file` is used.
+    std::function<std::optional<std::string>(const std::string& path, std::string& problem)> read_template{};
 };
 
 struct ScenarioRead
@@ -382,7 +390,7 @@ struct ScenarioRead
     /// Every error of the text, a note for each step that is skipped and for each expect beside a ramp
     /// or a wave that is not checked (ScenarioStep::expect_skipped), and a warning
     /// ("scenario-nothing-checked") if every step that checks is skipped, in the order of the file
-    /// (Finding::file is not set).
+    /// (Finding::file is set for template files and empty for the root scenario).
     std::vector<config::Finding> findings;
     /// What is wrong with the command line, known only with the scenario (code "usage"): a
     /// parameter given from the command line (ParamSource::CommandLine) that the scenario neither
@@ -392,6 +400,11 @@ struct ScenarioRead
     /// declares nor uses, when ScenarioContext::request_file is empty: left alone, for the caller
     /// to note.
     std::vector<std::string> unused_request_params{};
+    /// True when parameter discovery could not finish (an early parse, encoding, version, header,
+    /// or variant-skip abort, a failed inputs/steps parameter resolution, or a failing template
+    /// call or template file), so unused-parameter checks cannot tell whether an external parameter
+    /// is used.
+    bool params_incomplete = false;
 };
 
 /// Reads a scenario (YAML, or JSON if it starts with '{') and checks all of it: the form, unknown
@@ -400,8 +413,8 @@ struct ScenarioRead
 /// (it exists, its participant is usable, the value fits its type, range and enum items, a written
 /// variable is an input, or a parameter in a step at 0). Reports every problem at once, except
 /// that the steps are not read while a parameter has an error or the scenario is not for the
-/// variant. No file system access but through ScenarioContext::read_file (a wave's points from a
-/// CSV file, read once per path).
+/// variant. No file system access but through ScenarioContext::read_file and
+/// ScenarioContext::read_template (CSV points and template files, read once per normalized path).
 [[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog,
                                          const ScenarioContext& context = {});
 

@@ -91,7 +91,8 @@
         { "$ref": "#/definitions/step_wave" },
         { "$ref": "#/definitions/step_dither" },
         { "$ref": "#/definitions/step_wait_until" },
-        { "$ref": "#/definitions/step_expect" }
+        { "$ref": "#/definitions/step_expect" },
+        { "$ref": "#/definitions/step_template" }
       ]
     },
     "step_name": {
@@ -568,6 +569,43 @@
           "$ref": "#/definitions/duration_ms",
           "description": "expect passes if the conditions stay true for this many milliseconds of virtual time."
         }
+      }
+    },
+    "step_template": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template"],
+      "properties": {
+        "name": { "$ref": "#/definitions/step_name" },
+        "at_ms": { "$ref": "#/definitions/at_ms" },
+        "after_ms": { "$ref": "#/definitions/after_ms" },
+        "template": {
+          "$ref": "#/definitions/template_path",
+          "description": "The path of a scenario template file (vehicle_sil_scenario_template: 1), relative to this file's directory with / between directories (templates/power_on.yaml). Cannot use ${...} or '..'."
+        },
+        "params": {
+          "$ref": "#/definitions/template_params",
+          "description": "Arguments passed to the template's parameters (name: value). Each value may be a literal, a caller parameter reference (\"${outer}\"), or an interpolated string for a string parameter."
+        }
+      }
+    },
+    "template_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*\\\\)(?!.*//)(?!.*/$)(?!(.*/)?\\.\\.(/|$))[^\\x00-\\x1f\\x7f]+$(?!\\n)",
+      "not": { "pattern": "\\$\\{" },
+      "description": "The path of a scenario template file from the scenario file's directory, with / between directories: not an absolute path, without '..', and without ${...}."
+    },
+    "template_params": {
+      "type": "object",
+      "description": "Arguments passed to a template call (name: value).",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+        "description": "A parameter's name: letters, digits and _ (not a digit first)."
+      },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"],
+        "description": "One argument value: a number, true or false, a text, a parameter reference (\"${name}\"), or an interpolated string for a string parameter."
       }
     },
     "at_ms": {

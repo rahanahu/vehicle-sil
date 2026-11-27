@@ -101,11 +101,11 @@ namespace detail {
 /// with `timeout`.
 [[nodiscard]] config::ConnectTools bridge_tools(const std::filesystem::path& tool_directory, std::chrono::milliseconds timeout);
 
-/// The ScenarioContext::read_file of the scenario file `scenario`: a path is from the directory
-/// the file is in (a UTF-8 path, also on Windows). A file larger than 16 MiB, a directory and a
-/// file that cannot be opened are problems.
+/// The ScenarioContext::read_file (or read_template) of the scenario file `scenario`: a path is from
+/// the directory the file is in (a UTF-8 path, also on Windows). A file larger than 16 MiB, a
+/// directory and a file that cannot be opened are problems.
 [[nodiscard]] std::function<std::optional<std::string>(const std::string&, std::string&)>
-files_beside(const std::filesystem::path& scenario);
+files_beside(const std::filesystem::path& scenario, std::string_view file_kind = "the CSV file");
 
 // --- the participants' --describe: run, or saved ---
 

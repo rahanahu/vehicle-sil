@@ -159,12 +159,14 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 | `dither` | `dither: { <変数>: { <波形>: { ... } }, ... }`、`dither: { <変数>: none }` | その時刻から、入力に重ねる揺れを替えます。`none` は外します（[細かい揺れを重ねる](#細かい揺れを重ねるdither)）。 |
 | `wait_until` | `wait_until: { <変数>: <条件>, ... }` | 条件が成り立つまで待ちます。 |
 | `expect` | `expect: { <変数>: <条件>, ... }` | 手順の時刻に、条件が成り立つことを確認します。 |
+| `template` | `template: <パス>` | シナリオテンプレートファイル（`vehicle_sil_scenario_template: 1`）の手順を展開します。[手順テンプレート](#手順テンプレートtemplatevehicle_sil_scenario_template)にあります。 |
 
 | 動作と一緒に書くキー | 書ける動作 | 意味 |
 |---|---|---|
 | `name` | どれでも | 手順につける任意の名前です。実行結果や失敗メッセージに表示します。空文字や空白のみ、および制御文字は書けません。文字列内で `${name}` のパラメーター展開が使えます。 |
 | `at_ms` | どれでも | 手順の時刻です（仮想時間、ミリ秒、0 以上）。 |
 | `after_ms` | どれでも | 手順の時刻を、前の手順が終わった時刻からのミリ秒（0 以上）で書きます。 |
+| `params` | `template` | テンプレートが宣言した `parameters` へ渡す引数（`名前: 値`）です。 |
 | `timeout_ms: <ms>` | `wait_until`（必須） | この間に条件が成り立たなければ、失敗です。 |
 | `within_ms: <ms>` | `expect` | 手順の時刻 `T` から `[T, T + within_ms]` の間に 1 度でも成り立てば成功で、成り立った時点で次の手順へ進みます。 |
 | `hold_for_ms: <ms>` | `expect` | この間ずっと成り立つことを確認します。 |
@@ -648,11 +650,11 @@ U は、E が ECU のステップの上なら E、間なら次のステップで
 | 実装ごとに変数の名前や単位を変える | 設定ファイルの `variables` | [simulation-config.md](simulation-config.md#変数の名前と値を合わせるvariables) の「変数の名前と値を合わせる（`variables`）」 |
 | 実装ごとにネットワークの名前を変える | 設定ファイルの `network_names`（シナリオにネットワークの名前は書かない） | [simulation-config.md](simulation-config.md#ネットワークの名前を合わせるnetwork_names) の「ネットワークの名前を合わせる（`network_names`）」 |
 | シナリオと選択（機種、パラメーター、participant、速さ）を 1 つのファイルで共有する | 要求ファイル: `check` と `run` の `--request`（`test` は停止時刻と遅延の許容値だけを受けます）。ファイルに設定ファイルの名前は書きません。シナリオの相対パスは、設定ファイルのあるディレクトリから読みます | [simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」、[examples/ecu_main/requests/throttle_step.json](../../examples/ecu_main/requests/throttle_step.json) |
+| 複数のシナリオで共通の手順を使い回す | `template: <パス>` とテンプレートファイル（`vehicle_sil_scenario_template: 1`） | [手順テンプレート](#手順テンプレートtemplatevehicle_sil_scenario_template)、[examples/ecu_main/scenarios/templates/throttle_check.yaml](../../examples/ecu_main/scenarios/templates/throttle_check.yaml) |
 | 同じシナリオを、別の設定ファイルで実行する | その設定ファイルを引数に渡します。ない participant があれば、エラー `scenario-variable` です | [照合（`check --scenario`、`run --scenario` の最初）](#照合check---scenariorun---scenario-の最初) |
 
-今のシナリオにできないこと（文面を写してください）:
+今のシナリオにできないこと:
 
-- 複数のシナリオで共有する手順を取り込むこと。
 - participant の名前をパラメーターにすること。
 
 ## 機種とパラメーター
@@ -684,8 +686,8 @@ steps:
 
 | 項目 | ルール |
 |---|---|
-| 書ける位置 | `set` の値、条件の値と `tolerance`、`ramp` の `to`・`from`・`over_ms`、`wave` の数と長さ、`at_ms`、`after_ms`、`timeout_ms`、`within_ms`、`hold_for_ms`、および手順 `name` 文字列内の `${name}` です。 |
-| 書けない位置 | キー、変数名、手順 `name` 以外の値の一部（`"${a} rpm"`）です（エラー `scenario-param`）。`name` 内の `${` はすべて有効な `${name}` でなければなりません（エスケープはありません）。 |
+| 書ける位置 | `set` の値、条件の値と `tolerance`、`ramp` の `to`・`from`・`over_ms`、`wave` の数と長さ、`at_ms`、`after_ms`、`timeout_ms`、`within_ms`、`hold_for_ms`、手順 `name` や `points` のファイル名・列名（`file`、`value`、`time`）に埋め込む `${name}`、および `- template:` 呼び出しの `params`（`type: string` 引数では埋め込み `${name}` も可）です。実行前の `${name}` には `.` が入らず、実行中の ECU 信号（`<participant>.<変数>`）と見た目から区別できます。 |
+| 書けない位置 | キー、変数名、`template` パス、および手順 `name`・`points`（`file`、`value`、`time`）・`type: string` テンプレート引数以外の値の一部（`"${a} rpm"`）です（エラー `scenario-param`）。補間文字列内の `${` はすべて有効な `${name}` でなければなりません（エスケープはありません）。 |
 | 式 | ありません（`${a+1}` はエラー `scenario-param`）。計算した値が必要なときは、その値を別のパラメーターにします。 |
 | `{ ... }` や `[ ... ]` の中 | 引用符で囲みます（`{ near: "${idle_rpm}" }`）。YAML が、引用符のない `${` をそこでは読めないためです。 |
 | JSON | 文字列で書きます。 |
@@ -708,6 +710,54 @@ steps:
 | シナリオが使っても宣言してもいない名前の `--param` | 引数のエラーです（終了コード 4。シナリオのパラメーターの名前を表示します）。 |
 
 パラメーターにエラーがある間は、手順の中身を照合しません（まずパラメーターを直します）。
+
+### 手順テンプレート（`template`、`vehicle_sil_scenario_template`）
+
+共有したい手順の並びは、テンプレートファイルに書きます（`scenarios/templates/` に置くと、`vehicle_sil_launch test --scenarios scenarios/` が通常のシナリオとして拾いません）。
+
+```yaml
+vehicle_sil_scenario_template: 1
+name: throttle and speed check
+parameters:
+  throttle:
+    type: number
+    description: Target throttle value
+  timeout_ms:
+    type: integer
+    default: 500
+    values: [200, 500, 1000]
+  label:
+    type: string
+    default: throttle check
+steps:
+  - name: "${label}: apply"
+    set: { Engine.engine.throttle: "${throttle}" }
+  - name: "${label}: wait"
+    wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: "${timeout_ms}"
+```
+
+テンプレートファイルの最上位のキー（`schema/scenario-template.schema.json`）:
+
+| キー | 必須 | 意味 |
+|---|---|---|
+| `vehicle_sil_scenario_template` | はい | テンプレート形式のバージョン（`1`）です。テンプレートを直接 `--scenario` に渡すと `not-a-scenario` でエラーになります。 |
+| `name` | いいえ | テンプレートの静的な名前です（省略可）。 |
+| `parameters` | いいえ | 仮パラメーターの宣言（`名前 -> { type, default?, values?, description? }`）です。 |
+| `steps` | はい | 1 つ以上の手順の並びです（入れ子の `- template:` 呼び出しを含め、シナリオと同じ手順構文が使えます）。 |
+
+`parameters` の各項目のキー:
+
+| キー | 必須 | 意味 |
+|---|---|---|
+| `type` | はい | `integer`（10 進数または `0x...`）、`number`、`boolean`、`string`（YAML の数値・真偽値・`null` は引用符で囲みます。`--param` の CLI 値は文字列として受け入れます）のいずれかです。 |
+| `default` | いいえ | 呼び出し側で省略されたときの既定値です。`default` がないパラメーターは呼び出しごとに必須です。 |
+| `values` | いいえ | `type` に合う許可値のリスト（空でない配列、省略可）です。 |
+| `description` | いいえ | 人が読む説明文（省略可）です。 |
+
+テンプレートは**レキシカルに隔離**されます。テンプレート内の手順が参照できるのは、そのテンプレート自身の `parameters` に宣言されたパラメーターだけです（`TemplateDefault < TemplateCall`）。シナリオ、設定ファイル、variant、`--param` の値は暗黙には入らず、`- template:` の `params:` で明示的に渡します（`"${outer}"` と書くと外側の引用符を剥がして値・型情報を引き継ぎます）。
+
+`template:` と `points: { file: ... }` の相対パスは、それを書いたテンプレートのディレクトリを起点に解決され、正規化後のパスがルートシナリオのディレクトリ内に留まる限り `..` を使えます。入れ子呼び出しでは循環検出（`scenario-template-cycle`）、最大深さ 16（`scenario-template-depth`）、最大展開手順数 10,000（`scenario-template-steps`）を強制します。テンプレート内の照合指摘や失敗手順には、テンプレートの `file:line` と `called from:` の `call_stack` が付きます。
 
 ### ない変数を使う手順のスキップ
 
@@ -931,12 +981,13 @@ failed: 5 errors, 0 warnings, 0 notes
 
 | `code` | 種類 | 意味 |
 |---|---|---|
-| `file`、`encoding`、`syntax`、`not-a-scenario`、`format-version`、`unsupported-yaml` | エラー | ファイルが読めない、シナリオでない、バージョンが違う、アンカーや 2 つ目のドキュメントがある。 |
+| `file`、`encoding`、`syntax`、`not-a-scenario`、`not-a-template`、`format-version`、`unsupported-yaml` | エラー | ファイルが読めない、シナリオまたはテンプレートでない、バージョンが違う、アンカーや 2 つ目のドキュメントがある。 |
 | `unknown-key`、`duplicate-key`、`missing-key`、`value` | エラー | キーと値の形のエラー（1 つの手順に 2 つの動作、`wait_until` に `timeout_ms` がない、`near` に `tolerance` がない、など）。 |
 | `scenario-variable` | エラー | 変数が `<participant>.<変数名>` でない、participant か変数がない、participant を使えない（無効にしている、`describe: false`、実時間で動く、変数を出していない、変数を出すメッセージの版か運び方がこの `vehicle_sil_launch` と違う。古い vehicle-sil でビルドした ECU など）。 |
 | `scenario-not-writable` | エラー | 出力に書いている。Parameter を時刻 0 の `set` 以外で書いている。 |
 | `scenario-value` | エラー | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外。`dither` を bool か enum の変数に書いている。 |
-| `scenario-param` | エラー | `${name}` に値がない。`${...}` がキーや変数名、値の一部にある（シナリオにない名前の `--param` は、引数のエラー `usage`）。 |
+| `scenario-param` | エラー | `${name}` に値がない、テンプレート呼び出し引数が `type`・`values`・必須指定に違反している、または `${...}` がキー・変数名・`template` パス・許可されない部分文字列にある（シナリオにない名前の `--param` は、引数のエラー `usage`）。 |
+| `scenario-template-file`、`scenario-template-cycle`、`scenario-template-depth`、`scenario-template-steps` | エラー | テンプレートファイルが読めないかシナリオディレクトリ外へ出る（`scenario-template-file`）、循環呼び出しになる（`scenario-template-cycle`）、入れ子深さ 16 を超える（`scenario-template-depth`）、または展開後の手順数が 10,000 を超える（`scenario-template-steps`）。 |
 | `scenario-variant` | エラー | シナリオの `only` に、選んだ機種がない。`only` の名前が設定ファイルの機種にない。 |
 | `scenario-time` | エラー | `at_ms` が前の手順の終わりより前、待つ手順より後ろに `at_ms` がある、`end_ms` が手順の終わりうる最も早い時刻より前、または手順の時間を合計すると時刻の上限（1000000000000 ms）を超える。 |
 | `scenario-wave-undersampled`、`scenario-wave-duty` | 警告 | `wave` か `dither` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)）。integer の入力に、振幅が 0.5 より小さい `dither` も `scenario-wave-undersampled` です（下）。 |
