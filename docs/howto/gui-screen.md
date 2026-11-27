@@ -172,7 +172,7 @@ Attributes of `<vsil-value>` that this page does not use:
 | `on`, `off` | For a bool variable: the words to show for true and false (`on="LOST" off="ok"` shows `LOST` or `ok`). Without them it shows `on` and `off`. |
 | `no-unit` | Leave the unit out (`1200` instead of `1200 rpm`). |
 
-All the parts and their attributes are in "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements); the template uses most of them (a slider, a button that writes a value, a lamp, time and scenario controls).
+All the parts and their attributes are in "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements); the template uses most of them (a slider, a button that writes a value, a lamp, time controls, and scenario/case controls such as `<vsil-scenario-select>`, `<vsil-case-select>`, and `<vsil-scenario-result>`). To pass a `variant` or typed `params` from a custom screen, update `pageIntent` (`pageIntent.update({ variant, params })`) or pass `Intent` (including `session.intent` to re-run with the same settings) to `front.run.start()`.
 
 The page has no script, so `main.js` is no longer used and you can delete `main.js` and `style.css` (the template has them as the model for "a script of your own" and for styling the parts; see its README). The parts have no look of their own: the template's `style.css` shows how to style what they mark with `data-*` attributes.
 

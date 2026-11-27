@@ -3,6 +3,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { CheckResult } from '@vehicle-sil/gui-client';
 import { FindingsList } from '../widgets/findings-list';
 import { checkOutcomeLabel, checkStatusLabel } from '../widgets/check-labels';
+import { checkSelectionGuidance } from './scenario-param-model';
 
 /** participant の行。 */
 interface Row {
@@ -40,6 +41,21 @@ export class CheckPanel {
 
   protected readonly outcome = computed(() => checkOutcomeLabel(this.check().result));
   protected readonly passed = computed(() => this.check().result === 'passed');
+  protected readonly guidance = computed(() => checkSelectionGuidance(this.check()));
+  protected readonly guidanceText = computed(() => {
+    switch (this.guidance()) {
+      case 'variant':
+        return $localize`バリアントを選んでください。`;
+      case 'case':
+        return $localize`シナリオのケースを選んでください。`;
+      default:
+        return null;
+    }
+  });
+  protected readonly displayedFindings = computed(() => {
+    const findings = this.check().findings;
+    return this.guidance() === null ? findings : findings.filter((f) => f.code !== 'usage');
+  });
 
   protected readonly rows = computed<Row[]>(() => {
     const check = this.check();

@@ -25,6 +25,8 @@ function scenario(timelineUrl: string | null, extra: Partial<ScenarioView> = {})
     [running]="running()"
     [paused]="paused()"
     [crashed]="crashed()"
+    [rerunAllowed]="rerunAllowed()"
+    (rerun)="reruns = reruns + 1"
   />`,
 })
 class Host {
@@ -32,6 +34,8 @@ class Host {
   readonly running = signal(false);
   readonly paused = signal(false);
   readonly crashed = signal(false);
+  readonly rerunAllowed = signal<boolean | null>(null);
+  reruns = 0;
 }
 
 describe('ScenarioPanel', () => {
@@ -241,5 +245,84 @@ describe('ScenarioPanel', () => {
       longName,
     );
     expect(rows[519]?.querySelector('.state')?.textContent).toContain('飛ばした');
+  });
+
+  it('auto-expands timeline to failed step, jumps to clicked step, renders params, and emits rerun', async () => {
+    fixture.componentInstance.rerunAllowed.set(true);
+    fixture.componentInstance.scenario.set(
+      scenario('api/timeline/9', {
+        case: '定格',
+        params: [
+          { name: 'target_throttle', value: 50, from: 'case' },
+          { name: 'min_speed', value: 2500, from: 'request_file' },
+        ],
+        status: 'failed',
+        steps: [
+          {
+            index: 1,
+            file: 'scenarios/cases.yaml',
+            line: 10,
+            kind: 'set',
+            name: null,
+            text: 'set Engine.engine.throttle = 50',
+            status: 'passed',
+            start_ms: 0,
+            at_ms: 0,
+            end_ms: 0,
+            code: null,
+            message: null,
+            call_stack: null,
+          },
+          {
+            index: 2,
+            file: 'scenarios/templates/check.yaml',
+            line: 18,
+            kind: 'expect',
+            name: 'speed tracking',
+            text: 'expect Dashboard.dashboard.engine_speed near Engine.engine.speed',
+            status: 'failed',
+            start_ms: 50,
+            at_ms: 150,
+            end_ms: 150,
+            code: 'scenario-failed',
+            message: 'it was 1600 (150 ms) while Engine.engine.speed was 1800 (150 ms)',
+            call_stack: [
+              {
+                file: 'scenarios/cases.yaml',
+                line: 30,
+                name: 'load check',
+                params: { throttle: 50 },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await fixture.whenStable();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="scenario-params"]')?.textContent).toContain(
+      'min_speed',
+    );
+    expect(root.querySelector('[data-testid="scenario-params"]')?.textContent).toContain('上書き');
+    const toggle = root.querySelector<HTMLButtonElement>('[data-testid="timeline-toggle"]')!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+    const details = root.querySelector<HTMLDetailsElement>(
+      '[data-testid="scenario-step-call-stack"]',
+    )!;
+    expect(details.open).toBe(true);
+
+    // Jump button exists per step and focuses the clicked step
+    const jump1 = root.querySelector<HTMLButtonElement>('[data-testid="scenario-step-jump-1"]')!;
+    jump1.click();
+    await fixture.whenStable();
+    expect(root.querySelector('[data-testid="timeline-readout"]')?.textContent).toContain(
+      '選んだ手順: 1',
+    );
+
+    // Rerun button emits rerun event
+    root.querySelector<HTMLButtonElement>('[data-testid="scenario-rerun"]')?.click();
+    expect(fixture.componentInstance.reruns).toBe(1);
   });
 });

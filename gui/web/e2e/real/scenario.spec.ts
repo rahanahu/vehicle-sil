@@ -2,7 +2,7 @@
 // 実行中は見るだけ: 変数の値は見え、書く部品は理由を言って押せない。時刻の操作（ランチャーの標準入力の命令）と
 // 停止は、ふつうの実行と同じく効く。持たなければ飛ばす。
 import { expect, test } from '@playwright/test';
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GUI_PORT, guiToken } from '../support/gui-server';
 import {
@@ -282,6 +282,253 @@ test('real recording captures finalized end_ms, replays normally to that end tim
       unlinkSync(recordedPath);
     } catch {
       // ignore if never created
+    }
+    await stopRun(page, target, RUN_TIMEOUT);
+  }
+});
+
+test('real multi-case scenario: variant/case selection, typed parameter override, variable comparison failure provenance, timeline auto-expand & jump, and same-settings rerun from virtual time 0', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const target: Target = { base: `http://127.0.0.1:${GUI_PORT}/`, token: guiToken() };
+  const headers = { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin };
+  const app = (await (
+    await page.request.get(new URL('api/app', target.base).href, { headers })
+  ).json()) as {
+    launcher?: { version?: { features?: string[] } };
+  };
+  const features = app.launcher?.version?.features ?? [];
+  test.skip(
+    !features.includes('scenario-cases') ||
+      !features.includes('scenario-templates') ||
+      !features.includes('scenario-variable-compare'),
+    'launcher does not advertise scenario-cases / scenario-templates / scenario-variable-compare',
+  );
+
+  const rootDir = process.env['VEHICLE_SIL_GUI_E2E_ROOT'];
+  if (!rootDir) throw new Error('VEHICLE_SIL_GUI_E2E_ROOT is not set');
+  const templateDir = join(rootDir, 'scenarios', 'templates');
+  const templatePath = join(templateDir, 'real_compare_check.yaml');
+  const scenarioPath = join(rootDir, 'scenarios', 'real_cases_e2e.yaml');
+  mkdirSync(templateDir, { recursive: true });
+  writeFileSync(
+    templatePath,
+    [
+      'vehicle_sil_scenario_template: 1',
+      'parameters:',
+      '  throttle:',
+      '    type: integer',
+      '    description: initial throttle command',
+      '  max_lag_rpm:',
+      '    type: integer',
+      '    description: max rpm gap between Dashboard and Engine',
+      '  label:',
+      '    type: string',
+      '    description: tag kept as string',
+      'steps:',
+      '  - name: "${label}: apply throttle"',
+      '    at_ms: 0',
+      '    set:',
+      '      Engine.engine.throttle: "${throttle}"',
+      '  - name: "${label}: track engine speed"',
+      '    ramp:',
+      '      Engine.engine.throttle: { to: 90, over_ms: 200 }',
+      '    expect:',
+      '      Dashboard.dashboard.engine_speed:',
+      '        near: { variable: Engine.engine.speed }',
+      '        tolerance: "${max_lag_rpm}"',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeFileSync(
+    scenarioPath,
+    [
+      'vehicle_sil_scenario: 1',
+      'name: real cases comparison',
+      'params:',
+      '  throttle: 40',
+      '  max_lag_rpm: 600',
+      '  label: "0001"',
+      'cases:',
+      '  rated:',
+      '    params:',
+      '      throttle: 50',
+      '  big_only:',
+      '    only: [big]',
+      '    params:',
+      '      throttle: 80',
+      'steps:',
+      '  - name: "run ${label} tracking check"',
+      '    template: templates/real_compare_check.yaml',
+      '    params:',
+      '      throttle: "${throttle}"',
+      '      max_lag_rpm: "${max_lag_rpm}"',
+      '      label: "${label}"',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  await openRun(page);
+  await stopIfRunning(page);
+  try {
+    // 1. Select variants.yaml -> calm variant guidance (not red error count)
+    await choose(page, 'variants.yaml');
+    await expect(page.getByTestId('check-outcome')).toContainText('バリアントを選んでください。');
+    await expect(page.getByTestId('check-outcome')).not.toHaveClass(/failed/);
+    await expect(page.getByTestId('blocked')).toContainText('バリアントを選んでください。');
+
+    // Choose variant small
+    await page.getByTestId('variant-select').click();
+    await page.getByRole('option', { name: 'small', exact: true }).click();
+    await expect(page.getByTestId('check-outcome')).toContainText('通った', {
+      timeout: RUN_TIMEOUT,
+    });
+
+    // 2. Select multi-case scenario -> calm case guidance, big_only disabled with variant reason
+    await page.getByTestId('scenario-select').click();
+    await page.getByRole('option', { name: 'real_cases_e2e.yaml', exact: true }).click();
+    await expect(page.getByTestId('check-outcome')).toContainText(
+      'シナリオのケースを選んでください。',
+      { timeout: RUN_TIMEOUT },
+    );
+    await expect(page.getByTestId('blocked')).toContainText('シナリオのケースを選んでください。');
+
+    await page.getByTestId('case-select').click();
+    const bigOpt = page.getByRole('option', { name: /big_only/ });
+    await expect(bigOpt).toHaveAttribute('aria-disabled', 'true');
+    await expect(bigOpt).toContainText('バリアント big のみ対象');
+    await page.getByRole('option', { name: 'rated', exact: true }).click();
+    await expect(page.getByTestId('check-outcome')).toContainText('通った', {
+      timeout: RUN_TIMEOUT,
+    });
+
+    // 3. Override typed parameters: string "0123" stays string, integer 0 forces tight comparison failure
+    await expect(page.getByTestId('scenario-params-panel')).toBeVisible();
+    await page.getByTestId('param-input-label').fill('0123');
+    await page.getByTestId('param-input-max_lag_rpm').fill('0');
+    await expect(page.getByTestId('param-badge-max_lag_rpm')).toHaveText('上書き');
+    await expect(page.getByTestId('check-outcome')).toContainText('通った', {
+      timeout: RUN_TIMEOUT,
+    });
+    await page.getByTestId('config-card').getByRole('radio', { name: '最速', exact: true }).click();
+
+    // 4. Start run and verify typed params payload
+    const firstReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const firstId = await start(page);
+    const firstBody = (await firstReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(firstBody).toMatchObject({
+      file: 'variants.yaml',
+      variant: 'small',
+      scenario: 'scenarios/real_cases_e2e.yaml',
+      case: 'rated',
+      params: { label: '0123', max_lag_rpm: 0 },
+    });
+    expect(typeof (firstBody['params'] as Record<string, unknown>)['label']).toBe('string');
+    expect(typeof (firstBody['params'] as Record<string, unknown>)['max_lag_rpm']).toBe('number');
+
+    // 5. Verify failure provenance, two-signal comparison message, call_stack, and timeline auto-expand
+    await expect(result(page, firstId)).toContainText('失敗', { timeout: RUN_TIMEOUT });
+    const scenarioCard = page.getByTestId('scenario-card');
+    await expect(scenarioCard.getByTestId('scenario-case')).toContainText('rated');
+    await expect(scenarioCard.getByTestId('scenario-params')).toContainText('0123');
+    await expect(scenarioCard.getByTestId('scenario-step').nth(1)).toContainText(
+      'templates/real_compare_check.yaml:',
+    );
+    await expect(scenarioCard.getByTestId('scenario-step').nth(1)).toContainText(
+      'while Engine.engine.speed was',
+    );
+    await expect(page.getByTestId('result-scenario-case')).toHaveText('rated');
+    await expect(page.getByTestId('result-scenario-failure-location')).toContainText(
+      'templates/real_compare_check.yaml:',
+    );
+    await expect(page.getByTestId('result-scenario-failure-message')).toContainText(
+      'while Engine.engine.speed was',
+    );
+    await expect(page.getByTestId('result-scenario-call-stack')).toContainText(
+      'real_cases_e2e.yaml:',
+    );
+
+    const toggle = scenarioCard.getByTestId('timeline-toggle');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const timeline = scenarioCard.getByTestId('timeline-element');
+    await expect(timeline).toBeVisible();
+    await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toContainText(
+      '手順 2',
+      { timeout: RUN_TIMEOUT },
+    );
+    await expect(scenarioCard.getByTestId('timeline-readout')).toContainText('選んだ手順: 2');
+
+    const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
+    if (shots) {
+      await page.setViewportSize({ width: 1440, height: 1100 });
+      await page.locator('mat-sidenav-content').evaluate((el) => el.scrollTo(0, 0));
+      await page.waitForTimeout(300);
+      await page.screenshot({
+        path: `${shots}/run-cases-params-failed-timeline-1440.png`,
+      });
+      await scenarioCard.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(200);
+      await scenarioCard.screenshot({
+        path: `${shots}/run-scenario-card-timeline-1440.png`,
+      });
+    }
+
+    // 6. Jump to step 1 from the step table row
+    await scenarioCard.getByTestId('scenario-step-jump-1').click();
+    await expect(scenarioCard.getByTestId('timeline-readout')).toContainText('選んだ手順: 1');
+
+    // 7. Same-settings rerun starts a new session from virtual time 0 with identical intent
+    const firstSession = (await (
+      await page.request.get(new URL('api/session', target.base).href, { headers })
+    ).json()) as { session: { id: string; result: { timing: { sim_ms: number } } } };
+
+    const rerunReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const rerunResPromise = page.waitForResponse(
+      (r) => r.url().endsWith('/api/run') && r.request().method() === 'POST',
+    );
+    await scenarioCard.getByTestId('scenario-rerun').click();
+    const rerunBody = (await rerunReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(rerunBody).toMatchObject({
+      file: 'variants.yaml',
+      variant: 'small',
+      scenario: 'scenarios/real_cases_e2e.yaml',
+      case: 'rated',
+      params: { label: '0123', max_lag_rpm: 0 },
+    });
+    const secondId = ((await (await rerunResPromise).json()) as { run_id: string }).run_id;
+    expect(secondId).not.toBe(firstId);
+    await expect(result(page, secondId)).toContainText('失敗', { timeout: RUN_TIMEOUT });
+
+    const secondSession = (await (
+      await page.request.get(new URL('api/session', target.base).href, { headers })
+    ).json()) as {
+      session: {
+        id: string;
+        result: { timing: { sim_ms: number }; scenario: { steps: { start_ms: number | null }[] } };
+      };
+    };
+    expect(secondSession.session.id).toBe(secondId);
+    expect(secondSession.session.result.scenario.steps[0]?.start_ms).toBe(0);
+    expect(secondSession.session.result.timing.sim_ms).toBe(
+      firstSession.session.result.timing.sim_ms,
+    );
+  } finally {
+    try {
+      unlinkSync(scenarioPath);
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(templateDir, { recursive: true, force: true });
+    } catch {
+      // ignore
     }
     await stopRun(page, target, RUN_TIMEOUT);
   }

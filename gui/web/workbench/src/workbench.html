@@ -4,12 +4,18 @@
   @if (!fixedPeer && !detachedWave) {
     @if (live() && runActive(session())) {
       <span>Network: {{ session()!.file }}</span>
+      @if (session()?.intent?.variant ?? session()?.check?.variant; as activeVariant) {
+        <span data-testid="workbench-active-variant">Variant: {{ activeVariant }}</span>
+      }
       <span
         >Scenario:
         {{
           runScenario()?.file ?? (session()?.launcherState?.scenario === false ? 'Free run' : '—')
-        }}</span
-      >
+        }}
+        @if (runScenario()?.case; as activeCase) {
+          <span>[{{ activeCase }}]</span>
+        }
+      </span>
     } @else {
       <label
         >Network
@@ -25,6 +31,24 @@
           }
         </select>
       </label>
+      @if (availableVariants().length > 0) {
+        <label
+          >Variant
+          <select
+            aria-label="Variant"
+            data-testid="workbench-variant-select"
+            [disabled]="live()"
+            (change)="selectVariant($any($event.target).value)"
+          >
+            <option value="" [selected]="!selectedVariant()">Select variant…</option>
+            @for (variant of availableVariants(); track variant) {
+              <option [value]="variant" [selected]="selectedVariant() === variant">
+                {{ variant }}
+              </option>
+            }
+          </select>
+        </label>
+      }
       <label
         >Scenario
         <select
@@ -40,6 +64,36 @@
           }
         </select>
       </label>
+      @if (selectedScenario() && caseOptions().length > 0) {
+        <label
+          >Case
+          <select
+            aria-label="Case"
+            data-testid="workbench-case-select"
+            [disabled]="live()"
+            (change)="selectCase($any($event.target).value)"
+          >
+            <option value="" [selected]="!selectedCase()">Select case…</option>
+            @for (option of caseOptions(); track option.name) {
+              <option
+                [value]="option.name"
+                [selected]="selectedCase() === option.name"
+                [disabled]="option.disabled"
+                [title]="
+                  option.disabled && option.only
+                    ? 'Only for variant(s): ' + option.only.join(', ')
+                    : ''
+                "
+              >
+                {{ option.name }}
+                @if (option.disabled && option.only) {
+                  (only: {{ option.only.join(', ') }})
+                }
+              </option>
+            }
+          </select>
+        </label>
+      }
       @if (selectedScenario() && canHandover()) {
         <label
           >After scenario
@@ -84,7 +138,7 @@
           [attr.aria-describedby]="validStopAt() ? null : 'run-limit-error'"
           [value]="handoverSelected() ? '' : stopAt()"
           [placeholder]="handoverSelected() ? 'Disabled on handover' : ''"
-          (input)="stopAt.set($any($event.target).value); check.set(null)"
+          (input)="onStopAtInput($any($event.target).value)"
         />
       </label>
       @if (!validStopAt()) {
@@ -99,14 +153,20 @@
           ><input
             type="checkbox"
             [checked]="startPaused()"
-            (change)="startPaused.set($any($event.target).checked); check.set(null)"
+            (change)="onStartPausedChange($any($event.target).checked)"
           />
           Start paused</label
         >
       }
       <button
         class="primary"
-        [disabled]="!controls()?.start?.ok || !selectedFile() || !validStopAt()"
+        [disabled]="
+          !controls()?.start?.ok ||
+          !selectedFile() ||
+          !validStopAt() ||
+          !validParams() ||
+          selectionGuidance() !== null
+        "
         [title]="controls()?.start?.reason?.message ?? ''"
         (click)="action(() => start(false))"
       >
@@ -114,7 +174,14 @@
       </button>
       @if (!selectedScenario()) {
         <button
-          [disabled]="!controls()?.start?.ok || !selectedFile() || !validStopAt() || !canRecord()"
+          [disabled]="
+            !controls()?.start?.ok ||
+            !selectedFile() ||
+            !validStopAt() ||
+            !validParams() ||
+            selectionGuidance() !== null ||
+            !canRecord()
+          "
           (click)="action(() => start(true))"
         >
           <span class="record-dot" aria-hidden="true"></span> Record &amp; start
@@ -361,12 +428,144 @@
           Refresh run list
         </button>
         <button
-          [disabled]="!selectedFile() || !validStopAt() || live()"
+          [disabled]="!selectedFile() || !validStopAt() || !validParams() || live()"
           (click)="action(() => assess())"
         >
           Check run settings
         </button>
       </div>
+      @if (selectionGuidance(); as guidance) {
+        <p class="banner" role="status" data-testid="workbench-guidance">
+          {{ guidance === 'variant' ? 'Choose a variant.' : 'Choose a scenario case.' }}
+        </p>
+      }
+      @if (paramRows().length > 0) {
+        <section class="wb-params" data-testid="workbench-params">
+          <div class="tools">
+            <h2>Scenario parameters</h2>
+            @if (hasParamOverrides()) {
+              <button
+                type="button"
+                data-testid="workbench-params-reset-all"
+                [disabled]="live()"
+                (click)="resetAllParams()"
+              >
+                Reset all
+              </button>
+            }
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Parameter</th>
+                <th>Source</th>
+                <th>Value</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of paramRows(); track row.name) {
+                <tr
+                  [class.param-missing]="row.missing"
+                  [class.param-overridden]="row.overridden"
+                  [attr.data-testid]="'workbench-param-' + row.name"
+                  [attr.data-missing]="row.missing ? 'true' : null"
+                >
+                  <td>
+                    <code>{{ row.name }}</code>
+                    @if (row.type) {
+                      <span class="muted"> ({{ row.type }})</span>
+                    }
+                    @if (row.description) {
+                      <div class="muted">{{ row.description }}</div>
+                    }
+                  </td>
+                  <td>
+                    <span class="param-badge" [attr.data-source]="row.provenance">{{
+                      provenanceLabel(row.provenance, row.rawFrom)
+                    }}</span>
+                  </td>
+                  <td>
+                    @switch (row.control) {
+                      @case ('select') {
+                        <select
+                          [attr.aria-label]="'Parameter ' + row.name"
+                          [attr.data-testid]="'workbench-param-input-' + row.name"
+                          [disabled]="live()"
+                          (change)="onParamSelect(row, $any($event.target).value)"
+                        >
+                          @if (row.missing) {
+                            <option value="" selected disabled>Select…</option>
+                          }
+                          @for (option of row.values ?? []; track option) {
+                            <option
+                              [value]="option"
+                              [selected]="
+                                row.effectiveValue !== undefined && row.displayText === option
+                              "
+                            >
+                              {{ option }}
+                            </option>
+                          }
+                        </select>
+                      }
+                      @case ('boolean') {
+                        <select
+                          [attr.aria-label]="'Parameter ' + row.name"
+                          [attr.data-testid]="'workbench-param-input-' + row.name"
+                          [disabled]="live()"
+                          (change)="onParamBoolean(row, $any($event.target).value)"
+                        >
+                          @if (row.missing) {
+                            <option value="" selected disabled>Select…</option>
+                          }
+                          <option value="true" [selected]="row.effectiveValue === true">
+                            true
+                          </option>
+                          <option value="false" [selected]="row.effectiveValue === false">
+                            false
+                          </option>
+                        </select>
+                      }
+                      @default {
+                        <input
+                          type="text"
+                          [attr.aria-label]="'Parameter ' + row.name"
+                          [attr.aria-invalid]="row.invalid"
+                          [attr.data-testid]="'workbench-param-input-' + row.name"
+                          [placeholder]="row.missing ? 'Required' : ''"
+                          [value]="row.displayText"
+                          [disabled]="live()"
+                          (input)="onParamTextInput(row, $any($event.target).value)"
+                        />
+                        @if (row.invalid) {
+                          <span class="bad">
+                            {{
+                              row.control === 'integer' ? 'Enter an integer.' : 'Enter a number.'
+                            }}
+                          </span>
+                        }
+                      }
+                    }
+                  </td>
+                  <td>
+                    @if (row.overridden || hasParamDraft(row.name)) {
+                      <button
+                        type="button"
+                        [attr.data-testid]="'workbench-param-reset-' + row.name"
+                        [disabled]="live()"
+                        (click)="resetParam(row.name)"
+                      >
+                        Reset
+                      </button>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </section>
+      }
       <h2>Scenario files</h2>
       <div class="tools">
         <button (click)="showTab('Settings')">Scenario folder settings</button>

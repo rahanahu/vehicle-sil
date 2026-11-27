@@ -1175,6 +1175,281 @@ describe('RunPage', () => {
     });
     expect(pageIntent.get().stop_at_ms).toBeUndefined();
   });
+
+  it('shows calm guidance for variant and case usage, sends typed params, and restores session.intent on session switch', async () => {
+    const appBase = response('app') as { launcher: { version: { features: string[] } } };
+    const appWithHandover = {
+      ...appBase,
+      launcher: {
+        ...appBase.launcher,
+        version: {
+          ...appBase.launcher.version,
+          features: [...new Set([...appBase.launcher.version.features, 'scenario-handover'])],
+        },
+      },
+    };
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithHandover);
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    await advance(BATCH_MS);
+    TestBed.tick();
+
+    // Variant usage check shows calm guidance without red error count
+    const baseCheck = structuredClone(response('check-passed')) as {
+      check: Record<string, unknown>;
+    };
+    (await checkRequest()).flush({
+      check: {
+        ...baseCheck.check,
+        result: 'usage',
+        errors: 1,
+        variant: null,
+        variants: ['small', 'big'],
+        findings: [
+          {
+            severity: 'error',
+            code: 'usage',
+            file: 'bad-lines.yaml',
+            line: 1,
+            participant: null,
+            network: null,
+            message: 'choose a variant',
+            detail: null,
+          },
+        ],
+      },
+    });
+    await settle();
+    expect(text(fixture, 'check-outcome')).toContain('バリアントを選んでください。');
+    expect(text(fixture, 'check-outcome')).not.toContain('誤り');
+    expect(text(fixture, 'blocked')).toContain('バリアントを選んでください。');
+    expect(
+      (fixture.nativeElement as HTMLElement)
+        .querySelector('[data-testid="check-outcome"]')
+        ?.classList.contains('failed'),
+    ).toBe(false);
+
+    // Choose variant + scenario -> case usage check shows calm case guidance
+    const page = fixture.componentInstance as unknown as {
+      selectVariant(v: string | null): void;
+      selectScenario(s: string | null): void;
+      selectCase(c: string | null): void;
+    };
+    const firstScenario = (response('scenarios') as { scenarios: { path: string }[] }).scenarios[0]
+      .path;
+    page.selectVariant('small');
+    page.selectScenario(firstScenario);
+    TestBed.tick();
+    const caseUsageCheck = await checkRequest();
+    expect(caseUsageCheck.request.body).toMatchObject({
+      variant: 'small',
+      scenario: firstScenario,
+    });
+    caseUsageCheck.flush({
+      check: {
+        ...baseCheck.check,
+        result: 'usage',
+        errors: 1,
+        variant: 'small',
+        variants: ['small', 'big'],
+        findings: [
+          {
+            severity: 'error',
+            code: 'usage',
+            file: 'bad-lines.yaml',
+            line: null,
+            participant: null,
+            network: null,
+            message: 'choose a case',
+            detail: null,
+          },
+        ],
+        scenario: {
+          file: firstScenario,
+          name: 'cases',
+          case: null,
+          cases: ['c1', 'big_only'],
+          case_details: [
+            { name: 'c1', only: null },
+            { name: 'big_only', only: ['big'] },
+          ],
+          steps: 0,
+          params: [
+            { name: 'throttle', value: 50, from: 'scenario', type: 'integer' },
+            { name: 'tag', value: '0001', from: 'scenario', type: 'string' },
+          ],
+          param_meta: [
+            { name: 'throttle', type: 'integer' },
+            { name: 'tag', type: 'string' },
+          ],
+        },
+      },
+    });
+    await settle();
+    expect(text(fixture, 'check-outcome')).toContain('シナリオのケースを選んでください。');
+    expect(text(fixture, 'blocked')).toContain('シナリオのケースを選んでください。');
+
+    // Select case and edit typed params ("0123" stays string, "75" becomes number)
+    page.selectCase('c1');
+    TestBed.tick();
+    const tagInput = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="param-input-tag"]',
+    )!;
+    tagInput.value = '0123';
+    tagInput.dispatchEvent(new Event('input'));
+    const thrInput = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="param-input-throttle"]',
+    )!;
+    thrInput.value = '75';
+    thrInput.dispatchEvent(new Event('input'));
+    TestBed.tick();
+
+    const typedCheck = await checkRequest();
+    expect(typedCheck.request.body).toMatchObject({
+      variant: 'small',
+      scenario: firstScenario,
+      case: 'c1',
+      params: { tag: '0123', throttle: 75 },
+    });
+    expect(
+      typeof (typedCheck.request.body as { params: Record<string, unknown> }).params['tag'],
+    ).toBe('string');
+    expect(
+      typeof (typedCheck.request.body as { params: Record<string, unknown> }).params['throttle'],
+    ).toBe('number');
+    typedCheck.flush({
+      check: {
+        ...baseCheck.check,
+        result: 'passed',
+        variant: 'small',
+        variants: ['small', 'big'],
+        scenario: {
+          file: firstScenario,
+          name: 'cases',
+          case: 'c1',
+          cases: ['c1', 'big_only'],
+          case_details: [
+            { name: 'c1', only: null },
+            { name: 'big_only', only: ['big'] },
+          ],
+          steps: 2,
+          params: [
+            { name: 'throttle', value: 75, from: 'request_file', type: 'integer' },
+            { name: 'tag', value: '0123', from: 'request_file', type: 'string' },
+          ],
+        },
+      },
+    });
+    await settle();
+
+    // Switching to an ended session with session.intent restores after_scenario='pause', variant, case, params,
+    // and clicking rerun sends session.intent directly to POST /api/run
+    const baseSession = (server('ws-pass')[3] as { session: Record<string, unknown> }).session;
+    const endedIntent = {
+      disable: [],
+      manual: [],
+      variant: 'small',
+      scenario: firstScenario,
+      case: 'c1',
+      params: { tag: '0123', throttle: 75 },
+      after_scenario: 'pause',
+      speed: 'max',
+    };
+    fake.last().send({
+      type: 'session',
+      stream_seq: 50,
+      session: {
+        ...baseSession,
+        id: '42',
+        file: 'bad-lines.yaml',
+        state: 'ended',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        allowed: { start: { ok: true, reason: null, message: null } },
+        intent: endedIntent,
+        scenario: {
+          file: firstScenario,
+          name: 'cases',
+          case: 'c1',
+          params: [
+            { name: 'throttle', value: 75, from: 'request_file' },
+            { name: 'tag', value: '0123', from: 'request_file' },
+          ],
+          step_count: 1,
+          steps: [
+            {
+              index: 1,
+              line: 5,
+              kind: 'set',
+              text: 'set Engine.engine.throttle = 75',
+              status: 'passed',
+              start_ms: 0,
+              at_ms: 0,
+              end_ms: 0,
+              code: null,
+              message: null,
+            },
+          ],
+          steps_omitted: 0,
+          status: 'passed',
+          over_at_ms: 100,
+          timeline_url: null,
+        },
+        result: {
+          vehicle_sil_run: 2,
+          file: 'bad-lines.yaml',
+          result: 'passed',
+          end: 'completed',
+          ok: true,
+          simulation: 'ended',
+          interrupted_by: null,
+          errors: 0,
+          warnings: 0,
+          notes: 0,
+          participants: [],
+          findings: [],
+          timing: null,
+          scenario: {
+            file: firstScenario,
+            name: 'cases',
+            case: 'c1',
+            params: [
+              { name: 'throttle', value: 75, from: 'request_file' },
+              { name: 'tag', value: '0123', from: 'request_file' },
+            ],
+            status: 'passed',
+            over_at_ms: 100,
+            steps: [],
+          },
+        },
+      },
+    });
+    fake.last().send({ type: 'synced', stream_seq: 51, run_id: '42', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    await advance(CHECK_DELAY_MS);
+    for (const req of http.match('api/check')) req.flush(response('check-passed'));
+    answerScenarios();
+    await settle();
+
+    // afterScenario was restored to 'pause' from session.intent (not reset to 'stop')
+    const pauseRadio = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      '[data-testid="after-scenario-pause"] input[type="radio"]',
+    )!;
+    expect(pauseRadio.checked).toBe(true);
+
+    // Clicking rerun sends session.intent directly to POST /api/run
+    button(fixture, 'scenario-rerun').click();
+    const rerunReq = http.expectOne('api/run');
+    expect(rerunReq.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      ...endedIntent,
+    });
+    rerunReq.flush(response('run'));
+  });
 });
 
 describe('readRunChoices', () => {
@@ -1195,6 +1470,18 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, scenario: 'scenarios/a.yaml' })?.scenario).toBe(
       'scenarios/a.yaml',
     );
+    expect(
+      readRunChoices({
+        ...choices,
+        variant: 'small',
+        case: 'c1',
+        params: { code: '0123', throttle: 50, ok: true },
+      }),
+    ).toMatchObject({
+      variant: 'small',
+      case: 'c1',
+      params: { code: '0123', throttle: 50, ok: true },
+    });
   });
 
   it('carries nothing when the shape is wrong', () => {
@@ -1205,6 +1492,9 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, startPaused: 'yes' })).toBeNull();
     expect(readRunChoices({ ...choices, afterScenario: 'resume' })).toBeNull();
     expect(readRunChoices({ ...choices, scenario: 123 })).toBeNull();
+    expect(readRunChoices({ ...choices, variant: 123 })).toBeNull();
+    expect(readRunChoices({ ...choices, case: 123 })).toBeNull();
+    expect(readRunChoices({ ...choices, params: { a: null } })).toBeNull();
     expect(readRunChoices({ ...choices, manual: ['A', 1] })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: true })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: 'yes' })).toBeNull();

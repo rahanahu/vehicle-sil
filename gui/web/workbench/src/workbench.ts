@@ -28,6 +28,7 @@ import {
   type Intent,
   type RunTarget,
   type ScenarioFile,
+  type ScenarioParamValue,
   type SessionView,
   type VariableInfo,
   type VariableRef,
@@ -47,6 +48,17 @@ import {
   type ChannelView,
   type DesignerModel,
 } from '../../src/app/design/designer-model';
+import {
+  buildParamRows,
+  caseOptionsFor,
+  checkSelectionGuidance,
+  coerceSelectParamValue,
+  formatParamValue,
+  parseParamText,
+  type CaseOption,
+  type ParamProvenance,
+  type ParamRow,
+} from '../../src/app/run/scenario-param-model';
 import { IoRow } from './io-row';
 
 type FolderPicker = Window & {
@@ -170,7 +182,11 @@ export class Workbench {
   readonly files = signal<string[]>([]);
   readonly scenarios = signal<ScenarioFile[]>([]);
   readonly selectedFile = signal('');
+  readonly selectedVariant = signal('');
   readonly selectedScenario = signal('');
+  readonly selectedCase = signal('');
+  readonly paramOverrides = signal<Readonly<Record<string, ScenarioParamValue>>>({});
+  readonly paramDrafts = signal<Readonly<Record<string, string>>>({});
   readonly afterScenario = signal<AfterScenario>('stop');
   readonly handoverSelected = computed(() =>
     Boolean(this.selectedScenario() && this.canHandover() && this.afterScenario() === 'pause'),
@@ -201,6 +217,31 @@ export class Workbench {
   } | null>(null);
   readonly notice = signal('');
   readonly check = signal<CheckResult | null>(null);
+  readonly selectionCheck = signal<CheckResult | null>(null);
+  readonly activeCheck = computed(() => this.check() ?? this.selectionCheck());
+  readonly availableVariants = computed<readonly string[]>(
+    () => this.activeCheck()?.variants ?? [],
+  );
+  readonly caseOptions = computed<readonly CaseOption[]>(() =>
+    this.selectedScenario()
+      ? caseOptionsFor(
+          this.activeCheck()?.scenario,
+          this.selectedVariant() || this.activeCheck()?.variant || null,
+        )
+      : [],
+  );
+  readonly paramRows = computed<readonly ParamRow[]>(() =>
+    this.selectedScenario()
+      ? buildParamRows(this.activeCheck()?.scenario, this.paramOverrides(), this.paramDrafts())
+      : [],
+  );
+  readonly validParams = computed(() => !this.paramRows().some((row) => row.invalid));
+  readonly hasParamOverrides = computed(
+    () =>
+      Object.keys(this.paramOverrides()).length > 0 || Object.keys(this.paramDrafts()).length > 0,
+  );
+  readonly selectionGuidance = computed(() => checkSelectionGuidance(this.activeCheck()));
+  readonly String = String;
   readonly configText = signal('');
   readonly savedConfigText = signal('');
   readonly configStamp = signal<string | null>(null);
@@ -431,12 +472,14 @@ export class Workbench {
   private waveHeadDestroyed = false;
   private readonly waveEntries = new Map<string, WaveEntry>();
   private listRevision = 0;
+  private inspectAbort: AbortController | null = null;
 
   constructor() {
     this.destroy.onDestroy(() => {
       this.waveHeadDestroyed = true;
       if (this.waveHeadTimer !== null) clearTimeout(this.waveHeadTimer);
       this.waveHeadAbort?.abort();
+      this.inspectAbort?.abort();
     });
     if (this.fixedPeer) document.title = `${this.fixedPeer} · vehicle-sil`;
     if (this.detachedWave) document.title = 'Waveforms · vehicle-sil';
@@ -599,8 +642,13 @@ export class Workbench {
   }
 
   private async selectFile(file: string) {
+    this.cancelInspect();
     this.selectedFile.set(file);
+    this.selectedVariant.set('');
     this.selectedScenario.set('');
+    this.selectedCase.set('');
+    this.paramOverrides.set({});
+    this.paramDrafts.set({});
     this.afterScenario.set('stop');
     this.scenarios.set([]);
     this.configStamp.set(null);
@@ -608,12 +656,14 @@ export class Workbench {
     this.savedConfigText.set('');
     this.configAnswer.set(null);
     this.check.set(null);
+    this.selectionCheck.set(null);
     if (!this.live() && file) {
       void this.front()
         ?.prepare({ file })
         .catch(() => undefined);
     }
     await this.refreshScenarios();
+    void this.inspectSelection();
   }
 
   async refreshScenarios() {
@@ -627,29 +677,181 @@ export class Workbench {
       this.scenarios.set(scenarios);
       if (!scenarios.some(({ path }) => path === this.selectedScenario())) {
         this.selectedScenario.set('');
+        this.selectedCase.set('');
+        this.paramOverrides.set({});
+        this.paramDrafts.set({});
         this.afterScenario.set('stop');
       }
     }
   }
 
+  selectVariant(value: string) {
+    this.selectedVariant.set(value);
+    const currentCase = this.selectedCase();
+    if (currentCase) {
+      const options = caseOptionsFor(this.activeCheck()?.scenario, value || null);
+      if (options.some((opt) => opt.name === currentCase && opt.disabled)) {
+        this.selectedCase.set('');
+      }
+    }
+    this.check.set(null);
+    const file = this.selectedFile();
+    if (!this.live() && file) {
+      void this.front()
+        ?.prepare({ file, ...(value ? { variant: value } : {}) })
+        .catch(() => undefined);
+    }
+    void this.inspectSelection();
+  }
+
   selectScenario(value: string) {
     this.selectedScenario.set(value);
+    this.selectedCase.set('');
+    this.paramOverrides.set({});
+    this.paramDrafts.set({});
     if (!value) this.afterScenario.set('stop');
     this.check.set(null);
+    void this.inspectSelection();
+  }
+
+  selectCase(value: string) {
+    this.selectedCase.set(value);
+    this.check.set(null);
+    void this.inspectSelection();
   }
 
   selectAfterScenario(value: string) {
+    this.cancelInspect();
     this.afterScenario.set(value === 'pause' ? 'pause' : 'stop');
     this.check.set(null);
   }
 
-  intent(): Intent {
+  onStopAtInput(value: string) {
+    this.cancelInspect();
+    this.stopAt.set(value);
+    this.check.set(null);
+  }
+
+  onStartPausedChange(checked: boolean) {
+    this.cancelInspect();
+    this.startPaused.set(checked);
+    this.check.set(null);
+  }
+
+  onParamSelect(row: ParamRow, value: string) {
+    if (!value) return;
+    this.clearParamDraft(row.name);
+    const typed = coerceSelectParamValue(value, row.type, row.resolvedValue);
+    this.paramOverrides.update((current) => ({ ...current, [row.name]: typed }));
+    this.check.set(null);
+  }
+
+  onParamBoolean(row: ParamRow, value: string) {
+    if (value !== 'true' && value !== 'false') return;
+    this.clearParamDraft(row.name);
+    this.paramOverrides.update((current) => ({ ...current, [row.name]: value === 'true' }));
+    this.check.set(null);
+  }
+
+  onParamTextInput(row: ParamRow, raw: string) {
+    this.paramDrafts.update((current) => ({ ...current, [row.name]: raw }));
+    const parsed = parseParamText(raw, row.control, row.type, row.resolvedValue);
+    if (parsed.ok) {
+      this.paramOverrides.update((current) => ({ ...current, [row.name]: parsed.value }));
+      this.check.set(null);
+    }
+  }
+
+  resetParam(name: string) {
+    this.clearParamDraft(name);
+    this.paramOverrides.update((current) => {
+      if (!Object.hasOwn(current, name)) return current;
+      const next = { ...current };
+      delete next[name];
+      return next;
+    });
+    this.check.set(null);
+  }
+
+  resetAllParams() {
+    this.paramDrafts.set({});
+    this.paramOverrides.set({});
+    this.check.set(null);
+  }
+
+  hasParamDraft(name: string): boolean {
+    return Object.hasOwn(this.paramDrafts(), name);
+  }
+
+  provenanceLabel(provenance: ParamProvenance, rawFrom: string | null): string {
+    if (provenance === 'missing') return 'required';
+    if (provenance === 'other') return rawFrom ?? '';
+    return provenance;
+  }
+
+  formatParamScalar(value: ScenarioParamValue): string {
+    return formatParamValue(value);
+  }
+
+  private clearParamDraft(name: string) {
+    this.paramDrafts.update((current) => {
+      if (!Object.hasOwn(current, name)) return current;
+      const next = { ...current };
+      delete next[name];
+      return next;
+    });
+  }
+
+  private cancelInspect() {
+    this.inspectAbort?.abort();
+    this.inspectAbort = null;
+  }
+
+  private async inspectSelection() {
+    this.cancelInspect();
+    const front = this.front();
+    const file = this.selectedFile();
+    if (!front || !file || this.live() || this.fixedPeer || this.detachedWave) return;
+    const variant = this.selectedVariant();
     const scenario = this.selectedScenario();
+    const scenarioCase = this.selectedCase();
+    const controller = new AbortController();
+    this.inspectAbort = controller;
+    try {
+      const result = await front.check(this.intent(), { file, signal: controller.signal });
+      if (
+        controller.signal.aborted ||
+        file !== this.selectedFile() ||
+        variant !== this.selectedVariant() ||
+        scenario !== this.selectedScenario() ||
+        scenarioCase !== this.selectedCase()
+      ) {
+        return;
+      }
+      this.selectionCheck.set(result);
+    } catch {
+      // Background metadata inspection ignores aborts and transient check errors; explicit check/start reports them.
+    } finally {
+      if (this.inspectAbort === controller) this.inspectAbort = null;
+    }
+  }
+
+  intent(): Intent {
+    const variant = this.selectedVariant();
+    const scenario = this.selectedScenario();
+    const scenarioCase = scenario ? this.selectedCase() : '';
+    const overrides = this.paramOverrides();
+    const paramKeys = scenario ? Object.keys(overrides).sort() : [];
+    const params: Record<string, ScenarioParamValue> | null =
+      paramKeys.length > 0 ? Object.fromEntries(paramKeys.map((k) => [k, overrides[k]!])) : null;
     const handover = this.handoverSelected();
     const speed = this.speed();
     const stopAt = handover ? '' : this.stopAt();
     return {
+      ...(variant ? { variant } : {}),
       ...(scenario ? { scenario } : {}),
+      ...(scenarioCase ? { case: scenarioCase } : {}),
+      ...(params ? { params } : {}),
       ...(handover ? { after_scenario: 'pause' as const } : {}),
       ...(stopAt ? { stop_at_ms: Number(stopAt) } : {}),
       ...(speed ? { speed: speed === 'max' ? speed : Number(speed) } : {}),
@@ -687,6 +889,7 @@ export class Workbench {
   }
 
   async setSpeed(value: string, target: RunTarget | null) {
+    this.cancelInspect();
     if (this.live() && value)
       await this.front()!.time.setSpeed(value === 'max' ? value : Number(value), target);
     this.speed.set(value);
@@ -694,8 +897,12 @@ export class Workbench {
   }
 
   async assess() {
+    this.cancelInspect();
     const file = this.selectedFile();
+    const variant = this.selectedVariant();
     const scenario = this.selectedScenario();
+    const scenarioCase = this.selectedCase();
+    const params = JSON.stringify(this.paramOverrides());
     const afterScenario = this.afterScenario();
     const stopAt = this.stopAt();
     const speed = this.speed();
@@ -703,13 +910,17 @@ export class Workbench {
     const check = await this.front()!.check(this.intent(), { file, fresh: true });
     if (
       file === this.selectedFile() &&
+      variant === this.selectedVariant() &&
       scenario === this.selectedScenario() &&
+      scenarioCase === this.selectedCase() &&
+      params === JSON.stringify(this.paramOverrides()) &&
       afterScenario === this.afterScenario() &&
       stopAt === this.stopAt() &&
       speed === this.speed() &&
       paused === this.startPaused()
     ) {
       this.check.set(check);
+      this.selectionCheck.set(check);
     }
   }
 

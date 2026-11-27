@@ -9,6 +9,7 @@ import {
   Speed,
 } from '@vehicle-sil/gui-client';
 import { isTimeOperation } from '../widgets/control-labels';
+import { ParamProvenance } from './scenario-param-model';
 
 function label(table: Record<string, string>, value: string): string {
   return table[value] ?? value;
@@ -148,6 +149,26 @@ const STEP_STATES: Record<string, string> = {
 
 /** シナリオの手順の状態。 */
 export const stepStateLabel = (status: string): string => label(STEP_STATES, status);
+
+const PARAM_PROVENANCES: Record<Exclude<ParamProvenance, 'other'>, string> = {
+  override: $localize`上書き`,
+  missing: $localize`未指定（必須）`,
+  scenario: $localize`シナリオ`,
+  configuration: $localize`構成`,
+  variant: $localize`バリアント`,
+  case: $localize`ケース`,
+  default: $localize`既定値`,
+  template: $localize`テンプレート`,
+};
+
+/** パラメータの由来バッジの表示名。 */
+export function paramProvenanceLabel(
+  provenance: ParamProvenance,
+  rawFrom: string | null = null,
+): string {
+  if (provenance === 'other') return rawFrom ?? '';
+  return PARAM_PROVENANCES[provenance];
+}
 
 const FAILURE_REASONS: Record<string, string> = {
   left_simulation: $localize`シミュレーションを去った`,

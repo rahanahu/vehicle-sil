@@ -172,7 +172,7 @@ Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more 
 | `on`、`off` | bool の変数で、true と false に出す文字です（`on="LOST" off="ok"` なら `LOST` か `ok` と出ます）。指定しないと `on` と `off` と出ます。 |
 | `no-unit` | 単位を出しません（`1200 rpm` でなく `1200`）。 |
 
-部品の全部と属性は、[gui/client/README.md](../../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」にあります。テンプレートは、そのほとんど（スライダー、値を書き込むボタン、ランプ、時間とシナリオの操作）を使っています。
+部品の全部と属性は、[gui/client/README.md](../../../gui/client/README.ja.md#部品custom-element) の「部品（custom element）」にあります。テンプレートは、そのほとんど（スライダー、値を書き込むボタン、ランプ、時間の操作、`<vsil-scenario-select>`・`<vsil-case-select>`・`<vsil-scenario-result>` などのシナリオ/ケース部品）を使っています。独自の画面から `variant` や型付きの `params` を渡すときは、`pageIntent.update({ variant, params })` を使うか、`front.run.start()` に `Intent`（同じ条件で再実行する場合は `session.intent`）を渡します。
 
 このページにはスクリプトがないので、`main.js` はもう使いません。`main.js` と `style.css` は消してかまいません（テンプレートにあるのは、「自分のスクリプト」と部品の見た目の付け方の見本としてです。その README を見てください）。部品には自分の見た目がありません。`data-*` 属性が付いた部品の見た目の付け方は、テンプレートの `style.css` にあります。
 

@@ -1,5 +1,5 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -1511,5 +1511,117 @@ test('workbench runs scenario handover at max speed, unlocks writes, and steps o
     await expect(page.getByText('Scenario: failed', { exact: true })).toBeVisible();
   } finally {
     await server.stop();
+  }
+});
+
+test('workbench selects variant (calling prepare with variant), case, and typed parameters', async ({
+  page,
+}) => {
+  test.skip(
+    process.env['VEHICLE_SIL_VERIFY_WORKBENCH'] !== '1' || test.info().project.name !== 'static',
+    'run with verify-web.py --workbench',
+  );
+  test.setTimeout(120_000);
+  const root = mkdtempSync(join(tmpdir(), 'vehicle-sil-workbench-cases-'));
+  cpSync(CONFIGS, root, { recursive: true });
+  writeFileSync(
+    join(root, 'scenarios', 'cases_typed.yaml'),
+    [
+      'vehicle_sil_scenario: 1',
+      'name: typed cases',
+      'parameters:',
+      '  code:',
+      '    type: string',
+      '    description: leading zero tag',
+      '  throttle:',
+      '    type: integer',
+      '    default: 40',
+      '  flag:',
+      '    type: boolean',
+      '    default: true',
+      'cases:',
+      '  normal:',
+      '    params:',
+      '      throttle: 50',
+      '      code: "0001"',
+      '  big_only:',
+      '    only: [big]',
+      '    params:',
+      '      throttle: 90',
+      '      code: "0900"',
+      'steps:',
+      '  - at_ms: 0',
+      '    set: { Engine.engine.demand: 50 }',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  const server = await launchGuiServer({
+    launcher: REPLAY_LAUNCHER,
+    root,
+    config: join(root, 'variants.yaml'),
+    env: {
+      REPLAY_TICK_MS: '25',
+      REPLAY_FEATURES: `${features},scenario-cases,scenario-templates`,
+    },
+    port: 0,
+    web: join(REPOSITORY, 'build', 'gui-workbench', 'browser'),
+  });
+  try {
+    await page.goto(server.url);
+    const variantSelect = page.getByTestId('workbench-variant-select');
+    await expect(variantSelect).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start', exact: true })).toBeDisabled();
+
+    // Selecting variant triggers POST /api/prepare with { file, variant }
+    const prepareReq = page.waitForRequest(
+      (r) =>
+        r.url().endsWith('/api/prepare') &&
+        r.method() === 'POST' &&
+        (r.postDataJSON() as Record<string, unknown>)['variant'] === 'small',
+    );
+    await variantSelect.selectOption('small');
+    const prepareBody = (await prepareReq).postDataJSON() as Record<string, unknown>;
+    expect(prepareBody).toMatchObject({ file: 'variants.yaml', variant: 'small' });
+
+    // Select multi-case scenario -> Case dropdown appears with big_only disabled
+    const scenario = page.getByRole('combobox', { name: 'Scenario', exact: true });
+    await scenario.selectOption('scenarios/cases_typed.yaml');
+    const caseSelect = page.getByTestId('workbench-case-select');
+    await expect(caseSelect).toBeVisible();
+    await expect(caseSelect.locator('option[value="big_only"]')).toBeDisabled();
+    await caseSelect.selectOption('normal');
+
+    // Switch to Scenario tab, inspect & override typed parameters
+    await page.getByRole('button', { name: 'Scenario', exact: true }).click();
+    await expect(page.getByTestId('workbench-params')).toBeVisible();
+    await page.getByTestId('workbench-param-input-code').fill('0123');
+    await page.getByTestId('workbench-param-input-throttle').fill('75');
+    await page.getByTestId('workbench-param-input-flag').selectOption('false');
+
+    const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
+    if (shots) {
+      await page.setViewportSize({ width: 1280, height: 840 });
+      await page.screenshot({ path: `${shots}/workbench-variant-case-params-1280.png` });
+    }
+
+    const runReq = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Start', exact: true }).click();
+    const runBody = (await runReq).postDataJSON() as Record<string, unknown>;
+    expect(runBody).toMatchObject({
+      file: 'variants.yaml',
+      variant: 'small',
+      scenario: 'scenarios/cases_typed.yaml',
+      case: 'normal',
+      params: { code: '0123', flag: false, throttle: 75 },
+    });
+    expect(typeof (runBody['params'] as Record<string, unknown>)['code']).toBe('string');
+    expect(typeof (runBody['params'] as Record<string, unknown>)['throttle']).toBe('number');
+    expect(typeof (runBody['params'] as Record<string, unknown>)['flag']).toBe('boolean');
+  } finally {
+    await server.stop();
+    rmSync(root, { recursive: true, force: true });
   }
 });

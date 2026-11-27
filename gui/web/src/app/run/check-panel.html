@@ -1,10 +1,17 @@
-<p class="outcome" [class.failed]="!passed()" data-testid="check-outcome">
-  <span aria-hidden="true">{{ passed() ? '✓' : '✕' }}</span>
-  <ng-container i18n
-    >照合: {{ outcome() }}（誤り {{ check().errors }}、警告 {{ check().warnings }}、注記
-    {{ check().notes }}）</ng-container
-  >
-</p>
+@if (guidanceText(); as text) {
+  <p class="outcome guidance" data-testid="check-outcome" [attr.data-guidance]="guidance()">
+    <span aria-hidden="true">{{ 'ℹ' }}</span>
+    {{ text }}
+  </p>
+} @else {
+  <p class="outcome" [class.failed]="!passed()" data-testid="check-outcome">
+    <span aria-hidden="true">{{ passed() ? '✓' : '✕' }}</span>
+    <ng-container i18n
+      >照合: {{ outcome() }}（誤り {{ check().errors }}、警告 {{ check().warnings }}、注記
+      {{ check().notes }}）</ng-container
+    >
+  </p>
+}
 
 <h3 class="heading" i18n>participant</h3>
 <ul class="participants" aria-label="participant" i18n-aria-label>
@@ -78,5 +85,7 @@
   }
 </ul>
 
-<h3 class="heading" i18n>所見</h3>
-<app-findings-list [findings]="check().findings" />
+@if (guidance() === null || displayedFindings().length > 0) {
+  <h3 class="heading" i18n>所見</h3>
+  <app-findings-list [findings]="displayedFindings()" />
+}
