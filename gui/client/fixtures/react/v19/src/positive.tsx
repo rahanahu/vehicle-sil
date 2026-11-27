@@ -25,8 +25,42 @@ export function PositiveReact19({ front }: { front: Front }) {
         labelRunUntil="U"
       />
       <vsil-value client={front} variable="Dash.d.speed" on="HI" off="lo" no-unit noUnit={true} />
-      <vsil-slider client={front} variable="Engine.e.throttle" />
-      <vsil-write client={front} variable="Engine.e.flag" value={false} label="Cut" />
+      <vsil-slider
+        client={front}
+        variable="Engine.e.throttle"
+        onvsil-write-queued={(e) => {
+          const seq: number = e.detail.seq;
+          void seq;
+        }}
+        onvsil-write-result={(e) => {
+          if (e.detail.ok) {
+            const at: number | null = e.detail.appliedAtMs;
+            void at;
+          } else {
+            const code: string = e.detail.error.code;
+            void code;
+          }
+        }}
+      />
+      <vsil-write
+        client={front}
+        variable="Engine.e.flag"
+        value={false}
+        label="Cut"
+        onvsil-write-queued={(e) => {
+          const session: string = e.detail.session;
+          void session;
+        }}
+        onvsil-write-result={(e) => {
+          if (e.detail.ok) {
+            const late: boolean = e.detail.late;
+            void late;
+          } else {
+            const outcome: 'refused' | 'unknown' = e.detail.error.outcome;
+            void outcome;
+          }
+        }}
+      />
       <vsil-write client={front} variable="Engine.e.throttle" value={0} />
       <vsil-write client={front} variable="Engine.e.mode" value="eco" />
       <vsil-scenario-select client={front} />

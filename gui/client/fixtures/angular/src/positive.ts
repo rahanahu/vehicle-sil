@@ -1,7 +1,12 @@
 import { CUSTOM_ELEMENTS_SCHEMA, Component, ElementRef, signal, viewChild } from '@angular/core';
 import type { Front, Intent } from '@vehicle-sil/gui-client';
 import '@vehicle-sil/gui-client/elements';
-import type { VsilWriteElement } from '@vehicle-sil/gui-client/elements';
+import type {
+  VsilSliderElement,
+  VsilWriteElement,
+  WriteOutcome,
+  WriteQueuedInfo,
+} from '@vehicle-sil/gui-client/elements';
 import '@vehicle-sil/gui-client/timeline';
 import type {
   VehicleSilTimelineElement,
@@ -29,13 +34,21 @@ import type {
       on="ON"
       off="off"
     ></vsil-value>
-    <vsil-slider [client]="front" variable="Engine.e.throttle"></vsil-slider>
+    <vsil-slider
+      #sliderRef
+      [client]="front"
+      variable="Engine.e.throttle"
+      (vsil-write-queued)="onWriteQueued($event)"
+      (vsil-write-result)="onWriteResult($event)"
+    ></vsil-slider>
     <vsil-write
       #writeRef
       [client]="front"
       variable="Engine.e.flag"
       [value]="false"
       label="Cut"
+      (vsil-write-queued)="onWriteQueued($event)"
+      (vsil-write-result)="onWriteResult($event)"
     ></vsil-write>
     <vsil-write [client]="front" variable="Engine.e.throttle" [value]="0"></vsil-write>
     <vsil-connect [client]="front" network="CAN1" [file]="'bench.yaml'"></vsil-connect>
@@ -60,8 +73,26 @@ export class AngularConsumerComponent {
   readonly varName = signal('Dash.d.speed');
   readonly noUnit = signal(true);
   readonly vars = signal<string[]>(['Body.*']);
+  readonly sliderRef = viewChild<ElementRef<VsilSliderElement>>('sliderRef');
   readonly writeRef = viewChild<ElementRef<VsilWriteElement>>('writeRef');
   readonly tlRef = viewChild<ElementRef<VehicleSilTimelineElement>>('tlRef');
+
+  onWriteQueued(event: Event): void {
+    const detail = (event as CustomEvent<WriteQueuedInfo>).detail;
+    const seq: number = detail.seq;
+    void seq;
+  }
+
+  onWriteResult(event: Event): void {
+    const detail = (event as CustomEvent<WriteOutcome>).detail;
+    if (detail.ok) {
+      const at: number | null = detail.appliedAtMs;
+      void at;
+    } else {
+      const code: string = detail.error.code;
+      void code;
+    }
+  }
 
   onLoad(event: Event): void {
     const detail = (event as CustomEvent<VehicleSilTimelineLoadDetail>).detail;
@@ -79,10 +110,38 @@ export class AngularConsumerComponent {
   }
 
   syncElements(): void {
+    const slider = this.sliderRef()?.nativeElement;
+    if (slider) {
+      slider.addEventListener('vsil-write-queued', (e) => {
+        const seq: number = e.detail.seq;
+        // @ts-expect-error seq is number, not string
+        const bad: string = e.detail.seq;
+        void [seq, bad];
+      });
+      slider.addEventListener('vsil-write-result', (e) => {
+        if (e.detail.ok) {
+          const at: number | null = e.detail.appliedAtMs;
+          void at;
+        } else {
+          // @ts-expect-error error.code is string, not number
+          const bad: number = e.detail.error.code;
+          void bad;
+        }
+      });
+    }
     const write = this.writeRef()?.nativeElement;
     if (write) {
       write.value = false;
       write.value = 0;
+      write.addEventListener('vsil-write-queued', (e) => {
+        const session: string = e.detail.session;
+        void session;
+      });
+      write.addEventListener('vsil-write-result', (e) => {
+        // @ts-expect-error appliedAtMs requires narrowing ok === true
+        const bad: number | null = e.detail.appliedAtMs;
+        void bad;
+      });
     }
     const tl = this.tlRef()?.nativeElement;
     if (tl) {

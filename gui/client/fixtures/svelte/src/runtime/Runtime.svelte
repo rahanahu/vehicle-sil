@@ -1,7 +1,14 @@
 <script lang="ts">
   import type { Front, Intent } from '@vehicle-sil/gui-client';
+  import type { WriteOutcome, WriteQueuedInfo } from '@vehicle-sil/gui-client/elements';
   import type { VehicleSilTimelineLoadDetail } from '@vehicle-sil/gui-client/timeline';
-  import { SAMPLE_TIMELINE, createSmokeFront, initSmokeState } from './runtime-helpers';
+  import {
+    SAMPLE_TIMELINE,
+    createSmokeFront,
+    initSmokeState,
+    recordQueued,
+    recordResult,
+  } from './runtime-helpers';
 
   const smoke = initSmokeState();
   const front = createSmokeFront(smoke);
@@ -15,6 +22,14 @@
     rcIntent = undefined;
   }
 
+  function onQueuedFor(source: string) {
+    return (e: CustomEvent<WriteQueuedInfo>) => recordQueued(smoke, source, e.detail);
+  }
+
+  function onResultFor(source: string) {
+    return (e: CustomEvent<WriteOutcome>) => recordResult(smoke, source, e.detail);
+  }
+
   function onLoad(e: CustomEvent<VehicleSilTimelineLoadDetail>) {
     smoke.loads.push({ status: e.detail.status, end: e.detail.end, file: e.detail.file });
   }
@@ -25,8 +40,39 @@
 </script>
 
 <div>
-  <vsil-write id="w-false" client={front} variable="E.e.flag" value={false} label="Cut"></vsil-write>
-  <vsil-write id="w-zero" client={front} variable="E.e.throttle" value={0}></vsil-write>
+  <vsil-write
+    id="w-false"
+    client={front}
+    variable="E.e.flag"
+    value={false}
+    label="Cut"
+    onvsil-write-queued={onQueuedFor('w-false')}
+    onvsil-write-result={onResultFor('w-false')}
+  ></vsil-write>
+  <vsil-write
+    id="w-zero"
+    client={front}
+    variable="E.e.throttle"
+    value={0}
+    onvsil-write-queued={onQueuedFor('w-zero')}
+    onvsil-write-result={onResultFor('w-zero')}
+  ></vsil-write>
+  <vsil-write
+    id="w-fail"
+    client={front}
+    variable="E.e.fault"
+    value={true}
+    label="Fault"
+    onvsil-write-queued={onQueuedFor('w-fail')}
+    onvsil-write-result={onResultFor('w-fail')}
+  ></vsil-write>
+  <vsil-slider
+    id="sl"
+    client={front}
+    variable="E.e.throttle"
+    onvsil-write-queued={onQueuedFor('sl')}
+    onvsil-write-result={onResultFor('sl')}
+  ></vsil-slider>
   <vsil-value id="val" client={front} variable="E.e.speed" {noUnit}></vsil-value>
   <button id="toggle-unit" type="button" onclick={() => (noUnit = !noUnit)}>Toggle unit</button>
   <vsil-run-controls id="rc" client={rcClient} intent={rcIntent}></vsil-run-controls>

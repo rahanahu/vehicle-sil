@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Front, Intent } from '@vehicle-sil/gui-client';
 import '@vehicle-sil/gui-client/elements';
+import type { WriteOutcome, WriteQueuedInfo } from '@vehicle-sil/gui-client/elements';
 import '@vehicle-sil/gui-client/timeline';
 import type {
   VehicleSilTimelineErrorDetail,
@@ -12,6 +13,21 @@ import type { VueEventProps } from '@vehicle-sil/gui-client/vue';
 const front: Front | null = null;
 const intent: Intent = { speed: 'max' };
 const vars = ['Body.*'];
+
+function onWriteQueued(event: CustomEvent<WriteQueuedInfo>) {
+  const seq: number = event.detail.seq;
+  void seq;
+}
+
+function onWriteResult(event: CustomEvent<WriteOutcome>) {
+  if (event.detail.ok) {
+    const at: number | null = event.detail.appliedAtMs;
+    void at;
+  } else {
+    const code: string = event.detail.error.code;
+    void code;
+  }
+}
 
 function onLoad(event: CustomEvent<VehicleSilTimelineLoadDetail>) {
   const status: string = event.detail.status;
@@ -39,7 +55,7 @@ function onView(event: CustomEvent<{ from: number; to: number }>) {
 }
 
 // Verifies hyphenated custom events map to both on<Capitalize<K>> and on<Capitalize<CamelCase<K>>>.
-type HyphenEvents = VueEventProps<{ 'vsil-write-result': CustomEvent<{ ok: boolean }> }>;
+type HyphenEvents = VueEventProps<{ 'vsil-write-result': CustomEvent<WriteOutcome> }>;
 const hyphenCheck: HyphenEvents = {
   onVsilWriteResult: (e) => {
     const ok: boolean = e.detail.ok;
@@ -68,8 +84,20 @@ void hyphenCheck;
     <vsil-value :client="front" variable="Dash.d.speed" on="HI" off="lo" no-unit />
     <vsil-value :client="front" variable="Dash.d.speed" :noUnit="true" />
     <vsil-value :client="front" variable="Dash.d.speed" :noUnit="false" />
-    <vsil-slider :client="front" variable="Engine.e.throttle" />
-    <vsil-write :client="front" variable="Engine.e.flag" :value="false" label="Cut" />
+    <vsil-slider
+      :client="front"
+      variable="Engine.e.throttle"
+      @vsil-write-queued="onWriteQueued"
+      @vsil-write-result="onWriteResult"
+    />
+    <vsil-write
+      :client="front"
+      variable="Engine.e.flag"
+      :value="false"
+      label="Cut"
+      @vsil-write-queued="onWriteQueued"
+      @vsil-write-result="onWriteResult"
+    />
     <vsil-write :client="front" variable="Engine.e.throttle" :value="0" />
     <vsil-write :client="front" variable="Engine.e.mode" value="eco" />
     <vsil-scenario-select :client="front" />

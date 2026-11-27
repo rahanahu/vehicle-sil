@@ -1,10 +1,40 @@
-import type { Front, VariableView } from '@vehicle-sil/gui-client';
+import { ActionError } from '@vehicle-sil/gui-client';
+import type { Front, QueuedWrite, VariableView, WriteResult } from '@vehicle-sil/gui-client';
+import type { WriteOutcome, WriteQueuedInfo } from '@vehicle-sil/gui-client/elements';
+
+export interface SmokeQueuedEvent {
+  source: string;
+  session: string;
+  seq: number;
+  peer: string;
+  name: string;
+  value: unknown;
+}
+
+export interface SmokeResultEvent {
+  source: string;
+  ok: boolean;
+  peer: string;
+  name: string;
+  value: unknown;
+  seq?: number;
+  appliedAtMs?: number | null;
+  late?: boolean;
+  errorCode?: string;
+  errorOutcome?: 'refused' | 'unknown';
+  isActionError?: boolean;
+}
 
 export interface SmokeState {
   writes: { ref: string; value: unknown }[];
+  queuedEvents: SmokeQueuedEvent[];
+  resultEvents: SmokeResultEvent[];
+  eventLog: string[];
   loads: { status: string; end: number; file: string | null }[];
   cursors: (number | null)[];
   ready: boolean;
+  holdSliderEnqueue: () => void;
+  releaseSliderEnqueue: () => void;
 }
 
 declare global {
@@ -14,9 +44,60 @@ declare global {
 }
 
 export function initSmokeState(): SmokeState {
-  const state: SmokeState = { writes: [], loads: [], cursors: [], ready: false };
+  const state: SmokeState = {
+    writes: [],
+    queuedEvents: [],
+    resultEvents: [],
+    eventLog: [],
+    loads: [],
+    cursors: [],
+    ready: false,
+    holdSliderEnqueue: () => undefined,
+    releaseSliderEnqueue: () => undefined,
+  };
   window.__vsilSmoke = state;
   return state;
+}
+
+export function recordQueued(smoke: SmokeState, source: string, detail: WriteQueuedInfo): void {
+  smoke.queuedEvents.push({
+    source,
+    session: detail.session,
+    seq: detail.seq,
+    peer: detail.peer,
+    name: detail.name,
+    value: detail.value,
+  });
+  smoke.eventLog.push(`queued:${detail.seq}`);
+}
+
+export function recordResult(smoke: SmokeState, source: string, detail: WriteOutcome): void {
+  if (detail.ok) {
+    smoke.resultEvents.push({
+      source,
+      ok: true,
+      peer: detail.peer,
+      name: detail.name,
+      value: detail.value,
+      seq: detail.seq,
+      appliedAtMs: detail.appliedAtMs,
+      late: detail.late,
+    });
+    smoke.eventLog.push(`result:${detail.seq}`);
+  } else {
+    smoke.resultEvents.push({
+      source,
+      ok: false,
+      peer: detail.peer,
+      name: detail.name,
+      value: detail.value,
+      ...(detail.seq !== undefined ? { seq: detail.seq } : {}),
+      errorCode: detail.error.code,
+      errorOutcome: detail.error.outcome,
+      isActionError: detail.error instanceof ActionError,
+    });
+    if (detail.seq !== undefined) smoke.eventLog.push(`result:${detail.seq}`);
+  }
 }
 
 export const SAMPLE_TIMELINE = {
@@ -140,9 +221,9 @@ function makeView(fields: Partial<VariableView>): VariableView {
     why: null,
     writing: false,
     problem: null,
-    condition: 'live',
+    condition: { kind: 'live', reading: { value: 1, sampleMs: 0, simMs: 0, paused: false } },
     block: null,
-    write_status: 'idle',
+    write_status: { kind: 'idle' },
     ...fields,
   } as VariableView;
 }
@@ -184,8 +265,24 @@ export function createSmokeFront(smoke: SmokeState): Front {
     'E.e.flag': { value: true, text: 'true' },
     'E.e.throttle': { value: 50, text: '50', unit: '%', min: 0, max: 100, step: 1 },
     'E.e.speed': { value: 42, text: '42', unit: 'km/h' },
+    'E.e.fault': { value: false, text: 'false' },
   };
   const variables = new Map<string, ReturnType<typeof makeCell<VariableView>>>();
+  let nextSeq = 0;
+  let sliderGate: Promise<void> | null = null;
+  let releaseGate: (() => void) | null = null;
+
+  smoke.holdSliderEnqueue = () => {
+    sliderGate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+  };
+  smoke.releaseSliderEnqueue = () => {
+    const release = releaseGate;
+    sliderGate = null;
+    releaseGate = null;
+    release?.();
+  };
 
   const front = {
     low: {},
@@ -215,12 +312,43 @@ export function createSmokeFront(smoke: SmokeState): Front {
         cell = makeCell(makeView(initialViews[ref] ?? {}));
         variables.set(ref, cell);
       }
+      const dot = ref.indexOf('.');
+      const peer = dot > 0 ? ref.slice(0, dot) : ref;
+      const name = dot > 0 ? ref.slice(dot + 1) : ref;
+      const enqueue = async (value: number | boolean | string): Promise<QueuedWrite> => {
+        smoke.writes.push({ ref, value });
+        if (ref === 'E.e.fault') {
+          throw new ActionError('write-busy', 'too many writes', 'refused');
+        }
+        if (ref === 'E.e.throttle' && sliderGate !== null) {
+          const gate = sliderGate;
+          sliderGate = null;
+          await gate;
+        }
+        const seq = ++nextSeq;
+        const result: WriteResult = {
+          session: 's1',
+          seq,
+          peer,
+          name,
+          value,
+          appliedAtMs: 100 + seq * 10,
+          late: false,
+        };
+        return {
+          session: 's1',
+          seq,
+          peer,
+          name,
+          value,
+          applied: async () => result,
+        };
+      };
       return {
         get: cell.get,
         subscribe: cell.subscribe,
-        write: async (value: number | boolean | string) => {
-          smoke.writes.push({ ref, value });
-        },
+        enqueue,
+        write: (value: number | boolean | string) => enqueue(value).then((q) => q.applied()),
       };
     },
     close: () => undefined,

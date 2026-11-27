@@ -6,7 +6,8 @@
 //   5. Svelte 5 (svelte-check, positive + negative)
 // Plus real Playwright Chromium runtime mount smoke tests for Vanilla, React 19, Vue 3, and Svelte 5
 // exercising live property binding (false, 0, boolean toggle, numeric stepMs, array variables) and
-// genuine custom event reception (load + mouse-driven cursorchange on <vehicle-sil-timeline>).
+// genuine custom event reception (vsil-write-queued / vsil-write-result on <vsil-write> / <vsil-slider>
+// plus load and mouse-driven cursorchange on <vehicle-sil-timeline>).
 //
 // Usage: node gui/client/fixtures/verify-consumers.mjs [--tgz <path>] [--no-install]
 import { execFileSync } from 'node:child_process';
@@ -271,6 +272,8 @@ async function runChromiumSmoke(bundles) {
             (window.__vsilSmoke?.loads?.length ?? 0) >= 1 &&
             Boolean(document.querySelector('#w-false button')) &&
             Boolean(document.querySelector('#w-zero button')) &&
+            Boolean(document.querySelector('#w-fail button')) &&
+            Boolean(document.querySelector('#sl input')) &&
             Boolean(document.querySelector('#val output')) &&
             Boolean(document.querySelector('#rc button')) &&
             Boolean(document.querySelector('#tc input')),
@@ -342,9 +345,39 @@ async function runChromiumSmoke(bundles) {
           );
         }
 
-        // Click vsil-write buttons to verify falsy false and 0 actually reach front.variable().write().
+        // Click vsil-write buttons (success falsy false, 0, and pre-queue ActionError failure).
         await page.locator('#w-false button').click();
         await page.locator('#w-zero button').click();
+        await page.locator('#w-fail button').click();
+        await page.waitForFunction(
+          () => (window.__vsilSmoke?.resultEvents?.length ?? 0) >= 3,
+          undefined,
+          { timeout: 5_000 },
+        );
+
+        // Exercise <vsil-slider> rapid coalescing while enqueue() is in flight: dropped intermediates must never emit vsil-write-queued.
+        const heldQueuedCount = await page.evaluate(() => {
+          window.__vsilSmoke.holdSliderEnqueue();
+          const input = document.querySelector('#sl input');
+          for (const v of ['20', '40', '60', '80']) {
+            input.value = v;
+            input.dispatchEvent(new Event('change'));
+          }
+          return window.__vsilSmoke.queuedEvents.filter((e) => e.source === 'sl').length;
+        });
+        assertEq(
+          heldQueuedCount,
+          0,
+          'vsil-slider emits no vsil-write-queued while enqueue is held',
+        );
+        await page.evaluate(() => window.__vsilSmoke.releaseSliderEnqueue());
+        await page.waitForFunction(
+          () =>
+            (window.__vsilSmoke?.resultEvents?.filter((e) => e.source === 'sl').length ?? 0) >= 2,
+          undefined,
+          { timeout: 5_000 },
+        );
+
         // Click framework toggle button to flip noUnit from true -> false reactively.
         await page.locator('#toggle-unit').click();
         await page.waitForFunction(
@@ -369,6 +402,9 @@ async function runChromiumSmoke(bundles) {
           const rc = document.querySelector('#rc');
           return {
             writes: window.__vsilSmoke.writes,
+            queuedEvents: window.__vsilSmoke.queuedEvents,
+            resultEvents: window.__vsilSmoke.resultEvents,
+            eventLog: window.__vsilSmoke.eventLog,
             valHasNoUnit: val.hasAttribute('no-unit'),
             valNoUnitProp: val.noUnit,
             valKebab: valKebab
@@ -386,9 +422,87 @@ async function runChromiumSmoke(bundles) {
           [
             { ref: 'E.e.flag', value: false },
             { ref: 'E.e.throttle', value: 0 },
+            { ref: 'E.e.fault', value: true },
+            { ref: 'E.e.throttle', value: 20 },
+            { ref: 'E.e.throttle', value: 80 },
           ],
-          'vsil-write falsy clicks write false and 0',
+          'vsil-write falsy + fault + coalesced slider writes (40 and 60 never sent)',
         );
+        assertEq(
+          afterToggle.queuedEvents,
+          [
+            { source: 'w-false', session: 's1', seq: 1, peer: 'E', name: 'e.flag', value: false },
+            { source: 'w-zero', session: 's1', seq: 2, peer: 'E', name: 'e.throttle', value: 0 },
+            { source: 'sl', session: 's1', seq: 3, peer: 'E', name: 'e.throttle', value: 20 },
+            { source: 'sl', session: 's1', seq: 4, peer: 'E', name: 'e.throttle', value: 80 },
+          ],
+          'vsil-write-queued emitted strictly for ECU-queued writes (never for pre-queue failure or coalesced 40/60)',
+        );
+        assertEq(
+          afterToggle.resultEvents,
+          [
+            {
+              source: 'w-false',
+              ok: true,
+              peer: 'E',
+              name: 'e.flag',
+              value: false,
+              seq: 1,
+              appliedAtMs: 110,
+              late: false,
+            },
+            {
+              source: 'w-zero',
+              ok: true,
+              peer: 'E',
+              name: 'e.throttle',
+              value: 0,
+              seq: 2,
+              appliedAtMs: 120,
+              late: false,
+            },
+            {
+              source: 'w-fail',
+              ok: false,
+              peer: 'E',
+              name: 'e.fault',
+              value: true,
+              errorCode: 'write-busy',
+              errorOutcome: 'refused',
+              isActionError: true,
+            },
+            {
+              source: 'sl',
+              ok: true,
+              peer: 'E',
+              name: 'e.throttle',
+              value: 20,
+              seq: 3,
+              appliedAtMs: 130,
+              late: false,
+            },
+            {
+              source: 'sl',
+              ok: true,
+              peer: 'E',
+              name: 'e.throttle',
+              value: 80,
+              seq: 4,
+              appliedAtMs: 140,
+              late: false,
+            },
+          ],
+          'vsil-write-result payloads include appliedAtMs on success and concrete ActionError on failure',
+        );
+        for (const seq of [1, 2, 3, 4]) {
+          const qIdx = afterToggle.eventLog.indexOf(`queued:${seq}`);
+          const rIdx = afterToggle.eventLog.indexOf(`result:${seq}`);
+          if (qIdx < 0 || rIdx < 0 || qIdx >= rIdx) {
+            fail(
+              `[runtime:${name}] expected queued:${seq} before result:${seq}, got ${JSON.stringify(afterToggle.eventLog)}`,
+            );
+          }
+        }
         assertEq(afterToggle.valHasNoUnit, false, 'vsil-value noUnit=false removes attribute');
         assertEq(afterToggle.valNoUnitProp, false, 'vsil-value noUnit=false property');
         if (name === 'vue') {
@@ -524,7 +638,10 @@ async function main() {
       'angular (negative)',
       {
         expectFail: true,
-        expectErrors: [/Argument of type 'number' is not assignable to parameter of type 'Event'/],
+        expectErrors: [
+          /Argument of type 'string' is not assignable to parameter of type 'Event'/,
+          /Argument of type 'number' is not assignable to parameter of type 'Event'/,
+        ],
       },
     );
     console.log(
@@ -573,6 +690,8 @@ async function main() {
         expectFail: true,
         expectErrors: [
           /Type 'number' is not assignable to type 'boolean/,
+          /Argument of type 'number' is not assignable to parameter of type 'string'/,
+          /Argument of type 'string' is not assignable to parameter of type 'boolean'/,
           /Type '"neon"' is not assignable to type/,
           /Argument of type 'string' is not assignable to parameter of type 'number'/,
         ],
@@ -614,6 +733,8 @@ async function main() {
         expectErrors: [
           /Type 'number' is not assignable to type 'boolean/,
           /Type 'false' is not assignable to type/,
+          /Argument of type 'number' is not assignable to parameter of type 'string'/,
+          /Argument of type 'string' is not assignable to parameter of type 'boolean'/,
           /Type '"neon"' is not assignable to type/,
           /Argument of type 'string' is not assignable to parameter of type 'number'/,
         ],

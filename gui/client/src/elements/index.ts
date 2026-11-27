@@ -9,6 +9,11 @@ import type {
   ElementContract,
   VsilElementContracts,
   VsilPartProps,
+  VsilWriteEventMap,
+  WriteFailure,
+  WriteOutcome,
+  WriteQueuedInfo,
+  WriteSuccess,
 } from './contracts';
 import { VsilConnectElement, VsilOutsideElement } from './outside-parts';
 import { VsilRunControlsElement, VsilStatusElement, VsilTimeControlsElement } from './run-parts';
@@ -20,7 +25,18 @@ import {
 import { VsilSliderElement, VsilValueElement, VsilWriteElement } from './variable-parts';
 
 export { pageIntent, setReasonText };
-export type { BooleanAttr, ElementContract, ReasonText, VsilElementContracts, VsilPartProps };
+export type {
+  BooleanAttr,
+  ElementContract,
+  ReasonText,
+  VsilElementContracts,
+  VsilPartProps,
+  VsilWriteEventMap,
+  WriteFailure,
+  WriteOutcome,
+  WriteQueuedInfo,
+  WriteSuccess,
+};
 export {
   VsilConnectElement,
   VsilOutsideElement,
