@@ -274,7 +274,8 @@ export class ScenarioParamsPanel {
   readonly invalidChange = output<boolean>();
 
   private readonly drafts = signal<Readonly<Record<string, string>>>({});
-  private lastScenarioFile: string | null = null;
+  private lastScenarioKey: string | null = null;
+  private lastOwnOverrides: Readonly<Record<string, ScenarioParamValue>> | null = null;
 
   protected readonly missingPlaceholder = $localize`必須`;
   protected readonly String = String;
@@ -290,9 +291,18 @@ export class ScenarioParamsPanel {
 
   constructor() {
     effect(() => {
-      const file = this.scenario()?.file ?? null;
-      if (file !== this.lastScenarioFile) {
-        this.lastScenarioFile = file;
+      const sc = this.scenario();
+      const key = sc ? `${sc.file}\0${sc.case ?? ''}` : null;
+      if (key !== this.lastScenarioKey) {
+        this.lastScenarioKey = key;
+        this.drafts.set({});
+      }
+    });
+    effect(() => {
+      const current = this.overrides();
+      if (current === this.lastOwnOverrides) return;
+      this.lastOwnOverrides = current;
+      if (Object.keys(this.drafts()).length > 0) {
         this.drafts.set({});
       }
     });
@@ -332,18 +342,20 @@ export class ScenarioParamsPanel {
 
   protected resetOne(name: string): void {
     this.clearDraft(name);
-    this.overrides.update((current) => {
-      if (!Object.hasOwn(current, name)) return current;
-      const next = { ...current };
-      delete next[name];
-      return next;
-    });
+    const current = this.overrides();
+    if (!Object.hasOwn(current, name)) return;
+    const next = { ...current };
+    delete next[name];
+    this.lastOwnOverrides = next;
+    this.overrides.set(next);
   }
 
   protected resetAll(): void {
     this.drafts.set({});
     if (Object.keys(this.overrides()).length > 0) {
-      this.overrides.set({});
+      const next: Readonly<Record<string, ScenarioParamValue>> = {};
+      this.lastOwnOverrides = next;
+      this.overrides.set(next);
     }
   }
 
@@ -357,6 +369,8 @@ export class ScenarioParamsPanel {
   }
 
   private setOverride(name: string, value: ScenarioParamValue): void {
-    this.overrides.update((current) => ({ ...current, [name]: value }));
+    const next = { ...this.overrides(), [name]: value };
+    this.lastOwnOverrides = next;
+    this.overrides.set(next);
   }
 }

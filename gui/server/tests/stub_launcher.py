@@ -500,7 +500,10 @@ def inspect_config(
                         if isinstance(pdef.get("type"), str):
                             meta_entry["type"] = pdef["type"]
                         if isinstance(pdef.get("values"), list):
-                            meta_entry["values"] = list(pdef["values"])
+                            meta_entry["values"] = [
+                                ("true" if v else "false") if isinstance(v, bool) else str(v)
+                                for v in pdef["values"]
+                            ]
                         if isinstance(pdef.get("description"), str):
                             meta_entry["description"] = pdef["description"]
                         if "default" in pdef:

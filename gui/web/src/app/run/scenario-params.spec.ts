@@ -93,4 +93,47 @@ describe('ScenarioParamsPanel', () => {
     await fixture.whenStable();
     expect(fixture.componentInstance.overrides()).toEqual({});
   });
+
+  it('clears stale drafts on case switch and on external overrides replacement', async () => {
+    const baseScenario: CheckScenario = {
+      file: 'scenarios/cases.yaml',
+      name: 'cases',
+      case: 'case_a',
+      steps: 2,
+      params: [{ name: 'throttle', value: 40, from: 'case', type: 'integer' }],
+      param_meta: [{ name: 'throttle', type: 'integer' }],
+    };
+    fixture.componentInstance.scenario.set(baseScenario);
+    await fixture.whenStable();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const thrInput = () =>
+      root.querySelector<HTMLInputElement>('[data-testid="param-input-throttle"]')!;
+
+    // Type an invalid draft in case_a, then switch to case_b on the same file
+    thrInput().value = '12.5';
+    thrInput().dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    expect(fixture.componentInstance.invalid()).toBe(true);
+
+    fixture.componentInstance.scenario.set({
+      ...baseScenario,
+      case: 'case_b',
+      params: [{ name: 'throttle', value: 80, from: 'case', type: 'integer' }],
+    });
+    await fixture.whenStable();
+    expect(fixture.componentInstance.invalid()).toBe(false);
+    expect(thrInput().value).toBe('80');
+
+    // Local valid edit followed by external overrides replacement (e.g. session sync) updates display
+    thrInput().value = '55';
+    thrInput().dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    expect(fixture.componentInstance.overrides()).toEqual({ throttle: 55 });
+    expect(thrInput().value).toBe('55');
+
+    fixture.componentInstance.overrides.set({ throttle: 77 });
+    await fixture.whenStable();
+    expect(thrInput().value).toBe('77');
+  });
 });

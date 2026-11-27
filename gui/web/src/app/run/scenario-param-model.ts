@@ -266,7 +266,19 @@ export function buildParamRows(
     const description = meta?.description ?? resolved?.description ?? null;
     const control = controlKindFor(type, values, effectiveValue);
     const hasDraft = Object.hasOwn(drafts, name);
-    const displayText = hasDraft ? drafts[name] : formatParamValue(effectiveValue);
+    let displayText: string;
+    if (hasDraft) {
+      displayText = drafts[name];
+    } else if (control === 'select' && values && effectiveValue !== undefined) {
+      const formatted = formatParamValue(effectiveValue);
+      displayText = values.includes(formatted)
+        ? formatted
+        : (values.find(
+            (opt) => coerceSelectParamValue(opt, type, resolved?.value) === effectiveValue,
+          ) ?? formatted);
+    } else {
+      displayText = formatParamValue(effectiveValue);
+    }
     const invalid = hasDraft && !parseParamText(drafts[name], control, type, resolved?.value).ok;
     const provenance = normalizeProvenance(resolved?.from, overridden, missing);
     return {

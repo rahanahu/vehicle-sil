@@ -167,6 +167,48 @@ describe('scenario-param-model', () => {
       });
       expect(rows[3]).toMatchObject({ provenance: 'variant', control: 'boolean' });
     });
+
+    it('matches numeric effective values to formatted float select options and preserves empty string options', () => {
+      const scenario: CheckScenario = {
+        file: 'scenarios/floats.yaml',
+        name: null,
+        steps: 1,
+        params: [
+          {
+            name: 'gain',
+            value: 1,
+            from: 'default',
+            type: 'number',
+            values: ['0.0', '1.0', '2.5'],
+          },
+          {
+            name: 'tag',
+            value: '',
+            from: 'default',
+            type: 'string',
+            values: ['', '0123', '50'],
+          },
+        ],
+      };
+      const initial = buildParamRows(scenario, {}, {});
+      expect(initial[0]).toMatchObject({
+        control: 'select',
+        effectiveValue: 1,
+        displayText: '1.0',
+      });
+      expect(initial[1]).toMatchObject({
+        control: 'select',
+        effectiveValue: '',
+        displayText: '',
+      });
+
+      const overridden = buildParamRows(scenario, { gain: 0 }, {});
+      expect(overridden[0]).toMatchObject({
+        overridden: true,
+        effectiveValue: 0,
+        displayText: '0.0',
+      });
+    });
   });
 
   describe('normalizeProvenance & isParamRecord', () => {

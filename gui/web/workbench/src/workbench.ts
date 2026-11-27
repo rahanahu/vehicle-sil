@@ -187,6 +187,7 @@ export class Workbench {
   readonly selectedCase = signal('');
   readonly paramOverrides = signal<Readonly<Record<string, ScenarioParamValue>>>({});
   readonly paramDrafts = signal<Readonly<Record<string, string>>>({});
+  readonly paramUnsetValue = '\u0000__unset__';
   readonly afterScenario = signal<AfterScenario>('stop');
   readonly handoverSelected = computed(() =>
     Boolean(this.selectedScenario() && this.canHandover() && this.afterScenario() === 'pause'),
@@ -692,6 +693,8 @@ export class Workbench {
       const options = caseOptionsFor(this.activeCheck()?.scenario, value || null);
       if (options.some((opt) => opt.name === currentCase && opt.disabled)) {
         this.selectedCase.set('');
+        this.paramOverrides.set({});
+        this.paramDrafts.set({});
       }
     }
     this.check.set(null);
@@ -716,6 +719,8 @@ export class Workbench {
 
   selectCase(value: string) {
     this.selectedCase.set(value);
+    this.paramOverrides.set({});
+    this.paramDrafts.set({});
     this.check.set(null);
     void this.inspectSelection();
   }
@@ -739,7 +744,7 @@ export class Workbench {
   }
 
   onParamSelect(row: ParamRow, value: string) {
-    if (!value) return;
+    if (value === this.paramUnsetValue) return;
     this.clearParamDraft(row.name);
     const typed = coerceSelectParamValue(value, row.type, row.resolvedValue);
     this.paramOverrides.update((current) => ({ ...current, [row.name]: typed }));

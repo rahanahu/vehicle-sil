@@ -567,35 +567,45 @@ export class RunPage {
     computation: ({ value }) => value,
   });
 
-  /** パラメータ上書き。ファイル・セッション・シナリオ切替時にセッションの intent から復元する。 */
+  /** パラメータ上書き。ファイル・セッション・シナリオ・ケース切替時に一致するセッションの intent から復元する。 */
   private readonly paramOverridesSource = computed(
     () => {
       const file = this.selected();
       const session = this.session();
       const id = session?.id ?? null;
       const scenario = this.scenarioChoice();
+      const scenarioCase = this.caseChoice();
       const carried = this.carriedFor(id);
       const sessionScenario =
         session && session.file === file
           ? (session.intent?.scenario ?? session.scenario?.file ?? null)
+          : null;
+      const sessionCase =
+        session && session.file === file
+          ? (session.intent?.case ?? session.scenario?.case ?? null)
           : null;
       const value: Readonly<Record<string, ScenarioParamValue>> =
         scenario !== null &&
         carried &&
         carried.file === file &&
         carried.scenario === scenario &&
+        (carried.case ?? null) === scenarioCase &&
         carried.params !== undefined
           ? { ...carried.params }
-          : scenario !== null && scenario === sessionScenario && session?.intent?.params
+          : scenario !== null &&
+              scenario === sessionScenario &&
+              scenarioCase === sessionCase &&
+              session?.intent?.params
             ? { ...session.intent.params }
             : {};
-      return { file, id, scenario, value };
+      return { file, id, scenario, scenarioCase, value };
     },
     {
       equal: (a, b) =>
         a.file === b.file &&
         a.id === b.id &&
         a.scenario === b.scenario &&
+        a.scenarioCase === b.scenarioCase &&
         JSON.stringify(a.value) === JSON.stringify(b.value),
     },
   );
@@ -604,6 +614,7 @@ export class RunPage {
       file: string | null;
       id: string | null;
       scenario: string | null;
+      scenarioCase: string | null;
       value: Readonly<Record<string, ScenarioParamValue>>;
     },
     Readonly<Record<string, ScenarioParamValue>>
@@ -1053,6 +1064,9 @@ export class RunPage {
   }
 
   protected selectFile(file: string): void {
+    if (file !== this.selected()) {
+      this.paramInvalid.set(false);
+    }
     this.chosen.set(file);
   }
 
@@ -1070,6 +1084,8 @@ export class RunPage {
       const options = caseOptionsFor(this.selectedCheck()?.scenario, variant);
       if (options.some((opt) => opt.name === currentCase && opt.disabled)) {
         this.caseChoice.set(null);
+        this.paramOverrides.set({});
+        this.paramInvalid.set(false);
       }
     }
   }
@@ -1084,6 +1100,8 @@ export class RunPage {
 
   protected selectCase(scenarioCase: string | null): void {
     this.caseChoice.set(scenarioCase);
+    this.paramOverrides.set({});
+    this.paramInvalid.set(false);
   }
 
   protected selectAfterScenario(value: AfterScenario): void {

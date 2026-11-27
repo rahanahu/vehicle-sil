@@ -1450,6 +1450,168 @@ describe('RunPage', () => {
     });
     rerunReq.flush(response('run'));
   });
+
+  it('clears parameter overrides and invalid drafts on case switch, variant case invalidation, and external session sync', async () => {
+    const fixture = await openWithFiles();
+    const baseCheck = structuredClone(response('check-passed')) as {
+      check: Record<string, unknown>;
+    };
+    const firstScenario = (response('scenarios') as { scenarios: { path: string }[] }).scenarios[0]
+      .path;
+    const makeCheck = (
+      variant: string,
+      scenarioCase: string | null,
+      throttle: number,
+      result: 'passed' | 'usage' = 'passed',
+    ) => ({
+      check: {
+        ...baseCheck.check,
+        result,
+        errors: result === 'usage' ? 1 : 0,
+        variant,
+        variants: ['small', 'big'],
+        scenario: {
+          file: firstScenario,
+          name: 'cases',
+          case: scenarioCase,
+          cases: ['case_a', 'case_b', 'big_only'],
+          case_details: [
+            { name: 'case_a', only: null },
+            { name: 'case_b', only: null },
+            { name: 'big_only', only: ['big'] },
+          ],
+          steps: 2,
+          params: [{ name: 'throttle', value: throttle, from: 'case', type: 'integer' }],
+          param_meta: [{ name: 'throttle', type: 'integer' }],
+        },
+      },
+    });
+    (await checkRequest()).flush(makeCheck('big', null, 40, 'usage'));
+    await settle();
+
+    const page = fixture.componentInstance as unknown as {
+      selectVariant(v: string | null): void;
+      selectScenario(s: string | null): void;
+      selectCase(c: string | null): void;
+    };
+    const thrInput = () =>
+      (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+        '[data-testid="param-input-throttle"]',
+      )!;
+
+    page.selectVariant('big');
+    page.selectScenario(firstScenario);
+    page.selectCase('case_a');
+    TestBed.tick();
+    (await checkRequest()).flush(makeCheck('big', 'case_a', 40));
+    await settle();
+
+    // Override throttle in case_a, then switch to case_b -> overrides must not leak
+    thrInput().value = '55';
+    thrInput().dispatchEvent(new Event('input'));
+    TestBed.tick();
+    const overrideCheck = await checkRequest();
+    expect(overrideCheck.request.body).toMatchObject({
+      variant: 'big',
+      case: 'case_a',
+      params: { throttle: 55 },
+    });
+    overrideCheck.flush(makeCheck('big', 'case_a', 55));
+    await settle();
+
+    page.selectCase('case_b');
+    TestBed.tick();
+    const caseBCheck = await checkRequest();
+    expect((caseBCheck.request.body as Record<string, unknown>)['params']).toBeUndefined();
+    expect(caseBCheck.request.body).toMatchObject({ case: 'case_b' });
+    caseBCheck.flush(makeCheck('big', 'case_b', 80));
+    await settle();
+    expect(thrInput().value).toBe('80');
+
+    // Type invalid integer in case_b, then switch back to case_a -> invalid draft must clear
+    thrInput().value = '12.5';
+    thrInput().dispatchEvent(new Event('input'));
+    TestBed.tick();
+    expect(text(fixture, 'blocked')).toContain('パラメータの入力値を確認してください。');
+
+    page.selectCase('case_a');
+    TestBed.tick();
+    const caseACheck = await checkRequest();
+    expect((caseACheck.request.body as Record<string, unknown>)['params']).toBeUndefined();
+    caseACheck.flush(makeCheck('big', 'case_a', 40));
+    await settle();
+    expect(thrInput().value).toBe('40');
+    expect(text(fixture, 'blocked')).toBe('');
+
+    // Select big_only + override throttle, then switch variant to small -> both case and params clear
+    page.selectCase('big_only');
+    TestBed.tick();
+    (await checkRequest()).flush(makeCheck('big', 'big_only', 90));
+    await settle();
+
+    thrInput().value = '88';
+    thrInput().dispatchEvent(new Event('input'));
+    TestBed.tick();
+    (await checkRequest()).flush(makeCheck('big', 'big_only', 88));
+    await settle();
+
+    page.selectVariant('small');
+    TestBed.tick();
+    const smallCheck = await checkRequest();
+    expect((smallCheck.request.body as Record<string, unknown>)['case']).toBeUndefined();
+    expect((smallCheck.request.body as Record<string, unknown>)['params']).toBeUndefined();
+    smallCheck.flush(makeCheck('small', null, 40, 'usage'));
+    await settle();
+
+    // External session update while idle refreshes input display to the new intent params
+    page.selectCase('case_a');
+    TestBed.tick();
+    (await checkRequest()).flush(makeCheck('small', 'case_a', 40));
+    await settle();
+    thrInput().value = '55';
+    thrInput().dispatchEvent(new Event('input'));
+    TestBed.tick();
+    (await checkRequest()).flush(makeCheck('small', 'case_a', 55));
+    await settle();
+
+    const baseSession = (server('ws-pass')[3] as { session: Record<string, unknown> }).session;
+    fake.last().send({
+      type: 'session',
+      stream_seq: 60,
+      session: {
+        ...baseSession,
+        id: '99',
+        file: 'bad-lines.yaml',
+        state: 'ended',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        allowed: { start: { ok: true, reason: null, message: null } },
+        intent: {
+          disable: [],
+          manual: [],
+          variant: 'small',
+          scenario: firstScenario,
+          case: 'case_a',
+          params: { throttle: 77 },
+          speed: 1,
+        },
+      },
+    });
+    fake.last().send({ type: 'synced', stream_seq: 61, run_id: '99', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    (await checkRequest()).flush(makeCheck('small', 'case_a', 77));
+    await settle();
+    expect(thrInput().value).toBe('77');
+
+    // Switching to case_b after an ended case_a session does not apply case_a's session.intent.params
+    page.selectCase('case_b');
+    TestBed.tick();
+    const afterSessionCaseB = await checkRequest();
+    expect((afterSessionCaseB.request.body as Record<string, unknown>)['params']).toBeUndefined();
+    afterSessionCaseB.flush(makeCheck('small', 'case_b', 80));
+    await settle();
+    expect(thrInput().value).toBe('80');
+  });
 });
 
 describe('readRunChoices', () => {

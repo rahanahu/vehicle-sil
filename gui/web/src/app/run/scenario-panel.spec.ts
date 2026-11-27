@@ -1,5 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { ScenarioView } from '@vehicle-sil/gui-client';
 import { ScenarioPanel, timelinePageUrl } from './scenario-panel';
 
@@ -312,6 +313,15 @@ describe('ScenarioPanel', () => {
       '[data-testid="scenario-step-call-stack"]',
     )!;
     expect(details.open).toBe(true);
+
+    // Wait for the lazily imported <vehicle-sil-timeline> element to register and render
+    await customElements.whenDefined('vehicle-sil-timeline');
+    await vi.waitFor(async () => {
+      await fixture.whenStable();
+      expect(root.querySelector('[data-testid="timeline-readout"]')?.textContent).toContain(
+        '選んだ手順: 2',
+      );
+    });
 
     // Jump button exists per step and focuses the clicked step
     const jump1 = root.querySelector<HTMLButtonElement>('[data-testid="scenario-step-jump-1"]')!;

@@ -495,7 +495,13 @@
                           (change)="onParamSelect(row, $any($event.target).value)"
                         >
                           @if (row.missing) {
-                            <option value="" selected disabled>Select…</option>
+                            <option
+                              [value]="paramUnsetValue"
+                              [selected]="row.effectiveValue === undefined"
+                              disabled
+                            >
+                              Select…
+                            </option>
                           }
                           @for (option of row.values ?? []; track option) {
                             <option
@@ -517,7 +523,13 @@
                           (change)="onParamBoolean(row, $any($event.target).value)"
                         >
                           @if (row.missing) {
-                            <option value="" selected disabled>Select…</option>
+                            <option
+                              [value]="paramUnsetValue"
+                              [selected]="row.effectiveValue === undefined"
+                              disabled
+                            >
+                              Select…
+                            </option>
                           }
                           <option value="true" [selected]="row.effectiveValue === true">
                             true

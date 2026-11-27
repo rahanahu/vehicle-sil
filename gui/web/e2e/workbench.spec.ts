@@ -1539,11 +1539,23 @@ test('workbench selects variant (calling prepare with variant), case, and typed 
       '  flag:',
       '    type: boolean',
       '    default: true',
+      '  gain:',
+      '    type: number',
+      '    values: [0.0, 1.0, 2.5]',
+      '    default: 1.0',
+      '  suffix:',
+      '    type: string',
+      '    values: ["", "0123", "50"]',
+      '    default: "0123"',
       'cases:',
       '  normal:',
       '    params:',
       '      throttle: 50',
       '      code: "0001"',
+      '  high:',
+      '    params:',
+      '      throttle: 80',
+      '      code: "0002"',
       '  big_only:',
       '    only: [big]',
       '    params:',
@@ -1595,9 +1607,50 @@ test('workbench selects variant (calling prepare with variant), case, and typed 
     // Switch to Scenario tab, inspect & override typed parameters
     await page.getByRole('button', { name: 'Scenario', exact: true }).click();
     await expect(page.getByTestId('workbench-params')).toBeVisible();
+    // Float values dropdown matches "1.0" initially (not falling back to first option "0.0")
+    await expect(page.getByTestId('workbench-param-input-gain')).toHaveValue('1.0');
+    await page.getByTestId('workbench-param-input-gain').selectOption('0.0');
+    await expect(page.getByTestId('workbench-param-input-gain')).toHaveValue('0.0');
+
+    // String values dropdown accepts empty string "" as an explicit override
+    await expect(page.getByTestId('workbench-param-input-suffix')).toHaveValue('0123');
+    await page.getByTestId('workbench-param-input-suffix').selectOption('');
+    await expect(page.getByTestId('workbench-param-input-suffix')).toHaveValue('');
+    await expect(
+      page.getByTestId('workbench-param-suffix').getByRole('button', { name: 'Reset' }),
+    ).toBeVisible();
+
+    // Switching case clears overrides and invalid drafts
+    await page.getByTestId('workbench-param-input-throttle').fill('12.5');
+    await expect(page.getByRole('button', { name: 'Start', exact: true })).toBeDisabled();
+    await caseSelect.selectOption('high');
+    await expect(page.getByTestId('workbench-param-input-throttle')).toHaveValue('80');
+    await expect(page.getByRole('button', { name: 'Start', exact: true })).toBeEnabled();
+
+    // Switching variant so selected case is invalidated clears both case and overrides
+    await variantSelect.selectOption('big');
+    await caseSelect.selectOption('big_only');
+    await expect(page.getByTestId('workbench-param-input-throttle')).toHaveValue('90');
+    await page.getByTestId('workbench-param-input-throttle').fill('88');
+    const checkAfterVariant = page.waitForRequest(
+      (r) =>
+        r.url().endsWith('/api/check') &&
+        r.method() === 'POST' &&
+        (r.postDataJSON() as Record<string, unknown>)['variant'] === 'small',
+    );
+    await variantSelect.selectOption('small');
+    const variantCheckBody = (await checkAfterVariant).postDataJSON() as Record<string, unknown>;
+    expect(variantCheckBody['case']).toBeUndefined();
+    expect(variantCheckBody['params']).toBeUndefined();
+
+    // Select normal again and set typed overrides including float 0.0 and empty string ""
+    await caseSelect.selectOption('normal');
+    await expect(page.getByTestId('workbench-param-input-throttle')).toHaveValue('50');
     await page.getByTestId('workbench-param-input-code').fill('0123');
     await page.getByTestId('workbench-param-input-throttle').fill('75');
     await page.getByTestId('workbench-param-input-flag').selectOption('false');
+    await page.getByTestId('workbench-param-input-gain').selectOption('0.0');
+    await page.getByTestId('workbench-param-input-suffix').selectOption('');
 
     const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
     if (shots) {
@@ -1615,11 +1668,13 @@ test('workbench selects variant (calling prepare with variant), case, and typed 
       variant: 'small',
       scenario: 'scenarios/cases_typed.yaml',
       case: 'normal',
-      params: { code: '0123', flag: false, throttle: 75 },
+      params: { code: '0123', flag: false, gain: 0, suffix: '', throttle: 75 },
     });
     expect(typeof (runBody['params'] as Record<string, unknown>)['code']).toBe('string');
     expect(typeof (runBody['params'] as Record<string, unknown>)['throttle']).toBe('number');
     expect(typeof (runBody['params'] as Record<string, unknown>)['flag']).toBe('boolean');
+    expect(typeof (runBody['params'] as Record<string, unknown>)['gain']).toBe('number');
+    expect(typeof (runBody['params'] as Record<string, unknown>)['suffix']).toBe('string');
   } finally {
     await server.stop();
     rmSync(root, { recursive: true, force: true });
