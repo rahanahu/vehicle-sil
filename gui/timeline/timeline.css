@@ -688,12 +688,21 @@ svg text {
   stroke: var(--_neutral);
   stroke-width: 1.5;
 }
+.band .expect-box.dynamic {
+  fill: var(--_neutral-fill);
+}
 .band.ok .expect-box {
   stroke: var(--_ok);
+}
+.band.ok .expect-box.dynamic {
+  fill: var(--_ok-fill);
 }
 .band.bad .expect-box {
   stroke: var(--_bad);
   stroke-width: 2;
+}
+.band.bad .expect-box.dynamic {
+  fill: var(--_bad-fill);
 }
 .expect-label {
   font-size: 10px;
@@ -702,6 +711,11 @@ svg text {
   fill: var(--_bad);
   stroke: var(--_panel);
   stroke-width: 1.5;
+}
+.mark.compared path {
+  fill: var(--_panel);
+  stroke: var(--_bad);
+  stroke-width: 2;
 }
 .mark text {
   font-weight: 700;

@@ -504,3 +504,459 @@ test('timeline page: sanitizes XSS in case, non-string step.file, null lines, an
   expect(shadowDangerous).toBe(0);
   expect(problems).toEqual([]);
 });
+
+test('timeline page: draws dynamic watch bands, both-side failure values, and markers on both lanes under CSP', async ({
+  page,
+}) => {
+  const problems = await serve(page);
+  await page.goto(`${ORIGIN}/timeline.html`);
+  const gearItems = [
+    { name: 'P', value: 0 },
+    { name: 'R', value: 1 },
+    { name: 'D', value: 2 },
+  ];
+  const data = {
+    vehicle_sil_timeline: 1,
+    vehicle_sil: '0.6.0',
+    stage: 'run',
+    file: 'simulation.yaml',
+    variant: null,
+    params: [],
+    time_step_ms: 10,
+    scenario: {
+      file: 'scenarios/speed_tracking.yaml',
+      name: 'dashboard tracks engine speed and gear',
+      status: 'failed',
+      over_at_ms: 140,
+      recorded_to_ms: 140,
+      end_ms: null,
+    },
+    variables: [
+      {
+        name: 'Engine.speed',
+        participant: 'Engine',
+        type: 'real',
+        causality: 'output',
+        unit: 'rpm',
+        min: 0,
+        max: 4000,
+        items: [],
+        ecu_step_ms: 20,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Dashboard.speed',
+        participant: 'Dashboard',
+        type: 'real',
+        causality: 'output',
+        unit: 'rpm',
+        min: 0,
+        max: 4000,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Trans.gear',
+        participant: 'Trans',
+        type: 'enum',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: gearItems,
+        ecu_step_ms: 20,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Dashboard.gear',
+        participant: 'Dashboard',
+        type: 'enum',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: gearItems,
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 5,
+        kind: 'expect',
+        text: 'expect Dashboard.gear eq Trans.gear',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 80,
+        end_ms: 80,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 80,
+          conditions: [
+            {
+              variable: 'Dashboard.gear',
+              compare: [{ op: 'eq', value: null, variable: 'Trans.gear', tolerance: null }],
+            },
+          ],
+        },
+        failed: null,
+      },
+      {
+        index: 2,
+        line: 10,
+        kind: 'expect',
+        text: 'expect Dashboard.speed near Engine.speed (tolerance 25)',
+        status: 'failed',
+        start_ms: 20,
+        at_ms: 140,
+        end_ms: null,
+        code: 'scenario-failed',
+        message:
+          'at 140 ms Dashboard.speed near Engine.speed (tolerance 25), but it was 1650 (its sample of 140 ms) while Engine.speed was 1800 (its sample of 120 ms)',
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 20,
+          to_ms: 200,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'near', value: null, variable: 'Engine.speed', tolerance: 25 }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 140,
+          code: 'scenario-failed',
+          conditions: [
+            {
+              condition: 0,
+              value: 1650,
+              sample_ms: 140,
+              compared: [{ variable: 'Engine.speed', value: 1800, sample_ms: 120 }],
+            },
+          ],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      {
+        variable: 'Engine.speed',
+        source: 'sampled',
+        encoding: 'changes',
+        samples: 7,
+        first_ms: 0,
+        last_ms: 120,
+        not_applied_from: null,
+        columns: ['at_ms', 'value'],
+        points: [
+          [0, 1000],
+          [60, 1400],
+          [120, 1800],
+        ],
+      },
+      {
+        variable: 'Dashboard.speed',
+        source: 'sampled',
+        encoding: 'changes',
+        samples: 15,
+        first_ms: 0,
+        last_ms: 140,
+        not_applied_from: null,
+        columns: ['at_ms', 'value'],
+        points: [
+          [0, 1005],
+          [60, 1395],
+          [120, 1650],
+        ],
+      },
+      {
+        variable: 'Trans.gear',
+        source: 'sampled',
+        encoding: 'changes',
+        samples: 7,
+        first_ms: 0,
+        last_ms: 120,
+        not_applied_from: null,
+        columns: ['at_ms', 'value'],
+        points: [
+          [0, 0],
+          [40, 2],
+        ],
+      },
+      {
+        variable: 'Dashboard.gear',
+        source: 'sampled',
+        encoding: 'changes',
+        samples: 15,
+        first_ms: 0,
+        last_ms: 140,
+        not_applied_from: null,
+        columns: ['at_ms', 'value'],
+        points: [
+          [0, 0],
+          [40, 2],
+        ],
+      },
+    ],
+    lines: [],
+    findings: [],
+    limits: { points_per_series: 10000, points_total: 100000, dropped: [] },
+  };
+
+  await page.locator('#file').setInputFiles({
+    name: 'dynamic_bands.timeline.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(data)),
+  });
+
+  await expect(page.getByTestId('failed-conditions')).toHaveText(
+    'Dashboard.speed near Engine.speed ± 25: it was 1650 (sample of 140 ms); while Engine.speed was 1800 (sample of 120 ms)',
+  );
+  await page.getByRole('button', { name: 'Whole run' }).click();
+
+  // Both LHS and unmet RHS lanes are marked failing with failure markers.
+  await expect(page.locator('#chart .lane.failing .var-name')).toHaveText([
+    'Engine.speed',
+    'Dashboard.speed',
+  ]);
+  const dashLane = lane(page, 'Dashboard.speed');
+  const engLane = lane(page, 'Engine.speed');
+  // 3 stepped ZOH slices: [20, 60], [60, 120], [120, 140].
+  await expect(dashLane.locator('g.band-slice rect.allowed')).toHaveCount(3);
+  await expect(dashLane.locator('g.mark.bad:not(.compared) circle')).toHaveCount(1);
+  await expect(engLane.locator('g.mark.bad.compared path')).toHaveCount(1);
+  await expect(engLane.locator('g.mark.bad.compared title')).toHaveText(
+    'Compared value was 1800 (sample of 120 ms) for Dashboard.speed',
+  );
+
+  // Discrete enum lane renders dynamic ZOH slices ([0, 40] P and [40, 80] D).
+  const gearLane = lane(page, 'Dashboard.gear');
+  await expect(gearLane.locator('g.band-slice rect.expect-box.dynamic')).toHaveCount(2);
+
+  // Step details inspector shows the variable-to-variable comparison.
+  const details = page.getByRole('region', { name: 'Step details' });
+  await expect(details).toContainText('Dashboard.speed near Engine.speed ± 25');
+  expect(problems).toEqual([]);
+});
+
+test('timeline page: sanitizes XSS in compared variables and notes >2^53 integer rounding under CSP', async ({
+  page,
+}) => {
+  const problems = await serve(page);
+  await page.goto(`${ORIGIN}/timeline.html`);
+
+  const xssVar = 'Peer.<img src=x onerror="window.__xss=3">';
+  const xssData = {
+    vehicle_sil_timeline: 1,
+    vehicle_sil: '0.6.0',
+    stage: 'run',
+    file: 'simulation.yaml',
+    variant: null,
+    params: [],
+    time_step_ms: 10,
+    scenario: {
+      file: 'scenarios/xss_cmp.yaml',
+      name: 'xss compared',
+      status: 'failed',
+      over_at_ms: 40,
+      recorded_to_ms: 40,
+      end_ms: null,
+    },
+    variables: [
+      {
+        name: 'Body.level',
+        participant: 'Body',
+        type: 'integer',
+        causality: 'output',
+        unit: '',
+        min: 0,
+        max: 100,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: xssVar,
+        participant: 'Peer',
+        type: 'integer',
+        causality: 'output',
+        unit: '',
+        min: 0,
+        max: 100,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'expect',
+        text: `expect Body.level eq ${xssVar}`,
+        status: 'failed',
+        start_ms: 0,
+        at_ms: 40,
+        end_ms: null,
+        code: 'scenario-failed',
+        message: 'failed comparison',
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 40,
+          conditions: [
+            {
+              variable: 'Body.level',
+              compare: [{ op: 'eq', value: null, variable: xssVar, tolerance: null }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 40,
+          code: 'scenario-failed',
+          conditions: [
+            {
+              condition: 0,
+              value: 20,
+              sample_ms: 40,
+              compared: [{ variable: xssVar, value: null, sample_ms: null }],
+            },
+          ],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      {
+        variable: 'Body.level',
+        source: 'sampled',
+        encoding: 'changes',
+        samples: 1,
+        first_ms: 0,
+        last_ms: 40,
+        not_applied_from: null,
+        columns: ['at_ms', 'value'],
+        points: [[0, 20]],
+      },
+    ],
+    lines: [],
+    findings: [],
+    limits: { points_per_series: 10000, points_total: 100000, dropped: [] },
+  };
+
+  await page.locator('#file').setInputFiles({
+    name: 'xss_compared.timeline.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(xssData)),
+  });
+  await expect(page.getByTestId('failed-conditions')).toContainText(
+    `while ${xssVar} had no value yet`,
+  );
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: unknown }).__xss),
+  ).toBeUndefined();
+  const dangerous = await page.locator('vehicle-sil-timeline').evaluate((el) => {
+    return el.shadowRoot
+      ? el.shadowRoot.querySelectorAll('script, img, iframe, [onerror], [onload]').length
+      : -1;
+  });
+  expect(dangerous).toBe(0);
+
+  // Raw JSON with >2^53 integers: 9007199254740993 vs 9007199254740992.
+  const rawInt64 = `{
+    "vehicle_sil_timeline": 1,
+    "vehicle_sil": "0.6.0",
+    "stage": "run",
+    "file": "simulation.yaml",
+    "variant": null,
+    "params": [],
+    "time_step_ms": 10,
+    "scenario": {
+      "file": "scenarios/int64.yaml",
+      "name": "exact int64 failure",
+      "status": "failed",
+      "over_at_ms": 10,
+      "recorded_to_ms": 10,
+      "end_ms": null
+    },
+    "variables": [
+      { "name": "Engine.counter", "participant": "Engine", "type": "integer", "causality": "output", "unit": "", "min": null, "max": null, "items": [], "ecu_step_ms": 10, "written": false, "watched": true },
+      { "name": "Dashboard.counter", "participant": "Dashboard", "type": "integer", "causality": "output", "unit": "", "min": null, "max": null, "items": [], "ecu_step_ms": 10, "written": false, "watched": true }
+    ],
+    "steps": [
+      {
+        "index": 1,
+        "line": 4,
+        "kind": "expect",
+        "text": "expect Dashboard.counter eq Engine.counter",
+        "status": "failed",
+        "start_ms": 10,
+        "at_ms": 10,
+        "end_ms": null,
+        "code": "scenario-failed",
+        "message": "at 10 ms Dashboard.counter eq Engine.counter, but it was 9007199254740993 (its sample of 10 ms) while Engine.counter was 9007199254740992 (its sample of 10 ms)",
+        "lines": [],
+        "watch": {
+          "mode": "at",
+          "from_ms": 10,
+          "to_ms": null,
+          "conditions": [
+            { "variable": "Dashboard.counter", "compare": [{ "op": "eq", "value": null, "variable": "Engine.counter", "tolerance": null }] }
+          ]
+        },
+        "failed": {
+          "at_ms": 10,
+          "code": "scenario-failed",
+          "conditions": [
+            { "condition": 0, "value": 9007199254740993, "sample_ms": 10, "compared": [{ "variable": "Engine.counter", "value": 9007199254740992, "sample_ms": 10 }] }
+          ],
+          "writes": [],
+          "write": null
+        }
+      }
+    ],
+    "series": [
+      { "variable": "Engine.counter", "source": "sampled", "encoding": "changes", "samples": 1, "first_ms": 10, "last_ms": 10, "not_applied_from": null, "columns": ["at_ms", "value"], "points": [[10, 9007199254740992]] },
+      { "variable": "Dashboard.counter", "source": "sampled", "encoding": "changes", "samples": 1, "first_ms": 10, "last_ms": 10, "not_applied_from": null, "columns": ["at_ms", "value"], "points": [[10, 9007199254740993]] }
+    ],
+    "lines": [],
+    "findings": [],
+    "limits": { "points_per_series": 10000, "points_total": 100000, "dropped": [] }
+  }`;
+
+  await page.locator('#file').setInputFiles({
+    name: 'int64.timeline.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(rawInt64),
+  });
+  // Exact 64-bit values stay visible in failure-message; browser Number rounds both to 9007199254740992 with a note.
+  await expect(page.getByTestId('failure-message')).toContainText('9007199254740993');
+  await expect(page.getByTestId('failure-message')).toContainText('9007199254740992');
+  await expect(page.getByTestId('failed-conditions')).toContainText(
+    'it was 9007199254740992 (sample of 10 ms); while Engine.counter was 9007199254740992 (sample of 10 ms)',
+  );
+  await expect(page.getByTestId('conditions-rounded-note')).toContainText(
+    'beyond ±9007199254740991',
+  );
+  await expect(lane(page, 'Dashboard.counter').locator('.note')).toContainText(
+    'beyond ±9007199254740991',
+  );
+  expect(problems).toEqual([]);
+});
