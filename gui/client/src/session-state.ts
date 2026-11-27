@@ -273,11 +273,20 @@ function scenarioView(
   };
 }
 
-/** Applies one step (replacing one with the same index; kept in index order). */
+function mergeStep(prev: ScenarioStep, next: ScenarioStep): ScenarioStep {
+  return {
+    ...next,
+    file: next.file ?? prev.file,
+    name: next.name ?? prev.name,
+    call_stack: next.call_stack ?? prev.call_stack,
+  };
+}
+
+/** Applies one step (merging provenance when replacing the same index within the run; kept in index order). */
 function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly ScenarioStep[] {
   const i = steps.findIndex((s) => s.index >= step.index);
   if (i < 0) return [...steps, step];
-  if (steps[i].index === step.index) return steps.map((s, j) => (j === i ? step : s));
+  if (steps[i].index === step.index) return steps.map((s, j) => (j === i ? mergeStep(s, step) : s));
   return [...steps.slice(0, i), step, ...steps.slice(i)];
 }
 

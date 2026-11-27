@@ -362,7 +362,7 @@
     const args = {
       index: step.index,
       kind: step.kind,
-      line: step.line,
+      line: isNum(step.line) ? step.line : null,
       status: statusWord(step.status),
     };
     if (file && file !== scenarioFile) return t('step.titleInFile', { ...args, file });
@@ -375,7 +375,11 @@
       line.step === null || line.step === undefined
         ? t('line.inputs')
         : t('line.step', { step: line.step });
-    const args = { text: line.text ?? line.kind, where, line: line.line };
+    const args = {
+      text: line.text ?? line.kind,
+      where,
+      line: isNum(line.line) ? line.line : null,
+    };
     if (file && file !== scenarioFile) return t('line.titleInFile', { ...args, file });
     return t('line.title', args);
   }
@@ -384,10 +388,9 @@
     if (!Array.isArray(callStack)) return [];
     const fallback = nonEmptyString(scenarioFile) || '';
     return callStack.filter(isObject).map((fr) => {
-      const where = t('failure.where', {
-        line: fr.line ?? '',
-        file: nonEmptyString(fr.file) || fallback,
-      });
+      const file = nonEmptyString(fr.file) || fallback;
+      const line = isNum(fr.line) ? fr.line : null;
+      const where = file || line !== null ? t('failure.where', { line, file }) : '';
       const name = nonEmptyString(fr.name);
       const params = isObject(fr.params)
         ? Object.entries(fr.params)
@@ -1260,14 +1263,13 @@
     if (f) {
       const step = f.step;
       const stepName = nonEmptyString(step.name);
-      const where = [
-        step.kind,
-        stepName,
-        t('failure.where', { line: step.line, file: step.file || m.tl.scenario.file }),
-        f.code,
-      ]
-        .filter(Boolean)
-        .join(' · ');
+      const failFile = stepFile(step, m.tl.scenario.file) || '';
+      const failLine = isNum(step.line) ? step.line : null;
+      const failWhere =
+        failFile || failLine !== null
+          ? t('failure.where', { line: failLine, file: failFile })
+          : null;
+      const where = [step.kind, stepName, failWhere, f.code].filter(Boolean).join(' · ');
       const frames = callStackFrames(step.call_stack, m.tl.scenario.file);
       parts.push(
         h(
@@ -1474,10 +1476,13 @@
           : '');
       const canShow = isNum(st.start_ms);
       const stFile = nonEmptyString(st.file);
+      const stLine = isNum(st.line) ? String(st.line) : '';
       const lineCell =
         stFile && stFile !== m.tl.scenario.file
-          ? `${stFile}:${st.line ?? ''}`
-          : String(st.line ?? '');
+          ? stLine
+            ? `${stFile}:${stLine}`
+            : stFile
+          : stLine;
       const stName = nonEmptyString(st.name);
       const stFrames = callStackFrames(st.call_stack, m.tl.scenario.file);
       return h(

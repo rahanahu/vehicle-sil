@@ -633,7 +633,9 @@ class Session:
         if not isinstance(raw, list):
             return None
         frames: list[dict] = []
-        for frame in raw[:MAX_CALL_STACK_FRAMES]:
+        # Scan beyond MAX_CALL_STACK_FRAMES so malformed non-dict prefix items cannot hide valid frames,
+        # while capping total scanned elements to bound adversarial inputs.
+        for frame in raw[: MAX_CALL_STACK_FRAMES * 16]:
             if not isinstance(frame, dict):
                 continue
             file_val = frame.get("file")
@@ -656,16 +658,22 @@ class Session:
                             continue
                         kept_pv = pv
                     elif isinstance(pv, str):
-                        kept_pv = self._cut(pv, self.limits.message_chars)
+                        kept_pv = self._cut(self._clean_utf8(pv), self.limits.message_chars)
                     else:
                         continue
-                    params[self._cut(pk, self.limits.message_chars)] = kept_pv
+                    params[self._cut(self._clean_utf8(pk), self.limits.message_chars)] = kept_pv
             frames.append({
-                "file": self._cut(file_val, self.limits.message_chars) if isinstance(file_val, str) else None,
+                "file": self._cut(self._clean_utf8(file_val), self.limits.message_chars)
+                if isinstance(file_val, str)
+                else None,
                 "line": line_val if _is_int(line_val) and line_val >= 0 else None,
-                "name": self._cut(name_val, self.limits.message_chars) if isinstance(name_val, str) else None,
+                "name": self._cut(self._clean_utf8(name_val), self.limits.message_chars)
+                if isinstance(name_val, str)
+                else None,
                 "params": params,
             })
+            if len(frames) >= MAX_CALL_STACK_FRAMES:
+                break
         return frames
 
     def _keep_step(self, step: object) -> None:
@@ -677,11 +685,12 @@ class Session:
         if index > self.limits.scenario_steps:
             self.scenario_steps_omitted = max(self.scenario_steps_omitted, index - self.limits.scenario_steps)
             return
+        prev = self.scenario_steps.get(index)
         kept: dict[str, Any] = {}
         for k in SCENARIO_STEP_FIELDS:
             v = step.get(k)
             if k == "call_stack":
-                kept[k] = self._keep_call_stack(v)
+                kept[k] = prev[k] if k not in step and prev is not None else self._keep_call_stack(v)
             elif k == "index":
                 kept[k] = index
             elif k == "line":
@@ -689,7 +698,11 @@ class Session:
             elif k in ("start_ms", "at_ms", "end_ms"):
                 kept[k] = v if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
             else:
-                kept[k] = self._cut(v, self.limits.message_chars) if isinstance(v, str) else None
+                kept_str = self._cut(self._clean_utf8(v), self.limits.message_chars) if isinstance(v, str) else None
+                if k in ("file", "name") and k not in step and prev is not None:
+                    kept[k] = prev[k]
+                else:
+                    kept[k] = kept_str
         self.scenario_steps[index] = kept
 
     def _scenario_of_check(self, check: dict) -> None:
@@ -697,9 +710,9 @@ class Session:
         if self.scenario is None or not isinstance(found, dict):
             return
         if isinstance(found.get("name"), str):
-            self.scenario_name = self._cut(found["name"], self.limits.message_chars)
+            self.scenario_name = self._cut(self._clean_utf8(found["name"]), self.limits.message_chars)
         if isinstance(found.get("case"), str) and found["case"]:
-            self.scenario_case = self._cut(found["case"], self.limits.message_chars)
+            self.scenario_case = self._cut(self._clean_utf8(found["case"]), self.limits.message_chars)
         if _is_count(found.get("steps")):
             self.scenario_step_count = found["steps"]
 
@@ -708,16 +721,16 @@ class Session:
         if self.scenario is None or not isinstance(found, dict):
             return
         if isinstance(found.get("status"), str):
-            self.scenario_status = self._cut(found["status"], 100)
+            self.scenario_status = self._cut(self._clean_utf8(found["status"]), 100)
         over = found.get("over_at_ms")
         if isinstance(over, (int, float)) and not isinstance(over, bool) and math.isfinite(over):
             self.scenario_over_at_ms = over
         elif not self.scenario_handed_over:
             self.scenario_over_at_ms = None
         if isinstance(found.get("name"), str):
-            self.scenario_name = self._cut(found["name"], self.limits.message_chars)
+            self.scenario_name = self._cut(self._clean_utf8(found["name"]), self.limits.message_chars)
         if isinstance(found.get("case"), str) and found["case"]:
-            self.scenario_case = self._cut(found["case"], self.limits.message_chars)
+            self.scenario_case = self._cut(self._clean_utf8(found["case"]), self.limits.message_chars)
         steps = found.get("steps")
         if isinstance(steps, list):
             for step in steps:
@@ -932,6 +945,14 @@ class Session:
         self.launcher_process_alive = bool(launcher_alive)
         self.ended_at = now_iso()
         return out + [self.message(allowed=self.allowed(facts, execution_status))]
+
+    @staticmethod
+    def _clean_utf8(text: str) -> str:
+        try:
+            text.encode("utf-8")
+            return text
+        except UnicodeEncodeError:
+            return text.encode("utf-8", "replace").decode("utf-8")
 
     def _cut(self, text: str, n: int | None = None) -> str:
         n = n or self.limits.detail_chars

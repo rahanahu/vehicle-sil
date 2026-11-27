@@ -199,4 +199,47 @@ describe('ScenarioPanel', () => {
     expect(rows[2]?.querySelector('.line')?.textContent?.trim()).toBe('—');
     expect(rows[2]?.querySelector('.state')?.textContent).toContain('飛ばした');
   });
+
+  it('renders 500+ steps with long provenance strings and skipped status cleanly', async () => {
+    const longFile = `scenarios/templates/${'nested_'.repeat(20)}step.yaml`;
+    const longName = `手順_${'長い名前_'.repeat(20)}`;
+    const steps = Array.from({ length: 520 }, (_, i) => ({
+      index: i + 1,
+      file: i % 2 === 0 ? longFile : 'scenarios/large.yaml',
+      line: i + 10,
+      kind: 'set' as const,
+      name: i === 0 ? longName : `step ${i + 1}`,
+      text: `set Body.level = ${i % 100}`,
+      status: i === 519 ? ('skipped' as const) : ('passed' as const),
+      start_ms: i,
+      at_ms: i,
+      end_ms: i,
+      code: i === 519 ? 'scenario-skipped' : null,
+      message: i === 519 ? 'absent variable' : null,
+      call_stack:
+        i === 0
+          ? [{ file: 'scenarios/large.yaml', line: 5, name: 'call', params: { p: 'x'.repeat(80) } }]
+          : null,
+    }));
+    fixture.componentInstance.scenario.set(
+      scenario(null, {
+        file: 'scenarios/large.yaml',
+        name: 'large',
+        case: '長大ケース_' + 'c'.repeat(80),
+        stepCount: 520,
+        status: 'passed',
+        steps,
+      }),
+    );
+    await fixture.whenStable();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const rows = root.querySelectorAll<HTMLTableRowElement>('[data-testid="scenario-step"]');
+    expect(rows.length).toBe(520);
+    expect(rows[0]?.querySelector('.line')?.textContent?.trim()).toBe(`${longFile}:10`);
+    expect(rows[0]?.querySelector('[data-testid="scenario-step-name"]')?.textContent).toBe(
+      longName,
+    );
+    expect(rows[519]?.querySelector('.state')?.textContent).toContain('飛ばした');
+  });
 });

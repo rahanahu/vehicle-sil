@@ -233,6 +233,7 @@ ExactLiteralFalse = Annotated[Literal[False], BeforeValidator(_exact_bool)]
 
 NonEmptyStr = Annotated[StrictStr, Field(min_length=1)]
 Utf8Str = Annotated[StrictStr, AfterValidator(_check_utf8_str)]
+NonEmptyUtf8Str = Annotated[Utf8Str, Field(min_length=1)]
 NonNegInt = Annotated[StrictInt, Field(ge=0)]
 PosInt = Annotated[StrictInt, Field(ge=1)]
 CommandId = Annotated[StrictInt, Field(ge=0, le=MAX_ID)]
@@ -247,6 +248,7 @@ SpeedValue = Union[
 ]
 StampStr = Annotated[StrictStr, Field(pattern=STAMP_PATTERN)]
 ParamScalar = StrictStr | StrictBool | StrictInt | FiniteFloat
+Utf8ParamScalar = Utf8Str | StrictBool | StrictInt | FiniteFloat
 LatePolicy = Literal["reject", "apply"]
 AfterScenario = Literal["stop", "pause"]
 
@@ -998,38 +1000,38 @@ class SessionProblem(ContractModel):
 
 
 class ScenarioCallFrame(OpenContractModel):
-    file: StrictStr | None = None
+    file: Utf8Str | None = None
     line: NonNegInt | None = None
-    name: StrictStr | None = None
-    params: dict[StrictStr, ParamScalar] = Field(default_factory=dict)
+    name: Utf8Str | None = None
+    params: dict[Utf8Str, Utf8ParamScalar] = Field(default_factory=dict)
 
 
 class ScenarioStepSummary(OpenContractModel):
     index: PosInt
-    status: StrictStr
-    file: StrictStr | None = None
+    status: Utf8Str
+    file: Utf8Str | None = None
     line: StrictInt | None = None
-    kind: StrictStr | None = None
-    name: StrictStr | None = None
-    text: StrictStr | None = None
+    kind: Utf8Str | None = None
+    name: Utf8Str | None = None
+    text: Utf8Str | None = None
     start_ms: FiniteNumber | None = None
     at_ms: FiniteNumber | None = None
     end_ms: FiniteNumber | None = None
-    code: StrictStr | None = None
-    message: StrictStr | None = None
+    code: Utf8Str | None = None
+    message: Utf8Str | None = None
     call_stack: list[ScenarioCallFrame] | None = None
 
 
 class SessionScenarioSummary(ContractModel):
-    file: NonEmptyStr
-    name: StrictStr | None
-    case: StrictStr | None = None
-    status: StrictStr | None
+    file: NonEmptyUtf8Str
+    name: Utf8Str | None
+    case: Utf8Str | None = None
+    status: Utf8Str | None
     step_count: NonNegInt | None
     over_at_ms: FiniteNumber | None
     steps: list[ScenarioStepSummary]
     steps_omitted: NonNegInt
-    timeline_url: StrictStr | None
+    timeline_url: Utf8Str | None
     handed_over: StrictBool
 
 
