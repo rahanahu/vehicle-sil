@@ -159,15 +159,17 @@ Where executables find the DLLs they load:
 
 | Build | DLL behavior (`vehicle_sil_copy_runtime_dlls(<target>)`) |
 |---|---|
-| Non-static MinGW (`VEHICLE_SIL_STATIC=OFF`, default) | `POST_BUILD` copies both `SilKit.dll` (or `SilKitd.dll`) and the active toolchain's MinGW runtime DLLs (`libstdc++-6.dll`, `libgcc_s_{seh,dw2,sjlj}-1.dll` — `libgcc_s_seh-1.dll` on UCRT64 x86_64 — and `libwinpthread-1.dll` for GCC; `libc++.dll`, `libunwind.dll`, and `libwinpthread-1.dll` for Clang) next to each executable (`cmake/VehicleSilHelpers.cmake` / `cmake/VehicleSilCopyDlls.cmake` with a process lock for parallel Ninja builds). Built executables start outside the UCRT64 shell (e.g., PowerShell or `vehicle_sil_launch`) without adding `C:\msys64\ucrt64\bin` to `PATH`. |
+| Non-static MinGW (`VEHICLE_SIL_STATIC=OFF`, default) | `POST_BUILD` copies both `SilKit.dll` (or `SilKitd.dll`) and the active toolchain's MinGW runtime DLLs (`libstdc++-6.dll`, `libgcc_s_{seh,dw2,sjlj}-1.dll` — `libgcc_s_seh-1.dll` on UCRT64 x86_64 — and `libwinpthread-1.dll` for GCC; `libc++.dll`, `libunwind.dll`, and `libwinpthread-1.dll` for Clang, not yet verified on Windows CI) next to each executable (`cmake/VehicleSilHelpers.cmake` / `cmake/VehicleSilCopyDlls.cmake` with a process lock for parallel Ninja builds). Built executables start outside the UCRT64 shell (e.g., PowerShell or `vehicle_sil_launch`) without adding `C:\msys64\ucrt64\bin` to `PATH`. |
 | Static (`VEHICLE_SIL_STATIC=ON`, e.g., `windows-mingw-static`) | SIL Kit and the MinGW/C++ runtime are linked statically; `vehicle_sil_copy_runtime_dlls()` copies **0 DLLs**. |
+
+The verified Windows MinGW configuration is **MSYS2 UCRT64 GCC** (tested in Windows CI with a stripped `PATH`). Clang-MinGW runtime DLL copying (`libc++.dll` / `libunwind.dll`, or `libstdc++` resolved via `--target` / `--sysroot`) is implemented in the CMake helpers, but it is **not yet verified end-to-end on native Windows CI** (planned follow-up).
 
 If an executable still fails to start on Windows without printing anything:
 
 | Exit code | Cause | How to diagnose & fix |
 |---|---|---|
 | `0xC0000135` | A required DLL was not found. | Confirm `vehicle_sil_copy_runtime_dlls(<target>)` is called for the target (or build with `VEHICLE_SIL_STATIC=ON`). External driver DLLs such as `vxlapi64.dll` (Vector XL) are not copied automatically and must be on `PATH` or next to the bridge. |
-| `0xC0000139` | A DLL from an incompatible GCC/MinGW version was loaded first (or an entry point is missing). | Run `ldd <exe>` in the MSYS2 UCRT64 shell or `where.exe <dll>` in PowerShell/cmd to check which DLL directory is picked up first, or put `C:\msys64\ucrt64\bin` ahead of other MinGW toolchains. |
+| `0xC0000139` | An incompatible MinGW/GCC runtime DLL was loaded (for example, stale DLLs next to the executable or mismatched DLLs on `PATH`), leaving an expected entry point missing. | Windows normally loads DLLs next to the executable **before** searching `PATH`. First inspect the DLLs next to the executable and confirm they match the toolchain used to build it; if stale or mismatched DLLs are present, perform a clean rebuild with that same toolchain so `vehicle_sil_copy_runtime_dlls()` copies matching DLLs. In the MSYS2 UCRT64 shell, `ldd <exe>` lists imported DLLs; `where.exe <dll>` in PowerShell/cmd only lists candidate DLLs on `PATH` (it does not tell you which DLL Windows actually loaded). If resolution still falls back to `PATH`, put `C:\msys64\ucrt64\bin` ahead of other MinGW toolchains. |
 
 ## Prebuilt tools
 

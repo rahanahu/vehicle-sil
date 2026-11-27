@@ -159,15 +159,17 @@ Windows のプリセットは次の 4 つです（いずれも MSYS2 UCRT64 の 
 
 | ビルド | DLL の扱い（`vehicle_sil_copy_runtime_dlls(<target>)`） |
 |---|---|
-| 非静的 MinGW（`VEHICLE_SIL_STATIC=OFF`、既定） | `POST_BUILD` で、`SilKit.dll`（または `SilKitd.dll`）と、使用中のツールチェーンに一致する MinGW ランタイム DLL（GCC は `libstdc++-6.dll`、`libgcc_s_{seh,dw2,sjlj}-1.dll` — UCRT64 x86_64 では `libgcc_s_seh-1.dll` — と `libwinpthread-1.dll`、Clang は `libc++.dll`、`libunwind.dll`、`libwinpthread-1.dll`）の両方を各実行ファイルの隣へコピーします（`cmake/VehicleSilHelpers.cmake` / `cmake/VehicleSilCopyDlls.cmake` で並列 Ninja ビルド向けにプロセスロック付き）。ビルドした実行ファイルは、`C:\msys64\ucrt64\bin` を `PATH` に足さなくても UCRT64 シェルの外（PowerShell や `vehicle_sil_launch` など）から起動できます。 |
+| 非静的 MinGW（`VEHICLE_SIL_STATIC=OFF`、既定） | `POST_BUILD` で、`SilKit.dll`（または `SilKitd.dll`）と、使用中のツールチェーンに一致する MinGW ランタイム DLL（GCC は `libstdc++-6.dll`、`libgcc_s_{seh,dw2,sjlj}-1.dll` — UCRT64 x86_64 では `libgcc_s_seh-1.dll` — と `libwinpthread-1.dll`。Clang は `libc++.dll`、`libunwind.dll`、`libwinpthread-1.dll` だが Windows CI では未検証）の両方を各実行ファイルの隣へコピーします（`cmake/VehicleSilHelpers.cmake` / `cmake/VehicleSilCopyDlls.cmake` で並列 Ninja ビルド向けにプロセスロック付き）。ビルドした実行ファイルは、`C:\msys64\ucrt64\bin` を `PATH` に足さなくても UCRT64 シェルの外（PowerShell や `vehicle_sil_launch` など）から起動できます。 |
 | 静的（`VEHICLE_SIL_STATIC=ON`、`windows-mingw-static` など） | SIL Kit と MinGW/C++ ランタイムを静的にリンクするため、`vehicle_sil_copy_runtime_dlls()` は **0 個の DLL** をコピーします。 |
+
+検証済みの Windows MinGW 構成は **MSYS2 UCRT64 GCC** です（Windows CI で不要なパスを除いた最小限の `PATH` によりテストしています）。Clang-MinGW のランタイム DLL コピー（`libc++.dll` / `libunwind.dll`、または `--target` / `--sysroot` 経由で解決される `libstdc++`）は CMake ヘルパーに実装されていますが、**ネイティブ Windows CI でのエンドツーエンド検証はまだ完了していません**（今後のフォローアップで検証予定）。
 
 それでも Windows で実行ファイルが何も表示せずに終了する場合の切り分け方は次のとおりです。
 
 | 終了コード | 原因 | 切り分けと直し方 |
 |---|---|---|
 | `0xC0000135` | 必要な DLL が見つかりません。 | ターゲットに `vehicle_sil_copy_runtime_dlls(<target>)` があるか確認します（または `VEHICLE_SIL_STATIC=ON` でビルドします）。`vxlapi64.dll`（Vector XL）など外部ドライバーの DLL は自動コピーされないため、`PATH` 上かブリッジの隣に置きます。 |
-| `0xC0000139` | 互換性のない別バージョンの GCC/MinGW の DLL を先に読み込んだ（またはエントリーポイントが不足している）。 | MSYS2 UCRT64 シェルで `ldd <exe>`、PowerShell/cmd で `where.exe <dll>` を実行してどのディレクトリの DLL が先に拾われているか調べ、`C:\msys64\ucrt64\bin` をほかの MinGW より前に置きます。 |
+| `0xC0000139` | 互換性のない別バージョンの GCC/MinGW の DLL が読み込まれた（実行ファイルの隣に残った古い DLL や `PATH` 上の不一致 DLL などにより、エントリーポイントが不足している）。 | Windows は通常、`PATH` を検索する**前に**実行ファイルの隣にある DLL を読み込みます。まず実行ファイルの隣にある DLL を確認し、ビルドに使ったツールチェーンと一致しているか確かめてください。古い DLL や別ツールチェーンの DLL が残っている場合は、同じツールチェーンでクリーンリビルドし、`vehicle_sil_copy_runtime_dlls()` に一致する DLL をコピーし直させます。MSYS2 UCRT64 シェルの `ldd <exe>` はインポートされる DLL の一覧を表示し、PowerShell/cmd の `where.exe <dll>` は `PATH` 上の候補 DLL を調べるだけのコマンドです（Windows が実際にどの DLL を読み込んだかを示すものではありません）。解決が `PATH` にフォールバックする場合は、`C:\msys64\ucrt64\bin` をほかの MinGW ツールチェーンより前に置いてください。 |
 
 ## ビルド済みのツール
 

@@ -109,7 +109,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | 症状 | 原因 | 直し方 |
 |---|---|---|
 | `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示された、自分のシェルの PATH の行を実行します。 |
-| Windows で、ECU が何も表示せずに終了する（`0xC0000135` / `0xC0000139`） | 必要な DLL が見つからない（`0xC0000135`）、または互換性のない MinGW のバージョンの DLL が先に読み込まれた（`0xC0000139`）。 | 非静的ビルドでは `CMakeLists.txt` の `vehicle_sil_copy_runtime_dlls(<target>)` が `SilKit.dll` とツールチェーンの MinGW ランタイム DLL を各 ECU の隣にコピーします。その呼び出しがあるか確認し（または `-DVEHICLE_SIL_STATIC=ON` でビルドし）、UCRT64 で `ldd bin/<ecu>.exe`、PowerShell/cmd で `where.exe <dll>` を実行してどのディレクトリの DLL が先に読み込まれているか調べてください。 |
+| Windows で、ECU が何も表示せずに終了する（`0xC0000135` / `0xC0000139`） | 必要な DLL が見つからない（`0xC0000135`）、または互換性のない MinGW のランタイム DLL が読み込まれた（`0xC0000139`、実行ファイルの隣に残った古い DLL や `PATH` 上の不一致 DLL など）。 | 非静的ビルドでは `CMakeLists.txt` の `vehicle_sil_copy_runtime_dlls(<target>)` が `SilKit.dll` とツールチェーンの MinGW ランタイム DLL を各 ECU の隣にコピーします。その呼び出しがあるか確認してください（または `-DVEHICLE_SIL_STATIC=ON` でビルドします）。Windows は通常 `PATH` より先に実行ファイルの隣の DLL を読み込むため、`0xC0000139` の場合はまず `bin/<ecu>.exe` の隣にある DLL がビルドに使ったツールチェーンと一致しているか確認し、必要なら同じツールチェーンでクリーンリビルドして `vehicle_sil_copy_runtime_dlls()` に一致する DLL をコピーし直させてください。MSYS2 UCRT64 の `ldd bin/<ecu>.exe` はインポートされる DLL 一覧を表示し、PowerShell/cmd の `where.exe <dll>` は `PATH` 上の候補 DLL を確認するだけのツールです（Windows が実際にどの DLL を読み込んだかはわかりません）。 |
 | `check` が `version-mismatch` を表示する | ECU とツールで、vehicle-sil のバージョンが違います。 | 下の「vehicle-sil のバージョンを上げる」で、バージョンをそろえます。 |
 
 ツールの `vehicle_sil_launch` は、DLL が不要な 1 つの実行ファイルです（ツールの `bin` に DLL はありません）。
