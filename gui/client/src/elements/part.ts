@@ -61,7 +61,7 @@ export function setData(element: HTMLElement, name: string, value: string | null
 }
 
 /** Runs an operation and drops its failure: `status.problem` (or the variable's `problem`) shows it. */
-export async function quietly(operation: () => Promise<void>): Promise<void> {
+export async function quietly(operation: () => Promise<unknown>): Promise<void> {
   try {
     await operation();
   } catch {

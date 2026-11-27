@@ -62,6 +62,10 @@ class Scripted:
         self.written: list = []
         self.write_error: SourceError | None = None
         self.write_gate: asyncio.Event | None = None
+        self.wait_queued_calls: list[tuple[int, float]] = []
+        self.wait_queued_gates: dict[int, asyncio.Event] = {}
+        self.wait_queued_errors: dict[int, SourceError] = {}
+        self.wait_queued_answers: dict[int, OperationInfo | None] = {}
         self.gate: asyncio.Event | None = None
         self.read_error: Exception | None = None
         self.room: int | None = None
@@ -86,6 +90,25 @@ class Scripted:
 
     async def read_operation(self, seq: int, timeout_s: float):
         return self.operations.get(seq)
+
+    async def wait_queued(self, seq: int, timeout_s: float) -> OperationInfo | None:
+        self.wait_queued_calls.append((seq, timeout_s))
+        gate = self.wait_queued_gates.get(seq)
+        if gate is not None:
+            try:
+                async with asyncio.timeout(timeout_s):
+                    await gate.wait()
+            except TimeoutError:
+                raise SourceError("timeout", "DEADLINE_EXCEEDED: WaitOperation timed out") from None
+        if seq in self.wait_queued_errors:
+            raise self.wait_queued_errors[seq]
+        if seq in self.wait_queued_answers:
+            return self.wait_queued_answers[seq]
+        if seq in self.operations:
+            return self.operations[seq]
+        writes, _, _ = self.written[seq - 1]
+        peers = dict.fromkeys(w[0] for w in writes)
+        return OperationInfo(seq, False, [TargetInfo(peer, "queued") for peer in peers])
 
     async def read_peers(self, timeout_s: float):
         return list(self.peers)
@@ -779,17 +802,21 @@ def test_writes_go_to_the_source_in_the_order_asked_and_fail_with_a_reason() -> 
         source.write_gate.set()
         assert await asyncio.gather(*calls) == [1, 2, 3, 4, 5]
         assert [w[0][0][2] for w in source.written] == [0.0, 1.0, 2.0, 3.0, 4.0]
-        # each is told as an operation at once (the source's own news of it may come later, or earlier)
+        # each is told as sent when registered, and is queued before write() returns
         ops = [m for m in sent if m["type"] == "operation"]
-        assert [(m["seq"], m["state"], m["done"]) for m in ops] == [(n, "sent", False) for n in range(1, 6)]
-        assert ops[0]["peers"] == {"Engine": {"state": "sent", "applied_at_ms": None, "late": False, "reason": None,
-                                              "applied_writes": None, "failed_write": None}}
+        sent_ops = [m for m in ops if m["state"] == "sent"]
+        queued_ops = [m for m in ops if m["state"] == "queued"]
+        assert [(m["seq"], m["done"]) for m in sent_ops] == [(n, False) for n in range(1, 6)]
+        assert [(m["seq"], m["done"]) for m in queued_ops] == [(n, False) for n in range(1, 6)]
+        assert sent_ops[0]["peers"] == {"Engine": {"state": "sent", "applied_at_ms": None, "late": False, "reason": None,
+                                                   "applied_writes": None, "failed_write": None}}
+        assert [v.operations[n]["state"] for n in range(1, 6)] == ["queued"] * 5
         for kind, status, code in (("timeout", 504, "write-timeout"), ("refused", 400, "write-refused"),
                                    ("unavailable", 502, "write-failed")):
             source.write_error = SourceError(kind, "X: why")
             with pytest.raises(Rejected) as e:
                 await v.write([("Engine", "throttle", 1.0)], None, "reject")
-            assert (e.value.status, e.value.code) == (status, code)
+            assert (e.value.status, e.value.code, e.value.detail) == (status, code, None)
         await v.close()
         with pytest.raises(Rejected) as e:
             await v.write([("Engine", "throttle", 1.0)], None, "reject")
@@ -834,15 +861,18 @@ def test_operations_are_told_once_per_change_and_summed_up() -> None:
                    "failed_write": None},
         "Body": {"state": "applied", "applied_at_ms": 40, "late": True, "reason": None, "applied_writes": None,
                  "failed_write": None}}}
-    for targets, state in (((("A", "late"),), "late"), ((("A", "rejected", None, False, "the setter failed", 1, 1),), "rejected"),
-                           ((("A", "applied", 0), ("B", "invalid")), "mixed"), ((("A", "busy"), ("B", "busy")), "busy"),
-                           ((), "unknown")):
-        v.on_operations([op(9, True, *targets)])
+    for seq, (targets, state) in enumerate(
+        (((("A", "late"),), "late"), ((("A", "rejected", None, False, "the setter failed", 1, 1),), "rejected"),
+         ((("A", "applied", 0), ("B", "invalid")), "mixed"), ((("A", "busy"), ("B", "busy")), "busy"),
+         ((), "unknown")),
+        start=9,
+    ):
+        v.on_operations([op(seq, True, *targets)])
         assert sent[-1]["state"] == state
         if state == "rejected":  # the counts pass through as they came
             assert (sent[-1]["peers"]["A"]["applied_writes"], sent[-1]["peers"]["A"]["failed_write"]) == (1, 1)
     assert v.summary()["operations"] == [{k: x for k, x in m.items() if k not in ("type", "run_id")}
-                                         for m in (sent[3], sent[-1])]
+                                         for m in sent[3:]]
 
 
 def test_operations_are_kept_up_to_a_limit_open_ones_last_and_get_their_end_with_the_run() -> None:
@@ -915,10 +945,183 @@ def test_a_write_taken_while_the_run_ends_gets_its_end() -> None:
         source.write_gate.set()  # the source took it, but the run is over: no result will come
         assert await writing == 1
         await closing
+        assert source.wait_queued_calls == []
         assert sent == [{"type": "operation", "run_id": "7", "seq": 1, "state": "unknown", "done": True, "peers": {
             "Engine": {"state": "unknown", "applied_at_ms": None, "late": False,
                        "reason": "the run ended before the result came", "applied_writes": None, "failed_write": None}}}]
         assert [o["seq"] for o in v.summary()["operations"]] == [1]
+
+        # Multi-ECU write where one peer already reached FINAL before _closed flipped mid-source.write preserves FINAL.
+        v2, source2, sent2 = make()
+        v2.on_peers([PeerInfo("Body", "b", True, SCHEMA)], [])
+        v2.on_synced()
+        source2.write_gate = asyncio.Event()
+        recorded: list[dict | None] = []
+        writing2 = asyncio.create_task(
+            v2.write(
+                [("Engine", "throttle", 12.0), ("Body", "throttle", 34.0)],
+                None,
+                "reject",
+                on_wrote=lambda seq: recorded.append(v2.operations.get(seq)),
+            )
+        )
+        await settle()
+        v2.on_operations([op(1, False, ("Engine", "applied", 10 * MS), ("Body", "sent"))])
+        closing2 = asyncio.create_task(v2.close())
+        await settle()
+        del sent2[:]
+        source2.write_gate.set()
+        assert await writing2 == 1
+        await closing2
+        assert v2.operations[1]["state"] == "mixed" and v2.operations[1]["done"] is True
+        assert v2.operations[1]["peers"]["Engine"]["state"] == "applied"
+        assert v2.operations[1]["peers"]["Engine"]["applied_at_ms"] == 10
+        assert v2.operations[1]["peers"]["Body"]["state"] == "unknown"
+        assert recorded[0] is not None and recorded[0]["peers"]["Engine"]["state"] == "applied"
+    asyncio.run(main())
+
+
+def test_close_during_wait_queued_while_sent_rejects_502_and_operation_monotonicity_holds() -> None:
+    async def main() -> None:
+        # 1) close() cancelling in-flight wait_queued while still 'sent' & done=False MUST raise 502 write-failed
+        #    (never return HTTP 200 on self._closed while unconfirmed).
+        v, source, sent = make(Limits(operations=2, write_timeout_s=1.0))
+        v.on_peers([PeerInfo("Body", "b", True, SCHEMA)], [])
+        v.on_synced()
+
+        gate1 = source.wait_queued_gates[1] = asyncio.Event()
+        source.wait_queued_errors[1] = SourceError("unavailable", "CANCELLED: channel closed")
+        close_gate = asyncio.Event()
+        orig_close = source.close
+
+        async def slow_close() -> None:
+            gate1.set()
+            await close_gate.wait()
+            await orig_close()
+
+        source.close = slow_close  # type: ignore[method-assign]
+        in_flight = asyncio.create_task(v.write([("Engine", "throttle", 15.0)], None, "reject"))
+        await settle()
+        assert v.operations[1]["state"] == "sent" and v.operations[1]["done"] is False
+        closing = asyncio.create_task(v.close())
+        with pytest.raises(Rejected) as exc_close:
+            await in_flight
+        assert (exc_close.value.status, exc_close.value.code, exc_close.value.detail) == (
+            502,
+            "write-failed",
+            {"operation": 1, "state": "sent"},
+        )
+        close_gate.set()
+        await closing
+        assert v.operations[1]["state"] == "unknown" and v.operations[1]["done"] is True
+
+        # 2) Watch advancing operation to 'queued' (done=False) before wait_queued fails DOES confirm queue arrival.
+        v2, source2, sent2 = make(Limits(operations=2, write_timeout_s=1.0))
+        v2.on_peers([PeerInfo("Body", "b", True, SCHEMA)], [])
+        v2.on_synced()
+        gate_q = source2.wait_queued_gates[1] = asyncio.Event()
+        source2.wait_queued_errors[1] = SourceError("unavailable", "UNAVAILABLE: transient drop")
+        queued_race = asyncio.create_task(v2.write([("Engine", "throttle", 20.0)], None, "reject"))
+        await settle()
+        v2.on_operations([op(1, False, ("Engine", "queued"))])
+        gate_q.set()
+        assert await queued_race == 1
+        assert v2.operations[1]["state"] == "queued" and v2.operations[1]["done"] is False
+
+        # 3) Monotonicity: queued -> sent rewind is ignored; multi-peer FINAL -> queued is preserved;
+        #    evicted done=True operation is never resurrected.
+        del sent2[:]
+        v2.on_operations([op(1, False, ("Engine", "sent"))])
+        assert sent2 == [] and v2.operations[1]["state"] == "queued"
+
+        v2.on_operations([op(2, False, ("Engine", "applied", 10 * MS), ("Body", "sent"))])
+        assert v2.operations[2]["state"] == "sent" and v2.operations[2]["peers"]["Engine"]["state"] == "applied"
+        v2.on_operations([op(2, False, ("Engine", "queued"), ("Body", "queued"))])
+        assert v2.operations[2]["state"] == "queued"
+        assert v2.operations[2]["peers"]["Engine"]["state"] == "applied"
+        assert v2.operations[2]["peers"]["Body"]["state"] == "queued"
+        v2.on_operations([op(2, False, ("Engine", "sent"), ("Body", "applied", 20 * MS))])
+        assert v2.operations[2]["done"] is True and v2.operations[2]["state"] == "applied"
+
+        # Evict done=True op 2 by completing ops 1, 3, 4 (Limits.operations == 2), then send stale queued for op 2.
+        v2.on_operations([
+            op(1, True, ("Engine", "applied", 10 * MS)),
+            op(3, True, ("Engine", "applied", 30 * MS)),
+            op(4, True, ("Engine", "applied", 40 * MS)),
+        ])
+        assert 2 not in v2.operations
+        del sent2[:]
+        v2.on_operations([op(2, False, ("Engine", "queued"))])
+        assert 2 not in v2.operations and sent2 == []
+        await v2.close()
+    asyncio.run(main())
+
+
+def test_wait_queued_runs_in_parallel_without_blocking_other_ecus_and_classifies_failures() -> None:
+    async def main() -> None:
+        v, source, sent = make(Limits(write_timeout_s=0.15))
+        v.on_peers([PeerInfo("Body", "b", True, SCHEMA)], [])
+        v.on_synced()
+
+        # Operation 1 to Engine hangs in wait_queued; operation 2 to Body registers FIFO seq=2 and finishes at once.
+        source.wait_queued_gates[1] = asyncio.Event()
+        slow_engine = asyncio.create_task(v.write([("Engine", "throttle", 10.0)], None, "reject"))
+        await settle()
+        assert not slow_engine.done()
+        fast_body = await v.write([("Body", "throttle", 20.0)], None, "reject")
+        assert fast_body == 2
+        assert v.operations[2]["state"] == "queued"
+
+        # Slow operation 1 times out in wait_queued -> 504 write-timeout with detail {operation: 1, state: "sent"}.
+        with pytest.raises(Rejected) as exc:
+            await slow_engine
+        assert (exc.value.status, exc.value.code, exc.value.detail) == (
+            504,
+            "write-timeout",
+            {"operation": 1, "state": "sent"},
+        )
+
+        # Disconnect/error in wait_queued while unsettled -> 502 write-failed (never 503 write-busy).
+        source.wait_queued_errors[3] = SourceError("unavailable", "UNAVAILABLE: channel closed")
+        with pytest.raises(Rejected) as exc2:
+            await v.write([("Engine", "throttle", 30.0)], None, "reject")
+        assert (exc2.value.status, exc2.value.code, exc2.value.detail) == (
+            502,
+            "write-failed",
+            {"operation": 3, "state": "sent"},
+        )
+
+        # Forgotten operation (None) while unsettled -> 502 write-failed with detail.
+        source.wait_queued_answers[4] = None
+        with pytest.raises(Rejected) as exc3:
+            await v.write([("Engine", "throttle", 40.0)], None, "reject")
+        assert (exc3.value.status, exc3.value.code, exc3.value.detail) == (
+            502,
+            "write-failed",
+            {"operation": 4, "state": "sent"},
+        )
+
+        # Disconnect in wait_queued AFTER Watch already settled seq=5 as done=True -> returns seq=5 (HTTP 200).
+        gate5 = source.wait_queued_gates[5] = asyncio.Event()
+        source.wait_queued_errors[5] = SourceError("unavailable", "UNAVAILABLE: stream ended")
+        settled_race = asyncio.create_task(v.write([("Engine", "throttle", 50.0)], None, "reject"))
+        await settle()
+        v.on_operations([op(5, True, ("Engine", "applied", 0))])
+        gate5.set()
+        assert await settled_race == 5
+        assert v.operations[5]["done"] is True and v.operations[5]["state"] == "applied"
+
+        # Monotonicity guard: stale queued/sent updates (or late callbacks after close) never rewind done=True.
+        before_count = len(sent)
+        v.on_operations([op(5, False, ("Engine", "queued")), op(5, False, ("Engine", "sent"))])
+        assert len(sent) == before_count
+        assert v.operations[5]["done"] is True and v.operations[5]["state"] == "applied"
+
+        await v.close()
+        closed_count = len(sent)
+        v.on_operations([op(99, False, ("Engine", "queued"))])
+        assert len(sent) == closed_count
+        assert 99 not in v.operations
     asyncio.run(main())
 
 

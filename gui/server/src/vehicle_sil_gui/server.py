@@ -173,10 +173,12 @@ API_ROUTES: tuple[RouteSpec, ...] = (
               tags=("control",), request_model=WriteRequest, response_model=WriteResponse,
               error_statuses=(400, 401, 403, 409, 413, 415, 502, 503, 504),
               description=(
-                  "Validates variable names, writability, and value bounds against the active run's schema and forwards "
-                  "the write to the launcher Control Server. HTTP 200 `{run_id, operation}` acknowledges submission only; "
-                  "the asynchronous execution outcome arrives on `/ws` as `operation` messages. Returns `502 write-failed` "
-                  "when the Control Server write RPC fails."
+                  "Validates variable names, writability, and value bounds against the active run's schema, registers "
+                  "the write with the launcher Control Server in arrival order, and waits until every target ECU has "
+                  "left `sent` (`WAIT_FOR_QUEUED`, queued or immediately settled). HTTP 200 `{run_id, operation}` "
+                  "confirms ECU queue arrival (or immediate terminal settlement); the execution outcome arrives on "
+                  "`/ws` as `operation` messages. If the RPC fails or times out after `operation` is assigned, "
+                  "`502 write-failed` / `504 write-timeout` carries `detail: {operation, state: \"sent\"}`."
               )),
     RouteSpec("GET", "/api/session", "get_session", "getSession",
               "Get the current run summary, server availability, and runtime status",

@@ -572,6 +572,7 @@ async def in_process_gui(
     check_fn: Callable[[list[str], Path, Path | None, bytes | None], Awaitable[tuple[int, dict]]] | None = None,
     variables: bool | None = None,
     source: Callable[[str, str], object] | None = None,
+    variable_limits: object | None = None,
     stop_timeout_s: float | None = 1.0,
     silent_after_s: float = 5.0,
     token: str = "test-token",
@@ -588,6 +589,7 @@ async def in_process_gui(
             return await check_fn(argv, request, descriptions, text)
         return 0, default_check_result(argv[-1])
 
+    extra = {"variable_limits": variable_limits} if variable_limits is not None else {}
     server = GuiServer(Options(
         root=root,
         launcher=FakeLauncher(features=features),
@@ -599,6 +601,7 @@ async def in_process_gui(
         source=source,
         runtime=fake_runtime,
         check_runner=fake_check,
+        **extra,
     ))
     test_server = TestServer(server.app(), host="127.0.0.1", port=port)
     await test_server.start_server()

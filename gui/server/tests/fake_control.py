@@ -39,6 +39,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 from concurrent import futures
 
 NS_PER_MS = 1_000_000
@@ -159,6 +160,8 @@ class FakeControl:
         self.seq = 0
         self.stopped = False
         self.refuse_writes: str | None = None  # every write is refused with this (a scenario runs)
+        self.hold_sent: set[str] = set()  # peers whose writes stay SENT until release_sent()
+        self.wait_queued_error: tuple[object, str] | None = None  # (StatusCode, details) raised on WaitOperation
         self.calls: list[str] = []
         self.server = None
         self.address = ""
@@ -242,6 +245,10 @@ class FakeControl:
                         context.abort(grpc.StatusCode.NOT_FOUND, f"no operation {request.seq}")
                     return outer._operation(op)
 
+            def WaitOperation(self, request, context):
+                outer._enter("WaitOperation", context)
+                return outer._wait_operation(request, context)
+
             def Watch(self, request, context):
                 outer._enter("Watch", context)
                 yield from outer._watch(request, context)
@@ -310,11 +317,31 @@ class FakeControl:
                 for q in self.queued:
                     op = self.operations[q["seq"]]
                     for target in op["targets"]:
-                        if target["status"] == "QUEUED":
+                        if target["status"] in ("SENT", "QUEUED"):
                             target.update(status="CANCELLED", reason="the simulation ended")
                     op["done"], op["version"] = True, self.version
                 self.queued = []
             self.changed.notify_all()
+
+    def release_sent(self, peer: str | None = None) -> None:
+        """Moves held SENT targets (for `peer`, or every peer when None) to QUEUED and wakes WaitOperation/Watch."""
+        with self.changed:
+            changed = False
+            for op in self.operations.values():
+                if op["done"]:
+                    continue
+                op_changed = False
+                for target in op["targets"]:
+                    if target["status"] == "SENT" and (peer is None or target["peer"] == peer):
+                        target["status"] = "QUEUED"
+                        op_changed = True
+                if op_changed:
+                    if not changed:
+                        self.version += 1
+                        changed = True
+                    op["version"] = self.version
+            if changed:
+                self.changed.notify_all()
 
     def stop(self) -> None:
         with self.changed:
@@ -422,6 +449,9 @@ class FakeControl:
                 if problem is not None:
                     targets.append({"peer": peer, "status": "INVALID", "reason": problem, "applied_writes": 0,
                                     "failed_write": failed})
+                elif peer in self.hold_sent:
+                    targets.append({"peer": peer, "status": "SENT"})
+                    queued = True
                 else:
                     targets.append({"peer": peer, "status": "QUEUED"})
                     queued = True
@@ -436,6 +466,30 @@ class FakeControl:
                                     "late": late, "apply_late": request.late == self.pb.LATE_POLICY_APPLY_NEXT})
             self.changed.notify_all()
             return self.seq
+
+    def _wait_operation(self, request, context):
+        grpc, pb = self.grpc, self.pb
+        want_done = request.until != pb.WAIT_FOR_QUEUED
+        deadline = time.monotonic() + max(0.0, request.timeout_ms / 1000.0)
+        with self.changed:
+            while True:
+                if self.wait_queued_error is not None:
+                    code, details = self.wait_queued_error
+                    context.abort(code, details)
+                op = self.operations.get(request.seq)
+                if op is None:
+                    context.abort(grpc.StatusCode.NOT_FOUND, f"no operation {request.seq}")
+                ready = op["done"] if want_done else (
+                    op["done"] or all(t["status"] != "SENT" for t in op["targets"])
+                )
+                if ready:
+                    return self._operation(op)
+                if self.stopped or not context.is_active():
+                    context.abort(grpc.StatusCode.CANCELLED, "the wait was cancelled")
+                now = time.monotonic()
+                if now >= deadline:
+                    context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "WaitOperation timed out")
+                self.changed.wait(min(0.02, deadline - now))
 
     def _watch(self, request, context):
         pb = self.pb

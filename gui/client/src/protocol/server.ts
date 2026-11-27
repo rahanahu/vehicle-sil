@@ -76,6 +76,10 @@ export interface ServerProblem {
   skipped?: number;
   /** For `check-failed`, the findings of the check that refused the start (`detail.findings`; unreadable ones left out). */
   findings?: Finding[];
+  /** For `write-timeout` and `write-failed` after an operation number was assigned (`detail.operation`). */
+  operation?: number;
+  /** Last known operation state on `write-timeout` / `write-failed` (`detail.state`, e.g. `'sent'`). */
+  state?: string;
 }
 
 /** Reads a server notice (`{code, message, detail}`). The `error` in an HTTP error has the same shape. */
@@ -105,6 +109,18 @@ export const readServerProblem: Reader<ServerProblem> = (value, path) => {
         }
       });
       problem.findings = findings;
+    }
+  }
+  if (typeof detail === 'object' && detail !== null && 'operation' in detail) {
+    const op = detail.operation;
+    if (typeof op === 'number' && Number.isSafeInteger(op) && op >= 0) {
+      problem.operation = op;
+    }
+  }
+  if (typeof detail === 'object' && detail !== null && 'state' in detail) {
+    const st = detail.state;
+    if (typeof st === 'string' && st.length > 0) {
+      problem.state = st;
     }
   }
   return problem;

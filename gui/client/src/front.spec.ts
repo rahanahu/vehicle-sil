@@ -2372,6 +2372,7 @@ describe('the front door', () => {
       expect(sent.request.keepalive).toBe(true);
       expect(sent.request.body).toEqual({
         run_id: '1',
+        instance: 'x',
         writes: { Engine: { 'engine.offset': 0 } },
       });
       sent.flush({ run_id: '1', operation: 7 });
@@ -2383,7 +2384,330 @@ describe('the front door', () => {
         done: true,
         peers: { Engine: { state: 'applied', applied_at_ms: 500, late: false, reason: null } },
       });
-      await expect(release).resolves.toBeUndefined();
+      await expect(release).resolves.toEqual({
+        session: '1',
+        seq: 7,
+        peer: 'Engine',
+        name: 'engine.offset',
+        value: 0,
+        appliedAtMs: 500,
+        late: false,
+      });
+    });
+
+    it('supports enqueue() -> applied(), competing scheduled writes keeping writing === true, option validation, and AbortSignal', async () => {
+      const rig = await withVariable();
+      const variable = rig.front.variable(named);
+
+      // Unknown option keys and invalid timeoutMs are refused immediately with ActionError
+      await expect(
+        variable.enqueue(10, { onAccepted: () => undefined } as never),
+      ).rejects.toMatchObject({ code: 'unknown-field', outcome: 'refused' });
+      await expect(variable.write(10, { timeoutMs: Infinity })).rejects.toMatchObject({
+        code: 'invalid-argument',
+        outcome: 'refused',
+      });
+      rig.http.expectNone('api/write');
+
+      // Competing scheduled writes (atMs: 50 and atMs: 100): writing stays true until BOTH settle!
+      const q1Promise = variable.enqueue(25, { atMs: 50 });
+      const q2Promise = variable.enqueue(75, { atMs: 100 });
+      expect(variable.get().writing).toBe(true);
+      expect(rig.http.requests.filter((r) => r.request.path === 'api/write')).toHaveLength(2);
+      const [req1, req2] = rig.http.requests.splice(0, 2);
+      expect(req1.request.body).toMatchObject({
+        at_ms: 50,
+        writes: { Engine: { 'engine.offset': 25 } },
+      });
+      expect(req2.request.body).toMatchObject({
+        at_ms: 100,
+        writes: { Engine: { 'engine.offset': 75 } },
+      });
+      req1.flush({ run_id: '1', operation: 10 });
+      req2.flush({ run_id: '1', operation: 11 });
+      const [q1, q2] = await Promise.all([q1Promise, q2Promise]);
+      expect(q1).toMatchObject({
+        session: '1',
+        seq: 10,
+        peer: 'Engine',
+        name: 'engine.offset',
+        value: 25,
+      });
+      expect(q2).toMatchObject({
+        session: '1',
+        seq: 11,
+        peer: 'Engine',
+        name: 'engine.offset',
+        value: 75,
+      });
+
+      await expect(q1.applied({ bogus: 1 } as never)).rejects.toMatchObject({
+        code: 'unknown-field',
+        outcome: 'refused',
+      });
+
+      const a1 = q1.applied();
+      const a2 = q2.applied();
+      expect(variable.get().writing).toBe(true);
+
+      // First write settles at 50 ms: writing MUST remain true because operation 11 is still active!
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 10,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 50, late: false, reason: null } },
+      });
+      await expect(a1).resolves.toEqual({
+        session: '1',
+        seq: 10,
+        peer: 'Engine',
+        name: 'engine.offset',
+        value: 25,
+        appliedAtMs: 50,
+        late: false,
+      });
+      expect(variable.get().writing).toBe(true);
+
+      // Second write settles at 100 ms: now writing clears to false!
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 11,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 100, late: true, reason: null } },
+      });
+      await expect(a2).resolves.toEqual({
+        session: '1',
+        seq: 11,
+        peer: 'Engine',
+        name: 'engine.offset',
+        value: 75,
+        appliedAtMs: 100,
+        late: true,
+      });
+      expect(variable.get().writing).toBe(false);
+
+      // enqueue() without calling applied() still clears writing once the operation settles
+      const q3Promise = variable.enqueue(90, { atMs: 150 });
+      rig.http.expectOne('api/write').flush({ run_id: '1', operation: 12 });
+      await q3Promise;
+      expect(variable.get().writing).toBe(true);
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 12,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 150, late: false, reason: null } },
+      });
+      expect(variable.get().writing).toBe(false);
+
+      // Immediate terminal failure on enqueue() rejects with specific code & outcome
+      const q4Promise = variable.enqueue(99, { atMs: 10 });
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 13,
+        state: 'late',
+        done: true,
+        peers: {
+          Engine: { state: 'late', applied_at_ms: null, late: false, reason: 'past 10 ms' },
+        },
+      });
+      rig.http.expectOne('api/write').flush({ run_id: '1', operation: 13 });
+      await expect(q4Promise).rejects.toMatchObject({ code: 'late', outcome: 'refused' });
+      expect(variable.get()).toMatchObject({ writing: false, problem: { code: 'late' } });
+
+      // AbortSignal while link === 'connecting' before sync completes
+      const connectingRig = await open();
+      const abortSync = new AbortController();
+      const pendingSyncWrite = connectingRig.front
+        .variable(named)
+        .enqueue(15, { signal: abortSync.signal });
+      abortSync.abort();
+      await expect(pendingSyncWrite).rejects.toMatchObject({ code: 'aborted', outcome: 'refused' });
+      connectingRig.http.expectNone('api/write');
+    });
+
+    it('validates FrontWriteOptions strictly, preserves writing across partial applied() aborts, clears problem on applied/slider success, and isolates run switches & server restarts', async () => {
+      const rig = await withVariable();
+      const variable = rig.front.variable(named);
+
+      // 1) Strict runtime validation of atMs, late, keepalive, and signal (refused with 0 HTTP requests)
+      for (const badOpts of [
+        { atMs: Number.NaN },
+        { atMs: Number.POSITIVE_INFINITY },
+        { atMs: -1 },
+        { late: 'bad' as unknown as 'reject' },
+        { keepalive: 'yes' as unknown as boolean },
+        { signal: {} as unknown as AbortSignal },
+      ]) {
+        await expect(variable.enqueue(99, badOpts)).rejects.toMatchObject({
+          code: 'invalid-argument',
+          outcome: 'refused',
+        });
+      }
+      rig.http.expectNone('api/write');
+
+      // 2) Double applied() with independent AbortSignals: aborting 1st keeps writing=true until ON_SETTLED,
+      //    and settling as 'applied' clears problem back to null!
+      const qDoubleP = variable.enqueue(42, { atMs: 100 });
+      rig.http.expectOne('api/write').flush({ run_id: '1', operation: 20 });
+      const qDouble = await qDoubleP;
+      const ac1 = new AbortController();
+      const ac2 = new AbortController();
+      const p1 = qDouble.applied({ signal: ac1.signal });
+      const p2 = qDouble.applied({ signal: ac2.signal });
+      ac1.abort();
+      await expect(p1).rejects.toMatchObject({ code: 'aborted', outcome: 'unknown' });
+      expect(variable.get().writing).toBe(true);
+      expect(variable.get().problem?.code).toBe('aborted');
+
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 20,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 100, late: false, reason: null } },
+      });
+      await expect(p2).resolves.toMatchObject({ seq: 20, appliedAtMs: 100 });
+      expect(variable.get()).toMatchObject({ writing: false, problem: null });
+
+      // 3) Competing enqueued writes + VariableBinder slider write clear stale problem on subsequent applied
+      const wFailP = variable.enqueue(10, { atMs: 50 });
+      const wPassP = variable.enqueue(20, { atMs: 150 });
+      rig.http.requests[0].flush({ run_id: '1', operation: 21 });
+      rig.http.requests[1].flush({ run_id: '1', operation: 22 });
+      rig.http.requests.splice(0, 2);
+      const [wFail, wPass] = await Promise.all([wFailP, wPassP]);
+      const failWait = wFail.applied().catch((e: unknown) => e);
+      const passWait = wPass.applied();
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 21,
+        state: 'late',
+        done: true,
+        peers: { Engine: { state: 'late', applied_at_ms: null, late: false, reason: 'missed' } },
+      });
+      expect(await failWait).toMatchObject({ code: 'late', outcome: 'refused' });
+      expect(variable.get()).toMatchObject({ writing: true, problem: { code: 'late' } });
+
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 22,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 150, late: false, reason: null } },
+      });
+      await expect(passWait).resolves.toMatchObject({ seq: 22, appliedAtMs: 150 });
+      expect(variable.get()).toMatchObject({ writing: false, problem: null });
+
+      // Slider write via VariableBinder after a FrontVariable failure also clears stale problem
+      const wFail2P = variable.enqueue(11, { atMs: 10 });
+      rig.http.expectOne('api/write').flush({ run_id: '1', operation: 23 });
+      const wFail2 = await wFail2P;
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 23,
+        state: 'rejected',
+        done: true,
+        peers: { Engine: { state: 'rejected', applied_at_ms: null, late: false, reason: 'no' } },
+      });
+      await expect(wFail2.applied()).rejects.toMatchObject({
+        code: 'rejected',
+        outcome: 'refused',
+      });
+      expect(variable.get().problem?.code).toBe('rejected');
+
+      const binder = rig.front.low.variables.bind({ peer: 'Engine', name: 'engine.offset' });
+      binder.write(33);
+      rig.http.expectOne('api/write').flush({ run_id: '1', operation: 24 });
+      await rig.deliver({
+        type: 'operation',
+        run_id: '1',
+        seq: 24,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 200, late: false, reason: null } },
+      });
+      expect(variable.get().problem).toBeNull();
+      binder.close();
+
+      // 4) Run 1 -> Run 2 switch: in-flight Run 1 write rejection and Run 1 problem never leak into Run 2!
+      const wOpenRun1P = variable.enqueue(88, { atMs: 500 });
+      rig.http.expectOne('api/write').flush({ run_id: '1', operation: 25 });
+      const wOpenRun1 = await wOpenRun1P;
+      const run1Applied = wOpenRun1.applied().catch((e: unknown) => e);
+
+      await rig.deliver(
+        { type: 'session', session: summary({}, 2) },
+        {
+          type: 'variables',
+          run_id: '2',
+          variables: {
+            state: 'ready',
+            reason: null,
+            peers: [
+              {
+                name: 'Engine',
+                connected: true,
+                variables: [
+                  {
+                    name: 'engine.offset',
+                    type: 'real',
+                    role: 'input',
+                    writable: true,
+                    unit: 'rpm',
+                    min: null,
+                    max: null,
+                    step: null,
+                    description: '',
+                    enum: null,
+                  },
+                ],
+              },
+            ],
+            peers_omitted: 0,
+            variables_omitted: 0,
+            operations: [],
+          },
+        },
+        event(stateEvent(1), '2'),
+      );
+      expect(await run1Applied).toMatchObject({ code: 'no-answer', outcome: 'unknown' });
+      expect(variable.get()).toMatchObject({ writing: false, problem: null });
+
+      // 5) Server restart during WS reconnect backoff includes stale instance in POST api/write -> 409 session-changed
+      rig.socket.fail();
+      await rig.turn();
+      const staleWrite = variable.write(77);
+      const staleReq = rig.http.expectOne('api/write');
+      expect(staleReq.request.body).toEqual({
+        run_id: '2',
+        instance: 'x',
+        writes: { Engine: { 'engine.offset': 77 } },
+      });
+      staleReq.flush(
+        {
+          error: {
+            code: 'session-changed',
+            message: 'the server instance has changed',
+            detail: null,
+          },
+        },
+        { status: 409, statusText: 'Conflict' },
+      );
+      await expect(staleWrite).rejects.toMatchObject({
+        code: 'session-changed',
+        outcome: 'refused',
+      });
     });
   });
 
@@ -2718,6 +3042,7 @@ describe('the front door', () => {
       const writeReq = rig.http.expectOne('api/write');
       expect(writeReq.request.body).toEqual({
         run_id: '1',
+        instance: 'x',
         writes: { Engine: { 'engine.offset': 25 } },
       });
       writeReq.flush({ run_id: '1', operation: 1 });
@@ -2908,6 +3233,7 @@ describe('the front door', () => {
       const writeReq = rig3.http.expectOne('api/write');
       expect(writeReq.request.body).toEqual({
         run_id: '42',
+        instance: 'inst-1',
         writes: { Engine: { 'engine.offset': 25 } },
       });
       writeReq.flush({ run_id: '42', operation: 9 });
@@ -2919,7 +3245,15 @@ describe('the front door', () => {
         done: true,
         peers: { Engine: { state: 'applied', applied_at_ms: 100, late: false, reason: null } },
       });
-      await expect(writePromise).resolves.toBeUndefined();
+      await expect(writePromise).resolves.toEqual({
+        session: '42',
+        seq: 9,
+        peer: 'Engine',
+        name: 'engine.offset',
+        value: 25,
+        appliedAtMs: 100,
+        late: false,
+      });
     });
 
     it('rejects stop() and forceStop() with ActionError(not-running, refused) when no run is active after sync', async () => {

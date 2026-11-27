@@ -50,15 +50,32 @@ export const ANSWER_TIMEOUT = new InjectionToken<number>('ANSWER_TIMEOUT', {
  */
 export function httpClientTransport(http: HttpClient): HttpTransport {
   return (request, done) => {
+    if (request.signal?.aborted) {
+      done({ ok: false, error: new HttpError(0, 'aborted', null) });
+      return;
+    }
+    let finished = false;
+    let sub: { unsubscribe(): void } | null = null;
+    const onAbort = () => {
+      sub?.unsubscribe();
+      finish({ ok: false, error: new HttpError(0, 'aborted', null) });
+    };
+    const finish = (outcome: Parameters<typeof done>[0]) => {
+      if (finished) return;
+      finished = true;
+      request.signal?.removeEventListener('abort', onAbort);
+      done(outcome);
+    };
     const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const response =
       request.method === 'GET'
         ? http.get(request.path)
         : http.post(request.path, request.body ?? null);
-    response.pipe(timeout(timeoutMs)).subscribe({
-      next: (body) => done({ ok: true, body }),
+    request.signal?.addEventListener('abort', onAbort, { once: true });
+    sub = response.pipe(timeout(timeoutMs)).subscribe({
+      next: (body) => finish({ ok: true, body }),
       error: (error: unknown) =>
-        done({
+        finish({
           ok: false,
           error:
             error instanceof HttpErrorResponse

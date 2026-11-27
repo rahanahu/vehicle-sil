@@ -9,9 +9,12 @@ import type {
   FrontScenario,
   FrontStatus,
   FrontVariable,
+  FrontWriteOptions,
   Outside,
+  QueuedWrite,
   Readable,
   VariableView,
+  WriteResult,
 } from '../index';
 
 export class Cell<T> implements Readable<T> {
@@ -63,7 +66,16 @@ export const viewOf = (fields: Partial<VariableView> = {}): VariableView =>
 
 export interface FakeVariable extends FrontVariable {
   cell: Cell<VariableView>;
-  write: ReturnType<typeof vi.fn<(value: number | boolean | string) => Promise<void>>>;
+  enqueue: ReturnType<
+    typeof vi.fn<
+      (value: number | boolean | string, options?: FrontWriteOptions) => Promise<QueuedWrite>
+    >
+  >;
+  write: ReturnType<
+    typeof vi.fn<
+      (value: number | boolean | string, options?: FrontWriteOptions) => Promise<WriteResult>
+    >
+  >;
 }
 
 export interface FakeFront extends Front {
@@ -156,11 +168,31 @@ export function fakeFront(): FakeFront {
       let variable = variables.get(ref);
       if (!variable) {
         const cell = new Cell<VariableView>(viewOf());
+        const dot = ref.indexOf('.');
+        const peer = dot > 0 ? ref.slice(0, dot) : ref;
+        const name = dot > 0 ? ref.slice(dot + 1) : ref;
+        const makeResult = (value: number | boolean | string): WriteResult => ({
+          session: '1',
+          seq: 1,
+          peer,
+          name,
+          value,
+          appliedAtMs: 0,
+          late: false,
+        });
         variable = {
           cell,
           get: cell.get,
           subscribe: cell.subscribe,
-          write: vi.fn(async () => undefined),
+          enqueue: vi.fn(async (value: number | boolean | string): Promise<QueuedWrite> => ({
+            session: '1',
+            seq: 1,
+            peer,
+            name,
+            value,
+            applied: async () => makeResult(value),
+          })),
+          write: vi.fn(async (value: number | boolean | string) => makeResult(value)),
         };
         variables.set(ref, variable);
       }

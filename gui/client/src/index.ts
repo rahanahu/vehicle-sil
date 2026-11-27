@@ -37,14 +37,17 @@ export type {
   FrontStatus,
   FrontTime,
   FrontVariable,
+  FrontWriteOptions,
   Intent,
   Link,
   OperationName,
   Outside,
   Pacing,
+  QueuedWrite,
   Reason,
   RunState,
   VariableView,
+  WriteResult,
 } from './front-types';
 
 // Token (the #token= of the URL the server printed)
@@ -66,6 +69,7 @@ export type {
   HistoryPoint,
   OperationPeer,
   OperationView,
+  QueuedOperation,
   VariableInfo,
   VariablePeer,
   VariableReading,
@@ -78,6 +82,7 @@ export type {
   WatchProblem,
   WatchValues,
   WriteOptions,
+  WriteWaitOptions,
 } from './variables';
 
 // Binding one variable to one widget (client.variables.bind): value state, whether it can be written, write status

@@ -458,6 +458,9 @@ class _FakeControlSource:
     async def read_operation(self, seq: int, timeout_s: float):
         return None
 
+    async def wait_queued(self, seq: int, timeout_s: float):
+        return None
+
     async def write(self, writes, at_ns: int | None, late: str, client_name: str, idempotency: str, timeout_s: float) -> int:
         raise SourceError("refused", "not needed")
 

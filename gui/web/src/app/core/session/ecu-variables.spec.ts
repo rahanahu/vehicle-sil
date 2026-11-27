@@ -1,4 +1,4 @@
-import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { HttpClient, provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import {
   EnvironmentInjector,
@@ -6,11 +6,11 @@ import {
   runInInjectionContext,
 } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { BATCH_MS, WriteError } from '@vehicle-sil/gui-client';
+import { BATCH_MS, HttpOutcome, WriteError } from '@vehicle-sil/gui-client';
 import { FakeWebSockets, httpExamples, webSocketExamples } from '@vehicle-sil/gui-client/testing';
 import { authInterceptor } from '../auth/auth-interceptor';
 import { EcuVariables } from './ecu-variables';
-import { SOCKET_FACTORY } from './gui-client';
+import { SOCKET_FACTORY, httpClientTransport } from './gui-client';
 
 const DEMAND = { peer: 'Engine', name: 'engine.demand' };
 
@@ -83,12 +83,49 @@ describe('EcuVariables', () => {
     expect(request.request.headers.get('Authorization')).toBe('Bearer secret');
     expect(request.request.body).toEqual({
       run_id: '1',
+      instance: '0123456789abcdef',
       writes: { Engine: { 'engine.speed': 900 } },
     });
     request.flush(refused?.response ?? null, { status: 400, statusText: 'Bad Request' });
     const error = await write;
     expect(error).toBeInstanceOf(WriteError);
     expect(error).toMatchObject({ kind: 'refused', code: 'not-writable' });
+    http.verify();
+  });
+
+  it('handles pre-aborted and mid-flight AbortSignal in httpClientTransport without TDZ errors', () => {
+    const transport = httpClientTransport(TestBed.inject(HttpClient));
+
+    const preAborted = new AbortController();
+    preAborted.abort();
+    const outcomes: HttpOutcome[] = [];
+    expect(() =>
+      transport(
+        { method: 'POST', path: 'api/write', body: {}, signal: preAborted.signal },
+        (outcome) => outcomes.push(outcome),
+      ),
+    ).not.toThrow();
+    http.expectNone('api/write');
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({
+      ok: false,
+      error: { status: 0, message: 'HTTP 0 aborted' },
+    });
+
+    const midFlight = new AbortController();
+    transport(
+      { method: 'POST', path: 'api/write', body: { run_id: '1' }, signal: midFlight.signal },
+      (outcome) => outcomes.push(outcome),
+    );
+    const pending = http.expectOne('api/write');
+    expect(pending.cancelled).toBe(false);
+    midFlight.abort();
+    expect(pending.cancelled).toBe(true);
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes[1]).toMatchObject({
+      ok: false,
+      error: { status: 0, message: 'HTTP 0 aborted' },
+    });
     http.verify();
   });
 

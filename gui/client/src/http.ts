@@ -10,6 +10,8 @@ export interface HttpRequest {
   timeoutMs?: number;
   /** Forwarded to fetch() as `keepalive` so a request sent during `pagehide` can outlive the page. */
   keepalive?: boolean;
+  /** Aborts an in-flight request when triggered. */
+  signal?: AbortSignal;
 }
 
 /** Default time to wait for an answer (ms). A check (`api/check`) waits for the server's check limit plus this. */
@@ -114,8 +116,24 @@ export function fetchTransport(options: FetchTransportOptions): HttpTransport {
     }
     const url = new URL(request.path, options.baseUrl).href;
     const timeoutMs = request.timeoutMs ?? options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    let settled = false;
+    const finish = (outcome: HttpOutcome) => {
+      if (settled) return;
+      settled = true;
+      done(outcome);
+    };
+    if (request.signal?.aborted) {
+      finish({ ok: false, error: new HttpError(0, 'aborted', null) });
+      return;
+    }
     const abort = new AbortController();
     let timedOut = false;
+    let callerAborted = false;
+    const onAbort = () => {
+      callerAborted = true;
+      abort.abort();
+    };
+    request.signal?.addEventListener('abort', onAbort, { once: true });
     const timer = setTimeout(() => {
       timedOut = true;
       abort.abort();
@@ -129,28 +147,31 @@ export function fetchTransport(options: FetchTransportOptions): HttpTransport {
     if (request.keepalive !== undefined) init.keepalive = request.keepalive;
     if (request.method === 'POST') init.body = JSON.stringify(request.body ?? {});
     const fail = (error: unknown) =>
-      done({
+      finish({
         ok: false,
-        error: timedOut
-          ? HttpError.noAnswer(request.method, request.path, timeoutMs)
-          : new HttpError(0, errorMessage(error), null),
+        error:
+          timedOut && !callerAborted
+            ? HttpError.noAnswer(request.method, request.path, timeoutMs)
+            : new HttpError(0, callerAborted ? 'aborted' : errorMessage(error), null),
       });
     send(url, init)
       .then(async (response) => {
         // null if the body is not JSON (unless it has the error shape, the status code reports the failure)
         const body: unknown = await response.json().catch(() => null);
         clearTimeout(timer);
-        // Timed out while reading the body: count it as no answer, not as an unreadable body
-        if (timedOut) {
+        if (callerAborted || timedOut) {
           fail(null);
           return;
         }
-        done(
+        finish(
           response.ok
             ? { ok: true, body }
             : { ok: false, error: HttpError.from(response.status, response.statusText, body) },
         );
       }, fail)
-      .finally(() => clearTimeout(timer));
+      .finally(() => {
+        clearTimeout(timer);
+        request.signal?.removeEventListener('abort', onAbort);
+      });
   };
 }

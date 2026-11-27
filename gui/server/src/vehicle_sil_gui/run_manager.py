@@ -797,10 +797,14 @@ class RunManager:
                                               "its ECUs' variables cannot be written")
         try:
             writes, at_ns, late = run.variables.check_write(body)
-            seq = await run.variables.write(writes, at_ns, late)
+            seq = await run.variables.write(
+                writes,
+                at_ns,
+                late,
+                on_wrote=lambda seq: run.recording.wrote(seq, writes, run.variables.operations.get(seq)),
+            )
         except Rejected as e:
             raise Refused(e.status, e.code, str(e), e.detail) from None
-        run.recording.wrote(seq, writes, run.variables.operations.get(seq))
         return {"run_id": run.session.id, "operation": seq}
 
     # ------------------------------------------------------------ variables, events, helpers

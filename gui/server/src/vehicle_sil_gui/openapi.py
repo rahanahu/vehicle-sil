@@ -102,6 +102,10 @@ SUCCESS_DESCRIPTIONS: dict[str, str] = {
         "Command forwarded to the launcher's standard input (asynchronous launcher decision follows as a "
         "WebSocket `command` event)."
     ),
+    "writeVariables": (
+        "Write registered and acknowledged by every target ECU (`WAIT_FOR_QUEUED`, queued or immediately settled; "
+        "final execution outcome arrives on `/ws` as `operation` messages)."
+    ),
     "getTimeline": "Recorded scenario timeline JSON (`schema/timeline.schema.json`).",
 }
 
@@ -115,9 +119,9 @@ ERROR_DESCRIPTIONS: dict[int, str] = {
     415: "`Content-Type` is not `application/json` (`unsupported-media-type`).",
     422: "Configuration check failed or file is not valid UTF-8 (`check-failed`, `config-unreadable`).",
     500: "Internal server error or request-file write failure (`internal`, `request-file`).",
-    502: "Launcher start/output failure or Control Server write RPC failure (`launcher-start`, `launcher-output`, `write-failed`).",
+    502: "Launcher start/output failure or Control Server write/queue RPC failure (`launcher-start`, `launcher-output`, `write-failed`; post-registration `write-failed` includes `detail: {operation, state: \"sent\"}`).",
     503: "Server is shutting down, launcher is unusable, or queue/connection limit reached (`shutting-down`, `launcher-unusable`, `check-busy`, `write-busy`, `too-many-connections`).",
-    504: "Launcher check or Control Server write timed out (`check-timeout`, `write-timeout`).",
+    504: "Launcher check or Control Server write/queue wait timed out (`check-timeout`, `write-timeout`; post-registration `write-timeout` includes `detail: {operation, state: \"sent\"}`).",
 }
 
 QUERY_PARAM_DESCRIPTIONS: dict[str, str] = {

@@ -319,6 +319,13 @@ export function buildClient(options: ClientOptions): ClientParts {
     http,
     onError,
     () => limits.get(),
+    {
+      connection: connection.state,
+      ready: session.ready,
+      rejected: session.rejected,
+      incompatible: session.incompatible,
+      session: session.session,
+    },
   );
   const variables = variablesFeed;
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
@@ -407,6 +414,7 @@ export function buildClient(options: ClientOptions): ClientParts {
       operations: variables.operations,
       watchProblem: variables.watchProblem,
       watch: (wanted, watchOptions) => variables.watch(wanted, watchOptions),
+      enqueue: (writes, writeOptions) => variables.enqueue(writes, writeOptions),
       write: (writes, writeOptions) => variables.write(writes, writeOptions),
       bind: (ref, bindOptions) => binder.bind(ref, bindOptions),
     },

@@ -83,8 +83,8 @@ class Limits:
     period_ms_min: int = DEFAULT_PERIOD_MS_MIN
     period_ms_max: int = DEFAULT_PERIOD_MS_MAX
     writes_per_request: int = DEFAULT_WRITES_PER_REQUEST
-    writes_waiting: int = 32  # api/write requests waiting for the one that is being sent
-    write_timeout_s: float = 5.0  # for the source to take a write (and for a request to wait for its turn)
+    writes_waiting: int = 32  # concurrent api/write requests in flight (awaiting submission or ECU queue ack)
+    write_timeout_s: float = 5.0  # total budget for submission and WAIT_FOR_QUEUED acknowledgement
     read_timeout_s: float = 2.0  # one read of the time and the values, or of an operation
 
 
@@ -232,7 +232,7 @@ class Variables:
         self._reading = asyncio.Lock()  # one read at a time: they are taken in the order the source answered
         self._news = False  # the time may have changed since the last read: the next one is not put off
         self._writing = asyncio.Lock()
-        self._writes_waiting = 0
+        self._write_slots = asyncio.Semaphore(self.limits.writes_waiting)
         self._closed = False
 
     # ------------------------------------------------------------ the state
@@ -606,29 +606,50 @@ class Variables:
         self._news = True
 
     def on_operations(self, operations: list[OperationInfo]) -> None:
+        if self._closed:
+            return
         messages = []
         for op in operations:
-            entry = self._operation(op)
-            if self.operations.get(op.seq) == entry:
+            prev = self.operations.get(op.seq)
+            if prev is not None and prev["done"]:
+                continue
+            if prev is None and op.seq <= self._forgotten_max and op.seq not in self._forgotten_open:
+                continue
+            entry = self._merge_operation(prev, op)
+            if prev == entry:
                 continue
             self._keep_operation(entry)
             messages.append({"type": "operation", "run_id": self.run_id, **entry})
         if messages:
             self._emit(messages)
 
-    def _operation(self, op: OperationInfo) -> dict:
-        peers = {}
+    def _merge_operation(self, prev: dict | None, op: OperationInfo) -> dict:
+        incoming = {}
         for t in op.targets:
-            peers[t.peer] = {"state": t.status,
-                             "applied_at_ms": None if t.applied_at_ns is None else t.applied_at_ns // NS_PER_MS,
-                             "late": t.late, "reason": self._clean(t.reason) if t.reason else None,
-                             "applied_writes": t.applied_writes, "failed_write": t.failed_write}
+            incoming[t.peer] = {"state": t.status,
+                                "applied_at_ms": None if t.applied_at_ns is None else t.applied_at_ns // NS_PER_MS,
+                                "late": t.late, "reason": self._clean(t.reason) if t.reason else None,
+                                "applied_writes": t.applied_writes, "failed_write": t.failed_write}
+        if prev is None:
+            peers = incoming
+        else:
+            peers = dict(prev["peers"])
+            for name, new_p in incoming.items():
+                old_p = peers.get(name)
+                if old_p is None:
+                    peers[name] = new_p
+                elif old_p["state"] not in FINAL and _peer_rank(new_p["state"]) >= _peer_rank(old_p["state"]):
+                    peers[name] = new_p
         states = [p["state"] for p in peers.values()]
-        if not op.done:
+        done = op.done or (bool(states) and all(s in FINAL for s in states))
+        if not done:
             state = "sent" if "sent" in states or not states else "queued"
         else:  # every peer the same: that; else mixed (the peers say which)
             state = "unknown" if not states else states[0] if len(set(states)) == 1 else "mixed"
-        return {"seq": op.seq, "state": state, "done": op.done, "peers": peers}
+        return {"seq": op.seq, "state": state, "done": done, "peers": peers}
+
+    def _operation(self, op: OperationInfo) -> dict:
+        return self._merge_operation(None, op)
 
     def _keep_operation(self, entry: dict) -> None:
         self.operations[entry["seq"]] = entry
@@ -859,53 +880,122 @@ class Variables:
                 out.append((peer_name, name, _check_value(peer_name, entry, value, detail)))
         return out, None if at_ms is None else at_ms * NS_PER_MS, late
 
-    async def write(self, writes: list[tuple[str, str, object]], at_ns: int | None, late: str) -> int:
-        """Gives the source the write; the operation's number. One at a time, in the order asked: the source
-        gets them in the order the requests came."""
-        if self._writes_waiting >= self.limits.writes_waiting:
+    async def write(self, writes: list[tuple[str, str, object]], at_ns: int | None, late: str,
+                    *, on_wrote: Callable[[int], None] | None = None) -> int:
+        """Gives the source the write and waits until every target has left `sent` (`wait_queued`); returns the
+        operation's number. `source.write` runs one at a time in the order asked so operation numbers follow FIFO
+        arrival order; `wait_queued` runs outside `_writing` so one slow or hung ECU never blocks other ECUs."""
+        if self._write_slots.locked():
             raise Rejected(503, "write-busy", f"{self.limits.writes_waiting} writes are already waiting for the "
                                               "control server: wait for their answers, then write again")
         timeout = self.limits.write_timeout_s
-        self._writes_waiting += 1
-        try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        async with self._write_slots:
             try:
-                async with asyncio.timeout(timeout):
+                async with asyncio.timeout(max(0.0, deadline - loop.time())):
                     await self._writing.acquire()
             except TimeoutError:
                 raise Rejected(503, "write-busy", f"an earlier write has waited for the control server for more "
                                                   f"than {timeout:g} s: this one was not sent") from None
-        finally:
-            self._writes_waiting -= 1
-        try:
-            source = self.source
-            if self._closed or self.state != READY or source is None:
-                raise Rejected(409, "variables-not-ready", "the variables cannot be written any more (the run has "
-                                                           "ended, or the connection to its control server is lost)")
             try:
-                seq = await source.write(writes, at_ns, late, timeout)
+                source = self.source
+                if self._closed or self.state != READY or source is None:
+                    raise Rejected(409, "variables-not-ready", "the variables cannot be written any more (the run has "
+                                                               "ended, or the connection to its control server is lost)")
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise Rejected(503, "write-busy", f"an earlier write has waited for the control server for more "
+                                                      f"than {timeout:g} s: this one was not sent")
+                try:
+                    seq = await source.write(writes, at_ns, late, remaining)
+                except SourceError as e:
+                    if e.kind == "timeout":
+                        raise Rejected(504, "write-timeout",
+                                       f"the control server did not answer the write in {timeout:g} s: it may or may "
+                                       "not have been taken (it is not sent again)") from None
+                    if e.kind == "refused":
+                        raise Rejected(400, "write-refused",
+                                       f"the control server refused the write: {self._clean(str(e))}") from None
+                    raise Rejected(502, "write-failed", f"the write did not reach the control server: "
+                                                        f"{self._clean(str(e))}") from None
+                if self._closed:
+                    # taken while the run ended: close() has given the open ones their end already, so this one gets
+                    # it here without calling wait_queued (a screen that waits for its write is told none will come)
+                    existing = self.operations.get(seq)
+                    if existing is None or not existing["done"]:
+                        prev_peers = existing["peers"] if existing is not None else {}
+                        target_names = dict.fromkeys([*prev_peers, *(w[0] for w in writes)])
+                        peers = {}
+                        for peer in target_names:
+                            prev_p = prev_peers.get(peer)
+                            if prev_p is not None and prev_p["state"] in FINAL:
+                                peers[peer] = prev_p
+                            elif prev_p is not None:
+                                peers[peer] = {**prev_p, "state": "unknown",
+                                               "reason": "the run ended before the result came"}
+                            else:
+                                peers[peer] = {"state": "unknown", "applied_at_ms": None, "late": False,
+                                               "reason": "the run ended before the result came",
+                                               "applied_writes": None, "failed_write": None}
+                        states = {p["state"] for p in peers.values()}
+                        entry = {"seq": seq, "done": True, "peers": peers,
+                                 "state": states.pop() if len(states) == 1 else "mixed" if states else "unknown"}
+                        self._keep_operation(entry)
+                        self._emit([{"type": "operation", "run_id": self.run_id, **entry}])
+                    if on_wrote is not None:
+                        on_wrote(seq)
+                    return seq
+                if seq not in self.operations:
+                    entry = {"seq": seq, "state": "sent", "done": False,
+                             "peers": {peer: {"state": "sent", "applied_at_ms": None, "late": False, "reason": None,
+                                              "applied_writes": None, "failed_write": None}
+                                       for peer in dict.fromkeys(w[0] for w in writes)}}
+                    self._keep_operation(entry)
+                    self._emit([{"type": "operation", "run_id": self.run_id, **entry}])
+                if on_wrote is not None:
+                    on_wrote(seq)
+            finally:
+                self._writing.release()
+
+            if self._operation_confirmed(seq):
+                return seq
+            detail = {"operation": seq, "state": "sent"}
+            try:
+                op = await source.wait_queued(seq, max(0.001, deadline - loop.time()))
             except SourceError as e:
+                if self._operation_confirmed(seq):
+                    return seq
                 if e.kind == "timeout":
                     raise Rejected(504, "write-timeout",
-                                   f"the control server did not answer the write in {timeout:g} s: it may or may "
-                                   "not have been taken (it is not sent again)") from None
-                if e.kind == "refused":
-                    raise Rejected(400, "write-refused", f"the control server refused the write: {self._clean(str(e))}") \
-                        from None
-                raise Rejected(502, "write-failed", f"the write did not reach the control server: "
-                                                    f"{self._clean(str(e))}") from None
-        finally:
-            self._writing.release()
-        if seq not in self.operations:
-            # taken while the run ended: close() has given the open ones their end already, so this one gets it here
-            # (a screen that waits for the result of its write is told that none will come)
-            state, reason = ("unknown", "the run ended before the result came") if self._closed else ("sent", None)
-            entry = {"seq": seq, "state": state, "done": self._closed,
-                     "peers": {peer: {"state": state, "applied_at_ms": None, "late": False, "reason": reason,
-                                      "applied_writes": None, "failed_write": None}
-                               for peer in dict.fromkeys(w[0] for w in writes)}}
-            self._keep_operation(entry)
-            self._emit([{"type": "operation", "run_id": self.run_id, **entry}])
-        return seq
+                                   f"the ECUs did not queue the write (operation {seq}) in {timeout:g} s: it may "
+                                   "still take effect (it is not sent again)", detail) from None
+                raise Rejected(502, "write-failed",
+                               f"waiting for the ECUs to queue the write (operation {seq}) failed: "
+                               f"{self._clean(str(e))}", detail) from None
+            if op is not None:
+                self.on_operations([op])
+                return seq
+            if self._operation_confirmed(seq):
+                return seq
+            raise Rejected(502, "write-failed",
+                           f"the control server no longer has operation {seq} before it was queued", detail)
+
+    def _operation_confirmed(self, seq: int) -> bool:
+        existing = self.operations.get(seq)
+        if existing is not None:
+            return bool(existing["done"] or existing["state"] != "sent")
+        return seq <= self._forgotten_max and seq not in self._forgotten_open
+
+
+def _peer_rank(state: str) -> int:
+    if state in FINAL:
+        return 3
+    if state == "disconnected":
+        return 2
+    if state == "queued":
+        return 1
+    return 0
 
 
 def _finite_or_none(value: object) -> float | int | None:

@@ -140,9 +140,14 @@ class Source(Protocol):
     async def read_operation(self, seq: int, timeout_s: float) -> OperationInfo | None:
         """None: the source does not know it (any more)."""
 
+    async def wait_queued(self, seq: int, timeout_s: float) -> OperationInfo | None:
+        """Waits until no target of operation `seq` is still `sent`, returning the operation as it is then
+        (None: the source does not know it any more)."""
+
     async def write(self, writes: list[tuple[str, str, object]], at_ns: int | None, late: str,
                     timeout_s: float) -> int:
-        """Writes (peer, variable, value) together; the operation's number. Its result comes by on_operations."""
+        """Writes (peer, variable, value) together; the operation's number. Its result comes by on_operations
+        (and wait_queued waits until every target has left `sent`)."""
 
     async def close(self) -> None:
         """Ends everything of the source; nothing is told after it returns. Safe to call twice."""

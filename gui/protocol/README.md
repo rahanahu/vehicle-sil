@@ -89,7 +89,7 @@ Every `api/` request has these conditions:
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | `{instance, run_id}` of the targeted run, or 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
-| `POST api/write` `{run_id, instance, writes, at_ms, late}` | `{run_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
+| `POST api/write` `{run_id, instance, writes, at_ms, late}` | `{run_id, operation}` once every target ECU has queued or settled the operation (final outcome arrives as `operation` over WebSocket) | `write.json` |
 | `GET api/session` | `{instance, session, allowed, runtime}` (`session` is `null` if none; `allowed` as in "What the server accepts (`allowed`)" below) | `session-*.json` |
 | `POST api/prepare` `{file, variant, disable, enable, manual}` | `{instance}`: prepares a persistent launcher when eligible (`runtime` updates arrive over WebSocket) | — |
 | `GET api/dashboard?file=<configuration file>` | The dashboard file next to the configuration file: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
@@ -275,15 +275,15 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 500 | `internal` | A server bug (no example; if it happens, look at stderr) |
 | 502 | `launcher-start` | The launcher cannot be started |
 | 502 | `launcher-output` | `check --json` did not write a check result, or `connections --json` no list |
-| 502 | `write-failed` | `api/write`: the write did not reach the Control Server (disconnected) |
+| 502 | `write-failed` | `api/write`: the write did not reach the Control Server, or the connection broke before every target ECU queued it (once an operation number was assigned, `detail` holds `{operation, state: "sent"}`) |
 | 503 | `launcher-unusable` | The launcher cannot be used (the reason is in `launcher.problems` of `api/app`) |
 | 503 | `check-busy` | Too many checks (and lists of `api/connections`, and saves) waiting, or waiting too long |
-| 503 | `write-busy` | `api/write`: an earlier write is waiting for the Control Server's response and this one did not get its turn (not sent) |
+| 503 | `write-busy` | `api/write`: 32 writes are already in flight, or an earlier write held submission for longer than `limits.write_timeout_s`, so this write was not sent |
 | 503 | `shutting-down` | The server is shutting down |
 | 503 | `too-many-connections` | WebSocket connection limit (handshake response) |
 | 500 | `request-file` | The temporary file that carries the request to the launcher could not be made (no space, or a temporary directory that cannot be written: set `TMPDIR`) |
 | 504 | `check-timeout` | The check (or the list of `api/connections`) did not finish within the time limit (it was stopped) |
-| 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
+| 504 | `write-timeout` | `api/write`: the Control Server or target ECUs did not queue the write within `limits.write_timeout_s` (once an operation number was assigned, `detail` holds `{operation, state: "sent"}`). It may still take effect (do not resend) |
 
 - `api/check` and `api/run` take the same fields: `file`, `$schema`, `vehicle_sil_run_request`, `scenario`, `after_scenario`, `variant`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed`, `start_paused`, `stop_at_ms` and `late_tolerance_ms`. With `text`, `api/check` takes only `file`, `$schema`, `vehicle_sil_run_request`, `variant`, `strict` and `text`. `api/describe` takes `file` and `variant`. `POST api/config` takes `file`, `text` and `stamp` (`stamp` is required, and may be `null`). `api/connections` takes `file` and `network`. Any other field (a misspelled one, or a key of the launcher's side) and any `null` give 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
 - Fields covered by `invalid-field`: `speed`, `start_paused`, `stop_at_ms`, `late_tolerance_ms`, `after_scenario` (also `"pause"` without `scenario` or together with `stop_at_ms`), `variant`, `params`, `enable`, `strict`, `connect`, `time_policy`, `network`, `force`, `disable`, `manual` (also the same name twice), `command`, `ms`, `at_ms`, `value`, `id`, `run_id` and `instance` of `api/time` (including sending only one of `run_id` or `instance`), `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
@@ -639,8 +639,8 @@ When reading does not go well:
 - The server checks the writes against the variable list and rejects any that do not fit with 400 (`invalid-field`, `unknown-variable`, `not-writable`). If even one does not fit, none is sent.
 - **`at_ms`**: the write is applied in the first step that starts at or after that time.
 - **`late`**: with `reject`, the write is not applied and the result is `late`. With `apply`, it is applied in the next step and `late` in the result is `true`.
-- The writes of one request are applied together, per participant, in the same step. Requests are passed to the launcher in the order they arrive (one at a time).
-- The response returns when the launcher has received the operation (only its number). Whether it was applied arrives in an `operation` notification. The `operation` may arrive before the response.
+- The writes of one request are applied together, per participant, in the same step. Requests are registered with the launcher in the order they arrive, while waiting for each ECU's queue acknowledgement runs in parallel so one unresponsive ECU does not block writes to other ECUs.
+- The response returns once every target ECU has left `sent` (`queued` or settled; `WAIT_FOR_QUEUED`). Whether it was applied arrives in an `operation` notification, which may arrive before the response.
 
 Writes while paused:
 

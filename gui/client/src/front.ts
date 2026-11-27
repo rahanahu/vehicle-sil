@@ -28,7 +28,7 @@ import {
 } from './front-compose';
 import { FrontActions, actionError, noFileError } from './front-actions';
 import { entriesOf, outsideRows } from './front-outside';
-import { makeVariable, refOf } from './front-variable';
+import { makeVariable, refOf, validateFrontWriteOptions } from './front-variable';
 import { Readable, derived } from './values';
 
 /** Options of `connect()`: the same camelCase options as `createFront()` and `createClient()`. */
@@ -296,13 +296,59 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
           },
           writeControl,
         );
+        const enqueueWithSync = (
+          value: number | boolean | string,
+          writeOptions?: Parameters<typeof base.enqueue>[1],
+        ) => {
+          const bad = validateFrontWriteOptions(writeOptions);
+          if (bad) return Promise.reject(bad);
+          if (writeOptions?.signal?.aborted) {
+            return Promise.reject(
+              new ActionError('aborted', 'the write was aborted before it was sent', 'refused'),
+            );
+          }
+          if (linkOf(snapshot()) !== 'connecting') {
+            return base.enqueue(value, writeOptions);
+          }
+          const signal = writeOptions?.signal;
+          const waitSync = signal
+            ? new Promise<void>((resolve, reject) => {
+                const onAbort = () =>
+                  reject(
+                    new ActionError(
+                      'aborted',
+                      'the write was aborted before it was sent',
+                      'refused',
+                    ),
+                  );
+                signal.addEventListener('abort', onAbort, { once: true });
+                actions.waitForSync('write', false).then(
+                  () => {
+                    signal.removeEventListener('abort', onAbort);
+                    resolve();
+                  },
+                  (error: unknown) => {
+                    signal.removeEventListener('abort', onAbort);
+                    reject(error);
+                  },
+                );
+              })
+            : actions.waitForSync('write', false);
+          return waitSync.then(() => base.enqueue(value, writeOptions));
+        };
         variable = {
           get: base.get,
           subscribe: base.subscribe,
+          enqueue: enqueueWithSync,
           write: (value, writeOptions) =>
-            linkOf(snapshot()) === 'connecting'
-              ? actions.waitForSync('write', false).then(() => base.write(value, writeOptions))
-              : base.write(value, writeOptions),
+            enqueueWithSync(value, writeOptions).then((queued) =>
+              queued.applied({
+                ...(writeOptions?.timeoutMs !== undefined
+                  ? { timeoutMs: writeOptions.timeoutMs }
+                  : {}),
+                ...(writeOptions?.signal !== undefined ? { signal: writeOptions.signal } : {}),
+              }),
+            ),
         };
         variables.set(key, variable);
       }

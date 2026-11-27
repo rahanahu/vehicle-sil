@@ -89,7 +89,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | 対象の `{instance, run_id}`、または 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
-| `POST api/write` `{run_id, instance, writes, at_ms, late}` | `{run_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
+| `POST api/write` `{run_id, instance, writes, at_ms, late}` | 全対象 ECU がキュー投入または確定した時点での `{run_id, operation}`（最終結果は WebSocket の `operation`） | `write.json` |
 | `GET api/session` | `{instance, session, allowed, runtime}`（`session` は実行がなければ `null`。`allowed` は下の「サーバーが受け付けること（`allowed`）」） | `session-*.json` |
 | `POST api/prepare` `{file, variant, disable, enable, manual}` | `{instance}`: 条件を満たせば常駐ランチャーを準備する（`runtime` の変化は WebSocket で届く） | — |
 | `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
@@ -275,15 +275,15 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 500 | `internal` | サーバーの不具合（例はない。起きたら標準エラーを見る） |
 | 502 | `launcher-start` | ランチャーを起動できない |
 | 502 | `launcher-output` | `check --json` が照合の結果を、または `connections --json` が一覧を書かなかった |
-| 502 | `write-failed` | `api/write`: 書き込みが Control Server に届かなかった（切断された） |
+| 502 | `write-failed` | `api/write`: 書き込みが Control Server に届かなかった、または全対象 ECU のキュー投入前に切断された（操作番号の確定後は `detail` に `{operation, state: "sent"}`） |
 | 503 | `launcher-unusable` | ランチャーが使えない（`api/app` の `launcher.problems` に理由） |
 | 503 | `check-busy` | 照合（と `api/connections` の一覧、保存）の待ちが多すぎるか、待ちが長すぎる |
-| 503 | `write-busy` | `api/write`: 前の書き込みが Control Server のレスポンスを待っていて、順番が来なかった（送っていない） |
+| 503 | `write-busy` | `api/write`: すでに 32 件の書き込みが処理中か、前の書き込みの送信登録が `limits.write_timeout_s` を超えて順番が来なかった（送っていない） |
 | 503 | `shutting-down` | サーバーが終了しようとしている |
 | 503 | `too-many-connections` | WebSocket の数の上限（ハンドシェイクのレスポンス） |
 | 500 | `request-file` | ランチャーに要求を渡す一時ファイルを作れなかった（空きがない、一時ディレクトリに書けない。`TMPDIR` を設定する） |
 | 504 | `check-timeout` | 照合（または `api/connections` の一覧）が時間の上限までに終わらなかった（止めた） |
-| 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
+| 504 | `write-timeout` | `api/write`: `limits.write_timeout_s` 以内に Control Server の応答または全対象 ECU のキュー投入が完了しなかった（操作番号の確定後は `detail` に `{operation, state: "sent"}`）。反映される可能性がある（送り直さない） |
 
 - `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`after_scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
 - `invalid-field` の対象: `speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`after_scenario`（`scenario` なしの `"pause"` や `stop_at_ms` との併用も含む）、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`at_ms`、`value`、`id`、`run_id`、`instance`（`run_id` と `instance` の片方だけの指定を含む）、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
@@ -639,8 +639,8 @@ ECU は、動いている間に、いま変数のそれぞれを使っている�
 - サーバーは、変数の一覧と照合して、合わないものを 400 で拒否します（`invalid-field`、`unknown-variable`、`not-writable`）。1 つでも合わなければ、全部を送りません。
 - **`at_ms`**: その時刻以後に始まる最初のステップで反映されます。
 - **`late`**: `reject` は、反映せず、結果が `late` になります。`apply` は、次のステップで反映し、結果の `late` が `true` になります。
-- 1 回のリクエストの書き込みは、participant ごとに、同じステップでまとめて反映されます。リクエストは届いた順にランチャーへ渡します（1 つずつ）。
-- レスポンスは、ランチャーが操作を受け取ったところで返ります（番号だけ）。反映されたかは、`operation` の通知で届きます。レスポンスより先に `operation` が届くことがあります。
+- 1 回のリクエストの書き込みは、participant ごとに、同じステップでまとめて反映されます。ランチャーへの操作登録は届いた順に直列で行い、各 ECU のキュー到達待ちは並列に行うため、応答しない ECU がほかの ECU への書き込みを塞ぎません。
+- レスポンスは、すべての対象 ECU が `sent` を抜けた時点（`queued` または確定、`WAIT_FOR_QUEUED`）で返ります。反映されたかは `operation` の通知で届き、レスポンスより先に届くこともあります。
 
 止まっている間の書き込みは、次のようになります。
 

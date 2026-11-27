@@ -123,6 +123,10 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
         seq = await source.write([("Engine", "engine.demand", 12.5), ("Engine", "engine.mode", 1),
                                   ("Body", "body.demand", 3.0)], 100 * MS, "reject", 2)
         assert seq == 1
+        queued = await source.wait_queued(1, 2)
+        assert queued is not None and not queued.done
+        assert [(t.peer, t.status) for t in queued.targets] == [("Engine", "queued"), ("Body", "queued")]
+        assert await source.wait_queued(99, 2) is None
         operations = (await sink.until("operations"))[1]
         assert [(t.peer, t.status) for t in operations[0].targets] == [("Engine", "queued"), ("Body", "queued")]
         server.step(0)
