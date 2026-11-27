@@ -403,3 +403,104 @@ test('timeline page: ?lang=ja shows it in Japanese, and a long read-out is shown
   expect(await readout.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
   expect(problems).toEqual([]);
 });
+
+test('timeline page: attributes a template failure to the template file, line and call stack under CSP', async ({
+  page,
+}) => {
+  const problems = await serve(page);
+  await page.goto(`${ORIGIN}/timeline.html`);
+  const data = JSON.parse(readFileSync(join(REFERENCES, 'fails_beside.timeline.json'), 'utf8'));
+  data.scenario.case = '定格';
+  data.steps[1].file = 'templates/sub.yaml';
+  data.steps[1].line = 6;
+  data.steps[1].name = 'Inner failure step';
+  data.steps[1].call_stack = [
+    {
+      file: 'scenarios/main.yaml',
+      line: 4,
+      name: 'Outer call',
+      params: { target: 200 },
+    },
+  ];
+  data.lines[1].file = 'templates/sub.yaml';
+  await page.locator('#file').setInputFiles({
+    name: 'template_failure.timeline.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(data)),
+  });
+
+  await expect(page.locator('#facts')).toContainText('case 定格');
+  const failure = page.getByTestId('failure');
+  await expect(failure).toContainText('Inner failure step');
+  await expect(failure).toContainText('line 6 of templates/sub.yaml');
+  await expect(page.getByTestId('failure-call-stack')).toContainText(
+    'line 4 of scenarios/main.yaml · Outer call · target = 200',
+  );
+  const stepsTable = page.getByTestId('steps-table');
+  await expect(stepsTable).toContainText('templates/sub.yaml:6');
+  await expect(stepsTable).toContainText('Inner failure step');
+  expect(problems).toEqual([]);
+});
+
+test('timeline page: sanitizes XSS in case, non-string step.file, null lines, and call stack under CSP', async ({
+  page,
+}) => {
+  const problems = await serve(page);
+  await page.goto(`${ORIGIN}/timeline.html`);
+  const data = JSON.parse(readFileSync(join(REFERENCES, 'fails_beside.timeline.json'), 'utf8'));
+  const casePayload = '<script>window.__xss="case"</script>';
+  const stepPayload = '<script>window.__xss="step"</script>Step2';
+  const frameFile = 'templates/<img src=x onerror="window.__xss=1">.yaml';
+  const frameParam = '<svg onload="window.__xss=2">';
+  data.scenario.case = casePayload;
+  data.steps[1].file = 123;
+  data.steps[1].line = null;
+  data.steps[1].name = stepPayload;
+  data.steps[1].call_stack = [
+    {
+      file: frameFile,
+      line: null,
+      name: 'Outer',
+      params: { p: frameParam },
+    },
+  ];
+  data.steps[2].file = 'templates/sub.yaml';
+  data.steps[2].line = null;
+  data.steps[2].status = 'skipped';
+  data.steps[2].call_stack = null;
+
+  await page.locator('#file').setInputFiles({
+    name: 'xss_template.timeline.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(data)),
+  });
+
+  await expect(page.locator('#facts')).toContainText(casePayload);
+  const failure = page.getByTestId('failure');
+  await expect(failure).toContainText(stepPayload);
+  await expect(failure).toContainText(data.scenario.file);
+  const failureText = (await failure.textContent()) ?? '';
+  expect(failureText).not.toContain('line null');
+  expect(failureText).not.toContain('of 123');
+  expect(failureText).not.toContain('line  of');
+
+  const callStack = page.getByTestId('failure-call-stack');
+  await expect(callStack).toContainText(frameFile);
+  await expect(callStack).toContainText(`p = ${frameParam}`);
+
+  const stepsText = (await page.getByTestId('steps-table').textContent()) ?? '';
+  expect(stepsText).toContain('templates/sub.yaml');
+  expect(stepsText).not.toContain('templates/sub.yaml:');
+  expect(stepsText).not.toContain(':null');
+
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: unknown }).__xss),
+  ).toBeUndefined();
+  const shadowDangerous = await page.locator('vehicle-sil-timeline').evaluate((el) => {
+    const root = el.shadowRoot;
+    if (!root) return -1;
+    return root.querySelectorAll('script, img, iframe, [onerror], [onload]').length;
+  });
+  expect(shadowDangerous).toBe(0);
+  expect(problems).toEqual([]);
+});

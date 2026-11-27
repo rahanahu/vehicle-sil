@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: MIT
 //
-// The launch_run scenarios about variable maps, variants of a configuration, and
-// vehicle_sil_launch test:
+// The launch_run scenarios about variable maps, variants of a configuration, templates/cases,
+// and vehicle_sil_launch test:
 //
+//   template_cases_matrix           multi-ECU glitch + shared template + Japanese/space case names,
+//                                   repeatable --case filter, template dither failure, variants
+//                                   only/absent/scale/nested-template matrix, and run_alone() re-run
+//   template_csv_determinism        case-bound CSV points in templates with variant scale, dither,
+//                                   and --speed 0.5 / --speed max / slow-ms virtual-time determinism
+//   template_equivalence_and_serve  cases + hex param + --param override, direct vs template+case
+//                                   equivalence on Engine+Dashboard, and serve --once template events
 //   test_command  vehicle_sil_launch test: every variant with every scenario of a directory, one
 //                run after the other; skipped, failed and passed runs in one table and as JSON;
 //                --variant, --param, --fail-fast, --strict, and what ends it before its first run
@@ -716,4 +723,515 @@ void test_interrupt(const Options& o)
                 "\n"
                 "interrupted: 2 runs, 0 passed, 0 failed, 0 skipped, 1 interrupted, 1 not run\n",
                 "test interrupted");
+}
+
+namespace {
+
+/// Replaces the top-level `"file": "<from>"` field in a timeline JSON string for cross-config comparison.
+std::string replace_top_file(std::string text, const std::string& from, const std::string& to)
+{
+    const std::string needle = "\"file\": \"" + from + "\"";
+    const auto pos = text.find(needle);
+    require(pos != std::string::npos, "missing top-level file field " + needle);
+    text.replace(pos, needle.size(), "\"file\": \"" + to + "\"");
+    return text;
+}
+
+/// Extracts the `"series": [...]` section from a pretty-printed timeline JSON.
+std::string timeline_series_json(const std::string& json)
+{
+    const auto start = json.find("  \"series\": [");
+    require(start != std::string::npos, "timeline JSON has no series array:\n" + json);
+    const auto end = json.find("\n  \"lines\": [", start);
+    require(end != std::string::npos, "timeline JSON has no lines array after series:\n" + json);
+    return json.substr(start, end - start);
+}
+
+/// Extracts the `"over_at_ms": ...` line from a scenario JSON fragment.
+std::string over_at_ms_line(const std::string& scen_json)
+{
+    const auto pos = scen_json.find("\"over_at_ms\": ");
+    require(pos != std::string::npos, "scenario JSON has no over_at_ms:\n" + scen_json);
+    const auto nl = scen_json.find('\n', pos);
+    return scen_json.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+}
+
+/// Extracts per-step timing and action fields `(kind, text, start_ms, at_ms, end_ms)` from scenario JSON.
+std::string scenario_step_summary(const std::string& scen_json)
+{
+    std::string out;
+    std::size_t pos = 0;
+    while ((pos = scen_json.find("\"kind\": ", pos)) != std::string::npos)
+    {
+        for (const char* key : {"\"kind\": ", "\"text\": ", "\"start_ms\": ", "\"at_ms\": ", "\"end_ms\": "})
+        {
+            const auto k = scen_json.find(key, pos);
+            require(k != std::string::npos, std::string("missing ") + key + " in scenario JSON:\n" + scen_json);
+            const auto nl = scen_json.find('\n', k);
+            out += scen_json.substr(k, nl == std::string::npos ? std::string::npos : nl - k) + "\n";
+            pos = nl == std::string::npos ? scen_json.size() : nl + 1;
+        }
+    }
+    require(!out.empty(), "scenario JSON has no steps:\n" + scen_json);
+    return out;
+}
+
+} // namespace
+
+/// Multi-ECU template + Japanese/space case names, repeatable --case filtering, template dither
+/// failure, variant calibration matrix (only, absent: true, scale, nested templates), and
+/// run_alone() single-case re-run verification.
+void template_cases_matrix(const Options& o)
+{
+    // Part A: Three ECUs (including glitch 150 on Engine), shared power-on template, and Japanese/space cases.
+    const std::string multi_ecu =
+        "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+        "  - name: Power\n    command: [" + ecu(o) + "]\n"
+        "  - name: Engine\n    command: [" + ecu(o) + "]\n"
+        "  - name: Body\n    command: [" + ecu(o) + "]\n";
+    const fs::path dir_a = scenario_dir(
+        o, multi_ecu,
+        {{"Power", "scenario-variables"}, {"Engine", "scenario-variables glitch 150"}, {"Body", "scenario-variables"}});
+    fs::create_directories(dir_a / "scenarios" / "templates");
+    write_file(dir_a / "scenarios" / "templates" / "power_on_neutral.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "name: Power-on, comms establish, neutral check\n"
+               "parameters:\n"
+               "  comms_timeout_ms: { type: integer, default: 2000 }\n"
+               "  neutral_mode: { type: string, default: auto, values: [off, auto] }\n"
+               "steps:\n"
+               "  - name: 電源ON\n"
+               "    set: { Power.mode: on, Body.mode: \"${neutral_mode}\" }\n"
+               "  - name: 通信確立待ち\n"
+               "    wait_until: { Engine.ticks: { ge: 12 } }\n"
+               "    timeout_ms: \"${comms_timeout_ms}\"\n"
+               "  - name: レバー中立確認\n"
+               "    after_ms: 50\n"
+               "    expect: { Body.mode_now: \"${neutral_mode}\" }\n"
+               "    within_ms: 500\n");
+    write_file(dir_a / "scenarios" / "normal.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "name: 正常系走行\n"
+               "steps:\n"
+               "  - name: 初期化（電源ON〜通信確立〜レバー中立）\n"
+               "    template: templates/power_on_neutral.yaml\n"
+               "  - name: 負荷印加\n"
+               "    set: { Body.level: 40 }\n");
+    write_file(dir_a / "scenarios" / "comms_loss.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "name: 通信断リカバリ\n"
+               "steps:\n"
+               "  - name: 初期化（電源ON〜通信確立〜レバー中立）\n"
+               "    template: templates/power_on_neutral.yaml\n"
+               "  - name: 一時通信断を許容し復帰確認\n"
+               "    wait_until: { Engine.healthy: true }\n"
+               "    timeout_ms: 400\n");
+    write_file(dir_a / "scenarios" / "load_variation.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "name: 負荷変動試験\n"
+               "params:\n"
+               "  boot_timeout_ms: 2000\n"
+               "  load_pct: 50\n"
+               "cases:\n"
+               "  無負荷:\n"
+               "    params: { boot_timeout_ms: 2000, load_pct: 0 }\n"
+               "  定格:\n"
+               "    params: { boot_timeout_ms: 2000, load_pct: 50 }\n"
+               "  \"上限 直前\":\n"
+               "    params: { boot_timeout_ms: 50, load_pct: 95 }\n"
+               "steps:\n"
+               "  - name: 初期化（電源ON〜通信確立〜レバー中立）\n"
+               "    template: templates/power_on_neutral.yaml\n"
+               "    params: { comms_timeout_ms: \"${boot_timeout_ms}\" }\n"
+               "  - name: 負荷設定\n"
+               "    set: { Body.level: \"${load_pct}\" }\n");
+
+    const Captured all_json = launch(o, {"test", "sim.yaml", "--scenarios", "scenarios/", "--json"}, dir_a);
+    expect_code(all_json, 1, "multi-ECU batch test with shared template and Japanese/space cases");
+    const std::string all_out = lf(all_json.standard_output);
+    require(contains(all_out, "\"passed\": 4,\n  \"failed\": 1,\n  \"skipped\": 0,") &&
+                contains(all_out, "\"result\": \"failed\",") && contains(all_out, "\"case\": \"上限 直前\""),
+            "multi-ECU batch JSON summary:\n" + all_out);
+
+    // Repeatable --case filter selects only 無負荷 and "上限 直前", and text output includes template file:line + run_alone().
+    const Captured filtered = launch(
+        o, {"test", "sim.yaml", "--scenarios", "scenarios/load_variation.yaml", "--case", "無負荷", "--case", "上限 直前"}, dir_a);
+    expect_code(filtered, 1, "test with repeatable --case filter including space/Japanese case");
+    const std::string filt_out = lf(filtered.standard_output);
+    require(contains(filt_out, "無負荷") && contains(filt_out, "上限 直前") && !contains(filt_out, "定格") &&
+                contains(filt_out, "通信確立待ち") &&
+                contains(filt_out, "scenarios/templates/power_on_neutral.yaml:") &&
+                contains(filt_out,
+                         "to see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml --speed max "
+                         "--scenario scenarios/load_variation.yaml --case '上限 直前'") &&
+                contains(filt_out, "FAILED: 2 runs, 1 passed, 1 failed, 0 skipped"),
+            "repeatable --case filtered text output:\n" + filt_out);
+
+    // Reproduce the failed case alone using the options printed by run_alone().
+    const Captured rerun = launch(
+        o, {"run", "sim.yaml", "--speed", "max", "--scenario", "scenarios/load_variation.yaml", "--case", "上限 直前"}, dir_a);
+    expect_code(rerun, 1, "re-run failed Japanese/space case alone");
+    const std::string rerun_all = lf(rerun.standard_output) + "\n" + lf(rerun.standard_error);
+    require(contains(rerun_all, "上限 直前") && contains(rerun_all, "通信確立待ち") &&
+                contains(rerun_all, "初期化（電源ON〜通信確立〜レバー中立）") &&
+                contains(rerun_all, "scenarios/templates/power_on_neutral.yaml:9") &&
+                contains(rerun_all, "scenarios/load_variation.yaml:"),
+            "single-case failure attribution and call stack:\n" + rerun_all);
+    log("CHECK multi-ECU glitch + shared template + Japanese/space --case filter & run_alone() -> ok");
+
+    // Part B: Variant calibration matrix (only, absent: true, scale, nested templates) + template dither failure.
+    const fs::path dir_b = o.work_dir / "matrix";
+    fs::create_directories(dir_b / "scenarios" / "templates");
+    write_file(dir_b / "Body.behaviour", "scenario-variables\n");
+    write_file(dir_b / "sim.yaml",
+               "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+               "  - name: Body\n    command: [" + ecu(o) + "]\n"
+               "variants:\n"
+               "  prototype:\n"
+               "    params: { cal_target: 0.4, min_ticks: 1 }\n"
+               "    participants:\n"
+               "      Body:\n"
+               "        variables:\n"
+               "          heater: { absent: true }\n"
+               "          throttle: { from: level, scale: 0.01 }\n"
+               "  production:\n"
+               "    params: { cal_target: 60, min_ticks: 9999 }\n"
+               "    participants:\n"
+               "      Body:\n"
+               "        variables:\n"
+               "          heater: { from: ticks }\n"
+               "          throttle: { from: level, scale: 1.0 }\n");
+    write_file(dir_b / "scenarios" / "templates" / "heater_check.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  min_heater: { type: integer }\n"
+               "steps:\n"
+               "  - expect: { Body.heater: { ge: \"${min_heater}\" } }\n"
+               "    within_ms: 100\n");
+    write_file(dir_b / "scenarios" / "templates" / "init.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  target: { type: number }\n"
+               "  min_heater: { type: integer }\n"
+               "steps:\n"
+               "  - set: { Body.throttle: \"${target}\" }\n"
+               "  - template: heater_check.yaml\n"
+               "    params: { min_heater: \"${min_heater}\" }\n");
+    write_file(dir_b / "scenarios" / "calib.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "params: { cal_target: 20, min_heater: 1 }\n"
+               "cases:\n"
+               "  nominal: { params: { min_heater: 1 } }\n"
+               "  cold_soak:\n"
+               "    only: [production]\n"
+               "    params: { cal_target: 75, min_heater: 2 }\n"
+               "steps:\n"
+               "  - template: templates/init.yaml\n"
+               "    params: { target: \"${cal_target}\", min_heater: \"${min_heater}\" }\n");
+
+    const Captured calib = launch(o, {"test", "sim.yaml", "--scenarios", "scenarios/calib.yaml", "--json"}, dir_b);
+    expect_code(calib, 0, "calibration matrix with only, absent: true, scale, and nested templates");
+    const std::string calib_out = lf(calib.standard_output);
+    require(contains(calib_out, "\"passed\": 3,\n  \"failed\": 0,\n  \"skipped\": 1,") &&
+                contains(calib_out, "\"variant\": \"prototype\",\n      \"scenario\": \"scenarios/calib.yaml\",\n"
+                                    "      \"result\": \"skipped\",\n      \"reason\": \"the case is only for production (its only)\",\n"
+                                    "      \"run\": null,\n      \"case\": \"cold_soak\"") &&
+                contains(calib_out, "\"status\": \"skipped\",") &&
+                contains(calib_out, "scenarios/templates/heater_check.yaml"),
+            "calibration matrix JSON:\n" + calib_out);
+
+    // Template dither step + failing expect under (variant=production, case=定格) + run_alone() re-run.
+    write_file(dir_b / "scenarios" / "templates" / "dither_check.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  min_ticks: { type: integer }\n"
+               "steps:\n"
+               "  - dither: { Body.throttle: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+               "  - name: Tolerance check\n"
+               "    expect: { Body.heater: { ge: \"${min_ticks}\" } }\n"
+               "    within_ms: 30\n");
+    write_file(dir_b / "scenarios" / "dither_fail.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "params: { min_ticks: 1 }\n"
+               "cases:\n"
+               "  無負荷: {}\n"
+               "  定格: {}\n"
+               "steps:\n"
+               "  - template: templates/dither_check.yaml\n"
+               "    params: { min_ticks: \"${min_ticks}\" }\n");
+    const Captured dither_test = launch(
+        o, {"test", "sim.yaml", "--variant", "production", "--case", "定格", "--scenarios", "scenarios/dither_fail.yaml"}, dir_b);
+    expect_code(dither_test, 1, "template dither failure under variant + Japanese case");
+    const std::string dither_out = lf(dither_test.standard_output);
+    require(contains(dither_out, "scenarios/templates/dither_check.yaml:") &&
+                contains(dither_out,
+                         "to see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml --speed max "
+                         "--variant production --scenario scenarios/dither_fail.yaml --case '定格'"),
+            "template dither failure output:\n" + dither_out);
+    const Captured dither_alone = launch(
+        o, {"run", "sim.yaml", "--speed", "max", "--variant", "production", "--scenario", "scenarios/dither_fail.yaml", "--case", "定格"},
+        dir_b);
+    expect_code(dither_alone, 1, "re-run template dither failure alone");
+    require(contains(lf(dither_alone.standard_output), "定格") &&
+                contains(lf(dither_alone.standard_output), "scenarios/templates/dither_check.yaml:6"),
+            "template dither run_alone output:\n" + lf(dither_alone.standard_output));
+    log("CHECK calibration matrix (only, absent, scale, nested templates) and template dither failure -> ok");
+}
+
+/// Case-bound CSV points inside templates with variant scale, dither sweep, and virtual-time
+/// determinism across --speed 0.5, --speed max, and slow-ms 5.
+void template_csv_determinism(const Options& o)
+{
+    const fs::path dir = o.work_dir / "csv_det";
+    fs::create_directories(dir / "scenarios" / "templates" / "traces");
+    write_file(dir / "Body.behaviour", "scenario-variables\n");
+    write_file(dir / "sim_scaled.yaml",
+               "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+               "  - name: Body\n    command: [" + ecu(o) + "]\n"
+               "variants:\n"
+               "  scaled:\n"
+               "    participants:\n"
+               "      Body:\n"
+               "        variables:\n"
+               "          fill: { from: level, scale: 0.01 }\n"
+               "  raw:\n"
+               "    participants:\n"
+               "      Body:\n"
+               "        variables:\n"
+               "          fill: { from: level, scale: 1.0 }\n");
+    write_file(dir / "scenarios" / "templates" / "traces" / "low.csv", "ms,val\n0,0.1\n40,0.3\n");
+    write_file(dir / "scenarios" / "templates" / "traces" / "high.csv", "ms,val\n0,0.4\n40,0.8\n");
+    write_file(dir / "scenarios" / "templates" / "csv_wave.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  profile: { type: string }\n"
+               "steps:\n"
+               "  - wave:\n"
+               "      Body.fill:\n"
+               "        points: { file: \"traces/${profile}.csv\", value: val }\n");
+    write_file(dir / "scenarios" / "sweep.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "params: { profile: low }\n"
+               "cases:\n"
+               "  low_case: { params: { profile: low } }\n"
+               "  high_case: { params: { profile: high } }\n"
+               "steps:\n"
+               "  - template: templates/csv_wave.yaml\n"
+               "    params: { profile: \"${profile}\" }\n");
+
+    const Captured scaled_res = launch(
+        o, {"test", "sim_scaled.yaml", "--variant", "scaled", "--scenarios", "scenarios/sweep.yaml", "--json"}, dir);
+    expect_code(scaled_res, 0, "template CSV points bound by cases with variant scale");
+    require(contains(lf(scaled_res.standard_output), "\"passed\": 2,\n  \"failed\": 0,\n  \"skipped\": 0,"),
+            "scaled CSV cases JSON:\n" + lf(scaled_res.standard_output));
+
+    // Three CSV trace cases + template dither + --speed 0.5 / --speed max / slow-ms 5 timeline determinism.
+    write_file(dir / "scenarios" / "templates" / "traces" / "city.csv", "ms,throttle\n0,10\n40,30\n");
+    write_file(dir / "scenarios" / "templates" / "traces" / "highway.csv", "ms,throttle\n0,40\n40,70\n");
+    write_file(dir / "scenarios" / "templates" / "traces" / "hill_climb.csv", "ms,throttle\n0,60\n40,90\n");
+    write_file(dir / "scenarios" / "templates" / "drive_cycle.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  trace_csv: { type: string }\n"
+               "  dither_amp: { type: number }\n"
+               "  target_ticks: { type: integer }\n"
+               "steps:\n"
+               "  - dither: { Body.level: { triangle: { amplitude: \"${dither_amp}\", period_ms: 80 } } }\n"
+               "  - wave:\n"
+               "      Body.level:\n"
+               "        points: { file: \"${trace_csv}\", value: throttle }\n"
+               "  - wait_until: { Body.ticks: { ge: \"${target_ticks}\" } }\n"
+               "    timeout_ms: 200\n"
+               "  - expect: { Body.ticks: { ge: \"${target_ticks}\" } }\n"
+               "    hold_for_ms: 20\n");
+    write_file(dir / "scenarios" / "endurance.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "params: { trace_csv: \"traces/city.csv\", dither_amp: 1.5, target_ticks: 2 }\n"
+               "cases:\n"
+               "  city: { params: { trace_csv: \"traces/city.csv\", dither_amp: 1.0, target_ticks: 2 } }\n"
+               "  highway: { params: { trace_csv: \"traces/highway.csv\", dither_amp: 1.5, target_ticks: 2 } }\n"
+               "  hill_climb: { params: { trace_csv: \"traces/hill_climb.csv\", dither_amp: 2.0, target_ticks: 2 } }\n"
+               "steps:\n"
+               "  - template: templates/drive_cycle.yaml\n"
+               "    params: { trace_csv: \"${trace_csv}\", dither_amp: \"${dither_amp}\", target_ticks: \"${target_ticks}\" }\n");
+    write_file(dir / "sim_fast.yaml",
+               "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+               "  - name: Body\n    command: [" + ecu(o) + "]\n");
+
+    const Captured sweep = launch(o, {"test", "sim_fast.yaml", "--scenarios", "scenarios/endurance.yaml", "--json"}, dir);
+    expect_code(sweep, 0, "three CSV trace cases with template dither");
+    const std::string sweep_out = lf(sweep.standard_output);
+    const auto p_city = sweep_out.find("\"case\": \"city\"");
+    const auto p_hwy = sweep_out.find("\"case\": \"highway\"");
+    const auto p_hill = sweep_out.find("\"case\": \"hill_climb\"");
+    require(contains(sweep_out, "\"passed\": 3,\n  \"failed\": 0,\n  \"skipped\": 0,") &&
+                p_city != std::string::npos && p_hwy != std::string::npos && p_hill != std::string::npos &&
+                p_city < p_hwy && p_hwy < p_hill,
+            "endurance cases order and pass counts:\n" + sweep_out);
+
+    expect_code(launch(o, {"run", "sim_fast.yaml", "--scenario", "scenarios/endurance.yaml", "--case", "highway",
+                           "--speed", "0.5", "--timeline", "tl_05.json"}, dir),
+                0, "endurance highway --speed 0.5");
+    expect_code(launch(o, {"run", "sim_fast.yaml", "--scenario", "scenarios/endurance.yaml", "--case", "highway",
+                           "--speed", "max", "--timeline", "tl_max.json"}, dir),
+                0, "endurance highway --speed max");
+    const std::string tl_05 = lf(read_text(dir / "tl_05.json"));
+    const std::string tl_max = lf(read_text(dir / "tl_max.json"));
+    expect_text(tl_05, tl_max, "timeline JSON across --speed 0.5 and --speed max");
+
+    // Same run with slow-ms 5 ECU behaviour in a separate directory: identical timeline after normalizing file name.
+    const fs::path dir_slow = o.work_dir / "csv_det_slow";
+    fs::create_directories(dir_slow / "scenarios" / "templates" / "traces");
+    write_file(dir_slow / "Body.behaviour", "scenario-variables slow-ms 5\n");
+    write_file(dir_slow / "sim_slow.yaml",
+               "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+               "  - name: Body\n    command: [" + ecu(o) + "]\n");
+    for (const char* name : {"city.csv", "highway.csv", "hill_climb.csv"})
+    {
+        fs::copy_file(dir / "scenarios" / "templates" / "traces" / name,
+                      dir_slow / "scenarios" / "templates" / "traces" / name,
+                      fs::copy_options::overwrite_existing);
+    }
+    fs::copy_file(dir / "scenarios" / "templates" / "drive_cycle.yaml",
+                  dir_slow / "scenarios" / "templates" / "drive_cycle.yaml", fs::copy_options::overwrite_existing);
+    fs::copy_file(dir / "scenarios" / "endurance.yaml", dir_slow / "scenarios" / "endurance.yaml",
+                  fs::copy_options::overwrite_existing);
+    expect_code(launch(o, {"run", "sim_slow.yaml", "--scenario", "scenarios/endurance.yaml", "--case", "highway",
+                           "--speed", "max", "--timeline", "tl_slow.json"}, dir_slow),
+                0, "endurance highway with slow-ms 5");
+    const std::string tl_slow = replace_top_file(lf(read_text(dir_slow / "tl_slow.json")), "sim_slow.yaml", "sim_fast.yaml");
+    expect_text(tl_slow, tl_max, "timeline JSON across fast ECU and slow-ms 5 ECU");
+    log("CHECK case-bound CSV points, variant scale, and virtual-time determinism (--speed 0.5 / max / slow-ms 5) -> ok");
+}
+
+/// Cases with hex integer params + --param CLI string override, direct vs template+case equivalence
+/// on real Engine+Dashboard ECUs, and serve --once Events v4 provenance for template steps.
+void template_equivalence_and_serve(const Options& o)
+{
+    // Part A: cases + hex integer param (0x10 -> 16) + --param string override + serve --once Events v4 provenance.
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+                                      "  - name: Body\n    command: [" + ecu(o) + "]\n",
+                                      {{"Body", "scenario-variables"}});
+    fs::create_directories(dir / "templates");
+    write_file(dir / "templates" / "apply.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  mode_name: { type: string }\n"
+               "  hex_val: { type: integer }\n"
+               "steps:\n"
+               "  - set: { Body.mode: \"${mode_name}\", Body.level: \"${hex_val}\" }\n"
+               "  - expect: { Body.mode_now: auto }\n"
+               "    within_ms: 100\n");
+    write_file(dir / "hex_cases.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "params: { mode_name: off, hex_val: 0x10 }\n"
+               "cases:\n"
+               "  c1: { params: { mode_name: off, hex_val: 0x10 } }\n"
+               "steps:\n"
+               "  - template: templates/apply.yaml\n"
+               "    params: { mode_name: \"${mode_name}\", hex_val: \"${hex_val}\" }\n");
+    const Captured hex_run = launch(
+        o, {"run", "sim.yaml", "--scenario", "hex_cases.yaml", "--case", "c1", "--param", "mode_name=auto", "--json"}, dir);
+    expect_code(hex_run, 0, "run cases + hex param + --param string override");
+    const std::string hex_scn = scenario_json(lf(hex_run.standard_output));
+    require(contains(hex_scn, "\"case\": \"c1\",") && contains(hex_scn, "Body.level = 16") &&
+                contains(hex_scn, "Body.mode = auto"),
+            "hex + --param override scenario JSON:\n" + hex_scn);
+
+    // Interpolated Japanese step name in template: run --json with --case and serve --once Events v4 without case.
+    write_file(dir / "templates" / "stage.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  stage: { type: string }\n"
+               "steps:\n"
+               "  - name: \"確認 (${stage})\"\n"
+               "    set: { Body.level: 30 }\n");
+    write_file(dir / "stage_cased.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "params: { stage: base }\n"
+               "cases:\n"
+               "  定格: { params: { stage: \"定格\" } }\n"
+               "steps:\n"
+               "  - name: Run stage\n"
+               "    template: templates/stage.yaml\n"
+               "    params: { stage: \"${stage}\" }\n");
+    const Captured cased_run = launch(
+        o, {"run", "sim.yaml", "--scenario", "stage_cased.yaml", "--case", "定格", "--json"}, dir);
+    expect_code(cased_run, 0, "run --json with Japanese case and interpolated template step name");
+    const std::string cased_scn = scenario_json(lf(cased_run.standard_output));
+    require(contains(cased_scn, "\"case\": \"定格\",") && contains(cased_scn, "\"name\": \"確認 (定格)\",") &&
+                contains(cased_scn, "\"file\": \"templates/stage.yaml\",") && contains(cased_scn, "\"call_stack\": ["),
+            "cased template run JSON:\n" + cased_scn);
+
+    write_file(dir / "stage_caseless.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "params: { stage: base }\n"
+               "steps:\n"
+               "  - name: Run stage\n"
+               "    template: templates/stage.yaml\n"
+               "    params: { stage: \"${stage}\" }\n");
+    const Captured served = launch(
+        o, {"serve", "--once", "sim.yaml", "--scenario", "stage_caseless.yaml", "--param", "stage=定格", "--speed", "max"},
+        dir);
+    expect_code(served, 0, "serve --once with caseless template scenario and params");
+    const std::vector<std::string> evts = check_events(lf(served.standard_output));
+    const auto step_evts = events_with(
+        evts, {"\"event\":\"scenario_step\"", "\"name\":\"確認 (定格)\"", "\"file\":\"templates/stage.yaml\"", "\"call_stack\":["});
+    const auto result_evts = events_with(evts, {"\"event\":\"result\"", "\"name\":\"確認 (定格)\""});
+    require(!step_evts.empty() && !result_evts.empty(),
+            "serve --once Events v4 template provenance:\n" + lf(served.standard_output));
+    log("CHECK cases + hex param + --param override and serve --once Events v4 template provenance -> ok");
+
+    // Part B: Direct scenario vs Template + --case equivalence on real Engine + Dashboard ECUs.
+    const fs::path ex = example_copy(o);
+    fs::create_directories(ex / "scenarios" / "templates");
+    write_file(ex / "scenarios" / "templates" / "throttle_check.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  throttle: { type: integer }\n"
+               "  min_speed: { type: integer }\n"
+               "steps:\n"
+               "  - set: { Engine.engine.throttle: \"${throttle}\" }\n"
+               "  - wait_until: { Engine.engine.speed: { ge: \"${min_speed}\" } }\n"
+               "    timeout_ms: 500\n"
+               "  - after_ms: 50\n"
+               "    expect: { Dashboard.dashboard.engine_speed: { ge: \"${min_speed}\" } }\n"
+               "    within_ms: 200\n");
+    write_file(ex / "scenarios" / "direct.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "steps:\n"
+               "  - set: { Engine.engine.throttle: 50 }\n"
+               "  - wait_until: { Engine.engine.speed: { ge: 1700 } }\n"
+               "    timeout_ms: 500\n"
+               "  - after_ms: 50\n"
+               "    expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }\n"
+               "    within_ms: 200\n");
+    write_file(ex / "scenarios" / "templated.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "params: { throttle: 50, min_speed: 1700 }\n"
+               "cases:\n"
+               "  rated: { params: { throttle: 50, min_speed: 1700 } }\n"
+               "steps:\n"
+               "  - template: templates/throttle_check.yaml\n"
+               "    params: { throttle: \"${throttle}\", min_speed: \"${min_speed}\" }\n");
+
+    const Captured r_direct = launch(
+        o, {"run", "simulation.yaml", "--speed", "max", "--scenario", "scenarios/direct.yaml", "--json", "--timeline", "tl_direct.json"},
+        ex);
+    expect_code(r_direct, 0, "direct Engine+Dashboard scenario");
+    const Captured r_tpl = launch(
+        o,
+        {"run", "simulation.yaml", "--speed", "max", "--scenario", "scenarios/templated.yaml", "--case", "rated", "--json",
+         "--timeline", "tl_tpl.json"},
+        ex);
+    expect_code(r_tpl, 0, "template + --case Engine+Dashboard scenario");
+    const std::string direct_scn = scenario_json(lf(r_direct.standard_output));
+    const std::string tpl_scn = scenario_json(lf(r_tpl.standard_output));
+    expect_text(over_at_ms_line(tpl_scn), over_at_ms_line(direct_scn), "direct vs template+case over_at_ms");
+    expect_text(scenario_step_summary(tpl_scn), scenario_step_summary(direct_scn), "direct vs template+case steps");
+    expect_text(timeline_series_json(lf(read_text(ex / "tl_tpl.json"))),
+                timeline_series_json(lf(read_text(ex / "tl_direct.json"))),
+                "direct vs template+case timeline series");
+    log("CHECK direct vs template + --case equivalence on Engine+Dashboard -> ok");
 }

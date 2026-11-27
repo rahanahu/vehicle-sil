@@ -90,4 +90,40 @@ if(NOT "${lines_simulation.live.dashboard.yaml}" STREQUAL "${lines_simulation.da
   message(FATAL_ERROR "template/simulation.live.dashboard.yaml is not the same as simulation.dashboard.yaml "
                       "(comments aside). Copy the change of one to the other")
 endif()
-message(STATUS "the template's simulation: check, run and run --scenario passed")
+# Template + multi-case check --case, run --case, and batch test against the template project's ECUs.
+set(cases_dir "${DIR}/scenarios_cases")
+file(REMOVE_RECURSE "${cases_dir}")
+file(MAKE_DIRECTORY "${cases_dir}/templates")
+file(WRITE "${cases_dir}/templates/throttle_case.yaml"
+"vehicle_sil_scenario_template: 1
+parameters:
+  throttle: { type: integer }
+  min_speed: { type: integer }
+steps:
+  - name: apply throttle
+    set: { Engine.engine.throttle: \"\${throttle}\" }
+  - name: wait engine speed
+    wait_until: { Engine.engine.speed: { ge: \"\${min_speed}\" } }
+    timeout_ms: 500
+")
+file(WRITE "${cases_dir}/multi_case.yaml"
+"vehicle_sil_scenario: 1
+params: { throttle: 30, min_speed: 1200 }
+cases:
+  low: { params: { throttle: 30, min_speed: 1200 } }
+  high: { params: { throttle: 50, min_speed: 1700 } }
+steps:
+  - name: run throttle template
+    template: templates/throttle_case.yaml
+    params: { throttle: \"\${throttle}\", min_speed: \"\${min_speed}\" }
+")
+launch(0 check simulation.yaml --scenario scenarios_cases/multi_case.yaml --case low)
+launch(0 run simulation.yaml --speed max --scenario scenarios_cases/multi_case.yaml --case high)
+launch(0 test simulation.yaml --scenarios scenarios_cases)
+string(FIND "${output}" "passed: 2 runs, 2 passed, 0 failed, 0 skipped" cases_passed_at)
+if(cases_passed_at EQUAL -1)
+  file(REMOVE_RECURSE "${cases_dir}")
+  message(FATAL_ERROR "template test --scenarios scenarios_cases did not pass both cases:\n${output}")
+endif()
+file(REMOVE_RECURSE "${cases_dir}")
+message(STATUS "the template's simulation: check, run, run --scenario, and template multi-case tests passed")

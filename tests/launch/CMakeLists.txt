@@ -370,6 +370,9 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       step
       step_width
       stop_once
+      template_cases_matrix
+      template_csv_determinism
+      template_equivalence_and_serve
       test_command
       test_interrupt
       time_usage
