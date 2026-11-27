@@ -245,7 +245,8 @@ class ServeClientTest(unittest.TestCase):
         (tpl_dir / "step.yaml").write_text(
             "vehicle_sil_scenario_template: 1\n"
             "parameters:\n"
-            "  throttle: { type: integer }\n"
+            "  throttle: { type: number }\n"
+            "  min_rpm: { type: integer }\n"
             "  code: { type: string }\n"
             "  tag: { type: string }\n"
             "steps:\n"
@@ -253,7 +254,9 @@ class ServeClientTest(unittest.TestCase):
             "    at_ms: 0\n"
             "    set: { Engine.engine.throttle: \"${throttle}\" }\n"
             "  - after_ms: 20\n"
-            "    expect: { Engine.engine.throttle: \"${throttle}\" }\n",
+            "    expect:\n"
+            "      Engine.engine.throttle: \"${throttle}\"\n"
+            "      Engine.engine.speed: { ge: \"${min_rpm}\" }\n",
             encoding="utf-8",
         )
         scn = SCRATCH / "serve_cases_roundtrip.yaml"
@@ -261,11 +264,11 @@ class ServeClientTest(unittest.TestCase):
             "vehicle_sil_scenario: 1\n"
             "name: case roundtrip\n"
             "cases:\n"
-            "  low: { params: { throttle: 10, code: \"0001\", tag: \"10\" } }\n"
-            "  high: { params: { throttle: 50, code: \"0002\", tag: \"20\" } }\n"
+            "  low: { params: { throttle: 10, min_rpm: 10, code: \"0001\", tag: \"10\" } }\n"
+            "  high: { params: { throttle: 50, min_rpm: 100, code: \"0002\", tag: \"20\" } }\n"
             "steps:\n"
             "  - template: case_tpl_templates/step.yaml\n"
-            "    params: { throttle: \"${throttle}\", code: \"${code}\", tag: \"${tag}\" }\n",
+            "    params: { throttle: \"${throttle}\", min_rpm: \"${min_rpm}\", code: \"${code}\", tag: \"${tag}\" }\n",
             encoding="utf-8",
         )
 
@@ -277,7 +280,7 @@ class ServeClientTest(unittest.TestCase):
             with runner.start(
                 scenario=scn.as_posix(),
                 case="low",
-                params={"throttle": 25, "code": "0123", "tag": "50"},
+                params={"throttle": 25, "min_rpm": 50, "code": "0123", "tag": "50"},
                 timeout=scaled(60.0),
             ) as run1:
                 res1 = run1.wait(timeout=scaled(120.0))
@@ -286,6 +289,7 @@ class ServeClientTest(unittest.TestCase):
                 self.assertEqual(res1["scenario"]["steps"][0]["name"], "Run 0123-50")
                 by_name = {p["name"]: p for p in res1["scenario"]["params"]}
                 self.assertEqual(by_name["throttle"]["value"], 25)
+                self.assertEqual(by_name["min_rpm"]["value"], 50)
                 self.assertEqual(by_name["code"]["value"], "0123")
                 self.assertEqual(by_name["tag"]["value"], "50")
                 self.assertEqual(run1.status["launcher_state"], "ready")
@@ -296,10 +300,12 @@ class ServeClientTest(unittest.TestCase):
                 after_scenario="pause",
                 timeout=scaled(60.0),
             ) as run2:
+                handover = run2.wait_for_event("state", handed_over=True, timeout=scaled(30.0))
+                self.assertTrue(handover["paused"])
                 with run2.control(timeout=scaled(10.0)) as c:
-                    c.sim.wait_paused(timeout=scaled(30.0))
                     c.sim.stop()
                 res2 = run2.wait(timeout=scaled(120.0))
+                self.assertEqual(res2["scenario"]["status"], "passed", res2)
                 self.assertEqual(res2["scenario"]["case"], "high")
                 self.assertEqual(run2.status["launcher_state"], "ready")
 
@@ -309,12 +315,12 @@ class ServeClientTest(unittest.TestCase):
             LAUNCH,
             cfg,
             case="low",
-            params={"throttle": 40, "code": "9999", "tag": "99"},
+            params={"throttle": 40, "min_rpm": 500, "code": "9999", "tag": "99"},
             arguments=[
                 "--scenario",
                 scn.as_posix(),
                 "--param",
-                "throttle=0x10",
+                "min_rpm=0x10",
                 "--param",
                 "code=0123",
                 "--param",
@@ -326,8 +332,10 @@ class ServeClientTest(unittest.TestCase):
             self.assertEqual(res["scenario"]["case"], "low")
             self.assertEqual(res["scenario"]["steps"][0]["name"], "Run 0123-50")
             by_name = {p["name"]: p for p in res["scenario"]["params"]}
-            self.assertEqual(by_name["throttle"]["value"], 16)
-            self.assertEqual(by_name["throttle"]["from"], "command_line")
+            self.assertEqual(by_name["throttle"]["value"], 40)
+            self.assertEqual(by_name["throttle"]["from"], "request_file")
+            self.assertEqual(by_name["min_rpm"]["value"], 16)
+            self.assertEqual(by_name["min_rpm"]["from"], "command_line")
             self.assertEqual(by_name["code"]["value"], "0123")
             self.assertEqual(by_name["code"]["from"], "command_line")
             self.assertEqual(by_name["tag"]["value"], "50")
