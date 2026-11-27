@@ -983,7 +983,7 @@
             "number"
           ],
           "minLength": 1,
-          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*\\\\)",
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*\\\\)(?!.*//)(?!.*/$)",
           "description": "The CSV file, from the directory of this template file, with / between directories: not an absolute path. Relative .. segments may not escape the root scenario's directory."
         },
         "value": {

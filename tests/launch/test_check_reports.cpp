@@ -1518,3 +1518,58 @@ TEST_CASE(check_scenario_with_cases_and_case_selection)
     CHECK(json.find("\"case\": \"無負荷\"") != std::string::npos);
     CHECK(json.find("\"from\": \"case\"") != std::string::npos);
 }
+
+TEST_CASE(check_json_records_template_after_file_and_after_line_in_scenario_lines)
+{
+    const std::string tplText =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - wait_until: { Engine.speed: { ge: 50 } }\n"
+        "    timeout_ms: 100\n"
+        "  - dither: { Engine.level: { square: { amplitude: 2, period_ms: 40 } } }\n"
+        "  - set: { Engine.level: 50 }\n";
+    const std::string scnText =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - template: templates/wait_dither.yaml\n";
+
+    Setup s = good_pair();
+    control::VariableInfo level = variable("level");
+    level.type = control::ValueType::Integer;
+    level.causality = control::Causality::Input;
+    control::VariableInfo speed = variable("speed");
+    speed.type = control::ValueType::Real;
+    speed.causality = control::Causality::Output;
+    s.results[0].ecu->description.variables = {level, speed};
+    s.results[0].ecu->variables_reported = true;
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2, 1};
+
+    Checked r;
+    r.file = "sim.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+
+    scenario::ScenarioContext ctx;
+    ctx.scenario_file = "scn.yaml";
+    ctx.read_template = [&](const std::string& rel, std::string& prob) -> std::optional<std::string> {
+        if (rel == "templates/wait_dither.yaml")
+        {
+            return tplText;
+        }
+        prob = "missing";
+        return std::nullopt;
+    };
+    scenario::ScenarioRead read = scenario::read_scenario(scnText, scenario::scenario_catalog(r), ctx);
+    if (!read.scenario)
+    {
+        throw unit::Failure(lines(read.findings));
+    }
+    r.scenario.emplace();
+    r.scenario->file = "scn.yaml";
+    r.scenario->scenario = std::move(read.scenario);
+
+    const std::string json = format_json(r);
+    CHECK(json.find("\"file\": \"templates/wait_dither.yaml\"") != std::string::npos);
+    CHECK(json.find("\"after_file\": \"templates/wait_dither.yaml\"") != std::string::npos);
+    CHECK(json.find("\"after_line\": 3") != std::string::npos);
+}

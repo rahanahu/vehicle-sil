@@ -4235,3 +4235,245 @@ TEST_CASE(scenario_cases_parsing_precedence_only_intersection_and_inspect)
         CHECK(inspSyntax.params_incomplete);
     }
 }
+
+TEST_CASE(scenario_tier5_adversarial_template_boundaries_and_dithers)
+{
+    std::map<std::string, std::string> files;
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/s.yaml";
+    ctx.read_template = [&](const std::string& p, std::string& prob) -> std::optional<std::string> {
+        if (const auto it = files.find(p); it != files.end())
+        {
+            return it->second;
+        }
+        prob = "does not exist";
+        return std::nullopt;
+    };
+    ctx.read_file = ctx.read_template;
+    const auto run_check = [&](const std::string& yaml, ScenarioContext custom) { return read_scenario(yaml, catalog(), custom); };
+
+    // Gap 1: Repeated broken template call emits 1 syntax finding (no duplicate/crash) and keeps params_incomplete == true;
+    // plus malformed template AST variants (NUL, UTF-16 BOM, comment-only, sequence root, anchor/alias, multi-doc ---).
+    files["templates/bad_syntax.yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Body.level: [1 }\n";
+    {
+        ScenarioContext c2 = ctx;
+        c2.params = {ParamValue{"cli_param", "50", false, ParamSource::CommandLine, 0, true}};
+        const ScenarioRead rep = run_check(
+            "vehicle_sil_scenario: 1\nsteps:\n"
+            "  - template: templates/bad_syntax.yaml\n    params: { throttle: \"${cli_param}\" }\n"
+            "  - template: templates/bad_syntax.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            c2);
+        CHECK(rep.params_incomplete);
+        CHECK(rep.usage_errors.empty());
+        const auto syntaxCount = std::count_if(rep.findings.begin(), rep.findings.end(),
+                                               [](const Finding& f) { return f.code == "syntax"; });
+        CHECK_EQ(syntaxCount, 1);
+    }
+    files["templates/nul.yaml"] = std::string("vehicle_sil_scenario_template: 1\nsteps:\0\n", 42);
+    CHECK(lines(run_check(kHead + "  - template: templates/nul.yaml\n", ctx).findings).find("encoding:") != std::string::npos);
+
+    files["templates/utf16.yaml"] = std::string("\xFF\xFEvehicle_sil_scenario_template: 1\n", 35);
+    CHECK(lines(run_check(kHead + "  - template: templates/utf16.yaml\n", ctx).findings).find("encoding:") != std::string::npos);
+
+    files["templates/comment_only.yaml"] = "# just a comment\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/comment_only.yaml\n", ctx).findings).find("not-a-template:") !=
+          std::string::npos);
+
+    files["templates/list_root.yaml"] = "- set: { Body.level: 1 }\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/list_root.yaml\n", ctx).findings).find("not-a-template:") !=
+          std::string::npos);
+
+    files["templates/anchor.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - set: &a { Body.level: 1 }\n"
+        "  - set: *a\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/anchor.yaml\n", ctx).findings).find("unsupported-yaml:") !=
+          std::string::npos);
+
+    files["templates/multi_doc.yaml"] =
+        "vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Body.level: 1 }\n---\nvehicle_sil_scenario_template: 1\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/multi_doc.yaml\n", ctx).findings).find("unsupported-yaml:") !=
+          std::string::npos);
+
+    // Gap 2: Exact boundaries kMaxTemplateDepth (16 pass vs 17 fail), kMaxExpandedSteps (10,000 pass vs 10,001 fail),
+    // ./self.yaml cycle normalization, and root templates/../templates/leaf.yaml rejection.
+    for (int d = 1; d <= 17; ++d)
+    {
+        const std::string next = d < 17 ? "  - template: depth_" + std::to_string(d + 1) + ".yaml\n" : "  - set: { Body.level: 1 }\n";
+        files["templates/depth_" + std::to_string(d) + ".yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n" + next;
+    }
+    {
+        const ScenarioRead depth16 = run_check(kHead + "  - template: templates/depth_2.yaml\n", ctx);
+        CHECK(depth16.scenario.has_value());
+        CHECK(lines(depth16.findings).empty());
+        CHECK_EQ(depth16.scenario->steps.size(), std::size_t{1});
+
+        const ScenarioRead depth17 = run_check(kHead + "  - template: templates/depth_1.yaml\n", ctx);
+        CHECK(!depth17.scenario.has_value());
+        CHECK(lines(depth17.findings).find("scenario-template-depth:") != std::string::npos);
+    }
+    {
+        std::string hundredSteps = "vehicle_sil_scenario_template: 1\nsteps:\n";
+        for (int s = 0; s < 100; ++s)
+        {
+            hundredSteps += "  - set: { Body.level: 1 }\n";
+        }
+        files["templates/hundred.yaml"] = hundredSteps;
+        files["templates/one.yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Body.level: 1 }\n";
+        std::string tenK = kHead;
+        for (int c = 0; c < 100; ++c)
+        {
+            tenK += "  - template: templates/hundred.yaml\n";
+        }
+        const ScenarioRead pass10k = run_check(tenK, ctx);
+        CHECK(pass10k.scenario.has_value());
+        CHECK_EQ(pass10k.scenario->steps.size(), std::size_t{10000});
+
+        const ScenarioRead fail10001 = run_check(tenK + "  - template: templates/one.yaml\n", ctx);
+        CHECK(!fail10001.scenario.has_value());
+        CHECK(lines(fail10001.findings).find("scenario-template-steps:") != std::string::npos);
+    }
+    files["templates/self_dot.yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n  - template: ./self_dot.yaml\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/self_dot.yaml\n", ctx).findings).find("scenario-template-cycle:") !=
+          std::string::npos);
+    CHECK(lines(run_check(kHead + "  - template: templates/../templates/one.yaml\n", ctx).findings)
+              .find("scenario-template-file:") != std::string::npos);
+
+    // Gap 3: InheritedTiming mixed at_ms: 100 -> after_ms: 20 -> at_ms: 110 rejection,
+    // and nested wait_until wait_file_ attribution.
+    files["templates/mixed_time.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - after_ms: 20\n"
+        "    set: { Body.level: 1 }\n"
+        "  - at_ms: 110\n"
+        "    set: { Body.level: 2 }\n";
+    {
+        const std::string errs = lines(run_check(kHead + "  - at_ms: 100\n    template: templates/mixed_time.yaml\n", ctx).findings);
+        CHECK(errs.find("scenario-time:") != std::string::npos);
+        CHECK(errs.find("at_ms is 110, before the end of the step before it (120 ms)") != std::string::npos);
+        CHECK(errs.find("inside a template, at_ms is still the scenario's absolute time") != std::string::npos);
+    }
+    files["templates/wait_outer.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - wait_until: { Engine.speed: 50 }\n"
+        "    timeout_ms: 100\n"
+        "  - template: wait_inner.yaml\n";
+    files["templates/wait_inner.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - at_ms: 10\n"
+        "    set: { Body.level: 1 }\n";
+    {
+        const std::string errs = lines(run_check(kHead + "  - template: templates/wait_outer.yaml\n", ctx).findings);
+        CHECK(errs.find("scenario-time:") != std::string::npos);
+        CHECK(errs.find("scenarios/templates/wait_outer.yaml:3") != std::string::npos);
+    }
+
+    // Gap 4: skipped_wave_ms() with ${param} in points.file inside an absent: true template step + 0-row CSV safe handling.
+    files["traces/ok.csv"] = "time,level\n0,10\n50,20\n";
+    files["traces/empty_rows.csv"] = "time,level\n";
+    files["templates/skip_csv.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  f: { type: string }\n"
+        "  end_t: { type: integer }\n"
+        "steps:\n"
+        "  - wave: { Door.absent: { points: { file: \"${f}\", value: level } } }\n"
+        "  - at_ms: \"${end_t}\"\n"
+        "    expect: { Body.level: 0 }\n";
+    {
+        ScenarioCatalog skipCat = catalog();
+        skipCat[1].absent.push_back("absent");
+        ScenarioContext skipCtx = ctx;
+        skipCtx.variant = "small";
+        const std::string errs = lines(read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/skip_csv.yaml\n"
+            "    params: { f: ../traces/ok.csv, end_t: 40 }\n",
+            skipCat, skipCtx).findings);
+        CHECK(errs.find("scenario-time:") != std::string::npos);
+        CHECK(errs.find("50 ms") != std::string::npos);
+
+        const ScenarioRead okEmpty = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/skip_csv.yaml\n"
+            "    params: { f: ../traces/empty_rows.csv, end_t: 40 }\n",
+            skipCat, skipCtx);
+        CHECK(okEmpty.scenario.has_value());
+        CHECK(!okEmpty.scenario->steps[0].skipped.empty());
+        CHECK_EQ(okEmpty.scenario->steps[0].skipped_ms, std::int64_t{0});
+    }
+
+    // Gap 5: from_cli -> outer type: string -> nested type: integer non-coercion (quoted = true preserved),
+    // and param_values_equal() numeric/hex equivalence (1e0 vs values: [1.0], 16 vs values: [0x10]).
+    files["templates/need_int.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n  n: { type: integer }\n"
+        "steps:\n  - set: { Body.level: \"${n}\" }\n";
+    files["templates/str_to_int.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n  s: { type: string }\n"
+        "steps:\n"
+        "  - template: need_int.yaml\n"
+        "    params: { n: \"${s}\" }\n";
+    {
+        ScenarioContext cliCtx = ctx;
+        cliCtx.params = {ParamValue{"cli_num", "1", false, ParamSource::CommandLine, 0, true}};
+        const ScenarioRead rejected = run_check(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/str_to_int.yaml\n"
+            "    params: { s: \"${cli_num}\" }\n",
+            cliCtx);
+        CHECK(!rejected.scenario.has_value());
+        CHECK(lines(rejected.findings).find("write the integer without quotes") != std::string::npos);
+    }
+    files["templates/values_eq.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  n: { type: number, values: [1.0, 2.5] }\n"
+        "  i: { type: integer, values: [0x10] }\n"
+        "steps:\n  - set: { Body.ratio: \"${n}\", Body.level: \"${i}\" }\n";
+    {
+        const ScenarioRead eqOk = run_check(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/values_eq.yaml\n    params: { n: 1e0, i: 16 }\n",
+            ctx);
+        CHECK(eqOk.scenario.has_value());
+        CHECK(lines(eqOk.findings).empty());
+    }
+
+    // Gap 7 + Bug A-3: check_dithers() multi-call template (file, line) formatting.
+    files["templates/dither_dup.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n  v: { type: integer }\n"
+        "steps:\n  - set: { Body.level: \"${v}\" }\n";
+    files["templates/dither_other.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n  v: { type: integer }\n"
+        "steps:\n  - set: { Body.level: \"${v}\" }\n";
+    {
+        const std::string ditherInput =
+            "inputs:\n  Body.level: { dither: { square: { amplitude: 5, period_ms: 80 } } }\nsteps:\n";
+        const ScenarioRead sameLine = run_check(
+            kDitherHead + ditherInput +
+                "  - template: templates/dither_dup.yaml\n    params: { v: 98 }\n"
+                "  - template: templates/dither_dup.yaml\n    params: { v: 99 }\n",
+            ctx);
+        const auto it = std::find_if(sameLine.findings.begin(), sameLine.findings.end(),
+                                     [](const Finding& f) { return f.code == "scenario-dither-range"; });
+        CHECK(it != sameLine.findings.end());
+        CHECK(it->message.find("on the 98 of scenarios/templates/dither_dup.yaml:5") != std::string::npos);
+        CHECK(it->message.find("; so on 1 other value.") != std::string::npos);
+        CHECK(it->message.find("(line scenarios/templates/dither_dup.yaml:5)") == std::string::npos);
+
+        const ScenarioRead diffFile = run_check(
+            kDitherHead + ditherInput +
+                "  - template: templates/dither_dup.yaml\n    params: { v: 98 }\n"
+                "  - template: templates/dither_other.yaml\n    params: { v: 99 }\n",
+            ctx);
+        const auto it2 = std::find_if(diffFile.findings.begin(), diffFile.findings.end(),
+                                      [](const Finding& f) { return f.code == "scenario-dither-range"; });
+        CHECK(it2 != diffFile.findings.end());
+        CHECK(it2->message.find("; so on 1 other value (scenarios/templates/dither_other.yaml:5).") != std::string::npos);
+        CHECK(it2->message.find("(line scenarios/templates/") == std::string::npos);
+    }
+}

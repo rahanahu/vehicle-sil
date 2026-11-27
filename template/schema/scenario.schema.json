@@ -510,7 +510,7 @@
         "file": {
           "type": ["string", "number"],
           "minLength": 1,
-          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*\\\\)(?!(.*/)?\\.\\.(/|$))",
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*\\\\)(?!.*//)(?!.*/$)(?!(.*/)?\\.\\.(/|$))",
           "description": "The CSV file, from the directory of the scenario file, with / between directories: not an absolute path, and without .. (a scenario reads only files in its own directory and below it)."
         },
         "value": {
