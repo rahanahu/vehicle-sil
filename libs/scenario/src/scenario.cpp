@@ -323,6 +323,7 @@ void Reader::read()
             read_inputs(inputsNode);
         }
         declared_ = dithers_.size(); // (the steps' dithers come after those of "inputs")
+        collect_cli_string_params(stepsNode);
         read_steps(stepsNode);
         if (scenario_.end_ms && *scenario_.end_ms < min_end_ms_)
         {
@@ -361,7 +362,7 @@ void Reader::read()
             return;
         }
         const auto it = param_constraints_.find(name);
-        if (it == param_constraints_.end() || !it->second.template_type)
+        if (it == param_constraints_.end() || !it->second.template_type || it->second.conflict_reported)
         {
             return;
         }

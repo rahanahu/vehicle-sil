@@ -280,8 +280,9 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
     }
     case control::ValueType::Enum:
     {
+        const bool cliString = is_cli_string_param(node);
         std::int64_t i = 0;
-        const bool number = whole_number(node, i);
+        const bool number = !cliString && whole_number(node, i);
         if (number)
         {
             record_direct_param_usage(node, ParamType::Integer);

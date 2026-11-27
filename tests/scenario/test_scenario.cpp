@@ -4659,7 +4659,7 @@ TEST_CASE(scenario_parameter_type_lattice_metadata_conflicts_and_cli_string_quot
         CHECK(narrowed.param_meta[0].description == "Number constraint");
     }
 
-    // 3. Transitive narrowing through nested templates (outer number -> inner integer).
+    // 3. Transitive narrowing through nested templates (outer number -> inner integer) canonicalizes hex values to decimal.
     {
         const ScenarioRead nested = read_scenario(
             "vehicle_sil_scenario: 1\n"
@@ -4671,7 +4671,7 @@ TEST_CASE(scenario_parameter_type_lattice_metadata_conflicts_and_cli_string_quot
         CHECK(nested.scenario.has_value());
         CHECK_EQ(nested.param_meta.size(), std::size_t{1});
         CHECK(nested.param_meta[0].type == "integer");
-        CHECK((nested.param_meta[0].values == std::vector<std::string>{"0x14", "30", "40"}));
+        CHECK((nested.param_meta[0].values == std::vector<std::string>{"20", "30", "40"}));
         CHECK(nested.param_meta[0].description == "Outer description");
     }
 
@@ -4747,6 +4747,166 @@ TEST_CASE(scenario_parameter_type_lattice_metadata_conflicts_and_cli_string_quot
         CHECK(strOnly.scenario->params[0].quoted == true);
         CHECK_EQ(strOnly.param_meta.size(), std::size_t{1});
         CHECK(strOnly.param_meta[0].type == "string");
+    }
+
+    // 7. Narrowing number values containing float/scientific whole numbers (16.0, 1e1) with unconstrained integer
+    //    succeeds in both call orders and canonicalizes values to decimal integers.
+    {
+        files["templates/num_float_whole.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  y:\n"
+            "    type: number\n"
+            "    values: [1.5, 16.0, 1e1]\n"
+            "steps:\n"
+            "  - expect: { Body.body.speed: { ge: \"${y}\" } }\n";
+        files["templates/int_plain.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  x:\n"
+            "    type: integer\n"
+            "steps:\n"
+            "  - set: { Body.level: \"${x}\" }\n";
+
+        const ScenarioRead numFirst = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 16 }\n"
+            "steps:\n"
+            "  - template: templates/num_float_whole.yaml\n"
+            "    params: { y: \"${p}\" }\n"
+            "  - template: templates/int_plain.yaml\n"
+            "    params: { x: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(numFirst.scenario.has_value());
+        CHECK_EQ(numFirst.param_meta.size(), std::size_t{1});
+        CHECK(numFirst.param_meta[0].type == "integer");
+        CHECK((numFirst.param_meta[0].values == std::vector<std::string>{"16", "10"}));
+
+        const ScenarioRead intFirst = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 10 }\n"
+            "steps:\n"
+            "  - template: templates/int_plain.yaml\n"
+            "    params: { x: \"${p}\" }\n"
+            "  - template: templates/num_float_whole.yaml\n"
+            "    params: { y: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(intFirst.scenario.has_value());
+        CHECK_EQ(intFirst.param_meta.size(), std::size_t{1});
+        CHECK(intFirst.param_meta[0].type == "integer");
+        CHECK((intFirst.param_meta[0].values == std::vector<std::string>{"16", "10"}));
+    }
+
+    // 8. Integer hex values combined with type: number canonicalize to decimal regardless of call order,
+    //    and every advertised value is accepted when supplied.
+    {
+        files["templates/num_plain.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  x: { type: number }\n"
+            "steps:\n"
+            "  - expect: { Body.body.speed: { ge: \"${x}\" } }\n";
+
+        const ScenarioRead intThenNumVals = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 20 }\n"
+            "steps:\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n"
+            "  - template: templates/num.yaml\n"
+            "    params: { x: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(intThenNumVals.scenario.has_value());
+        CHECK_EQ(intThenNumVals.param_meta.size(), std::size_t{1});
+        CHECK(intThenNumVals.param_meta[0].type == "integer");
+        CHECK((intThenNumVals.param_meta[0].values == std::vector<std::string>{"20", "30"}));
+
+        const ScenarioRead intThenNumPlain = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: 20 }\n"
+            "steps:\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n"
+            "  - template: templates/num_plain.yaml\n"
+            "    params: { x: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(intThenNumPlain.scenario.has_value());
+        CHECK_EQ(intThenNumPlain.param_meta.size(), std::size_t{1});
+        CHECK((intThenNumPlain.param_meta[0].values == std::vector<std::string>{"20", "30", "40"}));
+    }
+
+    // 9. CLI --param p=123 bound to type: string and a numeric-looking enum item ("123") succeeds in both
+    //    step orders and preserves quoted string output, matching YAML params: { p: "123" }.
+    {
+        ScenarioCatalog weirdCat = catalog();
+        control::VariableInfo weirdMode;
+        weirdMode.name = "weird_mode";
+        weirdMode.type = control::ValueType::Enum;
+        weirdMode.causality = control::Causality::Input;
+        weirdMode.items = {{"off", 0}, {"123", 1}, {"true", 2}};
+        weirdCat[0].variables.push_back(std::move(weirdMode));
+
+        ScenarioContext cliCtx = ctx;
+        cliCtx.params = {ParamValue{"p", "123", false, ParamSource::CommandLine, 0, true}};
+
+        const ScenarioRead tplFirst = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: \"off\" }\n"
+            "steps:\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n"
+            "  - set: { Body.weird_mode: \"${p}\" }\n",
+            weirdCat, cliCtx);
+        CHECK(tplFirst.scenario.has_value());
+        CHECK_EQ(tplFirst.params.size(), std::size_t{1});
+        CHECK(tplFirst.params[0].text == "123" && tplFirst.params[0].quoted == true);
+        CHECK_EQ(tplFirst.param_meta.size(), std::size_t{1});
+        CHECK(tplFirst.param_meta[0].type == "string");
+        CHECK(std::get<std::int64_t>(tplFirst.scenario->steps[1].writes[0].value) == 1);
+
+        const ScenarioRead setFirst = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: \"off\" }\n"
+            "steps:\n"
+            "  - set: { Body.weird_mode: \"${p}\" }\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n",
+            weirdCat, cliCtx);
+        CHECK(setFirst.scenario.has_value());
+        CHECK_EQ(setFirst.params.size(), std::size_t{1});
+        CHECK(setFirst.params[0].text == "123" && setFirst.params[0].quoted == true);
+        CHECK_EQ(setFirst.param_meta.size(), std::size_t{1});
+        CHECK(setFirst.param_meta[0].type == "string");
+        CHECK(std::get<std::int64_t>(setFirst.scenario->steps[0].writes[0].value) == 1);
+    }
+
+    // 10. Conflicted parameter types omit first-wins type/values metadata in both full check and
+    //     unselected-case lightweight metadata scan.
+    {
+        const ScenarioRead fullConflict = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "params: { p: \"20\" }\n"
+            "steps:\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(!fullConflict.scenario.has_value());
+        CHECK(fullConflict.param_meta.empty());
+
+        const ScenarioRead unselectedConflict = read_scenario(
+            "vehicle_sil_scenario: 1\n"
+            "cases:\n"
+            "  c1: { params: { p: 20 } }\n"
+            "steps:\n"
+            "  - template: templates/str.yaml\n"
+            "    params: { tag: \"${p}\" }\n"
+            "  - template: templates/int.yaml\n"
+            "    params: { y: \"${p}\" }\n",
+            catalog(), ctx);
+        CHECK(!unselectedConflict.scenario.has_value());
+        CHECK(unselectedConflict.param_meta.empty());
     }
 }
 

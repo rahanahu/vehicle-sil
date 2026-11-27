@@ -204,6 +204,7 @@ private:
         std::optional<ParamType> template_type{};
         std::vector<config::ParamValue> allowed_values{};
         bool has_values = false;
+        bool saw_number = false;
         std::string description{};
         std::optional<ParamType> effective_type{};
         std::string first_origin{};
@@ -220,7 +221,13 @@ private:
     /// Records a direct typed step usage of a whole-value `${param}` node (conflict check only, not emitted as metadata).
     void record_direct_param_usage(ryml::id_type node, ParamType usage_type);
     static std::optional<ParamType> join_param_types(ParamType a, ParamType b) noexcept;
+    static std::optional<std::int64_t> exact_int64_value(const config::ParamValue& pv);
+    static std::optional<config::ParamValue> normalize_param_for_type(config::ParamValue pv, ParamType type, bool force_decimal);
     static bool value_fits_type_quiet(const config::ParamValue& pv, ParamType type);
+    void collect_cli_string_params(ryml::id_type steps_node);
+    void scan_cli_string_bindings(ryml::id_type steps_node, std::set<std::string>& has_string,
+                                  std::set<std::string>& has_non_string);
+    bool is_cli_string_param(ryml::id_type node) const;
     void add_missing_param(const std::string& name);
     /// Lightweight cache-sharing scan of inputs, steps, and templates for unselected/unknown case metadata
     /// (and fallback metadata collection when parameter resolution fails). Emits no findings.
@@ -609,6 +616,7 @@ private:
     std::vector<std::string> active_rel_paths_;
     std::map<std::string, ParamConstraint> param_constraints_;
     std::vector<std::string> param_constraint_order_;
+    std::set<std::string> cli_string_params_{};
     std::size_t expanded_steps_ = 0;
     bool too_many_expanded_steps_ = false;
     bool caller_template_params_incomplete_ = false;

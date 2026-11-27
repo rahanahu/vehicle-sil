@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -386,15 +388,9 @@ bool Reader::param_values_equal(ParamType type, const config::ParamValue& a, con
     {
     case ParamType::Integer:
     {
-        const auto parse_int = [](const std::string& s) -> std::int64_t {
-            std::int64_t i = 0;
-            if (read_integer(s, i))
-            {
-                return i;
-            }
-            return static_cast<std::int64_t>(read_hex(s).magnitude);
-        };
-        return parse_int(a.text) == parse_int(b.text);
+        const auto ia = exact_int64_value(a);
+        const auto ib = exact_int64_value(b);
+        return ia && ib && *ia == *ib;
     }
     case ParamType::Number:
     {
@@ -1181,15 +1177,60 @@ std::optional<ParamType> Reader::join_param_types(ParamType a, ParamType b) noex
     return std::nullopt;
 }
 
+std::optional<std::int64_t> Reader::exact_int64_value(const config::ParamValue& pv)
+{
+    if (pv.quoted)
+    {
+        return std::nullopt;
+    }
+    if (const auto parsed = config::detail::parse_int64(pv.text))
+    {
+        return parsed;
+    }
+    double d = 0;
+    if (!read_number(pv.text, d) || !std::isfinite(d) || std::trunc(d) != d)
+    {
+        return std::nullopt;
+    }
+    constexpr double kMinI64 = static_cast<double>(std::numeric_limits<std::int64_t>::min());
+    constexpr double kUpperBound = -kMinI64; // +2^63, exact in IEEE-754 double
+    if (d < kMinI64 || d >= kUpperBound)
+    {
+        return std::nullopt;
+    }
+    return static_cast<std::int64_t>(d);
+}
+
+std::optional<config::ParamValue> Reader::normalize_param_for_type(config::ParamValue pv, ParamType type, bool force_decimal)
+{
+    if (type == ParamType::Integer)
+    {
+        const auto iv = exact_int64_value(pv);
+        if (!iv)
+        {
+            return std::nullopt;
+        }
+        std::int64_t plain = 0;
+        const bool isPlainDecimal = read_integer(pv.text, plain);
+        if (!isPlainDecimal && (force_decimal || read_hex(pv.text).kind != Hex::Kind::Read))
+        {
+            pv.text = std::to_string(*iv);
+        }
+        return pv;
+    }
+    if (!value_fits_type_quiet(pv, type))
+    {
+        return std::nullopt;
+    }
+    return pv;
+}
+
 bool Reader::value_fits_type_quiet(const config::ParamValue& pv, ParamType type)
 {
     switch (type)
     {
     case ParamType::Integer:
-    {
-        std::int64_t i = 0;
-        return !pv.quoted && (read_integer(pv.text, i) || read_hex(pv.text).kind == Hex::Kind::Read);
-    }
+        return exact_int64_value(pv).has_value();
     case ParamType::Number:
     {
         double d = 0;
@@ -1234,9 +1275,10 @@ void Reader::record_template_param_constraint(const std::string& root_name, cons
         const auto joined = join_param_types(*c.effective_type, def.type);
         if (!joined)
         {
-            if (emit_errors && !c.conflict_reported)
+            const bool firstConflict = !c.conflict_reported;
+            c.conflict_reported = true;
+            if (emit_errors && firstConflict)
             {
-                c.conflict_reported = true;
                 error("scenario-param", line,
                       "parameter '" + root_name + "' has incompatible types: used as " +
                           param_type_name(*c.effective_type) + " (" + c.first_origin + ") and as " +
@@ -1245,6 +1287,10 @@ void Reader::record_template_param_constraint(const std::string& root_name, cons
             return;
         }
         c.effective_type = *joined;
+    }
+    if (def.type == ParamType::Number)
+    {
+        c.saw_number = true;
     }
     if (!c.template_type)
     {
@@ -1255,23 +1301,34 @@ void Reader::record_template_param_constraint(const std::string& root_name, cons
         c.template_type = *joined;
     }
     const ParamType t = *c.template_type;
+    const auto push_unique = [t](std::vector<config::ParamValue>& dst, config::ParamValue v) {
+        if (std::none_of(dst.begin(), dst.end(),
+                         [&](const config::ParamValue& existing) { return param_values_equal(t, existing, v); }))
+        {
+            dst.push_back(std::move(v));
+        }
+    };
     if (c.has_values && def.allowed_values.empty())
     {
         std::vector<config::ParamValue> filtered;
         for (const config::ParamValue& v : c.allowed_values)
         {
-            if (value_fits_type_quiet(v, t))
+            if (auto norm = normalize_param_for_type(v, t, c.saw_number))
             {
-                filtered.push_back(v);
+                push_unique(filtered, std::move(*norm));
             }
         }
         c.allowed_values = std::move(filtered);
-        if (c.allowed_values.empty() && emit_errors && !c.conflict_reported)
+        if (c.allowed_values.empty())
         {
+            const bool firstConflict = !c.conflict_reported;
             c.conflict_reported = true;
-            error("scenario-param", line,
-                  "parameter '" + root_name + "' has no allowed value compatible with type " + param_type_name(t) +
-                      ": use separate parameters or align the template parameter constraints");
+            if (emit_errors && firstConflict)
+            {
+                error("scenario-param", line,
+                      "parameter '" + root_name + "' has no allowed value compatible with type " + param_type_name(t) +
+                          ": use separate parameters or align the template parameter constraints");
+            }
         }
     }
     else if (!c.has_values && !def.allowed_values.empty())
@@ -1279,60 +1336,61 @@ void Reader::record_template_param_constraint(const std::string& root_name, cons
         c.has_values = true;
         for (const config::ParamValue& v : def.allowed_values)
         {
-            if (value_fits_type_quiet(v, t) &&
-                std::none_of(c.allowed_values.begin(), c.allowed_values.end(),
-                             [&](const config::ParamValue& existing) { return param_values_equal(t, existing, v); }))
+            if (auto norm = normalize_param_for_type(v, t, c.saw_number))
             {
-                c.allowed_values.push_back(v);
+                push_unique(c.allowed_values, std::move(*norm));
             }
         }
-        if (c.allowed_values.empty() && emit_errors && !c.conflict_reported)
+        if (c.allowed_values.empty())
         {
+            const bool firstConflict = !c.conflict_reported;
             c.conflict_reported = true;
-            error("scenario-param", line,
-                  "parameter '" + root_name + "' has no allowed value compatible with type " + param_type_name(t) +
-                      ": use separate parameters or align the template parameter constraints");
+            if (emit_errors && firstConflict)
+            {
+                error("scenario-param", line,
+                      "parameter '" + root_name + "' has no allowed value compatible with type " + param_type_name(t) +
+                          ": use separate parameters or align the template parameter constraints");
+            }
         }
     }
     else if (c.has_values && !def.allowed_values.empty())
     {
+        std::vector<config::ParamValue> normB;
+        normB.reserve(def.allowed_values.size());
+        for (const config::ParamValue& b : def.allowed_values)
+        {
+            if (auto nb = normalize_param_for_type(b, t, c.saw_number))
+            {
+                normB.push_back(std::move(*nb));
+            }
+        }
         std::vector<config::ParamValue> inter;
         for (const config::ParamValue& a : c.allowed_values)
         {
-            const auto match = std::find_if(def.allowed_values.begin(), def.allowed_values.end(),
-                                            [&](const config::ParamValue& b) {
-                                                if (t == ParamType::Integer)
-                                                {
-                                                    if (value_fits_type_quiet(a, ParamType::Integer) &&
-                                                        value_fits_type_quiet(b, ParamType::Integer))
-                                                    {
-                                                        return param_values_equal(ParamType::Integer, a, b);
-                                                    }
-                                                    return param_values_equal(ParamType::Number, a, b) &&
-                                                           (value_fits_type_quiet(a, ParamType::Integer) ||
-                                                            value_fits_type_quiet(b, ParamType::Integer));
-                                                }
-                                                return param_values_equal(t, a, b);
-                                            });
-            if (match != def.allowed_values.end())
+            auto na = normalize_param_for_type(a, t, c.saw_number);
+            if (!na)
             {
-                const config::ParamValue& kept =
-                    (t == ParamType::Integer && !value_fits_type_quiet(a, ParamType::Integer)) ? *match : a;
-                if (std::none_of(inter.begin(), inter.end(),
-                                 [&](const config::ParamValue& existing) { return param_values_equal(t, existing, kept); }))
-                {
-                    inter.push_back(kept);
-                }
+                continue;
+            }
+            const auto match = std::find_if(normB.begin(), normB.end(),
+                                            [&](const config::ParamValue& nb) { return param_values_equal(t, *na, nb); });
+            if (match != normB.end())
+            {
+                push_unique(inter, std::move(*na));
             }
         }
         c.allowed_values = std::move(inter);
-        if (c.allowed_values.empty() && emit_errors && !c.conflict_reported)
+        if (c.allowed_values.empty())
         {
+            const bool firstConflict = !c.conflict_reported;
             c.conflict_reported = true;
-            error("scenario-param", line,
-                  "parameter '" + root_name +
-                      "' has conflicting allowed values across template calls (their intersection is empty): use separate "
-                      "parameters or align the values lists");
+            if (emit_errors && firstConflict)
+            {
+                error("scenario-param", line,
+                      "parameter '" + root_name +
+                          "' has conflicting allowed values across template calls (their intersection is empty): use separate "
+                          "parameters or align the values lists");
+            }
         }
     }
 }
@@ -1360,6 +1418,10 @@ void Reader::record_direct_param_usage(ryml::id_type node, ParamType usage_type)
     {
         c.effective_type = usage_type;
         c.first_origin = loc_text(current_file(), line);
+        if (usage_type == ParamType::Number)
+        {
+            c.saw_number = true;
+        }
         return;
     }
     const auto joined = join_param_types(*c.effective_type, usage_type);
@@ -1376,6 +1438,186 @@ void Reader::record_direct_param_usage(ryml::id_type node, ParamType usage_type)
         return;
     }
     c.effective_type = *joined;
+    if (usage_type == ParamType::Number)
+    {
+        c.saw_number = true;
+        if (c.template_type && *c.template_type == ParamType::Integer && c.has_values)
+        {
+            std::vector<config::ParamValue> normalized;
+            for (const config::ParamValue& v : c.allowed_values)
+            {
+                if (auto norm = normalize_param_for_type(v, ParamType::Integer, true))
+                {
+                    if (std::none_of(normalized.begin(), normalized.end(), [&](const config::ParamValue& existing) {
+                            return param_values_equal(ParamType::Integer, existing, *norm);
+                        }))
+                    {
+                        normalized.push_back(std::move(*norm));
+                    }
+                }
+            }
+            c.allowed_values = std::move(normalized);
+        }
+    }
+}
+
+void Reader::collect_cli_string_params(ryml::id_type steps_node)
+{
+    cli_string_params_.clear();
+    if (steps_node == ryml::NONE)
+    {
+        return;
+    }
+    const bool hasCliParam = std::any_of(scope().params.begin(), scope().params.end(),
+                                         [](const Known& k) { return k.value.from_cli; });
+    if (!hasCliParam)
+    {
+        return;
+    }
+    std::set<std::string> hasString;
+    std::set<std::string> hasNonString;
+    scan_cli_string_bindings(steps_node, hasString, hasNonString);
+    for (const std::string& name : hasString)
+    {
+        if (hasNonString.count(name) == 0)
+        {
+            cli_string_params_.insert(name);
+        }
+    }
+}
+
+void Reader::scan_cli_string_bindings(ryml::id_type steps_node, std::set<std::string>& has_string,
+                                      std::set<std::string>& has_non_string)
+{
+    if (steps_node == ryml::NONE || !tree().is_seq(steps_node))
+    {
+        return;
+    }
+    for (auto step = tree().first_child(steps_node); step != ryml::NONE; step = tree().next_sibling(step))
+    {
+        if (!tree().is_map(step))
+        {
+            continue;
+        }
+        ryml::id_type templateNode = ryml::NONE;
+        ryml::id_type paramsNode = ryml::NONE;
+        for (auto field = tree().first_child(step); field != ryml::NONE; field = tree().next_sibling(field))
+        {
+            const std::string key = config::detail::to_string(tree().key(field));
+            if (key == "template")
+            {
+                templateNode = field;
+            }
+            else if (key == "params")
+            {
+                paramsNode = field;
+            }
+        }
+        if (templateNode == ryml::NONE || !is_scalar(templateNode) || is_null(templateNode))
+        {
+            continue;
+        }
+        const std::string rawPath = config::detail::to_string(tree().val(templateNode));
+        if (rawPath.find("${") != std::string::npos)
+        {
+            continue;
+        }
+        std::string normalizedRel;
+        if (resolve_scoped_path(scope().dir_rel, rawPath, normalizedRel, true))
+        {
+            continue;
+        }
+        if (std::find(active_rel_paths_.begin(), active_rel_paths_.end(), normalizedRel) != active_rel_paths_.end() ||
+            active_templates_.size() >= kMaxTemplateDepth)
+        {
+            continue;
+        }
+        const CachedTemplate* tpl = nullptr;
+        if (const auto it = cache_.templates.find(normalizedRel); it != cache_.templates.end())
+        {
+            if (!it->second.valid)
+            {
+                continue;
+            }
+            tpl = &it->second;
+        }
+        else
+        {
+            const std::size_t findingsBefore = findings_.size();
+            tpl = load_template(normalizedRel, doc().line(templateNode));
+            findings_.resize(findingsBefore);
+            if (tpl == nullptr)
+            {
+                cache_.templates.erase(normalizedRel);
+                continue;
+            }
+        }
+        std::vector<Known> calleeParams;
+        if (paramsNode != ryml::NONE && tree().is_map(paramsNode))
+        {
+            for (auto child = tree().first_child(paramsNode); child != ryml::NONE; child = tree().next_sibling(child))
+            {
+                const std::string argName = config::detail::to_string(tree().key(child));
+                const auto defIt = std::find_if(tpl->parameters.begin(), tpl->parameters.end(),
+                                                [&](const ParameterDef& d) { return d.name == argName; });
+                if (defIt == tpl->parameters.end() || !is_scalar(child) || is_null(child))
+                {
+                    continue;
+                }
+                const std::string rawText = config::detail::to_string(tree().val(child));
+                std::optional<std::string> forwardedRoot;
+                std::string refName;
+                if (is_whole_param_ref(rawText, refName))
+                {
+                    const auto known = std::find_if(scope().params.begin(), scope().params.end(),
+                                                    [&](const Known& k) { return k.value.name == refName; });
+                    if (known != scope().params.end() && known->root_param)
+                    {
+                        forwardedRoot = known->root_param;
+                        if (defIt->type == ParamType::String)
+                        {
+                            has_string.insert(*forwardedRoot);
+                        }
+                        else
+                        {
+                            has_non_string.insert(*forwardedRoot);
+                        }
+                    }
+                }
+                calleeParams.push_back(Known{config::ParamValue{argName, rawText, tree().is_val_quoted(child),
+                                                                config::ParamSource::TemplateCall, doc().line(child), false},
+                                             true, false, std::move(forwardedRoot)});
+            }
+        }
+        SourceFrame frame;
+        frame.file = scope().file;
+        frame.line = doc().line(step);
+        active_templates_.push_back(std::move(frame));
+        active_rel_paths_.push_back(normalizedRel);
+        EvalScope calleeScope;
+        calleeScope.doc = tpl->doc.get();
+        calleeScope.file = tpl->shown_file;
+        calleeScope.dir_rel = tpl->dir_rel;
+        calleeScope.params = std::move(calleeParams);
+        scopes_.push_back(std::move(calleeScope));
+        ScopeGuard popScan([this]() {
+            scopes_.pop_back();
+            active_rel_paths_.pop_back();
+            active_templates_.pop_back();
+        });
+        scan_cli_string_bindings(tpl->steps_node, has_string, has_non_string);
+    }
+}
+
+bool Reader::is_cli_string_param(ryml::id_type node) const
+{
+    const auto it = scope().substituted.find(node);
+    if (it == scope().substituted.end())
+    {
+        return false;
+    }
+    const Known& k = scope().params[it->second];
+    return k.value.from_cli && k.root_param && cli_string_params_.count(*k.root_param) != 0;
 }
 
 void Reader::note_param_ref_metadata(const std::string& name)

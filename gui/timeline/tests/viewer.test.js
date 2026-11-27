@@ -1016,151 +1016,151 @@ test('stepTitle, lineTitle, and callStackFrames handle line == null without "lin
 
 const makeMockDom = () => {
   const byTag = (root, pred, out = []) => {
-      for (const ch of root.children || []) {
-        if (pred(ch)) out.push(ch);
-        byTag(ch, pred, out);
-      }
-      return out;
-    };
-    class MockNode {
-      constructor(tag, ns = null) {
-        this.tagName = tag;
-        this.namespaceURI = ns;
-        this.children = [];
-        this.attrs = {};
-        this.dataset = {};
-        this._text = '';
-        this.hidden = false;
-        this.className = '';
-        this.clientWidth = 800;
-        this.parentElement = null;
-        this.style = { setProperty() {} };
-      }
-      get id() {
-        return this.attrs.id || '';
-      }
-      set id(v) {
-        this.attrs.id = v;
-      }
-      get textContent() {
-        return this._text + this.children.map((c) => c.textContent).join('');
-      }
-      set textContent(v) {
-        this.children = [];
-        this._text = String(v);
-      }
-      set innerHTML(_v) {
-        throw new Error('innerHTML must never be used');
-      }
-      setAttribute(k, v) {
-        this.attrs[k] = String(v);
-        if (k.startsWith('data-')) this.dataset[k.slice(5)] = String(v);
-      }
-      getAttribute(k) {
-        return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null;
-      }
-      removeAttribute(k) {
-        delete this.attrs[k];
-      }
-      append(...nodes) {
-        for (const n of nodes) {
-          if (typeof n === 'string') {
-            const tnode = new MockNode('#text');
-            tnode._text = n;
-            this.children.push(tnode);
-          } else if (n) {
-            n.parentElement = this;
-            this.children.push(n);
-          }
+    for (const ch of root.children || []) {
+      if (pred(ch)) out.push(ch);
+      byTag(ch, pred, out);
+    }
+    return out;
+  };
+  class MockNode {
+    constructor(tag, ns = null) {
+      this.tagName = tag;
+      this.namespaceURI = ns;
+      this.children = [];
+      this.attrs = {};
+      this.dataset = {};
+      this._text = '';
+      this.hidden = false;
+      this.className = '';
+      this.clientWidth = 800;
+      this.parentElement = null;
+      this.style = { setProperty() {} };
+    }
+    get id() {
+      return this.attrs.id || '';
+    }
+    set id(v) {
+      this.attrs.id = v;
+    }
+    get textContent() {
+      return this._text + this.children.map((c) => c.textContent).join('');
+    }
+    set textContent(v) {
+      this.children = [];
+      this._text = String(v);
+    }
+    set innerHTML(_v) {
+      throw new Error('innerHTML must never be used');
+    }
+    setAttribute(k, v) {
+      this.attrs[k] = String(v);
+      if (k.startsWith('data-')) this.dataset[k.slice(5)] = String(v);
+    }
+    getAttribute(k) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null;
+    }
+    removeAttribute(k) {
+      delete this.attrs[k];
+    }
+    append(...nodes) {
+      for (const n of nodes) {
+        if (typeof n === 'string') {
+          const tnode = new MockNode('#text');
+          tnode._text = n;
+          this.children.push(tnode);
+        } else if (n) {
+          n.parentElement = this;
+          this.children.push(n);
         }
-      }
-      replaceChildren(...nodes) {
-        this.children = [];
-        this._text = '';
-        this.append(...nodes);
-      }
-      addEventListener() {}
-      getElementById(id) {
-        return byTag(this, (n) => n.attrs.id === id)[0] || null;
-      }
-      querySelectorAll(sel) {
-        if (sel.startsWith('[') && sel.endsWith(']')) {
-          const inner = sel.slice(1, -1);
-          const eq = inner.indexOf('=');
-          if (eq >= 0) {
-            const attr = inner.slice(0, eq);
-            const val = inner.slice(eq + 1).replace(/^['"]|['"]$/g, '');
-            return byTag(this, (n) => n.attrs[attr] === val);
-          }
-          return byTag(this, (n) => Object.prototype.hasOwnProperty.call(n.attrs, inner));
-        }
-        return byTag(this, (n) => n.tagName === sel);
       }
     }
-    class MockHTMLElement extends MockNode {
-      constructor() {
-        super('vehicle-sil-timeline');
-        this.isConnected = true;
-        this._shadow = new MockNode('#shadow');
-      }
-      attachShadow() {
-        return this._shadow;
-      }
-      dispatchEvent() {
-        return true;
-      }
+    replaceChildren(...nodes) {
+      this.children = [];
+      this._text = '';
+      this.append(...nodes);
     }
-    const registry = new Map();
-    const document = {
-      createElement: (tag) => new MockNode(tag),
-      createElementNS: (ns, tag) => new MockNode(tag, ns),
-      createTextNode: (t) => {
-        const n = new MockNode('#text');
-        n._text = String(t);
-        return n;
-      },
-    };
-    const global = {
-      HTMLElement: MockHTMLElement,
-      document,
-      navigator: { languages: ['en'], language: 'en' },
-      customElements: {
-        get: (name) => registry.get(name),
-        define: (name, cls) => registry.set(name, cls),
-      },
-      CustomEvent: class {
-        constructor(type, init) {
-          this.type = type;
-          this.detail = init?.detail;
+    addEventListener() {}
+    getElementById(id) {
+      return byTag(this, (n) => n.attrs.id === id)[0] || null;
+    }
+    querySelectorAll(sel) {
+      if (sel.startsWith('[') && sel.endsWith(']')) {
+        const inner = sel.slice(1, -1);
+        const eq = inner.indexOf('=');
+        if (eq >= 0) {
+          const attr = inner.slice(0, eq);
+          const val = inner.slice(eq + 1).replace(/^['"]|['"]$/g, '');
+          return byTag(this, (n) => n.attrs[attr] === val);
         }
-      },
-      ResizeObserver: class {
-        observe() {}
-        disconnect() {}
-      },
-    };
-    const code = ['messages.js', 'viewer.js']
-      .map((name) => fs.readFileSync(path.join(__dirname, '..', name), 'utf8'))
-      .join('\n');
-    new Function(
-      'globalThis',
-      'HTMLElement',
-      'document',
-      'navigator',
-      'customElements',
-      'CustomEvent',
-      'ResizeObserver',
-      code,
-    )(
-      global,
-      global.HTMLElement,
-      global.document,
-      global.navigator,
-      global.customElements,
-      global.CustomEvent,
-      global.ResizeObserver,
-    );
-    return { Element: global.VehicleSilTimeline.Element };
+        return byTag(this, (n) => Object.prototype.hasOwnProperty.call(n.attrs, inner));
+      }
+      return byTag(this, (n) => n.tagName === sel);
+    }
+  }
+  class MockHTMLElement extends MockNode {
+    constructor() {
+      super('vehicle-sil-timeline');
+      this.isConnected = true;
+      this._shadow = new MockNode('#shadow');
+    }
+    attachShadow() {
+      return this._shadow;
+    }
+    dispatchEvent() {
+      return true;
+    }
+  }
+  const registry = new Map();
+  const document = {
+    createElement: (tag) => new MockNode(tag),
+    createElementNS: (ns, tag) => new MockNode(tag, ns),
+    createTextNode: (t) => {
+      const n = new MockNode('#text');
+      n._text = String(t);
+      return n;
+    },
+  };
+  const global = {
+    HTMLElement: MockHTMLElement,
+    document,
+    navigator: { languages: ['en'], language: 'en' },
+    customElements: {
+      get: (name) => registry.get(name),
+      define: (name, cls) => registry.set(name, cls),
+    },
+    CustomEvent: class {
+      constructor(type, init) {
+        this.type = type;
+        this.detail = init?.detail;
+      }
+    },
+    ResizeObserver: class {
+      observe() {}
+      disconnect() {}
+    },
+  };
+  const code = ['messages.js', 'viewer.js']
+    .map((name) => fs.readFileSync(path.join(__dirname, '..', name), 'utf8'))
+    .join('\n');
+  new Function(
+    'globalThis',
+    'HTMLElement',
+    'document',
+    'navigator',
+    'customElements',
+    'CustomEvent',
+    'ResizeObserver',
+    code,
+  )(
+    global,
+    global.HTMLElement,
+    global.document,
+    global.navigator,
+    global.customElements,
+    global.CustomEvent,
+    global.ResizeObserver,
+  );
+  return { Element: global.VehicleSilTimeline.Element };
 };
 
 test('DOM rendering handles non-string step.file, line == null, lines[].file, and escapes XSS payloads', async () => {
@@ -1238,7 +1238,10 @@ test('element DOM escapes XSS in scenario.case facts, multiline step.name, and m
   // Step name and multi-frame call_stack (including empty params: {}) render as safe text.
   const stepsText = shadow.querySelectorAll('[data-testid=steps-table]')[0].textContent;
   assert.ok(stepsText.includes('Line1\n<img src=x onerror="alert(2)">'), stepsText);
-  assert.ok(stepsText.includes('line 4 of scenarios/main.yaml · Outer <script>x</script>'), stepsText);
+  assert.ok(
+    stepsText.includes('line 4 of scenarios/main.yaml · Outer <script>x</script>'),
+    stepsText,
+  );
   assert.ok(stepsText.includes('line 9 of templates/mid.yaml · key = <svg onload=1>'), stepsText);
   assert.ok(!stepsText.includes('()'), stepsText);
 });
