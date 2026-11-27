@@ -1587,8 +1587,13 @@ TEST_CASE(timeline_json_records_real_expanded_template_provenance)
     ScenarioContext ctx;
     ctx.scenario_file = "scenarios/s.yaml";
     ctx.read_template = files_beside(dir / "s.yaml", "the template file");
-    const ScenarioRead read = read_scenario(scenarioText, catalog(), ctx);
-    CHECK(read.scenario.has_value());
+    ScenarioCatalog cat = catalog();
+    cat[1].absent.push_back("absent");
+    const ScenarioRead read = read_scenario(scenarioText, cat, ctx);
+    if (!read.scenario)
+    {
+        throw unit::Failure("the scenario has errors:\n" + lines(read.findings));
+    }
 
     World world;
     world.tick = 10ms;
@@ -1616,4 +1621,79 @@ TEST_CASE(timeline_json_records_real_expanded_template_provenance)
     run.case_name = "定格";
     const std::string tlCased = format_timeline_json(input);
     CHECK(tlCased.find("\"case\": \"定格\"") != std::string::npos);
+}
+
+TEST_CASE(timeline_json_records_nested_template_fail_grid_skipped_and_case)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "nested-fail-grid-timeline";
+    fs::remove_all(dir);
+    fs::create_directories(dir / "templates");
+    std::ofstream(dir / "templates" / "inner.yaml", std::ios::binary)
+        << "vehicle_sil_scenario_template: 1\n"
+        << "parameters:\n"
+        << "  lvl: { type: integer }\n"
+        << "steps:\n"
+        << "  - name: skipped door step\n"
+        << "    set: { Door.absent: 10 }\n"
+        << "  - name: dither body\n"
+        << "    dither: { Body.level: { square: { amplitude: 5, period_ms: 40 } } }\n"
+        << "  - name: set near edge\n"
+        << "    set: { Body.level: \"${lvl}\" }\n"
+        << "  - at_ms: 10\n"
+        << "    expect: { Body.level: { ge: 0 } }\n";
+    std::ofstream(dir / "templates" / "outer.yaml", std::ios::binary)
+        << "vehicle_sil_scenario_template: 1\n"
+        << "parameters:\n"
+        << "  target_lvl: { type: integer }\n"
+        << "steps:\n"
+        << "  - name: call inner\n"
+        << "    template: inner.yaml\n"
+        << "    params: { lvl: \"${target_lvl}\" }\n";
+    const std::string scenarioText =
+        "vehicle_sil_scenario: 1\n"
+        "params: { target_lvl: 50 }\n"
+        "cases:\n"
+        "  c_grid: { params: { target_lvl: 99 } }\n"
+        "steps:\n"
+        "  - name: call outer\n"
+        "    template: templates/outer.yaml\n"
+        "    params: { target_lvl: \"${target_lvl}\" }\n";
+
+    ScenarioContext ctx;
+    ctx.variant = "small";
+    ctx.case_name = "c_grid";
+    ctx.scenario_file = "scenarios/s.yaml";
+    ctx.read_template = files_beside(dir / "s.yaml", "the template file");
+    ScenarioCatalog cat = catalog();
+    cat[1].absent.push_back("absent");
+    const ScenarioRead read = read_scenario(scenarioText, cat, ctx);
+    if (!read.scenario)
+    {
+        throw unit::Failure("the scenario has errors:\n" + lines(read.findings));
+    }
+
+    World world;
+    world.tick = 10ms;
+    TimelineRecord record(*read.scenario);
+    world.record = &record;
+    ScenarioRun run = world.run(*read.scenario);
+    run.file = "scenarios/s.yaml";
+    CHECK(run.status == ScenarioStatus::Failed);
+
+    TimelineInput input;
+    input.file = "simulation.yaml";
+    input.time_step_ms = 10.0;
+    input.scenario = &*read.scenario;
+    input.run = &run;
+    const auto desc = catalog();
+    input.catalog = &desc;
+    input.record = &record;
+
+    const std::string tl = format_timeline_json(input);
+    CHECK(tl.find("\"case\": \"c_grid\"") != std::string::npos);
+    CHECK(tl.find("\"status\": \"skipped\"") != std::string::npos);
+    CHECK(tl.find("\"file\": \"scenarios/templates/inner.yaml\"") != std::string::npos);
+    CHECK(tl.find("\"file\": \"scenarios/templates/outer.yaml\"") != std::string::npos);
+    CHECK(tl.find("\"not_applied_from\":") != std::string::npos);
 }

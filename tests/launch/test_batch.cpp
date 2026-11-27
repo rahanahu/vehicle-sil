@@ -847,4 +847,96 @@ TEST_CASE(batch_named_cases_expansion_filtering_rerun_and_formatting)
     const std::string gridText = format_test_text(gridReport);
     CHECK(gridText.find("templates/inner.yaml:5: 'inject dither': the dither of Engine.level") != std::string::npos);
     CHECK(gridText.find("--variant small --scenario a_cases.yaml --case '無負荷'") != std::string::npos);
+
+    // 6. Bug A-1: failure_reason() includes template file even when first->line == 0 (empty template).
+    write(dir / "sim_ok_exec.yaml",
+          std::string("vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+                      "  - name: Engine\n    command: [\"") +
+              VEHICLE_SIL_PROCESS_HELPER +
+              "\"]\n    describe: false\n"
+              "variants:\n  small: {}\n  medium: {}\n");
+    write(dir / "templates" / "empty_tpl.yaml", "");
+    write(dir / "calls_empty_tpl.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/empty_tpl.yaml\n");
+    {
+        TestOptions opts;
+        opts.variants = {"small"};
+        opts.scenarios = {{"calls_empty_tpl.yaml"}};
+        const TestReport emptyRep = test_in(dir, "sim_ok_exec.yaml", opts);
+        CHECK_EQ(emptyRep.exit_code(), 1);
+        CHECK_EQ(emptyRep.runs.size(), std::size_t{1});
+        CHECK(emptyRep.runs[0].result == TestRunResult::Failed);
+        CHECK(emptyRep.runs[0].reason.rfind("templates/empty_tpl.yaml: the template file is empty", 0) == 0);
+    }
+
+    // 7. Bug A-2 & Gap 6: singular unused_params() wording with --case + --param, caseless no-params singular wording,
+    // broken unselected case under --case + --param, empty only: intersection (not_for_variant == false -> fail),
+    // and run_alone() shell metacharacters (', ", $, \).
+    {
+        TestOptions opts;
+        opts.variants = {"small"};
+        opts.scenarios = {{"a_cases.yaml"}};
+        opts.cases = {"無負荷"};
+        opts.request.intent.params = {ParamValue{"bogus", "1", false, ParamSource::CommandLine, 0, true}};
+        const TestReport singleUnused = test_in(dir, "sim.yaml", opts);
+        CHECK_EQ(singleUnused.exit_code(), 4);
+        CHECK(singleUnused.findings.size() == 1);
+        CHECK(singleUnused.findings[0].message.find("--param bogus=1: the scenario has no parameter bogus: its parameters are x") !=
+              std::string::npos);
+    }
+    write(dir / "caseless_noparams.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - set: { Engine.level: 1 }\n");
+    {
+        TestOptions opts;
+        opts.variants = {"small"};
+        opts.scenarios = {{"caseless_noparams.yaml"}};
+        opts.request.intent.params = {ParamValue{"bogus", "1", false, ParamSource::CommandLine, 0, true}};
+        const TestReport noneUnused = test_in(dir, "sim.yaml", opts);
+        CHECK_EQ(noneUnused.exit_code(), 4);
+        CHECK(noneUnused.findings.size() == 1);
+        CHECK(noneUnused.findings[0].message.find("--param bogus=1: the scenario has no parameter bogus: it uses none") !=
+              std::string::npos);
+    }
+    write(dir / "broken_unselected_case.yaml",
+          "vehicle_sil_scenario: 1\nparams: { x: 1 }\n"
+          "cases:\n  good: { params: { x: 5 } }\n  bad: { params: { typo: 99 } }\n"
+          "steps:\n  - template: templates/inner.yaml\n    params: { x: \"${x}\" }\n");
+    {
+        TestOptions opts;
+        opts.variants = {"small"};
+        opts.scenarios = {{"broken_unselected_case.yaml"}};
+        opts.cases = {"good"};
+        opts.request.intent.params = {ParamValue{"bogus", "1", false, ParamSource::CommandLine, 0, true}};
+        const TestReport brokenOther = test_in(dir, "sim.yaml", opts);
+        CHECK(brokenOther.result() == TestResult::Failed);
+        CHECK_EQ(brokenOther.exit_code(), 1);
+        CHECK(!brokenOther.usage);
+    }
+    write(dir / "empty_only_inter.yaml",
+          "vehicle_sil_scenario: 1\nonly: [small]\n"
+          "cases:\n  c_empty: { only: [medium] }\n"
+          "steps:\n  - set: { Engine.level: 1 }\n");
+    {
+        TestOptions opts;
+        opts.variants = {"small"};
+        opts.scenarios = {{"empty_only_inter.yaml"}};
+        const TestReport emptyInter = test_in(dir, "sim_ok_exec.yaml", opts);
+        CHECK(emptyInter.result() == TestResult::Failed);
+        CHECK_EQ(emptyInter.exit_code(), 1);
+        CHECK_EQ(emptyInter.runs.size(), std::size_t{1});
+        CHECK(emptyInter.runs[0].result == TestRunResult::Failed);
+        CHECK(emptyInter.runs[0].reason.find("have no variant in common") != std::string::npos);
+    }
+    {
+        TestReport metaReport;
+        metaReport.file = "sim.yaml";
+        metaReport.scenarios = {"a_cases.yaml"};
+        TestRun metaTr;
+        metaTr.variant = "small";
+        metaTr.scenario = "a_cases.yaml";
+        metaTr.case_name = "case 'q' \"dq\" $var \\bs";
+        metaTr.result = TestRunResult::Failed;
+        metaTr.reason = "failed";
+        metaReport.runs.push_back(metaTr);
+        const std::string metaText = format_test_text(metaReport);
+        CHECK(metaText.find("--case 'case '\\''q'\\'' \"dq\" $var \\bs'") != std::string::npos);
+    }
 }

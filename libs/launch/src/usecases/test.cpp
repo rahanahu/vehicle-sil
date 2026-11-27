@@ -114,10 +114,13 @@ std::string failure_reason(const RunReport& report)
     const char* kind = severity == config::Severity::Error ? "error" : "warning";
     const std::string scenarioFile = report.check.scenario ? report.check.scenario->file : std::string{};
     std::string loc;
-    if (!first->file.empty() && first->line > 0)
+    if (!first->file.empty() && !scenarioFile.empty() && first->file != scenarioFile)
     {
-        loc = (!scenarioFile.empty() && first->file != scenarioFile ? first->file + ":" : std::string("line ")) +
-              std::to_string(first->line) + ": ";
+        loc = first->file + (first->line > 0 ? ":" + std::to_string(first->line) : "") + ": ";
+    }
+    else if (!first->file.empty() && first->line > 0)
+    {
+        loc = "line " + std::to_string(first->line) + ": ";
     }
     return loc + first->message +
            (severity == config::Severity::Warning ? " (a warning, and --strict fails on it)" : "") +
@@ -339,11 +342,16 @@ std::vector<config::Finding> unused_params(const std::vector<TestScenario>& scen
             continue;
         }
         const std::string guess = config::detail::closest(param.name, names);
-        const std::string which = scenarios.size() == 1 ? "the scenario has" : "none of the " + std::to_string(scenarios.size()) + " scenarios has";
-        errors.push_back(usage("--param " + param.name + "=" + param.text + ": " + which + " a parameter " + param.name +
+        const bool single = scenarios.size() == 1;
+        const std::string which =
+            single ? "the scenario has no parameter "
+                   : "none of the " + std::to_string(scenarios.size()) + " scenarios has a parameter ";
+        errors.push_back(usage("--param " + param.name + "=" + param.text + ": " + which + param.name +
                                (guess.empty() ? "" : " (did you mean " + guess + "?)") + ": " +
-                               (names.empty() ? std::string("they use none (a step uses one as ${name})")
-                                              : "their parameters are " + config::detail::join(names)) +
+                               (names.empty() ? std::string(single ? "it uses none (a step uses one as ${name})"
+                                                                   : "they use none (a step uses one as ${name})")
+                                              : std::string(single ? "its parameters are " : "their parameters are ") +
+                                                    config::detail::join(names)) +
                                "; remove the option or correct the name"));
     }
     return errors;

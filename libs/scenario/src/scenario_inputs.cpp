@@ -150,16 +150,34 @@ void Reader::check_dithers()
             if (outside.size() > 1)
             {
                 std::vector<std::string> where;
+                bool hasFile = false;
                 for (std::size_t k = 1; k < outside.size(); ++k)
                 {
-                    const std::string line = short_loc(outside[k]->file, outside[k]->line);
-                    if (std::find(where.begin(), where.end(), line) == where.end())
+                    if (!outside[k]->file.empty() && outside[k]->file == first.file && outside[k]->line == first.line)
                     {
-                        where.push_back(line);
+                        continue;
+                    }
+                    hasFile = hasFile || !outside[k]->file.empty();
+                }
+                for (std::size_t k = 1; k < outside.size(); ++k)
+                {
+                    if (!outside[k]->file.empty() && outside[k]->file == first.file && outside[k]->line == first.line)
+                    {
+                        continue;
+                    }
+                    const std::string loc =
+                        hasFile ? loc_text(outside[k]->file, outside[k]->line) : short_loc(outside[k]->file, outside[k]->line);
+                    if (std::find(where.begin(), where.end(), loc) == where.end())
+                    {
+                        where.push_back(loc);
                     }
                 }
-                others = "; so on " + std::to_string(outside.size() - 1) + " other value" + (outside.size() > 2 ? "s" : "") + " (line" +
-                         (where.size() > 1 ? "s " : " ") + config::detail::join(where) + ")";
+                others = "; so on " + std::to_string(outside.size() - 1) + " other value" + (outside.size() > 2 ? "s" : "");
+                if (!where.empty())
+                {
+                    others += hasFile ? " (" + config::detail::join(where) + ")"
+                                      : std::string(" (line") + (where.size() > 1 ? "s " : " ") + config::detail::join(where) + ")";
+                }
             }
             add_at(config::Severity::Warning, "scenario-dither-range", dither.file, dither.line,
                    "the dither of " + var.text + " may take it out of its range (" + range + "): on the " + number_text(first.value) +
