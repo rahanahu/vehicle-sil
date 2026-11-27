@@ -1591,20 +1591,37 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
             }
             if (!lhsSeen || anyRhsUnseen)
             {
+                const auto finite_val = [](const std::optional<control::Value>& val) -> std::optional<control::Value> {
+                    if (!val)
+                    {
+                        return std::nullopt;
+                    }
+                    if (const auto* d = std::get_if<double>(&*val); d != nullptr && !std::isfinite(*d))
+                    {
+                        return std::nullopt;
+                    }
+                    return val;
+                };
                 const Variable& lhs = variables_[condition.variable];
+                const std::optional<control::Value> lhsVal = lhsSeen ? finite_val(lhs.value) : std::nullopt;
                 TimelineFailedCondition failed{
                     c,
-                    lhsSeen ? lhs.value : std::nullopt,
-                    lhsSeen ? lhs.value_time : std::nullopt,
+                    lhsVal,
+                    lhsVal ? lhs.value_time : std::nullopt,
                 };
                 for (const std::size_t rhsIdx : rhsVars)
                 {
                     const bool rhsSeen = seen_in_window(rhsIdx);
+                    if (lhsSeen && rhsSeen)
+                    {
+                        continue;
+                    }
                     const Variable& rhs = variables_[rhsIdx];
+                    const std::optional<control::Value> rhsVal = rhsSeen ? finite_val(rhs.value) : std::nullopt;
                     failed.compared.push_back(TimelineComparedValue{
                         rhsIdx,
-                        rhsSeen ? rhs.value : std::nullopt,
-                        rhsSeen ? rhs.value_time : std::nullopt,
+                        rhsVal,
+                        rhsVal ? rhs.value_time : std::nullopt,
                     });
                 }
                 notSeen.conditions.push_back(std::move(failed));

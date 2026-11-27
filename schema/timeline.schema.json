@@ -505,7 +505,7 @@
                         "number",
                         "null"
                       ],
-                      "description": "The value the variable had; null if it had none (no sample, or none in the time of a \"during\" watch)."
+                      "description": "The value the variable had; null if it had none (no sample, non-finite, or none in the time of a \"during\" watch)."
                     },
                     "sample_ms": {
                       "type": [

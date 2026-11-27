@@ -1690,7 +1690,7 @@ The `failed` of a failed step holds what failed, as numbers (`null` for other st
 }
 ```
 
-- `conditions[]` lists every condition that did not hold. `condition` is the index (from 0) in `watch.conditions[]`. `value` and `sample_ms` are the value at that moment and the time of the sample it came from. Both are `null` for a condition that had no value yet, and for a condition that got no sample in its `during` interval. When one or more variable-to-variable comparisons on that condition failed, `compared` lists the right-hand variables (`{ "variable", "value", "sample_ms" }`, with `value` and `sample_ms` `null` when the right-hand variable had no sample yet, was non-finite, or had no sample in a `during` interval).
+- `conditions[]` lists every condition that did not hold. `condition` is the index (from 0) in `watch.conditions[]`. `value` and `sample_ms` are the value at that moment and the time of the sample it came from. Both are `null` for a condition that had no value yet, was non-finite, or got no sample in its `during` interval. When one or more variable-to-variable comparisons on that condition failed, `compared` lists the right-hand variables (`{ "variable", "value", "sample_ms" }`, with `value` and `sample_ms` `null` when the right-hand variable had no sample yet, was non-finite, or had no sample in a `during` interval).
 - `writes[]` and `write` describe a failed write (below). In a step that did not fail on a write, `writes[]` is empty and `write` is `null`.
 
 For a step that failed on a write, `writes[]` holds every write that the scenario sent together for that time. In this example, one `set` wrote 2 variables of the participant `Body`, and the ECU's setter rejected the second one:

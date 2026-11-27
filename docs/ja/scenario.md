@@ -251,7 +251,7 @@ steps:
       Dashboard.dashboard.engine_lost: { ne: { variable: Engine.ecu.connected } }
 ```
 
-- 変数間比較の型ルール: `integer` と `real` は互いに全 7 演算子で比較できます（64 ビット整数同士および整数と倍精度実数の比較で `2^53` 超の精度落ちを起こしません）。`bool` 同士は `eq`・`ne`、`enum` 同士は `(name, value)` の集合が順序を除いて厳密一致するときに `eq`・`ne` で比較できます（ECU ごとに値が異なるときは `simulation.yaml` の `variables.<名前>.map` で揃えます）。同じ変数同士の自己比較はエラー（`scenario-value`）で、`variable:` の中では `${name}` のパラメーター展開は使えません（`scenario-param`。`tolerance` には `"${name}"` を使えます）。四則演算やインラインの `scale`・`offset`、`or`・`not`、過去時刻の参照はありません。
+- 変数間比較の型ルール: `integer` と `real` は互いに全 7 演算子で比較できます（64 ビット整数同士および整数と倍精度実数の比較で `2^53` 超の精度落ちを起こしません）。`bool` 同士は `eq`・`ne`、`enum` 同士は `(name, value)` の集合が順序を除いて厳密一致するときに `eq`・`ne` で比較できます（基底の整数値が一致している場合は `simulation.yaml` の `variables.<名前>.map` で項目名や共通の部分集合を揃えられます）。同じ変数同士の自己比較はエラー（`scenario-value`）で、`variable:` の中では `${name}` のパラメーター展開は使えません（`scenario-param`。`tolerance` には `"${name}"` を使えます）。四則演算やインラインの `scale`・`offset`、`or`・`not`、過去時刻の参照はありません。
 
 ### スキーマ
 

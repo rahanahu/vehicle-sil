@@ -5490,8 +5490,6 @@ TEST_CASE(scenario_holds_exact_numeric_and_non_finite_semantics)
     // even though (2^-54) + (1 - 2^-53) rounds to 1.0 in IEEE-754 double! Sterbenz must reject!
     const double dSmall = std::ldexp(1.0, -54);
     const double tolTight = 1.0 - std::ldexp(1.0, -53);
-    const double tolExact = 1.0 - std::ldexp(1.0, -54); // == tolTight? No, 1 - 2^-53 < 1 - 2^-54; 1.0 >= |1 - 2^-54|
-    static_cast<void>(tolExact);
     CHECK(!holds(Compare::Near, Value{std::int64_t{1}}, Value{dSmall}, tolTight));
     CHECK(holds(Compare::Near, Value{std::int64_t{1}}, Value{std::ldexp(1.0, -53)}, tolTight));
     // Negative fractional d = -1e-20 vs i = 0: std::modf keeps |fpart| = 1e-20 (d - floor(d) would round to 1.0).
@@ -5557,7 +5555,38 @@ TEST_CASE(scenario_holds_exact_numeric_and_non_finite_semantics)
         const ScenarioRun run = engine.run();
         CHECK(run.status == ScenarioStatus::Failed);
         CHECK(run.steps[0].message.find("while Door.ratio was nan (its sample of 0 ms)") != std::string::npos);
-        CHECK(!record.failures()[0].value().conditions[0].compared[0].value.has_value());
+        const auto& fc = record.failures()[0].value().conditions[0];
+        CHECK(fc.value == std::optional<Value>(Value{0.25}));
+        CHECK(fc.sample == std::optional<SimTime>(at(0ms)));
+        CHECK(!fc.compared[0].value.has_value());
+        CHECK(!fc.compared[0].sample.has_value());
+    }
+    {
+        // Symmetric: Body (LHS) sends NaN while Door (RHS) sends finite 0.25 -> LHS value & sample are both nullopt.
+        World world;
+        TimelineRecord record(sNe);
+        ScenarioEngine engine(sNe, 10ms, world, {}, &record);
+        std::vector<EnginePeer> peers(2);
+        peers[0].connected = peers[1].connected = true;
+        peers[0].schema = peers[1].schema = model_variables();
+        engine.begin(peers);
+        auto snap0 = std::make_shared<control::Snapshot>();
+        snap0->time = at(0ms);
+        snap0->sequence = 1;
+        snap0->values = {Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{false}, Value{nan},
+                         Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{false},           Value{0.0}};
+        auto snap1 = std::make_shared<control::Snapshot>(*snap0);
+        snap1->values[4] = Value{0.25};
+        engine.sample(0, snap0);
+        engine.sample(1, snap1);
+        CHECK(engine.tick(at(10ms)));
+        const ScenarioRun run = engine.run();
+        CHECK(run.status == ScenarioStatus::Failed);
+        const auto& fc = record.failures()[0].value().conditions[0];
+        CHECK(!fc.value.has_value());
+        CHECK(!fc.sample.has_value());
+        CHECK(fc.compared[0].value == std::optional<Value>(Value{0.25}));
+        CHECK(fc.compared[0].sample == std::optional<SimTime>(at(0ms)));
     }
 }
 
@@ -5746,5 +5775,175 @@ TEST_CASE(scenario_variable_comparisons_during_boundaries_mixed_and_unseen_rhs)
         CHECK_EQ(failedConds[0].compared.size(), std::size_t{1});
         CHECK(!failedConds[0].compared[0].value.has_value());
         CHECK(!failedConds[0].compared[0].sample.has_value());
+    }
+
+    struct ImmediatePort : ScenarioPort
+    {
+        std::uint64_t next = 0;
+        std::map<std::uint64_t, control::OperationResult> ops;
+        std::uint64_t write(std::vector<control::PeerWrite> writes, SimTime time) override
+        {
+            const std::uint64_t seq = ++next;
+            control::OperationResult r;
+            r.seq = seq;
+            for (const auto& w : writes)
+            {
+                if (std::none_of(r.targets.begin(), r.targets.end(), [&](const auto& t) { return t.peer == w.peer; }))
+                {
+                    const auto cnt = static_cast<std::uint32_t>(
+                        std::count_if(writes.begin(), writes.end(), [&](const auto& x) { return x.peer == w.peer; }));
+                    r.targets.push_back(control::TargetResult{w.peer, control::TargetStatus::Applied, time, false, "", cnt});
+                }
+            }
+            ops[seq] = std::move(r);
+            return seq;
+        }
+        void settle() override {}
+        std::optional<control::OperationResult> result(std::uint64_t t) override { return ops.at(t); }
+        std::optional<control::OperationResult> wait_done(std::uint64_t t) override { return ops.at(t); }
+    };
+
+    const auto makeRatioSnap = [](SimTime t, std::uint64_t seq, std::int64_t lvl, double ratio) {
+        auto snap = std::make_shared<control::Snapshot>();
+        snap->time = t;
+        snap->sequence = seq;
+        snap->values = {control::Value{lvl},            control::Value{std::int64_t{0}}, control::Value{std::int64_t{0}},
+                        control::Value{false},          control::Value{ratio},           control::Value{std::int64_t{0}},
+                        control::Value{std::int64_t{0}}, control::Value{false},          control::Value{0.0}};
+        return snap;
+    };
+
+    // 3. Non-finite (NaN / Inf) sample inside a multi-rate During ([20, 40]) window under samples: every_step:
+    // Both LHS NaN before the slower RHS steps and RHS NaN before the slower LHS steps must fail immediately at 20 ms
+    // instead of being overwritten by a later finite sample at 30 ms!
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    {
+        // LHS (Body, 10 ms) emits NaN at 20 ms and recovers to 1.0 at 30 ms; RHS (Door, 30 ms) steps at 0 ms and 30 ms.
+        ScenarioCatalog cat = catalog(10ms, 30ms);
+        const Scenario s = read(
+            kHead + "  - at_ms: 20\n"
+                    "    ramp: { Body.level: { from: 10, to: 20, over_ms: 20 } }\n"
+                    "    expect: { Body.ratio: { ne: { variable: Door.ratio } } }\n",
+            cat);
+        ImmediatePort port;
+        TimelineRecord record(s);
+        ScenarioEngine engine(s, 10ms, port, {}, &record);
+        std::vector<EnginePeer> peers(2);
+        peers[0].connected = peers[1].connected = true;
+        peers[0].schema = peers[1].schema = model_variables();
+        engine.begin(peers);
+        engine.sample(0, makeRatioSnap(at(0ms), 1, 0, 1.0));
+        engine.sample(1, makeRatioSnap(at(0ms), 1, 0, 2.0));
+        CHECK(!engine.tick(at(10ms)));
+        engine.sample(0, makeRatioSnap(at(10ms), 2, 0, 1.0));
+        CHECK(!engine.tick(at(20ms)));
+        engine.sample(0, makeRatioSnap(at(20ms), 3, 10, nan));
+        engine.sample(0, makeRatioSnap(at(30ms), 4, 15, 1.0));
+        engine.sample(1, makeRatioSnap(at(30ms), 2, 0, 2.0));
+        CHECK(engine.tick(at(40ms)));
+        const ScenarioRun run = engine.run();
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].at == std::optional<SimTime>(at(20ms)));
+        CHECK(run.steps[0].message.find("at 20 ms Body.ratio ne Door.ratio, but it was nan (its sample of 20 ms)") !=
+              std::string::npos);
+        const auto& fc = record.failures()[0].value().conditions[0];
+        CHECK(!fc.value.has_value());
+        CHECK(!fc.sample.has_value());
+        CHECK_EQ(fc.compared.size(), std::size_t{1});
+        CHECK(!fc.compared[0].value.has_value());
+        CHECK(!fc.compared[0].sample.has_value());
+    }
+    {
+        // Symmetric: LHS (Body, 30 ms) has no >= 20 ms sample yet when RHS (Door, 10 ms) emits NaN at 20 ms and recovers at 30 ms.
+        ScenarioCatalog cat = catalog(30ms, 10ms);
+        const Scenario s = read(
+            kHead + "  - at_ms: 20\n"
+                    "    ramp: { Door.level: { from: 10, to: 20, over_ms: 20 } }\n"
+                    "    expect: { Body.ratio: { ne: { variable: Door.ratio } } }\n",
+            cat);
+        ImmediatePort port;
+        TimelineRecord record(s);
+        ScenarioEngine engine(s, 10ms, port, {}, &record);
+        std::vector<EnginePeer> peers(2);
+        peers[0].connected = peers[1].connected = true;
+        peers[0].schema = peers[1].schema = model_variables();
+        engine.begin(peers);
+        const std::size_t bodyIdx = s.participants[0].name == "Body" ? 0 : 1;
+        const std::size_t doorIdx = 1 - bodyIdx;
+        engine.sample(bodyIdx, makeRatioSnap(at(0ms), 1, 0, 1.0));
+        engine.sample(doorIdx, makeRatioSnap(at(0ms), 1, 0, 2.0));
+        CHECK(!engine.tick(at(10ms)));
+        engine.sample(doorIdx, makeRatioSnap(at(10ms), 2, 0, 2.0));
+        CHECK(!engine.tick(at(20ms)));
+        engine.sample(doorIdx, makeRatioSnap(at(20ms), 3, 10, nan));
+        engine.sample(bodyIdx, makeRatioSnap(at(30ms), 2, 0, 1.0));
+        engine.sample(doorIdx, makeRatioSnap(at(30ms), 4, 15, 2.0));
+        CHECK(engine.tick(at(40ms)));
+        const ScenarioRun run = engine.run();
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].at == std::optional<SimTime>(at(20ms)));
+        CHECK(run.steps[0].message.find("it had no sample from 20 ms yet while Door.ratio was nan (its sample of 20 ms)") !=
+              std::string::npos);
+        const auto& fc = record.failures()[0].value().conditions[0];
+        CHECK(!fc.value.has_value());
+        CHECK(!fc.sample.has_value());
+        CHECK_EQ(fc.compared.size(), std::size_t{1});
+        CHECK(!fc.compared[0].value.has_value());
+        CHECK(!fc.compared[0].sample.has_value());
+    }
+
+    // 4. close(U) with two RHS variables on one condition: when LHS and Fast are both seen and passing in [20, 40]
+    // while Slow has no sample in [20, 40], failed.conditions[].compared[] lists ONLY Slow (not Fast)!
+    {
+        ScenarioCatalog cat;
+        cat.push_back(CatalogParticipant{"Body", "", 10ms, model_variables()});
+        cat.push_back(CatalogParticipant{"Fast", "", 10ms, model_variables()});
+        cat.push_back(CatalogParticipant{"Slow", "", 100ms, model_variables()});
+        const Scenario s = read(
+            "vehicle_sil_scenario: 1\n"
+            "samples: as_sent\n"
+            "steps:\n"
+            "  - at_ms: 20\n"
+            "    ramp: { Body.level: { from: 20, to: 30, over_ms: 20 } }\n"
+            "    expect: { Body.level: { ge: { variable: Fast.level }, le: { variable: Slow.level } } }\n",
+            cat);
+        ImmediatePort port;
+        TimelineRecord record(s);
+        ScenarioEngine engine(s, 10ms, port, {}, &record);
+        std::vector<EnginePeer> peers(3);
+        for (auto& p : peers)
+        {
+            p.connected = true;
+            p.schema = model_variables();
+        }
+        engine.begin(peers);
+        engine.sample(0, makeRatioSnap(at(0ms), 1, 20, 0.0));
+        engine.sample(1, makeRatioSnap(at(0ms), 1, 10, 0.0));
+        engine.sample(2, makeRatioSnap(at(0ms), 1, 50, 0.0)); // Slow seen only at 0 ms (< 20 ms)
+        CHECK(!engine.tick(at(10ms)));
+        engine.sample(0, makeRatioSnap(at(10ms), 2, 20, 0.0));
+        engine.sample(1, makeRatioSnap(at(10ms), 2, 10, 0.0));
+        CHECK(!engine.tick(at(20ms)));
+        engine.sample(0, makeRatioSnap(at(20ms), 3, 20, 0.0));
+        engine.sample(1, makeRatioSnap(at(20ms), 3, 10, 0.0));
+        CHECK(!engine.tick(at(30ms)));
+        engine.sample(0, makeRatioSnap(at(30ms), 4, 25, 0.0));
+        engine.sample(1, makeRatioSnap(at(30ms), 4, 10, 0.0));
+        CHECK(!engine.tick(at(40ms)));
+        engine.sample(0, makeRatioSnap(at(40ms), 5, 30, 0.0));
+        engine.sample(1, makeRatioSnap(at(40ms), 5, 10, 0.0));
+        CHECK(engine.tick(at(50ms)));
+        const ScenarioRun run = engine.run();
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].at == std::optional<SimTime>(at(40ms)));
+        CHECK(run.steps[0].message.find("no sample of Slow.level in that time") != std::string::npos);
+        CHECK(run.steps[0].message.find("Fast.level") == std::string::npos);
+        const auto& fc = record.failures()[0].value().conditions[0];
+        CHECK(fc.value == std::optional<control::Value>(control::Value{std::int64_t{30}}));
+        CHECK(fc.sample == std::optional<SimTime>(at(40ms)));
+        CHECK_EQ(fc.compared.size(), std::size_t{1});
+        CHECK(s.variables[fc.compared[0].variable].text == "Slow.level");
+        CHECK(!fc.compared[0].value.has_value());
+        CHECK(!fc.compared[0].sample.has_value());
     }
 }

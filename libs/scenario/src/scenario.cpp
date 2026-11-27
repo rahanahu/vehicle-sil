@@ -1981,7 +1981,7 @@ bool Reader::read_rhs_variable(ryml::id_type var_node, std::size_t lhs_variable,
         error("scenario-value", varLine,
               pre + " cannot compare with " + rhsVar.text + ": their enum items do not match (" + lhsVar.text + " has " +
                   items_text(lhsVar.items) + "; " + rhsVar.text + " has " + items_text(rhsVar.items) +
-                  "): normalize the enum items with variables.<name>.map in the configuration file (docs/simulation-config.md)");
+                  "): if their item values match, align item names or shared subsets with variables.<name>.map in the configuration file (docs/simulation-config.md)");
         return false;
     }
     rhs_out = *rhs;

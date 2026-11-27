@@ -22,6 +22,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -1826,4 +1827,18 @@ TEST_CASE(timeline_json_records_variable_to_variable_watches_and_failures)
     CHECK(tlUnseen.find("\"condition\": 0,\n            \"value\": 20,\n            \"sample_ms\": 40,\n            \"compared\": [\n"
                         "              {\n                \"variable\": \"Door.level\",\n                \"value\": null,\n"
                         "                \"sample_ms\": null\n              }\n            ]") != std::string::npos);
+
+    // 3. Non-finite RHS in timeline JSON: both value and sample_ms are null in compared[], matching the "null with value" contract.
+    const std::string rhsNan =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - at_ms: 0\n"
+        "    expect: { Body.ratio: { ne: { variable: Door.ratio } } }\n";
+    const std::string tlNan = timeline_of(rhsNan, 10ms, [](World& w) {
+        w.ecus[0].ratio = 0.5;
+        w.ecus[1].ratio = std::numeric_limits<double>::quiet_NaN();
+    });
+    CHECK(tlNan.find("\"condition\": 0,\n            \"value\": 0.5,\n            \"sample_ms\": 0,\n            \"compared\": [\n"
+                     "              {\n                \"variable\": \"Door.ratio\",\n                \"value\": null,\n"
+                     "                \"sample_ms\": null\n              }\n            ]") != std::string::npos);
 }

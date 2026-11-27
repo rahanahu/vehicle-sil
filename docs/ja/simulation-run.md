@@ -1690,7 +1690,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 }
 ```
 
-- `conditions[]` は、成り立たなかった条件の全部です。`condition` は `watch.conditions[]` の添字（0 から）、`value` と `sample_ms` は、そのときの値と、その値のサンプルの時刻です。値がまだなかった条件と、`during` の区間にサンプルが 1 つもなかった条件では、どちらも `null` です。その条件の変数間比較が失敗したときは、`compared` に右辺の変数（`{ "variable", "value", "sample_ms" }`。右辺のサンプルが未着・非有限・`during` 区間内で未着のときは `value` と `sample_ms` が `null`）を並べます。
+- `conditions[]` は、成り立たなかった条件の全部です。`condition` は `watch.conditions[]` の添字（0 から）、`value` と `sample_ms` は、そのときの値と、その値のサンプルの時刻です。値がまだなかった条件、非有限値だった条件、`during` の区間にサンプルが 1 つもなかった条件では、どちらも `null` です。その条件の変数間比較が失敗したときは、`compared` に右辺の変数（`{ "variable", "value", "sample_ms" }`。右辺のサンプルが未着・非有限・`during` 区間内で未着のときは `value` と `sample_ms` が `null`）を並べます。
 - `writes[]` と `write` は、失敗した書き込みです（下）。書き込みの失敗でない手順では、`writes[]` は空で、`write` は `null` です。
 
 書き込みで失敗した手順では、`writes[]` に、シナリオがその時刻に一緒に送った書き込みが全部入ります。次の例では、1 つの `set` が participant `Body` の 2 つの変数を書き、2 つ目を ECU の setter が断りました。

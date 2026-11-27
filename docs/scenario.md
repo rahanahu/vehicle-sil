@@ -251,7 +251,7 @@ A condition is a comparison, nothing more. A bare value means "equal". A mapping
       Dashboard.dashboard.engine_lost: { ne: { variable: Engine.ecu.connected } }
 ```
 
-- Variable-to-variable type rules: `integer` and `real` variables can be compared with each other across all 7 operators (exact 64-bit integer and integer-to-double comparison without `2^53` precision loss); `bool` variables take `eq` or `ne` with another `bool`; `enum` variables take `eq` or `ne` with another `enum` whose `(name, value)` item set is identical regardless of order (use `variables.<name>.map` in `simulation.yaml` when two ECUs encode items differently). Comparing a variable with itself is an error (`scenario-value`), and `${name}` parameters are not allowed inside `variable:` (`scenario-param`; `tolerance` still accepts `"${name}"`). Arithmetic expressions, inline `scale`/`offset`, `or`/`not`, and past-time offsets are not supported.
+- Variable-to-variable type rules: `integer` and `real` variables can be compared with each other across all 7 operators (exact 64-bit integer and integer-to-double comparison without `2^53` precision loss); `bool` variables take `eq` or `ne` with another `bool`; `enum` variables take `eq` or `ne` with another `enum` whose `(name, value)` item set is identical regardless of order (when underlying integer values match, use `variables.<name>.map` in `simulation.yaml` to align item names or shared subsets). Comparing a variable with itself is an error (`scenario-value`), and `${name}` parameters are not allowed inside `variable:` (`scenario-param`; `tolerance` still accepts `"${name}"`). Arithmetic expressions, inline `scale`/`offset`, `or`/`not`, and past-time offsets are not supported.
 
 ### Schema
 
