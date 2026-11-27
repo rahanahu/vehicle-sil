@@ -153,6 +153,7 @@ struct ScenarioOverlay
     /// Asked with the virtual time itself and the base 0 (Waveform::value()); null: none (the
     /// step takes the dither off).
     std::shared_ptr<const Waveform> shape{};
+    std::string file{};   ///< origin file path if from a template ("" if root scenario)
     std::size_t line = 0; ///< of a dither step the step's line, of one that "inputs" declares its entry's
     /// As in the step's text: "Body.ratio triangle amplitude 0.1 period 40 ms", "Body.ratio none".
     std::string text;
@@ -172,9 +173,32 @@ enum class StepKind
 /// "set", "ramp", "wave", "expect", "wait_until", "dither".
 [[nodiscard]] const char* step_kind_name(StepKind kind);
 
+/// One parameter value captured on a template call frame (call_stack).
+struct SourceParam
+{
+    std::string name;
+    std::string text;
+    bool quoted = false;
+    config::ParamSource source = config::ParamSource::TemplateCall;
+
+    friend bool operator==(const SourceParam&, const SourceParam&) = default;
+};
+
+/// One template call frame enclosing a ScenarioStep or ScenarioStepRun (outermost -> immediate).
+struct SourceFrame
+{
+    std::string file;                  ///< caller file path as shown
+    std::size_t line = 0;              ///< 1-based line of the `- template:` call step in `file`
+    std::string name{};                ///< optional human `name:` on that call step, or ""
+    std::vector<SourceParam> params{}; ///< resolved arguments passed to this template call
+
+    friend bool operator==(const SourceFrame&, const SourceFrame&) = default;
+};
+
 struct ScenarioStep
 {
     StepKind kind = StepKind::Set;
+    std::string file{}; ///< origin file path if from a template ("" if root scenario)
     std::size_t line = 0;
     /// Its time: at_ms, or after_ms from the end of the step before it (0 without either).
     std::optional<std::int64_t> at_ms{};
@@ -204,6 +228,8 @@ struct ScenarioStep
     /// variable that is absent or of a participant the variant leaves out, as `skipped` says it), or
     /// "". `conditions` is then empty; the ramp or wave writes as it would with the expect.
     std::string expect_skipped{};
+    std::string name{};                    ///< optional human-assigned step `name:` ("" if omitted)
+    std::vector<SourceFrame> call_stack{}; ///< outermost caller -> immediate caller (empty for direct steps)
 
     /// Its end is not known before it runs (WaitUntil, Expect with within_ms).
     [[nodiscard]] bool waits() const noexcept { return within_ms.has_value(); }
@@ -223,6 +249,7 @@ struct ScenarioLineText
     };
     std::string variable; ///< "<participant>.<name>"
     std::string kind;     ///< "set", "ramp", "wave", "dither"
+    std::string file{};   ///< origin file path if from a template ("" if root scenario)
     std::size_t line = 0; ///< the step's; of a dither that "inputs" declares its entry's
     /// The step's index, from 1; empty for a dither that "inputs" declares.
     std::optional<std::size_t> step{};
@@ -232,7 +259,8 @@ struct ScenarioLineText
     /// dither, which has no end (as in a timeline file).
     std::optional<std::int64_t> to_ms{};
     TimeSource time_source = TimeSource::Text;
-    std::size_t after_wait = 0; ///< AfterWait: the line of the step that waits
+    std::string after_wait_file{}; ///< AfterWait: the file of the step that waits ("" if root)
+    std::size_t after_wait = 0;    ///< AfterWait: the line of the step that waits
     /// What it is, as the step's text has it for this variable: "Body.level = 50",
     /// "Body.level to 80 over 1000 ms", "Body.level triangle amplitude 2 period 40 ms", "Body.level none".
     std::string text;

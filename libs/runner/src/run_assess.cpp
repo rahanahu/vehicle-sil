@@ -731,14 +731,48 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
     if (outcome.scenario.result)
     {
         const scenario::ScenarioRun& scenario = *outcome.scenario.result;
-        const auto add_scenario = [&](std::string code, std::string message, std::size_t line, config::Severity severity = config::Severity::Error) {
-            out.push_back(config::Finding{severity, std::move(code), std::move(message), line, "", "", "", scenario.file});
+        const auto format_provenance = [](const scenario::ScenarioStepRun& step) {
+            std::string detail;
+            for (auto it = step.call_stack.rbegin(); it != step.call_stack.rend(); ++it)
+            {
+                if (!detail.empty())
+                {
+                    detail += '\n';
+                }
+                detail += "called from: " + it->file + ":" + std::to_string(it->line);
+                std::string meta;
+                if (!it->name.empty())
+                {
+                    meta += "step '" + it->name + "'";
+                }
+                for (const scenario::SourceParam& p : it->params)
+                {
+                    if (!meta.empty())
+                    {
+                        meta += ", ";
+                    }
+                    meta += p.name + " = " + (p.quoted ? "\"" + p.text + "\"" : p.text);
+                }
+                if (!meta.empty())
+                {
+                    detail += " (" + meta + ")";
+                }
+            }
+            return detail;
+        };
+        const auto add_scenario = [&](std::string code, std::string message, std::size_t line,
+                                      config::Severity severity = config::Severity::Error,
+                                      std::string file = {}, std::string detail = {}) {
+            out.push_back(config::Finding{severity, std::move(code), std::move(message), line, "", "", std::move(detail),
+                                          file.empty() ? scenario.file : std::move(file)});
         };
         for (const scenario::ScenarioStepRun& step : scenario.steps)
         {
             if (step.status == scenario::StepStatus::Failed)
             {
-                add_scenario(step.code, step.text + ": " + step.message, step.line);
+                const std::string what = step.name.empty() ? step.text : "'" + step.name + "' (" + step.text + ")";
+                add_scenario(step.code, what + ": " + step.message, step.line, config::Severity::Error, step.file,
+                             format_provenance(step));
             }
         }
         if (scenario.status == scenario::ScenarioStatus::Failed && !scenario.code.empty())
@@ -767,7 +801,7 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
         if (scenario.status == scenario::ScenarioStatus::Incomplete)
         {
             const auto reached = std::find_if(scenario.steps.rbegin(), scenario.steps.rend(), [](const scenario::ScenarioStepRun& step) {
-                return step.status != scenario::StepStatus::NotRun;
+                return step.status != scenario::StepStatus::NotRun && step.status != scenario::StepStatus::Skipped;
             });
             const auto passed = static_cast<std::size_t>(std::count_if(
                 scenario.steps.begin(), scenario.steps.end(), [](const scenario::ScenarioStepRun& step) { return step.status == scenario::StepStatus::Passed; }));
@@ -782,7 +816,12 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                              " ms when " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) +
                              " steps had passed" +
                              (reached != scenario.steps.rend() && reached->status == scenario::StepStatus::Unfinished
-                                  ? " and the step at line " + std::to_string(reached->line) + " (" + reached->text + ") was not decided yet"
+                                  ? " and the step at " +
+                                        (reached->file.empty() ? "line " + std::to_string(reached->line)
+                                                               : reached->file + ":" + std::to_string(reached->line)) +
+                                        " (" +
+                                        (reached->name.empty() ? reached->text : "'" + reached->name + "' (" + reached->text + ")") +
+                                        ") was not decided yet"
                                   : std::string{}) +
                              (!outcome.scenario.error.empty()
                                   ? "; the launcher's scenario thread failed (" + outcome.scenario.error +
@@ -794,7 +833,9 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                          reached != scenario.steps.rend() ? reached->line : 0,
                          // Cut short by a stop or an interrupt: that is why, and it is not an error
                          // of the run (the result says that the scenario has no verdict).
-                         (cutShort || reachedLimit) ? config::Severity::Note : config::Severity::Error);
+                         (cutShort || reachedLimit) ? config::Severity::Note : config::Severity::Error,
+                         reached != scenario.steps.rend() ? reached->file : std::string{},
+                         reached != scenario.steps.rend() ? format_provenance(*reached) : std::string{});
         }
     }
     if (!outcome.scenario.timeline.empty() && outcome.scenario.timeline_record && outcome.scenario.timeline_record->dropped() > 0)

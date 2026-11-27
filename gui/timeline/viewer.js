@@ -347,6 +347,57 @@
     return { bands, notes };
   }
 
+  const nonEmptyString = (v) => (typeof v === 'string' && v !== '' ? v : null);
+
+  function stepFile(step, scenarioFile) {
+    return (isObject(step) && nonEmptyString(step.file)) || nonEmptyString(scenarioFile) || null;
+  }
+
+  function lineFile(line, scenarioFile) {
+    return (isObject(line) && nonEmptyString(line.file)) || nonEmptyString(scenarioFile) || null;
+  }
+
+  function stepTitle(step, scenarioFile) {
+    const file = stepFile(step, scenarioFile);
+    const args = {
+      index: step.index,
+      kind: step.kind,
+      line: step.line,
+      status: statusWord(step.status),
+    };
+    if (file && file !== scenarioFile) return t('step.titleInFile', { ...args, file });
+    return t('step.title', args);
+  }
+
+  function lineTitle(line, scenarioFile) {
+    const file = lineFile(line, scenarioFile);
+    const where =
+      line.step === null || line.step === undefined
+        ? t('line.inputs')
+        : t('line.step', { step: line.step });
+    const args = { text: line.text ?? line.kind, where, line: line.line };
+    if (file && file !== scenarioFile) return t('line.titleInFile', { ...args, file });
+    return t('line.title', args);
+  }
+
+  function callStackFrames(callStack, scenarioFile) {
+    if (!Array.isArray(callStack)) return [];
+    const fallback = nonEmptyString(scenarioFile) || '';
+    return callStack.filter(isObject).map((fr) => {
+      const where = t('failure.where', {
+        line: fr.line ?? '',
+        file: nonEmptyString(fr.file) || fallback,
+      });
+      const name = nonEmptyString(fr.name);
+      const params = isObject(fr.params)
+        ? Object.entries(fr.params)
+            .map(([k, v]) => `${k} = ${fmtValue(v)}`)
+            .join(', ')
+        : '';
+      return [where, name, params].filter(Boolean).join(' · ');
+    });
+  }
+
   /** The failure to lead the eye to: the failed step and what failed, in numbers and names. */
   function failureOf(tl, byName) {
     const step = tl.steps.find((s) => s.status === 'failed');
@@ -403,6 +454,9 @@
     const at = f && isNum(f.at_ms) ? f.at_ms : isNum(step.at_ms) ? step.at_ms : null;
     return {
       step,
+      file: stepFile(step, tl.scenario.file),
+      name: nonEmptyString(step.name),
+      callStack: Array.isArray(step.call_stack) ? step.call_stack.filter(isObject) : [],
       at,
       code: (f && f.code) || step.code || null,
       message: typeof step.message === 'string' ? step.message : null,
@@ -578,7 +632,8 @@
         : [];
     return {
       tl,
-      name: typeof sc.name === 'string' && sc.name !== '' ? sc.name : null,
+      name: nonEmptyString(sc.name),
+      caseName: nonEmptyString(sc.case),
       status: sc.status,
       recordedTo,
       overAt: isNum(sc.over_at_ms) ? sc.over_at_ms : null,
@@ -971,6 +1026,11 @@
     fmtValue,
     fmtMs,
     compareText,
+    stepFile,
+    lineFile,
+    stepTitle,
+    lineTitle,
+    callStackFrames,
   };
 
   global.VehicleSilTimeline = api;
@@ -1164,6 +1224,7 @@
     const facts = [
       ['fact.file', state.file],
       ['fact.scenario', tl.scenario.file],
+      ['fact.case', nonEmptyString(tl.scenario.case)],
       ['fact.configuration', tl.file],
       ['fact.variant', tl.variant],
       ['fact.timeStep', m.timeStep !== null ? fmtMs(m.timeStep) : null],
@@ -1198,19 +1259,29 @@
     const f = m.failure;
     if (f) {
       const step = f.step;
+      const stepName = nonEmptyString(step.name);
       const where = [
         step.kind,
-        t('failure.where', { line: step.line, file: m.tl.scenario.file }),
+        stepName,
+        t('failure.where', { line: step.line, file: step.file || m.tl.scenario.file }),
         f.code,
       ]
         .filter(Boolean)
         .join(' · ');
+      const frames = callStackFrames(step.call_stack, m.tl.scenario.file);
       parts.push(
         h(
           'div',
           { class: 'banner bad', 'data-testid': 'failure' },
           h('h3', { text: t('failure.heading', { step: step.index, at: fmtMs(f.at) }) }),
           h('p', { class: 'muted small', text: `${where} · ${step.text}` }),
+          frames.length
+            ? h(
+                'p',
+                { class: 'muted small', 'data-testid': 'failure-call-stack' },
+                `${t('failure.calledFrom')} ${frames.join(' → ')}`,
+              )
+            : null,
           f.message
             ? h('p', { class: 'message', 'data-testid': 'failure-message', text: f.message })
             : null,
@@ -1402,6 +1473,13 @@
           ? t('step.expectSkipped', { why: st.expect_skipped })
           : '');
       const canShow = isNum(st.start_ms);
+      const stFile = nonEmptyString(st.file);
+      const lineCell =
+        stFile && stFile !== m.tl.scenario.file
+          ? `${stFile}:${st.line ?? ''}`
+          : String(st.line ?? '');
+      const stName = nonEmptyString(st.name);
+      const stFrames = callStackFrames(st.call_stack, m.tl.scenario.file);
       return h(
         'tr',
         {
@@ -1424,7 +1502,7 @@
               })
             : `#${st.index}`,
         ),
-        h('td', { text: String(st.line ?? '') }),
+        h('td', { text: lineCell }),
         h('td', { text: String(st.kind) }),
         h(
           'td',
@@ -1438,7 +1516,18 @@
         h('td', { class: 'num', text: fmtMs(st.start_ms) }),
         h('td', { class: 'num', text: fmtMs(st.at_ms) }),
         h('td', { class: 'num', text: fmtMs(st.end_ms) }),
-        h('td', { text: String(st.text ?? '') }),
+        h(
+          'td',
+          {},
+          stName ? h('strong', { text: `${stName} · ` }) : null,
+          String(st.text ?? ''),
+          stFrames.length
+            ? h('div', {
+                class: 'muted small',
+                text: `${t('failure.calledFrom')} ${stFrames.join(' → ')}`,
+              })
+            : null,
+        ),
         h('td', { text: result }),
       );
     });
@@ -1463,16 +1552,20 @@
         h('td', { text: String(l.text ?? '') }),
       ),
     );
-    const findingRows = m.findings.map((x) =>
-      h(
+    const findingRows = m.findings.map((x) => {
+      const fFile = nonEmptyString(x.file);
+      const fLine = x.line === null || x.line === undefined ? '' : String(x.line);
+      const fWhere =
+        fFile && fFile !== m.tl.scenario.file ? (fLine ? `${fFile}:${fLine}` : fFile) : fLine;
+      return h(
         'tr',
         {},
         h('td', { text: String(x.severity ?? '') }),
         h('td', {}, h('code', { text: String(x.code) })),
-        h('td', { text: x.line === null || x.line === undefined ? '' : String(x.line) }),
+        h('td', { text: fWhere }),
         h('td', { text: String(x.message ?? t('finding.codeOnly')) }),
-      ),
-    );
+      );
+    });
     const table = (caption, heads, rows, testid) =>
       h(
         'details',
@@ -1729,7 +1822,8 @@
           ? st.watch.to_ms
           : null;
       if ((limit ?? end) < scale.t0 || start > scale.t1) continue;
-      const label = `#${st.index} ${st.kind}`;
+      const stName = nonEmptyString(st.name);
+      const label = stName ? `#${st.index} ${stName}` : `#${st.index} ${st.kind}`;
       const labelWidth = label.length * 6.6 + 12;
       const xs = Math.max(0, scale.x(start));
       const xe = Math.min(scale.width, scale.x(limit ?? end));
@@ -1805,20 +1899,19 @@
           g,
         );
       }
+      const stName = nonEmptyString(it.st.name);
+      const stFrames = callStackFrames(it.st.call_stack, m.tl.scenario.file);
       const lines = [
-        t('step.title', {
-          index: it.st.index,
-          kind: it.st.kind,
-          line: it.st.line,
-          status: statusWord(it.st.status),
-        }),
+        stepTitle(it.st, m.tl.scenario.file),
+        stName,
         String(it.st.text ?? ''),
+        ...stFrames.map((fr) => `${t('failure.calledFrom')} ${fr}`),
         t('step.times', {
           start: fmtMs(it.st.start_ms),
           decided: fmtMs(it.st.at_ms),
           end: fmtMs(it.st.end_ms),
         }),
-      ];
+      ].filter((x) => x !== null && x !== '');
       if (it.st.message) lines.push(it.st.message);
       if (typeof it.st.expect_skipped === 'string')
         lines.push(t('step.expectSkipped', { why: it.st.expect_skipped }));
@@ -2018,14 +2111,7 @@
       if (!isNum(l.from_ms)) continue;
       const known = knows(KNOWN.lineKind, l.kind);
       const x0 = scale.x(l.from_ms);
-      const text = t('line.title', {
-        text: l.text ?? l.kind,
-        where:
-          l.step === null || l.step === undefined
-            ? t('line.inputs')
-            : t('line.step', { step: l.step }),
-        line: l.line,
-      });
+      const text = lineTitle(l, m.tl.scenario.file);
       const g = tooltip(
         s('g', { class: `line-mark line-${known ? l.kind : 'unknown'}` }, svg),
         text,
@@ -2428,12 +2514,9 @@
     panel.hidden = !step;
     if (!step || panel.dataset.step === String(step.index)) return;
     panel.dataset.step = String(step.index);
-    const title = t('step.title', {
-      index: step.index,
-      kind: step.kind,
-      line: step.line,
-      status: statusWord(step.status),
-    });
+    const title = stepTitle(step, m.tl.scenario.file);
+    const stepName = nonEmptyString(step.name);
+    const frames = callStackFrames(step.call_stack, m.tl.scenario.file);
     const timings = t('step.times', {
       start: fmtMs(step.start_ms),
       decided: fmtMs(step.at_ms),
@@ -2455,8 +2538,16 @@
         'div',
         { class: 'detail-heading' },
         h('strong', { text: title }),
+        stepName ? h('span', { text: stepName }) : null,
         h('span', { class: 'muted', text: timings }),
       ),
+      frames.length
+        ? h(
+            'div',
+            { class: 'muted small', 'data-testid': 'step-call-stack' },
+            `${t('failure.calledFrom')} ${frames.join(' → ')}`,
+          )
+        : null,
       conditions.length
         ? h(
             'div',

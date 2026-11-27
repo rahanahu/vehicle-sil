@@ -90,8 +90,8 @@ TEST_CASE(scenario_file_errors_say_the_line_what_is_wrong_and_how_to_fix_it)
                "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, samples, only, params, inputs, end_ms, steps)\n"
                "E 0 missing-key: the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: 1\n");
     check_text(errors(kHead + "  - sets: { Body.level: 1 }\n"),
-               "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: at_ms, after_ms, set, ramp, wave, dither, wait_until, "
-               "timeout_ms, expect, within_ms, hold_for_ms, undersampled)\n"
+               "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: name, at_ms, after_ms, set, ramp, wave, dither, "
+               "wait_until, timeout_ms, expect, within_ms, hold_for_ms, undersampled)\n"
                "E 3 value: the step does nothing: give it one of set, ramp, wave, dither, wait_until, expect\n");
     check_text(errors(kHead + "  - set: { Body.level: 1 }\n    expect: { Body.level: 1 }\n"),
                "E 3 value: the step has set, expect: a step does one thing; make a step of each\n");
@@ -3286,4 +3286,159 @@ TEST_CASE(scenario_end_ms_validation_and_runtime_settlement)
         CHECK(run.steps[1].status == StepStatus::Passed);
         CHECK(!std::any_of(events.begin(), events.end(), [](const auto& ev) { return ev.second == StepStatus::Failed; }));
     }
+}
+
+TEST_CASE(scenario_step_names_work_on_every_step_kind_with_interpolation)
+{
+    ScenarioCatalog cat = catalog();
+    cat[0].absent.push_back("absent");
+    ScenarioContext ctx;
+    ctx.params = {ParamValue{"load_pct", "50", false, ParamSource::CommandLine},
+                  ParamValue{"phase", "定格", true, ParamSource::Configuration},
+                  ParamValue{"unused_top", "ignored", true, ParamSource::Scenario}};
+    const std::string yaml =
+        "vehicle_sil_scenario: 1\n"
+        "name: \"literal ${unused}\"\n"
+        "params: { rpm: 1800, label: \"待機\", n: 5 }\n"
+        "steps:\n"
+        "  - name: \"電源ON ${load_pct}%\"\n"
+        "    set: { Body.level: 50, Body.ratio: 0.2 }\n"
+        "  - name: \"${phase}: ${rpm} rpm\"\n"
+        "    ramp: { Body.ratio: { to: 0.5, over_ms: 40 } }\n"
+        "    expect: { Body.level: 50 }\n"
+        "  - name: 1\n"
+        "    wave: { Body.ratio: { sine: { amplitude: 0.1, period_ms: 100 }, around: 0.5, for_ms: 100 } }\n"
+        "  - name: \"$${n} dither\"\n"
+        "    dither: { Body.ratio: none }\n"
+        "  - name: \"${label}\"\n"
+        "    wait_until: { Body.body.speed: { ge: 0 } }\n"
+        "    timeout_ms: 100\n"
+        "  - name: \"確認\"\n"
+        "    expect: { Body.level: 50 }\n"
+        "    hold_for_ms: 10\n"
+        "  - name: \"skipped step\"\n"
+        "    set: { Body.absent: 1 }\n";
+    ScenarioRead r = read_scenario(yaml, cat, ctx);
+    CHECK(r.usage_errors.empty());
+    CHECK(std::none_of(r.findings.begin(), r.findings.end(), [](const Finding& f) { return f.severity == Severity::Error; }));
+    CHECK(r.scenario.has_value());
+    const Scenario& s = *r.scenario;
+    CHECK(s.name == "literal ${unused}");
+    CHECK_EQ(s.steps.size(), std::size_t{7});
+    CHECK(s.steps[0].name == "電源ON 50%");
+    CHECK(s.steps[0].text == "set Body.level = 50; Body.ratio = 0.2");
+    CHECK(s.steps[0].file.empty());
+    CHECK(s.steps[0].call_stack.empty());
+    CHECK(s.steps[1].name == "定格: 1800 rpm");
+    CHECK(s.steps[2].name == "1");
+    CHECK(s.steps[3].name == "$5 dither");
+    CHECK(s.steps[4].name == "待機");
+    CHECK(s.steps[5].name == "確認");
+    CHECK(s.steps[6].name == "skipped step");
+    CHECK(!s.steps[6].skipped.empty());
+    // load_pct (CLI) was marked used even though only step name referenced it.
+    CHECK(std::any_of(r.params.begin(), r.params.end(), [](const ParamValue& p) { return p.name == "load_pct"; }));
+
+    // JSON input works identically.
+    const Scenario json = read(R"({"vehicle_sil_scenario": 1, "steps": [{"name": "json step", "set": {"Body.level": 1}}]})");
+    CHECK(json.steps.at(0).name == "json step");
+
+    // scenario_not_run and World::run preserve step names including skipped steps and on_step events.
+    const ScenarioRun notRun = scenario_not_run(s);
+    CHECK_EQ(notRun.steps.size(), std::size_t{7});
+    CHECK(notRun.steps[0].name == "電源ON 50%");
+    CHECK(notRun.steps[6].name == "skipped step");
+
+    World world;
+    std::vector<std::string> seenNames;
+    world.on_step = [&](const ScenarioStepRun& st) { seenNames.push_back(st.name); };
+    const ScenarioRun run = world.run(s);
+    CHECK(run.status == ScenarioStatus::Passed);
+    CHECK(run.steps[0].name == "電源ON 50%");
+    CHECK(run.steps[6].name == "skipped step");
+    CHECK(std::find(seenNames.begin(), seenNames.end(), "電源ON 50%") != seenNames.end());
+    CHECK(std::find(seenNames.begin(), seenNames.end(), "skipped step") != seenNames.end());
+}
+
+TEST_CASE(scenario_step_name_errors_reject_empty_whitespace_control_chars_and_bad_params)
+{
+    const auto errors = [](const std::string& text) { return lines(read_scenario(text, catalog()).findings); };
+    CHECK(errors(kHead + "  - name:\n    set: { Body.level: 1 }\n").find("step name must be a non-empty text") != std::string::npos);
+    CHECK(errors(kHead + "  - name: null\n    set: { Body.level: 1 }\n").find("step name must be a non-empty text") != std::string::npos);
+    CHECK(errors(kHead + "  - name: [a]\n    set: { Body.level: 1 }\n").find("step name must be a non-empty text") != std::string::npos);
+    CHECK(errors(kHead + "  - name: { a: 1 }\n    set: { Body.level: 1 }\n").find("step name must be a non-empty text") != std::string::npos);
+    CHECK(errors(kHead + "  - name: \"\"\n    set: { Body.level: 1 }\n").find("must not be empty or whitespace-only") != std::string::npos);
+    CHECK(errors(kHead + "  - name: \"   \"\n    set: { Body.level: 1 }\n").find("must not be empty or whitespace-only") != std::string::npos);
+    CHECK(errors(kHead + "  - name: \"\u3000\"\n    set: { Body.level: 1 }\n").find("must not be empty or whitespace-only") != std::string::npos);
+    CHECK(errors(kHead + "  - name: \"\u00a0\"\n    set: { Body.level: 1 }\n").find("must not be empty or whitespace-only") != std::string::npos);
+    CHECK(errors("vehicle_sil_scenario: 1\nparams: { blank: \"  \" }\nsteps:\n  - name: \"${blank}\"\n    set: { Body.level: 1 }\n")
+              .find("must not be empty or whitespace-only") != std::string::npos);
+    CHECK(errors("vehicle_sil_scenario: 1\nparams: { u3000: \"\u3000\" }\nsteps:\n  - name: \"${u3000}\"\n    set: { Body.level: 1 }\n")
+              .find("must not be empty or whitespace-only") != std::string::npos);
+    const Scenario okUnicodeWs = read(kHead + "  - name: \"a\u3000b\"\n    set: { Body.level: 1 }\n");
+    CHECK(okUnicodeWs.steps.at(0).name == "a\u3000b");
+    CHECK(errors(kHead + "  - name: \"a\\nb\"\n    set: { Body.level: 1 }\n").find("control character") != std::string::npos);
+    CHECK(errors(kHead + "  - name: \"a\\tb\"\n    set: { Body.level: 1 }\n").find("control character") != std::string::npos);
+    CHECK(errors(kHead + "  - name: \"a\\x7fb\"\n    set: { Body.level: 1 }\n").find("control character") != std::string::npos);
+    CHECK(errors(kHead + "  - name: \"bad\x80\"\n    set: { Body.level: 1 }\n").find("not UTF-8") != std::string::npos);
+    CHECK(errors(kHead + "  - name: a\n    name: b\n    set: { Body.level: 1 }\n").find("duplicate-key") != std::string::npos);
+    for (const char* bad : {"\"${missing}\"", "\"$${missing}\"", "\"${a+1}\"", "\"${}\"", "\"${unclosed\"", "\"${a${b}}\""})
+    {
+        CHECK(errors(kHead + "  - name: " + bad + "\n    set: { Body.level: 1 }\n").find("scenario-param") != std::string::npos);
+    }
+}
+
+TEST_CASE(scenario_step_and_dither_file_provenance_flows_through_runs)
+{
+    Scenario s = read(kHead + "  - name: direct\n    set: { Body.level: 10 }\n"
+                              "  - at_ms: 10\n    expect: { Body.level: 10 }\n");
+    s.steps[0].file = "scenarios/templates/init.yaml";
+    s.steps[0].line = 7;
+    s.steps[0].name = "通信確立";
+    s.steps[0].call_stack = {SourceFrame{"scenarios/load.yaml", 20, "初期化",
+                                         {SourceParam{"comms_timeout_ms", "50", false, ParamSource::TemplateCall}}}};
+    const ScenarioRun notRun = scenario_not_run(s);
+    CHECK(notRun.steps[0].file == "scenarios/templates/init.yaml");
+    CHECK(notRun.steps[0].name == "通信確立");
+    CHECK(notRun.steps[0].call_stack == s.steps[0].call_stack);
+    CHECK(notRun.steps[1].file.empty());
+
+    World world;
+    std::vector<ScenarioStepRun> observed;
+    world.on_step = [&](const ScenarioStepRun& st) { observed.push_back(st); };
+    const ScenarioRun run = world.run(s);
+    CHECK(run.steps[0].file == "scenarios/templates/init.yaml");
+    CHECK(run.steps[0].name == "通信確立");
+    CHECK(run.steps[0].call_stack == s.steps[0].call_stack);
+    CHECK(!observed.empty());
+    CHECK(observed[0].file == "scenarios/templates/init.yaml");
+    CHECK(observed[0].call_stack == s.steps[0].call_stack);
+
+    // Dither grid failure formats template file:line when ScenarioOverlay::file is non-empty.
+    Scenario ditherFail = read(kDitherHead + "end_ms: 80\n"
+                                             "inputs:\n"
+                                             "  Body.level: { dither: { square: { amplitude: 5, period_ms: 80, phase_deg: 180 } } }\n"
+                                             "steps:\n"
+                                             "  - at_ms: 0\n    set: { Body.level: 97 }\n"
+                                             "  - at_ms: 0\n    expect: { Body.level: 92 }\n");
+    ditherFail.inputs[0].file = "scenarios/templates/dither.yaml";
+    ditherFail.inputs[0].line = 5;
+    World wFail;
+    wFail.tick = 10ms;
+    const ScenarioRun rFail = wFail.run(ditherFail);
+    CHECK(rFail.status == ScenarioStatus::Failed);
+    CHECK(rFail.message.find("(scenarios/templates/dither.yaml:5)") != std::string::npos);
+
+    // ScenarioLineText::file and after_wait_file are populated for inputs and steps.
+    ScenarioOverlay ov;
+    ov.variable = 0;
+    ov.file = "scenarios/templates/dither.yaml";
+    ov.line = 12;
+    ov.text = "Body.level triangle";
+    Scenario lineScenario = read(kHead + "  - set: { Body.level: 10 }\n");
+    lineScenario.inputs.push_back(ov);
+    const std::vector<ScenarioLineText> inLines = scenario_inputs_text(lineScenario);
+    CHECK_EQ(inLines.size(), std::size_t{1});
+    CHECK(inLines[0].file == "scenarios/templates/dither.yaml");
+    CHECK(inLines[0].line == 12);
 }

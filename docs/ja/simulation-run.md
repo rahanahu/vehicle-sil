@@ -1645,9 +1645,9 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `vehicle_sil`、`stage` | vehicle-sil のバージョン、`"run"`（実際の実行の記録） |
 | `file`、`variant`、`params` | 設定ファイル（引数のとおり）、機種（なければ `null`）、シナリオのパラメーターと効いた値（`check --json` の `scenario.params` と同じ形） |
 | `time_step_ms` | controller のタイムステップ（`run --json` の `timing.time_step_ms` と同じ） |
-| `scenario` | `file`、`name`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
+| `scenario` | `file`、`name`、省略可能な `case`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
 | `variables[]` | シナリオが使う変数（最初に出た順）。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む） |
-| `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキーに、`lines`、`watch`、`failed` を足したもの |
+| `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキー（省略可能な `file`、`name`、`call_stack` を含む）に、`lines`、`watch`、`failed` を足したもの |
 | `series[]` | 値の列（下） |
 | `lines[]` | 入力ごとの線: 手順が置いた値と動き（下の「入力の線」） |
 | `findings[]` | 照合と実行の指摘のうち、`code` が `scenario-` で始まるもの（`run --json` と同じ形）。ECU の値が約束より遅れて届いたことを言う指摘 `control-link-late-values` は、`severity` と `code` だけで、ほかのキーは `null`（この指摘のある実行は、記録が実行ごとに違いえます）。実時間の速さの指摘（`behind-real-time`）など、ほかの指摘は入りません |
@@ -1655,7 +1655,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 読む側は、知らないキーを無視します。知らない値（系列の `source` と `encoding`、`watch` の `mode`、条件の `op`、手順の `kind`、線の `kind` と `base_source`、`shape` の `type`）は、その部分を描かずに名前と `text` を出します。形式のバージョンを上げずに、キーと値が増えることがあります。手順の `status` は、これに入りません。[結果を決める値](scenario.md#結果を決める値)を見てください。
 
-この節のキーは、どのファイルにも全部あります。当てはまらないキーの値は `null` です。例外は手順の `expect_skipped` だけで、`run --json` と同じく、その手順にあるときだけ書きます。
+この節のキーは、どのファイルにも全部あります。当てはまらないキーの値は `null` です。例外は手順の `expect_skipped`、`file`、`name`、`call_stack`、線の `file`、`scenario` の `case` で、空でないときだけ書きます。
 
 手順の `lines` は、その手順が置いた線の、いちばん上の `lines[]` の中の位置（0 から）の配列です（書かない手順、時刻が `recorded_to_ms` より後の手順、書き込みを 1 つも送らなかった手順では空）。
 
@@ -1815,7 +1815,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | キー | 値 |
 |---|---|
 | `variable` | 変数 |
-| `kind`、`line`、`step` | 置いた手順の種類（`set`、`ramp`、`wave`。`dither` は下）、シナリオのファイルの行、手順の `index` |
+| `kind`、`file`、`line`、`step` | 置いた手順の種類（`set`、`ramp`、`wave`。`dither` は下）、省略可能な元ファイル（元のシナリオと同じファイルなら省略）、そのファイルの行、手順の `index` |
 | `from_ms`、`to_ms` | 手順の時刻と、動きの終わり（文面のとおり: `from_ms` + 長さ）。`set` は同じ値。実行が先に終わったとき、点があるのは `recorded_to_ms` まで |
 | `base` | `set` は書いた値。`ramp` と `wave` は、始まりの値、または振れの中心（[scenario.md](scenario.md) の `from` と `around`）。書き方は系列の点と同じ（手順が書いた数は、そのまま）。値を自分で持つ形（`low` と `high` の `square`、0 ms から始まる `points` など）では `null` |
 | `base_source` | `base` の出どころ（下の表）。`base` が `null` なら `null` |

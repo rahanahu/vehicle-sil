@@ -661,7 +661,28 @@ SCENARIO_SAMPLES = [
     ("only that is a text", S + SET + "only: small\n", "invalid"),
     ("a parameter that uses a parameter", S + SET + "params: { a: \"${b}\" }\n", "invalid"),
     ("a parameter's name with a digit first", S + SET + "params: { 1st: 5 }\n", "invalid"),
+    ("step name on every kind of step with interpolation",
+     "vehicle_sil_scenario: 1\nparams: { p: 50, phase: 'init' }\nsteps:\n"
+     "  - name: \"apply ${p}%\"\n    set: { Engine.engine.throttle: 50 }\n"
+     "  - name: 1\n    ramp: { Engine.engine.throttle: { to: 80, over_ms: 100 } }\n"
+     "  - name: \"${phase} wave\"\n    wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, for_ms: 200 } }\n"
+     "  - name: \"dither step\"\n    dither: { Engine.engine.throttle: { triangle: { amplitude: 1, period_ms: 100 } } }\n"
+     "  - name: \"wait speed\"\n    wait_until: { Engine.engine.speed: { ge: 0 } }\n    timeout_ms: 100\n"
+     "  - name: \"check speed\"\n    expect: { Engine.engine.speed: { ge: 0 } }\n", "valid"),
+    ("step name that is empty", S + "  - name: \"\"\n" + SET.replace("  - ", "    "), "invalid"),
+    ("step name that is spaces only", S + "  - name: \"   \"\n" + SET.replace("  - ", "    "), "invalid"),
+    ("step name with a newline", S + "  - name: \"a\\nb\"\n" + SET.replace("  - ", "    "), "invalid"),
+    ("step name with a trailing newline", S + "  - name: \"abc\\n\"\n" + SET.replace("  - ", "    "), "invalid"),
+    ("step name as a block scalar with trailing newline", S + "  - name: |\n      hello\n" + SET.replace("  - ", "    "), "invalid"),
+    ("step name with ideographic space only", S + "  - name: \"\u3000\"\n" + SET.replace("  - ", "    "), "invalid"),
+    ("step name with non-breaking space only", S + "  - name: \"\u00a0\"\n" + SET.replace("  - ", "    "), "invalid"),
+    ("step name with non-whitespace around ideographic space", S + "  - name: \"a\u3000b\"\n" + SET.replace("  - ", "    "), "valid"),
+    ("step name that is null", S + "  - name: \n" + SET.replace("  - ", "    "), "invalid"),
     # What the schema leaves to check.
+    ("step name interpolated to empty", S + "  - name: \"${empty}\"\n" + SET.replace("  - ", "    ") + "params: { empty: \"\" }\n", "check only"),
+    ("step name with undefined parameter", S + "  - name: \"${missing}\"\n" + SET.replace("  - ", "    "), "check only"),
+    ("step name with invalid parameter syntax", S + "  - name: \"bad ${1x}\"\n" + SET.replace("  - ", "    "), "check only"),
+    ("step name with unclosed parameter", S + "  - name: \"unclosed ${x\"\n" + SET.replace("  - ", "    "), "check only"),
     ("a key twice", S + SET + "name: a\nname: b\n", "check only"),
     ("a variable there is not", S + "  - set: { Engine.engine.pedal: 50 }\n", "check only"),
     ("a participant there is not", S + "  - set: { Motor.engine.throttle: 50 }\n", "check only"),
@@ -1173,9 +1194,9 @@ class TimelineSchema(unittest.TestCase):
         walk(TIMELINE, "")
 
     def test_every_key_is_required(self):
-        # Every key of the file is always there (null when it does not apply), but expect_skipped of a step, which
-        # the steps share with run --json and which is there only when it applies.
-        may_be_left_out = {"expect_skipped"}
+        # Every key of the file is always there (null when it does not apply), except optional
+        # provenance/conditional fields (`expect_skipped`, `case`, `file`, `name`, `call_stack`).
+        may_be_left_out = {"expect_skipped", "case", "file", "name", "call_stack"}
 
         def walk(node, where):
             if isinstance(node, dict):
@@ -1248,12 +1269,28 @@ class TimelineSchema(unittest.TestCase):
             "a series without samples": lambda d: d["series"][0].pop("samples"),
             "a variable without its unit": lambda d: d["variables"][0].pop("unit"),
             "a step without its message": lambda d: d["steps"][0].pop("message"),
+            "a call_stack frame without params": lambda d: d["steps"][0].update(
+                call_stack=[{"file": "a.yaml", "line": 3, "name": None}]),
+            "a call_stack frame without file": lambda d: d["steps"][0].update(
+                call_stack=[{"line": 3, "name": None, "params": {}}]),
+            "a step name that is a number": lambda d: d["steps"][0].update(name=123),
+            "a step file that is a number": lambda d: d["steps"][0].update(file=123),
+            "a line file that is a number": lambda d: d["lines"][0].update(file=123),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
         # What a later version may add is no mistake: keys, and values of the open lists.
         additions = {
             "a key it does not know": lambda d: d.update(notes=[]),
+            "scenario case and step/line provenance": lambda d: (
+                d["scenario"].update(case="nominal"),
+                d["steps"][0].update(
+                    file="templates/init.yaml",
+                    name="init",
+                    call_stack=[{"file": "scenario.yaml", "line": 10, "name": "call init", "params": {"ms": 50, "ok": True}}],
+                ),
+                d["lines"][0].update(file="templates/init.yaml"),
+            ),
             "a kind of line and a base_source it does not know": lambda d: d["lines"][0].update(kind="hold", base_source="given"),
             "a key of a shape it does not know": lambda d: d["lines"][-1]["shape"].update(steepness=2),
             "a source it does not know": lambda d: d["series"][0].update(source="computed", encoding="minmax"),

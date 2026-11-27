@@ -11,10 +11,13 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <map>
 #include <numeric>
 #include <set>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -23,6 +26,59 @@ namespace vehicle_sil::scenario::reader {
 namespace {
 
 constexpr const char* kDocs = "docs/scenario.md";
+
+bool is_unicode_whitespace(std::uint32_t cp) noexcept
+{
+    // Matches Python 3 re \s (all codepoints rejected by \S).
+    return cp == 0x0020 || (cp >= 0x0009 && cp <= 0x000D) || (cp >= 0x001C && cp <= 0x001F) || cp == 0x0085 ||
+           cp == 0x00A0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200A) || cp == 0x2028 || cp == 0x2029 ||
+           cp == 0x202F || cp == 0x205F || cp == 0x3000;
+}
+
+bool has_non_whitespace_utf8(std::string_view text) noexcept
+{
+    for (std::size_t i = 0; i < text.size();)
+    {
+        const auto b0 = static_cast<unsigned char>(text[i]);
+        std::uint32_t cp = 0;
+        std::size_t len = 1;
+        if (b0 < 0x80)
+        {
+            cp = b0;
+        }
+        else if ((b0 & 0xE0) == 0xC0 && i + 1 < text.size())
+        {
+            cp = (static_cast<std::uint32_t>(b0 & 0x1F) << 6) |
+                 static_cast<std::uint32_t>(static_cast<unsigned char>(text[i + 1]) & 0x3F);
+            len = 2;
+        }
+        else if ((b0 & 0xF0) == 0xE0 && i + 2 < text.size())
+        {
+            cp = (static_cast<std::uint32_t>(b0 & 0x0F) << 12) |
+                 (static_cast<std::uint32_t>(static_cast<unsigned char>(text[i + 1]) & 0x3F) << 6) |
+                 static_cast<std::uint32_t>(static_cast<unsigned char>(text[i + 2]) & 0x3F);
+            len = 3;
+        }
+        else if ((b0 & 0xF8) == 0xF0 && i + 3 < text.size())
+        {
+            cp = (static_cast<std::uint32_t>(b0 & 0x07) << 18) |
+                 (static_cast<std::uint32_t>(static_cast<unsigned char>(text[i + 1]) & 0x3F) << 12) |
+                 (static_cast<std::uint32_t>(static_cast<unsigned char>(text[i + 2]) & 0x3F) << 6) |
+                 static_cast<std::uint32_t>(static_cast<unsigned char>(text[i + 3]) & 0x3F);
+            len = 4;
+        }
+        else
+        {
+            return false;
+        }
+        if (!is_unicode_whitespace(cp))
+        {
+            return true;
+        }
+        i += len;
+    }
+    return false;
+}
 
 const char* compare_name(Compare op)
 {
@@ -215,7 +271,7 @@ void Reader::read()
     const bool inputsOk = inputsNode == ryml::NONE || out_.not_for_variant || resolve_params(inputsNode);
     if (hasSteps)
     {
-        if (!out_.not_for_variant && resolve_params(stepsNode) && inputsOk)
+        if (!out_.not_for_variant && resolve_step_params(stepsNode) && inputsOk)
         {
             if (inputsNode != ryml::NONE)
             {
@@ -346,6 +402,104 @@ bool Reader::resolve_params(ryml::id_type node)
     return ok;
 }
 
+bool Reader::resolve_step_params(ryml::id_type steps_node)
+{
+    if (!tree_.is_seq(steps_node))
+    {
+        return resolve_params(steps_node);
+    }
+    bool ok = true;
+    for (auto step = tree_.first_child(steps_node); step != ryml::NONE; step = tree_.next_sibling(step))
+    {
+        if (!tree_.is_map(step))
+        {
+            ok = resolve_params(step) && ok;
+            continue;
+        }
+        for (auto field = tree_.first_child(step); field != ryml::NONE; field = tree_.next_sibling(field))
+        {
+            if (tree_.has_key(field) && config::detail::to_string(tree_.key(field)) == "name" && is_scalar(field))
+            {
+                ok = resolve_interpolated_string(field) && ok;
+            }
+            else
+            {
+                ok = resolve_params(field) && ok;
+            }
+        }
+    }
+    return ok;
+}
+
+bool Reader::resolve_interpolated_string(ryml::id_type node)
+{
+    if (!is_scalar(node) || is_null(node))
+    {
+        return true;
+    }
+    const std::string text = config::detail::to_string(tree_.val(node));
+    if (text.find("${") == std::string::npos)
+    {
+        return true;
+    }
+    std::string out;
+    bool ok = true;
+    std::size_t pos = 0;
+    while (pos < text.size())
+    {
+        const std::size_t open = text.find("${", pos);
+        if (open == std::string::npos)
+        {
+            out.append(text, pos, std::string::npos);
+            break;
+        }
+        out.append(text, pos, open - pos);
+        const std::size_t close = text.find('}', open + 2);
+        if (close == std::string::npos)
+        {
+            error("scenario-param", doc_.line(node),
+                  "'" + text + "': unclosed '${' in text: write a parameter as ${name} (letters, digits and _)");
+            return false;
+        }
+        const std::string name = text.substr(open + 2, close - (open + 2));
+        if (!config::is_param_name(name))
+        {
+            error("scenario-param", doc_.line(node),
+                  "'" + text + "': '${" + name + "}' is not a parameter: write ${name} with letters, digits and _ (not a digit first)");
+            return false;
+        }
+        const auto known = std::find_if(params_.begin(), params_.end(), [&name](const Known& k) { return k.value.name == name; });
+        if (known == params_.end())
+        {
+            if (undefined_.insert(name).second)
+            {
+                std::vector<std::string> names;
+                for (const Known& k : params_)
+                {
+                    names.push_back(k.value.name);
+                }
+                const std::string guess = config::detail::closest(name, names);
+                error("scenario-param", doc_.line(node),
+                      "${" + name + "} has no value" + (guess.empty() ? "" : " (did you mean ${" + guess + "}?)") +
+                          ": give it a default in the scenario (params: { " + name + ": <value> }), or a value in the "
+                          "configuration's params, in a variant's params or with --param " + name + "=<value>");
+            }
+            ok = false;
+        }
+        else
+        {
+            known->used = true;
+            out += known->value.text;
+        }
+        pos = close + 1;
+    }
+    if (ok)
+    {
+        interpolated_.emplace(node, std::move(out));
+    }
+    return ok;
+}
+
 void Reader::check_given_params()
 {
     if (context_.params_for_many)
@@ -403,9 +557,9 @@ void Reader::check_something_is_checked()
         return;
     }
     std::vector<std::string> lines;
-    for (const std::size_t line : skipped_checks_)
+    for (const CheckRef& ref : skipped_checks_)
     {
-        lines.push_back(std::to_string(line));
+        lines.push_back(short_loc(ref.file, ref.line));
     }
     std::vector<std::string> others;
     for (const std::string& name : context_.variants)
@@ -418,12 +572,13 @@ void Reader::check_something_is_checked()
     const bool one = lines.size() == 1;
     const std::string where = context_.variant.empty() ? "in this configuration" : "in the variant " + context_.variant;
     // An expect beside a ramp or a wave that is not checked: the step runs, only its check is gone.
-    const std::size_t unchecked = unchecked_lines_.size();
+    const std::size_t unchecked = unchecked_checks_;
+    const std::string oneLoc = one ? loc_text(skipped_checks_.front().file, skipped_checks_.front().line) : std::string{};
     const std::string what =
-        unchecked == 0 ? (one ? "its only step that checks (expect or wait_until, line " + lines.front() + ") is skipped"
+        unchecked == 0 ? (one ? "its only step that checks (expect or wait_until, " + oneLoc + ") is skipped"
                               : "all its " + std::to_string(lines.size()) + " steps that check (expect or wait_until, lines " +
                                     config::detail::join(lines) + ") are skipped")
-        : one ? "its only check (an expect beside a ramp or a wave, line " + lines.front() + ") is not checked"
+        : one ? "its only check (an expect beside a ramp or a wave, " + oneLoc + ") is not checked"
               : "all its " + std::to_string(lines.size()) + " checks (expect, wait_until, or an expect beside a ramp or a wave; lines " +
                     config::detail::join(lines) + ") are " + (unchecked == lines.size() ? "not checked" : "skipped or not checked");
     add(config::Severity::Warning, "scenario-nothing-checked", 0,
@@ -584,6 +739,7 @@ void Reader::read_step(ryml::id_type node)
         return;
     }
     ScenarioStep step;
+    step.file = current_file_;
     step.line = line;
     absent_.clear();
     step_bases_.clear();
@@ -633,6 +789,41 @@ void Reader::read_step(ryml::id_type node)
                 : action == "dither" ? StepKind::Dither
                 : action == "expect" ? StepKind::Expect
                                      : StepKind::WaitUntil;
+
+    if (nodes.count("name") > 0)
+    {
+        const ryml::id_type nameNode = nodes.at("name");
+        if (!is_scalar(nameNode) || is_null(nameNode))
+        {
+            error("value", doc_.line(nameNode), "step name must be a non-empty text, not " + shown_value(nameNode));
+        }
+        else
+        {
+            const auto it = interpolated_.find(nameNode);
+            std::string resolved = it != interpolated_.end() ? it->second : config::detail::to_string(tree_.val(nameNode));
+            const auto control = std::find_if(resolved.begin(), resolved.end(), [](char c) {
+                return static_cast<unsigned char>(c) < 0x20 || c == 0x7F;
+            });
+            if (control != resolved.end() || !vehicle_sil::detail::is_utf8(resolved))
+            {
+                char code[8];
+                std::snprintf(code, sizeof(code), "%02X", control != resolved.end() ? static_cast<unsigned char>(*control) : 0);
+                error("value", doc_.line(nameNode),
+                      std::string("step name must be text on one line") +
+                          (control != resolved.end() ? std::string(" (it has the control character U+00") + code + ")"
+                                                     : std::string(" (it is not UTF-8)")) +
+                          ": write the name without it");
+            }
+            else if (!has_non_whitespace_utf8(resolved))
+            {
+                error("value", doc_.line(nameNode), "step name must not be empty or whitespace-only");
+            }
+            else
+            {
+                step.name = std::move(resolved);
+            }
+        }
+    }
 
     // The keys that go with the action.
     const auto only_with = [&](const std::string& key, bool allowed, const std::string& with) {
@@ -692,7 +883,7 @@ void Reader::read_step(ryml::id_type node)
             if (!end_known_)
             {
                 error("scenario-time", doc_.line(nodes.at("at_ms")),
-                      "at_ms after a step that waits (line " + std::to_string(wait_line_) +
+                      "at_ms after a step that waits (" + loc_text(wait_file_, wait_line_) +
                           "): when that step ends is not known before the run; give this step after_ms (from the end of "
                           "the step before it) instead");
             }
@@ -776,14 +967,14 @@ void Reader::read_step(ryml::id_type node)
     const bool checks = beside || step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil;
     if (checks)
     {
-        checks_.push_back(line);
+        checks_.push_back(CheckRef{step.file, line});
     }
     if (unchecked_)
     {
         step.expect_skipped = skip_reason();
         step.conditions.clear();
-        skipped_checks_.push_back(line);
-        unchecked_lines_.insert(line);
+        skipped_checks_.push_back(CheckRef{step.file, line});
+        ++unchecked_checks_;
         ++out_.unchecked_expects;
         add(config::Severity::Note, "scenario-step-skipped", step.line,
             "the " + std::string(step_kind_name(step.kind)) + " runs; its expect is not checked (" + step.text +
@@ -797,7 +988,7 @@ void Reader::read_step(ryml::id_type node)
         step.skipped_ms = length; // 0 for a step that waits: when it would end is not in the text
         if (checks)
         {
-            skipped_checks_.push_back(line);
+            skipped_checks_.push_back(CheckRef{step.file, line});
         }
     }
     // The latest and earliest times this step can end.
@@ -815,6 +1006,7 @@ void Reader::read_step(ryml::id_type node)
     {
         if (end_known_)
         {
+            wait_file_ = current_file_;
             wait_line_ = line;
         }
         end_known_ = false;
@@ -1298,6 +1490,7 @@ std::vector<ScenarioLineText> scenario_inputs_text(const Scenario& scenario)
         ScenarioLineText line;
         line.variable = scenario.variables[input.variable].text;
         line.kind = "dither";
+        line.file = input.file;
         line.line = input.line;
         line.time_source = ScenarioLineText::TimeSource::FirstWrite;
         line.text = input.text;

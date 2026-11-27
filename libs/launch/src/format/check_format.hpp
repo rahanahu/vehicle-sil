@@ -38,6 +38,8 @@ void write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view key, co
 /// The array "networks" of a participant's "reported": what its executable described, under the
 /// executable's names (check_networks.cpp).
 void write_reported_networks(vehicle_sil::json::JsonWriter& w, const EcuDescription& ecu);
+/// Writes a single parameter value (`key`: boolean, integer, real, or string) into the object `w` is in.
+void write_param_scalar(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::string& text, bool quoted);
 /// An array `key` of parameters: each with "name", "value" (as a scenario reads it: true or false,
 /// a number, or a text) and "from" (param_source_name()).
 void write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<config::ParamValue>& params);

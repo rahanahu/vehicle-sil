@@ -35,8 +35,9 @@ namespace vehicle_sil::scenario::reader {
 // the list in the message, pass without the key. (The keys of a step are taken from kStepKeys itself.)
 
 inline const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "samples", "only", "params", "inputs", "end_ms", "steps"};
-inline const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",        "wave",         "dither",
-                                                   "wait_until", "timeout_ms", "expect",  "within_ms",   "hold_for_ms", "undersampled"};
+inline const std::vector<std::string> kStepKeys = {"name",       "at_ms",      "after_ms", "set",        "ramp",       "wave",
+                                                   "dither",     "wait_until", "timeout_ms", "expect",  "within_ms",  "hold_for_ms",
+                                                   "undersampled"};
 inline const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "dither", "wait_until", "expect"};
 inline const std::vector<std::string> kCompareKeys = {"eq", "ne", "ge", "le", "gt", "lt", "near", "tolerance"};
 inline const std::vector<std::string> kRampKeys = {"to", "over_ms", "from"};
@@ -75,6 +76,29 @@ public:
     void read();
 
 private:
+    // --- findings ---
+
+    void add(config::Severity severity, std::string code, std::size_t line, std::string message,
+             std::string participant = {}, std::string network = {}) override
+    {
+        findings_.push_back(config::Finding{severity, std::move(code), std::move(message), line,
+                                            std::move(participant), std::move(network), {}, current_file_});
+    }
+    void add_at(config::Severity severity, std::string code, const std::string& file, std::size_t line,
+                std::string message, std::string participant = {}, std::string network = {})
+    {
+        findings_.push_back(config::Finding{severity, std::move(code), std::move(message), line,
+                                            std::move(participant), std::move(network), {}, file});
+    }
+    static std::string loc_text(const std::string& file, std::size_t line)
+    {
+        return file.empty() ? "line " + std::to_string(line) : file + ":" + std::to_string(line);
+    }
+    static std::string short_loc(const std::string& file, std::size_t line)
+    {
+        return file.empty() ? std::to_string(line) : file + ":" + std::to_string(line);
+    }
+
     // --- parameters ---
 
     /// A parameter that has a value: from the scenario's "params" (`declared`) or from outside.
@@ -92,6 +116,13 @@ private:
     /// parameter's value from here on (param_at()); anywhere else, or without a value, it is an
     /// error. false if there was one.
     bool resolve_params(ryml::id_type node);
+
+    /// Resolves parameters in `steps` sequence: step `name:` scalars support `${name}` string
+    /// interpolation; all other values remain whole-value `${name}` only.
+    bool resolve_step_params(ryml::id_type steps_node);
+
+    /// Interpolates zero or more `${name}` placeholders in a scalar string (no `$${` escape).
+    bool resolve_interpolated_string(ryml::id_type node);
 
     /// A --param that the scenario neither declares nor uses changes nothing: an error.
     void check_given_params();
@@ -394,10 +425,12 @@ private:
     const ScenarioCatalog& catalog_;
     const ScenarioContext& context_;
     ScenarioRead& out_;
+    std::string current_file_{};
     std::map<std::string, CsvFile> files_; ///< the points files, by the path the scenario writes
     Scenario scenario_;
     std::vector<Known> params_;                         ///< every parameter that has a value
     std::map<ryml::id_type, std::size_t> substituted_;  ///< a value node that is "${name}": its index in params_
+    std::map<ryml::id_type, std::string> interpolated_; ///< a step name node with "${name}" interpolation resolved
     std::set<std::string> undefined_;                   ///< the parameters without a value, said once
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
     /// What the steps that run put on the inputs, as the text says it (note_lines()).
@@ -405,12 +438,14 @@ private:
     {
         std::size_t variable;
         double value;
+        std::string file{};
         std::size_t line;
         bool stays; ///< the input is left there when the step is over (a set's value, a ramp's to, a wave's middle)
     };
     struct Dither
     {
         std::size_t variable;
+        std::string file{};
         std::size_t line;
         double reach;                 ///< how far from the value under it
         bool about;                   ///< `reach` is an estimate (a gaussian noise)
@@ -442,11 +477,16 @@ private:
     std::vector<std::string> absent_;                   ///< those the step being read uses
     bool beside_ = false;          ///< the step being read is a ramp or a wave with an expect beside it
     bool unchecked_ = false;       ///< and only its expect uses what is absent: the expect is not checked
-    std::set<std::size_t> unchecked_lines_; ///< of skipped_checks_, those of an expect beside that is not checked
+    std::size_t unchecked_checks_ = 0; ///< of skipped_checks_, those of an expect beside that is not checked
     std::size_t motion_absent_ = 0; ///< of absent_, those of its ramp or wave (the others: of the expect)
     std::set<std::string> left_out_; ///< the participants of absent_variables_ that the variant leaves out
-    std::vector<std::size_t> checks_;         ///< the lines of the steps that check (expect, wait_until, an expect beside)
-    std::vector<std::size_t> skipped_checks_; ///< those of them that are skipped
+    struct CheckRef
+    {
+        std::string file;
+        std::size_t line = 0;
+    };
+    std::vector<CheckRef> checks_;         ///< the checks (expect, wait_until, an expect beside)
+    std::vector<CheckRef> skipped_checks_; ///< those of them that are skipped
     std::vector<const control::VariableInfo*> infos_; ///< of scenario_.variables, in the catalog
     std::vector<const control::MappedSchema*> maps_;  ///< of scenario_.variables: its participant's map, or nullptr
     std::map<std::string, std::size_t> variable_index_;
@@ -457,6 +497,7 @@ private:
     /// Earliest possible end across all steps regardless of `end_known_` (wait steps contribute
     /// minimum length 0; subsequent `after_ms` and timed steps accumulate over it).
     std::int64_t min_end_ms_ = 0;
+    std::string wait_file_{};
     std::size_t wait_line_ = 0; ///< the first step that waits since the end was known
     /// The latest the step before can end, in milliseconds (a wait counted with its whole time).
     std::int64_t latest_ms_ = 0;

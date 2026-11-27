@@ -1735,3 +1735,160 @@ TEST_CASE(what_asked_to_stop_is_said_in_words_by_its_kind)
     check_meaning(report_of(stuck), {RunResult::Failed, 1, false, "\"stopped\""}, "stopped, not shut down");
     CHECK(report_of(stuck).message().starts_with("The run failed (it was stopped by a stop request): the simulation ended in state Error"));
 }
+
+TEST_CASE(step_provenance_surfaces_in_run_text_json_and_findings)
+{
+    // 1. Legacy unnamed single-file scenario keeps exact header and omits provenance keys in JSON.
+    {
+        RunOutcome o = passed_run();
+        scenario::ScenarioRun sr;
+        sr.file = "s.yaml";
+        sr.status = scenario::ScenarioStatus::Passed;
+        sr.over_at = SimTime{std::chrono::milliseconds(10)};
+        scenario::ScenarioStepRun st;
+        st.index = 1;
+        st.line = 4;
+        st.kind = scenario::StepKind::Set;
+        st.text = "set Body.level = 1";
+        st.status = scenario::StepStatus::Passed;
+        st.start = SimTime{};
+        st.at = SimTime{};
+        st.end = SimTime{};
+        sr.steps.push_back(st);
+        o.scenario.result = sr;
+        const RunReport rep = report_of(o);
+        const std::string txt = format_run_text(rep);
+        CHECK(txt.find("line  step") != std::string::npos);
+        CHECK(txt.find("  name  ") == std::string::npos);
+        const std::string j = format_run_json(rep);
+        CHECK(j.find("\"file\": \"s.yaml\"") != std::string::npos);
+        // Step object should omit file, name, call_stack.
+        const auto stepsPos = j.find("\"steps\": [");
+        CHECK(stepsPos != std::string::npos);
+        const std::string stepsJson = j.substr(stepsPos);
+        CHECK(stepsJson.find("\"file\":") == std::string::npos);
+        CHECK(stepsJson.find("\"name\":") == std::string::npos);
+        CHECK(stepsJson.find("\"call_stack\":") == std::string::npos);
+    }
+
+    // 2. Named step and cross-file template step with call_stack.
+    {
+        RunOutcome o = passed_run();
+        scenario::ScenarioRun sr;
+        sr.file = "scenarios/load.yaml";
+        sr.status = scenario::ScenarioStatus::Failed;
+        sr.over_at = SimTime{std::chrono::milliseconds(20)};
+        scenario::ScenarioStepRun st1;
+        st1.index = 1;
+        st1.line = 5;
+        st1.kind = scenario::StepKind::Set;
+        st1.name = "power on";
+        st1.text = "set Body.level = 1";
+        st1.status = scenario::StepStatus::Passed;
+        st1.start = SimTime{};
+        st1.at = SimTime{};
+        st1.end = SimTime{};
+        scenario::ScenarioStepRun st2;
+        st2.index = 2;
+        st2.file = "scenarios/templates/init.yaml";
+        st2.line = 8;
+        st2.kind = scenario::StepKind::Expect;
+        st2.name = "check comms";
+        st2.text = "expect Body.level eq 2";
+        st2.status = scenario::StepStatus::Failed;
+        st2.start = SimTime{std::chrono::milliseconds(10)};
+        st2.at = SimTime{std::chrono::milliseconds(10)};
+        st2.code = "scenario-failed";
+        st2.message = "it was 1";
+        st2.call_stack.push_back(scenario::SourceFrame{
+            "scenarios/load.yaml",
+            14,
+            "run init",
+            {scenario::SourceParam{"timeout_ms", "50", false, config::ParamSource::TemplateCall},
+             scenario::SourceParam{"mode", "auto", true, config::ParamSource::TemplateCall}},
+        });
+        sr.steps = {st1, st2};
+        o.scenario.result = sr;
+
+        const RunReport rep = report_of(o);
+        const std::string txt = format_run_text(rep);
+        CHECK(txt.find("where") != std::string::npos);
+        CHECK(txt.find("name") != std::string::npos);
+        CHECK(txt.find("scenarios/load.yaml:5") != std::string::npos);
+        CHECK(txt.find("scenarios/templates/init.yaml:8") != std::string::npos);
+        CHECK(txt.find("power on") != std::string::npos);
+        CHECK(txt.find("check comms") != std::string::npos);
+
+        // Finding uses template file, step name, and call_stack detail.
+        CHECK(lines(rep.findings).find("E 8 scenario-failed: 'check comms' (expect Body.level eq 2): it was 1") != std::string::npos);
+        CHECK(txt.find("error: scenarios/templates/init.yaml:8: 'check comms' (expect Body.level eq 2): it was 1 [scenario-failed]") !=
+              std::string::npos);
+        CHECK(txt.find("    called from: scenarios/load.yaml:14 (step 'run init', timeout_ms = 50, mode = \"auto\")") !=
+              std::string::npos);
+        const auto fIt = std::find_if(rep.findings.begin(), rep.findings.end(),
+                                      [](const Finding& f) { return f.code == "scenario-failed"; });
+        CHECK(fIt != rep.findings.end());
+        CHECK(fIt->file == "scenarios/templates/init.yaml");
+        CHECK(fIt->detail.find("called from: scenarios/load.yaml:14 (step 'run init', timeout_ms = 50, mode = \"auto\")") !=
+              std::string::npos);
+
+        // JSON emits file, name, call_stack with typed scalar params.
+        const std::string j = format_run_json(rep);
+        CHECK(j.find("\"file\": \"scenarios/templates/init.yaml\"") != std::string::npos);
+        CHECK(j.find("\"name\": \"check comms\"") != std::string::npos);
+        CHECK(j.find("\"call_stack\": [") != std::string::npos);
+        CHECK(j.find("\"timeout_ms\": 50") != std::string::npos);
+        CHECK(j.find("\"mode\": \"auto\"") != std::string::npos);
+    }
+}
+
+TEST_CASE(incomplete_finding_attributes_unfinished_step_before_skipped_step)
+{
+    RunOutcome o = passed_run();
+    o.end.simulation = SimulationEnd::ReachedStopAt;
+    o.timing.sim_ms = 50;
+    scenario::ScenarioRun sr;
+    sr.file = "scenarios/load.yaml";
+    sr.status = scenario::ScenarioStatus::Incomplete;
+
+    scenario::ScenarioStepRun unfinished;
+    unfinished.index = 1;
+    unfinished.file = "scenarios/templates/wait.yaml";
+    unfinished.line = 4;
+    unfinished.kind = scenario::StepKind::WaitUntil;
+    unfinished.name = "wait comms";
+    unfinished.text = "wait_until Engine.engine.speed ge 100 (timeout 200 ms)";
+    unfinished.status = scenario::StepStatus::Unfinished;
+    unfinished.start = SimTime{};
+    unfinished.call_stack.push_back(scenario::SourceFrame{
+        "scenarios/load.yaml",
+        12,
+        "call wait",
+        {scenario::SourceParam{"timeout_ms", "200", false, config::ParamSource::TemplateCall}},
+    });
+
+    scenario::ScenarioStepRun skipped;
+    skipped.index = 2;
+    skipped.file = "scenarios/load.yaml";
+    skipped.line = 7;
+    skipped.kind = scenario::StepKind::Set;
+    skipped.name = "skipped future";
+    skipped.text = "set Engine.absent = 1";
+    skipped.status = scenario::StepStatus::Skipped;
+    skipped.code = "scenario-skipped";
+    skipped.message = "absent";
+
+    sr.steps = {unfinished, skipped};
+    o.scenario.result = sr;
+
+    const RunReport rep = report_of(o);
+    const auto fIt = std::find_if(rep.findings.begin(), rep.findings.end(),
+                                  [](const Finding& f) { return f.code == "scenario-incomplete"; });
+    CHECK(fIt != rep.findings.end());
+    CHECK_EQ(fIt->line, std::size_t{4});
+    CHECK(fIt->file == "scenarios/templates/wait.yaml");
+    CHECK(fIt->message.find("and the step at scenarios/templates/wait.yaml:4 ('wait comms' (wait_until Engine.engine.speed ge 100 "
+                            "(timeout 200 ms))) was not decided yet") != std::string::npos);
+    CHECK(fIt->message.find("skipped future") == std::string::npos);
+    CHECK(fIt->detail.find("called from: scenarios/load.yaml:12 (step 'call wait', timeout_ms = 200)") != std::string::npos);
+}
