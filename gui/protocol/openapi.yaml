@@ -3972,6 +3972,9 @@ components:
         writable:
           title: Writable
           type: boolean
+        builtin:
+          title: Builtin
+          type: boolean
         unit:
           title: Unit
           type: string
@@ -4015,6 +4018,7 @@ components:
       - type
       - role
       - writable
+      - builtin
       - unit
       - description
       - min

@@ -42,6 +42,7 @@ import threading
 from concurrent import futures
 
 NS_PER_MS = 1_000_000
+BUILTIN_PREFIXES = ("ecu.", "peer.", "j1939.", "can.", "lin.", "eth.")
 
 
 def availability(name: str) -> dict[str, tuple[str, str]]:
@@ -342,9 +343,11 @@ class FakeControl:
         schema = []
         reports = self.reports.get(name, {})
         for v in self.peers[name]:
+            builtin = bool(v["builtin"]) if "builtin" in v else v["name"].startswith(BUILTIN_PREFIXES)
             info = pb.VariableInfo(name=v["name"], type=types[v["type"]], causality=roles[v["causality"]],
                                    unit=v["unit"], description=v["description"],
-                                   items=[pb.EnumItem(name=i["name"], value=i["value"]) for i in v["items"]])
+                                   items=[pb.EnumItem(name=i["name"], value=i["value"]) for i in v["items"]],
+                                   builtin=builtin)
             if v["name"] in reports:
                 info.availability = self._availability(reports[v["name"]][0])
             for key in ("min", "max", "step"):

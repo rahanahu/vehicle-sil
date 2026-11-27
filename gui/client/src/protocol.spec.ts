@@ -517,11 +517,16 @@ describe('the readers refuse what they cannot read', () => {
     );
     const ready = read.find((v) => v.state === 'ready');
     const variable = (name: string) => ready?.peers[0].variables.find((v) => v.name === name);
-    expect(variable('ecu.connected')).toMatchObject({ type: 'bool', writable: true });
+    expect(variable('ecu.connected')).toMatchObject({
+      type: 'bool',
+      writable: true,
+      builtin: true,
+    });
     expect(variable('engine.demand')).toMatchObject({
       name: 'engine.demand',
       type: 'real',
       writable: true,
+      builtin: false,
     });
     expect(variable('engine.mode')?.enum).toEqual([
       { name: 'off', value: 0 },
@@ -599,6 +604,7 @@ describe('the readers refuse what they cannot read', () => {
               type: 9,
               role: 7,
               writable: 'true',
+              builtin: 'true',
               unit: null,
               min: '0',
               max: Infinity,
@@ -633,6 +639,7 @@ describe('the readers refuse what they cannot read', () => {
               type: '',
               role: 'output',
               writable: false,
+              builtin: false,
               unit: '',
               min: null,
               max: null,
@@ -650,7 +657,45 @@ describe('the readers refuse what they cannot read', () => {
       operations_from_seq: null,
       operations_open_omitted: 0,
     });
-    expect(uVars.parts.length).toBeGreaterThan(0);
+    expect(uVars.parts).toContain('peers.variables.builtin');
+
+    const withBuiltin = (builtin: unknown) => ({
+      state: 'ready',
+      reason: null,
+      peers: [
+        {
+          name: 'Engine',
+          connected: true,
+          variables: [
+            {
+              name: 'ecu.connected',
+              type: 'bool',
+              role: 'input',
+              writable: true,
+              ...(builtin === undefined ? {} : { builtin }),
+              unit: '',
+              min: null,
+              max: null,
+              step: null,
+              description: '',
+              enum: null,
+              availability: 'active',
+            },
+          ],
+        },
+      ],
+      peers_omitted: 0,
+      variables_omitted: 0,
+      operations: [],
+      operations_from_seq: 0,
+      operations_open_omitted: 0,
+    });
+    expect(readVariablesSummary(withBuiltin(true)).peers[0].variables[0].builtin).toBe(true);
+    expect(readVariablesSummary(withBuiltin(false)).peers[0].variables[0].builtin).toBe(false);
+    expect(readVariablesSummary(withBuiltin(undefined)).peers[0].variables[0].builtin).toBe(false);
+    for (const invalid of [null, 1, 'true']) {
+      expect(() => readVariablesSummary(withBuiltin(invalid))).toThrow(ProtocolError);
+    }
 
     const rawOp = {
       seq: 7,

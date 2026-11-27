@@ -507,7 +507,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `state` | 変数の機能の状態（下の表）。値は増えることがある |
 | `reason` | `off`、`connecting`、`failed` の理由（人向けの英語の文。なければ `null`） |
 | `peers` | `[{"name", "connected", "variables": [...]}]`。Control Server が知っている participant（変数のないものも） |
-| `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum", "availability"}` |
+| `peers[].variables[]` | `{"name", "type", "role", "writable", "builtin", "unit", "min", "max", "step", "description", "enum", "availability"}` |
 | `peers_omitted`、`variables_omitted` | 上限を超えたので入れていない participant と変数の数 |
 | `operations` | 操作（下の `operation` から `type`、`stream_seq`、`run_id` を除いたもの。サーバーが初めて見た順） |
 | `operations_from_seq` | サーバーが受け取る操作のうち、この番号（`seq`）以上のものは、全部 `operations` に入っている（0 なら、サーバーが見た操作の全部）。シナリオ自身の書き込みの操作は、サーバーに届かない（下の `operation`） |
@@ -525,6 +525,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - `peers[].connected` は、その ECU がいま接続しているかです。
 - `type` は `bool`、`integer`、`real`、`enum` です。
 - `role` は `input`（実行中も書ける）、`parameter`（最初のステップの前だけ書ける）、`output`（読むだけ）です。`writable` は `role` が `output` でないことです。
+- `builtin` は vehicle-sil が自動で足す変数（`ecu.connected`、`peer.*`、`j1939.*`、`can.*`、`lin.*`、`eth.*`）なら `true`、ECU のアプリが宣言した変数なら `false` です（照合の結果の `participants[].variables[].builtin` と一致します）。
 - `min`、`max`、`step`（編集の刻み幅の目安）は数か `null` です。
 - `enum` は、`type` が `enum` のとき `[{"name", "value"}]`、ほかは `null` です。
 - `availability` は、ECU がいまその変数を使っているかです。`unknown`、`active`、`inactive` のどれかです（下の「利用状態」）。

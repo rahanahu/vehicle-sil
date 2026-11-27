@@ -25,6 +25,7 @@ const variable = (name: string, fields: object) => ({
   type: 'real',
   role: 'input',
   writable: true,
+  builtin: false,
   unit: '',
   min: null,
   max: null,
@@ -35,7 +36,7 @@ const variable = (name: string, fields: object) => ({
 });
 
 const SCHEMA = [
-  variable('ecu.connected', { type: 'bool' }),
+  variable('ecu.connected', { type: 'bool', builtin: true }),
   variable('engine.demand', { unit: '%', min: 0, max: 100 }),
   variable('engine.speed', { type: 'integer', role: 'output', writable: false, unit: 'rpm' }),
   variable('engine.enabled', { type: 'bool' }),

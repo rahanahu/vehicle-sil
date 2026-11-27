@@ -292,16 +292,45 @@ def test_live_producer_edge_cases_match_contract_models() -> None:
     with pytest.raises(ValidationError):
         C.OperationPeerResult.model_validate({**op_entry["peers"]["Engine"], "failed_write": "bad"})
 
-    # 2. PeerValuesSnapshot.values carries None for non-finite real ECU values
+    # 2. PeerValuesSnapshot.values carries None for non-finite real ECU values, and VariableSpec requires strict builtin
     v.on_peers([PeerInfo("Engine", "inc1", True, [
+        {"name": "ecu.connected", "type": "bool", "role": "input", "unit": "", "min": None, "max": None,
+         "step": None, "description": "", "enum": None, "builtin": True, "availability": None},
         {"name": "temp", "type": "real", "role": "output", "unit": "C", "min": None, "max": None,
-         "step": None, "description": "", "enum": None, "availability": None},
+         "step": None, "description": "", "enum": None, "builtin": False, "availability": None},
     ])], [])
     v.on_synced()
-    v.on_samples({"Engine": ListSample("inc1", 10_000_000, 1, [None])})
+    summary = C.VariablesSummary.model_validate(v.summary())
+    assert [(var.name, var.builtin) for var in summary.peers[0].variables] == [
+        ("ecu.connected", True),
+        ("temp", False),
+    ]
+    v.on_samples({"Engine": ListSample("inc1", 10_000_000, 1, [True, None])})
     values_msg = v.values_message(Watch(1, None, 0.02, 0.0, lambda _: None))
     assert values_msg["peers"]["Engine"]["values"]["temp"] is None
     C.WsValuesMessage.model_validate(values_msg)
+    base_var = v.summary()["peers"][0]["variables"][0]
+    ws_schema = C.WS_SERVER_MESSAGE_ADAPTER.json_schema(schema_generator=C.ContractJsonSchemaGenerator)
+    ws_v = jsonschema.Draft202012Validator(ws_schema)
+    for bad_var in (
+        {k: val for k, val in base_var.items() if k != "builtin"},
+        {**base_var, "builtin": None},
+        {**base_var, "builtin": 1},
+        {**base_var, "builtin": "true"},
+    ):
+        with pytest.raises(ValidationError):
+            C.VariableSpec.model_validate(bad_var)
+        bad_msg = {
+            "type": "variables",
+            "stream_seq": 1,
+            "run_id": "r1",
+            "variables": {
+                **v.summary(),
+                "peers": [{"name": "Engine", "connected": True, "variables": [bad_var]}],
+            },
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            ws_v.validate(bad_msg)
 
     # 3. Session.summary() with dropped-check stop_at_ms=None AND control_link preceding participant (no state)
     sess = Session("r1", "simulation.yaml", [], None, False, limits=SessionLimits(object_bytes=120))

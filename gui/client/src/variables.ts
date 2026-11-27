@@ -31,6 +31,8 @@ export interface VariableInfo {
   role: Open<'input' | 'output' | 'parameter'>;
   /** Whether it can be written (role is input or parameter). */
   writable: boolean;
+  /** Whether vehicle-sil added the variable (`ecu.connected`, `peer.*`, `j1939.*`, `can.*`, `lin.*`, `eth.*`) rather than the ECU application declaring it. */
+  builtin: boolean;
   unit: string;
   min: number | null;
   max: number | null;

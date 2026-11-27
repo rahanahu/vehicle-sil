@@ -12,6 +12,7 @@ const info = (fields: Partial<VariableInfo>): VariableInfo => ({
   type: 'real',
   role: 'input',
   writable: true,
+  builtin: false,
   unit: '',
   min: null,
   max: null,

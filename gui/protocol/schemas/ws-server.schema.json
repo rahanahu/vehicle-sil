@@ -3539,6 +3539,10 @@
           "title": "Writable",
           "type": "boolean"
         },
+        "builtin": {
+          "title": "Builtin",
+          "type": "boolean"
+        },
         "unit": {
           "title": "Unit",
           "type": "string"
@@ -3618,6 +3622,7 @@
         "type",
         "role",
         "writable",
+        "builtin",
         "unit",
         "description",
         "min",

@@ -414,7 +414,8 @@ class Variables:
             return None
         n = self.limits.text_chars
         return {"name": name, "type": type_, "role": role if role in ROLES else "output",
-                "writable": role in ("input", "parameter"), "unit": cut(v.get("unit"), n),
+                "writable": role in ("input", "parameter"), "builtin": v.get("builtin") is True,
+                "unit": cut(v.get("unit"), n),
                 "min": _finite_or_none(v.get("min")), "max": _finite_or_none(v.get("max")),
                 "step": _finite_or_none(v.get("step")), "description": cut(v.get("description"), n),
                 "enum": [{"name": cut(i[0], n), "value": i[1]} for i in items] if type_ == "enum" else None}

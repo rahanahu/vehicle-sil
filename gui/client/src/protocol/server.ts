@@ -1069,6 +1069,8 @@ export interface VariableSummary {
   type: Open<'bool' | 'integer' | 'real' | 'enum'>;
   role: Open<'input' | 'output' | 'parameter'>;
   writable: boolean;
+  /** Whether vehicle-sil added the variable (`ecu.connected`, `peer.*`, `j1939.*`, `can.*`, `lin.*`, `eth.*`) rather than the ECU application declaring it. */
+  builtin: boolean;
   unit: string;
   min: number | null;
   max: number | null;
@@ -1177,6 +1179,7 @@ const readVariableSummary = (value: unknown, path: string, u?: Unreadable): Vari
     type: field(f, path, 'type', lenient(string, '', u)),
     role: field(f, path, 'role', soft(string, 'output', u)),
     writable: field(f, path, 'writable', soft(boolean, false, u)),
+    builtin: field(f, path, 'builtin', soft(boolean, false, u)),
     unit: field(f, path, 'unit', soft(string, '', u)),
     min: field(f, path, 'min', soft(nullable(number), null, u)),
     max: field(f, path, 'max', soft(nullable(number), null, u)),

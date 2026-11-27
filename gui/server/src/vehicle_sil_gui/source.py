@@ -37,8 +37,8 @@ class TimeInfo:
 class PeerInfo:
     """A participant as the source knows it. variables: in the order of its samples, each {"name", "type" (bool,
     integer, real, enum), "role" (input, output, parameter), "unit", "min", "max", "step", "description",
-    "enum": [(name, value), ...], "availability"}. availability: None when the variable does not report whether it
-    is in use (it always is), else the state each incarnation starts with (one of AVAILABILITY)."""
+    "enum": [(name, value), ...], "builtin" (bool), "availability"}. availability: None when the variable does not
+    report whether it is in use (it always is), else the state each incarnation starts with (one of AVAILABILITY)."""
     name: str
     incarnation: str  # changes when another process takes the name: a sample belongs to one incarnation
     connected: bool

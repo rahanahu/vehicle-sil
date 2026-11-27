@@ -25,6 +25,7 @@ const variables = (state: string, more: object = {}) => ({
           type: 'real',
           role: 'input',
           writable: true,
+          builtin: false,
           unit: 'rpm',
           min: null,
           max: null,
