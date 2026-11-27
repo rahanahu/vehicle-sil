@@ -10,6 +10,7 @@
 #include "scenario_failure.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -21,16 +22,128 @@ using detail::ms_text;
 
 // --- the conditions that were not met ---
 
+namespace {
+
+template <class Var>
+bool has_sample_since(const Var& var, const std::optional<SimTime>& since) noexcept
+{
+    return var.value.has_value() && (!since || (var.value_time && *var.value_time >= *since));
+}
+
+bool is_non_finite(const control::Value& val) noexcept
+{
+    const auto* d = std::get_if<double>(&val);
+    return d != nullptr && !std::isfinite(*d);
+}
+
+std::optional<control::Value> finite_or_empty(const std::optional<control::Value>& val) noexcept
+{
+    if (!val || is_non_finite(*val))
+    {
+        return std::nullopt;
+    }
+    return val;
+}
+
+template <class Vars>
+std::vector<std::size_t> failed_rhs_variables(const ScenarioCondition& condition, const Vars& variables,
+                                              const std::optional<SimTime>& since)
+{
+    const auto& lhs = variables[condition.variable];
+    const bool hasLhs = has_sample_since(lhs, since);
+    const bool lhsNonFinite = hasLhs && is_non_finite(*lhs.value);
+    std::vector<std::size_t> out;
+    for (const ScenarioComparison& c : condition.all)
+    {
+        if (!c.rhs_variable)
+        {
+            continue;
+        }
+        const auto& rhs = variables[*c.rhs_variable];
+        const bool hasRhs = has_sample_since(rhs, since);
+        bool failed = false;
+        if (!hasLhs)
+        {
+            failed = !since || (hasRhs && is_non_finite(*rhs.value));
+        }
+        else if (lhsNonFinite)
+        {
+            failed = true;
+        }
+        else if (!since || hasRhs)
+        {
+            failed = !rhs.value || !holds(c.op, *lhs.value, *rhs.value, c.tolerance);
+        }
+        if (failed && std::find(out.begin(), out.end(), *c.rhs_variable) == out.end())
+        {
+            out.push_back(*c.rhs_variable);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 bool ScenarioEngine::is_unmet(const ScenarioCondition& condition, std::optional<SimTime> since, bool& judged) const
 {
-    const Variable& known = variables_[condition.variable];
-    judged = !(since && (!known.value_time || *known.value_time < *since));
-    if (!judged)
+    const Variable& lhs = variables_[condition.variable];
+    const bool hasLhs = has_sample_since(lhs, since);
+    if (!hasLhs)
     {
-        return false; // no sample of its ECU from `since` yet: not judged
+        if (!since)
+        {
+            judged = true;
+            return true;
+        }
+        for (const ScenarioComparison& c : condition.all)
+        {
+            if (c.rhs_variable)
+            {
+                const Variable& rhs = variables_[*c.rhs_variable];
+                if (has_sample_since(rhs, since) && is_non_finite(*rhs.value))
+                {
+                    judged = true;
+                    return true;
+                }
+            }
+        }
+        judged = false;
+        return false; // no sample of its ECU from `since` yet (and no non-finite RHS in window): not judged
     }
-    return !(known.value && std::all_of(condition.all.begin(), condition.all.end(),
-                                        [&](const ScenarioComparison& c) { return holds(c, *known.value); }));
+    if (!condition.all.empty() && is_non_finite(*lhs.value))
+    {
+        judged = true;
+        return true;
+    }
+    bool any_judged = false;
+    for (const ScenarioComparison& c : condition.all)
+    {
+        if (c.rhs_variable)
+        {
+            const Variable& rhs = variables_[*c.rhs_variable];
+            if (since && (!rhs.value_time || *rhs.value_time < *since))
+            {
+                continue; // no sample of the right-hand ECU from `since` yet: checked at later samples / close()
+            }
+            any_judged = true;
+            if (!rhs.value || !holds(c.op, *lhs.value, *rhs.value, c.tolerance))
+            {
+                judged = true;
+                return true;
+            }
+        }
+        else
+        {
+            any_judged = true;
+            if (!holds(c, *lhs.value))
+            {
+                judged = true;
+                return true;
+            }
+        }
+    }
+    judged = any_judged;
+    return false;
 }
 
 TimelineFailure ScenarioEngine::unmet_values(const ScenarioStep& step, std::optional<SimTime> since) const
@@ -39,10 +152,29 @@ TimelineFailure ScenarioEngine::unmet_values(const ScenarioStep& step, std::opti
     for (std::size_t i = 0; i < step.conditions.size(); ++i)
     {
         bool judged = false;
-        if (is_unmet(step.conditions[i], since, judged))
+        const ScenarioCondition& condition = step.conditions[i];
+        if (is_unmet(condition, since, judged))
         {
-            const Variable& known = variables_[step.conditions[i].variable];
-            out.conditions.push_back(TimelineFailedCondition{i, known.value, known.value ? known.value_time : std::nullopt});
+            const Variable& lhs = variables_[condition.variable];
+            const bool hasLhs = has_sample_since(lhs, since);
+            const std::optional<control::Value> lhsVal = hasLhs ? finite_or_empty(lhs.value) : std::nullopt;
+            TimelineFailedCondition failed{
+                i,
+                lhsVal,
+                lhsVal ? lhs.value_time : std::nullopt,
+            };
+            for (const std::size_t rhsIdx : failed_rhs_variables(condition, variables_, since))
+            {
+                const Variable& rhs = variables_[rhsIdx];
+                const bool hasRhs = has_sample_since(rhs, since);
+                const std::optional<control::Value> rhsVal = hasRhs ? finite_or_empty(rhs.value) : std::nullopt;
+                failed.compared.push_back(TimelineComparedValue{
+                    rhsIdx,
+                    rhsVal,
+                    rhsVal ? rhs.value_time : std::nullopt,
+                });
+            }
+            out.conditions.push_back(std::move(failed));
         }
     }
     return out;
@@ -53,16 +185,39 @@ std::string ScenarioEngine::unmet(const ScenarioStep& step, std::optional<SimTim
     std::string out;
     for (const ScenarioCondition& condition : step.conditions)
     {
-        const Variable& known = variables_[condition.variable];
+        const Variable& lhs = variables_[condition.variable];
         const ScenarioVariable& v = scenario_.variables[condition.variable];
         bool judged = false;
         if (!is_unmet(condition, since, judged))
         {
             continue;
         }
-        out += (out.empty() ? "" : "; ") + condition.text + ", but " +
-               (known.value ? "it was " + value_text(*known.value, &v) + " (its sample of " + ms_text(*known.value_time) + " ms)"
+        const bool hasLhs = has_sample_since(lhs, since);
+        std::string entry =
+            condition.text + ", but " +
+            (hasLhs ? "it was " + value_text(*lhs.value, &v) + " (its sample of " + ms_text(*lhs.value_time) + " ms)"
+                    : since ? "it had no sample from " + ms_text(*since) + " ms yet"
                             : std::string("it had no value yet (no sample of its ECU had arrived)"));
+        const std::vector<std::size_t> rhsVars = failed_rhs_variables(condition, variables_, since);
+        if (!rhsVars.empty())
+        {
+            entry += " while ";
+            for (std::size_t k = 0; k < rhsVars.size(); ++k)
+            {
+                const Variable& rhs = variables_[rhsVars[k]];
+                const ScenarioVariable& rv = scenario_.variables[rhsVars[k]];
+                const bool hasRhs = has_sample_since(rhs, since);
+                if (k > 0)
+                {
+                    entry += " and ";
+                }
+                entry += rv.text + " " +
+                         (hasRhs ? "was " + value_text(*rhs.value, &rv) + " (its sample of " + ms_text(*rhs.value_time) + " ms)"
+                                 : since ? "had no sample from " + ms_text(*since) + " ms yet"
+                                         : std::string("had no value yet (no sample of its ECU had arrived)"));
+            }
+        }
+        out += (out.empty() ? "" : "; ") + entry;
     }
     return out;
 }

@@ -62,6 +62,13 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
         for (const ScenarioCondition& c : step.conditions)
         {
             reads[c.variable] = true;
+            for (const ScenarioComparison& comp : c.all)
+            {
+                if (comp.rhs_variable)
+                {
+                    reads[*comp.rhs_variable] = true;
+                }
+            }
         }
     }
     // The inputs the scenario ever puts a dither on, by its text: not by what a run got to.

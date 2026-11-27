@@ -1748,6 +1748,40 @@ void Reader::scan_steps_metadata(ryml::id_type steps_node)
                     }
                 }
             }
+            else if ((fieldKey == "expect" || fieldKey == "wait_until") && tree().is_map(field))
+            {
+                for (auto cond = tree().first_child(field); cond != ryml::NONE; cond = tree().next_sibling(cond))
+                {
+                    if (!tree().is_map(cond))
+                    {
+                        scan_scalar_param_refs(cond, false);
+                        continue;
+                    }
+                    for (auto part = tree().first_child(cond); part != ryml::NONE; part = tree().next_sibling(part))
+                    {
+                        const std::string partKey = tree().has_key(part) ? config::detail::to_string(tree().key(part)) : std::string{};
+                        if (partKey == "variable")
+                        {
+                            continue;
+                        }
+                        if (compare_of(partKey).has_value() && tree().is_map(part))
+                        {
+                            for (auto sub = tree().first_child(part); sub != ryml::NONE; sub = tree().next_sibling(sub))
+                            {
+                                const std::string subKey = tree().has_key(sub) ? config::detail::to_string(tree().key(sub)) : std::string{};
+                                if (subKey != "variable")
+                                {
+                                    scan_scalar_param_refs(sub, false);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            scan_scalar_param_refs(part, false);
+                        }
+                    }
+                }
+            }
             else
             {
                 scan_scalar_param_refs(field, false);

@@ -1656,7 +1656,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 
 A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version. A step's `status` is not one of them: see [Values that carry the result](scenario.md#values-that-carry-the-result).
 
-Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: `expect_skipped`, `file`, `name` and `call_stack` on a step, `file` on a line, and `case` on `scenario`, which are emitted only when non-empty.
+Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
 
 The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write.
 
@@ -1669,7 +1669,7 @@ The `watch` of a step is the condition that the step checks (`null` for a step w
 | `once` | `expect` with `within_ms`, `wait_until` | The value at `from_ms` and the samples after it. The time at which the condition held is the step's `at_ms` | The wait limit |
 | `during` | `expect` beside `ramp` and `wave` | Only the samples with times from `from_ms` to `to_ms` | The ECU step in which the final value enters the ECU (it can be after the step's `end_ms`; see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
 
-- `watch.conditions[]` has one entry per variable: `variable` and `compare[]` (`op` is `eq`, `ne`, `ge`, `le`, `gt`, `lt` or `near`; `value`; `tolerance` for `near`, `null` for the other ops).
+- `watch.conditions[]` has one entry per variable: `variable` and `compare[]` (`op` is `eq`, `ne`, `ge`, `le`, `gt`, `lt` or `near`; `value`, or `value: null` with `"variable": "<participant>.<name>"` when comparing two variables; `tolerance` for `near`, `null` for the other ops).
 - For a step that the scenario never reached (`not_run`), `from_ms` and `to_ms` are `null`.
 
 The `failed` of a failed step holds what failed, as numbers (`null` for other steps; the text for people is in `message`).
@@ -1690,7 +1690,7 @@ The `failed` of a failed step holds what failed, as numbers (`null` for other st
 }
 ```
 
-- `conditions[]` lists every condition that did not hold. `condition` is the index (from 0) in `watch.conditions[]`. `value` and `sample_ms` are the value at that moment and the time of the sample it came from. Both are `null` for a condition that had no value yet, and for a condition that got no sample in its `during` interval.
+- `conditions[]` lists every condition that did not hold. `condition` is the index (from 0) in `watch.conditions[]`. `value` and `sample_ms` are the value at that moment and the time of the sample it came from. Both are `null` for a condition that had no value yet, was non-finite, or got no sample in its `during` interval. When one or more variable-to-variable comparisons on that condition failed, `compared` lists the right-hand variables (`{ "variable", "value", "sample_ms" }`, with `value` and `sample_ms` `null` when the right-hand variable had no sample yet, was non-finite, or had no sample in a `during` interval).
 - `writes[]` and `write` describe a failed write (below). In a step that did not fail on a write, `writes[]` is empty and `write` is `null`.
 
 For a step that failed on a write, `writes[]` holds every write that the scenario sent together for that time. In this example, one `set` wrote 2 variables of the participant `Body`, and the ECU's setter rejected the second one:
