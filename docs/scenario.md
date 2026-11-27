@@ -143,6 +143,7 @@ How the format grows:
 | `samples` | No | How often the ECUs whose values the scenario reads send them: `every_step` (the default) or `as_sent`. See [How often the ECUs send their values](#how-often-the-ecus-send-their-values-samples). |
 | `only` | No | The list of variants on which this scenario runs (`only: [small, medium]`). Without it, the scenario runs on every variant. See [Limiting a scenario to variants](#limiting-a-scenario-to-variants-only). |
 | `params` | No | Default values of parameters (name → value). Use a parameter by writing `${name}` where a step takes a value. See [Parameters](#parameters-params-name). |
+| `cases` | No | Named execution cases (`<name>: { params?, only? }`). Overrides parameters per case and optionally narrows `only`. See [Named cases (`cases`, `--case`)](#named-cases-cases---case). |
 | `inputs` | No | Declarations per input (variable → `{ dither: <waveform> }`). Overlays a fine dither on the input from the start of the scenario. See [Overlaying a dither](#overlaying-a-dither-dither). |
 | `end_ms` | No | Optional virtual end time in milliseconds (`0` to `10^12`). When all steps pass, the scenario holds until `end_ms` before finishing. Must not be earlier than the static end of the steps. |
 | `steps` | Yes | The list of steps (at least 1). They run in order from the top. |
@@ -702,7 +703,9 @@ Values are applied in this order, and a later one replaces an earlier one. A nam
 | 1 | `params` of the scenario |
 | 2 | `params` of the configuration file |
 | 3 | `params` of the selected variant |
-| 4 | The argument `--param <name>=<value>` |
+| 4 | `params` of the selected case (`cases.<name>.params`) |
+| 5 | `params` of the request file (`--request`) |
+| 6 | The argument `--param <name>=<value>` |
 
 | Error | Result |
 |---|---|
@@ -710,6 +713,32 @@ Values are applied in this order, and a later one replaces an earlier one. A nam
 | `--param` with a name the scenario neither uses nor declares | A usage error (exit code 4). The message lists the scenario's parameter names. |
 
 While a parameter has an error, the contents of the steps are not checked. Fix the parameters first.
+
+### Named cases (`cases`, `--case`)
+
+Add `cases` at the top level of a scenario to run the same steps or template calls under multiple named conditions (such as `無負荷`, `定格`, `上限直前`, or `-10C`) without duplicating the scenario file:
+
+```yaml
+vehicle_sil_scenario: 1
+name: throttle load cases
+params: { target_throttle: 50, timeout_ms: 500 }
+cases:
+  無負荷: { params: { target_throttle: 0, timeout_ms: 300 } }
+  定格: { only: [medium], params: { target_throttle: 50, timeout_ms: 500 } }
+  上限直前: { params: { target_throttle: 95, timeout_ms: 650 } }
+steps:
+  - set: { Engine.engine.throttle: "${target_throttle}" }
+  - wait_until: { Engine.engine.speed: { ge: 750 } }
+    timeout_ms: "${timeout_ms}"
+```
+
+Rules for `cases`:
+
+- `cases` must be a non-empty mapping of case names to `{ params?, only? }`. Case values cannot be `null` (use `{}` for a case with no overrides).
+- Case names allow UTF-8 text (such as `無負荷`, `定格`, `上限直前`) and single-dash names like `-10C` or internal `a--b`, and forbid empty names, names starting with `--`, control characters (below `U+0020` or `U+007F`, including newlines), and invalid UTF-8.
+- Every parameter in `cases.<name>.params` must be declared in top-level `params` or used in `steps` (`scenario-param` otherwise).
+- When both top-level `only` and `cases.<name>.only` are present, raw variant names in both are validated first, and the effective variant filter is their intersection. An empty intersection fails with `scenario-variant` (not skipped).
+- On `check --scenario` and `run --scenario`, a scenario with `cases` requires `--case <name>` (exit code `4` otherwise, listing available cases); `--case` on a scenario without `cases` also returns exit code `4`. On `test --scenarios`, omitting `--case` expands `(variant, scenario, case)` in file order, while `--case <name>` (repeatable) filters to matching cases and skips caseless scenarios.
 
 ### Step templates (`template`, `vehicle_sil_scenario_template`)
 
@@ -988,7 +1017,7 @@ The check lists every error; it does not stop at the first one. The exit code is
 | `scenario-value` | Error | A value does not fit the type, the range or the enum items. A `ramp` or a magnitude comparison is used on a non-numeric variable. The waveform of a `wave` does not fit the variable's type, or `around` ± `amplitude` is out of range. A `dither` is written on a bool or enum variable. |
 | `scenario-param` | Error | `${name}` has no value, a template call parameter violates its `type` / `values` / required contract, or `${...}` is in a key, variable name, `template` path, or disallowed partial value. (A `--param` with a name that is not in the scenario is the usage error `usage`.) |
 | `scenario-template-file`, `scenario-template-cycle`, `scenario-template-depth`, `scenario-template-steps` | Error | A template file cannot be read or escapes the scenario directory (`scenario-template-file`), forms a cycle (`scenario-template-cycle`), exceeds nesting depth 16 (`scenario-template-depth`), or exceeds 10,000 expanded steps (`scenario-template-steps`). |
-| `scenario-variant` | Error | The scenario's `only` does not include the selected variant, or a name in `only` is not a variant of the configuration file. |
+| `scenario-variant` | Error | The scenario's `only` (or its intersection with `cases.<name>.only`) does not include the selected variant, a `cases.<name>.only` intersection is empty, or a name in `only` is not a variant of the configuration file. |
 | `scenario-time` | Error | `at_ms` is before the end of the previous step, `at_ms` comes after a wait step, `end_ms` is earlier than the earliest possible end of the steps, or the durations of the steps add up to more than the time limit (1000000000000 ms). |
 | `scenario-wave-undersampled`, `scenario-wave-duty` | Warning | A `wave` or `dither` is finer than the step of the target ECU (see [Waveforms finer than the ECU step](#waveforms-finer-than-the-ecu-step)). A `dither` with an amplitude below 0.5 on an integer input also gives `scenario-wave-undersampled` (see below). |
 | `scenario-wave-coarse`, `scenario-wave-not-checked` | Note | See the same section. |
@@ -1035,7 +1064,7 @@ How to read them:
 
 | Part | Content |
 |---|---|
-| Check | The line `scenario <file> (<name>): <n> steps`. |
+| Check | The line `scenario <file> (<name>): <n> steps` (adding `, case <case>` when a case is selected). |
 | Check (with parameters) | The line `parameters: <name> = <value> (<source>), ...`. |
 | Run | One result line and the table of steps (line, optional `name` column when any step has one, step, result, and the virtual time at which the result was decided; `where` as `<file>:<line>` instead of `line` when any step comes from another file). |
 | Run (for each skipped step) | `line <line> skipped: <reason>`. |
@@ -1064,6 +1093,8 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario` key | Present | Meaning |
 |---|---|---|
 | `file`, `name` | Always | The scenario's file and name |
+| `case` | Only if selected | The selected case name (`--case`) |
+| `cases` | Only if defined | The scenario's case names in file order |
 | `steps` | Always | The number of steps |
 | `only` | Only if set | An array of variant names |
 | `params` | Only if any | For each parameter that the scenario declares or uses: `name`, `value`, `from` |
@@ -1072,7 +1103,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `inputs`, `lines` | Always (empty arrays in a scenario without a `dither`; `null` if the scenario could not be read) | See the next table. The `scenario` of `run --json` has the same keys |
 | `end_ms` | Always | The scenario's `end_ms` (`null` if omitted) |
 
-`value` in `params` is the effective value (`true` or `false`, a number or a string). `from` is one of `scenario`, `configuration`, `variant`, `command_line` and `request_file` (`params` of the file of `--request`).
+`value` in `params` is the effective value (`true` or `false`, a number or a string). `from` is one of `scenario`, `configuration`, `variant`, `case`, `command_line` and `request_file` (`params` of the file of `--request`).
 
 Keys about the `dither`s:
 
@@ -1097,6 +1128,8 @@ Keys about the `dither`s:
 | `timeline` | The name of the `--timeline` file, as given in the arguments; `null` without `--timeline`. |
 | `end_ms` | The scenario's top-level `end_ms` in virtual milliseconds (`null` if omitted). |
 | `steps[]` | The result of each step (next table). |
+| `case` | Present after `steps` only when a named case ran. |
+| `params[]` | Present after `steps` only when the scenario declares or uses parameters (`name`, `value`, `from`). |
 
 A step counted in `unchecked_expects` did run, so it is not counted in `skipped_steps`.
 

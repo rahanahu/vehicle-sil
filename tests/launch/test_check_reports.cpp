@@ -1446,3 +1446,75 @@ TEST_CASE(check_with_param_on_failing_template_call_reports_template_error_not_u
     CHECK(std::any_of(cyclicChecked.findings.begin(), cyclicChecked.findings.end(),
                       [](const Finding& f) { return f.code == "scenario-template-cycle"; }));
 }
+
+TEST_CASE(check_scenario_with_cases_and_case_selection)
+{
+    const auto dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "check-cases";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "sim.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [missing/engine]\n"
+               "variants:\n  small: {}\n  medium: {}\n";
+    }
+    {
+        std::ofstream out(dir / "cases.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\nname: load\nparams: { lvl: 10 }\n"
+               "cases:\n  無負荷: { params: { lvl: 0 } }\n  定格: { params: { lvl: 50 } }\n"
+               "steps:\n  - set: { Engine.level: \"${lvl}\" }\n";
+    }
+    {
+        std::ofstream out(dir / "single_case.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\ncases:\n  only_one: {}\nsteps:\n  - set: { Engine.level: 1 }\n";
+    }
+    {
+        std::ofstream out(dir / "caseless.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\nsteps:\n  - set: { Engine.level: 1 }\n";
+    }
+    const vehicle_sil::config::test::InDirectory there(dir);
+
+    // Multi-case and single-case without --case return exit 4 (usage) listing available cases.
+    RunRequest req;
+    req.host.config = "sim.yaml";
+    req.intent.variant = "small";
+    req.intent.scenario = "cases.yaml";
+    const Checked missingCase = check_file(req);
+    CHECK(missingCase.usage);
+    CHECK_EQ(check_exit_code(missingCase), 4);
+    CHECK(missingCase.findings.front().message.find("無負荷, 定格") != std::string::npos);
+
+    req.intent.scenario = "single_case.yaml";
+    const Checked singleMissing = check_file(req);
+    CHECK(singleMissing.usage);
+    CHECK_EQ(check_exit_code(singleMissing), 4);
+    CHECK(singleMissing.findings.front().message.find("only_one") != std::string::npos);
+
+    // Unknown --case returns exit 4 with "did you mean".
+    req.intent.scenario = "cases.yaml";
+    req.intent.scenario_case = "定格X";
+    const Checked typoCase = check_file(req);
+    CHECK(typoCase.usage);
+    CHECK_EQ(check_exit_code(typoCase), 4);
+    CHECK(typoCase.findings.front().message.find("did you mean '定格'?") != std::string::npos);
+
+    // --case on caseless returns exit 4.
+    req.intent.scenario = "caseless.yaml";
+    req.intent.scenario_case = "nominal";
+    const Checked onCaseless = check_file(req);
+    CHECK(onCaseless.usage);
+    CHECK_EQ(check_exit_code(onCaseless), 4);
+
+    // Valid --case emits case + cases + from: "case" in text and JSON.
+    req.intent.scenario = "cases.yaml";
+    req.intent.scenario_case = "無負荷";
+    const Checked ok = check_file(req);
+    CHECK(!ok.usage);
+    CHECK(ok.scenario && ok.scenario->case_name == "無負荷");
+    CHECK(ok.scenario->cases == std::vector<std::string>({"無負荷", "定格"}));
+    const std::string text = format_text(ok);
+    CHECK(text.find("scenario cases.yaml (load, case 無負荷):") != std::string::npos);
+    CHECK(text.find("lvl = 0 (the case's params)") != std::string::npos);
+    const std::string json = format_json(ok);
+    CHECK(json.find("\"case\": \"無負荷\"") != std::string::npos);
+    CHECK(json.find("\"from\": \"case\"") != std::string::npos);
+}

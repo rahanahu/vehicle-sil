@@ -34,7 +34,8 @@ namespace vehicle_sil::scenario::reader {
 // a new branch must be added here too, or the JSON Schema (schema/) and its test (tests/schema), which compare with
 // the list in the message, pass without the key. (The keys of a step are taken from kStepKeys itself.)
 
-inline const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "samples", "only", "params", "inputs", "end_ms", "steps"};
+inline const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "samples", "only", "params", "cases", "inputs", "end_ms", "steps"};
+inline const std::vector<std::string> kCaseKeys = {"params", "only"};
 inline const std::vector<std::string> kStepKeys = {"name",       "at_ms",      "after_ms", "set",        "ramp",       "wave",
                                                    "dither",     "wait_until", "timeout_ms", "expect",  "within_ms",  "hold_for_ms",
                                                    "undersampled", "template", "params"};
@@ -73,8 +74,10 @@ std::string items_text(const std::vector<control::EnumItem>& items);
 class Reader : config::detail::YamlReader
 {
 public:
-    Reader(const config::detail::YamlDocument& doc, const ScenarioCatalog& catalog, const ScenarioContext& context, ScenarioRead& out) :
-      config::detail::YamlReader(doc, out.findings), catalog_(catalog), context_(context), out_(out)
+    Reader(const config::detail::YamlDocument& doc, const ScenarioCatalog& catalog, const ScenarioContext& context,
+           ScenarioRead& out, bool check_catalog = true) :
+      config::detail::YamlReader(doc, out.findings), catalog_(catalog), context_(context), out_(out),
+      check_catalog_(check_catalog)
     {
         const auto slash = context_.scenario_file.find_last_of("/\\");
         if (slash != std::string::npos)
@@ -85,6 +88,8 @@ public:
     }
 
     void read();
+    bool has_cases() const noexcept { return cases_written_; }
+    bool cases_incomplete() const noexcept { return cases_incomplete_; }
 
 private:
     const config::detail::YamlDocument& doc() const noexcept override { return *scopes_.back().doc; }
@@ -128,8 +133,8 @@ private:
         bool used = false; ///< a step has "${name}"
     };
 
-    /// The scenario's defaults (`node`, or ryml::NONE), then the context's over them.
-    void take_params(ryml::id_type node);
+    /// The scenario's defaults (`node`, or ryml::NONE), then the context's and chosen case's by rank.
+    void take_params(ryml::id_type node, const std::vector<config::ParamValue>* case_params = nullptr);
 
     /// Finds every "${name}" under `node` (the steps): as a whole value it stands for the
     /// parameter's value from here on (param_at()); anywhere else, or without a value, it is an
@@ -184,9 +189,21 @@ private:
     /// ("0x65 (101)"), as the range beside it is decimal.
     std::string written(ryml::id_type node, double value) const;
 
-    // --- the variants the scenario is for ---
+    // --- cases & the variants the scenario/case is for ---
 
-    void read_only(ryml::id_type node);
+    struct CaseDef
+    {
+        std::string name;
+        std::size_t line = 0;
+        std::vector<config::ParamValue> params{};
+        std::optional<std::vector<std::string>> only{};
+        std::size_t only_line = 0;
+    };
+
+    void read_cases(ryml::id_type node);
+    const CaseDef* resolve_case_selection(ryml::id_type casesNode, bool hasTopLevelErrors, bool& skipReading);
+    std::optional<std::vector<std::string>> read_only_list(ryml::id_type node, const std::string& prefix);
+    void resolve_only_and_case(ryml::id_type onlyNode, const CaseDef* chosenCase);
 
     /// A whole number of milliseconds from `least` to kMaxMillis, or empty (and an error).
     std::optional<std::int64_t> millis(ryml::id_type node, const std::string& key, std::int64_t least, const std::string& meaning);
@@ -514,6 +531,7 @@ private:
     const ScenarioCatalog& catalog_;
     const ScenarioContext& context_;
     ScenarioRead& out_;
+    bool check_catalog_ = true;
     std::string scenario_dir_prefix_{};
     std::vector<EvalScope> scopes_;
     std::vector<SourceFrame> active_templates_;
@@ -522,6 +540,9 @@ private:
     std::size_t expanded_steps_ = 0;
     bool too_many_expanded_steps_ = false;
     bool caller_template_params_incomplete_ = false;
+    std::vector<CaseDef> cases_;
+    bool cases_written_ = false;
+    bool cases_incomplete_ = false;
     std::map<std::string, CsvFile> files_; ///< the points files, by normalized path from root scenario dir
     Scenario scenario_;
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant

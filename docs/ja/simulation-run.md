@@ -54,7 +54,7 @@
 | 項目 | `--scenario` を付けたとき |
 |---|---|
 | controller のタイムステップ | 速度を指定したときの既定と同じです（`time_step_ms` か、ECU のステップがすべて controller のステップから始まるタイムステップ）。 |
-| パラメーター（`${name}`）の値 | 設定ファイルの `params`、機種の `params`、`--param <名前>=<値>` で替えられます。 |
+| パラメーター（`${name}`）の値 | 設定ファイルの `params`、機種の `params`、`--case <名前>` で選んだ `cases.<名前>.params`、`--param <名前>=<値>` で替えられます。 |
 | その機種にない変数（`absent: true`）を使う手順 | 飛ばして、結果に表示します。 |
 | 機種が無効にした participant の変数を使う手順 | 同じく飛ばして、結果に表示します。 |
 | シナリオ成功後の動作（`after_scenario`） | 既定は `"stop"` です（通常の CLI `run --scenario` も含みます）。`--request` ファイルや `serve` のインライン `intent` で `"after_scenario": "pause"` を指定すると、止めずに終了時刻の controller ステップでアトミックに一時停止します。 |
@@ -1998,10 +1998,11 @@ vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.ya
 
 | 項目 | ルール |
 |---|---|
-| 順序 | 機種が設定ファイルに書いた順、その中でシナリオが引数の順です。 |
-| 機種のない設定ファイル | シナリオだけを並べます。 |
+| 順序 | 機種が設定ファイルに書いた順、その中でシナリオが引数の順、さらに `cases:` を持つシナリオではケースがファイル順です。 |
+| 機種のない設定ファイル | シナリオ（`cases:` があればその各ケース）だけを並べます。 |
 | `--variant <名前>` | その機種だけを実行します（繰り返せます。順は設定ファイルの順のままです）。 |
-| 1 組の実行 | `run <file> --variant <機種> --scenario <シナリオ> --speed max` と同じです。 |
+| `--case <名前>` | 一致するケースだけをファイル順で実行します（繰り返せます。`cases` のないシナリオはスキップします）。どのシナリオにも `<名前>` がなければ終了コード `4` です。 |
+| 1 組の実行 | `run <file> --variant <機種> --scenario <シナリオ> [--case <ケース>] --speed max` と同じです。 |
 | 速度 | 実時間に固定されている場合を除き、最速です。 |
 | 組と組の間 | registry、controller、participant のプロセスを作り直します（前の組の状態は残りません）。 |
 | 同時の実行 | しません。 |
@@ -2043,6 +2044,7 @@ vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.ya
 |---|---|
 | `--json`、`--strict`、`--describe-timeout-ms`、`--disable`、`--enable` | 使えます（どの組にも同じように適用します）。 |
 | `--timeout-ms` | 使えます（1 組ごとの上限）。 |
+| `--case <名前>` | 一致するケースだけをファイル順で実行します（繰り返せます。ケースなしシナリオをスキップし、どのシナリオにも `<名前>` がなければ引数のエラー）。 |
 | `--param <名前>=<値>` | そのパラメーターを宣言しているか使っているシナリオにだけ適用します。 |
 | `--speed`、`--log-dir`、`--stdin-commands`、`--control`、`--manual` などの `run` だけの引数 | 引数のエラーです。 |
 | `--scenario` | 引数のエラーです。 |
@@ -2104,8 +2106,9 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 - `passed` の警告の中身は、その組を 1 つだけ実行するか、`--json` の `runs[].run` で見ます。
 - `FAILED` が `--strict` で警告だけのときは、右の列は最初の警告です。
 - 機種のない設定ファイルでは、`variant` の列がありません。
+- 名前付きケースを持つ組が 1 つでもあるときは、`scenario` の後ろに `case` 列が表示されます（ケースなしの行は `-`）。
 
-1 組だけを実行し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に適用されるものを並べるので、同じ実行になります。並べるのは、`--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms` です。コマンドには、`test` の実行と同じ `--speed max` が付きます。`role: bridge` の participant が外とつないでいるために速さ 1 で実行した組には付きません（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。`test` に `--time-policy free` を付けていれば、それも付きます。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます。Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます。
+1 組だけを実行し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に適用されるものを並べるので、同じ実行になります。並べるのは、`--case`（名前付きケースの実行だったとき）、`--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms` です。コマンドには、`test` の実行と同じ `--speed max` が付きます。`role: bridge` の participant が外とつないでいるために速さ 1 で実行した組には付きません（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。`test` に `--time-policy free` を付けていれば、それも付きます。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます。Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます。
 
 最後の行は、`passed`、`FAILED`、`interrupted` のどれかと、組の数です。`interrupted` と `not run` の数は、あるときだけ書きます。
 
@@ -2171,6 +2174,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | `result` | `"passed"`、`"failed"`、`"skipped"`、`"interrupted"`、`"not_run"` |
 | `reason` | 表の右の列（なければ `null`） |
 | `run` | その組の `run --json` と同じオブジェクト（`skipped` と `not_run` では `null`） |
+| `case` | 名前付きケースを実行したときだけ `run` の後ろに入る |
 
 `version --json` の `formats` の `test` が、この JSON のバージョンです。`features` には `test` の項目はありません。
 

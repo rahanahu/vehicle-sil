@@ -869,7 +869,9 @@ A later value replaces an earlier one, in this order:
 | 1 | `params` of the scenario (the defaults) |
 | 2 | `params` of the configuration file |
 | 3 | `params` of the variant |
-| 4 | The option `--param <name>=<value>` |
+| 4 | `params` of the case (`cases.<name>.params` in the scenario) |
+| 5 | `params` of the request file (`--request`) |
+| 6 | The option `--param <name>=<value>` |
 
 - `--param` is allowed only with `--scenario`.
 - `--param` with a name that the scenario does not use is a usage error (exit code 4; typos are never silently ignored).
@@ -881,7 +883,7 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 ## Arguments and exit codes
 
 ```text
-vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -892,7 +894,7 @@ vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [-
 vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
-                       [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
+                       [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
@@ -902,7 +904,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
 vehicle_sil_launch serve [--once] [--events-stall-ms <ms>]
                          [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                          [--control-audit-log <file>]] [--] <file>
-vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
+vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--case <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
@@ -932,6 +934,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--control-tls-cert <file>`, `--control-tls-key <file>` | `--control` only | The server's certificate chain and private key (PEM). Passing both turns on TLS. |
 | `--control-audit-log <file>` | `--control` only | Appends a record of who changed what. |
 | `--scenario <file>` | | The scenario file ([scenario.md](scenario.md)). |
+| `--case <name>` | `check`, `run` (with `--scenario`), and `test` | Selects a named case from the scenario's `cases` (see "Named cases (`cases`, `--case`)" in [scenario.md](scenario.md#named-cases-cases---case)). Repeatable in `test`. |
 | `--variant <name>` | | Selects a variant of the configuration file (see [Variants](#variants-variants---variant)). |
 | `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
 | `--timeline <file>` | `run` only, and only with `--scenario` | Writes the values that the scenario wrote and saw to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
@@ -1062,6 +1065,7 @@ The following give exit code 4:
 | Participant options | `--disable`, `--enable` or `--manual` with a participant name that is not in the configuration file |
 | Participant options | `--disable` and `--enable` with the same name, or `--disable` and `--manual` with the same name |
 | Variants and parameters | No `--variant` for a configuration file with variants, or `--variant` with a name that is not a variant |
+| Variants and parameters | Missing `--case` on `check`/`run` for a scenario with `cases`, `--case` on a scenario without `cases`, `--case` without `--scenario` (`check`/`run`), or an unknown `--case` name |
 | Variants and parameters | A malformed `--param`, `--param` without `--scenario`, or `--param` with a name that is not in the scenario |
 | `test` | No `--scenarios`, a `--scenarios` path that does not exist, or a directory with no scenario files |
 | `test` | Options for `run` only, and `--scenario`, given to `test` |

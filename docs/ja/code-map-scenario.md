@@ -39,7 +39,7 @@
 
 設定やスキーマを変える場合は [設定ファイルかシナリオのキー](code-map-launcher.md#設定ファイルかシナリオのキー) を参照。
 
-設定ファイルの `variants` と `params`、`--variant`、`--param`、シナリオの `params`・`${name}`・`only` です。`absent: true` の変数や、機種が無効にした participant の変数を使う手順のスキップも含みます。
+設定ファイルの `variants` と `params`、`--variant`、`--param`、シナリオの `params`・`cases`・`${name}`・`--case`・`only` です。`absent: true` の変数や、機種が無効にした participant の変数を使う手順のスキップも含みます。
 
 変える場所（設定ファイルの側。`libs/config/src/config.cpp`）:
 
@@ -50,7 +50,7 @@
 変える場所（シナリオの側とその周り）:
 
 - `params` の読み方: `libs/config/include/vehicle_sil/config/detail/yaml_reader.hpp` の `read_params()`
-- `scenario.cpp` の `take_params()`、`resolve_params()`、`read_only()`、`skip()`
+- `scenario.cpp` の `take_params()`、`resolve_params()`、`read_cases()`、`resolve_case_selection()`、`resolve_only_and_case()`、`inspect_scenario()`、`skip()`
 - 渡すコード: `check.cpp` の `ScenarioContext`
 - スキップするコード: `scenario_run.cpp` の `issue_step()`（`StepStatus::Skipped`）
 - 引数: `tools/launch/main.cpp` の `common()`
@@ -115,6 +115,7 @@
 - `dither` の例は `examples/ecu_main/scenarios/throttle_dither.yaml` で、`launch_run.scenario_dither` が実行します。
 - CSV ファイルの `points` の例は `examples/ecu_main/scenarios/throttle_trace.yaml` と `.csv` で、`launch_run.scenario_wave` が実行します。
 - 手順テンプレートの例は `examples/ecu_main/scenarios/templates/throttle_check.yaml` を呼び出す `examples/ecu_main/scenarios/throttle_template.yaml` です。
+- 名前付きケースの例は `examples/ecu_main/scenarios/templates/throttle_check.yaml` を `無負荷`・`定格`・`上限直前` で呼び出す `examples/ecu_main/scenarios/throttle_cases.yaml` です。
 - ガイド howto/scenario-tests.md は、`throttle_step.yaml`、`engine_disconnect.yaml` と、`examples/scenario_tests` のファイルを載せています（「[`examples/scenario_tests`](#examplesscenario_testsガイドシナリオでテストを書くの例)」）。
 - エラーのある例と失敗する例は、ファイルも scenario.md のブロックです。`launch_run.scenario` が書き出して、`check --scenario` の出力、`run --scenario` の出力、`--json` の `scenario` を照合します。
 
@@ -221,8 +222,9 @@
 | 関数など | 内容 |
 |---|---|
 | `list_scenarios()` | ディレクトリからのシナリオの集め方と順 |
-| `test_file()` | 組ごとに `run_file()` を呼ぶ |
-| `format_test_text()` | 1 組だけを実行し直すコマンドに並べる引数は `TestArguments` |
+| `inspect_scenarios()` / `scenario::inspect_scenario()` | `unused_params()` と `(variant, scenario, case)` 展開のための軽量ケース・パラメーター検査 |
+| `test_file()` | 組ごとに `run_file()` を呼ぶ（`--case` はファイル順でケースを絞り込む） |
+| `format_test_text()` | 1 組だけを実行し直すコマンドに並べる引数は `TestArguments` で、ケース実行時は `--case` を付ける |
 | `format_test_json()` | `kTestFormat` |
 | `TestReport::remarks()` | `test` 全体の指摘 `test-nothing-run`、`test-runs-left`、`test-speed-set` |
 | `TestReport::result()` | 結果と終了コード |

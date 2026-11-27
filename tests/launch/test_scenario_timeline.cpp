@@ -1611,4 +1611,9 @@ TEST_CASE(timeline_json_records_real_expanded_template_provenance)
     CHECK(tl.find("\"name\": \"ramp level\"") != std::string::npos);
     CHECK(tl.find("\"call_stack\": [") != std::string::npos);
     CHECK(tl.find("\"to_val\": 40") != std::string::npos);
+    CHECK(tl.find("\"case\":") == std::string::npos);
+
+    run.case_name = "定格";
+    const std::string tlCased = format_timeline_json(input);
+    CHECK(tlCased.find("\"case\": \"定格\"") != std::string::npos);
 }

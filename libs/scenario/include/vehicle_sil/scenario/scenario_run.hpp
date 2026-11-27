@@ -87,6 +87,8 @@ struct ScenarioRun
 {
     std::string file; ///< as the user named it
     std::string name;
+    std::string case_name{};
+    std::vector<config::ParamValue> params{};
     ScenarioStatus status = ScenarioStatus::NotRun;
     std::vector<ScenarioStepRun> steps{};
     std::optional<std::int64_t> end_ms{};
@@ -98,6 +100,10 @@ struct ScenarioRun
     std::string code{};
     std::string message{};
     std::optional<SimTime> failed_at{};
+    std::string failed_file{};
+    std::size_t failed_line = 0;
+    std::string failed_name{};
+    std::vector<SourceFrame> failed_call_stack{};
     /// Scenario::has_dither, and then what the scenario's "inputs" declare
     /// (scenario_inputs_text()) and Scenario::lines: what the text puts on the inputs, known
     /// before the run. Empty without a dither.

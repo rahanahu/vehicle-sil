@@ -39,6 +39,8 @@ struct RunIntent
     /// the working directory; one of a request file (RunRequest::origin has "scenario") from the
     /// directory of the configuration file.
     std::optional<std::string> scenario{};
+    /// Selected case name from `cases:` (--case), CLI-only.
+    std::optional<std::string> scenario_case{};
     std::vector<std::string> disable{};
     std::vector<std::string> enable{};
     std::vector<std::string> manual{};

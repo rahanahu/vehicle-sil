@@ -145,6 +145,28 @@ struct ScenarioMotion
     ScenarioShapeText described{};
 };
 
+/// One parameter value captured on a template call frame (call_stack).
+struct SourceParam
+{
+    std::string name;
+    std::string text;
+    bool quoted = false;
+    config::ParamSource source = config::ParamSource::TemplateCall;
+
+    friend bool operator==(const SourceParam&, const SourceParam&) = default;
+};
+
+/// One template call frame enclosing a ScenarioStep, ScenarioOverlay, or ScenarioStepRun (outermost -> immediate).
+struct SourceFrame
+{
+    std::string file;                  ///< caller file path as shown
+    std::size_t line = 0;              ///< 1-based line of the `- template:` call step in `file`
+    std::string name{};                ///< optional human `name:` on that call step, or ""
+    std::vector<SourceParam> params{}; ///< resolved arguments passed to this template call
+
+    friend bool operator==(const SourceFrame&, const SourceFrame&) = default;
+};
+
 /// A dither of one input: a shape around 0 without an end that is on top of whatever the scenario
 /// puts on the input. The value written is that of the input's line (a set's value, a ramp's or a
 /// wave's value then) plus the shape's value at the virtual time itself, as the variable's type
@@ -161,6 +183,8 @@ struct ScenarioOverlay
     std::string text;
     /// The shape as the text gives it; `type` is "" for none.
     ScenarioShapeText described{};
+    std::string name{};                    ///< optional human-assigned step `name:` ("" for inputs or omitted)
+    std::vector<SourceFrame> call_stack{}; ///< outermost caller -> immediate caller (empty for direct steps / inputs)
 };
 
 enum class StepKind
@@ -174,28 +198,6 @@ enum class StepKind
 };
 /// "set", "ramp", "wave", "expect", "wait_until", "dither".
 [[nodiscard]] const char* step_kind_name(StepKind kind);
-
-/// One parameter value captured on a template call frame (call_stack).
-struct SourceParam
-{
-    std::string name;
-    std::string text;
-    bool quoted = false;
-    config::ParamSource source = config::ParamSource::TemplateCall;
-
-    friend bool operator==(const SourceParam&, const SourceParam&) = default;
-};
-
-/// One template call frame enclosing a ScenarioStep or ScenarioStepRun (outermost -> immediate).
-struct SourceFrame
-{
-    std::string file;                  ///< caller file path as shown
-    std::size_t line = 0;              ///< 1-based line of the `- template:` call step in `file`
-    std::string name{};                ///< optional human `name:` on that call step, or ""
-    std::vector<SourceParam> params{}; ///< resolved arguments passed to this template call
-
-    friend bool operator==(const SourceFrame&, const SourceFrame&) = default;
-};
 
 struct ScenarioStep
 {
@@ -289,6 +291,9 @@ enum class ScenarioSamples
 struct Scenario
 {
     std::string name; ///< its "name", or ""
+    std::string case_name{};
+    std::vector<std::string> cases{};
+    std::vector<config::ParamValue> params{};
     ScenarioSamples samples = ScenarioSamples::EveryStep; ///< its "samples"
     std::optional<std::int64_t> end_ms{};                 ///< optional "end_ms": virtual end time in ms
     std::vector<ScenarioParticipant> participants{};
@@ -363,6 +368,8 @@ struct ScenarioContext
     /// Optional callback to read a template file (by path relative to the root scenario's directory).
     /// When empty, `read_file` is used.
     std::function<std::optional<std::string>(const std::string& path, std::string& problem)> read_template{};
+    /// Selected case name from `cases:`, or empty when none was given.
+    std::optional<std::string> case_name{};
 };
 
 struct ScenarioRead
@@ -371,6 +378,8 @@ struct ScenarioRead
     std::optional<Scenario> scenario;
     /// Its "name" and the number of its steps, as far as the text could be read.
     std::string name{};
+    std::string case_name{};
+    std::vector<std::string> cases{};
     std::size_t steps = 0;
     std::optional<std::int64_t> end_ms{};
     /// The parameters the scenario declares ("params") or uses ("${name}"), each with the value in
@@ -417,6 +426,18 @@ struct ScenarioRead
 /// ScenarioContext::read_template (CSV points and template files, read once per normalized path).
 [[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog,
                                          const ScenarioContext& context = {});
+
+/// Lightweight scenario inspection for `test` multi-case expansion and `unused_params()`.
+struct ScenarioInspection
+{
+    bool has_cases = false;
+    std::vector<std::string> cases{};
+    std::vector<std::string> param_names{};
+    bool params_incomplete = false;
+    std::vector<config::Finding> findings{};
+};
+
+[[nodiscard]] ScenarioInspection inspect_scenario(std::string_view text, const ScenarioContext& context = {});
 
 /// Per participant of `scenario` (Scenario::participants): whether a step that runs reads a value
 /// its ECU sends: a condition (expect, wait_until, the expect beside a ramp or a wave) names one of

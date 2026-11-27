@@ -278,8 +278,11 @@ namespace {
         context.scenario_file = check.file;
         context.read_file = files_beside(path);
         context.read_template = files_beside(path, "the template file");
+        context.case_name = intent.scenario_case;
         scenario::ScenarioRead read = scenario::read_scenario(text, scenario::scenario_catalog(report), context);
         check.name = std::move(read.name);
+        check.case_name = std::move(read.case_name);
+        check.cases = std::move(read.cases);
         check.steps = read.steps;
         check.end_ms = read.end_ms;
         check.scenario = std::move(read.scenario);

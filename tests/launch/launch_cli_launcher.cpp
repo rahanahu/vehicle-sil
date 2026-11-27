@@ -620,6 +620,22 @@ void usage(const Options& o)
     expect_usage({"run", "a.yaml", "--param", "x=1", "--connect", "nowhere"}, paramNeedsScenario);
     expect_usage({"run", "a.yaml", "--param", "x=1", "--speed", "fast"}, paramNeedsScenario);
     expect_usage({"run", "a.yaml", "--param", "x=1", "--scenario", ""}, "--scenario needs a scenario file");
+    expect_usage({"check", "a.yaml", "--case", "nominal"},
+                 "--case chooses a case of a scenario: give --scenario <file> too, or leave --case out");
+    expect_usage({"run", "a.yaml", "--case", "-10C"},
+                 "--case chooses a case of a scenario: give --scenario <file> too, or leave --case out");
+    expect_usage({"check", "a.yaml", "--scenario", "s.yaml", "--case", ""},
+                 "--case needs the name of a case of the scenario");
+    expect_usage({"check", "a.yaml", "--scenario", "s.yaml", "--case", "--bogus"},
+                 "missing value for --case");
+    expect_usage({"test", "a.yaml", "--case", "", "--scenarios", "s.yaml"},
+                 "--case needs the name of a case of a scenario");
+    {
+        const Captured serveCase = launch(o, {"serve", "a.yaml", "--case", "nominal"});
+        expect_code(serveCase, 4, "serve --case");
+        require(contains(serveCase.standard_output, "\"--case is per-run, not for serve"),
+                "serve --case stdout:\n" + serveCase.standard_output);
+    }
     expect_usage({"run", "a.yaml", "--timeline", "t.json", "--timeout-ms", "0"},
                  "--timeline writes what a scenario did over the time: give --scenario <file> too, or leave --timeline out");
     expect_usage({"run", "a.yaml", "--scenario", "s.yaml", "--start-paused", "--speed", "fast"},

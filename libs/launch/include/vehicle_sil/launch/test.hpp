@@ -69,6 +69,7 @@ struct TestRun
     std::string reason{};
     /// The run's report (what `run --json` writes for it); empty for Skipped and NotRun.
     std::optional<RunReport> run{};
+    std::string case_name{};
 };
 
 enum class TestResult
@@ -87,6 +88,7 @@ enum class TestResult
 struct TestArguments
 {
     std::vector<std::string> variants{}; ///< --variant, as given; empty: every variant
+    std::vector<std::string> cases{};    ///< --case, as given; empty: all cases of each scenario
     std::vector<config::ParamValue> params{};    ///< --param
     std::vector<std::string> disable{};  ///< --disable
     std::vector<std::string> enable{};   ///< --enable
@@ -154,6 +156,8 @@ struct TestOptions
     bool fastest_by_default = false;
     /// --variant: only these variants (each must be one of the file's); empty: all of them.
     std::vector<std::string> variants{};
+    /// --case: only these cases (caseless scenarios skipped; error if no scenario defines a named case); empty: all.
+    std::vector<std::string> cases{};
     std::vector<TestScenario> scenarios{};
     /// Stop after the first run that fails; the rest is TestRunResult::NotRun.
     bool fail_fast = false;

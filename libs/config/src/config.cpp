@@ -2747,6 +2747,7 @@ const char* param_source_name(ParamSource source)
     case ParamSource::Scenario: return "scenario";
     case ParamSource::Configuration: return "configuration";
     case ParamSource::Variant: return "variant";
+    case ParamSource::Case: return "case";
     case ParamSource::CommandLine: return "command_line";
     case ParamSource::RequestFile: return "request_file";
     case ParamSource::TemplateDefault: return "template_default";
@@ -2762,6 +2763,7 @@ const char* param_source_text(ParamSource source)
     case ParamSource::Scenario: return "the scenario's params";
     case ParamSource::Configuration: return "the configuration's params";
     case ParamSource::Variant: return "the variant's params";
+    case ParamSource::Case: return "the case's params";
     case ParamSource::CommandLine: return "--param";
     case ParamSource::RequestFile: return "the request file's params";
     case ParamSource::TemplateDefault: return "the template's default";

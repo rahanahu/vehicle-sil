@@ -24,6 +24,8 @@ struct ScenarioCheck
     std::string file; ///< as the user named it
     /// Its "name" and the number of its steps, as far as it could be read.
     std::string name{};
+    std::string case_name{};
+    std::vector<std::string> cases{};
     std::size_t steps = 0;
     std::optional<std::int64_t> end_ms{};
     /// Set if the configuration could be read and the scenario has no error: it can run.

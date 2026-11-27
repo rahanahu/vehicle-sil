@@ -867,7 +867,9 @@ variants:
 | 1 | シナリオの `params`（既定） |
 | 2 | 設定ファイルの `params` |
 | 3 | 機種の `params` |
-| 4 | 引数の `--param <名前>=<値>` |
+| 4 | ケースの `params`（シナリオ内の `cases.<名前>.params`） |
+| 5 | 要求ファイル（`--request`）の `params` |
+| 6 | 引数の `--param <名前>=<値>` |
 
 - `--param` は、`--scenario` と一緒にだけ使えます。
 - シナリオが使っていない名前の `--param` は、引数のエラーです（終了コード 4。打ち間違いを黙って無視しません）。
@@ -879,7 +881,7 @@ variants:
 ## 引数と終了コード
 
 ```text
-vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -890,7 +892,7 @@ vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [-
 vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
-                       [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
+                       [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
@@ -900,7 +902,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
 vehicle_sil_launch serve [--once] [--events-stall-ms <ms>]
                          [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                          [--control-audit-log <file>]] [--] <file>
-vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
+vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--case <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
@@ -930,6 +932,7 @@ vehicle_sil_launch version [--json]
 | `--control-tls-cert <file>`、`--control-tls-key <file>` | `--control` だけ | サーバーの証明書チェーンと秘密鍵（PEM）で、2 つ一緒に付けると TLS になります。 |
 | `--control-audit-log <file>` | `--control` だけ | 誰が何を変えたかを追記します。 |
 | `--scenario <file>` | | シナリオのファイルです（[scenario.md](scenario.md)）。 |
+| `--case <name>` | `check`、`run`（`--scenario` と一緒に）、`test` | シナリオの `cases` から名前付きケースを選びます（[scenario.md](scenario.md#名前付きケースcases--case) の「名前付きケース」）。`test` では繰り返せます。 |
 | `--variant <name>` | | 設定ファイルの機種を選びます（[機種](#機種variants--variant)）。 |
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
 | `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ | シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
@@ -1060,6 +1063,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | participant の指定 | 設定ファイルにない participant 名の `--disable`、`--enable`、`--manual` |
 | participant の指定 | 同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual` |
 | 機種とパラメーター | 機種を書いた設定ファイルで `--variant` がない、機種のどれでもない名前の `--variant` |
+| 機種とパラメーター | `cases` のあるシナリオを `--case` なしで `check`/`run`、`cases` のないシナリオへの `--case`、`--scenario` なしの `--case`（`check`/`run`）、存在しない `--case` 名 |
 | 機種とパラメーター | 形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param` |
 | `test` | `--scenarios` がない、`--scenarios` のパスがない、シナリオのファイルがないディレクトリ |
 | `test` | `test` に付けた `run` だけの引数と `--scenario` |
