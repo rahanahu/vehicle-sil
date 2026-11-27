@@ -1656,6 +1656,88 @@ class TimelineOfARun(unittest.TestCase):
         self.assertEqual(throttle["columns"], ["at_ms", "value", "base"])
         self.assertTrue(all(len(point) == 3 for point in throttle["points"]))
 
+    def test_the_timeline_of_a_template_and_case_run_is_valid(self):
+        example = Path(EXAMPLE_DIR).resolve()
+        launcher_exe = str(Path(LAUNCH).resolve())
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-timeline-tpl-") as directory:
+            work = Path(directory)
+            (work / "sim.yaml").write_text(SCENARIO_CONFIG.replace("@DIR@", str(example)), encoding="utf-8", newline="\n")
+            templates = work / "scenarios" / "templates"
+            templates.mkdir(parents=True)
+            (templates / "inner.yaml").write_text(
+                "vehicle_sil_scenario_template: 1\n"
+                "parameters:\n"
+                "  lvl: { type: integer }\n"
+                "steps:\n"
+                "  - name: skipped absent step\n"
+                "    set: { Engine.engine.turbo: 1 }\n"
+                "  - name: wait ready\n"
+                "    wait_until: { Engine.engine.speed: { ge: 0 } }\n"
+                "    timeout_ms: 100\n"
+                "  - name: dither throttle\n"
+                "    dither: { Engine.engine.throttle: { square: { amplitude: 5, period_ms: 40 } } }\n"
+                "  - name: set near edge\n"
+                "    set: { Engine.engine.throttle: \"${lvl}\" }\n"
+                "  - after_ms: 20\n"
+                "    expect: { Engine.engine.speed: { ge: 0 } }\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            (templates / "outer.yaml").write_text(
+                "vehicle_sil_scenario_template: 1\n"
+                "parameters:\n"
+                "  target: { type: integer }\n"
+                "steps:\n"
+                "  - name: call inner\n"
+                "    template: inner.yaml\n"
+                "    params: { lvl: \"${target}\" }\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            (work / "scenarios" / "nested_grid.yaml").write_text(
+                "vehicle_sil_scenario: 1\n"
+                "params: { target: 50 }\n"
+                "cases:\n"
+                "  c_grid: { params: { target: 99 } }\n"
+                "steps:\n"
+                "  - name: call outer\n"
+                "    template: templates/outer.yaml\n"
+                "    params: { target: \"${target}\" }\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            chk = subprocess.run(
+                [launcher_exe, "check", "sim.yaml", "--variant", "small", "--scenario", "scenarios/nested_grid.yaml",
+                 "--case", "c_grid", "--json"],
+                cwd=work, capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=120,
+            )
+            self.assertEqual(chk.returncode, 0, f"check failed:\n{chk.stdout[-2000:]}\n{chk.stderr[-2000:]}")
+            chk_data = json.loads(chk.stdout)
+            after_lines = [
+                ln for ln in chk_data["scenario"]["lines"]
+                if ln.get("after_file") == "scenarios/templates/inner.yaml" and isinstance(ln.get("after_line"), int)
+            ]
+            self.assertTrue(after_lines, f"expected after_file/after_line on post-wait template lines: {chk_data['scenario']['lines']}")
+
+            out = work / "nested_grid.timeline.json"
+            proc = subprocess.run(
+                [launcher_exe, "run", "sim.yaml", "--variant", "small", "--speed", "max",
+                 "--scenario", "scenarios/nested_grid.yaml", "--case", "c_grid", "--timeline", str(out)],
+                cwd=work, capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=120,
+            )
+            self.assertEqual(proc.returncode, 1, f"expected out-of-range dither failure:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
+            data = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(problems(TIMELINE, data), [],
+                         "the timeline file of a template+case run is not valid for schema/timeline.schema.json")
+        self.assertEqual(data["scenario"]["case"], "c_grid")
+        self.assertTrue(any(st["status"] == "skipped" for st in data["steps"]))
+        self.assertTrue(any(
+            st.get("file") == "scenarios/templates/inner.yaml" and len(st.get("call_stack", [])) == 2
+            for st in data["steps"]
+        ))
+        self.assertTrue(any(ln.get("file") == "scenarios/templates/inner.yaml" for ln in data["lines"]))
+        self.assertTrue(any(s.get("not_applied_from") is not None for s in data["series"]))
+
 
 class ControlMetricsSchema(unittest.TestCase):
     maxDiff = None

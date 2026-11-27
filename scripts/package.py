@@ -1319,6 +1319,48 @@ def verify_command(args: argparse.Namespace) -> int:
         for command in (["check", "simulation.yaml"], ["run", "--stop-at-ms", "1000", "simulation.yaml"],
                         ["run", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"]):
             s.run([launch] + command, cwd=project, timeout=300)
+        # Standalone template + multi-case scenario check --case, run --case, and test outside the repository.
+        cases_dir = project / "scenarios_cases"
+        tpl_dir = cases_dir / "templates"
+        tpl_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            (tpl_dir / "throttle_case.yaml").write_text(
+                "vehicle_sil_scenario_template: 1\n"
+                "parameters:\n"
+                "  throttle: { type: integer }\n"
+                "  min_speed: { type: integer }\n"
+                "steps:\n"
+                "  - name: apply throttle\n"
+                "    set: { Engine.engine.throttle: \"${throttle}\" }\n"
+                "  - name: wait engine speed\n"
+                "    wait_until: { Engine.engine.speed: { ge: \"${min_speed}\" } }\n"
+                "    timeout_ms: 500\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            (cases_dir / "multi_case.yaml").write_text(
+                "vehicle_sil_scenario: 1\n"
+                "params: { throttle: 30, min_speed: 1200 }\n"
+                "cases:\n"
+                "  low: { params: { throttle: 30, min_speed: 1200 } }\n"
+                "  high: { params: { throttle: 50, min_speed: 1700 } }\n"
+                "steps:\n"
+                "  - name: run throttle template\n"
+                "    template: templates/throttle_case.yaml\n"
+                "    params: { throttle: \"${throttle}\", min_speed: \"${min_speed}\" }\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            s.run([launch, "check", "simulation.yaml", "--scenario", "scenarios_cases/multi_case.yaml", "--case", "low"],
+                  cwd=project, timeout=300)
+            s.run([launch, "run", "--speed", "max", "simulation.yaml", "--scenario", "scenarios_cases/multi_case.yaml",
+                   "--case", "high"], cwd=project, timeout=300)
+            p_test = s.run([launch, "test", "simulation.yaml", "--scenarios", "scenarios_cases"],
+                           cwd=project, capture=True, timeout=300)
+            if "passed: 2 runs, 2 passed, 0 failed, 0 skipped" not in p_test.stdout:
+                raise StepFailed(f"standalone template multi-case test did not pass both cases:\n{p_test.stdout[-500:]}")
+        finally:
+            shutil.rmtree(cases_dir, ignore_errors=True)
 
     def connect(s: Step) -> None:
         # check --connect on the template with an Ethernet network added: the launcher finds the bridge next to it

@@ -706,6 +706,9 @@ void scenario_time_commands_same(const Options& o);
 void scenario_paused_timeout(const Options& o);
 
 // launch_run_variants.cpp
+void template_cases_matrix(const Options& o);
+void template_csv_determinism(const Options& o);
+void template_equivalence_and_serve(const Options& o);
 void variable_map(const Options& o);
 void variants(const Options& o);
 void test_command(const Options& o);
