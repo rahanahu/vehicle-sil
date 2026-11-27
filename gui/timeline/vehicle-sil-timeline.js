@@ -1802,11 +1802,16 @@ tr.selected td {
       if (instant) {
         if (gap && from >= gap.from && from < gap.before) continue;
         const active = tStart <= from && (tNext === null ? from <= rawEnd : from < rawEnd);
-        if (active) segs.push({ from, to, value: val });
+        if (active) segs.push({ from, to, value: val, atEnd: true });
       } else {
+        const coversTo =
+          !(gap && to >= gap.from && to < gap.before) &&
+          tStart <= to &&
+          (tNext === null ? to <= rawEnd : to < rawEnd);
         const a = Math.max(tStart, from);
         const b = Math.min(rawEnd, to);
-        if (b > a) segs.push({ from: a, to: b, value: val });
+        if (b > a) segs.push({ from: a, to: b, value: val, atEnd: coversTo });
+        else if (tStart === to && coversTo) segs.push({ from: to, to, value: val, atEnd: true });
       }
     }
     return segs;
@@ -1880,6 +1885,20 @@ tr.selected td {
       const intHi = hi === Infinity ? Infinity : hiOpen ? Math.ceil(hi) - 1 : Math.floor(hi);
       if (intLo > intHi) return null;
       if (intLo === intHi && excluded.includes(intLo)) return null;
+      if (
+        Number.isSafeInteger(intLo) &&
+        Number.isSafeInteger(intHi) &&
+        intHi - intLo < excluded.length
+      ) {
+        let allExcluded = true;
+        for (let k = intLo; k <= intHi; k++) {
+          if (!excluded.includes(k)) {
+            allExcluded = false;
+            break;
+          }
+        }
+        if (allExcluded) return null;
+      }
     }
     return { discrete: false, lo, loOpen, hi, hiOpen, hasBound, excluded, resolved };
   }
@@ -1978,6 +1997,10 @@ tr.selected td {
       for (let i = 0; i + 1 < ts.length; i++) {
         if (ts[i + 1] > ts[i]) intervals.push([ts[i], ts[i + 1]]);
       }
+      const hasTerminalPoint = sources.some(
+        (src) => src.segs && src.segs.some((sg) => sg.from === to && sg.to === to),
+      );
+      if (hasTerminalPoint) intervals.push([to, to]);
     }
 
     const slices = [];
@@ -1989,7 +2012,10 @@ tr.selected td {
         if (!src.segs) {
           val = src.c.value;
         } else {
-          const seg = src.segs.find((sg) => sg.from <= a && sg.to >= b);
+          const seg =
+            b > a
+              ? src.segs.find((sg) => sg.from <= a && sg.to >= b)
+              : src.segs.find((sg) => sg.atEnd && sg.from <= a && sg.to >= b);
           if (!seg) {
             missing = true;
             break;
@@ -3162,15 +3188,41 @@ tr.selected td {
   }
 
   function isRoundedInteger(val, info) {
-    return Boolean(info && info.type === 'integer' && isNum(val) && !Number.isSafeInteger(val));
+    return Boolean(
+      info &&
+      info.type === 'integer' &&
+      isNum(val) &&
+      Number.isInteger(val) &&
+      !Number.isSafeInteger(val),
+    );
   }
 
   function renderConditions(f, m) {
     let anyRounded = false;
-    const items = f.conditions.map((c) => {
+    const rawFailed =
+      isObject(f.step?.failed) && Array.isArray(f.step.failed.conditions)
+        ? f.step.failed.conditions.filter(isObject)
+        : [];
+    const watchConds =
+      isObject(f.step?.watch) && Array.isArray(f.step.watch.conditions)
+        ? f.step.watch.conditions
+        : [];
+    const items = f.conditions.map((c, idx) => {
       const what = `${c.variable ?? '?'} ${c.compare ?? ''}`.trim();
       const lhsInfo = m && c.variable ? m.byName.get(c.variable)?.info : null;
       if (isRoundedInteger(c.value, lhsInfo)) anyRounded = true;
+      const fc = rawFailed[idx];
+      const wc = isObject(fc) ? watchConds[fc.condition] : null;
+      if (isObject(wc) && Array.isArray(wc.compare)) {
+        for (const comp of wc.compare) {
+          if (
+            isObject(comp) &&
+            (isRoundedInteger(comp.value, lhsInfo) || isRoundedInteger(comp.tolerance, lhsInfo))
+          ) {
+            anyRounded = true;
+          }
+        }
+      }
       let got;
       if (c.valueText !== null)
         got =

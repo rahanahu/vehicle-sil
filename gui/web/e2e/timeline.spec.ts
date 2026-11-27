@@ -958,5 +958,72 @@ test('timeline page: sanitizes XSS in compared variables and notes >2^53 integer
   await expect(lane(page, 'Dashboard.counter').locator('.note')).toContainText(
     'beyond ±9007199254740991',
   );
+
+  // Constant comparison bound >2^53 with a safe LHS sample also shows the rounding note.
+  const rawConstInt64 = `{
+    "vehicle_sil_timeline": 1,
+    "vehicle_sil": "0.6.0",
+    "stage": "run",
+    "file": "simulation.yaml",
+    "variant": null,
+    "params": [],
+    "time_step_ms": 10,
+    "scenario": {
+      "file": "scenarios/const_int64.yaml",
+      "name": "constant int64 bound",
+      "status": "failed",
+      "over_at_ms": 50,
+      "recorded_to_ms": 50,
+      "end_ms": null
+    },
+    "variables": [
+      { "name": "ECU.a", "participant": "ECU", "type": "integer", "causality": "output", "unit": "", "min": null, "max": null, "items": [], "ecu_step_ms": 10, "written": false, "watched": true }
+    ],
+    "steps": [
+      {
+        "index": 1,
+        "line": 4,
+        "kind": "expect",
+        "text": "expect ECU.a eq 9007199254740993",
+        "status": "failed",
+        "start_ms": 50,
+        "at_ms": 50,
+        "end_ms": null,
+        "code": "scenario-failed",
+        "message": "at 50 ms ECU.a eq 9007199254740993, but it was 100 (its sample of 50 ms)",
+        "lines": [],
+        "watch": {
+          "mode": "at",
+          "from_ms": 50,
+          "to_ms": null,
+          "conditions": [
+            { "variable": "ECU.a", "compare": [{ "op": "eq", "value": 9007199254740993, "tolerance": null }] }
+          ]
+        },
+        "failed": {
+          "at_ms": 50,
+          "code": "scenario-failed",
+          "conditions": [{ "condition": 0, "value": 100, "sample_ms": 50 }],
+          "writes": [],
+          "write": null
+        }
+      }
+    ],
+    "series": [
+      { "variable": "ECU.a", "source": "sampled", "encoding": "changes", "samples": 1, "first_ms": 0, "last_ms": 50, "not_applied_from": null, "columns": ["at_ms", "value"], "points": [[0, 100]] }
+    ],
+    "lines": [],
+    "findings": [],
+    "limits": { "points_per_series": 10000, "points_total": 100000, "dropped": [] }
+  }`;
+  await page.locator('#file').setInputFiles({
+    name: 'const_int64.timeline.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(rawConstInt64),
+  });
+  await expect(page.getByTestId('failure-message')).toContainText('9007199254740993');
+  await expect(page.getByTestId('conditions-rounded-note')).toContainText(
+    'beyond ±9007199254740991',
+  );
   expect(problems).toEqual([]);
 });

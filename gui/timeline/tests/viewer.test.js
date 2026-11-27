@@ -2425,3 +2425,359 @@ test('ne-only dynamic band draws threshold.ne without allowed rect, and unobserv
   // Unobserved once limit falls back to vertical center of the numeric lane (40 px), not top edge (4 px).
   assert.equal(Number(limitLines[0].attrs.y1), 38);
 });
+
+test('terminal rhs sample at exact watch endpoint resolves slice, limitValue, and laneRange across once, during, and always', async () => {
+  // 1. Passed once [0, 200] where rhs jumps at exact at_ms = 40: terminal slice [40, 40] and limitValue = 50.
+  const onceJump = makeDynamicTimeline({
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'wait_until',
+        text: 'wait_until Dashboard.speed near Engine.speed (tolerance 5)',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 40,
+        end_ms: 40,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'once',
+          from_ms: 0,
+          to_ms: 200,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'near', value: null, variable: 'Engine.speed', tolerance: 5 }],
+            },
+          ],
+        },
+        failed: null,
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [0, 100],
+          [40, 50],
+        ],
+        { last_ms: 40 },
+      ),
+      makeSeries('Dashboard.speed', 'sampled', [[0, 50]], { last_ms: 40 }),
+    ],
+  });
+  onceJump.scenario.recorded_to_ms = 40;
+  onceJump.scenario.over_at_ms = 40;
+  const mOnceJump = model(onceJump);
+  const bOnceJump = mOnceJump.byName.get('Dashboard.speed').bands[0];
+  assert.deepEqual(
+    bOnceJump.slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [0, 40, 95, 105],
+      [40, 40, 45, 55],
+    ],
+  );
+  assert.equal(bOnceJump.limitValue, 50);
+
+  // Verify DOM rendering draws both slices and aligns .threshold.limit with the matched 50 slice.
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = onceJump;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const sliceTitles = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'g' && n.attrs.class === 'band-slice',
+  ).map((g) => g.textContent);
+  assert.deepEqual(sliceTitles, ['near 100 ± 5 (0 ms to 40 ms)', 'near 50 ± 5 (40 ms to 40 ms)']);
+  const limitLine = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'line' && n.attrs.class === 'threshold limit',
+  )[0];
+  const thLines = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'line' && n.attrs.class === 'threshold',
+  );
+  assert.equal(thLines.length, 2);
+  assert.equal(limitLine.attrs.y1, thLines[1].attrs.y1);
+
+  // 2. Passed once [0, 200] where rhs first arrives at exact at_ms = 50: terminal slice [50, 50], limitValue = 80, laneRange includes 80.
+  const onceFirst = JSON.parse(JSON.stringify(onceJump));
+  onceFirst.steps[0].at_ms = 50;
+  onceFirst.steps[0].end_ms = 50;
+  onceFirst.scenario.recorded_to_ms = 50;
+  onceFirst.scenario.over_at_ms = 50;
+  onceFirst.series[0] = makeSeries('Engine.speed', 'sampled', [[50, 80]], { last_ms: 50 });
+  onceFirst.series[1] = makeSeries('Dashboard.speed', 'sampled', [[0, 10]], { last_ms: 50 });
+  const mOnceFirst = model(onceFirst);
+  const dashFirst = mOnceFirst.byName.get('Dashboard.speed');
+  assert.deepEqual(
+    dashFirst.bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [[50, 50, 75, 85]],
+  );
+  assert.equal(dashFirst.bands[0].limitValue, 80);
+  const [, hiFirst] = T.laneRange(dashFirst, true);
+  assert.ok(hiFirst >= 85, `expected laneRange hi >= 85, got ${hiFirst}`);
+
+  // 3. Passed once with intersection (ge rhs and le 100) empty on [0, 50) and non-empty at endpoint 50.
+  const onceIntersect = JSON.parse(JSON.stringify(onceFirst));
+  onceIntersect.steps[0].watch.conditions[0].compare = [
+    { op: 'ge', value: null, variable: 'Engine.speed', tolerance: null },
+    { op: 'le', value: 100, tolerance: null },
+  ];
+  onceIntersect.series[0] = makeSeries(
+    'Engine.speed',
+    'sampled',
+    [
+      [0, 120],
+      [50, 80],
+    ],
+    { last_ms: 50 },
+  );
+  const bOnceInt = model(onceIntersect).byName.get('Dashboard.speed').bands[0];
+  assert.deepEqual(
+    bOnceInt.slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [[50, 50, 80, 100]],
+  );
+  assert.equal(bOnceInt.limitValue, 80);
+
+  // 4. Failed during [10, 40] where rhs's only in-window sample arrives at exact endpoint 40.
+  const duringEnd = makeDynamicTimeline({
+    scenario: {
+      file: 'scenarios/tracking.yaml',
+      name: 'during endpoint',
+      status: 'failed',
+      over_at_ms: 40,
+      recorded_to_ms: 40,
+      end_ms: null,
+    },
+    steps: [
+      {
+        index: 1,
+        line: 4,
+        kind: 'ramp',
+        text: 'ramp with expect Dashboard.speed le Engine.speed',
+        status: 'failed',
+        start_ms: 10,
+        at_ms: 40,
+        end_ms: null,
+        code: 'scenario-failed',
+        message: 'failed at 40 ms',
+        lines: [],
+        watch: {
+          mode: 'during',
+          from_ms: 10,
+          to_ms: 40,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'le', value: null, variable: 'Engine.speed', tolerance: null }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 40,
+          code: 'scenario-failed',
+          conditions: [
+            {
+              condition: 0,
+              value: 50,
+              sample_ms: 40,
+              compared: [{ variable: 'Engine.speed', value: 20, sample_ms: 40 }],
+            },
+          ],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [0, 100],
+          [40, 20],
+        ],
+        { last_ms: 40 },
+      ),
+      makeSeries('Dashboard.speed', 'sampled', [[10, 50]], { last_ms: 40 }),
+    ],
+  });
+  assert.deepEqual(
+    model(duringEnd)
+      .byName.get('Dashboard.speed')
+      .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [[40, 40, -Infinity, 20]],
+  );
+
+  // 5. Failed always [0, 100] where rhs jumps at exact failed.at_ms = 40.
+  const alwaysEnd = JSON.parse(JSON.stringify(duringEnd));
+  alwaysEnd.steps[0].kind = 'expect';
+  alwaysEnd.steps[0].watch.mode = 'always';
+  alwaysEnd.steps[0].watch.from_ms = 0;
+  alwaysEnd.steps[0].watch.to_ms = 100;
+  assert.deepEqual(
+    model(alwaysEnd)
+      .byName.get('Dashboard.speed')
+      .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [0, 40, -Infinity, 100],
+      [40, 40, -Infinity, 20],
+    ],
+  );
+});
+
+test('constant comparison bound above 2^53 triggers conditions-rounded-note while fractional tolerances do not', async () => {
+  const rawConstOver = `{
+    "vehicle_sil_timeline": 1,
+    "vehicle_sil": "0.6.0",
+    "stage": "run",
+    "file": "simulation.yaml",
+    "variant": null,
+    "params": [],
+    "time_step_ms": 10,
+    "scenario": {
+      "file": "scenarios/const_int64.yaml",
+      "name": "constant int64 bound",
+      "status": "failed",
+      "over_at_ms": 50,
+      "recorded_to_ms": 50,
+      "end_ms": null
+    },
+    "variables": [
+      { "name": "ECU.a", "participant": "ECU", "type": "integer", "causality": "output", "unit": "", "min": null, "max": null, "items": [], "ecu_step_ms": 10, "written": false, "watched": true }
+    ],
+    "steps": [
+      {
+        "index": 1,
+        "line": 4,
+        "kind": "expect",
+        "text": "expect ECU.a eq 9007199254740993",
+        "status": "failed",
+        "start_ms": 50,
+        "at_ms": 50,
+        "end_ms": null,
+        "code": "scenario-failed",
+        "message": "at 50 ms ECU.a eq 9007199254740993, but it was 100 (its sample of 50 ms)",
+        "lines": [],
+        "watch": {
+          "mode": "at",
+          "from_ms": 50,
+          "to_ms": null,
+          "conditions": [
+            { "variable": "ECU.a", "compare": [{ "op": "eq", "value": 9007199254740993, "tolerance": null }] }
+          ]
+        },
+        "failed": {
+          "at_ms": 50,
+          "code": "scenario-failed",
+          "conditions": [{ "condition": 0, "value": 100, "sample_ms": 50 }],
+          "writes": [],
+          "write": null
+        }
+      }
+    ],
+    "series": [
+      { "variable": "ECU.a", "source": "sampled", "encoding": "changes", "samples": 1, "first_ms": 0, "last_ms": 50, "not_applied_from": null, "columns": ["at_ms", "value"], "points": [[0, 100]] }
+    ],
+    "lines": [],
+    "findings": [],
+    "limits": { "points_per_series": 10000, "points_total": 100000, "dropped": [] }
+  }`;
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = rawConstOver;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const notes = el._shadow.querySelectorAll('[data-testid=conditions-rounded-note]');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].textContent, /beyond ±9007199254740991/);
+
+  // Fractional tolerance on a safe integer variable must NOT falsely trigger the rounding note.
+  const safeFrac = JSON.parse(rawConstOver);
+  safeFrac.steps[0].watch.conditions[0].compare = [{ op: 'near', value: 200, tolerance: 0.5 }];
+  const el2 = new Element();
+  el2.data = safeFrac;
+  el2.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el2._shadow.querySelectorAll('[data-testid=conditions-rounded-note]').length, 0);
+});
+
+test('multi-ne integer intersection omits slices when every integer in [intLo, intHi] is excluded', () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'ECU.count',
+        participant: 'ECU',
+        type: 'integer',
+        causality: 'output',
+        unit: '',
+        min: 0,
+        max: 100,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'expect',
+        text: 'expect ECU.count ge 10 and le 11 and ne 10 and ne 11',
+        status: 'failed',
+        start_ms: 0,
+        at_ms: 20,
+        end_ms: null,
+        code: 'scenario-failed',
+        message: 'failed',
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 20,
+          conditions: [
+            {
+              variable: 'ECU.count',
+              compare: [
+                { op: 'ge', value: 10, tolerance: null },
+                { op: 'le', value: 11, tolerance: null },
+                { op: 'ne', value: 10, tolerance: null },
+                { op: 'ne', value: 11, tolerance: null },
+              ],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 20,
+          code: 'scenario-failed',
+          conditions: [{ condition: 0, value: 10, sample_ms: 20 }],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [makeSeries('ECU.count', 'sampled', [[0, 10]], { last_ms: 20 })],
+  });
+  tl.scenario.status = 'failed';
+  tl.scenario.recorded_to_ms = 20;
+  tl.scenario.over_at_ms = 20;
+
+  assert.deepEqual(model(tl).byName.get('ECU.count').bands[0].slices, []);
+
+  // When one integer (11) remains allowed, the slice is preserved.
+  const nonEmpty = JSON.parse(JSON.stringify(tl));
+  nonEmpty.steps[0].watch.conditions[0].compare.pop();
+  assert.deepEqual(
+    model(nonEmpty)
+      .byName.get('ECU.count')
+      .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi, s.excluded]),
+    [[0, 20, 10, 11, [10]]],
+  );
+});
