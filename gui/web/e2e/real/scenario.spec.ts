@@ -19,6 +19,7 @@ import {
   Target,
   numberOf,
   openVariables,
+  scrollWidgetIntoView,
   startRun,
   stopRun,
   waitForVariables,
@@ -224,6 +225,7 @@ test('real recording captures finalized end_ms, replays normally to that end tim
         { timeout: RUN_TIMEOUT },
       )
       .toBe(true);
+    await scrollWidgetIntoView(page, 'Engine', 'engine.throttle');
     const throttle = widget(page, 'Engine', 'engine.throttle');
     const throttleSlider = throttle.getByRole('slider', { name: 'engine.throttle' });
     await expect(throttleSlider).toBeEnabled();
