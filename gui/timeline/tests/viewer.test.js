@@ -983,3 +983,228 @@ test('callStackFrames formats nested multi-frame call stacks from outermost to i
     T.setLanguage('en');
   }
 });
+
+test('stepTitle, lineTitle, and callStackFrames handle line == null without "line null" or "line  of"', () => {
+  const stepNoLine = {
+    index: 1,
+    file: 'templates/a.yaml',
+    line: null,
+    kind: 'set',
+    status: 'failed',
+  };
+  const lineNoLine = { file: 'templates/a.yaml', line: null, step: 1, kind: 'set', text: 'x = 1' };
+  const stackNoLine = [{ file: 'templates/a.yaml', line: null, name: 'Outer', params: { k: 1 } }];
+
+  assert.equal(T.stepTitle(stepNoLine, 'main.yaml'), 'Step 1 (set, templates/a.yaml): failed');
+  assert.equal(T.stepTitle({ ...stepNoLine, file: null }, 'main.yaml'), 'Step 1 (set): failed');
+  assert.equal(T.lineTitle(lineNoLine, 'main.yaml'), 'x = 1 (step 1, templates/a.yaml)');
+  assert.deepEqual(T.callStackFrames(stackNoLine, 'main.yaml'), [
+    'templates/a.yaml · Outer · k = 1',
+  ]);
+
+  T.setLanguage('ja');
+  try {
+    assert.equal(T.stepTitle(stepNoLine, 'main.yaml'), '手順 1（set、templates/a.yaml）: 失敗');
+    assert.equal(T.lineTitle(lineNoLine, 'main.yaml'), 'x = 1（手順 1、templates/a.yaml）');
+    assert.deepEqual(T.callStackFrames(stackNoLine, 'main.yaml'), [
+      'templates/a.yaml · Outer · k = 1',
+    ]);
+  } finally {
+    T.setLanguage('en');
+  }
+});
+
+test('DOM rendering handles non-string step.file, line == null, lines[].file, and escapes XSS payloads', async () => {
+  const makeMockDom = () => {
+    const byTag = (root, pred, out = []) => {
+      for (const ch of root.children || []) {
+        if (pred(ch)) out.push(ch);
+        byTag(ch, pred, out);
+      }
+      return out;
+    };
+    class MockNode {
+      constructor(tag, ns = null) {
+        this.tagName = tag;
+        this.namespaceURI = ns;
+        this.children = [];
+        this.attrs = {};
+        this.dataset = {};
+        this._text = '';
+        this.hidden = false;
+        this.className = '';
+        this.clientWidth = 800;
+        this.parentElement = null;
+        this.style = { setProperty() {} };
+      }
+      get id() {
+        return this.attrs.id || '';
+      }
+      set id(v) {
+        this.attrs.id = v;
+      }
+      get textContent() {
+        return this._text + this.children.map((c) => c.textContent).join('');
+      }
+      set textContent(v) {
+        this.children = [];
+        this._text = String(v);
+      }
+      set innerHTML(_v) {
+        throw new Error('innerHTML must never be used');
+      }
+      setAttribute(k, v) {
+        this.attrs[k] = String(v);
+        if (k.startsWith('data-')) this.dataset[k.slice(5)] = String(v);
+      }
+      getAttribute(k) {
+        return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null;
+      }
+      removeAttribute(k) {
+        delete this.attrs[k];
+      }
+      append(...nodes) {
+        for (const n of nodes) {
+          if (typeof n === 'string') {
+            const tnode = new MockNode('#text');
+            tnode._text = n;
+            this.children.push(tnode);
+          } else if (n) {
+            n.parentElement = this;
+            this.children.push(n);
+          }
+        }
+      }
+      replaceChildren(...nodes) {
+        this.children = [];
+        this._text = '';
+        this.append(...nodes);
+      }
+      addEventListener() {}
+      getElementById(id) {
+        return byTag(this, (n) => n.attrs.id === id)[0] || null;
+      }
+      querySelectorAll(sel) {
+        if (sel.startsWith('[') && sel.endsWith(']')) {
+          const inner = sel.slice(1, -1);
+          const eq = inner.indexOf('=');
+          if (eq >= 0) {
+            const attr = inner.slice(0, eq);
+            const val = inner.slice(eq + 1).replace(/^['"]|['"]$/g, '');
+            return byTag(this, (n) => n.attrs[attr] === val);
+          }
+          return byTag(this, (n) => Object.prototype.hasOwnProperty.call(n.attrs, inner));
+        }
+        return byTag(this, (n) => n.tagName === sel);
+      }
+    }
+    class MockHTMLElement extends MockNode {
+      constructor() {
+        super('vehicle-sil-timeline');
+        this.isConnected = true;
+        this._shadow = new MockNode('#shadow');
+      }
+      attachShadow() {
+        return this._shadow;
+      }
+      dispatchEvent() {
+        return true;
+      }
+    }
+    const registry = new Map();
+    const document = {
+      createElement: (tag) => new MockNode(tag),
+      createElementNS: (ns, tag) => new MockNode(tag, ns),
+      createTextNode: (t) => {
+        const n = new MockNode('#text');
+        n._text = String(t);
+        return n;
+      },
+    };
+    const global = {
+      HTMLElement: MockHTMLElement,
+      document,
+      navigator: { languages: ['en'], language: 'en' },
+      customElements: {
+        get: (name) => registry.get(name),
+        define: (name, cls) => registry.set(name, cls),
+      },
+      CustomEvent: class {
+        constructor(type, init) {
+          this.type = type;
+          this.detail = init?.detail;
+        }
+      },
+      ResizeObserver: class {
+        observe() {}
+        disconnect() {}
+      },
+    };
+    const code = ['messages.js', 'viewer.js']
+      .map((name) => fs.readFileSync(path.join(__dirname, '..', name), 'utf8'))
+      .join('\n');
+    new Function(
+      'globalThis',
+      'HTMLElement',
+      'document',
+      'navigator',
+      'customElements',
+      'CustomEvent',
+      'ResizeObserver',
+      code,
+    )(
+      global,
+      global.HTMLElement,
+      global.document,
+      global.navigator,
+      global.customElements,
+      global.CustomEvent,
+      global.ResizeObserver,
+    );
+    return { Element: global.VehicleSilTimeline.Element };
+  };
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  const tl = JSON.parse(JSON.stringify(reference('fails_beside')));
+  tl.scenario.case = '<script>window.__xss=1</script>';
+  tl.steps[0].file = 123;
+  tl.steps[0].line = null;
+  tl.steps[0].name = '<script>window.__xss=2</script>Step1';
+  tl.steps[0].status = 'failed';
+  tl.steps[0].code = 'scenario-failed';
+  tl.steps[0].call_stack = [
+    {
+      file: 'templates/<img src=x onerror="xss()">.yaml',
+      line: null,
+      name: 'Outer',
+      params: { p: '<svg onload="xss()">' },
+    },
+  ];
+  tl.steps[1].file = 'templates/sub.yaml';
+  tl.steps[1].line = null;
+  tl.steps[1].status = 'skipped';
+  tl.lines[0].file = 'templates/sub.yaml';
+
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  const shadow = el._shadow;
+  const summaryText = shadow.getElementById('summary').textContent;
+  assert.ok(summaryText.includes(tl.scenario.file), summaryText);
+  assert.ok(!summaryText.includes('line null'), summaryText);
+  assert.ok(!summaryText.includes('of 123'), summaryText);
+  assert.ok(!summaryText.includes('line  of'), summaryText);
+  assert.ok(summaryText.includes('<script>window.__xss=2</script>Step1'));
+
+  const stepsTable = shadow.querySelectorAll('[data-testid=steps-table]')[0];
+  const stepText = stepsTable.textContent;
+  assert.ok(stepText.includes('templates/sub.yaml'));
+  assert.ok(!stepText.includes('templates/sub.yaml:'));
+  assert.ok(!stepText.includes(':null'));
+
+  const titles = shadow.querySelectorAll('title').map((n) => n.textContent);
+  assert.ok(titles.some((txt) => txt.includes('templates/sub.yaml')));
+  assert.ok(!titles.some((txt) => txt.includes('line null')));
+});

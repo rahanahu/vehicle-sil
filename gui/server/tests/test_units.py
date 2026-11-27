@@ -2218,7 +2218,7 @@ def test_scenario_step_provenance_sanitization_and_case_propagation() -> None:
     step2 = s.scenario_summary()["steps"][1]
     assert step2["file"] is None and step2["line"] is None and step2["name"] is None
     assert step2["start_ms"] is None and step2["at_ms"] is None and step2["end_ms"] is None
-    assert len(step2["call_stack"]) == 63  # 64 sliced minus 1 non-dict entry
+    assert len(step2["call_stack"]) == 64  # non-dict prefix filtered before MAX_CALL_STACK_FRAMES cap
     assert step2["call_stack"][0] == {
         "file": None, "line": None, "name": None,
         "params": {"good_bool": True, "good_int": 7, "good_float": 1.25, "good_str": "ok"},
@@ -2242,4 +2242,54 @@ def test_scenario_step_provenance_sanitization_and_case_propagation() -> None:
     assert summary_sc["case"] == "上限直前"
     assert summary_sc["steps"][0]["call_stack"] is None
     encode(s.summary())
-    C.SessionSummary.model_validate(s.summary())
+    C.SessionSummary.model_validate(s.summary()).model_dump_json()
+
+
+def test_tier5_call_stack_bounds_partial_step_provenance_and_surrogates() -> None:
+    from vehicle_sil_gui import contracts as C
+
+    s = Session("prov-t5", "simulation.yaml", [], None, False, scenario="scenarios/main.yaml")
+    feed_line(s, line("run_start", 0, run="r-t5"))
+
+    # 1. Partial scenario_step update preserves prior file, name, call_stack within the same run
+    feed_line(s, line("scenario_step", 1, index=1, file="scenarios/templates/init.yaml", line=7,
+                      kind="set", name="power on", text="set Power.on = true", status="running",
+                      call_stack=[{"file": "scenarios/main.yaml", "line": 4, "name": "boot", "params": {"ms": 100}}]))
+    feed_line(s, line("scenario_step", 2, index=1, line=7, kind="set",
+                      text="set Power.on = true", status="passed", start_ms=0, at_ms=0, end_ms=0))
+    step1 = s.scenario_summary()["steps"][0]
+    assert step1["status"] == "passed"
+    assert step1["at_ms"] == 0
+    assert step1["file"] == "scenarios/templates/init.yaml"
+    assert step1["name"] == "power on"
+    assert step1["call_stack"] == [{"file": "scenarios/main.yaml", "line": 4, "name": "boot", "params": {"ms": 100}}]
+
+    # 2. 64 non-dict prefix items cannot hide valid frames; 300-key params capped at 256; NaN/Inf/bool/-1 line;
+    # oversized strings and lone surrogates serialize cleanly via SessionSummary.model_dump_json()
+    big_params = {f"k{i}": i for i in range(300)}
+    big_params["nan_v"] = float("nan")
+    big_params["inf_v"] = float("inf")
+    big_params["surr_\ud800"] = "val_\ud800_" + ("z" * 1200)
+    s.feed_event({
+        "event": "scenario_step", "seq": 3, "t_ms": 10, "index": 2,
+        "file": "bad\ud800.yaml", "line": -1, "kind": "expect", "name": "step_\ud800_" + ("y" * 1200),
+        "text": "expect ok", "status": "failed",
+        "call_stack": [1] * 64 + [
+            {"file": "t\ud800.yaml", "line": True, "name": "n\ud800", "params": big_params},
+        ],
+    }, 8192)
+    step2 = s.scenario_summary()["steps"][1]
+    assert len(step2["call_stack"]) == 1
+    assert step2["call_stack"][0]["line"] is None
+    assert len(step2["call_stack"][0]["params"]) == 256
+    assert "\ud800" not in step2["file"]
+    assert "\ud800" not in step2["name"]
+    dumped = C.SessionSummary.model_validate(s.summary()).model_dump_json()
+    assert isinstance(dumped, str) and len(dumped) > 0
+
+    # 3. Fresh run does not inherit prior run's provenance
+    s2 = Session("prov-t5-new", "simulation.yaml", [], None, False, scenario="scenarios/main.yaml")
+    feed_line(s2, line("run_start", 0, run="r-t5-new"))
+    feed_line(s2, line("scenario_step", 1, index=1, line=2, kind="set", text="set x = 1", status="passed"))
+    fresh_step1 = s2.scenario_summary()["steps"][0]
+    assert fresh_step1["file"] is None and fresh_step1["name"] is None and fresh_step1["call_stack"] is None

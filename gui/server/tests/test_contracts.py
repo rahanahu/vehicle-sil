@@ -682,3 +682,18 @@ def test_scenario_provenance_and_case_contracts() -> None:
     }, 280)
     C.SessionSummary.model_validate(sess.summary(variables=True))
     C.WS_SERVER_MESSAGE_ADAPTER.validate_python(sess.message())
+
+
+def test_scenario_provenance_contracts_reject_lone_surrogates() -> None:
+    for payload in (
+        {"file": "bad\ud800.yaml", "line": 1, "name": "ok", "params": {}},
+        {"file": "ok.yaml", "line": 1, "name": "bad\ud800", "params": {}},
+        {"file": "ok.yaml", "line": 1, "name": "ok", "params": {"k\ud800": "v"}},
+        {"file": "ok.yaml", "line": 1, "name": "ok", "params": {"k": "v\ud800"}},
+    ):
+        with pytest.raises(ValidationError):
+            C.ScenarioCallFrame.model_validate(payload)
+    for field in ("file", "name", "text", "status", "kind", "code", "message"):
+        step = {"index": 1, "status": "passed", field: "bad\ud800"}
+        with pytest.raises(ValidationError):
+            C.ScenarioStepSummary.model_validate(step)

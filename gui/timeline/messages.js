@@ -7,6 +7,8 @@
 (function (global) {
   'use strict';
 
+  const hasLine = (line) => line !== null && line !== undefined && line !== '';
+
   const en = {
     // --- reading a file
     'file.named': ({ name }) => `"${name}"`,
@@ -145,7 +147,8 @@
 
     // --- the summary above the chart
     'failure.heading': ({ step, at }) => `Step ${step} failed at ${at}`,
-    'failure.where': ({ line, file }) => `line ${line} of ${file}`,
+    'failure.where': ({ line, file }) =>
+      hasLine(line) ? (file ? `line ${line} of ${file}` : `line ${line}`) : file || '',
     'failure.calledFrom': 'Called from:',
     'passed.heading': ({ count }) => `Passed: ${count} step${count === 1 ? '' : 's'}`,
     'passed.skipped': ({ count }) => `${count} skipped (see the table of steps).`,
@@ -212,9 +215,13 @@
     'chart.cursor': ({ at }) => `Cursor ${at}`,
     'chart.steps': 'Steps',
     'step.title': ({ index, kind, line, status }) =>
-      `Step ${index} (${kind}, line ${line}): ${status}`,
+      hasLine(line)
+        ? `Step ${index} (${kind}, line ${line}): ${status}`
+        : `Step ${index} (${kind}): ${status}`,
     'step.titleInFile': ({ index, kind, file, line, status }) =>
-      `Step ${index} (${kind}, ${file} line ${line}): ${status}`,
+      hasLine(line)
+        ? `Step ${index} (${kind}, ${file} line ${line}): ${status}`
+        : `Step ${index} (${kind}, ${file}): ${status}`,
     'step.times': ({ start, decided, end }) => `start ${start}, decided ${decided}, end ${end}`,
     'step.details': 'Step details',
     'step.matchOnce': ({ from, to }) =>
@@ -241,8 +248,10 @@
     'fit.toValues': 'Scale to the values',
     'fit.declared': 'declared range',
     'fit.values': 'fit values',
-    'line.title': ({ text, where, line }) => `${text} (${where}, line ${line})`,
-    'line.titleInFile': ({ text, where, file, line }) => `${text} (${where}, ${file} line ${line})`,
+    'line.title': ({ text, where, line }) =>
+      hasLine(line) ? `${text} (${where}, line ${line})` : `${text} (${where})`,
+    'line.titleInFile': ({ text, where, file, line }) =>
+      hasLine(line) ? `${text} (${where}, ${file} line ${line})` : `${text} (${where}, ${file})`,
     'line.step': ({ step }) => `step ${step}`,
     'state.notApplied': 'Sent, and the ECU did not apply it',
     'state.notKnown': 'Sent; not known whether the ECU applied it',
@@ -457,7 +466,8 @@
 
     // --- 図の上の要約
     'failure.heading': ({ step, at }) => `手順 ${step} が ${at} で失敗しました`,
-    'failure.where': ({ line, file }) => `${file} の ${line} 行`,
+    'failure.where': ({ line, file }) =>
+      hasLine(line) ? (file ? `${file} の ${line} 行` : `${line} 行`) : file || '',
     'failure.calledFrom': '呼び出し元:',
     'passed.heading': ({ count }) => `通りました: ${count} 個の手順`,
     'passed.skipped': ({ count }) => `${count} 個を飛ばしました（手順の表を見てください）。`,
@@ -524,9 +534,13 @@
     'chart.cursor': ({ at }) => `カーソル ${at}`,
     'chart.steps': '手順',
     'step.title': ({ index, kind, line, status }) =>
-      `手順 ${index}（${kind}、${line} 行）: ${status}`,
+      hasLine(line)
+        ? `手順 ${index}（${kind}、${line} 行）: ${status}`
+        : `手順 ${index}（${kind}）: ${status}`,
     'step.titleInFile': ({ index, kind, file, line, status }) =>
-      `手順 ${index}（${kind}、${file} ${line} 行）: ${status}`,
+      hasLine(line)
+        ? `手順 ${index}（${kind}、${file} ${line} 行）: ${status}`
+        : `手順 ${index}（${kind}、${file}）: ${status}`,
     'step.times': ({ start, decided, end }) =>
       `始まり ${start}、決まった ${decided}、終わり ${end}`,
     'step.details': '手順の詳細',
@@ -553,8 +567,10 @@
     'fit.toValues': '値に合わせる',
     'fit.declared': '宣言の範囲',
     'fit.values': '値に合わせた',
-    'line.title': ({ text, where, line }) => `${text}（${where}、${line} 行）`,
-    'line.titleInFile': ({ text, where, file, line }) => `${text}（${where}、${file} ${line} 行）`,
+    'line.title': ({ text, where, line }) =>
+      hasLine(line) ? `${text}（${where}、${line} 行）` : `${text}（${where}）`,
+    'line.titleInFile': ({ text, where, file, line }) =>
+      hasLine(line) ? `${text}（${where}、${file} ${line} 行）` : `${text}（${where}、${file}）`,
     'line.step': ({ step }) => `手順 ${step}`,
     'state.notApplied': '送ったが、ECU に入らなかった',
     'state.notKnown': '送ったが、ECU に入ったか不明',

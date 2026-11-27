@@ -1000,6 +1000,104 @@ describe('addDropped', () => {
   });
 });
 
+describe('withStep provenance merging', () => {
+  it('preserves file, name, and call_stack across partial scenario_step updates in the same run', () => {
+    const baseSummary = summary({
+      scenario: {
+        file: 'scenarios/main.yaml',
+        name: 'load',
+        case: '定格',
+        step_count: 1,
+        steps: [],
+        steps_omitted: 0,
+        status: null,
+        over_at_ms: null,
+        timeline_url: null,
+        handed_over: false,
+      },
+    });
+    const initial = sessionFromSummary(baseSummary);
+    const withRunning = applyEvents(
+      initial,
+      eventsFrom(1, [
+        {
+          event: 'scenario_step',
+          step: {
+            index: 1,
+            file: 'scenarios/templates/init.yaml',
+            line: 8,
+            kind: 'set',
+            name: 'power on',
+            text: 'set Power.on = true',
+            status: 'running',
+            start_ms: 0,
+            at_ms: null,
+            end_ms: null,
+            code: null,
+            message: null,
+            call_stack: [
+              {
+                file: 'scenarios/main.yaml',
+                line: 5,
+                name: 'boot',
+                params: { ms: 100 },
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    const withPassedPartial = applyEvents(
+      withRunning,
+      eventsFrom(2, [
+        {
+          event: 'scenario_step',
+          step: {
+            index: 1,
+            line: 8,
+            kind: 'set',
+            text: 'set Power.on = true',
+            status: 'passed',
+            start_ms: 0,
+            at_ms: 0,
+            end_ms: 0,
+            code: null,
+            message: null,
+          },
+        },
+      ]),
+    );
+    const step = withPassedPartial.scenario?.steps[0];
+    expect(step?.status).toBe('passed');
+    expect(step?.at_ms).toBe(0);
+    expect(step?.file).toBe('scenarios/templates/init.yaml');
+    expect(step?.name).toBe('power on');
+    expect(step?.call_stack).toEqual([
+      { file: 'scenarios/main.yaml', line: 5, name: 'boot', params: { ms: 100 } },
+    ]);
+
+    // A fresh summary clears prior run steps cleanly.
+    const nextRun = applySummary(
+      withPassedPartial,
+      summary({
+        last_seq: 0,
+        scenario: {
+          file: 'scenarios/other.yaml',
+          name: 'other',
+          step_count: 1,
+          steps: [],
+          steps_omitted: 0,
+          status: null,
+          over_at_ms: null,
+          timeline_url: null,
+          handed_over: false,
+        },
+      }),
+    );
+    expect(nextRun.scenario?.steps).toEqual([]);
+  });
+});
+
 describe('addProblem', () => {
   it('appends diagnostics in stream order', () => {
     let session = sessionFromSummary(
