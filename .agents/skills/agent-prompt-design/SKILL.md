@@ -87,7 +87,7 @@ Never bypass explicit approval requirements or tool permission checks.
 An escalation states the decision needed, why it is outside delegated authority, the evidence, the recommendation, and the impact. Continue unaffected work meanwhile.
 
 If a genuine prerequisite is missing, record the blocker, the resume condition, and how notification or handoff happens. Resume without renewed approval once the prerequisite is met, if the environment permits.
-For waiting on builds, CI, or timeouts, use reactive wakeup notifications or a one-shot timer (such as `schedule`, when supported by the host) rather than a resident polling monitor agent.
+For Swarm PR CI, follow the [Swarm operating rules](../../rules/swarm.md) for background watching. For other builds or waits, prefer reactive completion notifications. A one-shot timer is suitable for a specific deadline, not for repeated CI status checks.
 Do not assume a terminated session restarts automatically. If the environment lacks notification or resumption mechanisms, leave enough information for a future session to resume.
 End when the work is complete or no useful actionable work remains. Do not manufacture tasks.
 
