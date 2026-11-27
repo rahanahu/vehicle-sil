@@ -5,6 +5,28 @@
 
 namespace vehicle_sil::scenario::reader {
 
+namespace {
+
+bool looks_like_variable_name(std::string_view text) noexcept
+{
+    const auto dot = text.find('.');
+    if (dot == std::string_view::npos || dot == 0 || dot + 1 >= text.size())
+    {
+        return false;
+    }
+    if (std::any_of(text.begin(), text.end(), [](unsigned char c) { return std::isspace(c) != 0 || c < 0x20 || c == 0x7F; }))
+    {
+        return false;
+    }
+    const auto is_ident_start = [](unsigned char c) {
+        return std::isalpha(c) != 0 || c == '_' || c >= 0x80;
+    };
+    return is_ident_start(static_cast<unsigned char>(text[0])) &&
+           is_ident_start(static_cast<unsigned char>(text[dot + 1]));
+}
+
+} // namespace
+
 ScenarioShapeText::Value Reader::shape_value(ryml::id_type node, std::size_t variable) const
 {
     std::int64_t whole = 0;
@@ -227,6 +249,9 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
     }
     const std::string text = text_of(node);
     const bool quoted = this->quoted(node);
+    const std::string varRefHint = !write && !quoted && param_at(node) == nullptr && looks_like_variable_name(text)
+                                       ? "; to compare with another variable, write { variable: " + text + " }"
+                                       : std::string{};
     std::optional<control::Value> out;
     switch (v.type)
     {
@@ -238,7 +263,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
         }
         else
         {
-            error("scenario-value", line, pre + " must be true or false, not " + shown_value(node));
+            error("scenario-value", line, pre + " must be true or false, not " + shown_value(node) + varRefHint);
         }
         break;
     case control::ValueType::Integer:
@@ -258,7 +283,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
         {
             error("scenario-value", line,
                   pre + " must be a whole number, not " + shown_value(node) +
-                      (quoted ? ": write the number without quotes" : hex_hint(node, v.type)));
+                      (quoted ? ": write the number without quotes" : hex_hint(node, v.type)) + varRefHint);
         }
         break;
     }
@@ -274,7 +299,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
         {
             error("scenario-value", line,
                   pre + " must be a number, not " + shown_value(node) +
-                      (quoted ? ": write the number without quotes" : hex_hint(node, v.type)));
+                      (quoted ? ": write the number without quotes" : hex_hint(node, v.type)) + varRefHint);
         }
         break;
     }
@@ -307,7 +332,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
                   pre + " must be one of its items, by name or by value, not " + shown_value(node) +
                       (hint.empty() ? std::string(": ") : hint + "; ") +
                       (guess.empty() ? std::string{} : "did you mean '" + guess + "'? ") + "the items are " +
-                      items_text(info.items));
+                      items_text(info.items) + varRefHint);
         }
         break;
     }

@@ -26,6 +26,8 @@ configure_file(scenarios/templates/throttle_check.yaml scenarios/templates/throt
 configure_file(scenarios/throttle_template.yaml scenarios/throttle_template.yaml COPYONLY)
 # Named cases calling the same template (--scenarios scenarios/throttle_cases.yaml).
 configure_file(scenarios/throttle_cases.yaml scenarios/throttle_cases.yaml COPYONLY)
+# Runtime variable-to-variable comparisons across the two ECUs (--scenario scenarios/speed_tracking.yaml).
+configure_file(scenarios/speed_tracking.yaml scenarios/speed_tracking.yaml COPYONLY)
 # The browser GUI's dashboard of simulation.yaml and the panel it loads (docs/gui.md).
 configure_file(simulation.dashboard.yaml simulation.dashboard.yaml COPYONLY)
 # The same two at the speed of a clock and without an end, to watch in the GUI (scripts/run-gui.py).

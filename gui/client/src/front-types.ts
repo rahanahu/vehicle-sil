@@ -334,6 +334,19 @@ export interface QueuedWrite {
  */
 export interface FrontVariable extends Readable<VariableView> {
   /**
+   * Subscribes to changes of this variable's view. Optionally requests a polling interval (`periodMs`, finite
+   * `20..60_000` ms; default: the client's `watchPeriodMs`, or `WATCH_PERIOD_MS` = 100) while this subscription is
+   * active; the shortest active interval across all subscribers wins, and the slower interval is restored when faster
+   * subscribers unsubscribe. Note: latest-value polling at 20 ms does not guarantee capturing pulses shorter than 20 ms.
+   */
+  subscribe(
+    listener: (value: VariableView) => void,
+    options?: {
+      /** Requested polling interval (ms; finite `20..60_000`, rounded to `WATCH_PERIODS_MS`). */
+      periodMs?: number;
+    },
+  ): () => void;
+  /**
    * Sends the write and resolves once the server accepted it and the ECU queued it (stages 1+2).
    * Rejects immediately with an `ActionError` if refused or already terminally failed (`invalid`, `busy`, `late`, ...).
    */

@@ -40,12 +40,21 @@ enum class WatchMode
 /// "at", "always", "once", "during".
 [[nodiscard]] const char* watch_mode_name(WatchMode mode);
 
+/// A right-hand variable value of a condition that a failed step did not meet.
+struct TimelineComparedValue
+{
+    std::size_t variable = 0;              ///< index in Scenario::variables
+    std::optional<control::Value> value{}; ///< what the variable was; empty: no value (no sample)
+    std::optional<SimTime> sample{};       ///< the time of that sample
+};
+
 /// A condition a failed step did not meet.
 struct TimelineFailedCondition
 {
-    std::size_t condition = 0;             ///< index in ScenarioStep::conditions
-    std::optional<control::Value> value{}; ///< what the variable was; empty: no value (no sample)
-    std::optional<SimTime> sample{};       ///< the time of that sample
+    std::size_t condition = 0;                     ///< index in ScenarioStep::conditions
+    std::optional<control::Value> value{};         ///< what the variable was; empty: no value (no sample)
+    std::optional<SimTime> sample{};               ///< the time of that sample
+    std::vector<TimelineComparedValue> compared{}; ///< right-hand variables of this condition (empty when none)
 };
 
 /// A write of the request a step failed of.

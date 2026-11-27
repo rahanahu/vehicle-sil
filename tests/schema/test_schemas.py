@@ -271,6 +271,7 @@ def scenario_mappings() -> dict[str, dict]:
         "case": SCENARIO["properties"]["cases"]["additionalProperties"],
         "step": step,
         "comparison": comparison,
+        "variable reference": definitions["variable_reference"],
         "ramp": definitions["step_ramp"]["properties"]["ramp"]["additionalProperties"],
         "wave": definitions["wave"],
         **{f"wave {shape}": definitions["wave"]["properties"][shape] for shape in WAVE_SHAPES_WITH_KEYS},
@@ -833,6 +834,49 @@ SCENARIO_SAMPLES = [
     ("YAML 1.2 plus float", S + "  - set: { Engine.engine.throttle: +1.5 }\n", "check only"),
     ("YAML 1.2 plus int", S + "  - set: { Engine.engine.throttle: +5 }\n", "check only"),
     ("YAML 1.2 octal int", S + "  - set: { Engine.engine.throttle: 0o7 }\n", "check only"),
+    ("comparing variables with all operators and shorthand",
+     "vehicle_sil_scenario: 1\nparams: { tol: 25 }\nsteps:\n" + SET +
+     "  - expect: { Dashboard.dashboard.engine_speed: { variable: Engine.engine.speed } }\n"
+     "  - expect: { Dashboard.dashboard.engine_speed: { eq: { variable: Engine.engine.speed }, ne: -1 } }\n"
+     "  - expect: { Dashboard.dashboard.engine_speed: { ge: { variable: Engine.engine.throttle }, le: { variable: Engine.engine.speed } } }\n"
+     "    hold_for_ms: 20\n"
+     "  - expect: { Dashboard.dashboard.engine_speed: { gt: { variable: Engine.engine.throttle }, lt: { variable: Engine.engine.speed } } }\n"
+     "    within_ms: 50\n"
+     "  - expect: { Dashboard.dashboard.engine_speed: { near: { variable: Engine.engine.speed }, tolerance: \"${tol}\" } }\n"
+     "  - wait_until: { Dashboard.dashboard.engine_lost: { ne: { variable: Engine.ecu.connected } } }\n"
+     "    timeout_ms: 100\n"
+     "  - ramp: { Engine.engine.throttle: { to: 40, over_ms: 100 } }\n"
+     "    expect: { Dashboard.dashboard.engine_speed: { le: { variable: Engine.engine.speed } } }\n"
+     "  - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, around: 40, for_ms: 100 } }\n"
+     "    expect: { Dashboard.dashboard.engine_speed: { near: { variable: Engine.engine.speed }, tolerance: 500 } }\n",
+     "valid"),
+    ("variable reference without participant dot",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: { variable: speed } }\n", "invalid"),
+    ("variable reference with parameter",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: { variable: \"${rhs}\" } }\nparams: { rhs: Engine.engine.speed }\n",
+     "invalid"),
+    ("variable reference with interpolated parameter",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: { variable: \"Engine.${rhs}\" } }\nparams: { rhs: engine.speed }\n",
+     "invalid"),
+    ("variable reference as unquoted number",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: { variable: 1.5 } }\n", "invalid"),
+    ("variable and tolerance mixed at top",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: { variable: Engine.engine.speed, tolerance: 5 } }\n", "invalid"),
+    ("variable and operator mixed",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: { eq: 5, variable: Engine.engine.speed } }\n", "invalid"),
+    ("near with tolerance inside variable mapping",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: { near: { variable: Engine.engine.speed, tolerance: 5 }, tolerance: 5 } }\n",
+     "invalid"),
+    ("empty variable reference mapping",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: { eq: {} } }\n", "invalid"),
+    ("bare dotted variable name in condition",
+     S + "  - expect: { Dashboard.dashboard.engine_speed: Engine.engine.speed }\n", "check only"),
+    ("comparing a variable with itself",
+     S + "  - expect: { Engine.engine.speed: { variable: Engine.engine.speed } }\n", "check only"),
+    ("comparing incompatible variable types",
+     S + "  - expect: { Engine.ecu.connected: { eq: { variable: Engine.engine.speed } } }\n", "check only"),
+    ("ordered comparison of bool variables",
+     S + "  - expect: { Dashboard.dashboard.engine_lost: { ge: { variable: Engine.ecu.connected } } }\n", "check only"),
 ]
 
 T = "vehicle_sil_scenario_template: 1\n"
@@ -885,6 +929,14 @@ TEMPLATE_SAMPLES = [
     ("YAML 1.2 octal int in template",
      T + "parameters:\n  x: { type: integer, default: 0o7 }\nsteps:\n  - set: { Engine.engine.throttle: \"${x}\" }\n",
      "check only"),
+    ("variable comparison in template",
+     T + "parameters:\n  tol: { type: number, default: 10 }\nsteps:\n"
+     "  - expect: { Dashboard.dashboard.engine_speed: { near: { variable: Engine.engine.speed }, tolerance: \"${tol}\" } }\n",
+     "valid"),
+    ("parameter in variable reference inside template",
+     T + "parameters:\n  rhs: { type: string, default: Engine.engine.speed }\nsteps:\n"
+     "  - expect: { Dashboard.dashboard.engine_speed: { variable: \"${rhs}\" } }\n",
+     "invalid"),
 ]
 
 
@@ -1504,16 +1556,28 @@ class TimelineSchema(unittest.TestCase):
         walk(TIMELINE, "")
 
     def test_every_key_is_required(self):
-        # Every key of the file is always there (null when it does not apply), except optional
-        # provenance/conditional fields (`expect_skipped`, `case`, `file`, `name`, `call_stack`).
-        may_be_left_out = {"expect_skipped", "case", "file", "name", "call_stack"}
+        # Every key of the file is always there (null when it does not apply), except path-scoped optional
+        # provenance/conditional fields so existing timeline records stay valid unchanged.
+        may_be_left_out = {
+            ("scenario.", "case"),
+            ("steps.", "file"),
+            ("steps.", "name"),
+            ("steps.", "expect_skipped"),
+            ("steps.", "call_stack"),
+            ("steps.watch.conditions.compare.", "variable"),
+            ("steps.failed.conditions.", "compared"),
+            ("lines.", "file"),
+        }
 
         def walk(node, where):
             if isinstance(node, dict):
                 if "properties" in node:
-                    optional = set(node["properties"]) - set(node.get("required", [])) - may_be_left_out
+                    optional = {
+                        (where, key)
+                        for key in set(node["properties"]) - set(node.get("required", []))
+                    } - may_be_left_out
                     self.assertEqual(optional, set(), f"timeline.schema.json: {where or 'the file'} does not require "
-                                     f"{sorted(optional)}: the launcher writes every key, so add them to required "
+                                     f"{sorted(k for _, k in optional)}: the launcher writes every key, so add them to required "
                                      "(and null to their type, if they may be null)")
                 for key, value in node.items():
                     walk(value, f"{where}{key}." if key not in ("properties", "items") else where)
@@ -1586,6 +1650,12 @@ class TimelineSchema(unittest.TestCase):
             "a step name that is a number": lambda d: d["steps"][0].update(name=123),
             "a step file that is a number": lambda d: d["steps"][0].update(file=123),
             "a line file that is a number": lambda d: d["lines"][0].update(file=123),
+            "a watch compare variable that is a number": lambda d: failed_step(d)["watch"]["conditions"][0]["compare"][0].update(
+                value=None, variable=123),
+            "a failed compared entry without sample_ms": lambda d: failed_step(d)["failed"]["conditions"][0].update(
+                compared=[{"variable": "Body.other", "value": 1}]),
+            "a failed compared entry whose variable is a number": lambda d: failed_step(d)["failed"]["conditions"][0].update(
+                compared=[{"variable": 0, "value": 1, "sample_ms": 10}]),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
@@ -1600,6 +1670,15 @@ class TimelineSchema(unittest.TestCase):
                     call_stack=[{"file": "scenario.yaml", "line": 10, "name": "call init", "params": {"ms": 50, "ok": True}}],
                 ),
                 d["lines"][0].update(file="templates/init.yaml"),
+            ),
+            "a variable-to-variable watch and failed compared entries": lambda d: (
+                failed_step(d)["watch"]["conditions"][0]["compare"][0].update(value=None, variable="Body.other"),
+                failed_step(d)["failed"]["conditions"][0].update(
+                    compared=[
+                        {"variable": "Body.other", "value": 1800, "sample_ms": 20},
+                        {"variable": "Body.unseen", "value": None, "sample_ms": None},
+                    ]
+                ),
             ),
             "a kind of line and a base_source it does not know": lambda d: d["lines"][0].update(kind="hold", base_source="given"),
             "a key of a shape it does not know": lambda d: d["lines"][-1]["shape"].update(steepness=2),
@@ -1743,6 +1822,30 @@ class TimelineOfARun(unittest.TestCase):
         ))
         self.assertTrue(any(ln.get("file") == "scenarios/templates/inner.yaml" for ln in data["lines"]))
         self.assertTrue(any(s.get("not_applied_from") is not None for s in data["series"]))
+
+    def test_the_timeline_of_variable_comparisons_is_valid(self):
+        example = Path(EXAMPLE_DIR)
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-timeline-") as directory:
+            out = Path(directory) / "speed_tracking.timeline.json"
+            proc = subprocess.run([LAUNCH, "run", "simulation.yaml", "--scenario", "scenarios/speed_tracking.yaml",
+                                   "--timeline", str(out)], cwd=example, capture_output=True, text=True,
+                                  encoding="utf-8", stdin=subprocess.DEVNULL, timeout=120)
+            self.assertEqual(proc.returncode, 0, f"speed_tracking.yaml did not pass:\n{proc.stdout[-2000:]}\n"
+                                                 f"{proc.stderr[-2000:]}")
+            data = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(problems(TIMELINE, data), [],
+                         "the timeline file of speed_tracking.yaml is not valid for schema/timeline.schema.json")
+        self.assertEqual(data["scenario"]["status"], "passed")
+        var_compares = [
+            comp
+            for step in data["steps"]
+            if step["watch"] is not None
+            for cond in step["watch"]["conditions"]
+            for comp in cond["compare"]
+            if "variable" in comp
+        ]
+        self.assertGreaterEqual(len(var_compares), 4)
+        self.assertTrue(all(comp["value"] is None for comp in var_compares))
 
 
 class ControlMetricsSchema(unittest.TestCase):
@@ -2052,6 +2155,7 @@ class SchemaAndLauncher(unittest.TestCase):
             "case": S + SET + "cases: { a: { zz_probe: 1 } }\n",
             "step": S + SET + "    zz_probe: 1\n",
             "comparison": S + "  - expect: { Engine.engine.speed: { ge: 0, zz_probe: 1 } }\n",
+            "variable reference": S + "  - expect: { Dashboard.dashboard.engine_speed: { variable: Engine.engine.speed, zz_probe: 1 } }\n",
             "ramp": S + "  - ramp: { Engine.engine.throttle: { to: 5, over_ms: 10, zz_probe: 1 } }\n",
             "wave": S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, for_ms: 100, zz_probe: 1 } }\n",
             **{f"wave {shape}": S + "  - wave: { Engine.engine.throttle: { " + shape + ": { " + keys + ", zz_probe: 1 }, for_ms: 100 } }\n"

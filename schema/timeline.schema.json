@@ -434,16 +434,21 @@
                           "value": {
                             "type": [
                               "boolean",
-                              "number"
+                              "number",
+                              "null"
                             ],
-                            "description": "What the value is compared with."
+                            "description": "What the value is compared with; null when variable names a right-hand variable."
+                          },
+                          "variable": {
+                            "type": "string",
+                            "description": "The right-hand variable (<participant>.<name>) when comparing two variables; omitted for constant comparisons."
                           },
                           "tolerance": {
                             "type": [
                               "number",
                               "null"
                             ],
-                            "description": "near: how far the value may be from value; null for the other ops."
+                            "description": "near: how far the value may be from value or variable; null for the other ops."
                           }
                         }
                       }
@@ -500,7 +505,7 @@
                         "number",
                         "null"
                       ],
-                      "description": "The value the variable had; null if it had none (no sample, or none in the time of a \"during\" watch)."
+                      "description": "The value the variable had; null if it had none (no sample, non-finite, or none in the time of a \"during\" watch)."
                     },
                     "sample_ms": {
                       "type": [
@@ -508,6 +513,39 @@
                         "null"
                       ],
                       "description": "The time of the sample with that value; null with value."
+                    },
+                    "compared": {
+                      "type": "array",
+                      "description": "Right-hand variables of failed comparisons on this condition (omitted when no variable comparison failed).",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "variable",
+                          "value",
+                          "sample_ms"
+                        ],
+                        "properties": {
+                          "variable": {
+                            "type": "string",
+                            "description": "The right-hand variable (<participant>.<name>)."
+                          },
+                          "value": {
+                            "type": [
+                              "boolean",
+                              "number",
+                              "null"
+                            ],
+                            "description": "The value the right-hand variable had; null if it had none (no sample, non-finite, or none in the time of a \"during\" watch)."
+                          },
+                          "sample_ms": {
+                            "type": [
+                              "number",
+                              "null"
+                            ],
+                            "description": "The time of the right-hand variable's sample; null with value."
+                          }
+                        }
+                      }
                     }
                   }
                 }

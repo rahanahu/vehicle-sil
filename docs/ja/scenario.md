@@ -241,6 +241,17 @@ steps:
 
 - 1 つの変数に複数の演算子を書くと、全部が成り立つことが条件です（`{ ge: 1700, le: 1900 }`）。
 - 1 つの手順に複数の変数を書くと、全部の変数の条件が成り立つことが条件です。
+- 定数の代わりに `{ variable: <participant>.<変数> }` を書くと、上の全 7 演算子および等値の省略形で、別の変数の実行時サンプル値と比較できます。
+
+```yaml
+  - expect:
+      Dashboard.dashboard.engine_speed:
+        near: { variable: Engine.engine.speed }
+        tolerance: "${max_lag_rpm}"
+      Dashboard.dashboard.engine_lost: { ne: { variable: Engine.ecu.connected } }
+```
+
+- 変数間比較の型ルール: `integer` と `real` は互いに全 7 演算子で比較できます（64 ビット整数同士および整数と倍精度実数の比較で `2^53` 超の精度落ちを起こしません）。`bool` 同士は `eq`・`ne`、`enum` 同士は `(name, value)` の集合が順序を除いて厳密一致するときに `eq`・`ne` で比較できます（基底の整数値が一致している場合は `simulation.yaml` の `variables.<名前>.map` で項目名や共通の部分集合を揃えられます）。同じ変数同士の自己比較はエラー（`scenario-value`）で、`variable:` の中では `${name}` のパラメーター展開は使えません（`scenario-param`。`tolerance` には `"${name}"` を使えます）。四則演算やインラインの `scale`・`offset`、`or`・`not`、過去時刻の参照はありません。
 
 ### スキーマ
 
@@ -303,7 +314,8 @@ ECU は、ステップの終わりの全変数の値を 1 組（サンプル）�
 
 - ECU の 1 つのステップの中で変わって戻った値は見えません。値はステップの終わりに読むからです。シナリオが判定できる細かさは、ECU のステップまでです。
 - ECU は、`ecu_main` の実行ファイルのように、サンプルをステップの中で送信する必要があります。Control API の通信を自作した実行ファイルが別のスレッドから送信すると、ランチャーがその時刻を判定した後にサンプルが届くことがあります。そのサンプルは判定に入らず、実行に警告 `control-link-late-values` が出ます。
-- サンプルが 1 つもない変数は、どの条件も成り立ちません（指摘の文は `it had no value yet (no sample of its ECU had arrived)`）。
+- サンプルが 1 つもない変数は、どの条件も成り立ちません（指摘の文は `it had no value yet (no sample of its ECU had arrived)`）。変数間比較でも、左辺または右辺のサンプルが未着であるか非有限値（`NaN`・`Inf`）のときは、`ne` を含む全演算子が `false` になります。
+- 条件が 2 つの変数を比較するとき（`{ variable: ... }`）は、左辺と右辺の両方の ECU をシナリオが読むものとして扱います（`samples: every_step` での `--sample-every-step` 付与、および `--timeline` での `watched: true` と `sampled` 系列の記録）。同じ仮想時刻のサンプルは全 participant 分を一括反映してから条件を評価するため、`simulation.yaml` の定義順で合否は変わりません。右辺がシナリオで駆動する入力（`dither` を含む）のときも、予約した `written` 値ではなく ECU が適用して返した `sampled` 値で比較します。
 - 時刻 0 の `expect` は、サンプルがないことでは失敗しません。0 ms に始まるステップのサンプルを見ます（`its sample of 0 ms`）。このサンプルには、時刻 0 の書き込みがもう反映されています。
 - サンプルがなくて失敗するのは、時刻 0 に、シナリオがまだ書いていない変数を、`from` のない `ramp` か `around` のない `wave` で動かすときです（`scenario-write`）。時刻 0 の書き込みは最初のステップの前に渡すので、始まりの値にするサンプルがまだありません（[書き込み](#書き込み)）。
 
@@ -626,7 +638,7 @@ U は、E が ECU のステップの上なら E、間なら次のステップで
 | 書き込みが反映されなかった | `scenario-write` です。 |
 | 両方が起きた | `code` は、ランチャーが先に知ったほうです（[結果](#結果)）。 |
 
-- サンプルのない変数の扱いは、`hold_for_ms` の `expect` と違います。T より前のサンプルでは判定しません（[値の見え方](#値の見え方)）。
+- サンプルのない変数の扱いは、`hold_for_ms` の `expect` と違います。T より前のサンプルでは判定しません（[値の見え方](#値の見え方)）。変数間比較では右辺にも同じルールを対称に適用し、両辺とも T より前のサンプルは使わず、区間 `[T, U]` にサンプルが 1 つも届かなかった変数（左辺・右辺）があれば U で失敗します。1 つの変数に定数比較と変数比較を併記したとき（`{ ge: { variable: B.x }, le: 100 }`）は比較単位で評価するため、定数条件に反した時点で右辺の到着を待たずに失敗します。
 - ほかの区間で確認するときは、`expect` を別の手順にして、`ramp` や `wave` の後に置きます。
 - 失敗の文は `hold_for_ms` と同じ形で、区間と、見たサンプルを示します: `not true during the ramp (from 1000 ms to 2000 ms): at 1340 ms Engine.engine.speed le 3000, but it was 3050 (its sample of 1340 ms)`。U が E と違うときは、区間に `, where its end (2000 ms) takes effect` が付きます。
 
@@ -873,8 +885,8 @@ steps:
 
 | 場合 | スキップするもの |
 |---|---|
-| 1 つの手順に、ある変数とない変数の両方がある | 手順の全体です（ある変数にも書きません）。 |
-| `ramp` と `wave` の横の `expect` だけが、ない変数を使う | その `expect` だけです（[`expect` の変数がないとき](#expect-の変数がないとき)）。 |
+| 1 つの手順に、ある変数とない変数の両方がある | 手順の全体です（右辺の `{ variable: ... }` がない変数のときも含みます。ある変数にも書きません）。 |
+| `ramp` と `wave` の横の `expect` だけが、ない変数を使う | その `expect` だけです（[`expect` の変数がないとき](#expect-の変数がないとき)）。ある変数の実行時の未接続やスキーマ・enum 項目の不一致はスキップせず、直ちに失敗します。 |
 | スキップした `set` に頼る後ろの手順 | スキップせずに実行します。 |
 
 機種によって成り立たない手順は、ない変数を使う形にするか、シナリオを分けて `only` を書きます。
@@ -960,7 +972,7 @@ steps:
 
 ### 失敗する例
 
-失敗の指摘は、シナリオのファイルと行、手順、時刻、そのときの値を示します。次の例は、スロットルを設定してから 200 ms のうちに回転数が 1700 rpm に達することを確認しますが、達するのは 330 ms です（上の例の `wait_until`）。
+失敗の指摘は、シナリオのファイルと行、手順、時刻、そのときの値を示します（変数間比較が失敗したときは、`... but it was 1650 (its sample of 340 ms) while Engine.engine.speed was 1800 (its sample of 340 ms)` のように両辺の値とサンプル時刻を並べて示します）。次の例は、スロットルを設定してから 200 ms のうちに回転数が 1700 rpm に達することを確認しますが、達するのは 330 ms です（上の例の `wait_until`）。
 
 <!-- throttle_response.yaml -->
 ```yaml
@@ -1366,6 +1378,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario-handover` | 実行要求の `after_scenario: "pause"`（シナリオ成功時に一時停止して手動制御へ引き継ぐ） | `after_scenario` は知らないキーのエラーです。 |
 | `scenario-cases` | 名前付きケース（`cases:`）、`--case`・要求ファイルの `"case"`、`case_details`、`serve` インライン `intent.cli_params` | `cases` と要求ファイルの `"case"` は知らないキーのエラーです。 |
 | `scenario-templates` | 再利用可能なシナリオテンプレート（`- template:`）、`call_stack` 出典情報、`param_meta`・`missing_params` | `template` は知らないキーのエラーです。 |
+| `scenario-variable-compare` | `expect` と `wait_until` での実行時の変数間比較（`{ variable: <participant>.<変数> }`） | 条件の中の `variable` は知らないキーまたは型のエラーです。 |
 
 `features` の名前の全部は、[simulation-events.md](simulation-events.md) にあります。
 

@@ -3455,4 +3455,471 @@ describe('the front door', () => {
       ).rejects.toMatchObject({ code: 'invalid-argument', outcome: 'refused' });
     });
   });
+
+  describe('live watch and batch period options (WU-05)', () => {
+    const varHello = (runId = '1') => ({
+      type: 'hello',
+      vehicle_sil_gui: 4,
+      version: '0.1.0',
+      instance: 'x',
+      session: {
+        id: runId,
+        state: 'running',
+        launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
+        stop: 'none',
+        variables: {
+          state: 'ready',
+          reason: null,
+          peers: [
+            {
+              name: 'Engine',
+              connected: true,
+              variables: [
+                {
+                  name: 'engine.offset',
+                  type: 'real',
+                  role: 'input',
+                  writable: true,
+                  unit: 'rpm',
+                  min: null,
+                  max: null,
+                  step: null,
+                  description: '',
+                  enum: null,
+                },
+                {
+                  name: 'engine.speed',
+                  type: 'real',
+                  role: 'output',
+                  writable: false,
+                  unit: 'rpm',
+                  min: null,
+                  max: null,
+                  step: null,
+                  description: '',
+                  enum: null,
+                },
+              ],
+            },
+          ],
+          peers_omitted: 0,
+          variables_omitted: 0,
+          operations: [],
+        },
+      },
+      replay: null,
+    });
+
+    const watchMessages = (socket: FakeSocket) =>
+      socket.sent.filter((m) => {
+        const type = (m as { type?: string }).type;
+        return type === 'watch' || type === 'unwatch';
+      });
+
+    async function openWith(
+      extra: Partial<Parameters<typeof connect>[0]> = {},
+    ): Promise<Rig & { sockets: FakeWebSockets }> {
+      const sockets = new FakeWebSockets();
+      const http = new FakeHttp();
+      const promise = connect({
+        baseUrl: 'http://127.0.0.1:1/',
+        token: 'secret',
+        http: http.transport,
+        socket: sockets.factory,
+        answerTimeoutMs: ANSWER_MS,
+        onError: (error) => {
+          throw error;
+        },
+        ...extra,
+      });
+      http.expectOne('api/app').flush(app);
+      const front = await promise;
+      const socket = sockets.last();
+      socket.open();
+      const rig: Rig & { sockets: FakeWebSockets } = {
+        front,
+        http,
+        socket,
+        sockets,
+        deliver: async (...messages) => {
+          for (const message of messages) sockets.last().send(message);
+          await vi.advanceTimersByTimeAsync(extra.batchMs ?? BATCH_MS);
+        },
+        timeBody: () => http.expectOne('api/time').request.body as ReturnType<Rig['timeBody']>,
+        turn: async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        },
+      };
+      rigs.push(rig);
+      return rig;
+    }
+
+    it('rejects out-of-range, non-finite, non-number, and unknown watch/batch options on connect() and createFront()', async () => {
+      const http = new FakeHttp();
+      const fake = new FakeWebSockets();
+
+      for (const bad of [
+        { batchMs: -1 },
+        { batchMs: 1001 },
+        { batchMs: Number.NaN },
+        { batchMs: Number.POSITIVE_INFINITY },
+        { batchMs: '16' as unknown as number },
+        { watchPeriodMs: 19 },
+        { watchPeriodMs: 60_001 },
+        { watchPeriodMs: Number.NaN },
+        { watchPeriodMs: Number.POSITIVE_INFINITY },
+        { watchPeriodMs: '20' as unknown as number },
+      ]) {
+        await expect(
+          connect({
+            baseUrl: 'http://127.0.0.1:1/',
+            http: http.transport,
+            socket: fake.factory,
+            ...bad,
+          }),
+        ).rejects.toMatchObject({ code: 'invalid-argument', outcome: 'refused' });
+        expect(() =>
+          createFront({
+            baseUrl: 'http://127.0.0.1:1/',
+            http: http.transport,
+            socket: fake.factory,
+            ...bad,
+          }),
+        ).toThrow(expect.objectContaining({ code: 'invalid-argument', outcome: 'refused' }));
+      }
+
+      for (const unknown of [{ batch_ms: 16 }, { watch_period_ms: 20 }]) {
+        await expect(
+          connect({
+            baseUrl: 'http://127.0.0.1:1/',
+            http: http.transport,
+            socket: fake.factory,
+            ...unknown,
+          } as unknown as Parameters<typeof connect>[0]),
+        ).rejects.toMatchObject({ code: 'unknown-field', outcome: 'refused' });
+      }
+      expect(http.requests).toHaveLength(0);
+      expect(fake.sockets).toHaveLength(0);
+    });
+
+    it('validates FrontVariable.subscribe options strictly without leaking watches on error', async () => {
+      const rig = await openWith();
+      await rig.deliver(varHello(), { type: 'synced', run_id: '1', last_seq: null });
+      const variable = rig.front.variable('Engine.engine.offset');
+
+      expect(() =>
+        variable.subscribe(() => undefined, { period_ms: 20 } as unknown as { periodMs?: number }),
+      ).toThrow(expect.objectContaining({ code: 'unknown-field', outcome: 'refused' }));
+
+      for (const badOptions of [
+        null,
+        123,
+        [],
+        '20',
+        { periodMs: 19 },
+        { periodMs: 19.5 },
+        { periodMs: 60_001 },
+        { periodMs: 0 },
+        { periodMs: -10 },
+        { periodMs: Number.NaN },
+        { periodMs: Number.POSITIVE_INFINITY },
+        { periodMs: -Infinity },
+        { periodMs: '20' },
+        { periodMs: null },
+      ]) {
+        expect(() =>
+          variable.subscribe(() => undefined, badOptions as unknown as { periodMs?: number }),
+        ).toThrow(expect.objectContaining({ code: 'invalid-argument', outcome: 'refused' }));
+      }
+      await Promise.resolve();
+      expect(watchMessages(rig.socket)).toEqual([]);
+    });
+
+    it('dynamically promotes a cached FrontVariable to shortest periodMs and restores slower period on unsubscribe', async () => {
+      const rig = await openWith();
+      await rig.deliver(varHello(), { type: 'synced', run_id: '1', last_seq: null });
+      const offset = rig.front.variable('Engine.engine.offset');
+      const speed = rig.front.variable('Engine.engine.speed');
+
+      // 1) Initial subscribers at default 100 ms
+      const slowValues: (number | boolean | null)[] = [];
+      const stopSlow = offset.subscribe((v) => slowValues.push(v.value));
+      const stopOther = speed.subscribe(() => undefined);
+      await Promise.resolve();
+      expect(watchMessages(rig.socket)).toEqual([
+        {
+          type: 'watch',
+          id: 1,
+          variables: [
+            { peer: 'Engine', name: 'engine.offset' },
+            { peer: 'Engine', name: 'engine.speed' },
+          ],
+          period_ms: 100,
+        },
+      ]);
+
+      // 2) Second subscriber on the ALREADY cached FrontVariable requests { periodMs: 20 } -> promotes only offset to 20 ms!
+      const fastValues: (number | boolean | null)[] = [];
+      const stopFast = rig.front
+        .variable('Engine.engine.offset')
+        .subscribe((v) => fastValues.push(v.value), { periodMs: 20 });
+      await Promise.resolve();
+      expect(watchMessages(rig.socket).slice(1)).toEqual([
+        {
+          type: 'watch',
+          id: 2,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 20,
+        },
+        {
+          type: 'watch',
+          id: 1,
+          variables: [{ peer: 'Engine', name: 'engine.speed' }],
+          period_ms: 100,
+        },
+      ]);
+
+      // Both subscribers receive values delivered on the promoted 20 ms subscription
+      await rig.deliver({
+        type: 'values',
+        id: 2,
+        run_id: '1',
+        sim_ms: 40,
+        paused: false,
+        peers: { Engine: { sample_ms: 40, values: { 'engine.offset': 42 } } },
+      });
+      expect(slowValues).toEqual([42]);
+      expect(fastValues).toEqual([42]);
+
+      // 3) Unsubscribing the fast subscriber restores offset back to 100 ms (and unwatches the 20 ms bucket)
+      stopFast();
+      stopFast(); // duplicate unsubscribe is a no-op
+      await Promise.resolve();
+      expect(watchMessages(rig.socket).slice(3)).toEqual([
+        { type: 'unwatch', id: 2 },
+        {
+          type: 'watch',
+          id: 1,
+          variables: [
+            { peer: 'Engine', name: 'engine.offset' },
+            { peer: 'Engine', name: 'engine.speed' },
+          ],
+          period_ms: 100,
+        },
+      ]);
+
+      // 4) Unsubscribing remaining subscribers drops all watches cleanly
+      stopSlow();
+      stopOther();
+      await Promise.resolve();
+      expect(watchMessages(rig.socket).slice(5)).toEqual([{ type: 'unwatch', id: 1 }]);
+    });
+
+    it('honors watchPeriodMs, slower-than-default periodMs, multi-tier step-down, and duplicate listener refs', async () => {
+      const rig = await openWith({ watchPeriodMs: 500, batchMs: 16 });
+      await rig.deliver(varHello(), { type: 'synced', run_id: '1', last_seq: null });
+      const v = rig.front.variable('Engine.engine.offset');
+
+      // Default subscriber uses watchPeriodMs (500 ms)
+      const seen: (number | boolean | null)[] = [];
+      const sharedListener = (view: { value: number | boolean | null }) => seen.push(view.value);
+      const stopDefault = v.subscribe(sharedListener);
+      await Promise.resolve();
+      expect(watchMessages(rig.socket)).toEqual([
+        {
+          type: 'watch',
+          id: 1,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 500,
+        },
+      ]);
+
+      // Add duplicate listener reference at 75 ms (-> rounded to 50 ms) and another at 20 ms
+      const stopMid = v.subscribe(sharedListener, { periodMs: 75 });
+      const stopFast = v.subscribe(() => undefined, { periodMs: 20 });
+      await Promise.resolve();
+      expect(watchMessages(rig.socket).slice(1)).toEqual([
+        { type: 'unwatch', id: 1 },
+        {
+          type: 'watch',
+          id: 2,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 20,
+        },
+      ]);
+
+      // Step down: remove 20 ms -> drops to 50 ms
+      stopFast();
+      await Promise.resolve();
+      expect(watchMessages(rig.socket).slice(3)).toEqual([
+        { type: 'unwatch', id: 2 },
+        {
+          type: 'watch',
+          id: 3,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 50,
+        },
+      ]);
+
+      // Duplicate listener reference subscribed twice receives value twice; unsubscribing mid leaves default active!
+      rig.socket.send({
+        type: 'values',
+        id: 3,
+        run_id: '1',
+        sim_ms: 50,
+        paused: false,
+        peers: { Engine: { sample_ms: 50, values: { 'engine.offset': 11 } } },
+      });
+      await vi.advanceTimersByTimeAsync(15);
+      expect(seen).toEqual([]); // batchMs: 16 has not elapsed yet
+      await vi.advanceTimersByTimeAsync(1);
+      expect(seen).toEqual([11, 11]);
+
+      // Step down: remove 50 ms -> restores watchPeriodMs (500 ms)!
+      stopMid();
+      stopMid();
+      await Promise.resolve();
+      expect(watchMessages(rig.socket).slice(5)).toEqual([
+        { type: 'unwatch', id: 3 },
+        {
+          type: 'watch',
+          id: 4,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 500,
+        },
+      ]);
+
+      stopDefault();
+      await Promise.resolve();
+      expect(watchMessages(rig.socket).slice(7)).toEqual([{ type: 'unwatch', id: 4 }]);
+
+      // Even on a default-100 ms client, a sole subscriber asking for { periodMs: 500 } watches at 500 ms (not 100 ms)
+      const defRig = await openWith();
+      await defRig.deliver(varHello(), { type: 'synced', run_id: '1', last_seq: null });
+      const stopSlowOnly = defRig.front
+        .variable('Engine.engine.offset')
+        .subscribe(() => undefined, { periodMs: 500 });
+      await Promise.resolve();
+      expect(watchMessages(defRig.socket)).toEqual([
+        {
+          type: 'watch',
+          id: 1,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 500,
+        },
+      ]);
+      stopSlowOnly();
+      await Promise.resolve();
+      expect(watchMessages(defRig.socket).slice(1)).toEqual([{ type: 'unwatch', id: 1 }]);
+    });
+
+    it('handles unsubscribe inside listener callback, run switch, reconnect, and batchMs: 0 cleanly', async () => {
+      const rig = await openWith({ batchMs: 0 });
+      rig.socket.send(varHello('1'));
+      rig.socket.send({ type: 'synced', run_id: '1', last_seq: null });
+      await Promise.resolve();
+
+      const v = rig.front.variable('Engine.engine.offset');
+      const slowSeen: (number | boolean | null)[] = [];
+      const stopSlow = v.subscribe((view) => slowSeen.push(view.value));
+
+      // Fast subscriber unsubscribes itself inside its listener callback on first value
+      const fastSeen: (number | boolean | null)[] = [];
+      let stopFast: () => void = () => undefined;
+      stopFast = v.subscribe(
+        (view) => {
+          fastSeen.push(view.value);
+          stopFast();
+        },
+        { periodMs: 20 },
+      );
+      await Promise.resolve();
+      expect(watchMessages(rig.socket)).toEqual([
+        {
+          type: 'watch',
+          id: 1,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 20,
+        },
+      ]);
+
+      // batchMs: 0 delivers values on microtask without advancing timers; fast unsubscribes in callback -> restores 100 ms!
+      rig.socket.send({
+        type: 'values',
+        id: 1,
+        run_id: '1',
+        sim_ms: 20,
+        paused: false,
+        peers: { Engine: { sample_ms: 20, values: { 'engine.offset': 7 } } },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(fastSeen).toEqual([7]);
+      expect(slowSeen).toEqual([7]);
+      expect(watchMessages(rig.socket).slice(1)).toEqual([
+        { type: 'unwatch', id: 1 },
+        {
+          type: 'watch',
+          id: 2,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 100,
+        },
+      ]);
+
+      // Re-add a 20 ms subscriber, then test Run switch (1 -> 2) and WS reconnect: active shortest period (20 ms) persists!
+      const stopFast2 = v.subscribe(() => undefined, { periodMs: 20 });
+      await Promise.resolve();
+      expect(watchMessages(rig.socket).at(-1)).toMatchObject({ type: 'watch', period_ms: 20 });
+
+      // Run switch to run 2: new run's values arrive and watch stays at 20 ms
+      rig.socket.send({ type: 'session', session: summary({}, '2') });
+      rig.socket.send({
+        type: 'variables',
+        run_id: '2',
+        variables: varHello('2').session.variables,
+      });
+      rig.socket.send({
+        type: 'values',
+        id: 3,
+        run_id: '2',
+        sim_ms: 10,
+        paused: false,
+        peers: { Engine: { sample_ms: 10, values: { 'engine.offset': 99 } } },
+      });
+      await Promise.resolve();
+      expect(slowSeen.at(-1)).toBe(99);
+
+      // WebSocket drops and reconnects: afterGreeting re-subscribes at the active shortest period (20 ms)!
+      rig.socket.fail();
+      await vi.advanceTimersByTimeAsync(500);
+      const reconnected = rig.sockets.last();
+      expect(reconnected).not.toBe(rig.socket);
+      reconnected.open();
+      expect(watchMessages(reconnected)).toEqual([
+        {
+          type: 'watch',
+          id: 3,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 20,
+        },
+      ]);
+
+      // Unsubscribing fast post-reconnect restores 100 ms on the reconnected socket!
+      stopFast2();
+      await Promise.resolve();
+      expect(watchMessages(reconnected).slice(1)).toEqual([
+        { type: 'unwatch', id: 3 },
+        {
+          type: 'watch',
+          id: 4,
+          variables: [{ peer: 'Engine', name: 'engine.offset' }],
+          period_ms: 100,
+        },
+      ]);
+
+      stopSlow();
+      await Promise.resolve();
+      expect(watchMessages(reconnected).slice(3)).toEqual([{ type: 'unwatch', id: 4 }]);
+    });
+  });
 });

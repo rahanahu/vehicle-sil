@@ -324,3 +324,22 @@ TEST_CASE(a_scenario_cannot_use_an_ecu_that_offers_another_version_of_the_contro
     door_only.participants[0].ecu->description.control = ControlOffer{"silkit", 1, 1};
     static_cast<void>(read(door_only, kHead + "  - set: { Door.level: 2 }\n"));
 }
+
+TEST_CASE(rhs_variable_comparison_registers_participant_as_read_for_every_step_sampling)
+{
+    const Checked check = checked(kTakes, kTakes);
+    // RHS `{ variable: Door.speed }` registers Door as read across expect, wait_until, and expect beside ramp.
+    check_text(readers(read(check, kHead + "  - expect: { Body.speed: { variable: Door.speed } }\n")), "Body,Door");
+    check_text(readers(read(check, kHead + "  - wait_until: { Body.speed: { near: { variable: Door.speed }, tolerance: 1 } }\n    timeout_ms: 10\n")),
+               "Body,Door");
+    check_text(readers(read(check, kHead + "  - ramp: { Body.level: { from: 0, to: 5, over_ms: 50 } }\n"
+                                           "    expect: { Body.speed: { le: { variable: Door.speed } } }\n")),
+               "Body,Door");
+    CHECK(flags(sample_every_step_participants(check, read(check, kHead + "  - expect: { Body.speed: { variable: Door.speed } }\n"))) == "11");
+
+    // If RHS participant lacks sample-every-step, check warns for that RHS participant!
+    const Checked oldDoor = checked(kTakes, kOld);
+    const std::vector<Finding> warned =
+        scenario_samples_findings(oldDoor, read(oldDoor, kHead + "  - expect: { Body.speed: { variable: Door.speed } }\n"), "0.2.0");
+    CHECK(warned.size() == 1 && warned[0].code == "scenario-samples-unsupported" && warned[0].participant == "Door");
+}

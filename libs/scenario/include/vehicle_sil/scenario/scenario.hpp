@@ -75,6 +75,8 @@ struct ScenarioComparison
     Compare op = Compare::Eq;
     control::Value value{};
     double tolerance = 0.0; ///< Near only
+    /// Index in Scenario::variables when comparing against another variable at runtime (`{ variable: ... }`).
+    std::optional<std::size_t> rhs_variable{};
 };
 
 /// All comparisons of one variable.
@@ -504,7 +506,15 @@ struct ScenarioInspection
 /// A value as the messages show it: true, 42, 1.5, or an enum's item ("on (1)").
 [[nodiscard]] std::string value_text(const control::Value& value, const ScenarioVariable* variable = nullptr);
 
-/// Whether `value` meets `comparison` (numbers are compared as numbers, whatever their types).
+/// Whether two enum item lists have the exact same set of (name, value) pairs regardless of order.
+[[nodiscard]] bool enum_items_match(const std::vector<control::EnumItem>& a, const std::vector<control::EnumItem>& b);
+
+/// Whether `lhs` meets `op` against `rhs` (with `tolerance` for Near). Integer and real numbers are
+/// compared without precision loss across 2^53; non-finite floating-point values compare false for
+/// every operator including Ne.
+[[nodiscard]] bool holds(Compare op, const control::Value& lhs, const control::Value& rhs, double tolerance = 0.0);
+
+/// Whether `value` meets constant `comparison` (numbers are compared as numbers, whatever their types).
 [[nodiscard]] bool holds(const ScenarioComparison& comparison, const control::Value& value);
 
 } // namespace vehicle_sil::scenario

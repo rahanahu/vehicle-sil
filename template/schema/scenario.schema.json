@@ -692,22 +692,44 @@
       "propertyNames": { "$ref": "#/definitions/variable_name" },
       "additionalProperties": { "$ref": "#/definitions/condition" }
     },
-    "condition": {
-      "description": "What the variable must be: a value (equal to it), or comparisons, all of which must hold ({ ge: 1700, le: 1900 }).",
+    "variable_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variable"],
+      "description": "Another variable whose runtime sample is compared with (<participant>.<variable>).",
+      "properties": {
+        "variable": {
+          "type": "string",
+          "allOf": [{ "$ref": "#/definitions/variable_name" }],
+          "not": { "pattern": "\\$\\{" },
+          "description": "The right-hand variable (<participant>.<variable>). Parameters (${...}) are not allowed here."
+        }
+      }
+    },
+    "comparison_target": {
+      "description": "A literal/parameter value or another variable ({ variable: <participant>.<variable> }).",
       "anyOf": [
         { "$ref": "#/definitions/value" },
+        { "$ref": "#/definitions/variable_reference" }
+      ]
+    },
+    "condition": {
+      "description": "What the variable must be: a value (equal to it), another variable ({ variable: <participant>.<variable> }), or comparisons, all of which must hold ({ ge: 1700, le: 1900 }).",
+      "anyOf": [
+        { "$ref": "#/definitions/value" },
+        { "$ref": "#/definitions/variable_reference" },
         {
           "type": "object",
           "minProperties": 1,
           "additionalProperties": false,
           "properties": {
-            "eq": { "$ref": "#/definitions/value", "description": "Equal to." },
-            "ne": { "$ref": "#/definitions/value", "description": "Not equal to." },
-            "ge": { "$ref": "#/definitions/value", "description": "Greater than or equal to (numbers only)." },
-            "le": { "$ref": "#/definitions/value", "description": "Less than or equal to (numbers only)." },
-            "gt": { "$ref": "#/definitions/value", "description": "Greater than (numbers only)." },
-            "lt": { "$ref": "#/definitions/value", "description": "Less than (numbers only)." },
-            "near": { "$ref": "#/definitions/value", "description": "At most tolerance away from this value (numbers only). Needs tolerance." },
+            "eq": { "$ref": "#/definitions/comparison_target", "description": "Equal to." },
+            "ne": { "$ref": "#/definitions/comparison_target", "description": "Not equal to." },
+            "ge": { "$ref": "#/definitions/comparison_target", "description": "Greater than or equal to (numbers only)." },
+            "le": { "$ref": "#/definitions/comparison_target", "description": "Less than or equal to (numbers only)." },
+            "gt": { "$ref": "#/definitions/comparison_target", "description": "Greater than (numbers only)." },
+            "lt": { "$ref": "#/definitions/comparison_target", "description": "Less than (numbers only)." },
+            "near": { "$ref": "#/definitions/comparison_target", "description": "At most tolerance away from this value or variable (numbers only). Needs tolerance." },
             "tolerance": {
               "description": "How far from near the value may be. Goes with near.",
               "anyOf": [

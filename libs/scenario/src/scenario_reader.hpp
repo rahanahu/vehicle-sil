@@ -46,6 +46,8 @@ inline const std::vector<std::string> kParameterTypes = {"integer", "number", "b
 inline constexpr std::size_t kMaxTemplateDepth = 16;
 inline constexpr std::size_t kMaxExpandedSteps = 10'000;
 inline const std::vector<std::string> kCompareKeys = {"eq", "ne", "ge", "le", "gt", "lt", "near", "tolerance"};
+inline const std::vector<std::string> kConditionKeys = {"eq", "ne", "ge", "le", "gt", "lt", "near", "tolerance", "variable"};
+inline const std::vector<std::string> kVariableRefKeys = {"variable"};
 inline const std::vector<std::string> kRampKeys = {"to", "over_ms", "from"};
 // A wave: the shapes (one per variable) and the keys beside the shape.
 inline const std::vector<std::string> kWaveShapes = {"sine", "triangle", "sawtooth", "square", "pulse",
@@ -584,9 +586,18 @@ private:
 
     void read_conditions(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::string& action);
 
+    bool read_rhs_variable(ryml::id_type var_node, std::size_t lhs_variable, const std::string& what,
+                           const std::string& prefix, StepReadState& state, std::optional<std::size_t>& rhs_out,
+                           std::string& rhs_text_out);
+
+    bool read_variable_ref_map(ryml::id_type map_node, std::size_t lhs_variable, Compare op, const std::string& lhs_name,
+                               const std::string& key, StepReadState& state, std::optional<std::size_t>& rhs_out,
+                               std::string& rhs_text_out);
+
     static std::optional<Compare> compare_of(const std::string& key);
 
-    static std::string condition_text(const ScenarioVariable& var, const ScenarioCondition& condition);
+    static std::string condition_text(const ScenarioVariable& var, const ScenarioCondition& condition,
+                                      const std::vector<std::string>& rhs_texts);
 
     std::string step_text(const ScenarioStep& step, const StepReadState& state) const;
 
@@ -652,6 +663,8 @@ private:
     struct StepReadState
     {
         std::vector<std::string> absent{};
+        std::set<std::string> condition_bare_absent{};
+        std::set<std::string> condition_formatted_absent{};
         bool beside = false;
         bool unchecked = false;
         std::size_t motion_absent = 0;
