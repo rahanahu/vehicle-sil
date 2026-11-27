@@ -1,6 +1,12 @@
 import { OperationName } from '@vehicle-sil/gui-client';
 import { reasonText } from '../widgets/control-labels';
-import { failureLine, simulationLabel } from './labels';
+import { failureLine, simulationLabel, stepStateLabel } from './labels';
+
+describe('stepStateLabel', () => {
+  it('translates skipped scenario steps', () => {
+    expect(stepStateLabel('skipped')).toBe('飛ばした');
+  });
+});
 
 describe('simulationLabel', () => {
   it('says the scenario ended only when it was over (passed or failed)', () => {

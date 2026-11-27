@@ -106,4 +106,97 @@ describe('ScenarioPanel', () => {
       expect(handover()).toBeNull();
     }
   });
+
+  it('renders template file:line provenance, step name, call_stack, case, and skipped state', async () => {
+    fixture.componentInstance.scenario.set(
+      scenario(null, {
+        file: 'scenarios/cases.yaml',
+        name: 'load cases',
+        case: '定格',
+        status: 'failed',
+        steps: [
+          {
+            index: 1,
+            file: 'scenarios/cases.yaml',
+            line: 12,
+            kind: 'set',
+            name: null,
+            text: 'set Engine.engine.throttle = 50',
+            status: 'passed',
+            start_ms: 0,
+            at_ms: 0,
+            end_ms: 0,
+            code: null,
+            message: null,
+            call_stack: null,
+          },
+          {
+            index: 2,
+            file: 'scenarios/templates/check.yaml',
+            line: 22,
+            kind: 'expect',
+            name: '定格: speed check',
+            text: 'expect Engine.engine.speed ge 1700',
+            status: 'failed',
+            start_ms: 50,
+            at_ms: 250,
+            end_ms: 250,
+            code: 'scenario-failed',
+            message: 'too slow',
+            call_stack: [
+              {
+                file: 'scenarios/cases.yaml',
+                line: 31,
+                name: 'run load check',
+                params: { throttle: 50, label: '定格' },
+              },
+            ],
+          },
+          {
+            index: 3,
+            file: null,
+            line: null,
+            kind: 'expect',
+            name: null,
+            text: 'expect Engine.engine.turbo le 0.1',
+            status: 'skipped',
+            start_ms: null,
+            at_ms: null,
+            end_ms: null,
+            code: 'scenario-skipped',
+            message: 'absent variable',
+            call_stack: null,
+          },
+        ],
+      }),
+    );
+    await fixture.whenStable();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="scenario-case"]')?.textContent).toContain('定格');
+
+    const rows = root.querySelectorAll<HTMLTableRowElement>('[data-testid="scenario-step"]');
+    expect(rows.length).toBe(3);
+
+    // Same file as root scenario -> line number only, no step name or call stack
+    expect(rows[0]?.querySelector('.line')?.textContent?.trim()).toBe('12');
+    expect(rows[0]?.querySelector('[data-testid="scenario-step-name"]')).toBeNull();
+    expect(rows[0]?.querySelector('[data-testid="scenario-step-call-stack"]')).toBeNull();
+
+    // Template file -> file:line, step name, and call_stack summary
+    expect(rows[1]?.querySelector('.line')?.textContent?.trim()).toBe(
+      'scenarios/templates/check.yaml:22',
+    );
+    expect(rows[1]?.querySelector('[data-testid="scenario-step-name"]')?.textContent).toBe(
+      '定格: speed check',
+    );
+    const stackEl = rows[1]?.querySelector<HTMLElement>('[data-testid="scenario-step-call-stack"]');
+    expect(stackEl?.textContent).toContain('scenarios/cases.yaml:31');
+    expect(stackEl?.textContent).toContain('run load check');
+    expect(stackEl?.textContent).toContain('throttle=50');
+
+    // Null line -> em-dash, skipped state -> localized label
+    expect(rows[2]?.querySelector('.line')?.textContent?.trim()).toBe('—');
+    expect(rows[2]?.querySelector('.state')?.textContent).toContain('飛ばした');
+  });
 });

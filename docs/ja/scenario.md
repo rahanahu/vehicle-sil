@@ -14,6 +14,7 @@
 | `ramp` と `wave` の横の `expect` | [動かしている間ずっと確認する](#動かしている間ずっと確認する) |
 | 1 つのシナリオを複数の機種、要求、設定ファイルで使う | [シナリオを使い回す](#シナリオを使い回す) |
 | パラメーター、機種、手順のスキップ | [機種とパラメーター](#機種とパラメーター) |
+| 手書き・テンプレート＋ケース・GUI 記録の 3 つの書き方の比較 | [シナリオの 3 つの書き方を比べる](#シナリオの-3-つの書き方を比べる) |
 | 合否の決まり方、実行したときの指摘のコード | [結果](#結果) |
 | 照合の指摘のコード | [照合（`check --scenario`、`run --scenario` の最初）](#照合check---scenariorun---scenario-の最初) |
 | 人向けの出力、JSON のキー | [出力](#出力) |
@@ -652,6 +653,7 @@ U は、E が ECU のステップの上なら E、間なら次のステップで
 | 実装ごとにネットワークの名前を変える | 設定ファイルの `network_names`（シナリオにネットワークの名前は書かない） | [simulation-config.md](simulation-config.md#ネットワークの名前を合わせるnetwork_names) の「ネットワークの名前を合わせる（`network_names`）」 |
 | シナリオと選択（機種、パラメーター、participant、速さ）を 1 つのファイルで共有する | 要求ファイル: `check` と `run` の `--request`（`test` は停止時刻と遅延の許容値だけを受けます）。ファイルに設定ファイルの名前は書きません。シナリオの相対パスは、設定ファイルのあるディレクトリから読みます | [simulation-run.md](simulation-run.md#要求ファイル--request) の「要求ファイル（`--request`）」、[examples/ecu_main/requests/throttle_step.json](../../examples/ecu_main/requests/throttle_step.json) |
 | 複数のシナリオで共通の手順を使い回す | `template: <パス>` とテンプレートファイル（`vehicle_sil_scenario_template: 1`） | [手順テンプレート](#手順テンプレートtemplatevehicle_sil_scenario_template)、[examples/ecu_main/scenarios/templates/throttle_check.yaml](../../examples/ecu_main/scenarios/templates/throttle_check.yaml) |
+| 直接手書き・テンプレート＋名前付きケース・GUI 記録を比べる | 同じ `vehicle_sil_scenario: 1` 手順構文と `<participant>.<変数>` 対 `${name}` | [シナリオの 3 つの書き方を比べる](#シナリオの-3-つの書き方を比べる)、[gui.md](gui.md#操作をシナリオとして保存する) |
 | 同じシナリオを、別の設定ファイルで実行する | その設定ファイルを引数に渡します。ない participant があれば、エラー `scenario-variable` です | [照合（`check --scenario`、`run --scenario` の最初）](#照合check---scenariorun---scenario-の最初) |
 
 今のシナリオにできないこと:
@@ -787,6 +789,71 @@ steps:
 テンプレートは**レキシカルに隔離**されます。テンプレート内の手順が参照できるのは、そのテンプレート自身の `parameters` に宣言されたパラメーターだけです（`TemplateDefault < TemplateCall`）。シナリオ、設定ファイル、variant、`--param` の値は暗黙には入らず、`- template:` の `params:` で明示的に渡します（`"${outer}"` と書くと外側の引用符を剥がして値・型情報を引き継ぎます）。
 
 `template:` と `points: { file: ... }` の相対パスは、それを書いたテンプレートのディレクトリを起点に解決され、正規化後のパスがルートシナリオのディレクトリ内に留まる限り `..` を使えます。入れ子呼び出しでは循環検出（`scenario-template-cycle`）、最大深さ 16（`scenario-template-depth`）、最大展開手順数 10,000（`scenario-template-steps`）を強制します。テンプレート内の照合指摘や失敗手順には、テンプレートの `file:line` と `called from:` の `call_stack` が付きます。
+
+### シナリオの 3 つの書き方を比べる
+
+直接手書きするシナリオ、テンプレート＋名前付きケースを使うシナリオ、GUI で操作を記録したシナリオは、すべてまったく同じ `vehicle_sil_scenario: 1` の形式、時刻ルール、手順構文（`set`、`ramp`、`wave`、`dither`、`wait_until`、`expect`、`at_ms`、`after_ms`）を使います。テンプレート専用や GUI 専用の別方言はありません。
+
+| 書き方 | 例 | 手順の構文 | 実行前条件と ECU 信号 | 主な用途 |
+|---|---|---|---|---|
+| 直接手書き | [examples/ecu_main/scenarios/throttle_step.yaml](../../examples/ecu_main/scenarios/throttle_step.yaml) | 標準の `vehicle_sil_scenario: 1` 手順 | 即値または `${name}`、`<participant>.<変数>` の信号 | 単体の試験をそのまま書く |
+| テンプレート＋名前付きケース | [examples/ecu_main/scenarios/throttle_cases.yaml](../../examples/ecu_main/scenarios/throttle_cases.yaml)、[templates/throttle_check.yaml](../../examples/ecu_main/scenarios/templates/throttle_check.yaml)、[throttle_template.yaml](../../examples/ecu_main/scenarios/throttle_template.yaml) | `vehicle_sil_scenario_template: 1` 内も同じ手順＋ `- template:` 呼び出し | `cases.<名前>.params` と `${name}` 引数、`<participant>.<変数>` の信号 | 共通手順を名前付き条件（`--case`）で回す |
+| GUI 記録 | `GET api/recording` で保存（[gui.md](gui.md#操作をシナリオとして保存する)） | 同じ `vehicle_sil_scenario: 1` の `at_ms` ＋ `set:` | `<participant>.<変数>` のキー、列挙値名の引用符付け | 手動操作を保存し、`expect`/`wait_until` 追加やテンプレート化へ繋ぐ |
+
+3 つの書き方を並べた具体例です。
+
+1. **直接手書き**（即値をそのまま書く単一シナリオ）:
+
+```yaml
+vehicle_sil_scenario: 1
+name: throttle step
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: 500
+  - expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }
+    within_ms: 200
+```
+
+2. **テンプレート＋名前付きケース**（共有の `templates/throttle_check.yaml` もまったく同じ `set`・`wait_until`・`expect` 構文で書き、UTF-8 の `cases:` から呼び出す）:
+
+```yaml
+vehicle_sil_scenario: 1
+name: throttle load cases
+cases:
+  無負荷: { params: { target_throttle: 0, min_speed: 750, wait_timeout_ms: 300 } }
+  定格: { params: { target_throttle: 50, min_speed: 1700, wait_timeout_ms: 500 } }
+  上限直前: { params: { target_throttle: 95, min_speed: 2600, wait_timeout_ms: 650 } }
+steps:
+  - name: "run load check"
+    template: templates/throttle_check.yaml
+    params:
+      throttle: "${target_throttle}"
+      min_speed: "${min_speed}"
+      timeout_ms: "${wait_timeout_ms}"
+```
+
+3. **GUI 記録**（GUI サーバーが同じ `vehicle_sil_scenario: 1` ヘッダーと `<participant>.<変数>` の `set` 手順として出力する）:
+
+```yaml
+vehicle_sil_scenario: 1
+name: "recorded from simulation.yaml (run 3)"
+end_ms: 1000
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 40.0 }
+  - at_ms: 350
+    set: { Engine.engine.throttle: 12.5 }
+```
+
+- **見た目と意味の区別**: 実行前のパラメーターは常に `${name}` と書きます（`.` は含まず、実行前に `params`、`cases.<名前>.params`、`--param`、またはテンプレートの `parameters` から解決します）。一方、実行中に変わる ECU 信号は常に `<participant>.<変数>` と書きます（`.` で participant と変数名を区切り、`${...}` では囲みません）。
+- **互換性と移行**: `name:`、`template:`、`cases:` は追加機能であるため、既存の `vehicle_sil_scenario: 1` ファイルの時刻や合否の意味は変わりません。GUI で保存したファイルにもそのまま `expect`/`wait_until` を書き足せ、繰り返す手順を `vehicle_sil_scenario_template: 1` と `cases:` へ切り出すときも手順の構文を変える必要はありません。
+- **黙って別解釈しないための保護**:
+  - `vehicle_sil_scenario_template: 1` のファイルを直接 `--scenario` に渡すと、空または部分的なシナリオとして実行せず `not-a-scenario` でエラーになります。
+  - `cases:` を持つシナリオで `--case <名前>` を付けずに `check` や `run` を呼ぶと、既定ケースを黙って選ばず利用可能なケース一覧を出して終了コード `4`（`usage`）で止まります（`test --scenarios` は全 `(variant, scenario, case)` の組合せを展開し、`--case` で絞り込めます）。
+  - 未知のキー（`unknown-key`）、`type: string` テンプレート引数での無引用の数値・真偽値（`scenario-param`）、レキシカル隔離されたテンプレート内での未宣言パラメーター参照（`scenario-param`）、未使用の `--param` 名（終了コード `4`）はすべて実行前に拒否します。
+- **追跡情報（provenance）**: 手順の `name:`、テンプレートの `file:line`、`called from:` の `call_stack` フレームは、`check`、`run`、`run --json`、`test`（`failure_reason()` の `file:line` と `run_alone()` の `--case`）、`--timeline`、および GUI の「シナリオ」カードまで一貫して保持・表示されます。
 
 ### ない変数を使う手順のスキップ
 

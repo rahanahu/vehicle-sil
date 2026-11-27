@@ -591,3 +591,94 @@ def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
         assert C.validate_launcher_event(bad_state) is not None
         with pytest.raises(ValidationError):
             C.LauncherStateSummary.model_validate(bad_state)
+
+
+def test_scenario_provenance_and_case_contracts() -> None:
+    # 1. ScenarioCallFrame & ScenarioStepSummary with provenance fields and without them
+    frame = C.ScenarioCallFrame.model_validate({
+        "file": "scenarios/cases.yaml",
+        "line": 31,
+        "name": "run check",
+        "params": {"throttle": 50, "ok": True, "ratio": 0.5, "label": "定格"},
+    })
+    assert frame.line == 31 and frame.params["label"] == "定格"
+    for bad_frame in (
+        {"line": -1},
+        {"line": True},
+        {"params": {"x": None}},
+        {"params": {"x": [1]}},
+    ):
+        with pytest.raises(ValidationError):
+            C.ScenarioCallFrame.model_validate(bad_frame)
+
+    step_with = C.ScenarioStepSummary.model_validate({
+        "index": 1,
+        "status": "skipped",
+        "file": "scenarios/templates/check.yaml",
+        "line": 22,
+        "name": "定格: apply",
+        "call_stack": [frame.model_dump()],
+    })
+    assert step_with.file == "scenarios/templates/check.yaml"
+    assert step_with.name == "定格: apply"
+    assert step_with.call_stack is not None and len(step_with.call_stack) == 1
+
+    step_legacy = C.ScenarioStepSummary.model_validate({"index": 1, "status": "passed"})
+    assert step_legacy.file is None and step_legacy.name is None and step_legacy.call_stack is None
+
+    # 2. SessionScenarioSummary with case present, None, or omitted
+    base_sc = {
+        "file": "scenarios/cases.yaml",
+        "name": "load cases",
+        "status": "passed",
+        "step_count": 1,
+        "over_at_ms": 100,
+        "steps": [step_with.model_dump()],
+        "steps_omitted": 0,
+        "timeline_url": None,
+        "handed_over": False,
+    }
+    assert C.SessionScenarioSummary.model_validate(base_sc).case is None
+    assert C.SessionScenarioSummary.model_validate({**base_sc, "case": "定格"}).case == "定格"
+
+    # 3. CheckObject with CheckScenario (case, cases, params, only, skipped_steps, unchecked_expects, end_ms)
+    chk = C.CheckObject.model_validate({
+        "result": "passed",
+        "participants": [],
+        "findings": [],
+        "scenario": {
+            "file": "scenarios/cases.yaml",
+            "name": "load cases",
+            "case": "定格",
+            "cases": ["無負荷", "定格", "上限直前"],
+            "steps": 3,
+            "only": ["medium"],
+            "params": [{"name": "target_throttle", "value": 50, "from": "case"}],
+            "skipped_steps": 1,
+            "unchecked_expects": 1,
+            "end_ms": 1000,
+        },
+    })
+    assert chk.scenario is not None
+    assert chk.scenario.case == "定格"
+    assert chk.scenario.cases == ["無負荷", "定格", "上限直前"]
+    assert chk.scenario.params is not None and chk.scenario.params[0].from_ == "case"
+
+    # 4. Session.summary() + Session.message() validation with template call_stack & case
+    sess = Session("p1", "simulation.yaml", [], None, False, scenario="scenarios/cases.yaml")
+    sess.feed_event({
+        "event": "check", "seq": 1, "t_ms": 1,
+        "check": {"result": "passed", "participants": [], "scenario": {
+            "file": "scenarios/cases.yaml", "name": "load cases", "case": "無負荷", "steps": 1,
+        }},
+    }, 150)
+    sess.feed_event({
+        "event": "scenario_step", "seq": 2, "t_ms": 2,
+        "index": 1, "file": "scenarios/templates/check.yaml", "line": 22, "kind": "set",
+        "name": "無負荷: apply", "text": "set Engine.engine.throttle = 0", "status": "passed",
+        "start_ms": 0, "at_ms": 0, "end_ms": 0, "code": None, "message": None,
+        "call_stack": [{"file": "scenarios/cases.yaml", "line": 31, "name": "run check",
+                        "params": {"throttle": 0}}],
+    }, 280)
+    C.SessionSummary.model_validate(sess.summary(variables=True))
+    C.WS_SERVER_MESSAGE_ADAPTER.validate_python(sess.message())

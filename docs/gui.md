@@ -463,11 +463,11 @@ Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU vari
 
 | Item | Details |
 |---|---|
-| Location | The list shows the `.yaml` and `.yml` files in `scenarios` next to the configuration file (for `simulation.yaml`, `scenarios/` in the same directory). |
-| Check | When you select a scenario, the check also covers it (`check --scenario`). Scenario errors appear as findings with the scenario file and line. |
+| Location | The list shows the `.yaml` and `.yml` files directly inside `scenarios` next to the configuration file (for `simulation.yaml`, `scenarios/` in the same directory). Subdirectories such as `scenarios/templates/` are excluded so reusable template files do not clutter the scenario dropdown. |
+| Check | When you select a scenario, the check also covers it (`check --scenario`). Scenario errors appear as findings with the source file and line (including template `file:line` and call stack details). Named cases (`--case`) are CLI-only: selecting a scenario that defines `cases:` in the GUI surfaces the launcher's `check-failed` / `usage` error listing the available case names instead of picking a default case silently (run multi-case scenarios from the CLI with `--case <name>` or `vehicle_sil_launch test`). |
 | After scenario | Choose **Stop and end the run** (default: stops the simulation when the scenario finishes) or, when the launcher supports `scenario-handover`, **Pause and hand over to manual control** (pauses at the scenario's end virtual time on the same run without restarting ECUs). Selecting handover disables and clears **Stop at (virtual ms)**. |
 | Run | With **Stop and end the run**, the launcher runs the scenario from time 0 to its end, then stops the simulation. With **Pause and hand over to manual control**, if the scenario passes, the run pauses at the end virtual time (even at **Fastest** speed) until you **Step** or **Resume**. |
-| Result | When the run ends, the **Scenario** card shows the overall result and a table of the scenario steps (line, step, state, the virtual time at which the result was decided, the reason for a failure), and **How it ended** in the **Result** card is **The scenario ended**. |
+| Result | When the run ends, the **Scenario** card shows the overall result and a table of the scenario steps (`<file>:<line>` when a step comes from another file such as a template, optional step `name`, step text and template `call_stack` summary, state including `skipped`, the virtual time at which the result was decided, and the reason for a failure), and **How it ended** in the **Result** card is **The scenario ended**. |
 | Variables | While a scenario runs, variables cannot be written (so that the scenario result does not change; the server also rejects writes with `scenario-running`). After a passed handover, normal writing and time controls (**Step**, **Resume**, **Speed**) unlock on the same run. |
 | Timeline | After the run, the **Timeline** link of the **Scenario** card opens the run's timeline as a chart (see "[Timeline of a scenario run](#timeline-of-a-scenario-run)"). |
 
@@ -527,6 +527,7 @@ steps:
 - Put the saved file in `scenarios/`, and it passes the check as is and can be run from **Scenario** (ECUs have different step times, so the same writes may become separate steps per ECU).
 - Add checking steps (`expect`, `wait_until`) in an editor, or run with **Pause and hand over to manual control** to continue manually on the same run after replay finishes.
 - Variables of a participant whose name contains `.` cannot be addressed in a scenario (everything up to the first `.` is the participant name), so they are left out. The card shows how many were left out, and the comments at the top of the file say why.
+- The recorded YAML uses the exact same `vehicle_sil_scenario: 1` step syntax and `<participant>.<variable>` signal notation as hand-written and template/case scenarios (see "[Comparing the 3 ways to write a scenario](scenario.md#comparing-the-3-ways-to-write-a-scenario)"): you can add `expect`/`wait_until` steps or extract steps into a `vehicle_sil_scenario_template: 1` file and `cases:` without learning a different dialect.
 - The server API is `GET api/recording` (returns `run_id`, `end_ms`, and the recorded scenario YAML; see "Recording actions (`api/recording`)" in [gui/protocol/README.md](../gui/protocol/README.md#recording-actions-apirecording)); in the library, `client.recording()`.
 
 ## ECU variables

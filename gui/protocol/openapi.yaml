@@ -1276,6 +1276,11 @@ components:
           - type: string
           default: null
           title: Commands
+        scenario:
+          anyOf:
+          - $ref: '#/components/schemas/CheckScenario'
+          - type: 'null'
+          default: null
       title: CheckObject
       type: object
     CheckParticipant:
@@ -1385,6 +1390,103 @@ components:
       - exit_code
       - check
       title: CheckResponse
+      type: object
+    CheckScenario:
+      additionalProperties: true
+      properties:
+        file:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: File
+        name:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: Name
+        case:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: Case
+        cases:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          default: null
+          title: Cases
+        steps:
+          anyOf:
+          - minimum: 0
+            type: integer
+          - type: 'null'
+          default: null
+          title: Steps
+        only:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          default: null
+          title: Only
+        params:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/CheckScenarioParam'
+            type: array
+          - type: 'null'
+          default: null
+          title: Params
+        skipped_steps:
+          anyOf:
+          - minimum: 0
+            type: integer
+          - type: 'null'
+          default: null
+          title: Skipped Steps
+        unchecked_expects:
+          anyOf:
+          - minimum: 0
+            type: integer
+          - type: 'null'
+          default: null
+          title: Unchecked Expects
+        end_ms:
+          anyOf:
+          - minimum: 0
+            type: integer
+          - type: 'null'
+          default: null
+          title: End Ms
+      title: CheckScenario
+      type: object
+    CheckScenarioParam:
+      additionalProperties: true
+      properties:
+        name:
+          title: Name
+          type: string
+        value:
+          anyOf:
+          - type: boolean
+          - type: integer
+          - type: number
+          - type: string
+          title: Value
+        from:
+          title: From
+          type: string
+      required:
+      - name
+      - value
+      - from
+      title: CheckScenarioParam
       type: object
     CheckTextRequest:
       additionalProperties: false
@@ -2920,6 +3022,39 @@ components:
       - caution
       title: SaveAllowedItem
       type: object
+    ScenarioCallFrame:
+      additionalProperties: true
+      properties:
+        file:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: File
+        line:
+          anyOf:
+          - minimum: 0
+            type: integer
+          - type: 'null'
+          default: null
+          title: Line
+        name:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: Name
+        params:
+          additionalProperties:
+            anyOf:
+            - type: boolean
+            - type: integer
+            - type: number
+            - type: string
+          title: Params
+          type: object
+      title: ScenarioCallFrame
+      type: object
     ScenarioEntry:
       additionalProperties: false
       properties:
@@ -2951,6 +3086,12 @@ components:
         status:
           title: Status
           type: string
+        file:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: File
         line:
           anyOf:
           - type: integer
@@ -2963,6 +3104,12 @@ components:
           - type: string
           default: null
           title: Kind
+        name:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: Name
         text:
           anyOf:
           - type: 'null'
@@ -3002,6 +3149,14 @@ components:
           - type: string
           default: null
           title: Message
+        call_stack:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ScenarioCallFrame'
+            type: array
+          - type: 'null'
+          default: null
+          title: Call Stack
       required:
       - index
       - status
@@ -3219,6 +3374,12 @@ components:
           - type: 'null'
           - type: string
           title: Name
+        case:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: Case
         status:
           anyOf:
           - type: 'null'

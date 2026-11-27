@@ -720,6 +720,8 @@ export interface SummaryScenario {
   /** The scenario file (relative to root). */
   file: string;
   name: string | null;
+  /** Selected case name, or null when none was selected. */
+  case?: string | null;
   /** Number of steps (from the check result; null until then). */
   step_count: number | null;
   /** Steps received (in index order). After the result, every step (not_run included). */
@@ -743,6 +745,9 @@ const readSummaryScenario = (value: unknown, path: string, u: Unreadable): Summa
   return {
     file: field(f, path, 'file', string),
     name: field(f, path, 'name', soft(nullable(string), null, u)),
+    ...(f['case'] === undefined
+      ? {}
+      : { case: field(f, path, 'case', soft(nullable(string), null, u)) }),
     step_count: field(f, path, 'step_count', soft(nullable(integer), null, u)),
     steps: field(
       f,

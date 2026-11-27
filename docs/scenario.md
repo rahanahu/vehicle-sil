@@ -14,6 +14,7 @@ This is the reference for the scenario file format and for the rules that apply 
 | `expect` beside `ramp` and `wave` | [Checking values during a ramp or wave](#checking-values-during-a-ramp-or-wave) |
 | Using one scenario for several variants, requests or configurations | [Reusing a scenario](#reusing-a-scenario) |
 | Parameters, variants and skipped steps | [Variants and parameters](#variants-and-parameters) |
+| Comparing direct, template + case, and GUI-recorded scenarios | [Comparing the 3 ways to write a scenario](#comparing-the-3-ways-to-write-a-scenario) |
 | How the result is decided, and the finding codes of a run | [Results](#results) |
 | The finding codes of the check | [Check (`check --scenario`, start of `run --scenario`)](#check-check---scenario-start-of-run---scenario) |
 | Human-readable output and JSON keys | [Output](#output) |
@@ -652,6 +653,7 @@ If a variable of the `expect` is absent in the configuration file (`absent: true
 | Use another network name per implementation | `network_names` in the configuration file (the scenario names no network) | "Matching network names (`network_names`)" in [simulation-config.md](simulation-config.md#matching-network-names-network_names) |
 | Share the scenario and the choices (variant, parameters, participants, speed) as a file | A request file: `--request` of `check` and `run` (`test` accepts only the stop time and lateness tolerance in its request). The file does not name the configuration file; a relative scenario path is read from the directory of the configuration file | "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request); [examples/ecu_main/requests/throttle_step.json](../examples/ecu_main/requests/throttle_step.json) |
 | Share a sequence of steps across scenarios | `template: <path>` and a template file (`vehicle_sil_scenario_template: 1`) | [Step templates](#step-templates-template-vehicle_sil_scenario_template); [examples/ecu_main/scenarios/templates/throttle_check.yaml](../examples/ecu_main/scenarios/templates/throttle_check.yaml) |
+| Compare direct hand-written, template + named-case, and GUI-recorded scenarios | Same `vehicle_sil_scenario: 1` step grammar and `<participant>.<variable>` vs `${name}` | [Comparing the 3 ways to write a scenario](#comparing-the-3-ways-to-write-a-scenario); [gui.md](gui.md#save-your-actions-as-a-scenario) |
 | Run the same scenario on another configuration file | Give that file in the arguments. A participant that it lacks is the error `scenario-variable` | [Check (`check --scenario`, start of `run --scenario`)](#check-check---scenario-start-of-run---scenario) |
 
 What a scenario cannot do now:
@@ -787,6 +789,71 @@ Each entry under `parameters` has:
 Templates are **lexically isolated**: steps inside a template only see parameters declared in that template's `parameters` (`TemplateDefault < TemplateCall`). Scenario, configuration, variant, and `--param` values do not leak into templates unless passed explicitly via `params:` on `- template:` (where `"${outer}"` forwards the outer value without adding YAML quotes).
 
 Relative paths in `template:` and `points: { file: ... }` resolve from the declaring template's directory and may use `..` segments as long as the normalized path stays inside the root scenario's directory. Nested calls enforce a cycle check (`scenario-template-cycle`), maximum depth of 16 (`scenario-template-depth`), and maximum of 10,000 expanded steps (`scenario-template-steps`). Findings and failed steps inside templates include their template `file:line` and `called from:` `call_stack` provenance.
+
+### Comparing the 3 ways to write a scenario
+
+Direct hand-written scenarios, template + named-case scenarios, and GUI-recorded scenarios all share the exact same `vehicle_sil_scenario: 1` format, timing rules, and step grammar (`set`, `ramp`, `wave`, `dither`, `wait_until`, `expect`, `at_ms`, `after_ms`). There is no separate template dialect or GUI dialect.
+
+| Approach | Example | Step grammar | Pre-run condition vs. ECU signal | Typical workflow |
+|---|---|---|---|---|
+| Direct hand-written | [examples/ecu_main/scenarios/throttle_step.yaml](../examples/ecu_main/scenarios/throttle_step.yaml) | Standard `vehicle_sil_scenario: 1` steps | Literal values or `${name}`; `<participant>.<variable>` signals | Self-contained single-purpose test |
+| Template + named cases | [examples/ecu_main/scenarios/throttle_cases.yaml](../examples/ecu_main/scenarios/throttle_cases.yaml), [templates/throttle_check.yaml](../examples/ecu_main/scenarios/templates/throttle_check.yaml), [throttle_template.yaml](../examples/ecu_main/scenarios/throttle_template.yaml) | Identical steps inside `vehicle_sil_scenario_template: 1` + `- template:` calls | `cases.<name>.params` + `${name}` args; `<participant>.<variable>` signals | Shared procedures run across named conditions (`--case`) |
+| GUI-recorded | Saved via `GET api/recording` ([gui.md](gui.md#save-your-actions-as-a-scenario)) | Identical `at_ms` + `set:` steps in `vehicle_sil_scenario: 1` | `<participant>.<variable>` keys; quoted enum strings | Capture manual writes, then add `expect`/`wait_until` or extract templates |
+
+Side-by-side examples of all three forms:
+
+1. **Direct hand-written** (single scenario with literal values):
+
+```yaml
+vehicle_sil_scenario: 1
+name: throttle step
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: 500
+  - expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }
+    within_ms: 200
+```
+
+2. **Template + named cases** (shared `templates/throttle_check.yaml` using the exact same `set`, `wait_until`, and `expect` syntax, invoked under UTF-8 `cases:`):
+
+```yaml
+vehicle_sil_scenario: 1
+name: throttle load cases
+cases:
+  無負荷: { params: { target_throttle: 0, min_speed: 750, wait_timeout_ms: 300 } }
+  定格: { params: { target_throttle: 50, min_speed: 1700, wait_timeout_ms: 500 } }
+  上限直前: { params: { target_throttle: 95, min_speed: 2600, wait_timeout_ms: 650 } }
+steps:
+  - name: "run load check"
+    template: templates/throttle_check.yaml
+    params:
+      throttle: "${target_throttle}"
+      min_speed: "${min_speed}"
+      timeout_ms: "${wait_timeout_ms}"
+```
+
+3. **GUI-recorded** (written by the GUI server with the same `vehicle_sil_scenario: 1` header and `<participant>.<variable>` `set` steps):
+
+```yaml
+vehicle_sil_scenario: 1
+name: "recorded from simulation.yaml (run 3)"
+end_ms: 1000
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 40.0 }
+  - at_ms: 350
+    set: { Engine.engine.throttle: 12.5 }
+```
+
+- **Visual and semantic distinction**: Pre-run parameters are always written `${name}` (never containing `.`, resolved before execution from `params`, `cases.<name>.params`, `--param`, or template `parameters`), whereas runtime ECU signals are always `<participant>.<variable>` (containing `.`, never wrapped in `${...}`).
+- **Compatibility and migration**: Existing `vehicle_sil_scenario: 1` files retain identical timing and pass/fail semantics because `name:`, `template:`, and `cases:` are additive. You can add `expect`/`wait_until` steps directly to a GUI-recorded file, or move repeated steps into a `vehicle_sil_scenario_template: 1` file and `cases:`, without changing step syntax.
+- **Silent-misinterpretation guards**:
+  - Passing a `vehicle_sil_scenario_template: 1` file directly to `--scenario` fails with `not-a-scenario` instead of running as an empty or partial scenario.
+  - Calling `check` or `run` on a scenario with `cases:` without `--case <name>` fails with exit code `4` (`usage`) listing available cases rather than silently picking a default case (`test --scenarios` expands all `(variant, scenario, case)` combinations unless filtered by `--case`).
+  - Unknown keys (`unknown-key`), unquoted numeric/boolean values for `type: string` template parameters (`scenario-param`), undeclared parameter names inside lexically isolated templates (`scenario-param`), and unused `--param` names (exit code `4`) are rejected before execution.
+- **Provenance diagnostics**: Step `name:`, template `file:line`, and `called from:` `call_stack` frames are preserved across `check`, `run`, `run --json`, `test` (`file:line` in `failure_reason()` and `--case` in `run_alone()`), `--timeline`, and the GUI **Scenario** card.
 
 ### Skipping steps that use an absent variable
 

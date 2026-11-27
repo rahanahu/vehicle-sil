@@ -563,3 +563,108 @@ def test_real_single_check_describes_once_per_start_and_recovers_after_failed_ch
 
     with gui_server(tmp_path, root=cfg, launcher=Path(LAUNCHER)) as gui:
         run_async(talk, gui)
+
+
+def test_real_template_provenance_multicase_error_and_recording_playback_parity(tmp_path: Path) -> None:
+    """Real launcher + GUI server: scenarios/templates/ excluded, multi-case without --case returns clean 422,
+    template scenario propagates file/name/call_stack, and GUI recording plays back cleanly."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    (configs / "scenarios" / "templates").mkdir(parents=True)
+    (configs / "scenarios" / "templates" / "throttle_check.yaml").write_text(
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  throttle: { type: number }\n"
+        "  label: { type: string, default: check }\n"
+        "steps:\n"
+        "  - name: \"${label}: apply\"\n"
+        "    set: { Engine.engine.throttle: \"${throttle}\" }\n"
+        "  - name: \"${label}: wait\"\n"
+        "    wait_until: { Engine.engine.speed: { ge: 100 } }\n"
+        "    timeout_ms: 500\n",
+        encoding="utf-8",
+    )
+    (configs / "scenarios" / "tpl_run.yaml").write_text(
+        "vehicle_sil_scenario: 1\n"
+        "name: template run\n"
+        "steps:\n"
+        "  - name: outer call\n"
+        "    template: templates/throttle_check.yaml\n"
+        "    params: { throttle: 50, label: mid }\n",
+        encoding="utf-8",
+    )
+    (configs / "scenarios" / "cases_run.yaml").write_text(
+        "vehicle_sil_scenario: 1\n"
+        "cases:\n"
+        "  idle: { params: { target: 0 } }\n"
+        "  load: { params: { target: 50 } }\n"
+        "steps:\n"
+        "  - set: { Engine.engine.throttle: \"${target}\" }\n",
+        encoding="utf-8",
+    )
+
+    async def talk(c: Client) -> None:
+        # 1. scenarios/templates/ is excluded from GET api/scenarios
+        st, listed = await c.get("api/scenarios?file=simulation.yaml")
+        assert st == 200
+        paths = [f["path"] for f in listed["scenarios"]]
+        assert "scenarios/tpl_run.yaml" in paths and "scenarios/cases_run.yaml" in paths
+        assert not any("templates/" in p for p in paths), paths
+
+        # 2. Multi-case without --case returns clean structured error
+        st, chk_case = await c.post("api/check", {"file": "simulation.yaml", "scenario": "scenarios/cases_run.yaml"})
+        assert st == 200 and chk_case["exit_code"] == 4 and chk_case["check"]["result"] == "usage"
+        st, run_case = await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/cases_run.yaml"})
+        assert (st, run_case["error"]["code"]) == (422, "check-failed")
+        assert run_case["error"]["detail"]["result"] == "usage"
+
+        # 3. Template scenario run preserves step file, name, and call_stack in session summary
+        ws = await c.ws()
+        await ws.until(is_synced)
+        st, started = await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/tpl_run.yaml", "speed": "max"})
+        assert st == 200, started
+        await ws.until(is_ended, timeout=30)
+        _, sess = await c.get("api/session")
+        sc = sess["session"]["scenario"]
+        assert sc["status"] == "passed"
+        assert len(sc["steps"]) == 2
+        assert sc["steps"][0]["file"] == "scenarios/templates/throttle_check.yaml"
+        assert sc["steps"][0]["name"] == "mid: apply"
+        assert sc["steps"][0]["call_stack"] == [{
+            "file": "scenarios/tpl_run.yaml",
+            "line": 4,
+            "name": "outer call",
+            "params": {"throttle": 50, "label": "mid"},
+        }]
+
+        # 4. Record -> save -> playback parity on the same server
+        st, started2 = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
+        assert st == 200, started2
+        rid2 = started2["run_id"]
+        await ws.until(
+            lambda m: m["type"] == "variables"
+            and m["variables"]["state"] == "ready"
+            and any(p["name"] == "Engine" and p["connected"] for p in m["variables"]["peers"]),
+            timeout=30,
+        )
+        st, w = await c.post("api/write", {"run_id": rid2, "writes": {"Engine": {"engine.throttle": 40}}})
+        assert st == 200, w
+        await c.post("api/time", {"command": "step", "ms": 20})
+        await ws.until(lambda m: m["type"] == "operation" and m["seq"] == w["operation"] and m["done"], timeout=30)
+        await c.post("api/stop-session", {"run_id": rid2, "instance": started2["instance"], "force": False})
+        await ws.until(is_ended, timeout=30)
+        _, rec = await c.get("api/recording")
+        assert rec["recording"]["available"] is True and rec["recording"]["yaml"]
+        (configs / "scenarios" / "recorded_replay.yaml").write_text(rec["recording"]["yaml"], encoding="utf-8")
+
+        st, chk_rec = await c.post("api/check", {"file": "simulation.yaml", "scenario": "scenarios/recorded_replay.yaml"})
+        assert st == 200 and chk_rec["check"]["result"] == "passed", chk_rec
+        st, started3 = await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/recorded_replay.yaml", "speed": "max"})
+        assert st == 200, started3
+        await ws.until(is_ended, timeout=30)
+        _, sess3 = await c.get("api/session")
+        assert sess3["session"]["scenario"]["status"] == "passed"
+        await ws.close()
+
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        run_async(talk, gui)

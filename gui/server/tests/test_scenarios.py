@@ -505,3 +505,138 @@ def test_after_scenario_validation_and_handover_lifecycle(tmp_path: Path, contro
                 assert neg_sess["session"]["scenario"]["handed_over"] is False
             await ws.close()
         run_async(talk, gui)
+
+
+def test_templates_subdir_is_excluded_and_multicase_returns_clean_error(tmp_path: Path) -> None:
+    """Templates in scenarios/templates/ are excluded from listing/selection, and launcher check errors
+    (such as a multi-case scenario selected without CLI --case or a direct template file) return clean errors."""
+    root = tmp_path / "root"
+    (root / "scenarios" / "templates").mkdir(parents=True)
+    (root / "simulation.yaml").write_text("vehicle_sil_simulation: 2\n", encoding="utf-8")
+    (root / "scenarios" / "templates" / "shared.yaml").write_text(
+        "vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Engine.engine.throttle: 10 }\n", encoding="utf-8")
+    (root / "scenarios" / "direct_template.yaml").write_text(
+        "vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Engine.engine.throttle: 10 }\n", encoding="utf-8")
+    (root / "scenarios" / "cases.yaml").write_text(
+        "vehicle_sil_scenario: 1\ncases:\n  idle: {}\nsteps:\n  - set: { Engine.engine.throttle: 10 }\n",
+        encoding="utf-8")
+
+    # Custom fake launcher simulating real vehicle_sil_launch behavior on direct template and multi-case without --case
+    from vehicle_sil_gui import __version__
+    from vehicle_sil_gui.launcher import REQUIRED_FEATURES
+
+    fake = tmp_path / "fake_launch.py"
+    fake.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        f"FEATURES = {list(REQUIRED_FEATURES)!r}\n"
+        f"VERSION = {__version__!r}\n"
+        "args = sys.argv[1:]\n"
+        "if args[0] == 'version':\n"
+        "    print(json.dumps({'vehicle_sil_launch': 1, 'vehicle_sil': VERSION,\n"
+        "        'formats': {'check': 1, 'run': 2, 'events': 4, 'timeline': 1},\n"
+        "        'features': FEATURES}))\n"
+        "    raise SystemExit(0)\n"
+        "if args[0] == 'check':\n"
+        "    if '--request' in args:\n"
+        "        req = json.loads(Path(args[args.index('--request') + 1]).read_text(encoding='utf-8'))\n"
+        "        sc = req.get('scenario', '')\n"
+        "    elif '--scenario' in args:\n"
+        "        sc = args[args.index('--scenario') + 1]\n"
+        "    else:\n"
+        "        sc = ''\n"
+        "    cfg_dir = Path(args[-1]).parent if '--' in args else Path('.')\n"
+        "    text = (cfg_dir / sc).read_text(encoding='utf-8') if sc else ''\n"
+        "    if 'vehicle_sil_scenario_template' in text:\n"
+        "        print(json.dumps({'vehicle_sil_check': 1, 'file': 'simulation.yaml', 'result': 'failed',\n"
+        "            'errors': 1, 'warnings': 0, 'notes': 0, 'participants': [], 'networks': [],\n"
+        "            'findings': [{'severity': 'error', 'code': 'not-a-scenario', 'file': sc, 'line': 1,\n"
+        "                'participant': None, 'network': None, 'message': 'not a runnable scenario'}],\n"
+        "            'scenario': {'file': sc, 'name': None, 'steps': 0, 'inputs': None, 'lines': None}}))\n"
+        "        raise SystemExit(1)\n"
+        "    if 'cases:' in text:\n"
+        "        print(json.dumps({'vehicle_sil_check': 1, 'file': 'simulation.yaml', 'result': 'usage',\n"
+        "            'errors': 1, 'warnings': 0, 'notes': 0, 'participants': [], 'networks': [],\n"
+        "            'findings': [{'severity': 'error', 'code': 'usage', 'file': None, 'line': None,\n"
+        "                'participant': None, 'network': None,\n"
+        "                'message': 'the scenario defines cases: give --case <name> with one of idle'}]}))\n"
+        "        raise SystemExit(4)\n"
+        "    print(json.dumps({'vehicle_sil_check': 1, 'file': 'simulation.yaml', 'result': 'passed',\n"
+        "        'errors': 0, 'warnings': 0, 'notes': 0, 'participants': [], 'networks': [],\n"
+        "        'findings': [], 'hot_eligibility': {'eligible': False, 'reason': None, 'message': None}}))\n"
+        "    raise SystemExit(0)\n"
+        "if args[0] == 'serve':\n"
+        "    inst = '0123456789abcdef'\n"
+        "    def mk_status(state, run=None, last=None, rev=0):\n"
+        "        ok = {'ok': True, 'reason': None, 'message': None, 'caution': None}\n"
+        "        return {'instance': inst, 'status_rev': rev, 'launcher_state': state,\n"
+        "            'config': args[-1], 'eligibility': {'eligible': False, 'reason': None, 'message': None},\n"
+        "            'launcher_allowed': {'prepare': ok, 'run': ok}, 'active_run_id': run,\n"
+        "            'last_run_id': last, 'run_state': None}\n"
+        "    print(json.dumps({'event': 'hello', 'seq': 0, 't_ms': 0, 'vehicle_sil_events': 4,\n"
+        "        'vehicle_sil': VERSION, 'pid': 1, 'file': args[-1], 'arguments': args, 'launcher': inst}), flush=True)\n"
+        "    print(json.dumps({'event': 'status', 'seq': 1, 't_ms': 0, 'id': None, **mk_status('unprepared')}), flush=True)\n"
+        "    seq = 2\n"
+        "    for raw in sys.stdin:\n"
+        "        cmd = json.loads(raw)\n"
+        "        if cmd.get('command') == 'run':\n"
+        "            req = json.loads(Path(cmd['request']).read_text(encoding='utf-8'))\n"
+        "            sc = req.get('scenario', '')\n"
+        "            text = (Path(args[-1]).parent / sc).read_text(encoding='utf-8')\n"
+        "            code = 'not-a-scenario' if 'vehicle_sil_scenario_template' in text else 'usage'\n"
+        "            res_kind = 'check_failed' if code == 'not-a-scenario' else 'usage'\n"
+        "            chk_res = 'failed' if code == 'not-a-scenario' else 'usage'\n"
+        "            rid = f'{inst}-1'\n"
+        "            print(json.dumps({'event': 'run_start', 'seq': seq, 't_ms': 1, 'run': rid, 'id': cmd.get('id')}), flush=True)\n"
+        "            seq += 1\n"
+        "            chk = {'vehicle_sil_check': 1, 'file': 'simulation.yaml', 'result': chk_res,\n"
+        "                'errors': 1, 'warnings': 0, 'notes': 0, 'participants': [], 'networks': [],\n"
+        "                'findings': [{'severity': 'error', 'code': code, 'message': code}]}\n"
+        "            print(json.dumps({'event': 'check', 'seq': seq, 't_ms': 1, 'run': rid, 'check': chk}), flush=True)\n"
+        "            seq += 1\n"
+        "            print(json.dumps({'event': 'result', 'seq': seq, 't_ms': 1, 'run': rid,\n"
+        "                'launcher_ends': True, 'status': mk_status('ending', None, rid, 2),\n"
+        "                'result': {'vehicle_sil_run': 2, 'result': res_kind, 'ok': False,\n"
+        "                    'message': 'refused', 'errors': 1, 'warnings': 0, 'notes': 0,\n"
+        "                    'simulation': 'not_started', 'participants': [], 'check': chk,\n"
+        "                    'findings': chk['findings']}}), flush=True)\n"
+        "            raise SystemExit(1 if code == 'not-a-scenario' else 4)\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    # Use sys.executable wrapper so shebang isn't needed
+    launcher = tmp_path / "launch_wrap"
+    launcher.write_text(f"#!{os.sys.executable}\nimport runpy\nrunpy.run_path({str(fake)!r}, run_name='__main__')\n",
+                        encoding="utf-8")
+    launcher.chmod(0o755)
+
+    with gui_server(tmp_path, root=root, launcher=launcher) as gui:
+        async def talk(c: Client) -> None:
+            st, body = await c.get("api/scenarios?file=simulation.yaml")
+            assert st == 200
+            assert [f["path"] for f in body["scenarios"]] == ["scenarios/cases.yaml", "scenarios/direct_template.yaml"]
+
+            # Template in scenarios/templates/ cannot be checked or run
+            for ep in ("api/check", "api/run"):
+                st, b = await c.post(ep, {"file": "simulation.yaml", "scenario": "scenarios/templates/shared.yaml"})
+                assert (st, b["error"]["code"]) == (400, "scenario-not-listed"), (ep, b)
+
+            # Multi-case without --case returns structured error cleanly
+            st, chk_case = await c.post("api/check", {"file": "simulation.yaml", "scenario": "scenarios/cases.yaml"})
+            assert st == 200 and chk_case["exit_code"] == 4 and chk_case["check"]["result"] == "usage"
+            st, run_case = await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/cases.yaml"})
+            assert (st, run_case["error"]["code"]) == (422, "check-failed"), run_case
+            assert run_case["error"]["detail"]["result"] == "usage"
+
+            # Direct template in scenarios/ returns not-a-scenario cleanly
+            st, chk_tpl = await c.post("api/check", {"file": "simulation.yaml", "scenario": "scenarios/direct_template.yaml"})
+            assert st == 200 and chk_tpl["exit_code"] == 1
+            assert chk_tpl["check"]["findings"][0]["code"] == "not-a-scenario"
+            st, run_tpl = await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/direct_template.yaml"})
+            assert (st, run_tpl["error"]["code"]) == (422, "check-failed"), run_tpl
+            assert run_tpl["error"]["detail"]["findings"][0]["code"] == "not-a-scenario"
+
+            # Server remains healthy
+            st, sess = await c.get("api/session")
+            assert st == 200 and sess["session"] is None
+        run_async(talk, gui)

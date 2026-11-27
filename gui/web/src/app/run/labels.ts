@@ -143,6 +143,7 @@ const STEP_STATES: Record<string, string> = {
   failed: $localize`失敗`,
   unfinished: $localize`途中で終わった`,
   not_run: $localize`動かなかった`,
+  skipped: $localize`飛ばした`,
 };
 
 /** シナリオの手順の状態。 */

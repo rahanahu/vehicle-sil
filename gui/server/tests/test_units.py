@@ -2157,3 +2157,89 @@ def test_session_ended_sim_ms_and_handover_invariants() -> None:
     assert sc_over.scenario_handed_over is True and sc_over.scenario_over_at_ms is None
     feed_line(sc_over, line("state", 2, rev=2, allowed={}, handed_over=True, scenario_over_at_ms=STEP_MS_MAX))
     assert sc_over.scenario_over_at_ms == STEP_MS_MAX
+
+
+def test_scenario_step_provenance_sanitization_and_case_propagation() -> None:
+    from vehicle_sil_gui import contracts as C
+
+    s = Session("prov-1", "simulation.yaml", [], None, False, scenario="scenarios/cases.yaml",
+                limits=Limits(message_chars=40))
+    feed_line(s, line("run_start", 0, run="r-p1"))
+    feed_line(s, line("check", 1, check={
+        "result": "passed",
+        "participants": [],
+        "scenario": {"file": "scenarios/cases.yaml", "name": "load cases", "case": "定格", "steps": 2},
+    }))
+    assert s.scenario_summary()["case"] == "定格"
+
+    # Live scenario_step with file, name, call_stack, and long strings
+    long_text = "x" * 100
+    feed_line(s, line("scenario_step", 2, index=1, file="scenarios/templates/check.yaml", line=22,
+                      kind="set", name=long_text, text="set Engine.engine.throttle = 50",
+                      status="passed", start_ms=0, at_ms=0, end_ms=0, code=None, message=None,
+                      call_stack=[
+                          {"file": "scenarios/cases.yaml", "line": 31, "name": "run check",
+                           "params": {"throttle": 50, "ok": True, "ratio": 0.5, "label": long_text}},
+                      ]))
+    step1 = s.scenario_summary()["steps"][0]
+    assert step1["file"] == "scenarios/templates/check.yaml"
+    assert "more characters" in step1["name"] and len(step1["name"]) < 80
+    assert len(step1["call_stack"]) == 1
+    assert step1["call_stack"][0]["file"] == "scenarios/cases.yaml"
+    assert step1["call_stack"][0]["line"] == 31
+    assert step1["call_stack"][0]["params"]["throttle"] == 50
+    assert step1["call_stack"][0]["params"]["ok"] is True
+    assert "more characters" in step1["call_stack"][0]["params"]["label"]
+
+    # Malformed values (bool in numeric fields, non-finite floats, lone surrogates, non-dict call_stack items, >64 frames)
+    many_frames = [{"file": f"f{i}.yaml", "line": i, "name": None, "params": {}} for i in range(80)]
+    bad_step_event = {
+        "event": "scenario_step", "seq": 3, "t_ms": 10, "index": 2,
+        "file": 123, "line": True, "kind": "expect", "name": ["bad"],
+        "text": "expect speed", "status": "skipped",
+        "start_ms": True, "at_ms": float("inf"), "end_ms": False,
+        "code": "scenario-skipped", "message": "absent",
+        "call_stack": [
+            "not-a-dict",
+            {"file": 99, "line": True, "name": 5, "params": {
+                "good_bool": True, "good_int": 7, "good_float": 1.25, "good_str": "ok",
+                "bad_inf": float("inf"), "bad_nan": float("nan"), "bad_none": None,
+                "bad_list": [1], "bad_dict": {"a": 1},
+                123: "non-str-key",
+            }},
+            {"file": "survives.yaml", "line": -5, "name": "\ud800", "params": {"s": "\ud800"}},
+            *many_frames,
+        ],
+    }
+    out = s.feed_event(bad_step_event, 512)
+    assert kinds(out) == ["event"]
+    encode(s.summary())
+    C.SessionSummary.model_validate(s.summary())
+    step2 = s.scenario_summary()["steps"][1]
+    assert step2["file"] is None and step2["line"] is None and step2["name"] is None
+    assert step2["start_ms"] is None and step2["at_ms"] is None and step2["end_ms"] is None
+    assert len(step2["call_stack"]) == 63  # 64 sliced minus 1 non-dict entry
+    assert step2["call_stack"][0] == {
+        "file": None, "line": None, "name": None,
+        "params": {"good_bool": True, "good_int": 7, "good_float": 1.25, "good_str": "ok"},
+    }
+    assert step2["call_stack"][1]["line"] is None
+
+    # Non-list call_stack becomes None, and result propagates case + steps cleanly
+    feed_line(s, line("result", 4, result={
+        "result": "passed", "ok": True,
+        "scenario": {
+            "file": "scenarios/cases.yaml", "name": "load cases", "case": "上限直前",
+            "status": "passed", "over_at_ms": 100,
+            "steps": [
+                {"index": 1, "file": "scenarios/templates/check.yaml", "line": 22, "kind": "set",
+                 "name": "apply", "text": "set", "status": "passed", "start_ms": 0, "at_ms": 0, "end_ms": 0,
+                 "code": None, "message": None, "call_stack": "not-a-list"},
+            ],
+        },
+    }))
+    summary_sc = s.scenario_summary()
+    assert summary_sc["case"] == "上限直前"
+    assert summary_sc["steps"][0]["call_stack"] is None
+    encode(s.summary())
+    C.SessionSummary.model_validate(s.summary())

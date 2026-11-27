@@ -8,6 +8,7 @@
 import {
   Fields,
   Open,
+  ProtocolError,
   Reader,
   Unreadable,
   array,
@@ -155,15 +156,46 @@ export type ScenarioStepStatus = Open<
 /** Overall result of a scenario. */
 export type ScenarioStatus = Open<'passed' | 'failed' | 'incomplete' | 'not_run'>;
 
+/** A resolved parameter scalar in a template call-stack frame. */
+export type ScenarioParamValue = string | number | boolean;
+
+/** One frame in a step's template call stack (outermost to immediate caller). */
+export interface ScenarioCallFrame extends FromLauncher {
+  file: string | null;
+  line: number | null;
+  name: string | null;
+  params: Readonly<Record<string, ScenarioParamValue>>;
+}
+
+const readParamScalar: Reader<ScenarioParamValue> = (value, path) => {
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  throw new ProtocolError(path, 'a string, finite number, or boolean');
+};
+
+const readScenarioCallFrame = (value: unknown, path: string, u?: Unreadable): ScenarioCallFrame => {
+  const f = object(value, path);
+  return withRaw(f, {
+    file: field(f, path, 'file', soft(nullable(string), null, u)),
+    line: field(f, path, 'line', soft(nullable(integer), null, u)),
+    name: field(f, path, 'name', soft(nullable(string), null, u)),
+    params: field(f, path, 'params', soft(record(readParamScalar), {}, u)),
+  });
+};
+
 /**
  * One scenario step (the `scenario_step` event, `scenario.steps[]` of the result, `scenario.steps[]` of the summary).
  */
 export interface ScenarioStep extends FromLauncher {
   /** From 1. */
   index: number;
-  /** Line in the scenario file. */
+  /** Source file path when defined in another file (e.g., a template). */
+  file?: string | null;
+  /** Line in the scenario (or source) file. */
   line: number | null;
   kind: Open<'set' | 'ramp' | 'wave' | 'dither' | 'expect' | 'wait_until'>;
+  /** Optional human-readable step name. */
+  name?: string | null;
   /** Text of the step (shown in English, unchanged). */
   text: string;
   status: ScenarioStepStatus;
@@ -176,13 +208,17 @@ export interface ScenarioStep extends FromLauncher {
   /** code and text of the failure finding (shown in English, unchanged). */
   code: string | null;
   message: string | null;
+  /** Caller frames when expanded from templates (outermost first). */
+  call_stack?: ScenarioCallFrame[] | null;
 }
 
 const readScenarioStepFields = (f: Fields, path: string, u?: Unreadable): ScenarioStep =>
   withRaw(f, {
     index: field(f, path, 'index', integer),
+    file: field(f, path, 'file', soft(nullable(string), null, u)),
     line: field(f, path, 'line', soft(nullable(integer), null, u)),
     kind: field(f, path, 'kind', lenient(string, '', u)),
+    name: field(f, path, 'name', soft(nullable(string), null, u)),
     text: field(f, path, 'text', lenient(string, '', u)),
     status: field(f, path, 'status', string),
     start_ms: field(f, path, 'start_ms', soft(nullable(number), null, u)),
@@ -190,6 +226,20 @@ const readScenarioStepFields = (f: Fields, path: string, u?: Unreadable): Scenar
     end_ms: field(f, path, 'end_ms', soft(nullable(number), null, u)),
     code: field(f, path, 'code', soft(nullable(string), null, u)),
     message: field(f, path, 'message', soft(nullable(string), null, u)),
+    call_stack: field(
+      f,
+      path,
+      'call_stack',
+      soft(
+        nullable(
+          u
+            ? items((v, p) => readScenarioCallFrame(v, p, u), u)
+            : array((v, p) => readScenarioCallFrame(v, p)),
+        ),
+        null,
+        u,
+      ),
+    ),
   });
 
 export const readScenarioStep = (value: unknown, path: string, u?: Unreadable): ScenarioStep =>
@@ -200,6 +250,8 @@ export interface CheckScenario extends FromLauncher {
   /** The scenario file (as passed to the launcher). */
   file: string;
   name: string | null;
+  /** Selected case name, or null if omitted. */
+  case?: string | null;
   /** Number of steps. */
   steps: number;
   /** Virtual end time from the scenario file (`end_ms`), or null if omitted. */
@@ -211,6 +263,7 @@ const readCheckScenario = (value: unknown, path: string, u?: Unreadable): CheckS
   return withRaw(f, {
     file: field(f, path, 'file', lenient(string, '', u)),
     name: field(f, path, 'name', soft(nullable(string), null, u)),
+    case: field(f, path, 'case', soft(nullable(string), null, u)),
     steps: field(f, path, 'steps', lenient(integer, 0, u)),
     end_ms: field(f, path, 'end_ms', soft(nullable(integer), null, u)),
   });
@@ -220,6 +273,8 @@ const readCheckScenario = (value: unknown, path: string, u?: Unreadable): CheckS
 export interface ScenarioResult extends FromLauncher {
   file: string;
   name: string | null;
+  /** Selected case name, or null if omitted. */
+  case?: string | null;
   status: ScenarioStatus;
   /** The controller step at which the scenario ended (passed and failed; null otherwise). */
   over_at_ms: number | null;
@@ -233,6 +288,7 @@ const readScenarioResult = (value: unknown, path: string, u?: Unreadable): Scena
   return withRaw(f, {
     file: field(f, path, 'file', lenient(string, '', u)),
     name: field(f, path, 'name', soft(nullable(string), null, u)),
+    case: field(f, path, 'case', soft(nullable(string), null, u)),
     status: field(f, path, 'status', lenient(string, '', u)),
     over_at_ms: field(f, path, 'over_at_ms', soft(nullable(number), null, u)),
     end_ms: field(f, path, 'end_ms', soft(nullable(integer), null, u)),

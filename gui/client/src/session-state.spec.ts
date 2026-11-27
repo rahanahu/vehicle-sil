@@ -1511,4 +1511,101 @@ describe('addProblem', () => {
     });
     expect(isScenarioHandedOver(incompleteResult)).toBe(false);
   });
+
+  it('preserves step provenance (file, name, call_stack) and case across events and summary', () => {
+    const callStack = [
+      {
+        file: 'scenarios/cases.yaml',
+        line: 31,
+        name: 'run check',
+        params: { throttle: 50, label: '定格' },
+      },
+    ];
+    const tplStep = {
+      index: 1,
+      file: 'scenarios/templates/check.yaml',
+      line: 22,
+      kind: 'set',
+      name: '定格: apply',
+      text: 'set Engine.engine.throttle = 50',
+      status: 'passed' as const,
+      start_ms: 0,
+      at_ms: 0,
+      end_ms: 0,
+      code: null,
+      message: null,
+      call_stack: callStack,
+    };
+    const initial = sessionFromSummary(
+      summary({
+        scenario: {
+          file: 'scenarios/cases.yaml',
+          name: 'load cases',
+          case: '定格',
+          step_count: 1,
+          steps: [],
+          steps_omitted: 0,
+          status: null,
+          over_at_ms: null,
+          timeline_url: null,
+        },
+      }),
+    );
+    expect(initial.scenario?.case).toBe('定格');
+
+    const withEvents = applyEvents(
+      initial,
+      events(
+        {
+          event: 'check',
+          check: {
+            ...check([{ name: 'A' }]),
+            scenario: { file: 'scenarios/cases.yaml', name: 'load cases', case: '定格', steps: 1 },
+          },
+        },
+        { event: 'scenario_step', step: tplStep },
+      ),
+    );
+    expect(withEvents.scenario?.case).toBe('定格');
+    expect(withEvents.scenario?.steps[0]).toMatchObject({
+      file: 'scenarios/templates/check.yaml',
+      name: '定格: apply',
+      call_stack: callStack,
+    });
+
+    const ended = applyEvents(
+      withEvents,
+      eventsFrom(3, [
+        {
+          event: 'result',
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            message: 'ok',
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+            simulation: 'ended',
+            interrupted_by: null,
+            timing: null,
+            participants: [],
+            findings: [],
+            check: null,
+            scenario: {
+              file: 'scenarios/cases.yaml',
+              name: 'load cases',
+              case: '定格',
+              status: 'passed',
+              over_at_ms: 50,
+              steps: [tplStep],
+            },
+          },
+        },
+      ]),
+    );
+    expect(ended.scenario?.case).toBe('定格');
+    expect(ended.scenario?.steps[0]?.call_stack).toEqual(callStack);
+  });
 });
