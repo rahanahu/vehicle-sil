@@ -10,7 +10,7 @@ import type { Snapshot } from './front-compose';
 import type { StopCapture } from './run';
 import { sameRunTarget, type RunTarget } from './session';
 import { isRunActive } from './session-state';
-import { linkOf, standsAt } from './front-compose';
+import { linkOf, linkProblem, runOf, standsAt } from './front-compose';
 import type {
   CheckResult,
   CheckTextRequest,
@@ -40,6 +40,7 @@ export interface ActionSources {
   low: GuiClient;
   http: HttpTransport;
   captureStop(): StopCapture;
+  activeTarget?(): RunTarget | null;
   snapshot(): Snapshot;
   controls(): FrontControls;
   run(): RunState;
@@ -139,6 +140,9 @@ const INTENT_FIELDS = new Set([
 /** The fields of an `Intent` that a check of a text takes. */
 const TEXT_INTENT_FIELDS = new Set(['vehicle_sil_run_request', 'variant', 'strict']);
 
+/** Maximum delay accepted by 32-bit platform timers (`setTimeout`). */
+const TIMER_MAX_MS = 2_147_483_647;
+
 /** The refusal when there is no file to use. */
 export const noFileError = (): ActionError =>
   new ActionError(
@@ -155,8 +159,11 @@ export class FrontActions {
   private readonly waiting = new Map<number, Waiting>();
   private readonly inFlight = new Map<
     'stop' | 'force_stop',
-    { key: object | string; promise: Promise<void> }
+    { key: object | string; promise: Promise<void>; cancel: () => void }
   >();
+  private readonly syncCancelers = new Set<() => void>();
+  private syncingStop: Promise<void> | null = null;
+  private syncingForceStop: Promise<void> | null = null;
   /** The checks not answered yet, in the order they are sent: the first is on its way, the others wait. */
   private readonly checks: QueuedCheck[] = [];
   /** Rejects when the client closes: a check that waits ends with it. */
@@ -415,22 +422,226 @@ export class FrontActions {
       : null;
   }
 
+  private timeoutDelayMs(): number {
+    return Math.min(this.src.answerTimeoutMs, TIMER_MAX_MS);
+  }
+
+  /**
+   * Waits while `link === 'connecting'` (bounded by `answerTimeoutMs`).
+   * Resolves once `link !== 'connecting'` (or `extraDone()` holds), and never hangs on WS close,
+   * auth rejection, protocol mismatch, timeout, or `dispose()`.
+   */
+  waitForSync(opLabel: string, recordOnTimeout = true, extraDone?: () => boolean): Promise<void> {
+    if (this.disposed) {
+      return Promise.reject(
+        new ActionError('closed', `the client was closed before ${opLabel} was sent`, 'refused'),
+      );
+    }
+    const isDone = () => linkOf(this.src.snapshot()) !== 'connecting' || (extraDone?.() ?? false);
+    if (isDone()) return Promise.resolve();
+
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+      const unsubscribes: (() => void)[] = [];
+      const cleanup = () => {
+        if (settled) return false;
+        settled = true;
+        clearTimeout(timer);
+        this.syncCancelers.delete(onDispose);
+        for (const off of unsubscribes) off();
+        return true;
+      };
+      const onDispose = () => {
+        if (cleanup()) {
+          reject(
+            new ActionError(
+              'closed',
+              `the client was closed before ${opLabel} was sent`,
+              'refused',
+            ),
+          );
+        }
+      };
+      const check = () => {
+        if (this.disposed) {
+          onDispose();
+          return;
+        }
+        if (isDone() && cleanup()) {
+          resolve();
+        }
+      };
+
+      this.syncCancelers.add(onDispose);
+      const watchSources: Readable<unknown>[] = [
+        this.src.low.connection.state,
+        this.src.low.connection.failures,
+        this.src.low.connection.lastClose,
+        this.src.low.session.rejected,
+        this.src.low.session.incompatible,
+        this.src.low.session.ready,
+        this.src.low.run.starting,
+        this.startedRunId,
+      ];
+      for (const source of watchSources) {
+        unsubscribes.push(source.subscribe(check));
+      }
+      if (settled) {
+        for (const off of unsubscribes) off();
+        return;
+      }
+      timer = setTimeout(() => {
+        if (cleanup()) {
+          const error = new ActionError(
+            'timeout',
+            `initial WebSocket sync did not complete within ${this.src.answerTimeoutMs / 1000} s before ${opLabel}: try again once status.link is online`,
+            'refused',
+          );
+          reject(recordOnTimeout ? this.record(error) : error);
+        }
+      }, this.timeoutDelayMs());
+      check();
+    });
+  }
+
+  private hasLocalStart(): boolean {
+    if (this.src.low.run.starting.get() || this.startedRunIdValue.get() !== null) return true;
+    const active = this.src.activeTarget?.() ?? null;
+    return active !== null && !sameRunTarget(active, this.src.low.session.currentTarget());
+  }
+
+  private needsSyncForStop(): boolean {
+    return !this.hasLocalStart() && linkOf(this.src.snapshot()) === 'connecting';
+  }
+
+  private isStoppable(s: Snapshot): boolean {
+    const run = runOf(s);
+    const live = isRunActive(s.session) && run !== 'ended' && run !== 'crashed';
+    return (
+      this.hasLocalStart() ||
+      s.busy.has('start') ||
+      s.awaitingRunSession === true ||
+      live ||
+      run === 'starting' ||
+      s.allowed?.stop.ok === true ||
+      s.allowed?.force.ok === true
+    );
+  }
+
+  private refusalBeforeStop(s: Snapshot, opLabel: 'stop' | 'force_stop'): ActionError | null {
+    if (this.disposed) {
+      return new ActionError(
+        'closed',
+        `the client was closed before ${opLabel} was sent`,
+        'refused',
+      );
+    }
+    const link = linkOf(s);
+    if (link === 'rejected' || link === 'incompatible') {
+      const why = linkProblem(s);
+      return new ActionError(link, why?.message ?? link, 'refused');
+    }
+    const hasLocalStart = this.hasLocalStart();
+    if (!hasLocalStart && link === 'offline' && this.src.low.session.currentInstance() === null) {
+      const why = linkProblem(s);
+      return new ActionError('offline', why?.message ?? 'offline', 'refused');
+    }
+    if (!hasLocalStart && s.allowed?.start.reason === 'starting') {
+      return new ActionError('starting', 'wait until the new run can be identified', 'refused');
+    }
+    if (!this.isStoppable(s)) {
+      const message =
+        s.allowed?.stop.reason === 'not-running' && s.allowed.stop.message
+          ? s.allowed.stop.message
+          : 'no run is going: there is nothing to stop';
+      return new ActionError('not-running', message, 'refused');
+    }
+    if (!hasLocalStart && this.src.low.session.currentTarget() === null) {
+      return new ActionError('not-running', 'no run is going: there is nothing to stop', 'refused');
+    }
+    return null;
+  }
+
   stop(): Promise<void> {
+    if (this.disposed) {
+      return Promise.reject(
+        new ActionError('closed', 'the client was closed before stop was sent', 'refused'),
+      );
+    }
+    if (this.needsSyncForStop()) {
+      if (this.syncingStop) return this.syncingStop;
+      const pending = this.waitForSync('stop', true, () => !this.needsSyncForStop()).then(
+        () => {
+          if (this.syncingStop === pending) this.syncingStop = null;
+          return this.stopReady();
+        },
+        (error: unknown) => {
+          if (this.syncingStop === pending) this.syncingStop = null;
+          throw error;
+        },
+      );
+      this.syncingStop = pending;
+      return pending;
+    }
+    return this.stopReady();
+  }
+
+  private stopReady(): Promise<void> {
+    const refusal = this.refusalBeforeStop(this.src.snapshot(), 'stop');
+    if (refusal) return refusal.code === 'closed' ? Promise.reject(refusal) : this.fail(refusal);
     return this.once('stop', false);
   }
 
   forceStop(target?: RunTarget): Promise<void> {
+    if (this.disposed) {
+      return Promise.reject(
+        new ActionError('closed', 'the client was closed before force_stop was sent', 'refused'),
+      );
+    }
+    if (this.src.low.run.starting.get())
+      return this.fail(
+        new ActionError('starting', 'wait until the new run can be identified', 'refused'),
+      );
+    if (this.needsSyncForStop()) {
+      if (!target && this.syncingForceStop) return this.syncingForceStop;
+      const pending = this.waitForSync('force_stop', true, () => !this.needsSyncForStop()).then(
+        () => {
+          if (this.syncingForceStop === pending) this.syncingForceStop = null;
+          return this.forceStopReady(target);
+        },
+        (error: unknown) => {
+          if (this.syncingForceStop === pending) this.syncingForceStop = null;
+          throw error;
+        },
+      );
+      if (!target) this.syncingForceStop = pending;
+      return pending;
+    }
+    return this.forceStopReady(target);
+  }
+
+  private forceStopReady(target?: RunTarget): Promise<void> {
+    if (this.disposed) {
+      return Promise.reject(
+        new ActionError('closed', 'the client was closed before force_stop was sent', 'refused'),
+      );
+    }
     if (this.src.low.run.starting.get())
       return this.fail(
         new ActionError('starting', 'wait until the new run can be identified', 'refused'),
       );
     const current = this.src.low.session.currentTarget();
+    const active = this.src.activeTarget?.() ?? current;
     const startedId = this.startedRunIdValue.get();
-    const effectiveRunId = startedId ?? current?.run_id ?? null;
-    if (target && (effectiveRunId !== target.run_id || current?.instance !== target.instance))
+    const effectiveRunId = startedId ?? active?.run_id ?? null;
+    const effectiveInstance = active?.instance ?? current?.instance;
+    if (target && (effectiveRunId !== target.run_id || effectiveInstance !== target.instance))
       return this.fail(
         new ActionError('session-changed', 'the confirmed run has changed', 'refused'),
       );
+    const refusal = this.refusalBeforeStop(this.src.snapshot(), 'force_stop');
+    if (refusal) return refusal.code === 'closed' ? Promise.reject(refusal) : this.fail(refusal);
     return this.once('force_stop', true);
   }
 
@@ -460,7 +671,24 @@ export class FrontActions {
       resolve = ok;
       reject = fail;
     });
-    const entry = { key, promise };
+    let finished = false;
+    const entry = {
+      key,
+      promise,
+      cancel: () => {
+        if (finished) return;
+        finished = true;
+        if (this.inFlight.get(name) === entry) {
+          this.inFlight.delete(name);
+          this.setBusy(name, false);
+        }
+        reject(
+          this.record(
+            new ActionError('closed', `the client was closed before ${name} was done`, 'unknown'),
+          ),
+        );
+      },
+    };
     this.inFlight.set(name, entry);
     this.failureValue.set(null);
     // The low-level method snapshots the target before any Front busy notification.
@@ -469,6 +697,8 @@ export class FrontActions {
     else this.setBusy(name, true);
     operation.then(
       (ack) => {
+        if (finished) return;
+        finished = true;
         this.stopConfirmedForValue.set(ack.run_id);
         if (this.inFlight.get(name) === entry) {
           this.inFlight.delete(name);
@@ -477,6 +707,8 @@ export class FrontActions {
         resolve();
       },
       (error: unknown) => {
+        if (finished) return;
+        finished = true;
         if (this.inFlight.get(name) === entry) {
           this.inFlight.delete(name);
           this.setBusy(name, false);
@@ -554,6 +786,28 @@ export class FrontActions {
     amount: number,
     shownTarget?: RunTarget | null,
   ): Promise<void> {
+    if (this.disposed) {
+      return Promise.reject(
+        new ActionError('closed', `the client was closed before ${op} was sent`, 'refused'),
+      );
+    }
+    if (linkOf(this.src.snapshot()) === 'connecting') {
+      return this.waitForSync(op).then(() => this.timeReady(op, body, amount, shownTarget));
+    }
+    return this.timeReady(op, body, amount, shownTarget);
+  }
+
+  private timeReady(
+    op: TimeOperation,
+    body: Record<string, unknown>,
+    amount: number,
+    shownTarget?: RunTarget | null,
+  ): Promise<void> {
+    if (this.disposed) {
+      return Promise.reject(
+        new ActionError('closed', `the client was closed before ${op} was sent`, 'refused'),
+      );
+    }
     const target = this.src.low.session.currentTarget();
     this.failureValue.set(null);
     const snapshot = this.src.snapshot();
@@ -562,9 +816,11 @@ export class FrontActions {
     const own =
       link === 'rejected' || link === 'incompatible'
         ? this.src.controls()[op].reason
-        : this.busyValue.get().has(op)
-          ? { code: 'busy', message: `the previous ${op} has not been answered yet: wait for it` }
-          : null;
+        : link === 'offline' && this.src.low.session.currentInstance() === null
+          ? linkProblem(snapshot)
+          : this.busyValue.get().has(op)
+            ? { code: 'busy', message: `the previous ${op} has not been answered yet: wait for it` }
+            : null;
     if (own) return this.fail(new ActionError(own.code, own.message, 'refused'));
     if (shownTarget !== undefined && !sameRunTarget(shownTarget, target))
       return this.fail(
@@ -604,7 +860,7 @@ export class FrontActions {
             'unknown',
           ),
         );
-      }, this.src.answerTimeoutMs);
+      }, this.timeoutDelayMs());
       this.src.http(
         { method: 'POST', path: 'api/time', body: { ...body, id, ...target } },
         (outcome) => {
@@ -772,7 +1028,11 @@ export class FrontActions {
     if (this.disposed) return;
     this.disposed = true;
     this.close(closedCheck());
+    for (const cancel of [...this.syncCancelers]) cancel();
     for (const stop of this.stops) stop();
+    for (const [, entry] of [...this.inFlight]) {
+      entry.cancel();
+    }
     for (const w of [...this.waiting.values()]) {
       this.settle(
         w,

@@ -20,7 +20,7 @@ export { ANSWER_TIMEOUT_MS } from './time';
 
 // Front door: `connect()` returns it. Built on the client above (`front.low`); the client keeps its names and shapes.
 export { connect, createFront, until, watch } from './front';
-export type { ConnectOptions } from './front';
+export type { ConnectOptions, UntilOptions } from './front';
 export { ActionError } from './front-types';
 export type {
   ConnectEntry,

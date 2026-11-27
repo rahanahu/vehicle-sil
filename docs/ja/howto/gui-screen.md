@@ -249,10 +249,10 @@ cp "$TOOLS/client/vehicle-sil-gui-client.mjs" .
 import { connect, until } from './vehicle-sil-gui-client.mjs';
 
 const url = new URL(process.env.VEHICLE_SIL_GUI_URL); // サーバーが表示した URL
-const client = await connect({ base_url: `${url.origin}/`, token: url.hash.replace('#token=', '') });
+const client = await connect({ baseUrl: `${url.origin}/`, token: url.hash.replace('#token=', '') });
 const speed = client.variable('Engine.engine.speed');
 // 生きている値を待つ（`note` は、値が生きていないときの文）
-const view = await until(speed, (v) => v.value !== null && v.note === null, { timeout_ms: 10_000 });
+const view = await until(speed, (v) => v.value !== null && v.note === null, { timeoutMs: 10_000 });
 console.log(`Engine.engine.speed = ${view.text} ${view.unit}`);
 client.close();
 ```

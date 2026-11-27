@@ -128,7 +128,7 @@ const front = await connect();
 let unsubscribe = () => {};
 try {
   await front.run.start({ start_paused: true }); // サーバーが開始を受けたときに解決します。実行が立ち上がったときではありません
-  await until(front.status, (status) => status.run === 'paused', { timeout_ms: 30_000 });
+  await until(front.status, (status) => status.run === 'paused', { timeoutMs: 30_000 });
   unsubscribe = front.variable('Engine.engine.speed').subscribe((view) => console.log(view.text, view.unit)); // 値は購読している間に届きます
   const written = front.variable('Engine.engine.throttle').write(60); // まだ待たない: 一時停止中の実行は、次のステップで適用します
   written.catch(() => undefined); // ステップが先に失敗しても、未処理の拒否になりません。下の `await written` は投げます
@@ -156,7 +156,7 @@ const [scenario] = await front.scenarios(); // なければ一覧は空です
 if (scenario) {
   await front.run.start({ scenario: scenario.path }); // 解決したとき、`status` はこの実行を示しています（前に終わった実行ではありません）
   const status = await until(front.status, (s) => s.run === 'ended' || s.run === 'crashed', {
-    timeout_ms: 600_000,
+    timeoutMs: 600_000,
   });
   console.log(status.result?.ok, status.result?.message);
 }

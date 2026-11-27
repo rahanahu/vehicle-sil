@@ -533,7 +533,7 @@ export class Workbench {
     effect(() => this.waveformFeed()?.setSignals(this.traces()));
     void this.action(async () => {
       const front = pageToken
-        ? await connect({ base_url: new URL('/', location.href).href, token: pageToken })
+        ? await connect({ baseUrl: new URL('/', location.href).href, token: pageToken })
         : await connect();
       this.front.set(front);
       this.destroy.onDestroy(() => front.close());

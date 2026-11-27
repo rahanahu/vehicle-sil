@@ -188,12 +188,12 @@ describe('the front door', () => {
     const fake = new FakeWebSockets();
     const http = new FakeHttp();
     const promise = connect({
-      base_url: 'http://127.0.0.1:1/',
+      baseUrl: 'http://127.0.0.1:1/',
       token: 'secret',
       http: http.transport,
       socket: fake.factory,
-      answer_timeout_ms: ANSWER_MS,
-      on_error: (error) => {
+      answerTimeoutMs: ANSWER_MS,
+      onError: (error) => {
         throw error;
       },
     });
@@ -2408,7 +2408,7 @@ describe('the front door', () => {
       expect(await until(rig.front.status, (s) => s.run === 'running')).toMatchObject({
         run: 'running',
       });
-      const waiting = until(rig.front.status, (s) => s.run === 'ended', { timeout_ms: 500 }).catch(
+      const waiting = until(rig.front.status, (s) => s.run === 'ended', { timeoutMs: 500 }).catch(
         (e: unknown) => e as ActionError,
       );
       await vi.advanceTimersByTimeAsync(500);
@@ -2433,7 +2433,7 @@ describe('the front door', () => {
       const http = new FakeHttp();
       const fake = new FakeWebSockets();
       const attempt = connect({
-        base_url: 'http://127.0.0.1:1/',
+        baseUrl: 'http://127.0.0.1:1/',
         token: 't',
         http: http.transport,
         socket: fake.factory,
@@ -2453,7 +2453,7 @@ describe('the front door', () => {
       const fake = new FakeWebSockets();
       const app = (await httpExamples()).find((e) => e.name === 'app')?.response;
       const attempt = connect({
-        base_url: 'http://127.0.0.1:1/',
+        baseUrl: 'http://127.0.0.1:1/',
         http: http.transport,
         socket: fake.factory,
       });
@@ -2787,6 +2787,338 @@ describe('the front door', () => {
         over_at_ms: 500,
       });
       expect(variable.get()).toMatchObject({ can_write: true, why: null, block: null });
+    });
+  });
+
+  describe('initial WebSocket sync wait and camelCase options', () => {
+    it('awaits initial WS sync on stop(), forceStop(), time.*(), and variable.write() without 100 ms batching delay', async () => {
+      const rig = await open();
+      expect(rig.front.status.get().link).toBe('connecting');
+
+      // Call stop() immediately after connect() while link === 'connecting'
+      const stopPromise = rig.front.run.stop();
+      rig.http.expectNone('api/stop-session');
+
+      // Push hello + synced without advancing fake timers by BATCH_MS: immediate microtask flush!
+      rig.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.1.0',
+        instance: 'inst-1',
+        session: summary({}, '42'),
+        allowed: serverAllowed(1, alreadyRunning),
+        replay: null,
+      });
+      rig.socket.send(event(stateEvent(1), '42'));
+      rig.socket.send({ type: 'synced', run_id: '42', last_seq: 11 });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(rig.front.status.get().link).toBe('online');
+      const stopReq = rig.http.expectOne('api/stop-session');
+      expect(stopReq.request.body).toEqual({ force: false, run_id: '42', instance: 'inst-1' });
+      stopReq.flush({ instance: 'inst-1', run_id: '42' });
+      await expect(stopPromise).resolves.toBeUndefined();
+
+      // Second client: forceStop() and time.pause() while link === 'connecting'
+      const rig2 = await open();
+      const pausePromise = rig2.front.time.pause();
+      const forcePromise = rig2.front.run.forceStop();
+      rig2.http.expectNone('api/time');
+      rig2.http.expectNone('api/stop-session');
+
+      rig2.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.1.0',
+        instance: 'inst-1',
+        session: summary({}, '42'),
+        allowed: serverAllowed(2, alreadyRunning),
+        replay: null,
+      });
+      rig2.socket.send(event(stateEvent(2), '42'));
+      rig2.socket.send({ type: 'synced', run_id: '42', last_seq: 12 });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const timeReq = rig2.http.expectOne('api/time');
+      const cmdId = (timeReq.request.body as { id: number }).id;
+      expect(timeReq.request.body).toMatchObject({
+        command: 'pause',
+        run_id: '42',
+        instance: 'inst-1',
+      });
+      timeReq.flush({ run_id: '42', command: { command: 'pause' } });
+      // Command event also flushes on microtask without waiting BATCH_MS!
+      rig2.socket.send(event(commandEvent(70, 'pause', cmdId), '42'));
+      await expect(pausePromise).resolves.toBeUndefined();
+
+      const forceReq = rig2.http.expectOne('api/stop-session');
+      expect(forceReq.request.body).toEqual({ force: true, run_id: '42', instance: 'inst-1' });
+      forceReq.flush({ instance: 'inst-1', run_id: '42' });
+      await expect(forcePromise).resolves.toBeUndefined();
+
+      // Third client: variable.write() while link === 'connecting' + immediate operation flush
+      const rig3 = await open();
+      const writePromise = rig3.front.variable('Engine.engine.offset').write(25);
+      rig3.http.expectNone('api/write');
+      rig3.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.1.0',
+        instance: 'inst-1',
+        session: {
+          ...summary({}, '42'),
+          variables: {
+            state: 'ready',
+            reason: null,
+            peers: [
+              {
+                name: 'Engine',
+                connected: true,
+                variables: [
+                  {
+                    name: 'engine.offset',
+                    type: 'real',
+                    role: 'input',
+                    writable: true,
+                    unit: 'rpm',
+                    min: null,
+                    max: null,
+                    step: null,
+                    description: '',
+                    enum: null,
+                  },
+                ],
+              },
+            ],
+            peers_omitted: 0,
+            variables_omitted: 0,
+            operations: [],
+          },
+        },
+        allowed: serverAllowed(3, alreadyRunning),
+        replay: null,
+      });
+      rig3.socket.send(event(stateEvent(3), '42'));
+      rig3.socket.send({ type: 'synced', run_id: '42', last_seq: 13 });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const writeReq = rig3.http.expectOne('api/write');
+      expect(writeReq.request.body).toEqual({
+        run_id: '42',
+        writes: { Engine: { 'engine.offset': 25 } },
+      });
+      writeReq.flush({ run_id: '42', operation: 9 });
+      rig3.socket.send({
+        type: 'operation',
+        run_id: '42',
+        seq: 9,
+        state: 'applied',
+        done: true,
+        peers: { Engine: { state: 'applied', applied_at_ms: 100, late: false, reason: null } },
+      });
+      await expect(writePromise).resolves.toBeUndefined();
+    });
+
+    it('rejects stop() and forceStop() with ActionError(not-running, refused) when no run is active after sync', async () => {
+      // 1. Server has had no run yet (session: null)
+      const rig = await open();
+      const stopWhileConnecting = rig.front.run.stop().catch((e: unknown) => e as ActionError);
+      rig.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.1.0',
+        instance: 'x',
+        session: null,
+        allowed: serverAllowed(1, startOk, notRunning, notRunning),
+        replay: null,
+      });
+      rig.socket.send({ type: 'synced', run_id: null, last_seq: null });
+      const err1 = await stopWhileConnecting;
+      expect(err1).toBeInstanceOf(ActionError);
+      expect(err1).toMatchObject({ code: 'not-running', outcome: 'refused' });
+      rig.http.expectNone('api/stop-session');
+
+      // Calling stop() or forceStop() again once already online with no run also rejects with not-running
+      await expect(rig.front.run.stop()).rejects.toMatchObject({
+        code: 'not-running',
+        outcome: 'refused',
+      });
+      await expect(rig.front.run.forceStop()).rejects.toMatchObject({
+        code: 'not-running',
+        outcome: 'refused',
+      });
+
+      // 2. Previous run has already ended (session.state === 'ended', launcher not running)
+      const rigEnded = await open();
+      const stopEnded = rigEnded.front.run.stop().catch((e: unknown) => e as ActionError);
+      rigEnded.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.1.0',
+        instance: 'x',
+        session: summary({
+          state: 'ended',
+          launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
+          allowed: serverAllowed(2, startOk, notRunning, notRunning),
+        }),
+        allowed: serverAllowed(2, startOk, notRunning, notRunning),
+        replay: null,
+      });
+      rigEnded.socket.send({ type: 'synced', run_id: '1', last_seq: 10 });
+      expect(await stopEnded).toMatchObject({ code: 'not-running', outcome: 'refused' });
+      rigEnded.http.expectNone('api/stop-session');
+    });
+
+    it('deduplicates concurrent stop() and forceStop() calls made while connecting', async () => {
+      const rig = await open();
+      const s1 = rig.front.run.stop();
+      const s2 = rig.front.run.stop();
+      expect(s1).toBe(s2);
+
+      rig.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.1.0',
+        instance: 'x',
+        session: summary(),
+        allowed: serverAllowed(1, alreadyRunning),
+        replay: null,
+      });
+      rig.socket.send({ type: 'synced', run_id: '1', last_seq: 1 });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // A third stop() while api/stop-session is in flight shares the same HTTP request
+      const s3 = rig.front.run.stop();
+      const req = rig.http.expectOne('api/stop-session');
+      req.flush({ instance: 'x', run_id: '1' });
+      await expect(Promise.all([s1, s2, s3])).resolves.toEqual([undefined, undefined, undefined]);
+      rig.http.expectNone('api/stop-session');
+    });
+
+    it('never hangs on initial sync timeout, WS disconnect, auth rejection, protocol mismatch, or close()', async () => {
+      // 1. Initial sync timeout (socket opens, never sends synced)
+      const rigTimeout = await open();
+      const stopTimeout = rigTimeout.front.run.stop().catch((e: unknown) => e as ActionError);
+      const timeTimeout = rigTimeout.front.time.pause().catch((e: unknown) => e as ActionError);
+      await vi.advanceTimersByTimeAsync(ANSWER_MS);
+      expect(await stopTimeout).toMatchObject({ code: 'timeout', outcome: 'refused' });
+      expect(await timeTimeout).toMatchObject({ code: 'timeout', outcome: 'refused' });
+
+      // 2. WS disconnect during initial sync
+      const rigOffline = await open();
+      const stopOffline = rigOffline.front.run.stop().catch((e: unknown) => e as ActionError);
+      const forceOffline = rigOffline.front.run.forceStop().catch((e: unknown) => e as ActionError);
+      const timeOffline = rigOffline.front.time.pause().catch((e: unknown) => e as ActionError);
+      rigOffline.socket.fail();
+      expect(await stopOffline).toMatchObject({ code: 'offline', outcome: 'refused' });
+      expect(await forceOffline).toMatchObject({ code: 'offline', outcome: 'refused' });
+      expect(await timeOffline).toMatchObject({ code: 'offline', outcome: 'refused' });
+
+      // 3. Auth rejection during initial sync
+      const rigRejected = await open();
+      const stopRejected = rigRejected.front.run.stop().catch((e: unknown) => e as ActionError);
+      const timeRejected = rigRejected.front.time.pause().catch((e: unknown) => e as ActionError);
+      rigRejected.socket.send({
+        type: 'error',
+        run_id: null,
+        code: 'unauthorized',
+        message: 'bad token',
+        detail: null,
+      });
+      expect(await stopRejected).toMatchObject({ code: 'rejected', outcome: 'refused' });
+      expect(await timeRejected).toMatchObject({ code: 'rejected', outcome: 'refused' });
+
+      // 4. Protocol version mismatch during initial sync
+      const rigIncompatible = await open();
+      const stopIncompatible = rigIncompatible.front.run
+        .stop()
+        .catch((e: unknown) => e as ActionError);
+      rigIncompatible.socket.send({
+        type: 'hello',
+        vehicle_sil_gui: 99,
+        version: '9.0.0',
+        instance: 'x',
+        session: null,
+        replay: null,
+      });
+      await vi.advanceTimersByTimeAsync(BATCH_MS);
+      expect(await stopIncompatible).toMatchObject({ code: 'incompatible', outcome: 'refused' });
+
+      // 5. close() while waiting for initial sync AND while api/stop-session is in flight
+      const rigClosedPreSync = await open();
+      const stopClosedPreSync = rigClosedPreSync.front.run
+        .stop()
+        .catch((e: unknown) => e as ActionError);
+      const timeClosedPreSync = rigClosedPreSync.front.time
+        .pause()
+        .catch((e: unknown) => e as ActionError);
+      rigClosedPreSync.front.close();
+      expect(await stopClosedPreSync).toMatchObject({ code: 'closed', outcome: 'refused' });
+      expect(await timeClosedPreSync).toMatchObject({ code: 'closed', outcome: 'refused' });
+
+      const rigClosedMidHttp = await running();
+      const stopClosedMidHttp = rigClosedMidHttp.front.run
+        .stop()
+        .catch((e: unknown) => e as ActionError);
+      rigClosedMidHttp.http.expectOne('api/stop-session');
+      rigClosedMidHttp.front.close();
+      expect(await stopClosedMidHttp).toMatchObject({ code: 'closed', outcome: 'unknown' });
+    });
+
+    it('rejects unknown snake_case keys on connect(), createFront(), and until()', async () => {
+      const http = new FakeHttp();
+      const fake = new FakeWebSockets();
+
+      await expect(
+        connect({
+          base_url: 'http://127.0.0.1:1/',
+          http: http.transport,
+          socket: fake.factory,
+        } as unknown as Parameters<typeof connect>[0]),
+      ).rejects.toMatchObject({ code: 'unknown-field', outcome: 'refused' });
+
+      await expect(
+        connect({
+          baseUrl: 'http://127.0.0.1:1/',
+          answer_timeout_ms: 500,
+          http: http.transport,
+          socket: fake.factory,
+        } as unknown as Parameters<typeof connect>[0]),
+      ).rejects.toMatchObject({ code: 'unknown-field', outcome: 'refused' });
+
+      await expect(
+        connect({
+          baseUrl: 'http://127.0.0.1:1/',
+          on_error: () => undefined,
+          http: http.transport,
+          socket: fake.factory,
+        } as unknown as Parameters<typeof connect>[0]),
+      ).rejects.toMatchObject({ code: 'unknown-field', outcome: 'refused' });
+
+      expect(http.requests).toHaveLength(0);
+      expect(fake.sockets).toHaveLength(0);
+
+      expect(() =>
+        createFront({
+          base_url: 'http://127.0.0.1:1/',
+        } as unknown as Parameters<typeof createFront>[0]),
+      ).toThrow(expect.objectContaining({ code: 'unknown-field', outcome: 'refused' }));
+
+      const rig = await running();
+      // Even when the condition already holds, unknown keys like timeout_ms are rejected
+      await expect(
+        until(rig.front.status, (s) => s.run === 'running', {
+          timeout_ms: 500,
+        } as unknown as Parameters<typeof until>[2]),
+      ).rejects.toMatchObject({ code: 'unknown-field', outcome: 'refused' });
+
+      await expect(
+        until(rig.front.status, (s) => s.run === 'ended', { timeoutMs: -1 }),
+      ).rejects.toMatchObject({ code: 'invalid-argument', outcome: 'refused' });
     });
   });
 });

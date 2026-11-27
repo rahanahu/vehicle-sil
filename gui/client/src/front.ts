@@ -5,8 +5,6 @@
 import { ClientOptions, buildClient } from './client';
 import { ANSWER_TIMEOUT_MS } from './time';
 import { takeToken } from './token';
-import type { HttpTransport } from './http';
-import type { SocketFactory } from './connection';
 import {
   ActionError,
   Front,
@@ -26,30 +24,26 @@ import {
   runOf,
   sameData,
   statusOf,
+  linkOf,
 } from './front-compose';
 import { FrontActions, actionError, noFileError } from './front-actions';
 import { entriesOf, outsideRows } from './front-outside';
 import { makeVariable, refOf } from './front-variable';
-import { ErrorSink, Readable, derived } from './values';
-import { linkOf } from './front-compose';
+import { Readable, derived } from './values';
 
-/** Options of `connect()`. In the browser, call it without options (the page's own server and token are used). */
-export interface ConnectOptions {
-  /** URL of the GUI server (what the server printed, without `#token=...`). */
-  base_url: string;
-  /** The token (what follows `#token=`), if required. A function is called each time the token is used. */
-  token?: string | null | (() => string | null);
-  /** Origin to send (Node sends the origin of `base_url` if omitted). */
-  origin?: string;
-  /** HTTP transport (default: fetch). For tests. */
-  http?: HttpTransport;
-  /** Function that opens the WebSocket (default: the platform's). For tests. */
-  socket?: SocketFactory;
-  /** How long to wait for the launcher's answer to a time command (ms; default 5000). */
-  answer_timeout_ms?: number;
-  /** Receives what subscribers threw (default: console.error). */
-  on_error?: ErrorSink;
+/** Options of `connect()`: the same camelCase options as `createFront()` and `createClient()`. */
+export type ConnectOptions = ClientOptions;
+
+/** Options of `until()`. */
+export interface UntilOptions {
+  /** Maximum wait duration in milliseconds before rejecting with `ActionError('timeout', ..., 'unknown')`. */
+  timeoutMs?: number;
+  /** Signal to abort the wait with `ActionError('aborted', ..., 'unknown')`. */
+  signal?: AbortSignal;
 }
+
+const UNTIL_OPTION_FIELDS = new Set(['timeoutMs', 'signal']);
+const TIMER_MAX_MS = 2_147_483_647;
 
 function makeFront(options: ClientOptions, onClose: () => void): Front {
   const { client: low, http, onError, runControl } = buildClient(options);
@@ -104,6 +98,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
     low,
     http,
     captureStop: () => runControl.captureStop(),
+    activeTarget: () => runControl.activeTarget(),
     snapshot,
     controls: () => controls.get(),
     run,
@@ -284,17 +279,31 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
       const key = `${named.peer}\u0000${named.name}`;
       let variable = variables.get(key);
       if (!variable) {
-        variable = makeVariable(
+        const base = makeVariable(
           low,
           named,
           () => {
-            const link = linkOf(snapshot());
-            return link === 'rejected' || link === 'incompatible'
-              ? new ActionError(link, writeControl.get().reason?.message ?? link, 'refused')
-              : null;
+            const s = snapshot();
+            const link = linkOf(s);
+            if (link === 'rejected' || link === 'incompatible') {
+              return new ActionError(link, writeControl.get().reason?.message ?? link, 'refused');
+            }
+            if (link === 'offline' && low.session.currentInstance() === null) {
+              const why = linkProblem(s);
+              return new ActionError('offline', why?.message ?? 'offline', 'refused');
+            }
+            return null;
           },
           writeControl,
         );
+        variable = {
+          get: base.get,
+          subscribe: base.subscribe,
+          write: (value, writeOptions) =>
+            linkOf(snapshot()) === 'connecting'
+              ? actions.waitForSync('write', false).then(() => base.write(value, writeOptions))
+              : base.write(value, writeOptions),
+        };
         variables.set(key, variable);
       }
       return variable;
@@ -314,18 +323,7 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
 let shared: Promise<Front> | null = null;
 
 async function open(options: ConnectOptions, onClose: () => void): Promise<Front> {
-  const front = makeFront(
-    {
-      baseUrl: options.base_url,
-      token: options.token,
-      origin: options.origin,
-      http: options.http,
-      socket: options.socket,
-      answerTimeoutMs: options.answer_timeout_ms,
-      onError: options.on_error,
-    },
-    onClose,
-  );
+  const front = makeFront(options, onClose);
   front.low.connect();
   try {
     await front.low.loadApp();
@@ -354,11 +352,11 @@ function pageOptions(): ConnectOptions {
   if (!page) {
     throw new ActionError(
       'no-token',
-      'connect() without options works in a page that the GUI server served. In Node, pass { base_url } (and token unless the server runs with --no-auth)',
+      'connect() without options works in a page that the GUI server served. In Node, pass { baseUrl } (and token unless the server runs with --no-auth)',
       'refused',
     );
   }
-  return { base_url: new URL('/', page.location.href).href, token: takeToken(page) };
+  return { baseUrl: new URL('/', page.location.href).href, token: takeToken(page) };
 }
 
 /**
@@ -367,7 +365,7 @@ function pageOptions(): ConnectOptions {
  * (close it with `close()`). A failure to connect is not remembered: the next call connects again.
  */
 export function connect(options?: ConnectOptions): Promise<Front> {
-  if (options) return open(options, () => undefined);
+  if (options !== undefined) return open(options, () => undefined);
   if (shared) return shared;
   let promise: Promise<Front>;
   try {
@@ -406,14 +404,46 @@ export function watch(
 
 /**
  * Resolves with the first value that satisfies `test` (the current one counts). Rejects with an ActionError `timeout`
- * after `timeout_ms`, or `aborted` when `signal` aborts (`unknown`: the thing waited for may still happen).
+ * after `timeoutMs`, or `aborted` when `signal` aborts (`unknown`: the thing waited for may still happen).
  */
 export function until<T>(
   source: Readable<T>,
   test: (value: T) => boolean,
-  options: { timeout_ms?: number; signal?: AbortSignal } = {},
+  options: UntilOptions = {},
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+      reject(
+        new ActionError('invalid-argument', 'the options of until must be an object', 'refused'),
+      );
+      return;
+    }
+    const unknown = Object.keys(options).filter((k) => !UNTIL_OPTION_FIELDS.has(k));
+    if (unknown.length > 0) {
+      reject(
+        new ActionError(
+          'unknown-field',
+          `the options of until have ${unknown.join(', ')}, which until does not know: the fields are ${[...UNTIL_OPTION_FIELDS].join(', ')}`,
+          'refused',
+        ),
+      );
+      return;
+    }
+    if (
+      options.timeoutMs !== undefined &&
+      (typeof options.timeoutMs !== 'number' ||
+        !Number.isFinite(options.timeoutMs) ||
+        options.timeoutMs < 0)
+    ) {
+      reject(
+        new ActionError(
+          'invalid-argument',
+          'options.timeoutMs must be a finite number of milliseconds, 0 or more',
+          'refused',
+        ),
+      );
+      return;
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cleanups: (() => void)[] = [];
     const finish = (done: () => void) => {
@@ -433,19 +463,20 @@ export function until<T>(
     };
     cleanups.push(source.subscribe(check));
     options.signal?.addEventListener('abort', onAbort);
-    if (options.timeout_ms !== undefined) {
+    if (options.timeoutMs !== undefined) {
+      const timeoutMs = options.timeoutMs;
       timer = setTimeout(
         () =>
           finish(() =>
             reject(
               new ActionError(
                 'timeout',
-                `the condition did not hold within ${options.timeout_ms! / 1000} s: look at the state before you wait again`,
+                `the condition did not hold within ${timeoutMs / 1000} s: look at the state before you wait again`,
                 'unknown',
               ),
             ),
           ),
-        options.timeout_ms,
+        Math.min(timeoutMs, TIMER_MAX_MS),
       );
     }
     const first = source.get();

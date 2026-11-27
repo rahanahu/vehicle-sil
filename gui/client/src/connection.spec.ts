@@ -372,6 +372,106 @@ describe('Connection', () => {
     ]);
   });
 
+  describe('immediate control and sync flushing', () => {
+    it('flushes synced, operation, error, and command frames on a microtask without waiting BATCH_MS', async () => {
+      const c = connection();
+      const got = batches(c);
+      c.connect();
+      fake.last().open();
+
+      // hello + synced coalesce into one microtask batch without advancing timers
+      fake.last().send({ type: 'hello' });
+      fake.last().send({ type: 'synced', run_id: null, last_seq: null });
+      expect(got).toEqual([]);
+      await Promise.resolve();
+      expect(got).toEqual([[{ type: 'hello' }, { type: 'synced', run_id: null, last_seq: null }]]);
+      // The cancelled BATCH_MS timer does not fire an empty or duplicate batch
+      vi.advanceTimersByTime(BATCH_MS * 2);
+      expect(got).toHaveLength(1);
+
+      // operation flushes immediately on microtask
+      fake.last().send({ type: 'operation', run_id: '1', seq: 1, state: 'applied', done: true });
+      await Promise.resolve();
+      expect(got).toHaveLength(2);
+      expect(got[1]).toEqual([
+        { type: 'operation', run_id: '1', seq: 1, state: 'applied', done: true },
+      ]);
+
+      // error flushes immediately on microtask
+      fake.last().send({ type: 'error', run_id: null, code: 'invalid-watch', message: 'bad' });
+      await Promise.resolve();
+      expect(got).toHaveLength(3);
+      expect(got[2]).toEqual([
+        { type: 'error', run_id: null, code: 'invalid-watch', message: 'bad' },
+      ]);
+
+      // command launcher event flushes immediately on microtask
+      fake.last().send({
+        type: 'event',
+        run_id: '1',
+        event: { event: 'command', seq: 2, command: 'pause', accepted: true, id: 7 },
+      });
+      await Promise.resolve();
+      expect(got).toHaveLength(4);
+      expect(got[3]).toEqual([
+        {
+          type: 'event',
+          run_id: '1',
+          event: { event: 'command', seq: 2, command: 'pause', accepted: true, id: 7 },
+        },
+      ]);
+
+      // Non-immediate events (time, values, session) still batch for BATCH_MS
+      fake.last().send({ type: 'event', run_id: '1', event: { event: 'time', sim_ms: 100 } });
+      await Promise.resolve();
+      expect(got).toHaveLength(4);
+      vi.advanceTimersByTime(BATCH_MS);
+      expect(got).toHaveLength(5);
+    });
+
+    it('guards queued microtask flushes with flushQueued and attemptRevision across close() and reconnects', async () => {
+      const c = connection();
+      const got = batches(c);
+      c.connect();
+      fake.last().open();
+
+      // 1. Immediate frame followed synchronously by close(): microtask must not fire after close()
+      fake.last().send({ type: 'synced', run_id: null, last_seq: null });
+      c.close();
+      await Promise.resolve();
+      expect(got).toEqual([]);
+
+      // 2. Immediate frame on attempt 1, synchronous close() + connect() + open() + non-immediate frame on attempt 2:
+      // attempt 1's stale microtask must NOT prematurely flush attempt 2's non-immediate hello frame!
+      c.connect();
+      fake.last().open();
+      fake.last().send({ type: 'error', run_id: null, code: 'invalid-watch', message: 'old' });
+      c.close();
+      c.connect();
+      fake.last().open();
+      fake.last().send({ type: 'hello', instance: 'new' });
+      await Promise.resolve();
+      expect(got).toEqual([]);
+      vi.advanceTimersByTime(BATCH_MS);
+      expect(got).toEqual([[{ type: 'hello', instance: 'new' }]]);
+
+      // 3. Immediate frame on attempt 2, synchronous close() + connect() + open() + immediate frame on attempt 3:
+      // attempt 3's microtask still flushes attempt 3's batch cleanly once
+      fake.last().send({ type: 'synced', run_id: 'old', last_seq: 1 });
+      c.close();
+      c.connect();
+      fake.last().open();
+      fake.last().send({ type: 'hello', instance: '3' });
+      fake.last().send({ type: 'synced', run_id: '3', last_seq: 5 });
+      await Promise.resolve();
+      expect(got).toHaveLength(2);
+      expect(got[1]).toEqual([
+        { type: 'hello', instance: '3' },
+        { type: 'synced', run_id: '3', last_seq: 5 },
+      ]);
+    });
+  });
+
   describe('webSocketFactory', () => {
     /** Fake globalThis.WebSocket. Remembers the arguments it was created with. */
     class Recorder {

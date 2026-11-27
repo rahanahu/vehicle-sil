@@ -1,4 +1,5 @@
 import { ClientConnection, Connection, SocketFactory, webSocketFactory } from './connection';
+import { ActionError } from './front-types';
 import { DEFAULT_TIMEOUT_MS, HttpRequest, HttpTransport, fetchTransport } from './http';
 import {
   AppInfo,
@@ -218,8 +219,65 @@ export function clientErrorSink(client: GuiClient): ErrorSink | undefined {
   return clientErrorSinks.get(client);
 }
 
+const CLIENT_OPTION_FIELDS = new Set([
+  'baseUrl',
+  'token',
+  'origin',
+  'http',
+  'socket',
+  'answerTimeoutMs',
+  'onError',
+]);
+
+/** Validates ClientOptions / ConnectOptions at runtime, rejecting unknown (e.g. legacy snake_case) fields. */
+export function validateClientOptions(options: unknown): asserts options is ClientOptions {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new ActionError('invalid-argument', 'options must be an object with baseUrl', 'refused');
+  }
+  const unknown = Object.keys(options).filter((k) => !CLIENT_OPTION_FIELDS.has(k));
+  if (unknown.length > 0) {
+    throw new ActionError(
+      'unknown-field',
+      `options has ${unknown.join(', ')}, which connect, createFront and createClient do not know: the fields are ${[...CLIENT_OPTION_FIELDS].join(', ')}`,
+      'refused',
+    );
+  }
+  const candidate = options as Record<string, unknown>;
+  const baseUrl = candidate['baseUrl'];
+  if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
+    throw new ActionError(
+      'invalid-argument',
+      'options.baseUrl must be a non-empty URL string',
+      'refused',
+    );
+  }
+  try {
+    new URL(baseUrl);
+  } catch {
+    throw new ActionError(
+      'invalid-argument',
+      `options.baseUrl '${baseUrl}' is not a valid absolute URL`,
+      'refused',
+    );
+  }
+  const answerTimeoutMs = candidate['answerTimeoutMs'];
+  if (
+    answerTimeoutMs !== undefined &&
+    (typeof answerTimeoutMs !== 'number' ||
+      !Number.isFinite(answerTimeoutMs) ||
+      answerTimeoutMs <= 0)
+  ) {
+    throw new ActionError(
+      'invalid-argument',
+      'options.answerTimeoutMs must be a finite number of milliseconds greater than 0',
+      'refused',
+    );
+  }
+}
+
 /** createClient, and the parts the front door is built from. */
 export function buildClient(options: ClientOptions): ClientParts {
+  validateClientOptions(options);
   const rawToken = options.token;
   const token: () => string | null =
     typeof rawToken === 'function' ? rawToken : () => rawToken ?? null;
