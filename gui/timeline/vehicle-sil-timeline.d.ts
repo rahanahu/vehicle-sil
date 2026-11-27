@@ -101,6 +101,49 @@ export interface VehicleSilTimelineElement extends HTMLElement {
   ): void;
 }
 
+/** HTML attributes accepted by `<vehicle-sil-timeline>`. */
+export interface VehicleSilTimelineAttributes {
+  src?: string;
+  'file-name'?: string;
+  cursor?: string | number;
+  step?: string | number;
+  from?: string | number;
+  to?: string | number;
+  variables?: string;
+  hide?: string;
+  compact?: boolean | '';
+  theme?: 'light' | 'dark' | 'auto';
+}
+
+/** JS properties accepted by `<vehicle-sil-timeline>`. */
+export interface VehicleSilTimelineProperties {
+  src?: string;
+  fileName?: string;
+  data?: string | object | null;
+  token?: string | null;
+  headers?: Record<string, string> | null;
+  cursor?: number | null;
+  step?: number | null;
+  from?: number | null;
+  to?: number | null;
+  variables?: string[] | null;
+  labels?: Record<string, string> | null;
+  hide?: string;
+  compact?: boolean;
+  theme?: 'light' | 'dark' | 'auto';
+  messages?: VehicleSilTimelineMessages | null;
+}
+
+/** Single-source contract entry of `<vehicle-sil-timeline>` for framework type adapters. */
+export interface VehicleSilTimelineContract {
+  readonly 'vehicle-sil-timeline': {
+    readonly element: VehicleSilTimelineElement;
+    readonly attrs: VehicleSilTimelineAttributes;
+    readonly props: VehicleSilTimelineProperties;
+    readonly events: VehicleSilTimelineEventMap;
+  };
+}
+
 declare global {
   interface HTMLElementTagNameMap {
     'vehicle-sil-timeline': VehicleSilTimelineElement;

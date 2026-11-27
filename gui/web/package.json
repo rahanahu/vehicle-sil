@@ -16,6 +16,7 @@
     "lint": "ng lint && eslint ../client ../timeline",
     "build:client": "node node_modules/esbuild/bin/esbuild ../client/src/index.ts --bundle --format=esm --platform=neutral --target=es2022 --outfile=../../build/gui-client/vehicle-sil-gui-client.mjs && node ../client/build-elements.mjs ../../build/gui-client/vehicle-sil-gui-elements.mjs ./vehicle-sil-gui-client.mjs",
     "pack:client": "node ../client/pack.mjs",
+    "verify:consumers": "node ../client/fixtures/verify-consumers.mjs",
     "e2e": "playwright test",
     "e2e:dev": "playwright test -c playwright.dev.config.ts",
     "e2e:real": "playwright test -c playwright.real.config.ts",

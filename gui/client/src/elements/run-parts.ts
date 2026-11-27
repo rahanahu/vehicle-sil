@@ -48,13 +48,34 @@ export class VsilRunControlsElement extends Part {
     return this.#intent;
   }
   set intent(value: Intent | null) {
-    this.#intent = value;
+    this.#intent = value ?? null;
   }
   #intent: Intent | null = null;
 
+  get labelStart(): string {
+    return this.getAttribute('label-start') ?? '';
+  }
+  set labelStart(value: string | null) {
+    this.reflectString('label-start', value);
+  }
+
+  get labelStop(): string {
+    return this.getAttribute('label-stop') ?? '';
+  }
+  set labelStop(value: string | null) {
+    this.reflectString('label-stop', value);
+  }
+
+  get labelForceStop(): string {
+    return this.getAttribute('label-force-stop') ?? '';
+  }
+  set labelForceStop(value: string | null) {
+    this.reflectString('label-force-stop', value);
+  }
+
   constructor() {
     super();
-    this.upgrade('intent');
+    this.upgrade('intent', 'labelStart', 'labelStop', 'labelForceStop');
   }
 
   protected draw(client: Front, root: HTMLElement): void {
@@ -108,6 +129,54 @@ export class VsilTimeControlsElement extends Part {
     'label-step',
     'label-run-until',
   ];
+
+  get speeds(): string {
+    return this.getAttribute('speeds') ?? '';
+  }
+  set speeds(value: string | null) {
+    this.reflectNonEmpty('speeds', value);
+  }
+
+  get stepMs(): string {
+    return this.getAttribute('step-ms') ?? '';
+  }
+  set stepMs(value: number | string | null) {
+    if (value === null || value === undefined || value === '') this.removeAttribute('step-ms');
+    else this.setAttribute('step-ms', String(value));
+  }
+
+  get labelPause(): string {
+    return this.getAttribute('label-pause') ?? '';
+  }
+  set labelPause(value: string | null) {
+    this.reflectString('label-pause', value);
+  }
+
+  get labelResume(): string {
+    return this.getAttribute('label-resume') ?? '';
+  }
+  set labelResume(value: string | null) {
+    this.reflectString('label-resume', value);
+  }
+
+  get labelStep(): string {
+    return this.getAttribute('label-step') ?? '';
+  }
+  set labelStep(value: string | null) {
+    this.reflectString('label-step', value);
+  }
+
+  get labelRunUntil(): string {
+    return this.getAttribute('label-run-until') ?? '';
+  }
+  set labelRunUntil(value: string | null) {
+    this.reflectString('label-run-until', value);
+  }
+
+  constructor() {
+    super();
+    this.upgrade('speeds', 'stepMs', 'labelPause', 'labelResume', 'labelStep', 'labelRunUntil');
+  }
 
   protected draw(client: Front, root: HTMLElement): void {
     const stepMs = h('input', { type: 'number', min: '1', value: this.text('step-ms', '10') });

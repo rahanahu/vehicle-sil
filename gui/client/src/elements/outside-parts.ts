@@ -91,6 +91,25 @@ function targetText(target: ConnectTarget): string {
 export class VsilConnectElement extends Part {
   static override observedAttributes = ['network', 'file'];
 
+  get network(): string {
+    return this.getAttribute('network') ?? '';
+  }
+  set network(value: string | null) {
+    this.reflectNonEmpty('network', value);
+  }
+
+  get file(): string {
+    return this.getAttribute('file') ?? '';
+  }
+  set file(value: string | null) {
+    this.reflectNonEmpty('file', value);
+  }
+
+  constructor() {
+    super();
+    this.upgrade('network', 'file');
+  }
+
   protected draw(client: Front, root: HTMLElement, alive: () => boolean): void {
     const network = this.getAttribute('network');
     if (!network) {

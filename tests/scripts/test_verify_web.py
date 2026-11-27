@@ -443,7 +443,7 @@ class VerifyWebFilteringTest(unittest.TestCase):
         return code, out.getvalue(), err.getvalue(), ran, waits
 
     def test_heavy_steps_exclude_i18n_and_build(self) -> None:
-        self.assertEqual(verify_web_mod.HEAVY, {"test", "client", "e2e", "e2e-dev"})
+        self.assertEqual(verify_web_mod.HEAVY, {"test", "client", "consumers", "e2e", "e2e-dev"})
         self.assertNotIn("i18n", verify_web_mod.HEAVY)
         self.assertNotIn("build", verify_web_mod.HEAVY)
 
@@ -512,13 +512,19 @@ class VerifyWebFilteringTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual([name for name, _ in ran], ["build", "bundle", "e2e"])
 
-        # Release / CI invocation (--skip-install --skip-e2e, without --skip-checks) still runs package
+        # Release / CI invocation (--skip-install --skip-e2e, without --skip-checks) still runs package and consumers
         code, _out, err, ran, _ = self._run_main(["--skip-install", "--skip-e2e", "--no-wait"])
         self.assertEqual(code, 0, err)
         self.assertEqual(
             [name for name, _ in ran],
-            ["format", "lint", "test", "client", "timeline", "i18n", "build", "bundle", "package"],
+            ["format", "lint", "test", "client", "timeline", "i18n", "build", "bundle", "package", "consumers"],
         )
+
+        # --only package,consumers runs in canonical order and waits before heavy consumers step
+        code, _out, err, ran, waits = self._run_main(["--only", "consumers,package"], has_dist=False)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([name for name, _ in ran], ["package", "consumers"])
+        self.assertEqual(waits, ["verify-web"])
 
     def test_skip_build_and_all_skipped_and_conflicts(self) -> None:
         code, _out, err, ran, _ = self._run_main(["--skip-install", "--skip-checks", "--skip-build", "--no-wait"])

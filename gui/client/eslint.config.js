@@ -9,6 +9,9 @@ const tseslint = fromWeb('typescript-eslint');
 
 module.exports = defineConfig([
   {
+    ignores: ['fixtures/**'],
+  },
+  {
     files: ['**/*.ts'],
     extends: [eslint.configs.recommended, tseslint.configs.recommended, tseslint.configs.stylistic],
     rules: {

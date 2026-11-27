@@ -950,6 +950,22 @@ jobs:
         if: steps.web-node-modules.outputs.cache-hit != 'true'
         working-directory: gui/web
         run: npm ci
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: consumer-fixture-modules
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          path: |
+            gui/client/fixtures/react/v18/node_modules
+            gui/client/fixtures/react/v19/node_modules
+            gui/client/fixtures/vue/node_modules
+            gui/client/fixtures/svelte/node_modules
+          key: consumer-fixtures-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-node.outputs.node-version }}-${{ hashFiles('gui/client/fixtures/**/package-lock.json') }}
+      - name: Install consumer fixture packages
+        if: needs.changes.outputs.docs_only != 'true' && steps.consumer-fixture-modules.outputs.cache-hit != 'true'
+        run: |
+          for dir in gui/client/fixtures/react/v18 gui/client/fixtures/react/v19 gui/client/fixtures/vue gui/client/fixtures/svelte; do
+            npm --prefix "$dir" ci --no-fund --no-audit
+          done
       - name: Format of the documents (a pull request that changes only Markdown files)
         if: needs.changes.outputs.docs_only == 'true'
         working-directory: gui/web

@@ -12,7 +12,9 @@ message, a message not translated yet ("target": null), a changed source and a b
 entries are listed; see scripts/web_i18n.py), npm run build, npm run build:client (the
 client library bundled into one ESM file, build/gui-client/vehicle-sil-gui-client.mjs, with the esbuild that the
 Angular build tools bring), npm run pack:client (the client library as an npm package,
-build/gui-client/vehicle-sil-gui-client-<version>.tgz, with its types; it is installed and used to check it), npm
+build/gui-client/vehicle-sil-gui-client-<version>.tgz, with its types; it is installed and used to check it), npm run
+verify:consumers (installs the real .tgz into isolated consumer directories to type-check Vanilla TS, Angular,
+React 18/19, Vue 3 and Svelte 5 plus run Playwright Chromium mount smoke tests), npm
 run e2e (the built
 app served by the GUI server of gui/server, which runs the stand-in launcher that replays recordings), and, with --e2e-dev, npm run e2e:dev (the same tests through the
 dev server with its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web) and the Playwright JUnit XML report of each e2e step to build/logs/<tag>-<step>.junit.xml; the
@@ -83,6 +85,7 @@ ERROR_LINES = {
     "build": re.compile(r"^\s*(✘|X)\s*\[ERROR\]|\[ERROR\]|error TS\d+|^Error|budget"),
     "bundle": re.compile(r"\[ERROR\]|^Error|rror:|Cannot find module"),
     "package": re.compile(r"pack-client: |error TS\d+|\[ERROR\]|rror:"),
+    "consumers": re.compile(r"verify-consumers: |error TS\d+|\[ERROR\]|rror:|TimeoutError"),
     "e2e": E2E_ERRORS,
     "e2e-dev": E2E_ERRORS,
 }
@@ -99,6 +102,7 @@ ALL_STEPS = (
     "build",
     "bundle",
     "package",
+    "consumers",
     "e2e",
     "e2e-dev",
 )
@@ -117,6 +121,7 @@ SUMMARY_LINES = {
     "build": re.compile(r"Initial total"),
     "bundle": re.compile(r"vehicle-sil-gui-client\.mjs\s+\S+"),
     "package": re.compile(r"pack-client: \S+\.tgz"),
+    "consumers": re.compile(r"verify-consumers: \d+ environments"),
     "e2e": E2E_SUMMARY,
     "e2e-dev": E2E_SUMMARY,
 }
@@ -127,7 +132,7 @@ BROWSER_HINT = ("The browser of the unit tests is not installed. Install it with
                 "--only-shell chromium` in gui/web (add --with-deps on a fresh Linux); scripts/doctor.py checks it.")
 
 # Steps that wait while timing-sensitive work runs on the machine.
-HEAVY = {"test", "client", "e2e", "e2e-dev"}
+HEAVY = {"test", "client", "consumers", "e2e", "e2e-dev"}
 
 # Warnings worth showing even when a step passes.
 NOTE_LINES = {"build": re.compile(r"budget", re.IGNORECASE)}
@@ -522,6 +527,7 @@ def main() -> int:
             "build": [npm, "run", "build"],
             "bundle": [npm, "run", "build:client"],
             "package": [npm, "run", "pack:client"],
+            "consumers": [npm, "run", "verify:consumers"],
             "e2e": [npm, "run", "e2e", *extra],
             "e2e-dev": [npm, "run", "e2e:dev", *extra],
         }
@@ -557,7 +563,10 @@ def main() -> int:
         if not i18n_alone and not args.workbench and not args.skip_build:
             steps += [Step("build", [npm, "run", "build"]), Step("bundle", [npm, "run", "build:client"])]
             if not args.skip_checks:
-                steps.append(Step("package", [npm, "run", "pack:client"]))
+                steps += [
+                    Step("package", [npm, "run", "pack:client"]),
+                    Step("consumers", [npm, "run", "verify:consumers"]),
+                ]
         if not i18n_alone and not args.skip_e2e:
             steps += [Step("e2e", [npm, "run", "e2e", *extra])]
             if args.e2e_dev:
