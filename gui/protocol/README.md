@@ -81,11 +81,11 @@ Every `api/` request has these conditions:
 | `GET api/app` | Information on the server and the launcher, whether variables can be read and written, limits | `app.json` |
 | `GET api/configs` | The `.yaml` / `.yml` files under the root | `configs.json` |
 | `GET api/config?file=<configuration file>` | The text of the file and the SHA-256 of its bytes: `{file, text, stamp}` ("The text of a configuration file" below) | `config.json` |
-| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | The check of an unsaved text of the file, which starts no process; the same response as above | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: a check of the saved file that describes its executables again, for the checks of its text | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: saves the text as the file, by default only an edit that keeps the commands that run ("Saving a text (`POST api/config`)" below) | `save-config.json`, `error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}` (the identifier of the run it started; the summary arrives over WebSocket), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}` (the identifier of the run it started; the summary arrives over WebSocket), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `run-connect.json`, `error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: where that network can be connected on this computer ("Connecting a network outside" below) | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | `{instance, run_id}` of the targeted run, or 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
@@ -142,7 +142,7 @@ A `can` or `ethernet` network can be connected to a real bus through the launche
 
 ### Check and start (`api/check`, `api/run`)
 
-The optional integer `stop_at_ms` (1–10^12) gives the virtual stop time. The optional integer `late_tolerance_ms` (0–10^12) gives the wall-clock pacing tolerance. Both fields apply to Check and Start. The server returns HTTP 409 `launcher-unsupported` if either field is sent to a launcher without the `run-stop-at` feature. Check returns the resolved `time_step_ms` after Describe. The optional string `after_scenario` (`"stop"` or `"pause"`, default `"stop"`) chooses whether a passed scenario stops the run or pauses at the scenario end virtual time and hands over to manual control; `"pause"` requires `scenario` to be set and `stop_at_ms` to be omitted (400 `invalid-field` otherwise), and returns 409 `launcher-unsupported` when the launcher lacks `scenario-handover`.
+The optional integer `stop_at_ms` (1–10^12) gives the virtual stop time. The optional integer `late_tolerance_ms` (0–10^12) gives the wall-clock pacing tolerance. Both fields apply to Check and Start. The server returns HTTP 409 `launcher-unsupported` if either field is sent to a launcher without the `run-stop-at` feature. Check returns the resolved `time_step_ms` after Describe. The optional string `after_scenario` (`"stop"` or `"pause"`, default `"stop"`) chooses whether a passed scenario stops the run or pauses at the scenario end virtual time and hands over to manual control; `"pause"` requires `scenario` to be set and `stop_at_ms` to be omitted (400 `invalid-field` otherwise), and returns 409 `launcher-unsupported` when the launcher lacks `scenario-handover`. The optional non-empty string `case` selects a named case from a multi-case scenario; it returns 409 `launcher-unsupported` when the launcher lacks `scenario-cases`. When a multi-case scenario is checked without `case`, `POST api/check` still returns HTTP 200 with `check.result: "usage"` while preserving `participants`, `networks`, `hot_eligibility`, and `scenario` (`case: null`, `cases`, `case_details`, `params`, `param_meta`, `missing_params`).
 
 - **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. The response is `{instance, run_id}`, and the summary of the new run arrives over the WebSocket stream as `session`. **Ordering with WebSocket**: the server broadcasts the initial `session`, `variables`, and any buffered pre-start events over WebSocket *before* the `POST api/run` HTTP response resolves. External HTTP+WS clients must accept events (and even a fast `session` with `state: "ended"`) arriving before `POST api/run` returns (see [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs) and [examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)).
 - **Start after a check**: `api/run` validates `disable`/`manual` participant names against the saved configuration and runs the launcher's own single `check` when starting. If the check does not pass (`result` is not `passed`), the run does not proceed and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before any session becomes active, so there is nothing to stop. Example: `error-check-failed.json`.
@@ -261,7 +261,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 409 | `starting` | `api/run`: another `api/run` is starting a run (the launcher has not been registered yet) |
 | 422 | `check-failed` | `api/run`: the check of what the run is made of did not pass, so no run was started (`detail` holds `{result, findings}`; "Check and start" above). Example: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
-| 409 | `launcher-unsupported` | `api/check`, `api/run`: `stop_at_ms` or `late_tolerance_ms` was sent to a launcher without `run-stop-at`, or `after_scenario: "pause"` was sent to a launcher without `scenario-handover` |
+| 409 | `launcher-unsupported` | `api/check`, `api/run`: `stop_at_ms` or `late_tolerance_ms` was sent to a launcher without `run-stop-at`, `after_scenario: "pause"` was sent to a launcher without `scenario-handover`, or `case` was sent to a launcher without `scenario-cases` |
 | 409 | `scenario-running` | `api/write`: the running run is running a scenario before handover (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
 | 409 | `session-changed` | `api/stop-session` and targeted `api/time`: the server instance or current run changed. `api/write`: the requested run ID differs from the running run. No operation was sent. Example: `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: the file's content no longer has `stamp`, or a new file (`stamp` `null`) is there already |
@@ -444,6 +444,7 @@ Notifications from the server.
 | `log` | `{kept, dropped}` per source: the number of lines the server keeps and the number it dropped |
 | `problems`, `problems_omitted` | The server's notifications (`{code, message, detail}`, as in `error`) in the order they happened, and the number not kept because the limit was exceeded |
 | `scenario` | The progress of the scenario run (`scenario` of `api/run`). `null` for a run without a scenario ("Scenarios" below) |
+| `intent` | Optional run options used to start this session (such as `variant`, `scenario`, `case`, `after_scenario`, `params`, `disable`, `enable`, `manual`, `strict`, `connect`, `time_policy`, `speed`, `start_paused`, `stop_at_ms`, `late_tolerance_ms`), with `scenario` preserved as the GUI API root-relative path so clients can re-run via `POST api/run` with `{"file": session.file, ...session.intent}`. Omitted or `null` on older servers |
 
 Notes on the fields:
 
@@ -718,12 +719,14 @@ What you can do while a scenario runs:
 - Step findings (`scenario-failed` and others) are `finding`s that have the scenario's `file` and `line`.
 - The `simulation` of the result of a run stopped by a scenario is `ended` (the presence of `scenario` in the result tells it from an `ended` caused by a participant).
 
-`scenario` of the summary is `{file, name, step_count, steps, steps_omitted, status, over_at_ms, timeline_url, handed_over}`. A screen opened midway can build the step table from it.
+`scenario` of the summary is `{file, name, case, params, step_count, steps, steps_omitted, status, over_at_ms, timeline_url, handed_over}`. A screen opened midway can build the step table from it.
 
 | Field | Contents |
 |---|---|
 | `file` | The scenario that was passed |
 | `name`, `step_count` | From `scenario` of the check result |
+| `case` | Optional selected scenario case name (`null` or omitted when none) |
+| `params` | Optional resolved scenario parameters (`[{name, value, from, type?, values?, description?}]`, merging check metadata with result values) |
 | `steps` | The steps that have arrived (in `index` order; the last state of each step) |
 | `steps_omitted` | Number of steps beyond 1000 |
 | `status`, `over_at_ms` | From `scenario` of the result (`null` until the result arrives, or set on handover from `state`) |

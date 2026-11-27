@@ -394,3 +394,174 @@ def test_run_manager_write_variables_honors_handover_and_prestate_refusals(tmp_p
             await configs.cleanup()
 
     asyncio.run(main())
+
+
+def test_case_validation_feature_gate_and_root_relative_session_intent(tmp_path: Path) -> None:
+    """case requires FEATURE_SCENARIO_CASES, rejects invalid values, writes config-relative scenario to
+    launcher request while preserving root-relative Session.intent, and re-run still runs TOCTOU validation."""
+    from pydantic import ValidationError
+    from fake_runtime import DEFAULT_FEATURES
+    from vehicle_sil_gui.launcher import FEATURE_SCENARIO_CASES
+
+    root = tmp_path / "root"
+    sub = root / "sub"
+    (sub / "scenarios").mkdir(parents=True)
+    cfg = sub / "simple.yaml"
+    cfg.write_text(
+        "vehicle_sil_simulation: 2\n"
+        "networks:\n"
+        "  - name: CAN1\n"
+        "    connect:\n"
+        "      lab: { backend: socketcan, channel: vcan0 }\n"
+        "participants:\n"
+        "  - name: Engine\n"
+        "    command: [echo, ok]\n",
+        encoding="utf-8",
+    )
+    (sub / "scenarios" / "cases.yaml").write_text(
+        "vehicle_sil_scenario: 1\ncases:\n  load: {}\nsteps: []\n",
+        encoding="utf-8",
+    )
+
+    # Validation: empty/null/non-string case and case+text rejected
+    for bad in ("", None, 42, ["load"]):
+        with pytest.raises(ValidationError):
+            RunRequest.model_validate({"file": "sub/simple.yaml", "case": bad})
+
+    # Feature gate: launcher without scenario-cases refuses with 409 launcher-unsupported
+    async def check_feature_gate() -> None:
+        no_cases_launcher = FakeLauncher(features=tuple(f for f in DEFAULT_FEATURES if f != FEATURE_SCENARIO_CASES))
+        svc = ConfigService(root, no_cases_launcher)
+        try:
+            with pytest.raises(Refused) as exc:
+                await svc.check({"file": "sub/simple.yaml", "scenario": "sub/scenarios/cases.yaml", "case": "load"})
+            assert (exc.value.status, exc.value.code) == (409, "launcher-unsupported")
+        finally:
+            await svc.cleanup()
+
+    asyncio.run(check_feature_gate())
+
+    # Subdirectory coordinate system + Session.intent round-trip + TOCTOU connect validation on re-run
+    seen_intents: list[dict] = []
+
+    async def fake_check(argv: list[str], request: Path, descriptions: Path | None = None,
+                         text: bytes | None = None) -> tuple[int, dict]:
+        seen_intents.append(json.loads(request.read_text(encoding="utf-8")))
+        res = default_check_result("sub/simple.yaml")
+        res["networks"] = [{"name": "CAN1"}]
+        return 0, res
+
+    async def main() -> None:
+        launcher = FakeLauncher()
+        configs = ConfigService(root, launcher, check_runner=fake_check)
+        runtime = FakeRuntime()
+        runs = RunManager(instance="inst-1", launcher=launcher, configs=configs, runtime=runtime)
+        ws = WsGateway(runs, auth=False)
+        runs.bind_hub(ws.hub, ws.wake_watches)
+        try:
+            # case with text -> 400 invalid-field
+            with pytest.raises(Refused) as bad_text:
+                await configs.check({"file": "sub/simple.yaml", "text": cfg.read_text(encoding="utf-8"), "case": "load"})
+            assert (bad_text.value.status, bad_text.value.code) == (400, "invalid-field")
+
+            # Seed connect target list via check
+            await configs.check({"file": "sub/simple.yaml"})
+            # Manually populate connect targets allowlist for CAN1 -> ("lab",)
+            st = configs.stamp("sub/simple.yaml")
+            configs._targets[("sub/simple.yaml", "CAN1")] = (st, None, ("lab",))
+
+            raw_req = {
+                "file": "sub/simple.yaml",
+                "scenario": "sub/scenarios/cases.yaml",
+                "case": "load",
+                "after_scenario": "pause",
+                "params": {"rpm": 3000, "dry": False},
+                "connect": {"CAN1": "lab"},
+            }
+            req = RunRequest.model_validate(raw_req)
+            await runs.start_run(req, raw_req)
+            run = runs.current
+            assert run is not None
+            # Launcher received config-relative scenario path and case
+            sent = json.loads(runtime.runs[-1].spec.request.read_text(encoding="utf-8"))
+            assert sent["scenario"] == "scenarios/cases.yaml"
+            assert sent["case"] == "load"
+            assert sent["after_scenario"] == "pause"
+
+            # Feed check + result events to verify scenario.params metadata merging
+            run.session.feed_event({
+                "event": "check",
+                "seq": 1,
+                "check": {
+                    "result": "passed",
+                    "scenario": {
+                        "file": "scenarios/cases.yaml",
+                        "name": "cases",
+                        "case": "load",
+                        "steps": 1,
+                        "params": [
+                            {"name": "rpm", "value": 3000, "from": "cli", "type": "integer", "description": "target rpm"},
+                            {"name": "dry", "value": False, "from": "cli", "type": "bool"},
+                        ],
+                    },
+                },
+            }, 200)
+            run.session.feed_event({
+                "event": "result",
+                "seq": 2,
+                "result": {
+                    "result": "passed",
+                    "end": "completed",
+                    "ok": True,
+                    "scenario": {
+                        "file": "scenarios/cases.yaml",
+                        "name": "cases",
+                        "case": "load",
+                        "params": [
+                            {"name": "rpm", "value": 3000, "from": "cli"},
+                            {"name": "dry", "value": False, "from": "cli"},
+                        ],
+                        "status": "passed",
+                        "over_at_ms": 100,
+                        "steps": [],
+                    },
+                },
+            }, 200)
+
+            summary = run.session.summary()
+            # Session.intent keeps GUI API root-relative scenario path and exact re-run options
+            assert summary["intent"] == {
+                "scenario": "sub/scenarios/cases.yaml",
+                "case": "load",
+                "after_scenario": "pause",
+                "params": {"rpm": 3000, "dry": False},
+                "connect": {"CAN1": "lab"},
+            }
+            assert summary["scenario"]["case"] == "load"
+            assert summary["scenario"]["params"] == [
+                {"name": "rpm", "value": 3000, "from": "cli", "type": "integer", "description": "target rpm"},
+                {"name": "dry", "value": False, "from": "cli", "type": "bool"},
+            ]
+
+            # End the first run so we can re-run from summary["intent"]
+            await runtime.runs[-1].finish(returncode=0)
+            rerun_payload = {"file": summary["file"], **summary["intent"]}
+            rerun_req = RunRequest.model_validate(rerun_payload)
+            await runs.start_run(rerun_req, rerun_payload)
+            sent2 = json.loads(runtime.runs[-1].spec.request.read_text(encoding="utf-8"))
+            assert sent2["scenario"] == "scenarios/cases.yaml"
+            assert sent2["case"] == "load"
+
+            # TOCTOU: if connect targets change on disk/allowlist, re-running via POST /api/run is still rejected
+            await runtime.runs[-1].finish(returncode=0)
+            configs._targets[("sub/simple.yaml", "CAN1")] = (st, None, ("other",))
+            with pytest.raises(Refused) as toctou:
+                await runs.start_run(rerun_req, rerun_payload)
+            assert (toctou.value.status, toctou.value.code) == (400, "target-not-listed")
+        finally:
+            await runs.shutdown_runtime()
+            await ws.shutdown()
+            await runs.cleanup_timelines()
+            await configs.cleanup()
+
+    asyncio.run(main())

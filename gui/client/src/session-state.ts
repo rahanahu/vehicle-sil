@@ -2,6 +2,7 @@
 // launcher's events. The session copy (SessionFeed in session.ts) uses them; users read the result as readable values.
 import {
   CheckResult,
+  CheckScenarioParam,
   CONTROL_EVENT,
   CommandReport,
   ControlLink,
@@ -16,6 +17,7 @@ import {
   ScenarioStatus,
   ScenarioStep,
   ServerProblem,
+  SessionIntent,
   SessionSummary,
   SummaryScenario,
   Speed,
@@ -233,6 +235,8 @@ export interface ScenarioView {
   name: string | null;
   /** Selected case name, if any. */
   case?: string | null;
+  /** Resolved parameters of the scenario, if any. */
+  params?: readonly CheckScenarioParam[];
   /** Number of steps (from the check result; null until then). */
   stepCount: number | null;
   /** Steps received (in index order, the last state of each step). After the result, every step. */
@@ -252,6 +256,25 @@ export interface ScenarioView {
   timelineUrl: string | null;
 }
 
+function mergeScenarioParams(
+  prev: readonly CheckScenarioParam[] | undefined,
+  next: readonly CheckScenarioParam[] | undefined,
+): readonly CheckScenarioParam[] | undefined {
+  if (next === undefined) return prev;
+  if (!prev || prev.length === 0) return next;
+  const byName = new Map(prev.map((p) => [p.name, p]));
+  return next.map((p) => {
+    const old = byName.get(p.name);
+    if (!old) return p;
+    return {
+      ...p,
+      ...(p.type == null && old.type != null ? { type: old.type } : {}),
+      ...(p.values == null && old.values != null ? { values: old.values } : {}),
+      ...(p.description == null && old.description != null ? { description: old.description } : {}),
+    };
+  });
+}
+
 function scenarioView(
   summary: SummaryScenario,
   launcherState: StateReport | null = null,
@@ -262,6 +285,7 @@ function scenarioView(
     file: summary.file,
     name: summary.name,
     ...(summary.case === undefined ? {} : { case: summary.case }),
+    ...(summary.params === undefined ? {} : { params: summary.params }),
     stepCount: summary.step_count,
     steps: summary.steps,
     stepsOmitted: summary.steps_omitted,
@@ -364,6 +388,8 @@ export interface SessionView {
   droppedMarks: number;
   /** Progress of the scenario (null for a run without a scenario). */
   scenario: ScenarioView | null;
+  /** Root-relative run intent suitable for re-running this session. Undefined on older servers. */
+  intent?: SessionIntent | null;
 }
 
 /** Where the run stands now (used by the status bar and the result display). */
@@ -606,12 +632,14 @@ export function applySummary(session: SessionView, summary: SessionSummary): Ses
     : session.scenario;
   if (scenario && result?.scenario) {
     const resultHandedOver = handedOver && result.scenario.status === 'passed';
+    const mergedParams = mergeScenarioParams(scenario.params, result.scenario.params);
     scenario = {
       ...scenario,
       name: result.scenario.name ?? scenario.name,
       ...(result.scenario.case !== undefined
         ? { case: result.scenario.case ?? scenario.case ?? null }
         : {}),
+      ...(mergedParams === undefined ? {} : { params: mergedParams }),
       stepCount: result.scenario.steps.length,
       steps: result.scenario.steps,
       stepsOmitted: 0,
@@ -626,6 +654,7 @@ export function applySummary(session: SessionView, summary: SessionSummary): Ses
   return {
     ...session,
     ...(summary.stop_at_ms === undefined ? {} : { stopAtMs: summary.stop_at_ms }),
+    ...(summary.intent === undefined ? {} : { intent: summary.intent }),
     runT0Ms,
     state: summary.state,
     launcher: launcherOf(summary),
@@ -818,6 +847,7 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
                 ...(found.case !== undefined
                   ? { case: found.case ?? next.scenario.case ?? null }
                   : {}),
+                ...(found.params !== undefined ? { params: found.params } : {}),
                 stepCount: found.steps,
               }
             : next.scenario,
@@ -903,12 +933,17 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
           ? (() => {
               const handedOver =
                 event.result.scenario.status === 'passed' ? next.scenario.handedOver : false;
+              const mergedParams = mergeScenarioParams(
+                next.scenario.params,
+                event.result.scenario.params,
+              );
               return {
                 ...next.scenario,
                 name: event.result.scenario.name,
                 ...(event.result.scenario.case !== undefined
                   ? { case: event.result.scenario.case ?? next.scenario.case ?? null }
                   : {}),
+                ...(mergedParams === undefined ? {} : { params: mergedParams }),
                 stepCount: next.scenario.stepCount ?? event.result.scenario.steps.length,
                 steps: event.result.scenario.steps,
                 status: event.result.scenario.status,

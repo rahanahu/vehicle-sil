@@ -57,8 +57,22 @@ SCENARIO_STEP_FIELDS = (
 )
 MAX_CALL_STACK_FRAMES = 64
 MAX_CALL_STACK_PARAMS = 256
+MAX_SCENARIO_PARAMS = 256
+MAX_PARAM_VALUES = 256
 NO_VARIABLES = {"state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
                 "operations": [], "operations_from_seq": 0, "operations_open_omitted": 0}
+
+
+def _copy_intent(intent: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for k, v in intent.items():
+        if isinstance(v, list):
+            out[k] = list(v)
+        elif isinstance(v, dict):
+            out[k] = dict(v)
+        else:
+            out[k] = v
+    return out
 
 
 def check_timing(check: dict) -> dict:
@@ -244,6 +258,7 @@ class Session:
     scenario: str | None = None  # the scenario file given to --scenario (root-relative), or None
     manual: list[str] = field(default_factory=list)  # the names given to --manual (the user starts them)
     staged: bool = False  # pre-start buffering until the initial check settles on pass or fail
+    intent: dict[str, Any] | None = None  # root-relative GUI API intent for re-running this session
 
     def __post_init__(self) -> None:
         self.id = str(self.id)
@@ -288,7 +303,13 @@ class Session:
         self.variables: Callable[[], dict] | None = None
         # The scenario's progress (a run with --scenario): from the check, the scenario_step events, the result.
         self.scenario_name: str | None = None
-        self.scenario_case: str | None = None
+        self.scenario_case: str | None = (
+            self._cut(self._clean_utf8(self.intent["case"]), self.limits.message_chars)
+            if self.scenario is not None and isinstance(self.intent, dict)
+            and isinstance(self.intent.get("case"), str) and self.intent["case"]
+            else None
+        )
+        self.scenario_params: list[dict[str, Any]] | None = None
         self.scenario_step_count: int | None = None
         self.scenario_steps: dict[int, dict] = {}
         self.scenario_steps_omitted = 0
@@ -705,6 +726,69 @@ class Session:
                     kept[k] = kept_str
         self.scenario_steps[index] = kept
 
+    def _keep_scenario_params(self, raw: object) -> list[dict[str, Any]] | None:
+        if not isinstance(raw, list):
+            return None
+        kept: list[dict[str, Any]] = []
+        for item in raw[: MAX_SCENARIO_PARAMS * 4]:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            from_val = item.get("from")
+            val = item.get("value")
+            if not isinstance(name, str) or not isinstance(from_val, str):
+                continue
+            if isinstance(val, bool):
+                kept_val: bool | int | float | str = val
+            elif _is_int(val):
+                kept_val = val
+            elif isinstance(val, float):
+                if not math.isfinite(val):
+                    continue
+                kept_val = val
+            elif isinstance(val, str):
+                kept_val = self._cut(self._clean_utf8(val), self.limits.message_chars)
+            else:
+                continue
+            entry: dict[str, Any] = {
+                "name": self._cut(self._clean_utf8(name), self.limits.message_chars),
+                "value": kept_val,
+                "from": self._cut(self._clean_utf8(from_val), self.limits.message_chars),
+            }
+            if isinstance(item.get("type"), str):
+                entry["type"] = self._cut(self._clean_utf8(item["type"]), self.limits.message_chars)
+            if isinstance(item.get("values"), list):
+                vals = [
+                    self._cut(self._clean_utf8(v), self.limits.message_chars)
+                    for v in item["values"][: MAX_PARAM_VALUES]
+                    if isinstance(v, str)
+                ]
+                if vals:
+                    entry["values"] = vals
+            if isinstance(item.get("description"), str):
+                entry["description"] = self._cut(self._clean_utf8(item["description"]), self.limits.message_chars)
+            kept.append(entry)
+            if len(kept) >= MAX_SCENARIO_PARAMS:
+                break
+        return kept
+
+    def _merge_scenario_params(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not self.scenario_params:
+            return incoming
+        prev_by_name = {p["name"]: p for p in self.scenario_params}
+        merged: list[dict[str, Any]] = []
+        for entry in incoming:
+            prev = prev_by_name.get(entry["name"])
+            if prev is None:
+                merged.append(entry)
+                continue
+            out = dict(entry)
+            for meta_key in ("type", "values", "description"):
+                if meta_key not in out and meta_key in prev:
+                    out[meta_key] = prev[meta_key]
+            merged.append(out)
+        return merged
+
     def _scenario_of_check(self, check: dict) -> None:
         found = check.get("scenario")
         if self.scenario is None or not isinstance(found, dict):
@@ -713,6 +797,10 @@ class Session:
             self.scenario_name = self._cut(self._clean_utf8(found["name"]), self.limits.message_chars)
         if isinstance(found.get("case"), str) and found["case"]:
             self.scenario_case = self._cut(self._clean_utf8(found["case"]), self.limits.message_chars)
+        if "params" in found:
+            params = self._keep_scenario_params(found.get("params"))
+            if params is not None:
+                self.scenario_params = params
         if _is_count(found.get("steps")):
             self.scenario_step_count = found["steps"]
 
@@ -731,6 +819,10 @@ class Session:
             self.scenario_name = self._cut(self._clean_utf8(found["name"]), self.limits.message_chars)
         if isinstance(found.get("case"), str) and found["case"]:
             self.scenario_case = self._cut(self._clean_utf8(found["case"]), self.limits.message_chars)
+        if "params" in found:
+            params = self._keep_scenario_params(found.get("params"))
+            if params is not None:
+                self.scenario_params = self._merge_scenario_params(params)
         steps = found.get("steps")
         if isinstance(steps, list):
             for step in steps:
@@ -741,12 +833,18 @@ class Session:
     def scenario_summary(self) -> dict | None:
         if self.scenario is None:
             return None
-        return {"file": self.scenario, "name": self.scenario_name, "case": self.scenario_case,
-                "step_count": self.scenario_step_count,
-                "steps": [self.scenario_steps[i] for i in sorted(self.scenario_steps)],
-                "steps_omitted": self.scenario_steps_omitted, "status": self.scenario_status,
-                "over_at_ms": self.scenario_over_at_ms, "timeline_url": self.timeline_url,
-                "handed_over": self.scenario_handed_over}
+        out = {"file": self.scenario, "name": self.scenario_name, "case": self.scenario_case,
+               "step_count": self.scenario_step_count,
+               "steps": [self.scenario_steps[i] for i in sorted(self.scenario_steps)],
+               "steps_omitted": self.scenario_steps_omitted, "status": self.scenario_status,
+               "over_at_ms": self.scenario_over_at_ms, "timeline_url": self.timeline_url,
+               "handed_over": self.scenario_handed_over}
+        if self.scenario_params is not None:
+            out["params"] = [
+                {**p, "values": list(p["values"])} if isinstance(p.get("values"), list) else dict(p)
+                for p in self.scenario_params
+            ]
+        return out
 
     def _keep_log(self, event: dict, size: int, stream_seq: int) -> None:
         log = self._log_of(event["source"])
@@ -992,6 +1090,8 @@ class Session:
             "scenario": self.scenario_summary(),
             **self.check_timing,
         }
+        if self.intent is not None:
+            out["intent"] = _copy_intent(self.intent)
         if variables:
             out["variables"] = self.variables() if self.variables is not None else dict(NO_VARIABLES)
         return out

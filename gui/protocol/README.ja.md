@@ -81,11 +81,11 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
 | `GET api/config?file=<configuration file>` | ファイルの文と、そのバイト列の SHA-256: `{file, text, stamp}`（下の「構成ファイルの文」） | `config.json` |
-| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: 文をそのファイルとして保存する。既定では、実行されるコマンドを変えない編集だけ（下の「文を保存する（`POST api/config`）」） | `save-config.json`、`error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | 対象の `{instance, run_id}`、または 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
@@ -142,7 +142,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 
 ### 照合と開始（`api/check`、`api/run`）
 
-任意の整数 `stop_at_ms`（1〜10^12）は仮想時間の停止時刻を指定します。任意の整数 `late_tolerance_ms`（0〜10^12）は実時間ペーシングの遅延許容を指定します。どちらも照合と開始の両方で使えます。`run-stop-at` 機能を持たないランチャーにどちらかを送ると、サーバーは HTTP 409 `launcher-unsupported` を返します。照合は Describe の後に確定した `time_step_ms` を返します。任意の文字列 `after_scenario`（`"stop"` または `"pause"`、省略時は `"stop"`）は、シナリオが通った後に実行を停止するか、シナリオ終了仮想時刻で一時停止して手動操作へ引き継ぐかを指定します。`"pause"` には `scenario` の指定と `stop_at_ms` の省略が必要で（反する場合は 400 `invalid-field`）、ランチャーに `scenario-handover` がない場合は 409 `launcher-unsupported` を返します。
+任意の整数 `stop_at_ms`（1〜10^12）は仮想時間の停止時刻を指定します。任意の整数 `late_tolerance_ms`（0〜10^12）は実時間ペーシングの遅延許容を指定します。どちらも照合と開始の両方で使えます。`run-stop-at` 機能を持たないランチャーにどちらかを送ると、サーバーは HTTP 409 `launcher-unsupported` を返します。照合は Describe の後に確定した `time_step_ms` を返します。任意の文字列 `after_scenario`（`"stop"` または `"pause"`、省略時は `"stop"`）は、シナリオが通った後に実行を停止するか、シナリオ終了仮想時刻で一時停止して手動操作へ引き継ぐかを指定します。`"pause"` には `scenario` の指定と `stop_at_ms` の省略が必要で（反する場合は 400 `invalid-field`）、ランチャーに `scenario-handover` がない場合は 409 `launcher-unsupported` を返します。任意の空でない文字列 `case` は複数ケースのシナリオから実行するケースを選び、ランチャーに `scenario-cases` がない場合は 409 `launcher-unsupported` を返します。複数ケースのシナリオを `case` なしで照合した場合も、`POST api/check` は `participants`、`networks`、`hot_eligibility`、`scenario`（`case: null`、`cases`、`case_details`、`params`、`param_meta`、`missing_params`）を保持したまま `check.result: "usage"` で HTTP 200 を返します。
 
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスは `{instance, run_id}` で、新しい実行の要約は WebSocket ストリームの `session` として届きます。**WebSocket との到達順**: サーバーは `POST api/run` の HTTP レスポンスを返す*前*に、最初の `session`、`variables`、および開始前に溜まったイベントを WebSocket へ配信します。外部の HTTP+WS クライアントは、`POST api/run` が返る前に新しい実行のイベント（速く終わった実行では `state: "ended"` の `session` も含む）が届く前提で扱ってください（[examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)、[examples/gui_client/time-and-stop.mjs](../../examples/gui_client/time-and-stop.mjs)）。
 - **照合のあとの開始**: `api/run` は、`disable`/`manual` の participant 名を保存済み構成と照合したうえで、起動時にランチャー自身の単一の `check` を実行します。照合が通らなければ（`result` が `passed` でなければ）実行は進まず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。セッションを有効にする前に断るので、止めるものはありません。例: `error-check-failed.json`。
@@ -261,7 +261,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 409 | `starting` | `api/run`: 別の `api/run` が実行を始めている途中（ランチャーをまだ登録していない） |
 | 422 | `check-failed` | `api/run`: 実行を成す内容の照合が通らなかったので、実行を始めなかった（`detail` は `{result, findings}`。上の「照合と開始」）。例: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
-| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った、あるいは `scenario-handover` 機能のないランチャーに `after_scenario: "pause"` を送った |
+| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った、`scenario-handover` 機能のないランチャーに `after_scenario: "pause"` を送った、または `scenario-cases` 機能のないランチャーに `case` を送った |
 | 409 | `scenario-running` | `api/write`: 動いている実行が引き継ぎ前のシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
 | 409 | `session-changed` | `api/stop-session` と対象を指定した `api/time` では、サーバーの識別子か実行が変わった。`api/write` では、指定した実行 ID が動いている実行と違う。操作は送られていない。例 `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: ファイルの中身がもう `stamp` でない、または新しいファイル（`stamp` が `null`）がすでにある |
@@ -444,6 +444,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数 |
 | `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
 | `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
+| `intent` | この実行を開始したときの任意の条件（`variant`、`scenario`、`case`、`after_scenario`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms` など）。`scenario` は GUI API のルート相対パスで保持するため、`{"file": session.file, ...session.intent}` をそのまま `POST api/run` へ渡して再実行できる。旧サーバーでは省略または `null` |
 
 フィールドごとの補足です。
 
@@ -718,12 +719,14 @@ participant ごとの `state` は次のとおりです。
 - 手順の指摘（`scenario-failed` など）は、シナリオの `file` と `line` を持つ `finding` です。
 - シナリオで止まった実行の結果の `simulation` は `ended` です（結果の `scenario` があることで、participant が止めた `ended` と区別します）。
 
-要約の `scenario` は `{file, name, step_count, steps, steps_omitted, status, over_at_ms, timeline_url, handed_over}` です。途中から開いた画面も、これで手順の表を作れます。
+要約の `scenario` は `{file, name, case, params, step_count, steps, steps_omitted, status, over_at_ms, timeline_url, handed_over}` です。途中から開いた画面も、これで手順の表を作れます。
 
 | フィールド | 内容 |
 |---|---|
 | `file` | 渡したシナリオ |
 | `name`、`step_count` | 照合の結果の `scenario` から |
+| `case` | 任意の選択されたシナリオのケース名（なければ `null` または省略） |
+| `params` | 任意の解決済みシナリオパラメーター（`[{name, value, from, type?, values?, description?}]`。照合のメタデータと結果の値を統合） |
 | `steps` | 届いた手順（`index` の順。手順ごとに最後の状態） |
 | `steps_omitted` | 1000 手順を超えた数 |
 | `status`、`over_at_ms` | 結果の `scenario` から（結果が来るまで `null`、引き継ぎ時は `state` から設定） |

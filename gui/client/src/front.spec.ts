@@ -3454,6 +3454,136 @@ describe('the front door', () => {
         until(rig.front.status, (s) => s.run === 'ended', { timeoutMs: -1 }),
       ).rejects.toMatchObject({ code: 'invalid-argument', outcome: 'refused' });
     });
+
+    it('forwards case in check/start, exposes scenario case/params, and re-runs from session.intent in one call', async () => {
+      const rig = await open();
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 4,
+          version: '0.1.0',
+          instance: 'x',
+          session: summary({
+            file: 'sub/simulation.yaml',
+            state: 'ended',
+            launcher: { pid: 1, running: false, exit_code: 0, signal: null, silent_s: null },
+            allowed: serverAllowed(4, startOk, notRunning),
+            intent: {
+              scenario: 'sub/scenarios/cases.yaml',
+              case: 'full_load',
+              after_scenario: 'pause',
+              variant: 'hil',
+              params: { target_rpm: 3000, dry_run: false },
+              connect: { Engine: 'lab' },
+            },
+            scenario: {
+              file: 'sub/scenarios/cases.yaml',
+              name: 'cases',
+              case: 'full_load',
+              params: [
+                {
+                  name: 'target_rpm',
+                  value: 3000,
+                  from: 'cli',
+                  type: 'integer',
+                  description: 'target rpm',
+                },
+              ],
+              step_count: 1,
+              steps: [],
+              steps_omitted: 0,
+              status: 'passed',
+              over_at_ms: 200,
+              timeline_url: 'api/timeline/1',
+            },
+          }),
+          allowed: serverAllowed(4, startOk, notRunning),
+          replay: null,
+        },
+        { type: 'synced', run_id: '1', last_seq: 1 },
+      );
+
+      expect(rig.front.scenario.get()).toMatchObject({
+        case: 'full_load',
+        params: [
+          {
+            name: 'target_rpm',
+            value: 3000,
+            from: 'cli',
+            type: 'integer',
+            description: 'target rpm',
+          },
+        ],
+      });
+
+      // check() forwards case
+      const checkPromise = rig.front.check(
+        { scenario: 'sub/scenarios/cases.yaml', case: 'idle', variant: 'hil' },
+        { file: 'sub/simulation.yaml' },
+      );
+      const checkReq = rig.http.expectOne('api/check');
+      expect(checkReq.request.body).toEqual({
+        file: 'sub/simulation.yaml',
+        disable: [],
+        scenario: 'sub/scenarios/cases.yaml',
+        case: 'idle',
+        variant: 'hil',
+      });
+      checkReq.flush({
+        check: {
+          vehicle_sil_check: 1,
+          file: 'sub/simulation.yaml',
+          result: 'passed',
+          errors: 0,
+          warnings: 0,
+          notes: 0,
+          participants: [],
+          networks: [],
+          findings: [],
+          scenario: {
+            file: 'sub/scenarios/cases.yaml',
+            name: 'cases',
+            case: 'idle',
+            cases: ['idle', 'full_load'],
+            steps: 1,
+          },
+        },
+      });
+      const checked = await checkPromise;
+      expect(checked.scenario?.case).toBe('idle');
+
+      // Re-run directly from session.intent in one call
+      const session = rig.front.low.session.session.get();
+      expect(session?.intent).toEqual({
+        scenario: 'sub/scenarios/cases.yaml',
+        case: 'full_load',
+        after_scenario: 'pause',
+        variant: 'hil',
+        params: { target_rpm: 3000, dry_run: false },
+        connect: { Engine: 'lab' },
+      });
+      const rerun = rig.front.run.start(session!.intent!, { file: session!.file });
+      const runReq = rig.http.expectOne('api/run');
+      expect(runReq.request.body).toEqual({
+        file: 'sub/simulation.yaml',
+        disable: [],
+        scenario: 'sub/scenarios/cases.yaml',
+        case: 'full_load',
+        after_scenario: 'pause',
+        variant: 'hil',
+        params: { target_rpm: 3000, dry_run: false },
+        connect: { Engine: 'lab' },
+      });
+      runReq.flush({ instance: 'x', run_id: '2' });
+      await rig.deliver(
+        {
+          type: 'session',
+          session: summary({ file: 'sub/simulation.yaml', state: 'running' }, '2'),
+        },
+        event(stateEvent(1), '2'),
+      );
+      await expect(rerun).resolves.toBeUndefined();
+    });
   });
 
   describe('live watch and batch period options (WU-05)', () => {

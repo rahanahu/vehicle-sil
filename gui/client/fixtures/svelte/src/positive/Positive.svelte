@@ -82,6 +82,7 @@
 <vsil-write client={front} variable="Engine.e.throttle" value={0}></vsil-write>
 <vsil-write client={front} variable="Engine.e.mode" value="eco"></vsil-write>
 <vsil-scenario-select client={front}></vsil-scenario-select>
+<vsil-case-select client={front}></vsil-case-select>
 <vsil-scenario-result client={front}></vsil-scenario-result>
 <vsil-timeline client={front}></vsil-timeline>
 <vsil-connect client={front} network="CAN1" file="bench.yaml"></vsil-connect>

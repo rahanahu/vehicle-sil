@@ -1706,4 +1706,164 @@ describe('addProblem', () => {
     expect(ended.scenario?.case).toBe('定格');
     expect(ended.scenario?.steps[0]?.call_stack).toEqual(callStack);
   });
+
+  it('preserves session.intent and merges scenario.params metadata from check into result', () => {
+    const initial = sessionFromSummary(
+      summary({
+        file: 'sub/simulation.yaml',
+        intent: {
+          scenario: 'sub/scenarios/cases.yaml',
+          case: 'idle',
+          after_scenario: 'pause',
+          variant: 'sil',
+          params: { target_rpm: 1200 },
+        },
+        scenario: {
+          file: 'sub/scenarios/cases.yaml',
+          name: null,
+          case: 'idle',
+          step_count: null,
+          steps: [],
+          steps_omitted: 0,
+          status: null,
+          over_at_ms: null,
+          timeline_url: null,
+        },
+      }),
+    );
+    expect(initial.intent).toEqual({
+      scenario: 'sub/scenarios/cases.yaml',
+      case: 'idle',
+      after_scenario: 'pause',
+      variant: 'sil',
+      params: { target_rpm: 1200 },
+    });
+
+    const checked = applyEvents(
+      initial,
+      events({
+        event: 'check',
+        check: {
+          ...check([{ name: 'A' }]),
+          scenario: {
+            file: 'sub/scenarios/cases.yaml',
+            name: 'cases',
+            case: 'idle',
+            steps: 1,
+            params: [
+              {
+                name: 'target_rpm',
+                value: 1200,
+                from: 'cli',
+                type: 'integer',
+                description: 'target rpm',
+              },
+              {
+                name: 'mode',
+                value: 'eco',
+                from: 'default',
+                type: 'enum',
+                values: ['eco', 'sport'],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(checked.scenario?.params).toEqual([
+      {
+        name: 'target_rpm',
+        value: 1200,
+        from: 'cli',
+        type: 'integer',
+        description: 'target rpm',
+      },
+      {
+        name: 'mode',
+        value: 'eco',
+        from: 'default',
+        type: 'enum',
+        values: ['eco', 'sport'],
+      },
+    ]);
+
+    const ended = applyEvents(
+      checked,
+      eventsFrom(1, [
+        {
+          event: 'result',
+          result: {
+            vehicle_sil_run: 2,
+            result: 'passed',
+            end: 'completed',
+            ok: true,
+            message: 'ok',
+            errors: 0,
+            warnings: 0,
+            notes: 0,
+            simulation: 'ended',
+            interrupted_by: null,
+            timing: null,
+            participants: [],
+            findings: [],
+            check: null,
+            scenario: {
+              file: 'sub/scenarios/cases.yaml',
+              name: 'cases',
+              case: 'idle',
+              params: [
+                {
+                  name: 'target_rpm',
+                  value: 1200,
+                  from: 'cli',
+                  type: null,
+                  values: null,
+                  description: null,
+                },
+                {
+                  name: 'mode',
+                  value: 'eco',
+                  from: 'default',
+                  type: null,
+                  values: null,
+                  description: null,
+                },
+              ],
+              status: 'passed',
+              over_at_ms: 100,
+              steps: [],
+            },
+          },
+        },
+      ]),
+    );
+    expect(ended.scenario?.params).toEqual([
+      {
+        name: 'target_rpm',
+        value: 1200,
+        from: 'cli',
+        type: 'integer',
+        values: null,
+        description: 'target rpm',
+      },
+      {
+        name: 'mode',
+        value: 'eco',
+        from: 'default',
+        type: 'enum',
+        values: ['eco', 'sport'],
+        description: null,
+      },
+    ]);
+
+    const updated = applySummary(
+      ended,
+      summary({
+        id: '1',
+        file: 'sub/simulation.yaml',
+        intent: { scenario: 'sub/scenarios/cases.yaml', case: 'load' },
+      }),
+    );
+    expect(updated.intent).toEqual({ scenario: 'sub/scenarios/cases.yaml', case: 'load' });
+  });
 });

@@ -87,6 +87,8 @@ export function checkVanilla(front: Front): void {
 
   const select = document.createElement('vsil-scenario-select');
   select.client = front;
+  const caseSelect = document.createElement('vsil-case-select');
+  caseSelect.client = front;
   const result = document.createElement('vsil-scenario-result');
   result.client = front;
   const tlWrap = document.createElement('vsil-timeline');
@@ -116,7 +118,22 @@ export function checkVanilla(front: Front): void {
     void c;
   });
 
-  const _tag: keyof VsilElementContracts = 'vsil-write';
+  const _tag: keyof VsilElementContracts = 'vsil-case-select';
   const _tlTag: keyof VehicleSilTimelineContract = 'vehicle-sil-timeline';
-  void [_tag, _tlTag, status, run, time, val, slider, write, select, result, tlWrap, conn, outside];
+  void [
+    _tag,
+    _tlTag,
+    status,
+    run,
+    time,
+    val,
+    slider,
+    write,
+    select,
+    caseSelect,
+    result,
+    tlWrap,
+    conn,
+    outside,
+  ];
 }
