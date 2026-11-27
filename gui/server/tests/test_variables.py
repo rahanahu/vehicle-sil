@@ -79,10 +79,12 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             by_name = {v["name"]: v for v in schema["peers"][0]["variables"]}
             demand, speed, mode = by_name["engine.demand"], by_name["engine.speed"], by_name["engine.mode"]
             assert by_name["ecu.connected"]["writable"] is True
-            assert demand == {"name": "engine.demand", "type": "real", "role": "input", "writable": True, "unit": "%",
-                              "min": 0, "max": 100, "step": None, "description": "requested level", "enum": None,
-                              "availability": "active"}
-            assert (speed["role"], speed["writable"], speed["type"]) == ("output", False, "integer")
+            assert by_name["ecu.connected"]["builtin"] is True
+            assert demand == {"name": "engine.demand", "type": "real", "role": "input", "writable": True,
+                              "builtin": False, "unit": "%", "min": 0, "max": 100, "step": None,
+                              "description": "requested level", "enum": None, "availability": "active"}
+            assert (speed["role"], speed["writable"], speed["builtin"], speed["type"]) == \
+                ("output", False, False, "integer")
             assert mode["enum"] == [{"name": "off", "value": 0}, {"name": "on", "value": 1}]
             # Standing still before the first step: no sample yet, and that is complete.
             await ws.send({"type": "watch", "id": 1, "variables": "all", "period_ms": 20})
@@ -660,3 +662,74 @@ def test_fake_control_flushes_ended_time_when_stopped(control_env: dict) -> None
         asyncio.run(main())
     finally:
         grpc_server.stop()
+
+
+def test_builtin_metadata_propagates_across_grpc_source_and_variables(control_env: dict) -> None:
+    import fake_control
+    from vehicle_sil_gui import control
+    from vehicle_sil_gui.source import PeerInfo
+    from vehicle_sil_gui.variables import Variables
+
+    def var(name: str, vtype: str = "integer", causality: str = "output", **extra: object) -> dict:
+        return {"name": name, "type": vtype, "causality": causality, "unit": "", "min": None, "max": None,
+                "step": None, "description": "", "items": [], **extra}
+
+    schema = [
+        var("ecu.connected", vtype="bool", causality="input", builtin=True),
+        var("peer.steps", builtin=True),
+        var("j1939.CAN1.frames_sent", builtin=True),
+        var("can.CAN1.frames_rx", builtin=True),
+        var("lin.LIN1.frames_tx", builtin=True),
+        var("eth.ETH1.frames_rx", builtin=True),
+        var("engine.demand", vtype="real", causality="input", builtin=False),
+        var("engine.speed", builtin=False),
+    ]
+    grpc_server = fake_control.FakeControl({"Engine": schema})
+    addr = grpc_server.start()
+
+    async def main() -> None:
+        ready = asyncio.Event()
+        sent: list[dict] = []
+
+        def emit(messages: list[dict]) -> None:
+            sent.extend(messages)
+            for msg in messages:
+                if msg["type"] == "variables" and msg["variables"]["state"] == "ready":
+                    ready.set()
+
+        v = Variables("r-builtin", emit)
+        v.expect()
+        v.connect(control.GrpcSource(control.load(), addr, None))
+        async with asyncio.timeout(5.0):
+            await ready.wait()
+        ws_msg = next(m for m in reversed(sent) if m["type"] == "variables" and m["variables"]["state"] == "ready")
+        by_name = {item["name"]: item["builtin"] for item in ws_msg["variables"]["peers"][0]["variables"]}
+        assert by_name == {
+            "ecu.connected": True,
+            "peer.steps": True,
+            "j1939.CAN1.frames_sent": True,
+            "can.CAN1.frames_rx": True,
+            "lin.LIN1.frames_tx": True,
+            "eth.ETH1.frames_rx": True,
+            "engine.demand": False,
+            "engine.speed": False,
+        }
+        await v.close()
+
+    try:
+        asyncio.run(main())
+    finally:
+        grpc_server.stop()
+
+    # Non-boolean or omitted builtin from a source never silently becomes True.
+    v_unit = Variables("r-defensive", lambda _: None)
+    v_unit.on_peers([PeerInfo("Engine", "1", True, [
+        {"name": "a", "type": "bool", "role": "input", "builtin": True},
+        {"name": "b", "type": "bool", "role": "input", "builtin": False},
+        {"name": "c", "type": "bool", "role": "input"},
+        {"name": "d", "type": "bool", "role": "input", "builtin": "true"},
+        {"name": "e", "type": "bool", "role": "input", "builtin": 1},
+    ])], [])
+    assert [(item["name"], item["builtin"]) for item in v_unit.summary()["peers"][0]["variables"]] == [
+        ("a", True), ("b", False), ("c", False), ("d", False), ("e", False),
+    ]

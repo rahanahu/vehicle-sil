@@ -507,7 +507,7 @@ When the launcher has a Control Server (`variables.available` in `api/app`), the
 | `state` | The state of the variable feature (table below). Values may be added |
 | `reason` | The reason for `off`, `connecting` and `failed` (human-readable text, not localized; `null` if none) |
 | `peers` | `[{"name", "connected", "variables": [...]}]`. The participants the Control Server knows (also those without variables) |
-| `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum", "availability"}` |
+| `peers[].variables[]` | `{"name", "type", "role", "writable", "builtin", "unit", "min", "max", "step", "description", "enum", "availability"}` |
 | `peers_omitted`, `variables_omitted` | Numbers of participants and variables left out because a limit was exceeded |
 | `operations` | Operations (`operation` below without `type`, `stream_seq` and `run_id`; in the order the server first saw them) |
 | `operations_from_seq` | Every operation with this number (`seq`) or higher that the server receives is in `operations` (0 means every operation the server saw). The operations of a scenario's own writes never reach the server (see `operation` below) |
@@ -525,6 +525,7 @@ When the launcher has a Control Server (`variables.available` in `api/app`), the
 - `peers[].connected` tells whether that ECU is connected now.
 - `type` is `bool`, `integer`, `real` or `enum`.
 - `role` is `input` (writable during the run), `parameter` (writable only before the first step) or `output` (read-only). `writable` means `role` is not `output`.
+- `builtin` is `true` for variables vehicle-sil adds (`ecu.connected`, `peer.*`, `j1939.*`, `can.*`, `lin.*`, `eth.*`), and `false` for variables the ECU application declared (matching `participants[].variables[].builtin` in the check result).
 - `min`, `max` and `step` (a hint for the editing increment) are numbers or `null`.
 - `enum` is `[{"name", "value"}]` when `type` is `enum`, otherwise `null`.
 - `availability` is whether the ECU uses the variable now: `unknown`, `active` or `inactive` ("Availability" below).

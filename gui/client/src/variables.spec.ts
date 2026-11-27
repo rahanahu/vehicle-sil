@@ -86,6 +86,7 @@ const ready = (operations: unknown[] = [], more: object = {}) => ({
           type: 'real',
           role: 'input',
           writable: true,
+          builtin: false,
           unit: '%',
           min: 0,
           max: 100,
@@ -182,6 +183,7 @@ describe('variables', () => {
       type: 'real',
       role: 'input',
       writable: true,
+      builtin: false,
       unit: '%',
       min: 0,
       max: 100,
@@ -247,6 +249,7 @@ describe('variables', () => {
               type: 'vector',
               role: 'output',
               writable: false,
+              builtin: false,
               unit: '',
               min: null,
               max: null,
@@ -262,6 +265,57 @@ describe('variables', () => {
       variablesOmitted: 3,
     });
     expect(readVariables(null, null).status).toBe('unknown');
+  });
+
+  it('preserves builtin flags for built-in and user-defined variables', () => {
+    const varDef = (name: string, builtin: boolean) => ({
+      name,
+      type: 'integer',
+      role: 'output',
+      writable: false,
+      builtin,
+      unit: '',
+      min: null,
+      max: null,
+      step: null,
+      description: '',
+      enum: null,
+      availability: 'active',
+    });
+    const state = readVariables(
+      {
+        state: 'ready',
+        reason: null,
+        peers: [
+          {
+            name: 'Engine',
+            connected: true,
+            variables: [
+              varDef('ecu.connected', true),
+              varDef('peer.steps', true),
+              varDef('j1939.CAN1.frames_sent', true),
+              varDef('can.CAN1.frames_rx', true),
+              varDef('lin.LIN1.frames_tx', true),
+              varDef('eth.ETH1.frames_rx', true),
+              varDef('engine.speed', false),
+            ],
+          },
+        ],
+        peers_omitted: 0,
+        variables_omitted: 0,
+        operations: [],
+      },
+      '7',
+    );
+    expect(state.peers[0].variables.map((v) => [v.name, v.builtin])).toEqual([
+      ['ecu.connected', true],
+      ['peer.steps', true],
+      ['j1939.CAN1.frames_sent', true],
+      ['can.CAN1.frames_rx', true],
+      ['lin.LIN1.frames_tx', true],
+      ['eth.ETH1.frames_rx', true],
+      ['engine.speed', false],
+    ]);
   });
 
   it('merges the watches of one variable into one subscription, at the shortest period asked', async () => {

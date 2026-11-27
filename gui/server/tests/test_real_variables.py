@@ -93,10 +93,21 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
                 schema = {p["name"]: {v["name"]: v for v in p["variables"]} for p in var_msgs[-1]["variables"]["peers"]}
                 assert set(schema) == {"Engine", "Dashboard"}
                 throttle, speed = schema["Engine"]["engine.throttle"], schema["Engine"]["engine.speed"]
-                assert (throttle["type"], throttle["role"], throttle["writable"], throttle["unit"]) == \
-                    ("real", "input", True, "%")
+                assert (throttle["type"], throttle["role"], throttle["writable"], throttle["builtin"],
+                        throttle["unit"]) == ("real", "input", True, False, "%")
                 assert (throttle["min"], throttle["max"]) == (0, 100)
-                assert (speed["role"], speed["writable"], speed["unit"]) == ("output", False, "rpm")
+                assert (speed["role"], speed["writable"], speed["builtin"], speed["unit"]) == \
+                    ("output", False, False, "rpm")
+                assert schema["Engine"]["ecu.connected"]["builtin"] is True
+                builtin_prefixes = ("ecu.", "peer.", "j1939.", "can.", "lin.", "eth.")
+                engine_vars = schema["Engine"].values()
+                assert any(v["name"].startswith("peer.") and v["builtin"] is True for v in engine_vars)
+                for v in engine_vars:
+                    assert v["builtin"] is v["name"].startswith(builtin_prefixes), v
+                _, check_body = await c.post("api/check", {"file": "forever.yaml"})
+                check_engine = next(p for p in check_body["check"]["participants"] if p["name"] == "Engine")
+                for cv in check_engine["variables"]:
+                    assert schema["Engine"][cv["name"]]["builtin"] is cv["builtin"], cv
 
                 await ws.send({"type": "watch", "id": 1, "variables": [THROTTLE, SPEED], "period_ms": 20})
                 first = (await ws.until(is_values(1, paused=True)))[-1]

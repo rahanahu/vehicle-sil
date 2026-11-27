@@ -109,9 +109,10 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
         assert (engine.incarnation, engine.connected) == ("1", True)
         assert [v["name"] for v in engine.variables] == ["ecu.connected", "engine.demand", "engine.speed",
                                                          "engine.mode"]
+        assert engine.variables[0]["builtin"] is True
         assert engine.variables[1] == {"name": "engine.demand", "type": "real", "role": "input", "unit": "%",
                                        "min": 0.0, "max": 100.0, "step": None, "description": "requested level",
-                                       "enum": [], "availability": None}
+                                       "enum": [], "builtin": False, "availability": None}
         assert engine.variables[3]["enum"] == [("off", 0), ("on", 1)] and engine.variables[3]["role"] == "parameter"
         # Before the first step: the time, and for every name asked for that there is no sample (a peer that
         # has none yet, a name that is no peer's).
@@ -266,15 +267,17 @@ def test_what_the_control_server_says_is_turned_into_the_servers_words(control_e
     assert op.targets[4].late and op.targets[5].reason == "a setter threw"
     assert [(t.applied_writes, t.failed_write) for t in op.targets[2:6]] == [(None, None), (2, None), (None, None), (0, 0)]
     peer = source._peer(pb.PeerInfo(participant="P", incarnation="i", connected=False, schema=[
-        pb.VariableInfo(name="a", type=pb.VALUE_TYPE_BOOL, causality=pb.CAUSALITY_INPUT),
-        pb.VariableInfo(name="b", type=pb.VALUE_TYPE_INTEGER, causality=pb.CAUSALITY_OUTPUT, min=-1, max=2, step=0.5),
+        pb.VariableInfo(name="a", type=pb.VALUE_TYPE_BOOL, causality=pb.CAUSALITY_INPUT, builtin=True),
+        pb.VariableInfo(name="b", type=pb.VALUE_TYPE_INTEGER, causality=pb.CAUSALITY_OUTPUT, min=-1, max=2, step=0.5,
+                        builtin=False),
         pb.VariableInfo(name="c", type=pb.VALUE_TYPE_REAL, causality=pb.CAUSALITY_PARAMETER, unit="V"),
         pb.VariableInfo(name="d", type=pb.VALUE_TYPE_ENUM, items=[pb.EnumItem(name="x", value=-3)]),
         pb.VariableInfo(name="e", type=77, causality=55),  # of a newer server: no type, read-only
     ]))
     assert (peer.name, peer.incarnation, peer.connected) == ("P", "i", False)
-    assert [(v["type"], v["role"]) for v in peer.variables] == [
-        ("bool", "input"), ("integer", "output"), ("real", "parameter"), ("enum", "output"), ("", "output")]
+    assert [(v["type"], v["role"], v["builtin"]) for v in peer.variables] == [
+        ("bool", "input", True), ("integer", "output", False), ("real", "parameter", False),
+        ("enum", "output", False), ("", "output", False)]
     assert (peer.variables[1]["min"], peer.variables[1]["max"], peer.variables[1]["step"]) == (-1, 2, 0.5)
     assert (peer.variables[0]["min"], peer.variables[2]["unit"], peer.variables[3]["enum"]) == (None, "V", [("x", -3)])
     snapshot = pb.Snapshot(time_ns=9, sequence=4, values=[

@@ -361,7 +361,7 @@ class GrpcSource:
                       "unit": v.unit, "min": v.min if v.HasField("min") else None,
                       "max": v.max if v.HasField("max") else None, "step": v.step if v.HasField("step") else None,
                       "description": v.description, "enum": [(i.name, i.value) for i in v.items],
-                      "availability": self._declared(v)}
+                      "builtin": bool(v.builtin), "availability": self._declared(v)}
                      for v in p.schema]
         return PeerInfo(p.participant, p.incarnation, p.connected, variables)
 

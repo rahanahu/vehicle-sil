@@ -30,6 +30,7 @@ const variable = (name: string, fields: object) => ({
   type: 'real',
   role: 'input',
   writable: true,
+  builtin: false,
   unit: '',
   min: null,
   max: null,

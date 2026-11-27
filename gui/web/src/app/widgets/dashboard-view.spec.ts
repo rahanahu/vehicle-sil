@@ -42,6 +42,7 @@ const variable = (name: string, fields: object = {}) => ({
   type: 'real',
   role: 'output',
   writable: false,
+  builtin: false,
   unit: '',
   min: null,
   max: null,

@@ -1298,6 +1298,7 @@ test('workbench displays replay write lock, handover notice on pause, and hides 
                   type: 'real',
                   role: 'input',
                   writable: true,
+                  builtin: false,
                   unit: '%',
                   min: 0,
                   max: 100,

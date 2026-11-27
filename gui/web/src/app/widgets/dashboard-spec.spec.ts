@@ -16,6 +16,7 @@ const info = (fields: Partial<VariableInfo>): VariableInfo => ({
   type: 'real',
   role: 'input',
   writable: true,
+  builtin: false,
   unit: '',
   min: null,
   max: null,
@@ -348,7 +349,7 @@ describe('fileDashboard before a run', () => {
 });
 
 describe('the bus connection (ecu.connected) and the builtin variables', () => {
-  const connected = info({ name: 'ecu.connected', type: 'bool' });
+  const connected = info({ name: 'ecu.connected', type: 'bool', builtin: true });
   const peers: VariablePeer[] = [
     {
       name: 'Engine',

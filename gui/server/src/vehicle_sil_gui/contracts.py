@@ -936,6 +936,7 @@ class VariableSpec(ContractModel):
     type: Literal["bool", "integer", "real", "enum"]
     role: Literal["input", "output", "parameter"]
     writable: StrictBool
+    builtin: StrictBool
     unit: StrictStr
     description: StrictStr
     min: FiniteNumber | None
