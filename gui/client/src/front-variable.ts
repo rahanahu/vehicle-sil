@@ -22,6 +22,8 @@ import {
   ON_SETTLED,
   OperationView,
   VariableRef,
+  WATCH_PERIOD_MS_MAX,
+  WATCH_PERIOD_MS_MIN,
   WriteError,
   WriteOptions,
   WriteWaitOptions,
@@ -30,6 +32,7 @@ import {
 } from './variables';
 
 const FRONT_WRITE_OPTION_FIELDS = new Set(['atMs', 'late', 'timeoutMs', 'keepalive', 'signal']);
+const FRONT_SUBSCRIBE_OPTION_FIELDS = new Set(['periodMs']);
 
 // `launcher` is not here: its sentence is the launcher's own (BoundVariable.launcherReason)
 const WHY_BLOCKED: Record<Exclude<WriteBlock, 'launcher'>, string> = {
@@ -112,6 +115,41 @@ export function validateFrontWriteOptions(options: unknown): ActionError | null 
 export function validateFrontWaitOptions(options: unknown): ActionError | null {
   const err = validateWriteWaitOptions(options);
   return err ? new ActionError(err.code ?? 'invalid-argument', err.message, 'refused') : null;
+}
+
+export function validateFrontSubscribeOptions(options: unknown): { periodMs?: number } {
+  if (options === undefined) return {};
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new ActionError(
+      'invalid-argument',
+      'the options of subscribe must be an object',
+      'refused',
+    );
+  }
+  const candidate = options as Record<string, unknown>;
+  const unknown = Object.keys(candidate).filter((k) => !FRONT_SUBSCRIBE_OPTION_FIELDS.has(k));
+  if (unknown.length > 0) {
+    throw new ActionError(
+      'unknown-field',
+      `the options of subscribe have ${unknown.join(', ')}, which subscribe does not know: the fields are ${[...FRONT_SUBSCRIBE_OPTION_FIELDS].join(', ')}`,
+      'refused',
+    );
+  }
+  const periodMs = candidate['periodMs'];
+  if (
+    periodMs !== undefined &&
+    (typeof periodMs !== 'number' ||
+      !Number.isFinite(periodMs) ||
+      periodMs < WATCH_PERIOD_MS_MIN ||
+      periodMs > WATCH_PERIOD_MS_MAX)
+  ) {
+    throw new ActionError(
+      'invalid-argument',
+      `options.periodMs must be a finite number of milliseconds between ${WATCH_PERIOD_MS_MIN} and ${WATCH_PERIOD_MS_MAX}`,
+      'refused',
+    );
+  }
+  return periodMs !== undefined ? { periodMs } : {};
 }
 
 interface Track {
@@ -312,34 +350,48 @@ export function makeVariable(
     }
   };
 
-  const readable: Readable<VariableView> = {
-    get: () => refresh() ?? peek(),
-    subscribe: (listener) => {
-      if (count++ === 0) {
-        binding = low.variables.bind(ref);
+  const get = (): VariableView => refresh() ?? peek();
+  const subscribe: FrontVariable['subscribe'] = (listener, options) => {
+    const { periodMs } = validateFrontSubscribeOptions(options);
+    const subWatch = low.variables.watch([ref], periodMs !== undefined ? { periodMs } : undefined);
+    if (count === 0) {
+      try {
+        binding = low.variables.bind(ref, { periodMs: WATCH_PERIOD_MS_MAX });
         stops = [
           binding.state.subscribe(refresh),
           low.variables.state.subscribe(refresh),
           track.subscribe(refresh),
           launcher.subscribe(refresh),
         ];
+        count = 1;
         refresh();
+      } catch (error) {
+        for (const stop of stops) stop();
+        stops = [];
+        binding?.close();
+        binding = null;
+        count = 0;
+        subWatch.close();
+        throw error;
       }
-      const off = view.subscribe((v) => v && listener(v));
-      let done = false;
-      return () => {
-        if (done) return;
-        done = true;
-        off();
-        if (--count === 0) {
-          for (const stop of stops) stop();
-          stops = [];
-          binding?.close();
-          binding = null;
-          view.set(null);
-        }
-      };
-    },
+    } else {
+      count += 1;
+    }
+    const off = view.subscribe((v) => v && listener(v));
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      off();
+      subWatch.close();
+      if (--count === 0) {
+        for (const stop of stops) stop();
+        stops = [];
+        binding?.close();
+        binding = null;
+        view.set(null);
+      }
+    };
   };
 
   const enqueue = (value: WriteValue, options?: FrontWriteOptions): Promise<QueuedWrite> => {
@@ -419,8 +471,8 @@ export function makeVariable(
   };
 
   return {
-    get: readable.get,
-    subscribe: readable.subscribe,
+    get,
+    subscribe,
     enqueue,
     write: (value: WriteValue, options?: FrontWriteOptions): Promise<WriteResult> =>
       enqueue(value, options).then((queued) =>

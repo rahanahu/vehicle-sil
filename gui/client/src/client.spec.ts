@@ -346,5 +346,140 @@ describe('createClient', () => {
     expect(() => createClient({ baseUrl: 'http://127.0.0.1:8765/', answerTimeoutMs: 0 })).toThrow(
       expect.objectContaining({ code: 'invalid-argument', outcome: 'refused' }),
     );
+    expect(() =>
+      createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        batch_ms: 16,
+      } as unknown as Parameters<typeof createClient>[0]),
+    ).toThrow(expect.objectContaining({ code: 'unknown-field', outcome: 'refused' }));
+    expect(() =>
+      createClient({
+        baseUrl: 'http://127.0.0.1:8765/',
+        watch_period_ms: 20,
+      } as unknown as Parameters<typeof createClient>[0]),
+    ).toThrow(expect.objectContaining({ code: 'unknown-field', outcome: 'refused' }));
+    for (const badBatch of [
+      -1,
+      1001,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      -Infinity,
+      '16',
+      null,
+    ]) {
+      expect(() =>
+        createClient({
+          baseUrl: 'http://127.0.0.1:8765/',
+          batchMs: badBatch as unknown as number,
+        }),
+      ).toThrow(expect.objectContaining({ code: 'invalid-argument', outcome: 'refused' }));
+    }
+    for (const badPeriod of [
+      -1,
+      0,
+      19,
+      19.999,
+      60_001,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      -Infinity,
+      '20',
+      null,
+    ]) {
+      expect(() =>
+        createClient({
+          baseUrl: 'http://127.0.0.1:8765/',
+          watchPeriodMs: badPeriod as unknown as number,
+        }),
+      ).toThrow(expect.objectContaining({ code: 'invalid-argument', outcome: 'refused' }));
+    }
+  });
+
+  it('applies valid batchMs and watchPeriodMs (with tier rounding and server limits clamping)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = new FakeWebSockets();
+      const http = new FakeHttp();
+      const client = createClient({
+        baseUrl: 'http://127.0.0.1:1/',
+        token: 'secret',
+        batchMs: 16,
+        watchPeriodMs: 35,
+        socket: fake.factory,
+        http: http.transport,
+      });
+      const batches: unknown[][] = [];
+      client.connection.onBatch((b) => batches.push([...b]));
+      client.connect();
+      fake.last().open();
+
+      // batchMs: 16 delivers non-immediate frames at 16 ms (not 15 ms)
+      fake
+        .last()
+        .send({ type: 'hello', vehicle_sil_gui: 4, instance: 'i', session: null, replay: null });
+      vi.advanceTimersByTime(15);
+      expect(batches).toHaveLength(0);
+      vi.advanceTimersByTime(1);
+      expect(batches).toHaveLength(1);
+
+      // watchPeriodMs: 35 rounds down via WATCH_PERIODS_MS to 20 ms for default watches and binds
+      const watch = client.variables.watch([{ peer: 'Engine', name: 'engine.speed' }]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fake.last().sent.filter((m) => (m as { type: string }).type === 'watch')).toEqual([
+        {
+          type: 'watch',
+          id: 1,
+          variables: [{ peer: 'Engine', name: 'engine.speed' }],
+          period_ms: 20,
+        },
+      ]);
+      watch.close();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Server limits still clamp watchPeriodMs (e.g. server min 50 ms clamps 35 -> 50)
+      const app = (await httpExamples()).find((e) => e.name === 'app')?.response as {
+        limits: Record<string, number>;
+      };
+      const load = client.loadApp();
+      http
+        .expectOne('api/app')
+        .flush({ ...app, limits: { ...app.limits, watch_period_ms_min: 50 } });
+      await load;
+      const clamped = client.variables.bind({ peer: 'Engine', name: 'engine.speed' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        fake
+          .last()
+          .sent.filter((m) => (m as { type: string }).type === 'watch')
+          .at(-1),
+      ).toEqual({
+        type: 'watch',
+        id: 2,
+        variables: [{ peer: 'Engine', name: 'engine.speed' }],
+        period_ms: 50,
+      });
+      clamped.close();
+      client.close();
+
+      // Boundary values 0, 1000, 20, 60_000 all construct cleanly
+      const fast = createClient({
+        baseUrl: 'http://127.0.0.1:1/',
+        batchMs: 0,
+        watchPeriodMs: 20,
+        socket: fake.factory,
+        http: http.transport,
+      });
+      const slow = createClient({
+        baseUrl: 'http://127.0.0.1:1/',
+        batchMs: 1000,
+        watchPeriodMs: 60_000,
+        socket: fake.factory,
+        http: http.transport,
+      });
+      fast.close();
+      slow.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

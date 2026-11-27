@@ -348,6 +348,10 @@ export const WATCH_PERIOD_MS = 100;
  * subscriptions (the server's limit is 16 per connection).
  */
 export const WATCH_PERIODS_MS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 60_000] as const;
+/** Shortest supported watch period (ms). */
+export const WATCH_PERIOD_MS_MIN = WATCH_PERIODS_MS[0];
+/** Longest supported watch period (ms). */
+export const WATCH_PERIOD_MS_MAX = WATCH_PERIODS_MS[WATCH_PERIODS_MS.length - 1];
 /** Default limit on variables named in one subscription (beyond it, that subscription asks for "all"). */
 const WATCH_VARIABLES = 2000;
 
@@ -857,6 +861,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       watch_variables?: number;
     } = () => ({}),
     private readonly clock?: WriteClockSource,
+    private readonly defaultWatchPeriodMs: number = WATCH_PERIOD_MS,
   ) {
     this.stateValue = new Writable<VariablesState>(NO_VARIABLES, Object.is, onError);
     this.operationsValue = new Writable<readonly OperationView[]>([], Object.is, onError);
@@ -1291,8 +1296,9 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
 
   /** Rebuilds values of the watches that observe the changed variables (all watches if touched is null). */
   private publish(touched: Set<string> | null, current: () => boolean = () => true): void {
-    for (const handle of this.handles) {
+    for (const handle of [...this.handles]) {
       if (!current()) return;
+      if (!this.handles.has(handle)) continue;
       if (touched !== null && handle.keys !== null) {
         let hit = false;
         for (const key of handle.keys) {
@@ -1896,7 +1902,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     const history = options.history ?? 0;
     const handle: Handle = {
       keys: variables === 'all' ? null : new Set(variables.map((v) => keyOf(v.peer, v.name))),
-      periodMs: this.period(options.periodMs ?? WATCH_PERIOD_MS),
+      periodMs: this.period(options.periodMs ?? this.defaultWatchPeriodMs),
       // A non-number or a negative value means 0 (keep none)
       history: Number.isFinite(history)
         ? Math.max(0, Math.min(Math.floor(history), HISTORY_MAX))

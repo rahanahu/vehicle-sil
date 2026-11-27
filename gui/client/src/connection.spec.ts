@@ -472,6 +472,146 @@ describe('Connection', () => {
     });
   });
 
+  describe('custom batchMs and batchMs: 0 re-entrancy', () => {
+    it('batches non-immediate notifications at custom batchMs while keeping immediate frames on microtasks', async () => {
+      const c = new Connection({
+        url: 'ws://127.0.0.1:1/ws',
+        socket: fake.factory,
+        greeting: () => [],
+        batchMs: 16,
+      });
+      const got = batches(c);
+      c.connect();
+      fake.last().open();
+
+      fake.last().send({ type: 'values', v: 1 });
+      fake.last().send({ type: 'values', v: 2 });
+      vi.advanceTimersByTime(15);
+      expect(got).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(got).toEqual([
+        [
+          { type: 'values', v: 1 },
+          { type: 'values', v: 2 },
+        ],
+      ]);
+
+      // Even with batchMs: 1000, error frames flush immediately on a microtask (before 500 ms reconnect delay)
+      const slow = new Connection({
+        url: 'ws://127.0.0.1:1/ws',
+        socket: fake.factory,
+        greeting: () => [],
+        batchMs: 1000,
+      });
+      const slowGot = batches(slow);
+      slow.connect();
+      fake.last().open();
+      fake.last().send({ type: 'error', code: 'unauthorized', message: 'bad token' });
+      await Promise.resolve();
+      expect(slowGot).toEqual([[{ type: 'error', code: 'unauthorized', message: 'bad token' }]]);
+      slow.close();
+      c.close();
+    });
+
+    it('flushes batchMs: 0 on a microtask, coalescing same-turn messages without stack overflow or re-entrancy corruption', async () => {
+      const c = new Connection({
+        url: 'ws://127.0.0.1:1/ws',
+        socket: fake.factory,
+        greeting: () => [],
+        batchMs: 0,
+      });
+      const got = batches(c);
+      c.connect();
+      fake.last().open();
+
+      // Coalesces same-turn non-immediate messages into one microtask batch
+      fake.last().send({ type: 'values', n: 1 });
+      fake.last().send({ type: 'values', n: 2 });
+      expect(got).toEqual([]);
+      await Promise.resolve();
+      expect(got).toEqual([
+        [
+          { type: 'values', n: 1 },
+          { type: 'values', n: 2 },
+        ],
+      ]);
+
+      // Chained synchronous message sends inside onBatch execute in subsequent microtasks (O(1) stack)
+      let remaining = 300;
+      const stopChain = c.onBatch(() => {
+        if (remaining > 0) {
+          remaining -= 1;
+          fake.last().send({ type: 'values', seq: remaining });
+        }
+      });
+      fake.last().send({ type: 'values', seq: 999 });
+      for (let i = 0; i <= 305; i++) {
+        await Promise.resolve();
+      }
+      expect(remaining).toBe(0);
+      expect(got).toHaveLength(302);
+      stopChain();
+
+      // Re-entrant flush() inside listener 1 preserves listener 2 ordering for batch 1 before draining batch 2 iteratively
+      const order: string[] = [];
+      let reentrantCount = 0;
+      const stopA = c.onBatch((batch) => {
+        const tag = (batch[0] as { tag?: string }).tag;
+        if (!tag) return;
+        order.push(`A:${tag}`);
+        if (reentrantCount < 500) {
+          reentrantCount += 1;
+          fake.last().send({ tag: `r${reentrantCount}` });
+          c.flush();
+        }
+      });
+      const stopB = c.onBatch((batch) => {
+        const tag = (batch[0] as { tag?: string }).tag;
+        if (tag) order.push(`B:${tag}`);
+      });
+      fake.last().send({ tag: 'r0' });
+      await Promise.resolve();
+      expect(order.slice(0, 6)).toEqual(['A:r0', 'B:r0', 'A:r1', 'B:r1', 'A:r2', 'B:r2']);
+      expect(order.slice(-2)).toEqual(['A:r500', 'B:r500']);
+      stopA();
+      stopB();
+
+      // Subscribe / unsubscribe and socket close during batchMs: 0 delivery
+      const dynamic: string[] = [];
+      let stopLate: () => void = () => undefined;
+      const stopSelf = c.onBatch((batch) => {
+        dynamic.push(`self:${(batch[0] as { id?: number }).id}`);
+        stopSelf();
+        stopLate = c.onBatch((next) => {
+          dynamic.push(`late:${(next[0] as { id?: number }).id}`);
+        });
+      });
+      fake.last().send({ id: 1 });
+      await Promise.resolve();
+      fake.last().send({ id: 2 });
+      await Promise.resolve();
+      expect(dynamic).toEqual(['self:1', 'late:2']);
+      stopLate();
+
+      // Pending message sent right before a re-entrant socket close does not leak into the next socket
+      const leaked: unknown[][] = [];
+      const stopClose = c.onBatch(() => {
+        stopClose();
+        fake.last().send({ leaked: true });
+        fake.last().close(1006, 'drop');
+      });
+      c.onBatch((b) => leaked.push([...b]));
+      fake.last().send({ trigger: true });
+      await Promise.resolve();
+      vi.advanceTimersByTime(backoffMs(1));
+      fake.last().open();
+      fake.last().send({ fresh: true });
+      await Promise.resolve();
+      expect(leaked).toEqual([[{ trigger: true }], [{ fresh: true }]]);
+      c.close();
+    });
+  });
+
   describe('webSocketFactory', () => {
     /** Fake globalThis.WebSocket. Remembers the arguments it was created with. */
     class Recorder {

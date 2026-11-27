@@ -20,6 +20,12 @@ export const TRY_AGAIN_LATER = 1013;
  */
 export const BATCH_MS = 100;
 
+/** Minimum allowed value for `batchMs` (0 flushes each turn's messages on a microtask). */
+export const BATCH_MS_MIN = 0;
+
+/** Maximum allowed value for `batchMs` (ms). */
+export const BATCH_MS_MAX = 1000;
+
 /** Receives WebSocket events. Passed to SocketFactory. */
 export interface SocketHandlers {
   open(): void;
@@ -113,7 +119,7 @@ export interface ConnectionOptions {
   afterGreeting?: () => readonly unknown[];
   /** Upper limit of the reconnect delay. */
   maxBackoffMs?: number;
-  /** Interval for batching received notifications. */
+  /** Interval for batching received notifications (ms; 0 flushes each turn's messages on a microtask). */
   batchMs?: number;
   /** Receives what subscribers threw. */
   onError?: ErrorSink;
@@ -182,6 +188,8 @@ export class Connection implements ClientConnection {
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private batchTimer: ReturnType<typeof setTimeout> | undefined;
   private flushQueued = false;
+  private flushing = false;
+  private flushAgain = false;
   private pending: unknown[] = [];
 
   readonly state: Readable<ConnectionState>;
@@ -282,18 +290,33 @@ export class Connection implements ClientConnection {
     };
   }
 
-  /** Passes on the batched notifications without waiting. */
+  /** Passes on the batched notifications without waiting. Re-entrant calls drain iteratively in order. */
   flush(): void {
     clearTimeout(this.batchTimer);
     this.batchTimer = undefined;
     this.flushQueued = false;
-    const batch = this.pending;
-    this.pending = [];
-    if (batch.length === 0) return;
-    this.restartAsked = false;
-    callEach(this.batchListeners, [batch], this.onError);
-    // The readers took the batch without asking for a restart: the next restart's delay starts over
-    if (!this.restartAsked) this.restarts = 0;
+    if (this.flushing) {
+      this.flushAgain = true;
+      return;
+    }
+    this.flushing = true;
+    try {
+      do {
+        this.flushAgain = false;
+        const batch = this.pending;
+        this.pending = [];
+        if (batch.length === 0) break;
+        const revision = this.attemptRevision;
+        this.restartAsked = false;
+        callEach(this.batchListeners, [batch], this.onError);
+        // The readers took the batch without asking for a restart: the next restart's delay starts over
+        if (!this.restartAsked && this.attemptRevision === revision) this.restarts = 0;
+        if (this.attemptRevision !== revision) break;
+      } while (this.flushAgain && this.pending.length > 0);
+    } finally {
+      this.flushing = false;
+      this.flushAgain = false;
+    }
   }
 
   private scheduleImmediateFlush(): void {
@@ -310,6 +333,7 @@ export class Connection implements ClientConnection {
     clearTimeout(this.batchTimer);
     this.batchTimer = undefined;
     this.flushQueued = false;
+    this.flushAgain = false;
     this.pending = [];
   }
 
@@ -385,10 +409,15 @@ export class Connection implements ClientConnection {
         if (this.lastCloseValue.get() !== null) this.lastCloseValue.set(null);
         if (!current()) return;
         this.pending.push(message);
-        if (isImmediateMessage(message)) {
+        const batchMs = this.options.batchMs ?? BATCH_MS;
+        if (batchMs <= 0) {
           this.scheduleImmediateFlush();
+        } else {
+          if (isImmediateMessage(message)) {
+            this.scheduleImmediateFlush();
+          }
+          this.batchTimer ??= setTimeout(() => this.flush(), batchMs);
         }
-        this.batchTimer ??= setTimeout(() => this.flush(), this.options.batchMs ?? BATCH_MS);
       },
       close: (code, reason) => {
         if (!current()) return;
@@ -396,6 +425,7 @@ export class Connection implements ClientConnection {
         // acknowledgements must arrive before closed subscribers can adopt another server.
         this.flush();
         if (!current()) return;
+        this.dropPending();
         ++this.attemptRevision;
         this.socket = null;
         const closedEpoch = this.connectionEpoch;
