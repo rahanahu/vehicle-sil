@@ -158,6 +158,7 @@ if(VEHICLE_SIL_BUILD_EXAMPLES)
   foreach(_schema IN ITEMS
           schema/simulation.schema.json
           schema/scenario.schema.json
+          schema/scenario-template.schema.json
           schema/run-request.schema.json
           gui/protocol/dashboard.schema.json)
     configure_file(${_schema} ${CMAKE_CURRENT_BINARY_DIR}/${_schema} COPYONLY)

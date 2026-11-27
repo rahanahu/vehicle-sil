@@ -58,6 +58,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = ROOT / "schema"
 SIMULATION = json.loads((SCHEMA_DIR / "simulation.schema.json").read_text(encoding="utf-8"))
 SCENARIO = json.loads((SCHEMA_DIR / "scenario.schema.json").read_text(encoding="utf-8"))
+SCENARIO_TEMPLATE = json.loads((SCHEMA_DIR / "scenario-template.schema.json").read_text(encoding="utf-8"))
 TIMELINE = json.loads((SCHEMA_DIR / "timeline.schema.json").read_text(encoding="utf-8"))
 RUN_REQUEST = json.loads((SCHEMA_DIR / "run-request.schema.json").read_text(encoding="utf-8"))
 CONTROL_METRICS = json.loads((SCHEMA_DIR / "control-metrics.schema.json").read_text(encoding="utf-8"))
@@ -74,6 +75,7 @@ needs_launcher = unittest.skipUnless(
 TEMPLATE_COPIES = {
     "template/schema/simulation.schema.json": "schema/simulation.schema.json",
     "template/schema/scenario.schema.json": "schema/scenario.schema.json",
+    "template/schema/scenario-template.schema.json": "schema/scenario-template.schema.json",
     "template/schema/run-request.schema.json": "schema/run-request.schema.json",
     "template/schema/dashboard.schema.json": "gui/protocol/dashboard.schema.json",
 }
@@ -81,6 +83,7 @@ TEMPLATE_COPIES = {
 KINDS = {
     "vehicle_sil_simulation": "simulation.schema.json",
     "vehicle_sil_scenario": "scenario.schema.json",
+    "vehicle_sil_scenario_template": "scenario-template.schema.json",
     "vehicle_sil_dashboard": "dashboard.schema.json",
 }
 
@@ -209,6 +212,14 @@ def scenario_mappings() -> dict[str, dict]:
         "wave points file": definitions["points_file"],
         "input": SCENARIO["properties"]["inputs"]["additionalProperties"],
         "dither": definitions["overlay"],
+    }
+
+
+def template_mappings() -> dict[str, dict]:
+    definitions = SCENARIO_TEMPLATE["definitions"]
+    return {
+        "template top": SCENARIO_TEMPLATE,
+        "template parameter": definitions["parameter_def"],
     }
 
 
@@ -721,6 +732,50 @@ SCENARIO_SAMPLES = [
     ("a negative hexadecimal", S + "  - expect: { Engine.engine.speed: { ge: -0x1 } }\n", "check only"),
     ("hexadecimal in quotes", S + "  - expect: { Engine.engine.speed: \"0x10\" }\n", "check only"),
     ("only with a variant there is not", S + SET + "only: [large]\n", "check only"),
+    ("a template call with params and name",
+     S + "  - name: call noop\n    template: templates/noop.yaml\n    params: { ms: 20, label: \"go\" }\n", "valid"),
+    ("a template call with ${...} in template path",
+     S + "  - template: \"templates/${name}.yaml\"\n", "invalid"),
+    ("a template call with .. in root scenario",
+     S + "  - template: ../outside.yaml\n", "invalid"),
+    ("a template call with params on a set step",
+     S + SET + "    params: { ms: 20 }\n", "invalid"),
+    ("a template file passed as scenario",
+     "vehicle_sil_scenario_template: 1\nsteps:\n" + SET, "invalid"),
+]
+
+T = "vehicle_sil_scenario_template: 1\n"
+TEMPLATE_SAMPLES = [
+    ("the least", T + "steps:\n" + SET, "valid"),
+    ("JSON", '{"vehicle_sil_scenario_template": 1, "steps": [{"set": {"Engine.engine.throttle": 5}}]}', "valid"),
+    ("parameters and relative .. inside templates",
+     T + "name: reusable\nparameters:\n  ms:\n    type: integer\n    default: 10\n    values: [10, 20]\n"
+     "    description: delay\n  label:\n    type: string\n    default: ok\nsteps:\n"
+     "  - name: \"${label}\"\n    after_ms: ${ms}\n    template: ../templates/noop.yaml\n"
+     "  - wave: { Engine.engine.throttle: { points: { file: ../points.csv, value: throttle } } }\n", "valid"),
+    ("no format version", "steps:\n" + SET, "invalid"),
+    ("wrong format version", "vehicle_sil_scenario_template: 2\nsteps:\n" + SET, "invalid"),
+    ("unknown top key", T + "only: [small]\nsteps:\n" + SET, "invalid"),
+    ("empty steps", T + "steps: []\n", "invalid"),
+    ("empty parameter definition", T + "parameters:\n  x: {}\nsteps:\n" + SET, "invalid"),
+    ("null parameter definition", T + "parameters:\n  x:\nsteps:\n" + SET, "invalid"),
+    ("parameter without type", T + "parameters:\n  x:\n    default: 1\nsteps:\n" + SET, "invalid"),
+    ("parameter default type mismatch", T + "parameters:\n  x:\n    type: integer\n    default: 1.5\nsteps:\n" + SET, "invalid"),
+    ("parameter string with unquoted int default", T + "parameters:\n  x:\n    type: string\n    default: 1\nsteps:\n" + SET, "invalid"),
+    ("parameter values empty", T + "parameters:\n  x:\n    type: integer\n    values: []\nsteps:\n" + SET, "invalid"),
+    ("parameter description with quoted number",
+     T + 'parameters:\n  x:\n    type: integer\n    description: "123"\nsteps:\n' + SET, "valid"),
+    ("parameter description with unquoted text",
+     T + "parameters:\n  x:\n    type: integer\n    description: hello world\nsteps:\n" + SET, "valid"),
+    ("parameter description with unquoted number",
+     T + "parameters:\n  x:\n    type: integer\n    description: 123\nsteps:\n" + SET, "invalid"),
+    ("parameter description with unquoted boolean",
+     T + "parameters:\n  x:\n    type: integer\n    description: true\nsteps:\n" + SET, "invalid"),
+    ("root-escaping .. in template path",
+     T + "steps:\n  - template: ../../escape.yaml\n", "check only"),
+    ("root-escaping .. in points file inside template",
+     T + "steps:\n  - wave: { Engine.engine.throttle: { points: { file: ../../points.csv, value: throttle } } }\n",
+     "check only"),
 ]
 
 
@@ -757,6 +812,19 @@ class Launcher:
         self.scenario_configuration: Path | None = None
         # The points file the samples name (points: { file: points.csv }), beside the scenarios.
         (directory / "points.csv").write_text("time,throttle,connected\n0,0,false\n100,50,true\n", encoding="utf-8", newline="\n")
+        (directory / "templates").mkdir(exist_ok=True)
+        (directory / "templates" / "noop.yaml").write_text(
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  ms: { type: integer, default: 10 }\n"
+            "  label: { type: string, default: ok }\n"
+            "steps:\n"
+            "  - name: \"${label}\"\n"
+            "    after_ms: ${ms}\n"
+            "    set: { Engine.engine.throttle: 5 }\n",
+            encoding="utf-8",
+            newline="\n",
+        )
 
     def write(self, text: str) -> Path:
         with self._lock:
@@ -786,6 +854,45 @@ class Launcher:
         report = check(str(scenario_configuration), "--variant", "small", "--scenario", str(self.write(text)))
         return errors_of(report)
 
+    def template(self, text: str) -> list[dict]:
+        if not EXAMPLE_DIR or not (Path(EXAMPLE_DIR) / "simulation.yaml").is_file():
+            raise AssertionError("VEHICLE_SIL_EXAMPLE_DIR must be the directory of the built examples/ecu_main "
+                                 f"(simulation.yaml next to its ECUs), not {EXAMPLE_DIR!r}")
+        with self._lock:
+            if self.scenario_configuration is None:
+                self.scenario_configuration = self.write(SCENARIO_CONFIG.replace("@DIR@", str(Path(EXAMPLE_DIR).resolve())))
+                report = check(str(self.scenario_configuration), "--variant", "small")
+                if errors_of(report):
+                    raise AssertionError(f"the configuration the scenarios are checked with has errors: {errors_of(report)}")
+            scenario_configuration = self.scenario_configuration
+            self.count += 1
+            count = self.count
+        tpl_path = self.directory / "templates" / f"tpl{count}.yaml"
+        tpl_path.write_text(text.replace("@EXE@", LAUNCH), encoding="utf-8", newline="\n")
+        args: dict[str, object] = {}
+        try:
+            data = load(text)
+        except yaml.YAMLError:
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("parameters"), dict):
+            for pname, pdef in data["parameters"].items():
+                if not isinstance(pdef, dict) or "default" in pdef:
+                    continue
+                vals = pdef.get("values")
+                if isinstance(vals, list) and vals:
+                    args[pname] = vals[0]
+                else:
+                    ptype = pdef.get("type")
+                    args[pname] = False if ptype == "boolean" else 0 if ptype in ("integer", "number") else "ok"
+        call = {"template": f"templates/tpl{count}.yaml"}
+        if args:
+            call["params"] = args
+        wrapper = {"vehicle_sil_scenario": 1, "steps": [call]}
+        wrapper_path = self.directory / f"wrap{count}.yaml"
+        wrapper_path.write_text(json.dumps(wrapper), encoding="utf-8", newline="\n")
+        report = check(str(scenario_configuration), "--variant", "small", "--scenario", str(wrapper_path))
+        return errors_of(report)
+
     def keys_at(self, errors: list[dict]) -> set[str]:
         """The keys the launcher lists in the error of the unknown key zz_probe."""
         messages = [e["message"] for e in errors if e["code"] == "unknown-key" and "'zz_probe'" in e["message"]]
@@ -804,7 +911,7 @@ class SchemaFiles(unittest.TestCase):
     maxDiff = None
 
     def test_the_schemas_are_json_schemas(self):
-        for schema in (SIMULATION, SCENARIO, TIMELINE, RUN_REQUEST, CONTROL_METRICS, BENCHMARK_REPORT):
+        for schema in (SIMULATION, SCENARIO, SCENARIO_TEMPLATE, TIMELINE, RUN_REQUEST, CONTROL_METRICS, BENCHMARK_REPORT):
             jsonschema.Draft7Validator.check_schema(schema)
             self.assertEqual(schema["$schema"], "http://json-schema.org/draft-07/schema#")
 
@@ -820,8 +927,11 @@ class SchemaFiles(unittest.TestCase):
             walk(schema)
 
     def test_every_mapping_refuses_unknown_keys_and_describes_its_keys(self):
-        for name, mappings in (("simulation", simulation_mappings()), ("scenario", scenario_mappings())):
-            schema = SIMULATION if name == "simulation" else SCENARIO
+        for name, schema, mappings in (
+            ("simulation", SIMULATION, simulation_mappings()),
+            ("scenario", SCENARIO, scenario_mappings()),
+            ("scenario-template", SCENARIO_TEMPLATE, template_mappings()),
+        ):
             for where, mapping in mappings.items():
                 if where != "step":
                     self.assertIs(mapping.get("additionalProperties"), False, f"{name}: {where}")
@@ -834,7 +944,27 @@ class SchemaFiles(unittest.TestCase):
             self.assertIn(kind, step["required"], f"step_{kind} must require the key {kind}")
             self.assertLessEqual({"at_ms", "after_ms"}, set(step["properties"]), f"step_{kind} has no time")
 
+    def test_the_template_schema_matches_the_scenario_schema(self):
+        scenario_defs = copy.deepcopy(SCENARIO["definitions"])
+        template_defs = copy.deepcopy(SCENARIO_TEMPLATE["definitions"])
+        self.assertIn("parameter_def", template_defs)
+        template_defs.pop("parameter_def")
+        self.assertEqual(set(template_defs), set(scenario_defs))
+        # Only template_path and points_file.properties.file intentionally differ (templates allow ..).
+        for defs in (scenario_defs, template_defs):
+            defs["template_path"].pop("pattern", None)
+            defs["template_path"].pop("description", None)
+            defs["step_template"]["properties"]["template"].pop("description", None)
+            defs["points_file"]["properties"]["file"].pop("pattern", None)
+            defs["points_file"]["properties"]["file"].pop("description", None)
+        self.assertEqual(template_defs, scenario_defs)
+
     def test_the_examples_are_valid(self):
+        schemas = {
+            "simulation.schema.json": SIMULATION,
+            "scenario.schema.json": SCENARIO,
+            "scenario-template.schema.json": SCENARIO_TEMPLATE,
+        }
         seen = {schema: 0 for schema in KINDS.values()}
         for path in yaml_files():
             data = load(path.read_text(encoding="utf-8"))
@@ -842,15 +972,16 @@ class SchemaFiles(unittest.TestCase):
             if kind is None or kind == "dashboard.schema.json":  # the dashboard's schema is the screen's to test
                 continue
             seen[kind] += 1
-            schema = SIMULATION if kind == "simulation.schema.json" else SCENARIO
+            schema = schemas[kind]
             self.assertEqual(problems(schema, data), [],
                              f"{path.relative_to(ROOT)} is not valid for schema/{kind}: if the launcher reads the "
                              "file, the schema is too strict; correct the schema")
         self.assertGreater(seen["simulation.schema.json"], 3)
         self.assertGreater(seen["scenario.schema.json"], 3)
+        self.assertGreater(seen["scenario-template.schema.json"], 0)
 
     def test_the_yaml_of_the_documents_is_valid(self):
-        seen = {"simulation": 0, "scenario": 0}
+        seen = {"simulation": 0, "scenario": 0, "scenario-template": 0}
         found = set()
         for path in documents():
             name = path.relative_to(ROOT).as_posix()
@@ -865,6 +996,10 @@ class SchemaFiles(unittest.TestCase):
                 if whole == "simulation.schema.json" or (whole is None and set(data) <= keys_of(SIMULATION)
                                                           and {"participants", "networks", "variants"} & set(data)):
                     kind, schema = "simulation", SIMULATION
+                elif whole == "scenario-template.schema.json" or (
+                    whole is None and set(data) <= keys_of(SCENARIO_TEMPLATE) and "parameters" in data and "steps" in data
+                ):
+                    kind, schema = "scenario-template", SCENARIO_TEMPLATE
                 elif whole == "scenario.schema.json" or (whole is None and set(data) <= keys_of(SCENARIO)
                                                          and "steps" in data):
                     kind, schema = "scenario", SCENARIO
@@ -884,11 +1019,13 @@ class SchemaFiles(unittest.TestCase):
                                         f"{name}:{line}: the schema should find the mistake at {start!r}; it says {said}")
         self.assertGreater(seen["simulation"], 3)
         self.assertGreater(seen["scenario"], 3)
+        self.assertGreater(seen["scenario-template"], 0)
         self.assertEqual(found, set(MISTAKES_IN_DOCUMENTS), "a block of MISTAKES_IN_DOCUMENTS is not in the documents "
                                                              "any more: correct the list")
 
     def test_the_samples_are_valid_or_not_as_they_say(self):
-        for schema, samples in ((SIMULATION, CONFIG_SAMPLES), (SCENARIO, SCENARIO_SAMPLES)):
+        for schema, samples in ((SIMULATION, CONFIG_SAMPLES), (SCENARIO, SCENARIO_SAMPLES),
+                                (SCENARIO_TEMPLATE, TEMPLATE_SAMPLES)):
             for what, text, verdict in samples:
                 said = problems(schema, load(text))
                 if verdict == "invalid":
@@ -935,6 +1072,13 @@ class SchemaFiles(unittest.TestCase):
                     if where in ("top", "step"):
                         self.assertTrue(any(s == key or s.startswith(key + ":") for s in spans),
                                         f"{doc} has no `{key}` (the tables of the file format)")
+                    else:
+                        self.assertIn(key, words, f"{doc} does not name the key {key} ({where})")
+            for where, mapping in template_mappings().items():
+                for key in keys_of(mapping):
+                    if where == "template top":
+                        self.assertTrue(any(s == key or s.startswith(key + ":") for s in spans),
+                                        f"{doc} has no `{key}` (the template format)")
                     else:
                         self.assertIn(key, words, f"{doc} does not name the key {key} ({where})")
 
@@ -1677,6 +1821,18 @@ class SchemaAndLauncher(unittest.TestCase):
             self.same_keys(where, keys_of(mappings[where]), self.launcher.keys_at(errors),
                            "scenario.schema.json")
 
+    def test_the_keys_of_a_template_are_the_launchers(self):
+        probes = {
+            "template top": "vehicle_sil_scenario_template: 1\nzz_probe: 1\nsteps:\n" + SET,
+            "template parameter": "vehicle_sil_scenario_template: 1\nparameters:\n  p:\n    type: integer\n    zz_probe: 1\n"
+                                  "steps:\n  - set: { Engine.engine.throttle: \"${p}\" }\n",
+        }
+        mappings = template_mappings()
+        self.assertEqual(set(probes), set(mappings))
+        for where, text in probes.items():
+            self.same_keys(where, keys_of(mappings[where]), self.launcher.keys_at(self.launcher.template(text)),
+                           "scenario-template.schema.json")
+
     def test_the_kinds_of_step_are_the_launchers(self):
         errors = self.launcher.scenario(S + "  - at_ms: 0\n")
         said = [re.search(r"give it one of (.*)$", e["message"]) for e in errors]
@@ -1705,7 +1861,8 @@ class SchemaAndLauncher(unittest.TestCase):
         workers = min(os.cpu_count() or 4, 4)
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for name, samples, ask in (("configuration", CONFIG_SAMPLES, self.launcher.configuration),
-                                       ("scenario", SCENARIO_SAMPLES, self.launcher.scenario)):
+                                       ("scenario", SCENARIO_SAMPLES, self.launcher.scenario),
+                                       ("template", TEMPLATE_SAMPLES, self.launcher.template)):
                 results = list(pool.map(lambda sample: (sample, ask(sample[1])), samples))
                 for (what, text, verdict), raw_errors in results:
                     errors = [f"{e['code']}: {e['message']}" for e in raw_errors]
@@ -1729,6 +1886,7 @@ class SchemaOfTheBuiltExamples(unittest.TestCase):
     def test_the_first_line_of_each_copy_in_the_build_directory_leads_to_its_schema(self):
         built = Path(EXAMPLE_DIR).resolve().parent  # <build>/examples
         sources = {"simulation.schema.json": SCHEMA_DIR, "scenario.schema.json": SCHEMA_DIR,
+                   "scenario-template.schema.json": SCHEMA_DIR,
                    "dashboard.schema.json": ROOT / "gui" / "protocol"}
         seen = 0
         for path in sorted(built.rglob("*.yaml")):

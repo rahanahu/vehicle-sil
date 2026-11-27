@@ -200,15 +200,14 @@ std::vector<config::Finding> unused_params(const std::vector<TestScenario>& scen
         context.params = configured;
         context.params.insert(context.params.end(), given.begin(), given.end());
         context.params_for_many = true;
+        context.scenario_file = scenario.shown;
         context.read_file = files_beside(path);
+        context.read_template = files_beside(path, "the template file");
         // Without the participants: the errors about the variables are not looked at.
         const scenario::ScenarioRead read = scenario::read_scenario(text, {}, context);
-        for (const config::Finding& finding : read.findings)
+        if (read.params_incomplete)
         {
-            if (finding.code == "syntax" || finding.code == "not-a-scenario" || finding.code == "unsupported-yaml")
-            {
-                return {};
-            }
+            return {};
         }
         for (const config::ParamValue& param : read.params)
         {

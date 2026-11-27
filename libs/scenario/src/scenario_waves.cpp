@@ -25,16 +25,16 @@ std::string Reader::span_text(SimDuration d)
 std::optional<Reader::Parts> Reader::parts_of(ryml::id_type node, const std::string& what, const std::vector<std::string>& allowed,
                                               const std::string& must)
 {
-    if (!tree_.is_map(node))
+    if (!tree().is_map(node))
     {
-        error("value", doc_.line(node), what + " must be " + must + ", not " + shown_value(node));
+        error("value", doc().line(node), what + " must be " + must + ", not " + shown_value(node));
         return std::nullopt;
     }
     Parts out;
     std::map<std::string, std::size_t> seen;
-    for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
+    for (auto part = tree().first_child(node); part != ryml::NONE; part = tree().next_sibling(part))
     {
-        const std::string key = config::detail::to_string(tree_.key(part));
+        const std::string key = config::detail::to_string(tree().key(part));
         if (!first_occurrence(seen, key, part, what + ": "))
         {
             continue;
@@ -55,14 +55,14 @@ std::optional<double> Reader::measure(ryml::id_type node, const std::string& lab
     double d = 0;
     if (!plain_number(node, d))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               label + " must be a number (" + meaning + "), not " + shown_value(node) +
                   (quoted(node) ? ": write the number without quotes" : ""));
         return std::nullopt;
     }
     if (d < least || (above && d == least) || d > most)
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               label + " is " + number_text(d) + ", but it must be " + (above ? "more than " : "from ") + number_text(least) +
                   (std::isfinite(most) ? std::string(above ? " and at most " : " to ") + number_text(most) : std::string{}) + " (" +
                   meaning + ")");
@@ -76,7 +76,7 @@ std::optional<bool> Reader::flag(ryml::id_type node, const std::string& label, c
     const std::string text = is_scalar(node) && !is_null(node) && !quoted(node) ? text_of(node) : std::string{};
     if (text != "true" && text != "false")
     {
-        error("value", doc_.line(node), label + " must be true or false (" + meaning + "), not " + shown_value(node));
+        error("value", doc().line(node), label + " must be true or false (" + meaning + "), not " + shown_value(node));
         return std::nullopt;
     }
     return text == "true";
@@ -87,7 +87,7 @@ std::optional<std::string> Reader::choice(ryml::id_type node, const std::string&
     const std::string text = is_scalar(node) && !is_null(node) ? text_of(node) : std::string{};
     if (std::find(options.begin(), options.end(), text) == options.end())
     {
-        error("value", doc_.line(node), label + " must be " + config::detail::or_list(options) + ", not " + shown_value(node));
+        error("value", doc().line(node), label + " must be " + config::detail::or_list(options) + ", not " + shown_value(node));
         return std::nullopt;
     }
     return text;
@@ -98,7 +98,7 @@ std::optional<std::uint64_t> Reader::seed_of(ryml::id_type node, const std::stri
     std::int64_t value = 0;
     if (!plain_integer(node, value) || value < 0)
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               label + " must be a whole number from 0 (the same seed gives the same values in every run), not " + shown_value(node));
         return std::nullopt;
     }
@@ -116,19 +116,19 @@ std::optional<double> Reader::level(ryml::id_type node, std::size_t variable, co
     double d = 0;
     if (!number_of(node, variable, d))
     {
-        error("scenario-value", doc_.line(node),
+        error("scenario-value", doc().line(node),
               key + " of " + what + " of " + var.text + " must be a number, not " + shown_value(node) +
                   (quoted(node) ? ": write the number without quotes" : hex_hint(node, var.type)));
         return std::nullopt;
     }
     if (!in_range(d, variable))
     {
-        error("scenario-value", doc_.line(node),
+        error("scenario-value", doc().line(node),
               key + " of " + what + " of " + var.text + " is " + written(node, d) + ", outside its range (" +
                   range_text(*info_of(variable)) + ")");
         return std::nullopt;
     }
-    note_base(variable, d, doc_.line(node), key == "to"); // (what a lag or a chatter comes to rest at)
+    note_base(variable, d, doc().line(node), key == "to"); // (what a lag or a chatter comes to rest at)
     return d;
 }
 
@@ -140,7 +140,7 @@ std::optional<detail::Periodic> Reader::periodic_of(const Parts& parts, const st
     const bool hasFrequency = parts.count("frequency_hz") > 0;
     if (hasPeriod && hasFrequency)
     {
-        error("value", doc_.line(parts.at("frequency_hz")),
+        error("value", doc().line(parts.at("frequency_hz")),
               what + " has period_ms and frequency_hz: give one of them (frequency_hz: 50 is period_ms: 20)");
         ok = false;
     }
@@ -397,17 +397,17 @@ void Reader::check_pulse(std::size_t variable, const std::string& what, std::siz
 
 std::int64_t Reader::skipped_wave_ms(ryml::id_type node)
 {
-    if (!tree_.is_map(node))
+    if (!tree().is_map(node))
     {
         return 0;
     }
     std::int64_t length = 0;
     const auto child = [&](ryml::id_type of, const std::string& key) {
-        if (tree_.is_map(of))
+        if (tree().is_map(of))
         {
-            for (auto part = tree_.first_child(of); part != ryml::NONE; part = tree_.next_sibling(part))
+            for (auto part = tree().first_child(of); part != ryml::NONE; part = tree().next_sibling(part))
             {
-                if (config::detail::to_string(tree_.key(part)) == key)
+                if (config::detail::to_string(tree().key(part)) == key)
                 {
                     return part;
                 }
@@ -433,12 +433,12 @@ std::int64_t Reader::skipped_wave_ms(ryml::id_type node)
         const std::int64_t interval = whole(child(chatter, "interval_ms"));
         length = bounces <= kMaxBounces && interval <= config::kMaxMillis / (2 * kMaxBounces) ? 2 * bounces * interval : 0;
     }
-    else if (const auto points = child(node, "points"); points != ryml::NONE && tree_.is_seq(points) && tree_.has_children(points))
+    else if (const auto points = child(node, "points"); points != ryml::NONE && tree().is_seq(points) && tree().has_children(points))
     {
-        const ryml::id_type last = tree_.last_child(points);
-        length = tree_.is_seq(last) && tree_.has_children(last) ? whole(tree_.first_child(last)) : 0;
+        const ryml::id_type last = tree().last_child(points);
+        length = tree().is_seq(last) && tree().has_children(last) ? whole(tree().first_child(last)) : 0;
     }
-    else if (points != ryml::NONE && tree_.is_map(points))
+    else if (points != ryml::NONE && tree().is_map(points))
     {
         // The time on the file's last line, if it can be read.
         const auto name = [&](const std::string& key) {
@@ -446,7 +446,9 @@ std::int64_t Reader::skipped_wave_ms(ryml::id_type node)
             return of != ryml::NONE && is_scalar(of) && !is_null(of) ? std::optional<std::string>{text_of(of)} : std::nullopt;
         };
         const auto path = name("file");
-        const CsvFile* file = path && !path_problem(*path) ? &csv(*path) : nullptr;
+        std::string normalizedPath;
+        const CsvFile* file =
+            path && !resolve_scoped_path(scope().dir_rel, *path, normalizedPath, false) ? &csv(normalizedPath) : nullptr;
         if (file != nullptr && file->table)
         {
             const auto column = name("time");
@@ -465,17 +467,17 @@ std::int64_t Reader::skipped_wave_ms(ryml::id_type node)
 std::int64_t Reader::read_wave(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time, bool quiet)
 {
     std::int64_t longest = 0;
-    if (!tree_.is_map(node) || !tree_.has_children(node))
+    if (!tree().is_map(node) || !tree().has_children(node))
     {
-        error("value", doc_.line(node),
+        error("value", doc().line(node),
               "wave must be a mapping of variables to a shape and how long it lasts ({ " + example_variable() +
                   ": { sine: { amplitude: 1, period_ms: 100 }, for_ms: 1000 } }), not " + shown_value(node));
         return longest;
     }
     std::map<std::string, std::size_t> seen;
-    for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
     {
-        if (!first_occurrence(seen, config::detail::to_string(tree_.key(child)), child, "wave: "))
+        if (!first_occurrence(seen, config::detail::to_string(tree().key(child)), child, "wave: "))
         {
             continue;
         }
@@ -597,7 +599,7 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
             {
                 if (has(key))
                 {
-                    error("value", doc_.line(parts->at(key)),
+                    error("value", doc().line(parts->at(key)),
                           std::string(key) + " does not go with " + what + ": the square of a bool is false and true; remove it");
                     good = false;
                 }
@@ -607,7 +609,7 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         }
         else if (levels && has("amplitude"))
         {
-            error("value", doc_.line(parts->at("amplitude")),
+            error("value", doc().line(parts->at("amplitude")),
                   what + " has amplitude and " + (has("low") ? "low" : "high") +
                       ": give low and high (its two values), or amplitude (so far above and below the middle)");
             good = false;
@@ -767,14 +769,14 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         if (fromHz && toHz && sweep == signal::Sweep::Log && (*fromHz == 0.0 || *toHz == 0.0))
         {
             const char* key = *fromHz == 0.0 ? "from_hz" : "to_hz";
-            error("value", doc_.line(parts->at(key)),
+            error("value", doc().line(parts->at(key)),
                   std::string(key) + " of " + what + " is 0, but a log sweep changes the frequency by the same factor every second, "
                   "which neither begins nor ends at 0 Hz: give a frequency above 0, or write sweep: linear");
             good = false;
         }
         else if (fromHz && toHz && *fromHz == 0.0 && *toHz == 0.0)
         {
-            error("value", doc_.line(parts->at("to_hz")),
+            error("value", doc().line(parts->at("to_hz")),
                   what + " goes from 0 Hz to 0 Hz, which does not move: give from_hz or to_hz a frequency above 0");
             good = false;
         }
@@ -831,7 +833,7 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         }
         if (has("from") && isBool)
         {
-            error("value", doc_.line(parts->at("from")),
+            error("value", doc().line(parts->at("from")),
                   "from does not go with " + what + ": a bool bounces between to and the other value; remove it");
             good = false;
         }
@@ -861,7 +863,7 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
         const bool hasFor = top->count("for_ms") > 0;
         if (has("bounces") && hasFor)
         {
-            error("value", doc_.line(top->at("for_ms")),
+            error("value", doc().line(top->at("for_ms")),
                   what + " has bounces and for_ms: give one of them (bounces: how often it falls back; for_ms: how long it bounces)");
             good = false;
         }
@@ -870,14 +872,14 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
             std::int64_t bounces = 0;
             if (!plain_integer(parts->at("bounces"), bounces) || bounces < 1 || bounces > kMaxBounces)
             {
-                error("value", doc_.line(parts->at("bounces")),
+                error("value", doc().line(parts->at("bounces")),
                       "bounces of " + what + " must be a whole number from 1 to " + std::to_string(kMaxBounces) +
                           " (how often it falls back before it rests), not " + shown_value(parts->at("bounces")));
                 good = false;
             }
             else if (interval && *interval > config::kMaxMillis / (2 * bounces))
             {
-                error("value", doc_.line(parts->at("bounces")),
+                error("value", doc().line(parts->at("bounces")),
                       what + " lasts 2 x bounces x interval_ms, more than the longest time (" + std::to_string(config::kMaxMillis) + " ms): lower them");
                 good = false;
             }
@@ -931,7 +933,7 @@ bool Reader::read_shape(const std::string& shape, ryml::id_type body, const Part
 
 std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size_t v, const std::optional<std::int64_t>& time, bool quiet)
 {
-    const std::size_t line = doc_.line(node);
+    const std::size_t line = doc().line(node);
     const ScenarioVariable& var = scenario_.variables[v];
     const std::string name = var.text;
     bool good = writable(v, line, time, "wave");
@@ -997,7 +999,7 @@ std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size
     // What stands beside the shape.
     if (top->count("interpolate") > 0 && shape != "points")
     {
-        error("value", doc_.line(top->at("interpolate")), "interpolate goes with points, not with " + shape + ": remove it");
+        error("value", doc().line(top->at("interpolate")), "interpolate goes with points, not with " + shape + ": remove it");
         good = false;
     }
     if (top->count("for_ms") > 0)
@@ -1009,7 +1011,7 @@ std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size
         }
         else if (shape != "chatter") // (a chatter with bounces and for_ms: said above)
         {
-            error("value", doc_.line(top->at("for_ms")),
+            error("value", doc().line(top->at("for_ms")),
                   "for_ms does not go with " + shape + ": " +
                       (shape == "pulse" ? "a pulse lasts its width_ms" : "the points end at the last of them") + "; remove it");
             good = false;
@@ -1025,7 +1027,7 @@ std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size
     {
         if (!noAround.empty())
         {
-            error("value", doc_.line(top->at("around")), "around does not go with " + what + ": " + noAround + "; remove it");
+            error("value", doc().line(top->at("around")), "around does not go with " + what + ": " + noAround + "; remove it");
             good = false;
         }
         else
@@ -1112,7 +1114,7 @@ bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::siz
         }
         else if (*said == "linear" && !number)
         {
-            error("scenario-value", doc_.line(interpolate),
+            error("scenario-value", doc().line(interpolate),
                   "interpolate: linear needs a number, and " + var.text + " is " +
                       (var.type == control::ValueType::Bool ? "a bool" : "an enum") +
                       ": write interpolate: hold (each value is kept until the next point), or leave it out");
@@ -1149,7 +1151,7 @@ bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::siz
         return true;
     };
     std::string source; // " from <file> column <name>" for points from a file
-    if (tree_.is_map(body))
+    if (tree().is_map(body))
     {
         const bool read = file_points(body, v, what, add, source, out.described);
         if (!good || !read)
@@ -1160,31 +1162,31 @@ bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::siz
     }
     else
     {
-        if (!tree_.is_seq(body) || !tree_.has_children(body))
+        if (!tree().is_seq(body) || !tree().has_children(body))
         {
-            error("value", doc_.line(body),
+            error("value", doc().line(body),
                   "points of " + var.text + " must be a list of [<milliseconds since the step began>, <value>] ([[0, 0], [100, 50]]), or " +
                       "a CSV file and its column (" + kPointsFileExample + "), not " +
-                      (tree_.is_seq(body) ? std::string("an empty list") : shown_value(body)));
+                      (tree().is_seq(body) ? std::string("an empty list") : shown_value(body)));
             return false;
         }
         std::size_t index = 0;
-        for (auto item = tree_.first_child(body); item != ryml::NONE; item = tree_.next_sibling(item))
+        for (auto item = tree().first_child(body); item != ryml::NONE; item = tree().next_sibling(item))
         {
             ++index;
             const std::string label = "point " + std::to_string(index);
-            if (!tree_.is_seq(item) || tree_.num_children(item) != 2)
+            if (!tree().is_seq(item) || tree().num_children(item) != 2)
             {
-                error("value", doc_.line(item),
+                error("value", doc().line(item),
                       label + " of " + what + " must be [<milliseconds since the step began>, <value>], not " + shown_value(item));
                 good = false;
                 continue;
             }
-            const ryml::id_type timeNode = tree_.first_child(item);
-            const ryml::id_type valueNode = tree_.last_child(item);
+            const ryml::id_type timeNode = tree().first_child(item);
+            const ryml::id_type valueNode = tree().last_child(item);
             const auto at = millis(timeNode, "the time of " + label, 0, "milliseconds of virtual time since the step began");
             const auto value = level(valueNode, v, "the value of " + label, "the points");
-            if (!at || !value || !add(*at, *value, label, "point " + std::to_string(index - 1), doc_.line(item)))
+            if (!at || !value || !add(*at, *value, label, "point " + std::to_string(index - 1), doc().line(item)))
             {
                 good = false;
             }
@@ -1197,7 +1199,7 @@ bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::siz
     }
     if (points.back().time <= SimDuration::zero())
     {
-        error("value", doc_.line(body),
+        error("value", doc().line(body),
               what + " end at 0 ms: a wave takes time; give a later point, or use set for a value at one time");
         return false;
     }
@@ -1205,13 +1207,13 @@ bool Reader::read_points(ryml::id_type body, ryml::id_type interpolate, std::siz
     text += source + " (" + std::to_string(points.size()) + (hold ? ", hold" : ", linear") + ") over " + std::to_string(*length) + " ms";
     if (hold)
     {
-        check_held_points(v, what, doc_.line(body), quiet, points, names, time);
+        check_held_points(v, what, doc().line(body), quiet, points, names, time);
     }
     else if (closest)
     {
         // On lines every point is a corner: closer than a step, the ECU misses some of them.
         const SimDuration apart = std::chrono::milliseconds(closest->second - closest->first);
-        check_span(v, what, doc_.line(body), quiet, apart,
+        check_span(v, what, doc().line(body), quiet, apart,
                    "are as little as " + span_text(apart) + " apart (at " + std::to_string(closest->first) + " ms and " +
                        std::to_string(closest->second) + " ms), closer than",
                    "the ECU gets only the value at the time of each of its steps, so it does not see every point",
@@ -1239,33 +1241,6 @@ const Reader::CsvFile& Reader::csv(const std::string& path)
         file.table = detail::read_csv(*text, file.problem);
     }
     return files_.emplace(path, std::move(file)).first->second;
-}
-
-std::optional<std::string> Reader::path_problem(const std::string& path)
-{
-    static const std::string kOnlyBelow = "a scenario reads only files in its own directory and below it";
-    if (path.empty())
-    {
-        return "is empty: give the path of the CSV file from the scenario file's directory (traces/drive.csv)";
-    }
-    if (path.find('\\') != std::string::npos)
-    {
-        return "has '\\': write '/' between directories (traces/drive.csv), which every OS reads";
-    }
-    if (path.front() == '/' || (path.size() >= 2 && path[1] == ':' && std::isalpha(static_cast<unsigned char>(path[0])) != 0))
-    {
-        return "is an absolute path: give the path from the scenario file's directory (traces/drive.csv); " + kOnlyBelow;
-    }
-    for (std::size_t at = 0; at <= path.size();)
-    {
-        const std::size_t end = std::min(path.find('/', at), path.size());
-        if (path.compare(at, end - at, "..") == 0)
-        {
-            return "goes up a directory (..): " + kOnlyBelow + "; put the file there";
-        }
-        at = end + 1;
-    }
-    return std::nullopt;
 }
 
 std::optional<std::int64_t> Reader::cell_ms(const std::string& cell, bool seconds, double& ms)
@@ -1367,7 +1342,7 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
         const ryml::id_type node = parts->at(key);
         if (!is_scalar(node) || is_null(node) || text_of(node).empty())
         {
-            error("value", doc_.line(node), key + " of " + what + " must be " + meaning + ", not " + shown_value(node));
+            error("value", doc().line(node), key + " of " + what + " must be " + meaning + ", not " + shown_value(node));
             good = false;
             return std::nullopt;
         }
@@ -1378,7 +1353,7 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
     {
         if (parts->count(key) == 0)
         {
-            error("missing-key", doc_.line(body), what + " from a file need " + key + ": " + meaning + " (" + kPointsFileExample + ")");
+            error("missing-key", doc().line(body), what + " from a file need " + key + ": " + meaning + " (" + kPointsFileExample + ")");
             good = false;
         }
     }
@@ -1396,13 +1371,14 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
     {
         return false;
     }
-    const std::size_t line = doc_.line(parts->at("file"));
-    if (const auto wrong = path_problem(*path))
+    const std::size_t line = doc().line(parts->at("file"));
+    std::string normalizedPath;
+    if (const auto wrong = resolve_scoped_path(scope().dir_rel, *path, normalizedPath, false))
     {
         error("scenario-points-file", line, what + ": the file '" + *path + "' " + *wrong);
         return false;
     }
-    const CsvFile& file = csv(*path);
+    const CsvFile& file = csv(normalizedPath);
     if (!file.table)
     {
         error("scenario-points-file", line, what + ": " + *path + " " + file.problem);
@@ -1425,7 +1401,7 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
         }
         if (found.size() > 1)
         {
-            error("scenario-points-file", doc_.line(parts->at(key)),
+            error("scenario-points-file", doc().line(parts->at(key)),
                   what + ": " + *path + " has " + std::to_string(found.size()) + " columns named " + detail::shown_cell(wanted) +
                       " (columns " + std::to_string(found[0]) + " and " + std::to_string(found[1]) +
                       "): give its columns different names on its first line");
@@ -1437,7 +1413,7 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
             shown.push_back(detail::shown_cell(table.columns[i]));
         }
         const std::string guess = config::detail::closest(wanted, table.columns);
-        error("scenario-points-file", doc_.line(parts->at(key)),
+        error("scenario-points-file", doc().line(parts->at(key)),
               what + ": " + *path + " has no column " + detail::shown_cell(wanted) + " on its first line (line " +
                   std::to_string(table.header_line) + ")" +
                   (guess.empty() ? std::string{} : ": did you mean " + detail::shown_cell(guess) + "?") + "; its columns are " +
@@ -1453,7 +1429,7 @@ bool Reader::file_points(ryml::id_type body, std::size_t v, const std::string& w
     const std::string& timeHead = table.columns[*timeColumn];
     if (*valueColumn == *timeColumn)
     {
-        error("scenario-points-file", doc_.line(parts->at("value")),
+        error("scenario-points-file", doc().line(parts->at("value")),
               what + ": value names the column of the times (" + detail::shown_cell(timeHead) + (timeName ? "" : ", the first column") +
                   "): name the column of the values" + (timeName ? "" : ", or the column of the times with time"));
         return false;

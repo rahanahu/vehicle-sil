@@ -91,8 +91,8 @@ TEST_CASE(scenario_file_errors_say_the_line_what_is_wrong_and_how_to_fix_it)
                "E 0 missing-key: the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: 1\n");
     check_text(errors(kHead + "  - sets: { Body.level: 1 }\n"),
                "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: name, at_ms, after_ms, set, ramp, wave, dither, "
-               "wait_until, timeout_ms, expect, within_ms, hold_for_ms, undersampled)\n"
-               "E 3 value: the step does nothing: give it one of set, ramp, wave, dither, wait_until, expect\n");
+               "wait_until, timeout_ms, expect, within_ms, hold_for_ms, undersampled, template, params)\n"
+               "E 3 value: the step does nothing: give it one of set, ramp, wave, dither, wait_until, expect, template\n");
     check_text(errors(kHead + "  - set: { Body.level: 1 }\n    expect: { Body.level: 1 }\n"),
                "E 3 value: the step has set, expect: a step does one thing; make a step of each\n");
     // The variables.
@@ -3441,4 +3441,468 @@ TEST_CASE(scenario_step_and_dither_file_provenance_flows_through_runs)
     CHECK_EQ(inLines.size(), std::size_t{1});
     CHECK(inLines[0].file == "scenarios/templates/dither.yaml");
     CHECK(inLines[0].line == 12);
+}
+
+TEST_CASE(scenario_templates_expand_with_lexical_scoping_quoting_and_provenance)
+{
+    auto files = std::map<std::string, std::string>{
+        {"templates/power_on.yaml",
+         "vehicle_sil_scenario_template: 1\n"
+         "name: power on\n"
+         "parameters:\n"
+         "  lvl:\n"
+         "    type: integer\n"
+         "    default: 10\n"
+         "  gear_mode:\n"
+         "    type: string\n"
+         "    default: off\n"
+         "  flag:\n"
+         "    type: boolean\n"
+         "    default: true\n"
+         "  gain:\n"
+         "    type: number\n"
+         "    default: 0.5\n"
+         "  label:\n"
+         "    type: string\n"
+         "    default: default_lbl\n"
+         "steps:\n"
+         "  - name: \"${label}: set\"\n"
+         "    set: { Body.level: \"${lvl}\", Door.mode: \"${gear_mode}\", Door.lamp: \"${flag}\", Body.ratio: \"${gain}\" }\n"
+         "  - after_ms: 20\n"
+         "    expect: { Body.level: \"${lvl}\" }\n"},
+        {"templates/nested_outer.yaml",
+         "vehicle_sil_scenario_template: 1\n"
+         "parameters:\n"
+         "  inner_lvl: { type: integer }\n"
+         "  outer_tag: { type: string }\n"
+         "  csv_path: { type: string, default: ../traces/curve.csv }\n"
+         "steps:\n"
+         "  - name: \"outer ${outer_tag}\"\n"
+         "    after_ms: 10\n"
+         "    template: ../common/inner.yaml\n"
+         "    params:\n"
+         "      lvl: \"${inner_lvl}\"\n"
+         "      gear_mode: \"${outer_tag}\"\n"
+         "      label: \"nested_${outer_tag}\"\n"
+         "  - after_ms: 5\n"
+         "    wave: { Body.level: { points: { file: \"${csv_path}\", value: level } } }\n"},
+        {"common/inner.yaml",
+         "vehicle_sil_scenario_template: 1\n"
+         "parameters:\n"
+         "  lvl: { type: integer }\n"
+         "  gear_mode: { type: string }\n"
+         "  label: { type: string }\n"
+         "steps:\n"
+         "  - name: \"${label}\"\n"
+         "    after_ms: 15\n"
+         "    set: { Body.level: \"${lvl}\", Door.mode: \"${gear_mode}\" }\n"},
+        {"traces/curve.csv", "time,level\n0,10\n30,20\n"},
+    };
+    ScenarioCatalog cat = catalog();
+    // Add an enum item named "1" (with numeric value 99) to Door.mode to verify from_cli -> quoted normalization.
+    cat[1].variables[2].items.push_back(control::EnumItem{"1", 99});
+
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/main.yaml";
+    ctx.read_template = [&](const std::string& p, std::string& prob) -> std::optional<std::string> {
+        if (const auto it = files.find(p); it != files.end())
+        {
+            return it->second;
+        }
+        prob = "does not exist";
+        return std::nullopt;
+    };
+    ctx.read_file = ctx.read_template;
+    ctx.params = {
+        ParamValue{"cli_hex", "0x10", false, ParamSource::CommandLine, 0, true},
+        ParamValue{"cli_enum_name", "1", false, ParamSource::CommandLine, 0, true},
+        ParamValue{"cli_tag", "007", false, ParamSource::CommandLine, 0, true},
+    };
+
+    const std::string yaml =
+        "vehicle_sil_scenario: 1\n"
+        "params: { outer_lvl: 25, gain_val: 0.25 }\n"
+        "steps:\n"
+        "  - name: call one\n"
+        "    at_ms: 0\n"
+        "    template: templates/power_on.yaml\n"
+        "    params:\n"
+        "      lvl: \"${cli_hex}\"\n"
+        "      gear_mode: \"${cli_enum_name}\"\n"
+        "      gain: \"${gain_val}\"\n"
+        "      label: \"tag_${cli_tag}\"\n"
+        "  - name: call nested\n"
+        "    after_ms: 50\n"
+        "    template: templates/nested_outer.yaml\n"
+        "    params:\n"
+        "      inner_lvl: \"${outer_lvl}\"\n"
+        "      outer_tag: on\n";
+    const ScenarioRead r = read_scenario(yaml, cat, ctx);
+    check_text(lines(r.findings), "");
+    CHECK(r.usage_errors.empty());
+    CHECK(r.scenario.has_value());
+    const Scenario& s = *r.scenario;
+    CHECK_EQ(s.steps.size(), std::size_t{4});
+
+    // Step 0: from templates/power_on.yaml, at_ms = 0 inherited, cli_hex=0x10 -> 16, cli_enum_name="1" -> item 99!
+    CHECK(s.steps[0].file == "scenarios/templates/power_on.yaml");
+    CHECK_EQ(s.steps[0].line, std::size_t{20});
+    CHECK(s.steps[0].name == "tag_007: set");
+    CHECK(s.steps[0].at_ms == std::optional<std::int64_t>{0});
+    CHECK(s.steps[0].text == "set Body.level = 16; Door.mode = 1 (99); Door.lamp = true; Body.ratio = 0.25");
+    CHECK_EQ(s.steps[0].call_stack.size(), std::size_t{1});
+    CHECK(s.steps[0].call_stack[0].file == "scenarios/main.yaml");
+    CHECK_EQ(s.steps[0].call_stack[0].line, std::size_t{4});
+    CHECK(s.steps[0].call_stack[0].name == "call one");
+    CHECK_EQ(s.steps[0].call_stack[0].params.size(), std::size_t{5});
+    // cli_enum_name passed via from_cli to type: string normalized quoted=true.
+    CHECK(s.steps[0].call_stack[0].params[1].name == "gear_mode");
+    CHECK(s.steps[0].call_stack[0].params[1].quoted == true);
+    // flag used TemplateDefault.
+    CHECK(s.steps[0].call_stack[0].params[2].name == "flag");
+    CHECK(s.steps[0].call_stack[0].params[2].source == ParamSource::TemplateDefault);
+
+    // Step 1: after_ms = 20 inside power_on.yaml
+    CHECK(s.steps[1].after_ms == 20);
+    CHECK(s.steps[1].at_ms == std::nullopt);
+
+    // Step 2: nested 2-deep call: caller after_ms 50 + outer after_ms 10 + inner after_ms 15 = 75!
+    CHECK(s.steps[2].file == "scenarios/common/inner.yaml");
+    CHECK(s.steps[2].name == "nested_on");
+    CHECK_EQ(s.steps[2].after_ms, std::int64_t{75});
+    CHECK_EQ(s.steps[2].call_stack.size(), std::size_t{2});
+    CHECK(s.steps[2].call_stack[0].file == "scenarios/main.yaml");
+    CHECK(s.steps[2].call_stack[0].name == "call nested");
+    CHECK(s.steps[2].call_stack[1].file == "scenarios/templates/nested_outer.yaml");
+    CHECK(s.steps[2].call_stack[1].name == "outer on");
+
+    // Step 3: wave points file inside template resolved ../traces/curve.csv relative to templates/.
+    CHECK(s.steps[3].file == "scenarios/templates/nested_outer.yaml");
+    CHECK_EQ(s.steps[3].motions.size(), std::size_t{1});
+}
+
+TEST_CASE(scenario_template_scoping_type_checks_and_errors)
+{
+    std::map<std::string, std::string> files;
+    ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/s.yaml";
+    ctx.read_template = [&](const std::string& p, std::string& prob) -> std::optional<std::string> {
+        if (const auto it = files.find(p); it != files.end())
+        {
+            return it->second;
+        }
+        prob = "does not exist";
+        return std::nullopt;
+    };
+    ctx.read_file = ctx.read_template;
+    const auto run_check = [&](const std::string& yaml) { return read_scenario(yaml, catalog(), ctx); };
+
+    // 1. Lexical isolation: outer scenario/CLI params do NOT leak into templates.
+    files["templates/leak.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - set: { Body.level: \"${outer_val}\" }\n";
+    {
+        ScenarioContext c2 = ctx;
+        c2.params = {ParamValue{"outer_val", "10", false, ParamSource::CommandLine, 0, true}};
+        const ScenarioRead r = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/leak.yaml\n", catalog(), c2);
+        CHECK(lines(r.findings).find("E 3 scenario-param: ${outer_val} has no value") != std::string::npos);
+        CHECK(lines(r.findings).find("parameters") != std::string::npos);
+        CHECK(!r.params_incomplete);
+        CHECK(!r.usage_errors.empty()); // outer_val was never used in caller scope!
+    }
+
+    // 2. Template passed as root scenario -> not-a-scenario; scenario passed as template -> not-a-template.
+    CHECK(lines(run_check("vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Body.level: 1 }\n").findings)
+              .find("not-a-scenario") != std::string::npos);
+    files["templates/is_scenario.yaml"] = "vehicle_sil_scenario: 1\nsteps:\n  - set: { Body.level: 1 }\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/is_scenario.yaml\n").findings)
+              .find("not-a-template") != std::string::npos);
+
+    // 3. Call-site errors: ${...} in template path, parameters: typo hint, params: on non-template step.
+    CHECK(lines(run_check(kHead + "  - template: \"templates/${x}.yaml\"\n").findings).find("scenario-param") != std::string::npos);
+    CHECK(lines(run_check(kHead + "  - template: templates/leak.yaml\n    parameters: { a: 1 }\n").findings)
+              .find("unknown key 'parameters': pass template arguments with 'params:'") != std::string::npos);
+    CHECK(lines(run_check(kHead + "  - set: { Body.level: 1 }\n    params: { a: 1 }\n").findings)
+              .find("params goes with template, not with set") != std::string::npos);
+
+    // 4. ParameterDef errors: missing type, empty {}, null, default/values mismatch.
+    files["templates/bad_defs.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  a: {}\n"
+        "  b:\n"
+        "  c: { default: 1 }\n"
+        "  d: { type: integer, default: 1.5 }\n"
+        "  e: { type: integer, values: [1, 2], default: 3 }\n"
+        "steps:\n  - set: { Body.level: 1 }\n";
+    {
+        const std::string errs = lines(run_check(kHead + "  - template: templates/bad_defs.yaml\n").findings);
+        CHECK(errs.find("an empty mapping") != std::string::npos);
+        CHECK(errs.find("not empty") != std::string::npos);
+        CHECK(errs.find("needs type") != std::string::npos);
+        CHECK(errs.find("type: integer") != std::string::npos);
+        CHECK(errs.find("not one of its allowed values") != std::string::npos);
+    }
+
+    // 5. type: string rejects YAML 1.2 non-string literals unless quoted or from_cli; millis rejects 0x10.
+    files["templates/typed.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  s: { type: string }\n"
+        "  ms: { type: integer, default: 0x10 }\n"
+        "steps:\n"
+        "  - name: \"${s}\"\n"
+        "    after_ms: \"${ms}\"\n"
+        "    set: { Body.level: 1 }\n";
+    for (const char* badLit : {"123", "0x10", "0o7", "+1", "true", "True", "TRUE", "false", "False", "FALSE", ".inf", ".nan"})
+    {
+        const std::string errs = lines(run_check(
+            std::string("vehicle_sil_scenario: 1\nsteps:\n  - template: templates/typed.yaml\n    params: { s: ") + badLit + ", ms: 10 }\n").findings);
+        CHECK(errs.find("scenario-param") != std::string::npos);
+    }
+    for (const char* nullLit : {"~", "null"})
+    {
+        const std::string errs = lines(run_check(
+            std::string("vehicle_sil_scenario: 1\nsteps:\n  - template: templates/typed.yaml\n    params: { s: ") + nullLit + ", ms: 10 }\n").findings);
+        CHECK(errs.find("not empty") != std::string::npos);
+    }
+    // Hex default 0x10 accepted by type: integer, rejected by millis() (after_ms).
+    CHECK(lines(run_check("vehicle_sil_scenario: 1\nsteps:\n  - template: templates/typed.yaml\n    params: { s: ok }\n").findings)
+              .find("after_ms must be a whole number") != std::string::npos);
+
+    // 6. Template syntax error attributed to template file:line with Finding::detail call_stack.
+    files["templates/bad_syntax.yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Body.level: [1 }\n";
+    {
+        const ScenarioRead r = run_check(kHead + "  - name: bad call\n    template: templates/bad_syntax.yaml\n");
+        CHECK(!r.findings.empty());
+        CHECK(r.findings[0].code == "syntax");
+        CHECK(r.findings[0].file == "scenarios/templates/bad_syntax.yaml");
+        CHECK(r.findings[0].detail.find("called from: scenarios/s.yaml:3 (step 'bad call')") != std::string::npos);
+    }
+
+    // 7. InheritedTiming at_ms inside template & end_known_ = false on expansion failure.
+    files["templates/abs.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - at_ms: 50\n"
+        "    set: { Body.level: 1 }\n";
+    {
+        const std::string errs = lines(run_check(kHead + "  - at_ms: 100\n    template: templates/abs.yaml\n").findings);
+        CHECK(errs.find("before the template call's at_ms (100 ms)") != std::string::npos);
+        CHECK(errs.find("inside a template, at_ms is still the scenario's absolute time") != std::string::npos);
+    }
+
+    // 8. Cycle, depth (> 16), step count (> 10,000), and sandboxed .. path escape.
+    files["templates/cyc_a.yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n  - template: cyc_b.yaml\n";
+    files["templates/cyc_b.yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n  - template: cyc_a.yaml\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/cyc_a.yaml\n").findings).find("scenario-template-cycle") != std::string::npos);
+
+    files["templates/escape.yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n  - template: ../../secret.yaml\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/escape.yaml\n").findings).find("scenario-template-file") != std::string::npos);
+
+    files["templates/root_csv_escape.yaml"] =
+        "vehicle_sil_scenario_template: 1\nsteps:\n  - wave: { Body.level: { points: { file: ../../secret.csv, value: level } } }\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/root_csv_escape.yaml\n").findings).find("scenario-points-file") != std::string::npos);
+
+    // Depth 17 triggers scenario-template-depth.
+    for (int d = 1; d <= 17; ++d)
+    {
+        const std::string next = d < 17 ? "  - template: d" + std::to_string(d + 1) + ".yaml\n" : "  - set: { Body.level: 1 }\n";
+        files["templates/d" + std::to_string(d) + ".yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n" + next;
+    }
+    CHECK(lines(run_check(kHead + "  - template: templates/d1.yaml\n").findings).find("scenario-template-depth") != std::string::npos);
+
+    // Binary tree depth 14 (> 10,000 steps) triggers scenario-template-steps.
+    files["templates/leaf.yaml"] = "vehicle_sil_scenario_template: 1\nsteps:\n  - set: { Body.level: 1 }\n";
+    for (int d = 1; d <= 14; ++d)
+    {
+        const std::string child = d == 14 ? "leaf.yaml" : "b" + std::to_string(d + 1) + ".yaml";
+        files["templates/b" + std::to_string(d) + ".yaml"] =
+            "vehicle_sil_scenario_template: 1\nsteps:\n  - template: " + child + "\n  - template: " + child + "\n";
+    }
+    CHECK(lines(run_check(kHead + "  - template: templates/b1.yaml\n").findings).find("scenario-template-steps") != std::string::npos);
+
+    // 9. Dithers inside templates carry Finding::detail call_stack and ScenarioOverlay::file.
+    files["templates/dither.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "steps:\n"
+        "  - name: add dither\n"
+        "    dither: { Body.level: { square: { amplitude: 5, period_ms: 80 } } }\n"
+        "  - set: { Body.level: 98 }\n";
+    {
+        const ScenarioRead r = run_check(kDitherHead + "steps:\n  - name: call dither\n    template: templates/dither.yaml\n");
+        const auto dIt = std::find_if(r.findings.begin(), r.findings.end(),
+                                      [](const Finding& f) { return f.code == "scenario-dither-range"; });
+        CHECK(dIt != r.findings.end());
+        CHECK(dIt->file == "scenarios/templates/dither.yaml");
+        CHECK(dIt->detail.find("called from: scenarios/s.yaml:3 (step 'call dither')") != std::string::npos);
+    }
+
+    // 10. --param passed to a failing template call surfaces the template error, not a false usage error.
+    {
+        ScenarioContext c2 = ctx;
+        c2.params = {ParamValue{"cli_param", "50", false, ParamSource::CommandLine, 0, true}};
+
+        const ScenarioRead missing = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/missing.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(missing.params_incomplete);
+        CHECK(missing.usage_errors.empty());
+        CHECK(lines(missing.findings).find("scenario-template-file") != std::string::npos);
+
+        files["templates/cyc_param_a.yaml"] =
+            "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer }\nsteps:\n  - template: cyc_param_b.yaml\n";
+        files["templates/cyc_param_b.yaml"] =
+            "vehicle_sil_scenario_template: 1\nsteps:\n  - template: cyc_param_a.yaml\n    params: { throttle: 10 }\n";
+        const ScenarioRead cyclic = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/cyc_param_a.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(cyclic.params_incomplete);
+        CHECK(cyclic.usage_errors.empty());
+        CHECK(lines(cyclic.findings).find("scenario-template-cycle") != std::string::npos);
+
+        // Also when cyc_a.yaml declares no params and caller passes unknown param referencing ${cli_param},
+        // scenario-param is surfaced instead of a false usage error.
+        const ScenarioRead unknownArg = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/cyc_a.yaml\n    params: { unknown_arg: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(unknownArg.params_incomplete);
+        CHECK(unknownArg.usage_errors.empty());
+        CHECK(lines(unknownArg.findings).find("scenario-param") != std::string::npos);
+
+        const ScenarioRead badSyntax = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/bad_syntax.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(badSyntax.params_incomplete);
+        CHECK(badSyntax.usage_errors.empty());
+        CHECK(lines(badSyntax.findings).find("syntax:") != std::string::npos);
+
+        const ScenarioRead tooManySteps = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/b1.yaml\n  - template: templates/leaf.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(tooManySteps.params_incomplete);
+        CHECK(tooManySteps.usage_errors.empty());
+        CHECK(lines(tooManySteps.findings).find("scenario-template-steps") != std::string::npos);
+
+        const ScenarioRead mixedAction = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/leaf.yaml\n    set: { Body.level: 1 }\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(mixedAction.params_incomplete);
+        CHECK(mixedAction.usage_errors.empty());
+        CHECK(lines(mixedAction.findings).find("a step does one thing") != std::string::npos);
+
+        files["templates/empty_steps.yaml"] =
+            "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer }\nsteps: []\n";
+        const ScenarioRead emptyTplSteps = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/empty_steps.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(emptyTplSteps.params_incomplete);
+        CHECK(emptyTplSteps.usage_errors.empty());
+        CHECK(lines(emptyTplSteps.findings).find("an empty list") != std::string::npos);
+
+        files["templates/bad_desc_val.yaml"] =
+            "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer, description: 123 }\nsteps:\n  - set: { Body.level: 1 }\n";
+        const ScenarioRead badTplDesc = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/bad_desc_val.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(badTplDesc.params_incomplete);
+        CHECK(badTplDesc.usage_errors.empty());
+        CHECK(lines(badTplDesc.findings).find("description of parameter 'throttle' must be a text") != std::string::npos);
+
+        files["templates/missing_type.yaml"] =
+            "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { default: 1 }\nsteps:\n  - set: { Body.level: 1 }\n";
+        const ScenarioRead missingTplType = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/missing_type.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(missingTplType.params_incomplete);
+        CHECK(missingTplType.usage_errors.empty());
+        CHECK(lines(missingTplType.findings).find("missing-key:") != std::string::npos);
+
+        files["templates/unknown_tpl_key.yaml"] =
+            "vehicle_sil_scenario_template: 1\nonly: [small]\nsteps:\n  - set: { Body.level: 1 }\n";
+        const ScenarioRead unknownTplKey = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/unknown_tpl_key.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(unknownTplKey.params_incomplete);
+        CHECK(unknownTplKey.usage_errors.empty());
+        CHECK(lines(unknownTplKey.findings).find("unknown-key:") != std::string::npos);
+
+        files["templates/dup_tpl_key.yaml"] =
+            "vehicle_sil_scenario_template: 1\nname: a\nname: b\nsteps:\n  - set: { Body.level: 1 }\n";
+        const ScenarioRead dupTplKey = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/dup_tpl_key.yaml\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(dupTplKey.params_incomplete);
+        CHECK(dupTplKey.usage_errors.empty());
+        CHECK(lines(dupTplKey.findings).find("duplicate-key:") != std::string::npos);
+
+        const ScenarioRead nullTpl = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: null\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(nullTpl.params_incomplete);
+        CHECK(nullTpl.usage_errors.empty());
+        CHECK(lines(nullTpl.findings).find("template must be a template file path") != std::string::npos);
+
+        const ScenarioRead paramsOnSet = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - set: { Body.level: 1 }\n    params: { throttle: \"${cli_param}\" }\n",
+            catalog(), c2);
+        CHECK(paramsOnSet.params_incomplete);
+        CHECK(paramsOnSet.usage_errors.empty());
+        CHECK(lines(paramsOnSet.findings).find("params goes with template") != std::string::npos);
+
+        const ScenarioRead rootSyntax = read_scenario("vehicle_sil_scenario: 1\nsteps:\n  - set: [1\n", catalog(), c2);
+        CHECK(rootSyntax.params_incomplete);
+        CHECK(rootSyntax.usage_errors.empty());
+        CHECK(lines(rootSyntax.findings).find("syntax:") != std::string::npos);
+
+        const ScenarioRead utf16 = read_scenario(std::string("\xFF\xFEvehicle_sil_scenario: 1\n", 26), catalog(), c2);
+        CHECK(utf16.params_incomplete);
+        CHECK(utf16.usage_errors.empty());
+        CHECK(lines(utf16.findings).find("encoding:") != std::string::npos);
+
+        // When load_template() and read_template_call_params() succeed, an error inside the template body
+        // or on a non-template step keeps params_incomplete == false so genuinely unused --param is caught.
+        files["templates/body_bad_time.yaml"] =
+            "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer }\nsteps:\n"
+            "  - at_ms: \"bad\"\n    set: { Body.level: \"${throttle}\" }\n";
+        const ScenarioRead bodyBadTime = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/body_bad_time.yaml\n    params: { throttle: 10 }\n",
+            catalog(), c2);
+        CHECK(!bodyBadTime.params_incomplete);
+        CHECK(!bodyBadTime.usage_errors.empty());
+
+        const ScenarioRead badTime = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: \"bad\"\n    set: { Body.level: 1 }\n", catalog(), c2);
+        CHECK(!badTime.params_incomplete);
+        CHECK(!badTime.usage_errors.empty());
+
+        files["templates/healthy_param.yaml"] =
+            "vehicle_sil_scenario_template: 1\nparameters:\n  throttle: { type: integer }\nsteps:\n"
+            "  - set: { Body.level: \"${throttle}\" }\n";
+        const ScenarioRead healthyUnused = read_scenario(
+            "vehicle_sil_scenario: 1\nsteps:\n  - template: templates/healthy_param.yaml\n    params: { throttle: 10 }\n",
+            catalog(), c2);
+        CHECK(!healthyUnused.params_incomplete);
+        CHECK(!healthyUnused.usage_errors.empty());
+    }
+
+    // 11. ParameterDef.description accepts quoted/unquoted text and rejects unquoted YAML 1.2 non-string literals.
+    files["templates/desc_ok.yaml"] =
+        "vehicle_sil_scenario_template: 1\n"
+        "parameters:\n"
+        "  a: { type: integer, default: 1, description: \"123\" }\n"
+        "  b: { type: integer, default: 2, description: hello world }\n"
+        "steps:\n  - set: { Body.level: 1 }\n";
+    CHECK(lines(run_check(kHead + "  - template: templates/desc_ok.yaml\n").findings).empty());
+
+    for (const char* badDesc : {"123", "true", "0x10", ".inf", "null", "[]"})
+    {
+        files["templates/desc_bad.yaml"] =
+            std::string("vehicle_sil_scenario_template: 1\nparameters:\n  a: { type: integer, default: 1, description: ") +
+            badDesc + " }\nsteps:\n  - set: { Body.level: 1 }\n";
+        const std::string errs = lines(run_check(kHead + "  - template: templates/desc_bad.yaml\n").findings);
+        CHECK(errs.find("description of parameter 'a' must be a text") != std::string::npos);
+    }
 }

@@ -80,11 +80,11 @@ Where to change:
 
 | What | Location |
 |---|---|
-| Reading and checking | `libs/scenario/src/scenario.cpp` (the file, parameters, variants, steps), `scenario_values.cpp` (variables and values), `scenario_waves.cpp` (waves and points), `scenario_inputs.cpp` (`inputs` and dithers). The class `Reader` is in `scenario_reader.hpp` |
+| Reading and checking | `libs/scenario/src/scenario.cpp` (the file, parameters, variants, steps), `scenario_templates.cpp` (step templates, scoping, scoped paths, `call_stack`), `scenario_values.cpp` (variables and values), `scenario_waves.cpp` (waves and points), `scenario_inputs.cpp` (`inputs` and dithers). The class `Reader` is in `scenario_reader.hpp` |
 | Advancing the steps | `libs/scenario/src/scenario_run.cpp` |
 | Why a step failed: the conditions not met and the writes not applied, in the message and in the record (`failed.conditions[]`, `failed.writes[]`) | `libs/scenario/src/scenario_failure.cpp` (`unmet()`, `unmet_values()`, `failed_write()`, `applied_text()`, `during()`) |
 | The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/scenario/src/scenario_shapes.cpp` |
-| Reading `points` from a CSV file | `read_csv()` in `libs/scenario/src/scenario_csv.cpp` splits the file into cells. `files_beside()` in `libs/launch/src/probe/probe.cpp` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
+| Reading `points` from a CSV file | `read_csv()` in `libs/scenario/src/scenario_csv.cpp` splits the file into cells. `files_beside()` in `libs/launch/src/probe/probe.cpp` reads it from the scenario file's directory. `resolve_scoped_path()` in `scenario_templates.cpp` checks the path; `file_points()` and `cell_value()` in `scenario_waves.cpp` convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
 | Integration into the launcher | `RunScenario` in `libs/runner/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The samples a scenario judges with (`samples`): which participants a scenario reads | `participants_read()` in `libs/scenario/src/scenario.cpp` |
@@ -114,6 +114,7 @@ Example files:
 - The `wave` example is `examples/ecu_main/scenarios/throttle_wave.yaml`, and `launch_run.scenario_wave` runs it.
 - The `dither` example is `examples/ecu_main/scenarios/throttle_dither.yaml`, and `launch_run.scenario_dither` runs it.
 - The example of `points` from a CSV file is `examples/ecu_main/scenarios/throttle_trace.yaml` with `throttle_trace.csv`, and `launch_run.scenario_wave` runs it.
+- The step template example is `examples/ecu_main/scenarios/throttle_template.yaml` calling `examples/ecu_main/scenarios/templates/throttle_check.yaml`.
 - The guide howto/scenario-tests.md shows `throttle_step.yaml`, `engine_disconnect.yaml` and the files of `examples/scenario_tests` (see "[`examples/scenario_tests`](#examplesscenario_tests-example-for-the-guide-write-tests-with-scenarios)").
 - For the examples with errors and the failing examples, the files too are blocks in scenario.md. `launch_run.scenario` writes them out and compares the output of `check --scenario`, the output of `run --scenario` and `scenario` in `--json`.
 

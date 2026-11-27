@@ -953,3 +953,33 @@ test('provenance helpers guard empty or absent case, file, name, and call_stack'
   assert.deepEqual(T.callStackFrames(m.steps[0].call_stack, m.tl.scenario.file), []);
   assert.deepEqual(T.callStackFrames(undefined, m.tl.scenario.file), []);
 });
+
+test('callStackFrames formats nested multi-frame call stacks from outermost to immediate', () => {
+  const stack = [
+    {
+      file: 'scenarios/load.yaml',
+      line: 12,
+      name: 'outer call',
+      params: { target_ms: 500 },
+    },
+    {
+      file: 'scenarios/templates/outer.yaml',
+      line: 8,
+      name: 'inner call',
+      params: { mode: 'auto', flag: true },
+    },
+  ];
+  assert.deepEqual(T.callStackFrames(stack, 'scenarios/load.yaml'), [
+    'line 12 of scenarios/load.yaml · outer call · target_ms = 500',
+    'line 8 of scenarios/templates/outer.yaml · inner call · mode = auto, flag = true',
+  ]);
+  T.setLanguage('ja');
+  try {
+    assert.deepEqual(T.callStackFrames(stack, 'scenarios/load.yaml'), [
+      'scenarios/load.yaml の 12 行 · outer call · target_ms = 500',
+      'scenarios/templates/outer.yaml の 8 行 · inner call · mode = auto, flag = true',
+    ]);
+  } finally {
+    T.setLanguage('en');
+  }
+});

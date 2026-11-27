@@ -246,6 +246,7 @@
 |---|---|
 | `schema/simulation.schema.json` | 設定ファイル |
 | `schema/scenario.schema.json` | シナリオ |
+| `schema/scenario-template.schema.json` | シナリオテンプレート（`vehicle_sil_scenario_template: 1`） |
 | `schema/run-request.schema.json` | `check --request` と `run --request` の要求ファイル（読むコードは `libs/launch/src/request/request_read.cpp`） |
 | `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `schema/control-metrics.schema.json` | `run --control-metrics` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
@@ -255,7 +256,7 @@
 
 | コピーの場所 | 内容 |
 |---|---|
-| `template/schema/` | 設定ファイル、シナリオ、要求ファイル、ダッシュボードのスキーマのコピー |
+| `template/schema/` | 設定ファイル、シナリオ、シナリオテンプレート、要求ファイル、ダッシュボードのスキーマのコピー |
 | ツールのアーカイブの `schema/` | 同じスキーマと `timeline.schema.json`、`control-metrics.schema.json`（`template/get_tools.py` が、全部をプロジェクトの `schema/` にコピーする） |
 | ビルドのディレクトリ | 例をビルドするとき、configure のときにコピーする（最上位の `CMakeLists.txt`） |
 

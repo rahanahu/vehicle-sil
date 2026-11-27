@@ -365,9 +365,11 @@ DescribeSource describe_by_running(std::chrono::milliseconds timeout, const std:
     };
 }
 
-std::function<std::optional<std::string>(const std::string&, std::string&)> files_beside(const std::filesystem::path& scenario)
+std::function<std::optional<std::string>(const std::string&, std::string&)>
+files_beside(const std::filesystem::path& scenario, std::string_view file_kind)
 {
-    return [directory = scenario.parent_path()](const std::string& name, std::string& problem) -> std::optional<std::string> {
+    return [directory = scenario.parent_path(),
+            kind = std::string(file_kind)](const std::string& name, std::string& problem) -> std::optional<std::string> {
         const std::filesystem::path path = directory / process::path_from_utf8(name);
         std::error_code ec;
         if (!std::filesystem::exists(path, ec))
@@ -378,13 +380,21 @@ std::function<std::optional<std::string>(const std::string&, std::string&)> file
         }
         if (!std::filesystem::is_regular_file(path, ec))
         {
-            problem = "is not a regular file: name the CSV file";
+            problem = "is not a regular file: name " + kind;
             return std::nullopt;
         }
         if (std::filesystem::file_size(path, ec) > scenario::detail::kMaxCsvBytes)
         {
-            problem = "is larger than " + std::to_string(scenario::detail::kMaxCsvBytes >> 20) +
-                      " MiB, too large for points: keep fewer points, or split it into steps of their own";
+            if (kind == "the CSV file")
+            {
+                problem = "is larger than " + std::to_string(scenario::detail::kMaxCsvBytes >> 20) +
+                          " MiB, too large for points: keep fewer points, or split it into steps of their own";
+            }
+            else
+            {
+                problem = "is larger than " + std::to_string(scenario::detail::kMaxCsvBytes >> 20) +
+                          " MiB, too large to read: split it into smaller files";
+            }
             return std::nullopt;
         }
         std::ifstream in(path, std::ios::binary);

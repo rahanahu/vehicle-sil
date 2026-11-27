@@ -37,8 +37,13 @@ namespace vehicle_sil::scenario::reader {
 inline const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "samples", "only", "params", "inputs", "end_ms", "steps"};
 inline const std::vector<std::string> kStepKeys = {"name",       "at_ms",      "after_ms", "set",        "ramp",       "wave",
                                                    "dither",     "wait_until", "timeout_ms", "expect",  "within_ms",  "hold_for_ms",
-                                                   "undersampled"};
-inline const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "dither", "wait_until", "expect"};
+                                                   "undersampled", "template", "params"};
+inline const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "dither", "wait_until", "expect", "template"};
+inline const std::vector<std::string> kTemplateTopKeys = {"vehicle_sil_scenario_template", "name", "parameters", "steps"};
+inline const std::vector<std::string> kParameterDefKeys = {"type", "default", "values", "description"};
+inline const std::vector<std::string> kParameterTypes = {"integer", "number", "boolean", "string"};
+inline constexpr std::size_t kMaxTemplateDepth = 16;
+inline constexpr std::size_t kMaxExpandedSteps = 10'000;
 inline const std::vector<std::string> kCompareKeys = {"eq", "ne", "ge", "le", "gt", "lt", "near", "tolerance"};
 inline const std::vector<std::string> kRampKeys = {"to", "over_ms", "from"};
 // A wave: the shapes (one per variable) and the keys beside the shape.
@@ -71,25 +76,39 @@ public:
     Reader(const config::detail::YamlDocument& doc, const ScenarioCatalog& catalog, const ScenarioContext& context, ScenarioRead& out) :
       config::detail::YamlReader(doc, out.findings), catalog_(catalog), context_(context), out_(out)
     {
+        const auto slash = context_.scenario_file.find_last_of("/\\");
+        if (slash != std::string::npos)
+        {
+            scenario_dir_prefix_ = context_.scenario_file.substr(0, slash);
+        }
+        scopes_.push_back(EvalScope{&doc, context_.scenario_file, ""});
     }
 
     void read();
 
 private:
+    const config::detail::YamlDocument& doc() const noexcept override { return *scopes_.back().doc; }
+    const ryml::Tree& tree() const noexcept override { return scopes_.back().doc->tree(); }
+
+    std::string current_file() const { return scopes_.size() <= 1 ? std::string{} : scopes_.back().file; }
+
     // --- findings ---
 
     void add(config::Severity severity, std::string code, std::size_t line, std::string message,
              std::string participant = {}, std::string network = {}) override
     {
         findings_.push_back(config::Finding{severity, std::move(code), std::move(message), line,
-                                            std::move(participant), std::move(network), {}, current_file_});
+                                            std::move(participant), std::move(network),
+                                            format_call_stack(active_templates_), current_file()});
     }
     void add_at(config::Severity severity, std::string code, const std::string& file, std::size_t line,
-                std::string message, std::string participant = {}, std::string network = {})
+                std::string message, std::string participant = {}, std::string network = {},
+                std::string detail = {})
     {
         findings_.push_back(config::Finding{severity, std::move(code), std::move(message), line,
-                                            std::move(participant), std::move(network), {}, file});
+                                            std::move(participant), std::move(network), std::move(detail), file});
     }
+    static std::string format_call_stack(const std::vector<SourceFrame>& stack);
     static std::string loc_text(const std::string& file, std::size_t line)
     {
         return file.empty() ? "line " + std::to_string(line) : file + ":" + std::to_string(line);
@@ -123,6 +142,8 @@ private:
 
     /// Interpolates zero or more `${name}` placeholders in a scalar string (no `$${` escape).
     bool resolve_interpolated_string(ryml::id_type node);
+    bool resolve_interpolated_string_text(const std::string& text, std::size_t line, std::string& out);
+    void report_undefined_param(const std::string& name, std::size_t line);
 
     /// A --param that the scenario neither declares nor uses changes nothing: an error.
     void check_given_params();
@@ -192,11 +213,69 @@ private:
     /// Whether the step at `time` (empty: not known before the run) may write the variable.
     bool writable(std::size_t variable, std::size_t line, const std::optional<std::int64_t>& time, const char* over_time = nullptr);
 
-    // --- steps ---
+    // --- steps & templates ---
 
-    void read_steps(ryml::id_type node);
+    struct InheritedTiming
+    {
+        std::optional<std::int64_t> at_ms{};
+        std::int64_t after_ms = 0;
+    };
 
-    void read_step(ryml::id_type node);
+    enum class ParamType
+    {
+        Integer,
+        Number,
+        Boolean,
+        String,
+    };
+
+    struct ParameterDef
+    {
+        std::string name;
+        ParamType type = ParamType::String;
+        std::size_t line = 0;
+        std::optional<config::ParamValue> default_value{};
+        std::vector<config::ParamValue> allowed_values{};
+    };
+
+    struct CachedTemplate
+    {
+        std::unique_ptr<config::detail::YamlDocument> doc;
+        std::string shown_file;
+        std::string dir_rel;
+        std::vector<ParameterDef> parameters;
+        ryml::id_type steps_node = ryml::NONE;
+        bool valid = false;
+        std::string read_error{};
+    };
+
+    void read_steps(ryml::id_type node, std::optional<InheritedTiming> first_timing = std::nullopt,
+                    bool* aborted = nullptr);
+
+    void read_step(ryml::id_type node, std::optional<InheritedTiming> inherited = std::nullopt);
+
+    void read_template_step(const std::map<std::string, ryml::id_type>& nodes, const std::string& step_name,
+                            std::optional<InheritedTiming> inherited, bool valid_call_time, std::size_t step_line);
+
+    const CachedTemplate* load_template(const std::string& normalized_rel, std::size_t call_line);
+
+    bool parse_template_parameters(ryml::id_type node, std::vector<ParameterDef>& out);
+
+    bool read_template_call_params(ryml::id_type params_node, const CachedTemplate& tpl, std::size_t call_line,
+                                   std::vector<Known>& callee_params, std::vector<SourceParam>& frame_params);
+
+    bool validate_param_value(config::ParamValue& val, ParamType type, std::size_t line, const std::string& label);
+
+    static bool is_yaml12_non_string_literal(std::string_view text);
+
+    static bool param_values_equal(ParamType type, const config::ParamValue& a, const config::ParamValue& b);
+
+    static const char* param_type_name(ParamType type);
+
+    std::string shown_path_for(const std::string& normalized_rel) const;
+
+    static std::optional<std::string> resolve_scoped_path(const std::string& dir_rel, const std::string& raw,
+                                                          std::string& normalized_out, bool is_template = false);
 
     // --- what the steps put on the inputs, as the text says it ---
 
@@ -387,10 +466,6 @@ private:
 
     const CsvFile& csv(const std::string& path);
 
-    /// What is wrong with the path of a points file (after "the file '<path>' "), or empty: it must
-    /// lead from the scenario's directory to a file in it or below it, the same on every OS.
-    static std::optional<std::string> path_problem(const std::string& path);
-
     /// A time cell in milliseconds (`seconds`: the cell is in seconds): empty if it is not a
     /// number (`ms` is then NaN), not a whole number of milliseconds, or not from 0 to kMaxMillis.
     static std::optional<std::int64_t> cell_ms(const std::string& cell, bool seconds, double& ms);
@@ -422,16 +497,33 @@ private:
 
     std::string step_text(const ScenarioStep& step) const;
 
+    struct EvalScope
+    {
+        const config::detail::YamlDocument* doc = nullptr;
+        std::string file{};
+        std::string dir_rel{};
+        std::vector<Known> params{};                         ///< every parameter that has a value
+        std::map<ryml::id_type, std::size_t> substituted{};  ///< a value node that is "${name}": its index in params
+        std::map<ryml::id_type, std::string> interpolated{}; ///< a scalar node with "${name}" interpolation resolved
+        std::set<std::string> undefined{};                   ///< the parameters without a value, said once
+    };
+
+    EvalScope& scope() noexcept { return scopes_.back(); }
+    const EvalScope& scope() const noexcept { return scopes_.back(); }
+
     const ScenarioCatalog& catalog_;
     const ScenarioContext& context_;
     ScenarioRead& out_;
-    std::string current_file_{};
-    std::map<std::string, CsvFile> files_; ///< the points files, by the path the scenario writes
+    std::string scenario_dir_prefix_{};
+    std::vector<EvalScope> scopes_;
+    std::vector<SourceFrame> active_templates_;
+    std::vector<std::string> active_rel_paths_;
+    std::map<std::string, CachedTemplate> templates_;
+    std::size_t expanded_steps_ = 0;
+    bool too_many_expanded_steps_ = false;
+    bool caller_template_params_incomplete_ = false;
+    std::map<std::string, CsvFile> files_; ///< the points files, by normalized path from root scenario dir
     Scenario scenario_;
-    std::vector<Known> params_;                         ///< every parameter that has a value
-    std::map<ryml::id_type, std::size_t> substituted_;  ///< a value node that is "${name}": its index in params_
-    std::map<ryml::id_type, std::string> interpolated_; ///< a step name node with "${name}" interpolation resolved
-    std::set<std::string> undefined_;                   ///< the parameters without a value, said once
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
     /// What the steps that run put on the inputs, as the text says it (note_lines()).
     struct Base
@@ -454,6 +546,7 @@ private:
         bool off;                     ///< a dither step's none
         const char* as_it_is;         ///< how to run it as it is (kAsItIs, kAsItIsInput)
         std::string shape;
+        std::vector<SourceFrame> call_stack{};
     };
     /// In the order of the file, of the steps that run: a value put on an input, or a dither
     /// step's dither (an index in dithers_).

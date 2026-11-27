@@ -87,8 +87,8 @@ std::string Reader::written(ryml::id_type node, double value) const
 
 std::optional<std::size_t> Reader::variable(ryml::id_type node)
 {
-    const std::string text = config::detail::to_string(tree_.key(node));
-    const std::size_t line = doc_.line(node);
+    const std::string text = config::detail::to_string(tree().key(node));
+    const std::size_t line = doc().line(node);
     if (const auto known = variable_index_.find(text); known != variable_index_.end())
     {
         return known->second;
@@ -208,7 +208,7 @@ std::optional<control::Value> Reader::value_of(ryml::id_type node, std::size_t v
 {
     const ScenarioVariable& v = scenario_.variables[variable];
     const control::VariableInfo& info = *info_of(variable);
-    const std::size_t line = doc_.line(node);
+    const std::size_t line = doc().line(node);
     const std::string pre = what + " of " + v.text + " (" + type_name(v.type) + ")";
     if (!is_scalar(node) || is_null(node))
     {

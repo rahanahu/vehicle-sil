@@ -372,16 +372,43 @@ std::string detail::scenario_text(const scenario::ScenarioRun& scenario)
     out += detail::table_text(rows);
     // Why, for the steps that were skipped and the expects that were not checked: the table has no
     // room for it.
+    const auto add_call_stack = [&](const std::vector<scenario::SourceFrame>& stack) {
+        for (auto it = stack.rbegin(); it != stack.rend(); ++it)
+        {
+            out += "    called from: " +
+                   (it->file.empty() ? "line " + std::to_string(it->line) : it->file + ":" + std::to_string(it->line));
+            std::string meta;
+            if (!it->name.empty())
+            {
+                meta += "step '" + it->name + "'";
+            }
+            for (const scenario::SourceParam& p : it->params)
+            {
+                if (!meta.empty())
+                {
+                    meta += ", ";
+                }
+                meta += p.name + " = " + (p.quoted ? "\"" + p.text + "\"" : p.text);
+            }
+            if (!meta.empty())
+            {
+                out += " (" + meta + ")";
+            }
+            out += "\n";
+        }
+    };
     for (const scenario::ScenarioStepRun& step : scenario.steps)
     {
         const std::string where = step.file.empty() ? "line " + std::to_string(step.line) : step.file + ":" + std::to_string(step.line);
         if (step.status == scenario::StepStatus::Skipped)
         {
             out += where + " skipped: " + step.message + "\n";
+            add_call_stack(step.call_stack);
         }
         else if (!step.expect_skipped.empty())
         {
             out += where + " expect not checked: " + step.expect_skipped + "\n";
+            add_call_stack(step.call_stack);
         }
     }
     return out;

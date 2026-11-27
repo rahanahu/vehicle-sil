@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=../../../../schema/scenario-template.schema.json
+# Reusable step sequence: apply a throttle value, wait for engine speed, and verify the dashboard.
+vehicle_sil_scenario_template: 1
+name: throttle and speed check
+parameters:
+  throttle:
+    type: number
+    description: Target throttle value to apply
+  min_speed:
+    type: number
+    description: Minimum expected engine speed (rpm)
+  timeout_ms:
+    type: integer
+    default: 500
+    description: Maximum wait time for the engine to reach min_speed (ms)
+  label:
+    type: string
+    default: throttle check
+    description: Step label prefix shown in run output and diagnostics
+steps:
+  - name: "${label}: apply throttle"
+    set: { Engine.engine.throttle: "${throttle}" }
+  - name: "${label}: wait for speed"
+    wait_until: { Engine.engine.speed: { ge: "${min_speed}" } }
+    timeout_ms: "${timeout_ms}"
+  - name: "${label}: dashboard reflects speed"
+    expect: { Dashboard.dashboard.engine_speed: { ge: "${min_speed}" } }
+    within_ms: 200

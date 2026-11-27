@@ -159,12 +159,14 @@ A step has one action and a time. Only `ramp` and `wave` can also have an `expec
 | `dither` | `dither: { <variable>: { <waveform>: { ... } }, ... }`, `dither: { <variable>: none }` | Changes the dither overlaid on the input from the step's time. `none` removes it. See [Overlaying a dither](#overlaying-a-dither-dither). |
 | `wait_until` | `wait_until: { <variable>: <condition>, ... }` | Waits until the condition holds. |
 | `expect` | `expect: { <variable>: <condition>, ... }` | Checks that the condition holds at the step's time. |
+| `template` | `template: <path>` | Expands the steps of a scenario template file (`vehicle_sil_scenario_template: 1`). See [Step templates](#step-templates-template-vehicle_sil_scenario_template). |
 
 | Key that goes with an action | Actions | Meaning |
 |---|---|---|
 | `name` | Any | Optional human-assigned name for the step, shown in run output and failure messages. Must be non-empty, non-whitespace-only, and contain no control characters; supports `${name}` parameter interpolation. |
 | `at_ms` | Any | The time of the step (virtual time in milliseconds, 0 or more). |
 | `after_ms` | Any | The time of the step, in milliseconds (0 or more) after the end of the previous step. |
+| `params` | `template` | Arguments (`name: value`) passed to the template's declared `parameters`. |
 | `timeout_ms: <ms>` | `wait_until` (required) | If the condition does not hold within this time, the step fails. |
 | `within_ms: <ms>` | `expect` | The step passes if the condition holds at least once in `[T, T + within_ms]` (where `T` is this step's time). The scenario moves to the next step as soon as it holds. |
 | `hold_for_ms: <ms>` | `expect` | Checks that the condition holds for the whole of this time. |
@@ -648,11 +650,11 @@ If a variable of the `expect` is absent in the configuration file (`absent: true
 | Use another variable name or unit per implementation | `variables` in the configuration file | "Matching variable names and values (`variables`)" in [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables) |
 | Use another network name per implementation | `network_names` in the configuration file (the scenario names no network) | "Matching network names (`network_names`)" in [simulation-config.md](simulation-config.md#matching-network-names-network_names) |
 | Share the scenario and the choices (variant, parameters, participants, speed) as a file | A request file: `--request` of `check` and `run` (`test` accepts only the stop time and lateness tolerance in its request). The file does not name the configuration file; a relative scenario path is read from the directory of the configuration file | "Request files (`--request`)" in [simulation-run.md](simulation-run.md#request-files---request); [examples/ecu_main/requests/throttle_step.json](../examples/ecu_main/requests/throttle_step.json) |
+| Share a sequence of steps across scenarios | `template: <path>` and a template file (`vehicle_sil_scenario_template: 1`) | [Step templates](#step-templates-template-vehicle_sil_scenario_template); [examples/ecu_main/scenarios/templates/throttle_check.yaml](../examples/ecu_main/scenarios/templates/throttle_check.yaml) |
 | Run the same scenario on another configuration file | Give that file in the arguments. A participant that it lacks is the error `scenario-variable` | [Check (`check --scenario`, start of `run --scenario`)](#check-check---scenario-start-of-run---scenario) |
 
-What a scenario cannot do now (copy the text instead):
+What a scenario cannot do now:
 
-- Include steps that are shared by several scenarios.
 - Take the name of a participant as a parameter.
 
 ## Variants and parameters
@@ -684,8 +686,8 @@ Write `${name}` where a step takes a value, as the whole value. It reads as if t
 
 | Topic | Rule |
 |---|---|
-| Where it is allowed | The value of `set`, the value and `tolerance` of a condition, `to`, `from` and `over_ms` of `ramp`, the numbers and durations of `wave`, `at_ms`, `after_ms`, `timeout_ms`, `within_ms` and `hold_for_ms`, and embedded `${name}` inside step `name`. |
-| Where it is not allowed | Keys, variable names and part of any value other than step `name` (`"${a} rpm"`). These give the error `scenario-param`. Every `${` in `name` must be a valid `${name}` (there is no escape). |
+| Where it is allowed | The value of `set`, the value and `tolerance` of a condition, `to`, `from` and `over_ms` of `ramp`, the numbers and durations of `wave`, `at_ms`, `after_ms`, `timeout_ms`, `within_ms` and `hold_for_ms`, embedded `${name}` inside step `name` and `points` file/column names (`file`, `value`, `time`), and `params` values of a `- template:` call (embedded `${name}` for `type: string`). Pre-run `${name}` parameters never contain `.` and stay visually distinct from runtime ECU signals (`<participant>.<variable>`). |
+| Where it is not allowed | Keys, variable names, `template` paths, and part of any value other than step `name`, `points` (`file`, `value`, `time`), and `type: string` template arguments (`"${a} rpm"`). These give the error `scenario-param`. Every `${` in interpolated strings must be a valid `${name}` (there is no escape). |
 | Expressions | None (`${a+1}` gives the error `scenario-param`). If you need a calculated value, make it another parameter. |
 | Inside `{ ... }` or `[ ... ]` | Quote it (`{ near: "${idle_rpm}" }`). YAML cannot read an unquoted `${` there. |
 | JSON | Write it as a string. |
@@ -708,6 +710,54 @@ Values are applied in this order, and a later one replaces an earlier one. A nam
 | `--param` with a name the scenario neither uses nor declares | A usage error (exit code 4). The message lists the scenario's parameter names. |
 
 While a parameter has an error, the contents of the steps are not checked. Fix the parameters first.
+
+### Step templates (`template`, `vehicle_sil_scenario_template`)
+
+Put shared step sequences in a template file (typically under `scenarios/templates/`, so `vehicle_sil_launch test --scenarios scenarios/` does not treat it as a top-level scenario):
+
+```yaml
+vehicle_sil_scenario_template: 1
+name: throttle and speed check
+parameters:
+  throttle:
+    type: number
+    description: Target throttle value
+  timeout_ms:
+    type: integer
+    default: 500
+    values: [200, 500, 1000]
+  label:
+    type: string
+    default: throttle check
+steps:
+  - name: "${label}: apply"
+    set: { Engine.engine.throttle: "${throttle}" }
+  - name: "${label}: wait"
+    wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: "${timeout_ms}"
+```
+
+Top-level keys of a template file (`schema/scenario-template.schema.json`):
+
+| Key | Required | Meaning |
+|---|---|---|
+| `vehicle_sil_scenario_template` | Yes | The template format version: `1`. Passing a template directly to `--scenario` fails with `not-a-scenario`. |
+| `name` | No | Optional static title for the template. |
+| `parameters` | No | Formal parameter declarations (`name -> { type, default?, values?, description? }`). |
+| `steps` | Yes | Non-empty list of steps (same step syntax as a scenario, including nested `- template:` calls). |
+
+Each entry under `parameters` has:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `type` | Yes | One of `integer` (decimal or `0x...`), `number`, `boolean`, or `string` (YAML numbers, booleans, and `null` must be quoted; `--param` CLI values are accepted as strings). |
+| `default` | No | Default value when the caller omits the argument. Without `default`, the argument is required at every call site. |
+| `values` | No | Optional non-empty list of allowed values matching `type`. |
+| `description` | No | Optional human description. |
+
+Templates are **lexically isolated**: steps inside a template only see parameters declared in that template's `parameters` (`TemplateDefault < TemplateCall`). Scenario, configuration, variant, and `--param` values do not leak into templates unless passed explicitly via `params:` on `- template:` (where `"${outer}"` forwards the outer value without adding YAML quotes).
+
+Relative paths in `template:` and `points: { file: ... }` resolve from the declaring template's directory and may use `..` segments as long as the normalized path stays inside the root scenario's directory. Nested calls enforce a cycle check (`scenario-template-cycle`), maximum depth of 16 (`scenario-template-depth`), and maximum of 10,000 expanded steps (`scenario-template-steps`). Findings and failed steps inside templates include their template `file:line` and `called from:` `call_stack` provenance.
 
 ### Skipping steps that use an absent variable
 
@@ -931,12 +981,13 @@ The check lists every error; it does not stop at the first one. The exit code is
 
 | `code` | Severity | Meaning |
 |---|---|---|
-| `file`, `encoding`, `syntax`, `not-a-scenario`, `format-version`, `unsupported-yaml` | Error | The file cannot be read, is not a scenario, has another format version, or contains an anchor or a second document. |
+| `file`, `encoding`, `syntax`, `not-a-scenario`, `not-a-template`, `format-version`, `unsupported-yaml` | Error | The file cannot be read, is not a scenario or template, has another format version, or contains an anchor or a second document. |
 | `unknown-key`, `duplicate-key`, `missing-key`, `value` | Error | An error in the shape of keys and values (2 actions in one step, `wait_until` without `timeout_ms`, `near` without `tolerance`, and so on). |
 | `scenario-variable` | Error | A variable is not of the form `<participant>.<variable name>`, the participant or the variable does not exist, or the participant cannot be used (it is disabled, has `describe: false`, runs in real time, does not expose variables, or exposes them in another version or transport of the control messages than this `vehicle_sil_launch` speaks, as an ECU built with an older vehicle-sil). |
 | `scenario-not-writable` | Error | The step writes to an output, or writes a Parameter other than with a `set` at time 0. |
 | `scenario-value` | Error | A value does not fit the type, the range or the enum items. A `ramp` or a magnitude comparison is used on a non-numeric variable. The waveform of a `wave` does not fit the variable's type, or `around` ± `amplitude` is out of range. A `dither` is written on a bool or enum variable. |
-| `scenario-param` | Error | `${name}` has no value, or `${...}` is in a key, in a variable name or in part of a value. (A `--param` with a name that is not in the scenario is the usage error `usage`.) |
+| `scenario-param` | Error | `${name}` has no value, a template call parameter violates its `type` / `values` / required contract, or `${...}` is in a key, variable name, `template` path, or disallowed partial value. (A `--param` with a name that is not in the scenario is the usage error `usage`.) |
+| `scenario-template-file`, `scenario-template-cycle`, `scenario-template-depth`, `scenario-template-steps` | Error | A template file cannot be read or escapes the scenario directory (`scenario-template-file`), forms a cycle (`scenario-template-cycle`), exceeds nesting depth 16 (`scenario-template-depth`), or exceeds 10,000 expanded steps (`scenario-template-steps`). |
 | `scenario-variant` | Error | The scenario's `only` does not include the selected variant, or a name in `only` is not a variant of the configuration file. |
 | `scenario-time` | Error | `at_ms` is before the end of the previous step, `at_ms` comes after a wait step, `end_ms` is earlier than the earliest possible end of the steps, or the durations of the steps add up to more than the time limit (1000000000000 ms). |
 | `scenario-wave-undersampled`, `scenario-wave-duty` | Warning | A `wave` or `dither` is finer than the step of the target ECU (see [Waveforms finer than the ECU step](#waveforms-finer-than-the-ecu-step)). A `dither` with an amplitude below 0.5 on an integer input also gives `scenario-wave-undersampled` (see below). |

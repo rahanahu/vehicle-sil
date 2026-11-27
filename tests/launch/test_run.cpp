@@ -1892,3 +1892,102 @@ TEST_CASE(incomplete_finding_attributes_unfinished_step_before_skipped_step)
     CHECK(fIt->message.find("skipped future") == std::string::npos);
     CHECK(fIt->detail.find("called from: scenarios/load.yaml:12 (step 'call wait', timeout_ms = 200)") != std::string::npos);
 }
+
+TEST_CASE(real_template_expansion_surfaces_call_stack_in_check_and_run_outputs)
+{
+    const auto files = std::map<std::string, std::string>{
+        {"templates/outer.yaml",
+         "vehicle_sil_scenario_template: 1\n"
+         "parameters:\n"
+         "  target: { type: integer }\n"
+         "steps:\n"
+         "  - name: invoke inner\n"
+         "    template: inner.yaml\n"
+         "    params: { expected: \"${target}\" }\n"},
+        {"templates/inner.yaml",
+         "vehicle_sil_scenario_template: 1\n"
+         "parameters:\n"
+         "  expected: { type: integer }\n"
+         "steps:\n"
+         "  - name: check level\n"
+         "    expect: { Body.level: \"${expected}\" }\n"},
+    };
+    scenario::ScenarioCatalog cat;
+    scenario::CatalogParticipant p;
+    p.name = "Body";
+    p.step = 10ms;
+    control::VariableInfo levelVar;
+    levelVar.name = "level";
+    levelVar.type = control::ValueType::Integer;
+    levelVar.causality = control::Causality::Input;
+    levelVar.min = 0.0;
+    levelVar.max = 100.0;
+    p.variables.push_back(std::move(levelVar));
+    cat.push_back(p);
+
+    scenario::ScenarioContext ctx;
+    ctx.scenario_file = "scenarios/load.yaml";
+    ctx.read_template = [&](const std::string& path, std::string& problem) -> std::optional<std::string> {
+        if (const auto it = files.find(path); it != files.end())
+        {
+            return it->second;
+        }
+        problem = "does not exist";
+        return std::nullopt;
+    };
+    const std::string yaml =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - name: set initial\n"
+        "    set: { Body.level: 10 }\n"
+        "  - name: call outer\n"
+        "    template: templates/outer.yaml\n"
+        "    params: { target: 99 }\n";
+    const scenario::ScenarioRead read = scenario::read_scenario(yaml, cat, ctx);
+    CHECK(read.scenario.has_value());
+
+    RunOutcome o = passed_run();
+    scenario::ScenarioRun sr;
+    sr.file = "scenarios/load.yaml";
+    sr.status = scenario::ScenarioStatus::Failed;
+    sr.over_at = SimTime{std::chrono::milliseconds(10)};
+    for (std::size_t i = 0; i < read.scenario->steps.size(); ++i)
+    {
+        const scenario::ScenarioStep& s = read.scenario->steps[i];
+        scenario::ScenarioStepRun r;
+        r.index = i + 1;
+        r.file = s.file;
+        r.line = s.line;
+        r.kind = s.kind;
+        r.name = s.name;
+        r.text = s.text;
+        r.call_stack = s.call_stack;
+        if (i == 0)
+        {
+            r.status = scenario::StepStatus::Passed;
+            r.start = SimTime{};
+            r.at = SimTime{};
+            r.end = SimTime{};
+        }
+        else
+        {
+            r.status = scenario::StepStatus::Failed;
+            r.start = SimTime{};
+            r.at = SimTime{};
+            r.code = "scenario-failed";
+            r.message = "Body.level was 10";
+        }
+        sr.steps.push_back(std::move(r));
+    }
+    o.scenario.result = sr;
+
+    const RunReport rep = report_of(o);
+    const std::string txt = format_run_text(rep);
+    CHECK(txt.find("scenarios/templates/inner.yaml:5") != std::string::npos);
+    CHECK(txt.find("    called from: scenarios/templates/outer.yaml:5 (step 'invoke inner', expected = 99)") != std::string::npos);
+    CHECK(txt.find("    called from: scenarios/load.yaml:5 (step 'call outer', target = 99)") != std::string::npos);
+
+    const std::string j = format_run_json(rep);
+    CHECK(j.find("\"file\": \"scenarios/templates/inner.yaml\"") != std::string::npos);
+    CHECK(j.find("\"call_stack\": [") != std::string::npos);
+}

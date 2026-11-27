@@ -246,6 +246,7 @@ What `launch_docs.integrate_ecus` (`tests/launch/integrate_ecus.cmake`) compares
 |---|---|
 | `schema/simulation.schema.json` | Configuration file |
 | `schema/scenario.schema.json` | Scenario |
+| `schema/scenario-template.schema.json` | Scenario template (`vehicle_sil_scenario_template: 1`) |
 | `schema/run-request.schema.json` | Request file of `check --request` and `run --request` (the code that reads it: `libs/launch/src/request/request_read.cpp`) |
 | `schema/timeline.schema.json` | The file that `run --timeline` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
 | `schema/control-metrics.schema.json` | The file that `run --control-metrics` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
@@ -255,7 +256,7 @@ The configuration file and scenario schemas are for completion and checking in e
 
 | Where the copies are | Details |
 |---|---|
-| `template/schema/` | Copies of the configuration, scenario, request file and dashboard schemas |
+| `template/schema/` | Copies of the configuration, scenario, scenario template, request file and dashboard schemas |
 | `schema/` in the tools archive | The same schemas, `timeline.schema.json`, and `control-metrics.schema.json` (`template/get_tools.py` copies all of them to the project's `schema/`) |
 | Build directory | Copied at configure time when the examples are built (top-level `CMakeLists.txt`) |
 
