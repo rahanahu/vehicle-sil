@@ -518,6 +518,7 @@ interface Pending {
    * answer).
    */
   session: string;
+  epoch: number;
   seq: number | null;
   resolve: (operation: OperationView) => void;
   reject: (error: WriteError) => void;
@@ -590,6 +591,7 @@ const runIdOf = (value: unknown): string | null =>
  */
 export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private instanceId: string | null = null;
+  private epoch = 0;
   private readonly stateValue: Writable<VariablesState>;
   private readonly operationsValue: Writable<readonly OperationView[]>;
   private readonly handles = new Set<Handle>();
@@ -684,11 +686,19 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     skippedBatch: readonly unknown[],
     current: () => boolean = () => true,
   ): void {
-    if (beforeBatch.length > 0) {
-      this.receive(beforeBatch, current);
+    let sawResync = false;
+    const preSwitch: unknown[] = [];
+    for (const message of beforeBatch) {
+      if (isObject(message) && message['type'] === 'resync') {
+        sawResync = true;
+      } else {
+        preSwitch.push(message);
+      }
+    }
+    if (preSwitch.length > 0) {
+      this.receive(preSwitch, current);
       if (!current()) return;
     }
-    let sawResync = false;
     for (const message of skippedBatch) {
       if (!current()) return;
       if (!isObject(message)) continue;
@@ -702,7 +712,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         }
       }
     }
-    if (sawResync) this.resyncWatches();
+    if (sawResync && current()) this.resyncWatches();
   }
 
   /**
@@ -941,6 +951,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     }
     // Clear every observable part before notifying any subscriber. A subscriber can synchronously
     // fetch the new run, so it must never observe or revive the previous run's values or schema.
+    this.epoch += 1;
     this.readings.clear();
     this.awaitingRefresh.clear();
     this.histories.clear();
@@ -950,7 +961,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     const notifyState = this.stateValue.setDeferred(initial);
     const notifyWatches = [...this.handles].map((handle) => handle.values.setDeferred({}));
     for (const pending of [...this.pending]) {
-      if (pending.session !== session) {
+      if (force || pending.session !== session) {
         this.settle(
           pending,
           new WriteError(
@@ -1141,6 +1152,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           : WRITE_TIMEOUT_MS;
     // Aim the write at the current run. The server refuses if that run is no longer running (session-changed)
     const session = this.stateValue.get().session;
+    const epoch = this.epoch;
     if (session === null) {
       return Promise.reject(
         new WriteError('refused', 'there is no run to write to', 'not-running'),
@@ -1151,7 +1163,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (options.atMs !== undefined) body['at_ms'] = options.atMs;
     if (options.late !== undefined) body['late'] = options.late;
     return new Promise<OperationView>((resolve, reject) => {
-      const pending: Pending = { session, seq: null, resolve, reject, timer: undefined };
+      const pending: Pending = { session, epoch, seq: null, resolve, reject, timer: undefined };
       this.pending.add(pending);
       const known = () =>
         this.operationsValue
@@ -1196,7 +1208,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         }
         // The run changed before the answer (normally enter() fails it first): that run's result will not arrive any
         // more
-        if (answered !== pending.session || this.stateValue.get().session !== pending.session) {
+        if (
+          answered !== pending.session ||
+          this.stateValue.get().session !== pending.session ||
+          this.epoch !== pending.epoch
+        ) {
           this.settle(
             pending,
             new WriteError(
@@ -1294,6 +1310,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
 
   isStale(ref: VariableRef): boolean {
     return this.awaitingRefresh.has(keyOf(ref.peer, ref.name));
+  }
+
+  runEpoch(): number {
+    return this.epoch;
   }
 
   /**

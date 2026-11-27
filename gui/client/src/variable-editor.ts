@@ -1,4 +1,5 @@
 import { clientErrorSink } from './client';
+import { sameData } from './front-compose';
 import type { Front, VariableView } from './front-types';
 import { Writable, type Readable } from './values';
 import type { VariableInfo, VariableRef } from './variables';
@@ -65,7 +66,7 @@ export function createVariableEditor(front: Front, ref: VariableRef): VariableEd
         !waiting,
     };
   };
-  const state = new Writable(read(), Object.is, clientErrorSink(client));
+  const state = new Writable(read(), sameData, clientErrorSink(client));
 
   const reset = () => {
     clearTimeout(timer);
@@ -75,10 +76,11 @@ export function createVariableEditor(front: Front, ref: VariableRef): VariableEd
   };
   const refresh = () => {
     if (closed) return;
-    const current = client.session.currentTarget();
     const bound = binding.state.get();
+    if (closed) return;
     const shown = read(bound);
     if (closed) return;
+    const current = client.session.currentTarget();
     if (
       current?.instance !== target?.instance ||
       current?.run_id !== target?.run_id ||
@@ -100,14 +102,20 @@ export function createVariableEditor(front: Front, ref: VariableRef): VariableEd
       reset();
     }
     target = current;
-    state.set(read());
+    if (!closed) state.set(read());
   };
   const unsubscribe = binding.state.subscribe(refresh);
   const unsubscribeSession = client.session.session.subscribe(refresh);
   const unsubscribeReady = client.session.ready.subscribe(refresh);
 
   return {
-    state: state.readonly(),
+    state: {
+      get: () => {
+        refresh();
+        return state.get();
+      },
+      subscribe: (listener) => state.subscribe(listener),
+    },
     write(value) {
       const { canWrite, info } = read();
       if (!canWrite || !info) return false;

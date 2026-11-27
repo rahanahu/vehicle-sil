@@ -1,5 +1,12 @@
 import { GuiClient } from './client';
-import { createFront, createVariableEditor, createWaveforms, watch, type Front } from './index';
+import {
+  createFront,
+  createVariableEditor,
+  createWaveforms,
+  until,
+  watch,
+  type Front,
+} from './index';
 import { BATCH_MS, ConnectionState } from './connection';
 import { isHolding } from './session-state';
 import { FakeHttp, FakeRequest } from './testing/fake-http';
@@ -1187,11 +1194,610 @@ describe('client.variables.bind', () => {
       stopReady();
 
       expect(readyTransitions).toEqual([
-        { ready: false, sessionId: '2', varSession: '1' },
+        { ready: false, sessionId: '2', varSession: '2' },
         { ready: true, sessionId: '2', varSession: '2' },
       ]);
       expect(demand.state.get().block).toBeNull();
       demand.close();
+    });
+
+    it('never exposes prior-run value, schema, or run_id write target when resync, hello(run 2), and synced(run 2) coalesce', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      const watch = client.variables.watch([ref('engine.demand')], { history: 5 });
+      const fvar = front.variable('Engine.engine.demand');
+      const stopFront = fvar.subscribe(() => undefined);
+
+      await deliver(hello('ready', 1), synced(1), values(100, true, { 'engine.demand': 25 }));
+      expect(watch.value(ref('engine.demand'))?.value).toBe(25);
+      expect(fvar.get().value).toBe(25);
+      expect(fvar.get().unit).toBe('%');
+
+      const seenOnReadyFalse: {
+        sessionId: string | null;
+        varSession: string | null;
+        varStatus: string;
+        watchValue: unknown;
+        historyLen: number;
+        frontValue: unknown;
+        frontUnit: string;
+        frontCanWrite: boolean;
+        boundBlock: string | null;
+      }[] = [];
+      const stopReady = client.session.ready.subscribe((isReady) => {
+        if (isReady) return;
+        const view = fvar.get();
+        seenOnReadyFalse.push({
+          sessionId: client.session.session.get()?.id ?? null,
+          varSession: client.variables.state.get().session,
+          varStatus: client.variables.state.get().status,
+          watchValue: watch.value(ref('engine.demand'))?.value ?? null,
+          historyLen: watch.history(ref('engine.demand')).length,
+          frontValue: view.value,
+          frontUnit: view.unit,
+          frontCanWrite: view.can_write,
+          boundBlock: demand.state.get().block,
+        });
+        demand.write(55);
+        void client.variables.write({ Engine: { 'engine.demand': 77 } }).catch(() => undefined);
+      });
+
+      const seenOnStatus: {
+        link: string;
+        varSession: string | null;
+        frontValue: unknown;
+      }[] = [];
+      const stopStatus = front.status.subscribe((st) => {
+        if (client.session.session.get()?.id !== '2') return;
+        seenOnStatus.push({
+          link: st.link,
+          varSession: client.variables.state.get().session,
+          frontValue: fvar.get().value,
+        });
+      });
+
+      const sentBefore = socket().sent.length;
+      await deliver({ type: 'resync' }, hello('ready', 2), synced(2));
+
+      stopReady();
+      stopStatus();
+
+      expect(seenOnReadyFalse).toEqual([
+        {
+          sessionId: '2',
+          varSession: '2',
+          varStatus: 'unknown',
+          watchValue: null,
+          historyLen: 0,
+          frontValue: null,
+          frontUnit: '',
+          frontCanWrite: false,
+          boundBlock: 'disconnected',
+        },
+      ]);
+      expect(seenOnStatus.every((e) => e.varSession === '2' && e.frontValue === null)).toBe(true);
+      const postedRunIds = http.requests.map((r) => (r.request.body as { run_id?: string }).run_id);
+      expect(postedRunIds).not.toContain('1');
+      expect(postedRunIds).toEqual(['2']);
+      expect(socket().sent.slice(sentBefore)).toContainEqual(
+        expect.objectContaining({ type: 'watch' }),
+      );
+      expect(client.session.ready.get()).toBe(true);
+      expect(fvar.get().can_write).toBe(true);
+
+      stopFront();
+      watch.close();
+      demand.close();
+    });
+
+    it('clears prior-run state on unsynced resync -> hello(run 2) and rejects writes on resync -> hello(null)', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      const watch = client.variables.watch([ref('engine.demand')], { history: 5 });
+      const fvar = front.variable('Engine.engine.demand');
+      const stopFront = fvar.subscribe(() => undefined);
+
+      await deliver(hello('ready', 1), synced(1), values(100, true, { 'engine.demand': 25 }));
+      expect(fvar.get().value).toBe(25);
+
+      // 1. resync -> hello(run 2) without synced(2) yet
+      const observedUnsynced: {
+        ready: boolean;
+        sessionId: string | null;
+        varSession: string | null;
+        watchValue: unknown;
+        frontValue: unknown;
+        frontUnit: string;
+        frontCanWrite: boolean;
+        boundBlock: string | null;
+      }[] = [];
+      const stopReady1 = client.session.ready.subscribe((isReady) => {
+        const view = fvar.get();
+        observedUnsynced.push({
+          ready: isReady,
+          sessionId: client.session.session.get()?.id ?? null,
+          varSession: client.variables.state.get().session,
+          watchValue: watch.value(ref('engine.demand'))?.value ?? null,
+          frontValue: view.value,
+          frontUnit: view.unit,
+          frontCanWrite: view.can_write,
+          boundBlock: demand.state.get().block,
+        });
+        void client.variables.write({ Engine: { 'engine.demand': 44 } }).catch(() => undefined);
+      });
+
+      await deliver({ type: 'resync' }, hello('ready', 2));
+      stopReady1();
+
+      expect(observedUnsynced).toEqual([
+        {
+          ready: false,
+          sessionId: '2',
+          varSession: '2',
+          watchValue: null,
+          frontValue: null,
+          frontUnit: '',
+          frontCanWrite: false,
+          boundBlock: 'disconnected',
+        },
+      ]);
+      expect(http.requests.map((r) => (r.request.body as { run_id?: string }).run_id)).toEqual([
+        '2',
+      ]);
+      expect(client.session.ready.get()).toBe(false);
+      expect(demand.state.get().block).toBe('disconnected');
+      expect(fvar.get().can_write).toBe(false);
+
+      // Complete sync for run 2 and populate a reading
+      http.requests.splice(0);
+      await deliver(synced(2), values(200, true, { 'engine.demand': 60 }, 2));
+      expect(client.session.ready.get()).toBe(true);
+      expect(fvar.get().value).toBe(60);
+
+      // 2. resync -> hello(null) -> synced(null) with a trailing stale run-2 variables frame
+      let writeDuringNull: Promise<unknown> | null = null;
+      const seenNull: {
+        sessionId: string | null;
+        varSession: string | null;
+        frontValue: unknown;
+      }[] = [];
+      const stopReady2 = client.session.ready.subscribe((isReady) => {
+        if (isReady) return;
+        seenNull.push({
+          sessionId: client.session.session.get()?.id ?? null,
+          varSession: client.variables.state.get().session,
+          frontValue: fvar.get().value,
+        });
+        writeDuringNull = client.variables
+          .write({ Engine: { 'engine.demand': 88 } })
+          .catch((e: unknown) => e);
+      });
+
+      await deliver(
+        { type: 'resync' },
+        {
+          type: 'hello',
+          vehicle_sil_gui: 4,
+          version: '0.1.0',
+          instance: 'x',
+          session: null,
+          replay: null,
+        },
+        { type: 'variables', run_id: '2', variables: variables('ready') },
+        { type: 'synced', run_id: null, last_seq: null },
+      );
+      stopReady2();
+
+      expect(seenNull).toEqual([{ sessionId: null, varSession: null, frontValue: null }]);
+      expect(await writeDuringNull).toMatchObject({
+        kind: 'refused',
+        code: 'not-running',
+      });
+      expect(http.requests).toHaveLength(0);
+      expect(client.variables.state.get()).toMatchObject({ session: null, status: 'off' });
+
+      stopFront();
+      watch.close();
+      demand.close();
+    });
+
+    it('clears readings, pending writes, and binding writeStatus when a new server instance reuses run_id', async () => {
+      const demand = client.variables.bind(ref('engine.demand'));
+      const watch = client.variables.watch([ref('engine.demand')], { history: 5 });
+      const fvar = front.variable('Engine.engine.demand');
+      const stopFront = fvar.subscribe(() => undefined);
+
+      await deliver(hello('ready', 1), synced(1), values(100, true, { 'engine.demand': 25 }));
+
+      // Complete one binding write so writeStatus is 'applied' on instance 'x' run '1'
+      demand.write(30);
+      http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
+      await deliver(operation(1, 'applied', true));
+      expect(demand.state.get().writeStatus).toEqual({ kind: 'applied', atMs: 200 });
+
+      // Start an unsettled write on instance 'x' run '1'
+      const pendingOld = client.variables
+        .write({ Engine: { 'engine.demand': 40 } })
+        .catch((e: unknown) => e);
+      http.expectOne('api/write').flush({ run_id: '1', operation: 2 });
+
+      const seenOnRestart: {
+        instance: string | null;
+        watchValue: unknown;
+        frontValue: unknown;
+        writeStatusKind: string;
+      }[] = [];
+      const stopReady = client.session.ready.subscribe((isReady) => {
+        if (isReady) return;
+        seenOnRestart.push({
+          instance: client.session.currentInstance(),
+          watchValue: watch.value(ref('engine.demand'))?.value ?? null,
+          frontValue: fvar.get().value,
+          writeStatusKind: demand.state.get().writeStatus.kind,
+        });
+      });
+
+      await deliver({ type: 'resync' }, { ...hello('ready', 1), instance: 'y' }, synced(1));
+      stopReady();
+
+      expect(seenOnRestart).toEqual([
+        {
+          instance: 'y',
+          watchValue: null,
+          frontValue: null,
+          writeStatusKind: 'idle',
+        },
+      ]);
+      expect(await pendingOld).toMatchObject({ kind: 'no-answer' });
+      expect(demand.state.get().writeStatus).toEqual({ kind: 'idle' });
+      expect(watch.value(ref('engine.demand'))).toBeUndefined();
+
+      stopFront();
+      watch.close();
+      demand.close();
+    });
+
+    it('settles pre-switch operations and avoids spurious stale Run 1 values across resync switches and multi-hop batches', async () => {
+      const fvar = front.variable('Engine.engine.demand');
+      const stopFront = fvar.subscribe(() => undefined);
+
+      await deliver(hello('ready', 1), synced(1), values(100, true, { 'engine.demand': 25 }));
+
+      const writeOn1 = client.variables.write({ Engine: { 'engine.demand': 35 } });
+      http.expectOne('api/write').flush({ run_id: '1', operation: 5 });
+
+      const seenViews: {
+        sessionId: string | null;
+        value: unknown;
+        stale: boolean;
+        canWrite: boolean;
+      }[] = [];
+      const stopLog = fvar.subscribe((v) => {
+        seenViews.push({
+          sessionId: client.session.session.get()?.id ?? null,
+          value: v.value,
+          stale: v.stale,
+          canWrite: v.can_write,
+        });
+      });
+
+      const sentBefore = socket().sent.length;
+      await deliver(
+        operation(5, 'applied', true),
+        { type: 'resync' },
+        hello('ready', 2),
+        synced(2),
+      );
+
+      await expect(writeOn1).resolves.toMatchObject({ session: '1', seq: 5, state: 'applied' });
+      // Never emitted a spurious stale Run 1 value or exposed Run 1 value alongside Run 2
+      expect(seenViews.some((e) => e.value === 25)).toBe(false);
+      expect(socket().sent.slice(sentBefore)).toContainEqual(
+        expect.objectContaining({ type: 'watch' }),
+      );
+
+      // Multi-hop batch with resync: Run 2 (value 60) -> session(3) -> resync -> hello(4) -> synced(4)
+      await deliver(values(200, true, { 'engine.demand': 60 }, 2));
+      expect(fvar.get().value).toBe(60);
+      seenViews.length = 0;
+
+      const seenMultiHopReady: {
+        sessionId: string | null;
+        varSession: string | null;
+        frontValue: unknown;
+      }[] = [];
+      const stopReady = client.session.ready.subscribe((isReady) => {
+        if (isReady) return;
+        seenMultiHopReady.push({
+          sessionId: client.session.session.get()?.id ?? null,
+          varSession: client.variables.state.get().session,
+          frontValue: fvar.get().value,
+        });
+      });
+
+      const sentBeforeMulti = socket().sent.length;
+      await deliver(
+        {
+          type: 'session',
+          session: {
+            id: '3',
+            state: 'running',
+            phase: 'running',
+            launcher: { pid: 3, running: true, exit_code: null, signal: null, silent_s: null },
+            stop: 'none',
+            launcher_state: runningState,
+          },
+        },
+        { type: 'resync' },
+        hello('ready', 4),
+        synced(4),
+      );
+      stopReady();
+      stopLog();
+
+      expect(seenMultiHopReady).toEqual([{ sessionId: '4', varSession: '4', frontValue: null }]);
+      expect(seenViews.some((e) => e.value === 60 || e.sessionId === '3')).toBe(false);
+      expect(socket().sent.slice(sentBeforeMulti)).toContainEqual(
+        expect.objectContaining({ type: 'watch' }),
+      );
+
+      stopFront();
+    });
+
+    it('returns a non-null VariableView when FrontVariable.get() unsubscribes its sole subscriber', async () => {
+      await deliver(hello('ready', 1), synced(1), values(100, true, { 'engine.demand': 25 }));
+      const fvar = front.variable('Engine.engine.demand');
+
+      // 1. Sole subscriber (until) unsubscribes via launcher/controls update inside fvar.get()
+      const waitingBlocked = until(fvar, (v) => !v.can_write);
+      expect(fvar.get().can_write).toBe(true);
+      const readsOnControls: unknown[] = [];
+      const stopControls = front.controls.subscribe(() => {
+        readsOnControls.push(fvar.get());
+      });
+
+      // Trigger a launcher/controls transition while binding.state is still being refreshed
+      await deliver({ type: 'resync' }, hello('ready', 2), synced(2));
+      stopControls();
+
+      expect(readsOnControls.length).toBeGreaterThan(0);
+      expect(readsOnControls.every((v) => v !== null && typeof v === 'object')).toBe(true);
+      expect((await waitingBlocked).can_write).toBe(false);
+      // After the sole subscriber unsubscribed, get() continues to work cleanly via peek()
+      expect(fvar.get().can_write).toBe(true);
+
+      // 2. Sole subscriber unsubscribes during re-entrant binding.state.get() on live run switch
+      const holdWatch = client.variables.watch([ref('engine.demand')]);
+      await deliver(values(200, true, { 'engine.demand': 42 }, 2));
+      const waitingCleared = until(fvar, (v) => v.value === null);
+      expect(fvar.get().value).toBe(42);
+      const readsOnStatus: unknown[] = [];
+      const stopStatus = front.status.subscribe(() => {
+        if (client.session.session.get()?.id !== '3') return;
+        readsOnStatus.push(fvar.get());
+      });
+
+      await deliver(
+        {
+          type: 'session',
+          session: {
+            id: '3',
+            state: 'running',
+            phase: 'running',
+            launcher: { pid: 3, running: true, exit_code: null, signal: null, silent_s: null },
+            stop: 'none',
+            launcher_state: { ...runningState, paused: true },
+          },
+        },
+        { type: 'variables', run_id: '3', variables: variables('ready') },
+      );
+      stopStatus();
+      holdWatch.close();
+
+      expect(readsOnStatus.length).toBeGreaterThan(0);
+      expect(readsOnStatus.every((v) => v !== null && typeof v === 'object')).toBe(true);
+      expect((await waitingCleared).value).toBeNull();
+      expect(fvar.get().can_write).toBe(true);
+    });
+
+    it('keeps createVariableEditor.state.get() coherent across live and resync run switches without recursion', async () => {
+      const editorVisible = createVariableEditor(front, ref('engine.demand'));
+      const editorHidden = createVariableEditor(front, ref('engine.demand'));
+      editorVisible.setVisible(true);
+
+      // Guard against infinite recursion or duplicate notifies when a subscriber calls editor.state.get()
+      let editorNotifications = 0;
+      const stopEditorSub = editorVisible.state.subscribe((st) => {
+        editorNotifications += 1;
+        expect(editorVisible.state.get()).toEqual(st);
+      });
+
+      await deliver(
+        hello('ready', 1, { launcher_state: { ...runningState, paused: true } }),
+        synced(1),
+        values(100, true, { 'engine.demand': 25 }),
+      );
+      expect(editorVisible.state.get()).toMatchObject({
+        shown: 25,
+        canWrite: true,
+        info: { unit: '%' },
+      });
+      const countBeforeGet = editorNotifications;
+      expect(editorVisible.state.get().shown).toBe(25);
+      expect(editorNotifications).toBe(countBeforeGet);
+
+      // 1. Live run replacement: [session(2), variables(2)]
+      const seenLive: {
+        source: string;
+        visVal: unknown;
+        visShown: unknown;
+        visInfo: unknown;
+        visCanWrite: boolean;
+        hidInfo: unknown;
+        hidCanWrite: boolean;
+      }[] = [];
+      const recordLive = (source: string) => {
+        if (client.session.session.get()?.id !== '2') return;
+        const vis = editorVisible.state.get();
+        const hid = editorHidden.state.get();
+        seenLive.push({
+          source,
+          visVal: vis.view.value,
+          visShown: vis.shown,
+          visInfo: vis.info ?? null,
+          visCanWrite: vis.canWrite,
+          hidInfo: hid.info ?? null,
+          hidCanWrite: hid.canWrite,
+        });
+      };
+      const stopStatus1 = front.status.subscribe(() => recordLive('status'));
+      const stopControls1 = front.controls.subscribe(() => recordLive('controls'));
+      const stopSession1 = client.session.session.subscribe(() => recordLive('session'));
+
+      await deliver(
+        {
+          type: 'session',
+          session: {
+            id: '2',
+            state: 'running',
+            phase: 'running',
+            launcher: { pid: 2, running: true, exit_code: null, signal: null, silent_s: null },
+            stop: 'none',
+            launcher_state: runningState,
+          },
+        },
+        { type: 'variables', run_id: '2', variables: variables('ready') },
+      );
+      stopStatus1();
+      stopControls1();
+      stopSession1();
+
+      expect(seenLive.length).toBeGreaterThan(0);
+      expect(
+        seenLive.every(
+          (e) =>
+            e.visVal === null &&
+            e.visShown === null &&
+            e.visInfo === null &&
+            !e.visCanWrite &&
+            e.hidInfo === null &&
+            !e.hidCanWrite,
+        ),
+      ).toBe(true);
+
+      // 2. Resync switch: [resync, hello(3), synced(3)]
+      await deliver(values(200, true, { 'engine.demand': 60 }, 2));
+      expect(editorVisible.state.get().shown).toBe(60);
+
+      const seenResync: {
+        source: string;
+        ready: boolean;
+        visVal: unknown;
+        visShown: unknown;
+        visInfo: unknown;
+        visCanWrite: boolean;
+        hidInfo: unknown;
+        hidCanWrite: boolean;
+      }[] = [];
+      const recordResync = (source: string) => {
+        if (client.session.session.get()?.id !== '3' || client.session.ready.get()) return;
+        const vis = editorVisible.state.get();
+        const hid = editorHidden.state.get();
+        seenResync.push({
+          source,
+          ready: client.session.ready.get(),
+          visVal: vis.view.value,
+          visShown: vis.shown,
+          visInfo: vis.info ?? null,
+          visCanWrite: vis.canWrite,
+          hidInfo: hid.info ?? null,
+          hidCanWrite: hid.canWrite,
+        });
+      };
+      const stopStatus2 = front.status.subscribe(() => recordResync('status'));
+      const stopControls2 = front.controls.subscribe(() => recordResync('controls'));
+      const stopSession2 = client.session.session.subscribe(() => recordResync('session'));
+
+      await deliver({ type: 'resync' }, hello('ready', 3), synced(3));
+      stopStatus2();
+      stopControls2();
+      stopSession2();
+
+      expect(seenResync.length).toBeGreaterThan(0);
+      expect(
+        seenResync.every(
+          (e) =>
+            !e.ready &&
+            e.visVal === null &&
+            e.visShown === null &&
+            e.visInfo === null &&
+            !e.visCanWrite &&
+            e.hidInfo === null &&
+            !e.hidCanWrite,
+        ),
+      ).toBe(true);
+
+      // 3. Subscriber closing the editor synchronously during state.get() returns closed state cleanly
+      const stopCloseOnNext = editorHidden.state.subscribe(() => {
+        editorHidden.close();
+      });
+      const stopControlsClose = front.controls.subscribe(() => {
+        if (client.session.session.get()?.id === '4') {
+          expect(editorHidden.state.get().canWrite).toBe(false);
+        }
+      });
+      await deliver({ type: 'resync' }, hello('ready', 4), synced(4));
+      stopCloseOnNext();
+      stopControlsClose();
+      expect(editorHidden.state.get().canWrite).toBe(false);
+
+      stopEditorSub();
+      editorVisible.close();
+    });
+
+    it('clears prior-run readings and pending writes on a single-batch ABA run switch', async () => {
+      const watch = client.variables.watch([ref('engine.demand')], { history: 5 });
+      await deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 4,
+          version: '0.1.0',
+          instance: 'x',
+          session: {
+            id: '1',
+            state: 'running',
+            launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
+            stop: 'none',
+            launcher_state: runningState,
+          },
+          replay: null,
+        },
+        synced(1),
+        values(100, true, { 'engine.demand': 25 }),
+      );
+      expect(client.variables.state.get()).toMatchObject({ session: '1', status: 'unknown' });
+      expect(watch.value(ref('engine.demand'))?.value).toBe(25);
+
+      const pendingOld = client.variables
+        .write({ Engine: { 'engine.demand': 30 } })
+        .catch((e: unknown) => e);
+      http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
+
+      const runSummary = (id: string) => ({
+        id,
+        state: 'running',
+        phase: 'running',
+        launcher: { pid: Number(id), running: true, exit_code: null, signal: null, silent_s: null },
+        stop: 'none',
+        launcher_state: runningState,
+      });
+
+      await deliver(
+        { type: 'session', session: runSummary('2') },
+        { type: 'session', session: runSummary('1') },
+      );
+
+      expect(watch.value(ref('engine.demand'))).toBeUndefined();
+      expect(await pendingOld).toMatchObject({ kind: 'no-answer' });
+      watch.close();
     });
 
     it('never emits a writable state during a resync or unsynced hello', async () => {

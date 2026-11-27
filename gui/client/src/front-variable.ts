@@ -147,8 +147,12 @@ export function makeVariable(
   let count = 0;
   let stops: (() => void)[] = [];
 
-  const refresh = () => {
-    if (binding) view.set(viewOf(binding.state.get(), track.get(), launcher.get()));
+  const refresh = (): VariableView | null => {
+    if (!binding) return null;
+    const next = viewOf(binding.state.get(), track.get(), launcher.get());
+    if (!binding) return next;
+    view.set(next);
+    return view.get() ?? next;
   };
 
   /** The view without anyone subscribed: no values are asked for. The same object while nothing changed. */
@@ -165,11 +169,7 @@ export function makeVariable(
   };
 
   const readable: Readable<VariableView> = {
-    get: () => {
-      if (!binding) return peek();
-      refresh();
-      return view.get() as VariableView;
-    },
+    get: () => refresh() ?? peek(),
     subscribe: (listener) => {
       if (count++ === 0) {
         binding = low.variables.bind(ref);

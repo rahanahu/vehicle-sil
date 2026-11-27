@@ -146,6 +146,7 @@ export interface BindingSources {
       options?: WriteOptions,
     ): Promise<OperationView>;
     isStale?(ref: VariableRef): boolean;
+    runEpoch?(): number;
   };
   readonly connection: Readable<ConnectionState>;
   /** Optional session sync readiness (`session.ready`). Falls back to `connection === 'open'` when omitted. */
@@ -177,6 +178,7 @@ interface Sent {
  */
 interface Entry {
   session: string;
+  epoch: number;
   key: string;
   ref: VariableRef;
   status: WriteStatus;
@@ -199,7 +201,7 @@ const IDLE: WriteStatus = { kind: 'idle' };
  */
 export class VariableBinder {
   private entries = new Map<string, Entry>();
-  private entriesSession: string | null = null;
+  private entriesKey: string | null = null;
   /** Per variable, the functions to call when the write status changes (the binds listen). */
   private readonly listeners = new Map<string, Set<() => void>>();
   /** Lookup table of the list (rebuilt when peers change). */
@@ -336,9 +338,11 @@ export class VariableBinder {
    */
   private entry(ref: VariableRef): Entry | undefined {
     const session = this.sources.variables.state.get().session;
-    if (session !== this.entriesSession) {
+    const epoch = this.sources.variables.runEpoch?.() ?? 0;
+    const entryKey = session === null ? null : `${epoch}:${session}`;
+    if (entryKey !== this.entriesKey) {
       this.entries = new Map();
-      this.entriesSession = session;
+      this.entriesKey = entryKey;
     }
     if (session === null) return undefined;
     const key = keyOf(ref);
@@ -346,6 +350,7 @@ export class VariableBinder {
     if (!entry) {
       entry = {
         session,
+        epoch,
         key,
         ref: { peer: ref.peer, name: ref.name },
         status: IDLE,
@@ -385,7 +390,9 @@ export class VariableBinder {
       // The held value: sent only in the same run while the variable can still be written. variables.write promises not
       // to call onAccepted after the run changes, so same is always true here (kept as a guard in case that promise
       // changes)
-      const same = this.sources.variables.state.get().session === entry.session;
+      const same =
+        this.sources.variables.state.get().session === entry.session &&
+        (this.sources.variables.runEpoch?.() ?? 0) === entry.epoch;
       if (same && this.block(entry.ref) === null) {
         this.send(entry, next.value);
         return;
@@ -418,6 +425,7 @@ export class VariableBinder {
       this.sources.connectionEpoch() !== epoch ||
       this.sources.session.get()?.id !== entry.session ||
       this.sources.variables.state.get().session !== entry.session ||
+      (this.sources.variables.runEpoch?.() ?? 0) !== entry.epoch ||
       this.block(entry.ref) !== null
     ) {
       settled({ kind: 'dropped', message: DROPPED_MESSAGE });

@@ -17,7 +17,7 @@ import {
   applySummary,
   sessionFromSummary,
 } from './session-state';
-import { ErrorSink, Readable, Writable, callEach, derived, rethrowLater } from './values';
+import { ErrorSink, Readable, Writable, callEach, rethrowLater } from './values';
 
 /** How many kinds of notices not tied to a session are kept. */
 export const MAX_NOTICES = 20;
@@ -130,9 +130,10 @@ export class SessionFeed implements ClientSession {
   private instanceId: string | null = null;
   private lastStreamSeq = -1;
   private resyncing = false;
+  private syncedFlag = false;
   private stopTarget: RunTarget | null = null;
   private readonly current: Writable<SessionView | null>;
-  private readonly synced: Writable<boolean>;
+  private readonly readyValue: Writable<boolean>;
   private readonly allowedValue: Writable<ServerAllowed | null>;
   private readonly runtimeValue: Writable<RuntimeStatus | null>;
   private readonly receivedAt: Writable<number>;
@@ -170,7 +171,7 @@ export class SessionFeed implements ClientSession {
     },
   ) {
     this.current = new Writable<SessionView | null>(null, Object.is, onError);
-    this.synced = new Writable<boolean>(false, Object.is, onError);
+    this.readyValue = new Writable<boolean>(false, Object.is, onError);
     this.allowedValue = new Writable<ServerAllowed | null>(null, Object.is, onError);
     this.allowed = this.allowedValue.readonly();
     this.runtimeValue = new Writable<RuntimeStatus | null>(null, Object.is, onError);
@@ -184,12 +185,10 @@ export class SessionFeed implements ClientSession {
     this.notices = this.noticeList.readonly();
     this.rejected = this.rejectedValue.readonly();
     this.incompatible = this.incompatibleValue.readonly();
-    this.ready = derived(
-      [connection.state, this.synced],
-      () => connection.state.get() === 'open' && this.synced.get(),
-      Object.is,
-      onError,
-    );
+    this.ready = this.readyValue.readonly();
+    connection.state.subscribe((state) => {
+      this.readyValue.set(state === 'open' && this.syncedFlag);
+    });
     connection.onBatch((batch) => this.receive(batch));
     connection.onUnreadable((text) =>
       this.notify(`unreadable message: not JSON (connecting again): ${text.slice(0, 80)}`),
@@ -201,13 +200,18 @@ export class SessionFeed implements ClientSession {
     return this.stoppedFlag;
   }
 
+  private setSyncedDeferred(value: boolean): () => void {
+    this.syncedFlag = value;
+    return this.readyValue.setDeferred(this.connection.state.get() === 'open' && value);
+  }
+
   /**
    * Fields to add to the authentication message: where in the stream it holds the server should resend from. Called
    * on every connect (after the call, the copy is not in sync until hello and the resent events have arrived). Used
    * only inside the library.
    */
   resumeFields(): Pick<AuthMessage, 'instance' | 'run_id' | 'after_stream_seq'> {
-    this.synced.set(false);
+    this.setSyncedDeferred(false)();
     const session = this.current.get();
     if (this.instanceId === null || session === null || this.lastStreamSeq < 0) return {};
     return {
@@ -311,7 +315,7 @@ export class SessionFeed implements ClientSession {
       originInstance = instance;
     });
     if (!currentOrigin()) return;
-    if (stop === 'lost' || stop === 'incompatible') this.synced.set(false);
+    if (stop === 'lost' || stop === 'incompatible') this.setSyncedDeferred(false)();
     if (stop === 'unauthorized') this.rejectedValue.set(true);
     if (incompatible !== null) this.incompatibleValue.set(incompatible);
   }
@@ -335,7 +339,7 @@ export class SessionFeed implements ClientSession {
     let firstSwitchRawIndex = -1;
     let lastSwitchRawIndex = -1;
     let applied = false;
-    let synced = this.synced.get();
+    let synced = this.syncedFlag;
     let syncReset = false;
     let allowedNow = this.allowedValue.get();
     let runtimeNow = this.runtimeValue.get();
@@ -503,7 +507,7 @@ export class SessionFeed implements ClientSession {
           selectedRaw.push(rawMessage);
           break;
         default:
-          if (session !== null && 'run_id' in message && message.run_id !== session.id) {
+          if ('run_id' in message && message.run_id !== (session?.id ?? null)) {
             continue;
           }
           selectedBatch.push(message);
@@ -544,14 +548,15 @@ export class SessionFeed implements ClientSession {
     const notifySession = this.current.setDeferred(session);
     const notifyAllowed = this.allowedValue.setDeferred(allowedNow);
     const notifyRuntime = this.runtimeValue.setDeferred(runtimeNow);
-    if (!synced || syncReset) {
-      this.synced.set(false);
-      if (!sameStream()) return;
-    }
+    const notifyUnsynced = !synced || syncReset ? this.setSyncedDeferred(false) : undefined;
     let notifyVarSwitch: (() => void) | undefined;
     if (this.hooks?.stageRunSwitch) {
       if (lastSwitchRawIndex >= 0 || (instance !== null && instance !== beforeInstance)) {
-        notifyVarSwitch = this.hooks.stageRunSwitch(instance, sessionId, instanceChanged);
+        notifyVarSwitch = this.hooks.stageRunSwitch(
+          instance,
+          sessionId,
+          instanceChanged || lastSwitchRawIndex >= 0,
+        );
       }
     } else if (instance !== null && instance !== beforeInstance) {
       this.onInstance?.(instance);
@@ -560,7 +565,7 @@ export class SessionFeed implements ClientSession {
     notifySession();
     notifyAllowed();
     notifyRuntime();
-    if (!sameStream()) return;
+    notifyUnsynced?.();
     notifyVarSwitch?.();
     if (!sameStream()) return;
     for (const notice of notices) {
@@ -581,7 +586,7 @@ export class SessionFeed implements ClientSession {
     if (!sameStream()) return;
     // Mark synced and notify ready subscribers only after both session state and raw listeners
     // (VariablesFeed) have applied the batch, so ready=true never observes stale variable state.
-    const notifySynced = this.synced.setDeferred(synced);
+    const notifySynced = this.setSyncedDeferred(synced);
     notifySynced();
     if (!sameStream()) return;
     if (selectedBatch.length > 0) {
