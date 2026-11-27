@@ -15,6 +15,7 @@ import {
 import {
   HistoryPoint,
   OperationView,
+  QueuedOperation,
   VariableInfo,
   VariableReading,
   VariableRef,
@@ -141,6 +142,14 @@ export interface BindingSources {
   readonly variables: {
     readonly state: Readable<VariablesState>;
     watch(variables: readonly VariableRef[], options?: WatchOptions): VariableWatch;
+    enqueue?(
+      writes: Record<string, Record<string, number | boolean | string>>,
+      options?: WriteOptions,
+    ): Promise<QueuedOperation>;
+    enqueueForBinder?(
+      writes: Record<string, Record<string, number | boolean | string>>,
+      onQueued: (seq: number) => void,
+    ): Promise<OperationView>;
     write(
       writes: Record<string, Record<string, number | boolean | string>>,
       options?: WriteOptions,
@@ -387,9 +396,8 @@ export class VariableBinder {
         }
         return;
       }
-      // The held value: sent only in the same run while the variable can still be written. variables.write promises not
-      // to call onAccepted after the run changes, so same is always true here (kept as a guard in case that promise
-      // changes)
+      // The held value: sent only in the same run while the variable can still be written. enqueueForBinder settles old
+      // writes before switching runs, so same is always true here (kept as a guard)
       const same =
         this.sources.variables.state.get().session === entry.session &&
         (this.sources.variables.runEpoch?.() ?? 0) === entry.epoch;
@@ -431,29 +439,34 @@ export class VariableBinder {
       settled({ kind: 'dropped', message: DROPPED_MESSAGE });
       return;
     }
-    this.sources.variables
-      .write(
-        { [peer]: { [name]: value } },
-        {
-          // While paused, the result does not come until time advances. Do not time out; wait for the result of the
-          // operation (if the result is lost because the run ends, the run changes or the connection is re-established,
-          // write settles it as "no answer came")
-          timeoutMs: Infinity,
-          onAccepted: ({ seq }) => accepted(seq),
-        },
-      )
-      .then(
-        (operation) => {
-          accepted(null); // Usually onAccepted has already done this
-          settled({ kind: 'applied', atMs: operation.peers[peer]?.appliedAtMs ?? null });
-        },
-        (error: unknown) =>
-          settled(
-            error instanceof WriteError
-              ? { kind: error.kind, message: error.message, code: error.code }
-              : { kind: 'no-answer', message: String(error), code: null },
-          ),
+    const failWith = (error: unknown) =>
+      settled(
+        error instanceof WriteError
+          ? { kind: error.kind, message: error.message, code: error.code }
+          : { kind: 'no-answer', message: String(error), code: null },
       );
+    if (this.sources.variables.enqueueForBinder) {
+      this.sources.variables
+        .enqueueForBinder({ [peer]: { [name]: value } }, (seq) => accepted(seq))
+        .then((operation) => {
+          accepted(null);
+          settled({ kind: 'applied', atMs: operation.peers[peer]?.appliedAtMs ?? null });
+        }, failWith);
+      return;
+    }
+    if (this.sources.variables.enqueue) {
+      this.sources.variables.enqueue({ [peer]: { [name]: value } }).then((queued) => {
+        accepted(queued.seq);
+        queued.applied().then((operation) => {
+          settled({ kind: 'applied', atMs: operation.peers[peer]?.appliedAtMs ?? null });
+        }, failWith);
+      }, failWith);
+      return;
+    }
+    this.sources.variables.write({ [peer]: { [name]: value } }).then((operation) => {
+      accepted(operation.seq);
+      settled({ kind: 'applied', atMs: operation.peers[peer]?.appliedAtMs ?? null });
+    }, failWith);
   }
 }
 

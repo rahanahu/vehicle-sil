@@ -546,7 +546,7 @@ describe('client.variables.bind', () => {
     expect(mode.state.get().block).toBeNull();
     mode.write('on');
     expect(requests().map((r) => r.request.body)).toEqual([
-      { run_id: '2', writes: { Engine: { 'engine.mode': 'on' } } },
+      { run_id: '2', instance: 'x', writes: { Engine: { 'engine.mode': 'on' } } },
     ]);
     mode.close();
   });
@@ -756,6 +756,7 @@ describe('client.variables.bind', () => {
     const [request] = requests();
     expect(request.request.body).toEqual({
       run_id: '1',
+      instance: 'x',
       writes: { Engine: { 'engine.enabled': true } },
     });
     expect(first.state.get().pending).toBe(false);
@@ -764,7 +765,7 @@ describe('client.variables.bind', () => {
     expect(again.state.get()).toMatchObject({ writeStatus: { kind: 'sending' }, pending: false });
     request.flush({ run_id: '1', operation: 4 });
     expect(requests().map((r) => r.request.body)).toEqual([
-      { run_id: '1', writes: { Engine: { 'engine.enabled': false } } },
+      { run_id: '1', instance: 'x', writes: { Engine: { 'engine.enabled': false } } },
     ]);
     // A bind of another variable does not see this write
     const other = client.variables.bind(ref('engine.offset'), { visible: false });
@@ -892,7 +893,7 @@ describe('client.variables.bind', () => {
 
       demand.write(40);
       expect(requests().map((r) => r.request.body)).toEqual([
-        { run_id: '1', writes: { Engine: { 'engine.demand': 40 } } },
+        { run_id: '1', instance: 'x', writes: { Engine: { 'engine.demand': 40 } } },
       ]);
 
       // First post-reconnect values sample clears stale
@@ -1067,7 +1068,7 @@ describe('client.variables.bind', () => {
       expect(observedOnReady).toEqual([{ sessionId: '2', varSession: '2', block: null }]);
       expect(observedOnOnline).toEqual([{ run: 'running', varSession: '2' }]);
       expect(requests().map((r) => r.request.body)).toEqual([
-        { run_id: '2', writes: { Engine: { 'engine.demand': 75 } } },
+        { run_id: '2', instance: 'x', writes: { Engine: { 'engine.demand': 75 } } },
       ]);
       demand.close();
     });
@@ -1913,7 +1914,7 @@ describe('client.variables.bind', () => {
       ]);
       expect(seenFront.some((e) => e.value === 88)).toBe(false);
       expect(http.requests.map((r) => r.request.body)).toEqual([
-        { run_id: '2', writes: { Engine: { 'engine.demand': 66 } } },
+        { run_id: '2', instance: 'x', writes: { Engine: { 'engine.demand': 66 } } },
       ]);
       http.requests[0]!.flush({ run_id: '2', operation: 1 });
       await deliver({ ...operation(1, 'applied', true), run_id: '2' });
@@ -2002,7 +2003,15 @@ describe('client.variables.bind', () => {
         { type: 'variables', run_id: '4', variables: variables('ready') },
       );
 
-      await expect(writeOn3).resolves.toBeUndefined();
+      await expect(writeOn3).resolves.toEqual({
+        session: '3',
+        seq: 7,
+        peer: 'Engine',
+        name: 'engine.demand',
+        value: 42,
+        appliedAtMs: 200,
+        late: false,
+      });
       expect(client.variables.state.get().session).toBe('4');
       stopSub();
     });

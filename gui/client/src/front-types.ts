@@ -19,7 +19,7 @@ import type {
   ScenarioStep,
 } from './protocol';
 import type { ValueCondition, WriteBlock, WriteStatus } from './variable-state';
-import type { VariableRef, VariableValue } from './variables';
+import type { VariableRef, VariableValue, WriteWaitOptions } from './variables';
 import type { Readable } from './values';
 
 import type { Reason } from './session-state';
@@ -292,13 +292,57 @@ export interface VariableView {
   write_status: WriteStatus;
 }
 
+/** Options of `variable.enqueue(value, options)` and `variable.write(value, options)`. */
+export interface FrontWriteOptions {
+  /** Virtual time at which to apply the write (ms). Omitted: the next step of the ECU. */
+  atMs?: number;
+  /** If `atMs` cannot be met: `'reject'` (default; not applied) or `'apply'` (applied in the next step). */
+  late?: 'reject' | 'apply';
+  /** Watchdog timeout budget (ms; default `WRITE_TIMEOUT_MS`). Must be a finite number greater than 0. */
+  timeoutMs?: number;
+  /** Forwarded to `fetch(..., { keepalive })` so a release write sent on `pagehide` can outlive the page. */
+  keepalive?: boolean;
+  /** Aborts the write or wait (`ActionError('aborted', ...)`). */
+  signal?: AbortSignal;
+}
+
+/** Confirmed application of a variable write (`queued.applied()` / `variable.write()`). */
+export interface WriteResult {
+  readonly session: string;
+  readonly seq: number;
+  readonly peer: string;
+  readonly name: string;
+  readonly value: number | boolean | string;
+  readonly appliedAtMs: number | null;
+  readonly late: boolean;
+}
+
+/** Handle returned once the server accepted a variable write and the ECU queued it (`variable.enqueue()`). */
+export interface QueuedWrite {
+  readonly session: string;
+  readonly seq: number;
+  readonly peer: string;
+  readonly name: string;
+  readonly value: number | boolean | string;
+  /** Resolves with `WriteResult` once the ECU applies the write in a step; rejects with `ActionError` otherwise. */
+  applied(options?: WriteWaitOptions): Promise<WriteResult>;
+}
+
 /**
  * A variable. Values arrive while someone subscribes (the first subscription asks the server for them, the last
- * unsubscribe stops it: there is no close()). `write` needs no subscription.
+ * unsubscribe stops it: there is no close()). `enqueue` and `write` need no subscription.
  */
 export interface FrontVariable extends Readable<VariableView> {
-  /** Resolves when the value has been applied in an ECU step. Rejects with an ActionError (`no-answer` is `unknown`: it is not sent again). */
-  write(value: number | boolean | string, options?: { keepalive?: boolean }): Promise<void>;
+  /**
+   * Sends the write and resolves once the server accepted it and the ECU queued it (stages 1+2).
+   * Rejects immediately with an `ActionError` if refused or already terminally failed (`invalid`, `busy`, `late`, ...).
+   */
+  enqueue(value: number | boolean | string, options?: FrontWriteOptions): Promise<QueuedWrite>;
+  /**
+   * Resolves with `WriteResult` when the value has been applied in an ECU step (`enqueue(v, opts).then(q => q.applied(...))`).
+   * Rejects with an `ActionError` (`no-answer` is `unknown`: it is not sent again).
+   */
+  write(value: number | boolean | string, options?: FrontWriteOptions): Promise<WriteResult>;
 }
 
 /** The front door: `connect()` returns it. */

@@ -32,6 +32,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -237,6 +238,15 @@ class GrpcSource:
     async def read_operation(self, seq: int, timeout_s: float) -> OperationInfo | None:
         reply = await self._unary(self._stub.GetOperation, self._pb.GetOperationRequest(seq=seq), timeout_s,
                                   missing=None)
+        return None if reply is None else self._operation(reply)
+
+    async def wait_queued(self, seq: int, timeout_s: float) -> OperationInfo | None:
+        if timeout_s <= 0:
+            raise SourceError("timeout", "DEADLINE_EXCEEDED: wait for queued timed out")
+        pb = self._pb
+        timeout_ms = max(1, min(2 ** 31 - 1, math.ceil(timeout_s * 1000)))
+        request = pb.WaitOperationRequest(seq=seq, until=pb.WAIT_FOR_QUEUED, timeout_ms=timeout_ms)
+        reply = await self._unary(self._stub.WaitOperation, request, timeout_s + 0.5, missing=None)
         return None if reply is None else self._operation(reply)
 
     async def write(self, writes: list[tuple[str, str, object]], at_ns: int | None, late: str,

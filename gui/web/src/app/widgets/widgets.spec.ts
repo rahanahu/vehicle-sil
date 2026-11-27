@@ -292,6 +292,7 @@ describe('variable widgets', () => {
     const [request] = writes();
     expect(request.request.body).toEqual({
       run_id: '1',
+      instance: 'x',
       writes: { Engine: { 'engine.enabled': true } },
     });
     expect(text(fixture, 'widget-write')).toBe('… 送っています');
@@ -322,6 +323,7 @@ describe('variable widgets', () => {
     const [request] = writes();
     expect(request.request.body).toEqual({
       run_id: '1',
+      instance: 'x',
       writes: { Engine: { 'ecu.connected': false } },
     });
     request.flush({ run_id: '1', operation: 5 });
@@ -386,12 +388,12 @@ describe('variable widgets', () => {
     release(60);
     const first = writes();
     expect(first.map((r) => r.request.body)).toEqual([
-      { run_id: '1', writes: { Engine: { 'engine.demand': 40 } } },
+      { run_id: '1', instance: 'x', writes: { Engine: { 'engine.demand': 40 } } },
     ]);
     first[0].flush({ run_id: '1', operation: 1 });
     const second = writes();
     expect(second.map((r) => r.request.body)).toEqual([
-      { run_id: '1', writes: { Engine: { 'engine.demand': 60 } } },
+      { run_id: '1', instance: 'x', writes: { Engine: { 'engine.demand': 60 } } },
     ]);
     second[0].flush({ run_id: '1', operation: 2 });
     await deliver(
@@ -424,6 +426,7 @@ describe('variable widgets', () => {
     const [request] = writes();
     expect(request.request.body).toEqual({
       run_id: '1',
+      instance: 'x',
       writes: { Engine: { 'engine.offset': 12.5 } },
     });
     request.flush(
@@ -522,6 +525,7 @@ describe('variable widgets', () => {
     const write = http.expectOne('api/write');
     expect(write.request.body).toEqual({
       run_id: '2',
+      instance: 'x',
       writes: { Engine: { 'engine.enabled': true } },
     });
     write.flush({ run_id: '2', operation: 1 });
@@ -629,7 +633,7 @@ describe('variable widgets', () => {
     option.click();
     fixture.detectChanges();
     expect(writes().map((r) => r.request.body)).toEqual([
-      { run_id: '1', writes: { Engine: { 'engine.gear': 3 } } },
+      { run_id: '1', instance: 'x', writes: { Engine: { 'engine.gear': 3 } } },
     ]);
   });
 

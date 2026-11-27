@@ -1,3 +1,4 @@
+import type { ConnectionState } from './connection';
 import { HttpError, HttpRequest, HttpTransport, errorMessage } from './http';
 import {
   Open,
@@ -8,6 +9,8 @@ import {
 } from './protocol';
 import type { VariableAvailability } from './protocol';
 import { lenient } from './protocol/read';
+import { onItsWay, simMsOf, standsAt } from './front-compose';
+import { isHolding, isRunActive, type SessionView } from './session-state';
 import { ErrorSink, Readable, Writable, rethrowLater } from './values';
 import type { BindOptions, VariableBinding } from './variable-binding';
 
@@ -176,6 +179,28 @@ export interface OperationView {
   peers: Record<string, OperationPeer>;
 }
 
+/** Options of waiting for a queued write to settle (`queued.applied(options)`). */
+export interface WriteWaitOptions {
+  /**
+   * Watchdog timeout budget (ms; default WRITE_TIMEOUT_MS). Must be a finite number greater than 0.
+   * Suspended while healthy and paused/holding before all target ECUs settle; scaled by slow playback speed and
+   * target ECU step period while advancing towards due; bounded across disconnect/non-sync or past due.
+   */
+  timeoutMs?: number;
+  /** Aborts the wait (`WriteError('no-answer', ..., 'aborted', lastKnownOperation)`). */
+  signal?: AbortSignal;
+}
+
+/**
+ * Stages 1+2 result of `client.variables.enqueue`: the server accepted the write and every target ECU has queued it
+ * (or settled as `applied`). Call `applied()` for stages 3+4 (waiting for all target ECUs to apply it).
+ */
+export interface QueuedOperation {
+  readonly session: string;
+  readonly seq: number;
+  applied(options?: WriteWaitOptions): Promise<OperationView>;
+}
+
 /** Options of a write. */
 export interface WriteOptions {
   /** Optional server instance identifier to reject stale writes across server restarts. */
@@ -185,37 +210,30 @@ export interface WriteOptions {
   /** If the requested time cannot be met: reject (default; not applied) or apply (applied in the next step). */
   late?: 'reject' | 'apply';
   /**
-   * How long to wait for the result (whether it was applied) (ms; default WRITE_TIMEOUT_MS). While paused, and for a
-   * write at a later time (atMs), the write does not settle until the simulation gets there, so make this longer or
-   * follow the result in operations. `Infinity` never times out (waits until the run changes or close()). Values
-   * longer than about 24.8 days (2^31-1 ms) are capped there. A non-number or a value of 0 or less means the default.
-   * Counted from the HTTP answer.
+   * Watchdog timeout budget for waiting on the applied result (ms; default WRITE_TIMEOUT_MS). Must be a finite number
+   * greater than 0. Values longer than about 24.8 days (2^31-1 ms) are capped there.
    */
   timeoutMs?: number;
-  /**
-   * Called once when the server receives the write and returns the operation number (before the result; not called
-   * when refused or when no answer came). The number lets you follow the in-progress states (queued and so on) in
-   * `operations`, so a widget can show "accepted, waiting to be applied" or know that it may send the next write.
-   */
-  onAccepted?: (operation: { session: string; seq: number }) => void;
   /**
    * Forwarded to the HTTP transport (`HttpRequest.keepalive` -> `fetch(..., { keepalive })`). Set `true` for a
    * release write sent from a browser `pagehide` handler so the request can finish as the page unloads.
    */
   keepalive?: boolean;
+  /** Aborts the write or wait (`WriteError`). */
+  signal?: AbortSignal;
 }
 
 /**
  * A write that went wrong.
  * - refused: the server did not accept it (wrong type or range, unknown variable, no run and so on; code names the
  *   error). It was not sent, so you may fix it and send it again.
- * - failed: accepted but not applied (operation has the state and reason per participant).
+ * - failed: accepted but not applied (code names the settled state; operation has the state and reason per participant).
  * - no-answer: unknown whether it was applied. The result did not come within the timeout (operation has the last
- *   known state), there was no HTTP answer, the server failed midway (500), the Control Server's answer could not be
- *   waited for (code `write-timeout`) or the connection broke midway (`write-failed`), the run changed before the
- *   answer, the write settled while reconnecting and its result was lost (not in the summary's list and older than
- *   the boundary operations_from_seq), or the server could not keep all unsettled operations and stopped following it.
- *   **Sending it again as is may write twice**: check operations and the value first.
+ *   known state), there was no HTTP answer, the server failed midway (500), the ECUs did not queue it in time
+ *   (code `write-timeout`) or the connection broke midway (`write-failed`), the wait was aborted (`aborted`), the run
+ *   changed before the answer, the write settled while reconnecting and its result was lost (not in the summary's list
+ *   and older than the boundary operations_from_seq), or the server could not keep all unsettled operations and stopped
+ *   following it. **Sending it again as is may write twice**: check operations and the value first.
  * - closed: the client was closed (unknown whether it was applied).
  */
 export class WriteError extends Error {
@@ -223,8 +241,9 @@ export class WriteError extends Error {
     readonly kind: 'refused' | 'failed' | 'no-answer' | 'closed',
     message: string,
     /**
-     * Name of the server's error (for refused: `unknown-variable`, `not-writable`, `invalid-field` and so on; for
-     * no-answer: `write-timeout`, `write-failed`; null unless it is an HTTP error).
+     * Name of the error (for refused: `unknown-variable`, `not-writable`, `invalid-field`, `unknown-field`,
+     * `invalid-argument`, `aborted` and so on; for failed: `invalid`, `busy`, `late`, `rejected`, `cancelled`,
+     * `unknown`, `mixed`; for no-answer: `write-timeout`, `write-failed`, `aborted`, or null).
      */
     readonly code: string | null = null,
     /** The operation (once its number is known). */
@@ -258,11 +277,17 @@ export interface ClientVariables {
    */
   watch(variables: readonly VariableRef[] | 'all', options?: WatchOptions): VariableWatch;
   /**
-   * Writes variables: `write({Engine: {'engine.throttle': 50}})`. Sent to the current run (session of state); the
-   * server refuses if that run is not running (refused, code session-changed / not-running; if the run is not known
-   * yet, nothing is sent and the error is not-running). For an enum, give the value (number) or the item's name.
-   * Resolves with the operation once applied. Otherwise rejects with a WriteError (tell the cases apart by kind). The
-   * same write is never resent automatically.
+   * Sends a write and resolves with `QueuedOperation` once the server accepted it and every target ECU has queued it
+   * (stages 1+2). Rejects immediately with `WriteError` if refused, unanswered, or already terminally failed.
+   */
+  enqueue(
+    writes: Record<string, Record<string, number | boolean | string>>,
+    options?: WriteOptions,
+  ): Promise<QueuedOperation>;
+  /**
+   * Writes variables: `write({Engine: {'engine.throttle': 50}})`. Sugar for
+   * `enqueue(writes, options).then(q => q.applied(...))`: resolves with the operation once applied; rejects with a
+   * `WriteError` otherwise. The same write is never resent automatically.
    */
   write(
     writes: Record<string, Record<string, number | boolean | string>>,
@@ -276,6 +301,22 @@ export interface ClientVariables {
    * recreating a bind). Call close() when done with it.
    */
   bind(ref: VariableRef, options?: BindOptions): VariableBinding;
+}
+
+/** Internal hook letting `FrontVariable` release its in-flight token even when `queued.applied()` is never called. */
+export const ON_SETTLED = Symbol('onSettled');
+
+export interface InternalQueuedOperation extends QueuedOperation {
+  [ON_SETTLED]?(listener: (outcome: OperationView | WriteError) => void): () => void;
+}
+
+/** Clock and link signals driving the four-mode write watchdog. */
+export interface WriteClockSource {
+  readonly connection: Readable<ConnectionState>;
+  readonly ready: Readable<boolean>;
+  readonly rejected: Readable<boolean>;
+  readonly incompatible: Readable<string | null>;
+  readonly session: Readable<SessionView | null>;
 }
 
 /** Default time to wait for the result of a write (ms). */
@@ -310,6 +351,16 @@ export const WATCH_PERIODS_MS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10_000
 /** Default limit on variables named in one subscription (beyond it, that subscription asks for "all"). */
 const WATCH_VARIABLES = 2000;
 
+const WRITE_OPTION_FIELDS = new Set([
+  'instance',
+  'atMs',
+  'late',
+  'timeoutMs',
+  'keepalive',
+  'signal',
+]);
+const WRITE_WAIT_OPTION_FIELDS = new Set(['timeoutMs', 'signal']);
+
 const NO_VARIABLES: VariablesState = {
   session: null,
   status: 'unknown',
@@ -339,6 +390,114 @@ const isObject = (value: unknown): value is Fields =>
 const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback);
 const numberOrNull = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+export function isAbortSignalLike(value: unknown): value is AbortSignal {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as AbortSignal).aborted === 'boolean' &&
+    typeof (value as AbortSignal).addEventListener === 'function' &&
+    typeof (value as AbortSignal).removeEventListener === 'function'
+  );
+}
+
+export function validateWriteOptions(options: unknown): WriteError | null {
+  if (options === undefined) return null;
+  if (!isObject(options)) {
+    return new WriteError('refused', 'the options of write must be an object', 'invalid-argument');
+  }
+  const unknown = Object.keys(options).filter((k) => !WRITE_OPTION_FIELDS.has(k));
+  if (unknown.length > 0) {
+    return new WriteError(
+      'refused',
+      `the options of write have ${unknown.join(', ')}, which write does not know: the fields are ${[...WRITE_OPTION_FIELDS].join(', ')}`,
+      'unknown-field',
+    );
+  }
+  const atMs = options['atMs'];
+  if (atMs !== undefined && (typeof atMs !== 'number' || !Number.isFinite(atMs) || atMs < 0)) {
+    return new WriteError(
+      'refused',
+      'options.atMs must be a finite number of milliseconds greater than or equal to 0',
+      'invalid-argument',
+    );
+  }
+  const late = options['late'];
+  if (late !== undefined && late !== 'reject' && late !== 'apply') {
+    return new WriteError(
+      'refused',
+      "options.late must be 'reject' or 'apply'",
+      'invalid-argument',
+    );
+  }
+  const timeoutMs = options['timeoutMs'];
+  if (
+    timeoutMs !== undefined &&
+    (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0)
+  ) {
+    return new WriteError(
+      'refused',
+      'options.timeoutMs must be a finite number of milliseconds greater than 0',
+      'invalid-argument',
+    );
+  }
+  const keepalive = options['keepalive'];
+  if (keepalive !== undefined && typeof keepalive !== 'boolean') {
+    return new WriteError('refused', 'options.keepalive must be true or false', 'invalid-argument');
+  }
+  const signal = options['signal'];
+  if (signal !== undefined && !isAbortSignalLike(signal)) {
+    return new WriteError('refused', 'options.signal must be an AbortSignal', 'invalid-argument');
+  }
+  return null;
+}
+
+export function validateWriteWaitOptions(options: unknown): WriteError | null {
+  if (options === undefined) return null;
+  if (!isObject(options)) {
+    return new WriteError(
+      'refused',
+      'the options of applied must be an object',
+      'invalid-argument',
+    );
+  }
+  const unknown = Object.keys(options).filter((k) => !WRITE_WAIT_OPTION_FIELDS.has(k));
+  if (unknown.length > 0) {
+    return new WriteError(
+      'refused',
+      `the options of applied have ${unknown.join(', ')}, which applied does not know: the fields are ${[...WRITE_WAIT_OPTION_FIELDS].join(', ')}`,
+      'unknown-field',
+    );
+  }
+  const timeoutMs = options['timeoutMs'];
+  if (
+    timeoutMs !== undefined &&
+    (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0)
+  ) {
+    return new WriteError(
+      'refused',
+      'options.timeoutMs must be a finite number of milliseconds greater than 0',
+      'invalid-argument',
+    );
+  }
+  const signal = options['signal'];
+  if (signal !== undefined && !isAbortSignalLike(signal)) {
+    return new WriteError('refused', 'options.signal must be an AbortSignal', 'invalid-argument');
+  }
+  return null;
+}
+
+function failedWriteError(outcome: OperationView): WriteError {
+  const reasons = Object.entries(outcome.peers)
+    .filter(([, p]) => p.state !== 'applied')
+    .map(([name, p]) => `${name}: ${p.state}${p.reason ? ` (${p.reason})` : ''}`);
+  return new WriteError(
+    'failed',
+    `the write (operation ${outcome.seq}) was not applied: ${reasons.join('; ') || outcome.state}`,
+    outcome.state,
+    outcome,
+  );
+}
 
 /** Reads `variables` of a summary. Unreadable parts are skipped as if absent (additions are compatible). */
 export function readVariables(value: unknown, session: string | null): VariablesState {
@@ -513,25 +672,6 @@ interface Bucket {
   asked: string | null;
 }
 
-/** A write waiting for its answer. */
-interface Pending {
-  /**
-   * The run the write was aimed at (the run when it was written), and the operation number (null until the HTTP
-   * answer).
-   */
-  session: string;
-  epoch: number;
-  seq: number | null;
-  resolve: (operation: OperationView) => void;
-  reject: (error: WriteError) => void;
-  timer: ReturnType<typeof setTimeout> | undefined;
-  /**
-   * The operations part of the last summary that arrived while waiting for the HTTP answer (number) (checked once the
-   * number is known).
-   */
-  summary?: Listed;
-}
-
 /**
  * The operations part of a summary: the list, the boundary (null from a server that does not say), and whether the
  * server could not keep all unsettled operations.
@@ -542,19 +682,68 @@ interface Listed {
   openOmitted: boolean;
 }
 
+/** Stage 1+2 request waiting for `POST api/write` to answer. */
+interface HttpInFlight {
+  session: string;
+  epoch: number;
+  targetPeers: readonly string[];
+  requestedAtMs: number | null;
+  simMsAtEnqueue: number | null;
+  defaultTimeoutMs: number;
+  signal: AbortSignal | undefined;
+  summary?: Listed;
+  resolve: (queued: InternalQueuedOperation) => void;
+  reject: (error: WriteError) => void;
+}
+
+type WatchdogMode = 'armed-unhealthy' | 'suspended' | 'armed-due' | 'liveness';
+
+/** One `queued.applied()` waiter driven by the four-mode clock-aware watchdog. */
+interface WatchdogWaiter {
+  tracker: QueuedTracker;
+  timeoutMs: number;
+  signal: AbortSignal | undefined;
+  onAbort: (() => void) | null;
+  mode: WatchdogMode | null;
+  modeEnteredAtMs: number;
+  /** Cumulative wall-clock ms spent in `armed-unhealthy`; never reset across flapping or resync. */
+  unhealthyElapsedMs: number;
+  /** Normalized fraction [0, 1] of active `armed-due` budget consumed; never reset on `simMs` progress. */
+  dueUsed: number;
+  /** Active `armed-due` budget (ms) during the previous segment, for fractional consumption across speed changes. */
+  lastDueBudgetMs: number;
+  /** Normalized fraction [0, 1] of active `liveness` budget consumed since last strict `simMs` progress. */
+  livenessUsed: number;
+  /** Active `liveness` budget (ms) during the previous segment, for fractional consumption across speed changes. */
+  lastLivenessBudgetMs: number;
+  /** Highest `simMs` observed so far; strict increase (`simMs > maxSimMsSeen`) resets `livenessUsed` to 0. */
+  maxSimMsSeen: number | null;
+  /** First `simMs` observed for an immediate write whose anchor `simMs` was initially null. */
+  firstObservedSimMs: number | null;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  resolve: (operation: OperationView) => void;
+  reject: (error: WriteError) => void;
+}
+
 /**
- * If the summary shows that the result of the operation with that number will no longer arrive, returns that error
- * (null if it cannot tell). The summary's list holds every unsettled operation and every operation numbered at or
- * above the boundary (operations_from_seq) that the server receives (a scenario's own writes never come; a write of
- * this client always does). So an operation that is not in the list and is older than the boundary
- * settled while disconnected, and its notification will not come any more. Operations in the list, and those numbered
- * at or above the boundary, just have not arrived yet, so keep waiting. A summary that does not give the boundary
- * cannot tell them apart, so keep waiting.
- *
- * When the server could not keep all unsettled operations (operations_open_omitted is 1 or more), an old operation not
- * in the list cannot be told apart as settled or unsettled. The server no longer follows it, so it also becomes "no
- * answer came" (told apart by the text; no-answer means "unknown whether it was applied").
+ * Plain state tracker for a queued operation `(session, seq)`. Holds no Promise of its own until `applied()` is
+ * called, so settling before `applied()` (or never calling `applied()`) never causes an unhandled rejection.
  */
+interface QueuedTracker {
+  session: string;
+  epoch: number;
+  seq: number;
+  targetPeers: readonly string[];
+  requestedAtMs: number | null;
+  queuedHolding: boolean;
+  anchorSimMs: number | null;
+  defaultTimeoutMs: number;
+  lastOperation: OperationView | null;
+  settled: OperationView | WriteError | null;
+  waiters: Set<WatchdogWaiter>;
+  doneListeners: Set<(outcome: OperationView | WriteError) => void>;
+}
+
 function lost(seq: number, summary: Listed): WriteError | null {
   if (summary.fromSeq === null || seq >= summary.fromSeq) return null;
   if (summary.operations.some((o) => o.seq === seq)) return null;
@@ -566,6 +755,52 @@ function lost(seq: number, summary: Listed): WriteError | null {
       : `the result of the write (operation ${seq}) was lost while the connection was down (it was settled ` +
           'meanwhile, and the server does not list it any more): look at the values before writing again',
   );
+}
+
+function simMsOfSession(session: SessionView | null): number | null {
+  if (!session) return null;
+  return isHolding(session) ? 0 : simMsOf(session);
+}
+
+function controllerTimeStepMs(session: SessionView | null): number {
+  const check = session?.check;
+  const direct = check?.time_step_ms;
+  if (typeof direct === 'number' && Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+  const rawStep = check && isObject(check.raw) ? check.raw['time_step_ms'] : undefined;
+  if (typeof rawStep === 'number' && Number.isFinite(rawStep) && rawStep > 0) {
+    return rawStep;
+  }
+  return 10;
+}
+
+function peerStepMs(session: SessionView | null, peerName: string, timeStepMs: number): number {
+  const check = session?.check;
+  const participant = check?.participants.find((p) => p.name === peerName);
+  if (
+    participant &&
+    typeof participant.step_ms === 'number' &&
+    Number.isFinite(participant.step_ms) &&
+    participant.step_ms > 0
+  ) {
+    return participant.step_ms;
+  }
+  const controlRaw =
+    participant?.control && isObject(participant.control.raw) ? participant.control.raw : null;
+  const reported =
+    participant && isObject(participant.raw) && isObject(participant.raw['reported'])
+      ? participant.raw['reported']
+      : null;
+  const stepNs = controlRaw?.['step_ns'] ?? reported?.['step_ns'];
+  if (typeof stepNs === 'number' && Number.isFinite(stepNs) && stepNs > 0) {
+    return Math.max(1, Math.ceil(stepNs / 1_000_000));
+  }
+  return timeStepMs;
+}
+
+function isSettledPeerState(state: string | undefined): boolean {
+  return state !== undefined && state !== 'sent' && state !== 'queued' && state !== 'disconnected';
 }
 
 /** What VariablesFeed asks of the connection. */
@@ -580,20 +815,11 @@ const runIdOf = (value: unknown): string | null =>
 
 /**
  * ECU variables: list and state, value watches, writes and their results. No framework needed.
- *
- * - List and state come from `variables` in hello and from `variables` notifications (`session` notifications do not
- *   carry them). When the run changes, they are unknown until that run's `variables` notification arrives.
- * - Each variable goes into the subscription with the shortest interval requested for it (one subscription per
- *   interval). A changed subscription is resent with the same id (the server replaces it); after a reconnect, resume()
- *   resends them all.
- * - Per variable, keeps the last value and as many history points as requested (ring buffer). Dropped when the run
- *   changes.
- * - Write results arrive in `operation` notifications. They can arrive before the HTTP answer (the operation number),
- *   so recent operations are kept and matched once the number is known.
  */
 export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private instanceId: string | null = null;
   private epoch = 0;
+  private lastValuesSimMs: number | null = null;
   private readonly stateValue: Writable<VariablesState>;
   private readonly operationsValue: Writable<readonly OperationView[]>;
   private readonly handles = new Set<Handle>();
@@ -602,7 +828,8 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   /** Cached keys kept across a reconnect until a post-reconnect `values` sample arrives. */
   private readonly awaitingRefresh = new Set<string>();
   private readonly histories = new Map<string, History>();
-  private readonly pending = new Set<Pending>();
+  private readonly inFlight = new Set<HttpInFlight>();
+  private readonly trackers = new Set<QueuedTracker>();
   /** Variables someone watches (null: a watch observes all). */
   private watched: Set<string> | null = new Set();
   /** History points requested by watches of all variables (the largest request). */
@@ -629,6 +856,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
       watch_period_ms_max?: number;
       watch_variables?: number;
     } = () => ({}),
+    private readonly clock?: WriteClockSource,
   ) {
     this.stateValue = new Writable<VariablesState>(NO_VARIABLES, Object.is, onError);
     this.operationsValue = new Writable<readonly OperationView[]>([], Object.is, onError);
@@ -637,6 +865,15 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     this.operations = this.operationsValue.readonly();
     this.watchProblem = this.problemValue.readonly();
     link.onBatch((batch, current) => this.receive(batch, current));
+    if (clock) {
+      const reevaluate = () => this.evaluateAllWaiters();
+      clock.connection.subscribe(reevaluate);
+      clock.ready.subscribe(reevaluate);
+      clock.rejected.subscribe(reevaluate);
+      clock.incompatible.subscribe(reevaluate);
+      clock.session.subscribe(reevaluate);
+    }
+    this.stateValue.subscribe(() => this.evaluateAllWaiters());
   }
 
   // --- Connection -----------------------------------------------------------------------------
@@ -661,11 +898,14 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
 
   /** The client was closed: fail the pending writes (including those waiting for the HTTP answer). Watches stay. */
   dispose(): void {
-    for (const pending of [...this.pending]) {
-      this.settle(
-        pending,
-        new WriteError('closed', 'the client was closed before the result came'),
-      );
+    const closedError = () =>
+      new WriteError('closed', 'the client was closed before the result came');
+    for (const flight of [...this.inFlight]) {
+      this.inFlight.delete(flight);
+      flight.reject(closedError());
+    }
+    for (const tracker of [...this.trackers]) {
+      this.settleTracker(tracker, closedError());
     }
   }
 
@@ -917,21 +1157,19 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
    * is kept and checked the same way once the number is known.
    */
   private forgetLost(session: string, summary: Listed): void {
-    for (const pending of [...this.pending]) {
-      if (pending.session !== session) continue;
-      if (pending.seq === null) {
-        pending.summary = summary;
-        continue;
-      }
-      const error = lost(pending.seq, summary);
-      if (error) this.settle(pending, error);
+    for (const flight of [...this.inFlight]) {
+      if (flight.session === session) flight.summary = summary;
+    }
+    for (const tracker of [...this.trackers]) {
+      if (tracker.session !== session) continue;
+      const error = lost(tracker.seq, summary);
+      if (error) this.settleTracker(tracker, error);
     }
   }
 
   /**
-   * Switched to another run: drop the previous run's values, histories and operations (histories not requested by name
-   * are dropped with their memory, so they do not keep growing as the variables change from run to run). Writes
-   * waiting for the previous run's result are failed, since the result will not come.
+   * Switched to another run: drop the previous run's values, histories and operations. Writes waiting for the previous
+   * run's result are failed, since the result will not come.
    */
   private enter(
     session: string | null,
@@ -954,6 +1192,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     // Clear every observable part before notifying any subscriber. A subscriber can synchronously
     // fetch the new run, so it must never observe or revive the previous run's values or schema.
     this.epoch += 1;
+    this.lastValuesSimMs = null;
     this.readings.clear();
     this.awaitingRefresh.clear();
     this.histories.clear();
@@ -962,15 +1201,25 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     const notifyOperations = this.operationsValue.setDeferred([]);
     const notifyState = this.stateValue.setDeferred(initial);
     const notifyWatches = [...this.handles].map((handle) => handle.values.setDeferred({}));
-    for (const pending of [...this.pending]) {
-      if (force || pending.session !== session) {
-        this.settle(
-          pending,
+    for (const flight of [...this.inFlight]) {
+      if (force || flight.session !== session) {
+        this.inFlight.delete(flight);
+        flight.reject(
           new WriteError(
             'no-answer',
-            `the run ${pending.session} is over (another one has started): the result of the write ` +
-              (pending.seq === null ? '' : `(operation ${pending.seq}) `) +
-              'did not come',
+            `the run ${flight.session} is over (another one has started): the result of the write did not come`,
+          ),
+        );
+      }
+    }
+    for (const tracker of [...this.trackers]) {
+      if (force || tracker.session !== session) {
+        this.settleTracker(
+          tracker,
+          new WriteError(
+            'no-answer',
+            `the run ${tracker.session} is over (another one has started): the result of the write ` +
+              `(operation ${tracker.seq}) did not come`,
           ),
         );
       }
@@ -986,6 +1235,10 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     const peers = message['peers'];
     if (!isObject(peers)) return;
     const simMs = numberOrNull(message['sim_ms']);
+    if (simMs !== null && (this.lastValuesSimMs === null || simMs > this.lastValuesSimMs)) {
+      this.lastValuesSimMs = simMs;
+      this.evaluateAllWaiters();
+    }
     const paused = message['paused'] === true;
     const mayGrow = (more: number) => {
       if (this.historyReserved + more > HISTORY_TOTAL_MAX) return false;
@@ -1071,7 +1324,11 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     return out;
   }
 
-  // --- Operations -----------------------------------------------------------------------------
+  // --- Operations & Four-Stage Write -----------------------------------------------------------
+
+  private findOperation(session: string, seq: number): OperationView | undefined {
+    return this.operationsValue.get().find((o) => o.seq === seq && o.session === session);
+  }
 
   private withOperation(
     operations: readonly OperationView[],
@@ -1085,11 +1342,6 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     return next.length > OPERATIONS_KEPT ? next.slice(next.length - OPERATIONS_KEPT) : next;
   }
 
-  /**
-   * Replaces the list of operations and clears the writes whose result has settled. `fresh` holds the operations that
-   * just arrived (a batch of notifications, the list in a summary): the list is cut to OPERATIONS_KEPT entries, so
-   * settled operations cut from the list are picked up from here.
-   */
   private setOperations(
     operations: readonly OperationView[],
     fresh: readonly OperationView[] = [],
@@ -1106,53 +1358,368 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
     if (!current()) return () => undefined;
     // Install the observable list and settle confirmed results before any subscriber runs.
     const notify = this.operationsValue.setDeferred(operations);
-    for (const pending of [...this.pending]) {
-      if (pending.seq === null) continue;
-      const mine = (o: OperationView) =>
-        o.done && o.seq === pending.seq && o.session === pending.session;
-      const operation = fresh.find(mine) ?? operations.find(mine);
-      if (operation) this.settle(pending, operation);
+    for (const tracker of [...this.trackers]) {
+      let latest: OperationView | undefined;
+      for (let i = fresh.length - 1; i >= 0; i--) {
+        const candidate = fresh[i];
+        if (candidate && candidate.seq === tracker.seq && candidate.session === tracker.session) {
+          latest = candidate;
+          break;
+        }
+      }
+      if (!latest) {
+        latest = operations.find((o) => o.seq === tracker.seq && o.session === tracker.session);
+      }
+      if (latest) {
+        tracker.lastOperation = latest;
+        if (latest.done) {
+          this.settleTracker(tracker, latest);
+        }
+      }
     }
+    this.evaluateAllWaiters();
     return notify;
   }
 
-  private settle(pending: Pending, outcome: OperationView | WriteError): void {
-    if (!this.pending.delete(pending)) return;
-    clearTimeout(pending.timer);
-    if (outcome instanceof WriteError) {
-      pending.reject(outcome);
-    } else if (outcome.state === 'applied') {
-      pending.resolve(outcome);
-    } else {
-      const reasons = Object.entries(outcome.peers)
-        .filter(([, p]) => p.state !== 'applied')
-        .map(([name, p]) => `${name}: ${p.state}${p.reason ? ` (${p.reason})` : ''}`);
-      pending.reject(
-        new WriteError(
-          'failed',
-          `the write (operation ${outcome.seq}) was not applied: ${reasons.join('; ') || outcome.state}`,
-          null,
-          outcome,
-        ),
-      );
+  private settleTracker(tracker: QueuedTracker, outcome: OperationView | WriteError): void {
+    if (tracker.settled !== null) return;
+    tracker.settled = outcome;
+    if (!(outcome instanceof WriteError)) {
+      tracker.lastOperation = outcome;
+    }
+    this.trackers.delete(tracker);
+    for (const listener of [...tracker.doneListeners]) {
+      tracker.doneListeners.delete(listener);
+      try {
+        listener(outcome);
+      } catch (error) {
+        this.onError(error);
+      }
+    }
+    for (const waiter of [...tracker.waiters]) {
+      this.finishWaiter(waiter, outcome);
     }
   }
 
-  write(
-    writes: Record<string, Record<string, number | boolean | string>>,
-    options: WriteOptions = {},
+  private cleanupWaiter(waiter: WatchdogWaiter): void {
+    clearTimeout(waiter.timer);
+    waiter.timer = undefined;
+    if (waiter.onAbort && waiter.signal) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort);
+      waiter.onAbort = null;
+    }
+    waiter.tracker.waiters.delete(waiter);
+  }
+
+  private finishWaiter(waiter: WatchdogWaiter, outcome: OperationView | WriteError): void {
+    if (!waiter.tracker.waiters.has(waiter)) return;
+    this.cleanupWaiter(waiter);
+    if (outcome instanceof WriteError) {
+      waiter.reject(outcome);
+    } else if (outcome.state === 'applied') {
+      waiter.resolve(outcome);
+    } else {
+      waiter.reject(failedWriteError(outcome));
+    }
+  }
+
+  private currentSimMs(session: string): number | null {
+    const sessionView = this.clock?.session.get() ?? null;
+    const fromSession =
+      sessionView && sessionView.id === session ? simMsOfSession(sessionView) : null;
+    const fromValues = this.stateValue.get().session === session ? this.lastValuesSimMs : null;
+    if (fromSession !== null && fromValues !== null) return Math.max(fromSession, fromValues);
+    return fromSession ?? fromValues;
+  }
+
+  private evaluateAllWaiters(): void {
+    if (this.trackers.size === 0) return;
+    for (const tracker of [...this.trackers]) {
+      for (const waiter of [...tracker.waiters]) {
+        this.evaluateWaiter(waiter);
+      }
+    }
+  }
+
+  private evaluateWaiter(waiter: WatchdogWaiter): void {
+    const { tracker } = waiter;
+    if (!tracker.waiters.has(waiter) || tracker.settled !== null) return;
+
+    const now = Date.now();
+    const dt = Math.max(0, now - waiter.modeEnteredAtMs);
+    waiter.modeEnteredAtMs = now;
+
+    if (dt > 0) {
+      if (waiter.mode === 'armed-unhealthy') {
+        waiter.unhealthyElapsedMs += dt;
+      } else if (waiter.mode === 'armed-due' && waiter.lastDueBudgetMs > 0) {
+        waiter.dueUsed = Math.min(1, waiter.dueUsed + dt / waiter.lastDueBudgetMs);
+      } else if (waiter.mode === 'liveness' && waiter.lastLivenessBudgetMs > 0) {
+        waiter.livenessUsed = Math.min(1, waiter.livenessUsed + dt / waiter.lastLivenessBudgetMs);
+      }
+    }
+
+    const sessionView = this.clock?.session.get() ?? null;
+    const varsState = this.stateValue.get();
+    const simMs = this.currentSimMs(tracker.session);
+    if (simMs !== null) {
+      if (waiter.firstObservedSimMs === null) waiter.firstObservedSimMs = simMs;
+      if (waiter.maxSimMsSeen === null) {
+        waiter.maxSimMsSeen = simMs;
+      } else if (simMs > waiter.maxSimMsSeen) {
+        waiter.maxSimMsSeen = simMs;
+        waiter.livenessUsed = 0;
+      }
+    }
+
+    const lastOp =
+      tracker.lastOperation ?? this.findOperation(tracker.session, tracker.seq) ?? null;
+    if (lastOp) tracker.lastOperation = lastOp;
+    const incompletePeers =
+      tracker.targetPeers.length > 0
+        ? tracker.targetPeers.filter((p) => !isSettledPeerState(lastOp?.peers[p]?.state))
+        : [];
+
+    const timeStepMs = controllerTimeStepMs(sessionView);
+    let targetStepMs = timeStepMs;
+    let dueSimMs: number | null = null;
+    const anchorSimMs = tracker.anchorSimMs ?? waiter.firstObservedSimMs;
+    const hasAnchor =
+      tracker.requestedAtMs !== null || tracker.queuedHolding || anchorSimMs !== null;
+    const duePeers = incompletePeers.length > 0 ? incompletePeers : tracker.targetPeers;
+    for (const peerName of duePeers) {
+      const stepMs = peerStepMs(sessionView, peerName, timeStepMs);
+      if (incompletePeers.length === 0 || incompletePeers.includes(peerName)) {
+        if (stepMs > targetStepMs) targetStepMs = stepMs;
+      }
+      if (hasAnchor) {
+        const earliestStep = tracker.queuedHolding
+          ? 0
+          : anchorSimMs !== null
+            ? (Math.floor(anchorSimMs / stepMs) + 1) * stepMs
+            : 0;
+        const atStep =
+          tracker.requestedAtMs !== null ? Math.ceil(tracker.requestedAtMs / stepMs) * stepMs : 0;
+        const dueStart = Math.max(atStep, earliestStep);
+        const duePass = dueStart + Math.max(stepMs, timeStepMs);
+        if (dueSimMs === null || duePass > dueSimMs) {
+          dueSimMs = duePass;
+        }
+      }
+    }
+
+    let nextMode: WatchdogMode;
+    if (!this.clock) {
+      nextMode = 'liveness';
+    } else {
+      const allIncompleteConnected = incompletePeers.every((peerName) => {
+        const vp = varsState.peers.find((p) => p.name === peerName);
+        if (!vp || !vp.connected) return false;
+        if (lastOp?.peers[peerName]?.state === 'disconnected') return false;
+        const sp = sessionView?.participants.find((p) => p.name === peerName);
+        if (
+          sp &&
+          (sp.state === 'ended' ||
+            sp.state === 'failed' ||
+            sp.state === 'killed' ||
+            sp.state === 'not_started' ||
+            (sp.controlLink !== null && sp.controlLink.state !== 'connected'))
+        ) {
+          return false;
+        }
+        return true;
+      });
+      const healthy =
+        this.clock.connection.get() === 'open' &&
+        this.clock.ready.get() === true &&
+        !this.clock.rejected.get() &&
+        this.clock.incompatible.get() === null &&
+        sessionView !== null &&
+        sessionView.id === tracker.session &&
+        isRunActive(sessionView) &&
+        sessionView.result === null &&
+        sessionView.launcher.silentSeconds === null &&
+        varsState.session === tracker.session &&
+        varsState.status === 'ready' &&
+        allIncompleteConnected;
+
+      if (!healthy) {
+        nextMode = 'armed-unhealthy';
+      } else if (
+        (isHolding(sessionView) || standsAt(sessionView) !== null) &&
+        !onItsWay(sessionView)
+      ) {
+        nextMode = 'suspended';
+      } else if (dueSimMs !== null && simMs !== null && simMs >= dueSimMs) {
+        nextMode = 'armed-due';
+      } else {
+        nextMode = 'liveness';
+      }
+    }
+
+    clearTimeout(waiter.timer);
+    waiter.timer = undefined;
+    waiter.mode = nextMode;
+
+    if (nextMode === 'suspended') {
+      return;
+    }
+
+    const rawSpeed = sessionView?.launcherState?.speed ?? sessionView?.speed ?? null;
+    const effectiveMs =
+      typeof rawSpeed === 'number' && Number.isFinite(rawSpeed) && rawSpeed > 0 && rawSpeed < 1
+        ? Math.min(
+            TIMER_MAX_MS,
+            Math.max(waiter.timeoutMs, Math.ceil((targetStepMs / rawSpeed) * 2) + 2000),
+          )
+        : waiter.timeoutMs;
+
+    let rawRemainingMs: number;
+    if (nextMode === 'armed-unhealthy') {
+      rawRemainingMs = waiter.timeoutMs - waiter.unhealthyElapsedMs;
+    } else if (nextMode === 'armed-due') {
+      waiter.lastDueBudgetMs = effectiveMs;
+      rawRemainingMs = (1 - waiter.dueUsed) * effectiveMs;
+    } else {
+      waiter.lastLivenessBudgetMs = effectiveMs;
+      rawRemainingMs = (1 - waiter.livenessUsed) * effectiveMs;
+    }
+    const remainingMs =
+      Math.abs(rawRemainingMs - Math.round(rawRemainingMs)) < 1e-6
+        ? Math.round(rawRemainingMs)
+        : rawRemainingMs;
+
+    if (remainingMs <= 0) {
+      const last =
+        tracker.lastOperation ?? this.findOperation(tracker.session, tracker.seq) ?? null;
+      this.finishWaiter(
+        waiter,
+        new WriteError(
+          'no-answer',
+          `no result of the write (operation ${tracker.seq}) came in ${waiter.timeoutMs / 1000} s` +
+            (last
+              ? `: it is ${last.state} (it is applied when the simulation reaches its step)`
+              : ''),
+          null,
+          last,
+        ),
+      );
+      return;
+    }
+
+    const delayMs = Math.min(TIMER_MAX_MS, Math.max(1, Math.ceil(remainingMs)));
+    waiter.timer = setTimeout(() => {
+      this.evaluateWaiter(waiter);
+    }, delayMs);
+    (waiter.timer as { unref?: () => void }).unref?.();
+  }
+
+  private waitForApplied(
+    tracker: QueuedTracker,
+    options?: WriteWaitOptions,
   ): Promise<OperationView> {
-    // Timeout: no timer for infinity (the end of the run and close() always clear it). A non-number or 0 or less means
-    // the default. An overly long value is capped at the longest a timer accepts (passed as is, it would time out at
-    // once)
-    const asked = options.timeoutMs;
-    const timeoutMs =
-      asked === Infinity
-        ? Infinity
-        : typeof asked === 'number' && asked > 0
-          ? Math.min(asked, TIMER_MAX_MS)
-          : WRITE_TIMEOUT_MS;
-    // Aim the write at the current run. The server refuses if that run is no longer running (session-changed)
+    const bad = validateWriteWaitOptions(options);
+    if (bad) return Promise.reject(bad);
+    const askedTimeout = options?.timeoutMs;
+    const timeoutMs = Math.min(
+      askedTimeout !== undefined ? askedTimeout : tracker.defaultTimeoutMs,
+      TIMER_MAX_MS,
+    );
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      const last =
+        (tracker.settled && !(tracker.settled instanceof WriteError) ? tracker.settled : null) ??
+        tracker.lastOperation ??
+        this.findOperation(tracker.session, tracker.seq) ??
+        null;
+      return Promise.reject(
+        new WriteError(
+          'no-answer',
+          `the wait for the write (operation ${tracker.seq}) was aborted: it may still take effect`,
+          'aborted',
+          last,
+        ),
+      );
+    }
+    if (tracker.settled !== null) {
+      if (tracker.settled instanceof WriteError) return Promise.reject(tracker.settled);
+      if (tracker.settled.state === 'applied') return Promise.resolve(tracker.settled);
+      return Promise.reject(failedWriteError(tracker.settled));
+    }
+    return new Promise<OperationView>((resolve, reject) => {
+      const initialSim = this.currentSimMs(tracker.session);
+      const waiter: WatchdogWaiter = {
+        tracker,
+        timeoutMs,
+        signal,
+        onAbort: null,
+        mode: null,
+        modeEnteredAtMs: Date.now(),
+        unhealthyElapsedMs: 0,
+        dueUsed: 0,
+        lastDueBudgetMs: timeoutMs,
+        livenessUsed: 0,
+        lastLivenessBudgetMs: timeoutMs,
+        maxSimMsSeen: initialSim,
+        firstObservedSimMs: initialSim,
+        timer: undefined,
+        resolve,
+        reject,
+      };
+      if (signal) {
+        const onAbort = () => {
+          const last =
+            tracker.lastOperation ?? this.findOperation(tracker.session, tracker.seq) ?? null;
+          this.finishWaiter(
+            waiter,
+            new WriteError(
+              'no-answer',
+              `the wait for the write (operation ${tracker.seq}) was aborted: it may still take effect`,
+              'aborted',
+              last,
+            ),
+          );
+        };
+        waiter.onAbort = onAbort;
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+      tracker.waiters.add(waiter);
+      this.evaluateWaiter(waiter);
+    });
+  }
+
+  enqueue(
+    writes: Record<string, Record<string, number | boolean | string>>,
+    options?: WriteOptions,
+  ): Promise<QueuedOperation> {
+    return this.enqueueInternal(writes, options);
+  }
+
+  /**
+   * Internal path for `VariableBinder`: invokes `onQueued(seq)` synchronously when the HTTP 200 answer arrives so
+   * synchronous widget state (`BoundVariable.writeStatus` / held-value dispatch) transitions in the same turn, then
+   * waits on the same four-mode clock-aware watchdog (`waitForApplied`).
+   */
+  enqueueForBinder(
+    writes: Record<string, Record<string, number | boolean | string>>,
+    onQueued: (seq: number) => void,
+  ): Promise<OperationView> {
+    return this.enqueueInternal(writes, undefined, onQueued).then((queued) => queued.applied());
+  }
+
+  private enqueueInternal(
+    writes: Record<string, Record<string, number | boolean | string>>,
+    options?: WriteOptions,
+    onQueuedSync?: (seq: number) => void,
+  ): Promise<QueuedOperation> {
+    const bad = validateWriteOptions(options);
+    if (bad) return Promise.reject(bad);
+    if (options?.signal?.aborted) {
+      return Promise.reject(
+        new WriteError('refused', 'the write was aborted before it was sent', 'aborted'),
+      );
+    }
+    const defaultTimeoutMs = Math.min(options?.timeoutMs ?? WRITE_TIMEOUT_MS, TIMER_MAX_MS);
     const session = this.stateValue.get().session;
     const epoch = this.epoch;
     if (session === null) {
@@ -1160,30 +1727,59 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         new WriteError('refused', 'there is no run to write to', 'not-running'),
       );
     }
+    const simMsAtEnqueue = this.currentSimMs(session);
+    const targetPeers = isObject(writes) ? Object.keys(writes) : [];
+
     const body: Fields = { run_id: session, writes };
-    if (options.instance !== undefined) body['instance'] = options.instance;
-    if (options.atMs !== undefined) body['at_ms'] = options.atMs;
-    if (options.late !== undefined) body['late'] = options.late;
-    return new Promise<OperationView>((resolve, reject) => {
-      const pending: Pending = { session, epoch, seq: null, resolve, reject, timer: undefined };
-      this.pending.add(pending);
-      const known = () =>
-        this.operationsValue
-          .get()
-          .find((o) => o.seq === pending.seq && o.session === pending.session);
+    const instance = options?.instance ?? this.instanceId ?? undefined;
+    if (instance !== undefined) body['instance'] = instance;
+    if (options?.atMs !== undefined) body['at_ms'] = options.atMs;
+    if (options?.late !== undefined) body['late'] = options.late;
+
+    return new Promise<QueuedOperation>((resolve, reject) => {
+      const flight: HttpInFlight = {
+        session,
+        epoch,
+        targetPeers,
+        requestedAtMs: options?.atMs ?? null,
+        simMsAtEnqueue,
+        defaultTimeoutMs,
+        signal: options?.signal,
+        resolve,
+        reject,
+      };
+      this.inFlight.add(flight);
       const request: HttpRequest = { method: 'POST', path: 'api/write', body };
-      if (options.keepalive !== undefined) request.keepalive = options.keepalive;
+      if (options?.keepalive !== undefined) request.keepalive = options.keepalive;
+      if (options?.signal !== undefined) request.signal = options.signal;
       this.http(request, (outcome) => {
-        if (!this.pending.has(pending)) return; // close() failed it first
+        if (!this.inFlight.delete(flight)) return; // close() or run switch failed it first
         if (!outcome.ok) {
           const error = outcome.error;
+          if (flight.signal?.aborted && error instanceof HttpError && error.status === 0) {
+            reject(
+              new WriteError(
+                'no-answer',
+                'the write was aborted while waiting for the server: it may have been taken; look at the operations and the values before writing again',
+                'aborted',
+              ),
+            );
+            return;
+          }
           const code = error instanceof HttpError ? (error.problem?.code ?? null) : null;
-          // No answer (status 0), the Control Server did not answer in time (504), the connection broke midway (502),
-          // the server failed midway (500): it may have been received. It is refused only when it is known not to have
-          // been sent
           const unsure = error instanceof HttpError && [0, 500, 502, 504].includes(error.status);
-          this.settle(
-            pending,
+          const detailSeq = error instanceof HttpError ? error.problem?.operation : undefined;
+          const partialOp: OperationView | null =
+            detailSeq !== undefined
+              ? (this.findOperation(flight.session, detailSeq) ?? {
+                  session: flight.session,
+                  seq: detailSeq,
+                  state: error.problem?.state ?? 'sent',
+                  done: false,
+                  peers: {},
+                })
+              : null;
+          reject(
             new WriteError(
               unsure ? 'no-answer' : 'refused',
               unsure
@@ -1191,6 +1787,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
                     'and the values before writing again)'
                 : errorMessage(error),
               code,
+              partialOp,
             ),
           );
           return;
@@ -1199,8 +1796,7 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         const seq = isObject(answer) ? answer['operation'] : null;
         const answered = isObject(answer) ? runIdOf(answer['run_id']) : null;
         if (!Number.isSafeInteger(seq) || answered === null) {
-          this.settle(
-            pending,
+          reject(
             new WriteError(
               'no-answer',
               'the server answered the write without an operation number',
@@ -1208,64 +1804,90 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
           );
           return;
         }
-        // The run changed before the answer (normally enter() fails it first): that run's result will not arrive any
-        // more
         if (
-          answered !== pending.session ||
-          this.stateValue.get().session !== pending.session ||
-          this.epoch !== pending.epoch
+          answered !== flight.session ||
+          this.stateValue.get().session !== flight.session ||
+          this.epoch !== flight.epoch
         ) {
-          this.settle(
-            pending,
+          reject(
             new WriteError(
               'no-answer',
-              `the run ${pending.session} ended before the answer to the write came (operation ${String(seq)}): ` +
+              `the run ${flight.session} ended before the answer to the write came (operation ${String(seq)}): ` +
                 'its result will not come; look at the values before writing again',
             ),
           );
           return;
         }
-        pending.seq = seq as number;
-        if (options.onAccepted) {
+        const opSeq = seq as number;
+        const summary = flight.summary;
+        const already =
+          this.findOperation(flight.session, opSeq) ??
+          summary?.operations.find((o) => o.seq === opSeq && o.session === flight.session);
+        if (already?.done && already.state !== 'applied') {
+          reject(failedWriteError(already));
+          return;
+        }
+        const lostErr = !already?.done && summary ? lost(opSeq, summary) : null;
+        const initialSettled: OperationView | WriteError | null = already?.done ? already : lostErr;
+        const activeSessionView = this.clock?.session.get() ?? null;
+        const sameSessionView =
+          activeSessionView && activeSessionView.id === flight.session ? activeSessionView : null;
+        const queuedHolding = isHolding(sameSessionView);
+        const anchorSimMs = this.currentSimMs(flight.session) ?? flight.simMsAtEnqueue;
+        const tracker: QueuedTracker = {
+          session: flight.session,
+          epoch: flight.epoch,
+          seq: opSeq,
+          targetPeers: flight.targetPeers,
+          requestedAtMs: flight.requestedAtMs,
+          queuedHolding,
+          anchorSimMs,
+          defaultTimeoutMs: flight.defaultTimeoutMs,
+          lastOperation: already ?? null,
+          settled: initialSettled,
+          waiters: new Set(),
+          doneListeners: new Set(),
+        };
+        if (initialSettled === null) {
+          this.trackers.add(tracker);
+        }
+        if (onQueuedSync) {
           try {
-            options.onAccepted({ session: pending.session, seq: pending.seq });
+            onQueuedSync(opSeq);
           } catch (error) {
             this.onError(error);
           }
-          if (!this.pending.has(pending)) return; // onAccepted called close()
         }
-        if (timeoutMs !== Infinity) {
-          pending.timer = setTimeout(() => {
-            const last = known();
-            this.settle(
-              pending,
-              new WriteError(
-                'no-answer',
-                `no result of the write (operation ${pending.seq}) came in ${timeoutMs / 1000} s` +
-                  (last
-                    ? `: it is ${last.state} (it is applied when the simulation reaches its step)`
-                    : ''),
-                null,
-                last ?? null,
-              ),
-            );
-          }, timeoutMs);
-          // Node: do not keep the process alive just for this timer
-          (pending.timer as { unref?: () => void }).unref?.();
-        }
-        // The result may have arrived before the HTTP answer (in a notification, or in a summary after a reconnect
-        // while waiting for the answer, which may show that the result will no longer arrive)
-        const summary = pending.summary;
-        const already =
-          known() ??
-          summary?.operations.find((o) => o.seq === seq && o.session === pending.session);
-        if (already?.done) this.settle(pending, already);
-        else if (summary) {
-          const error = lost(pending.seq, summary);
-          if (error) this.settle(pending, error);
-        }
+        const queued: InternalQueuedOperation = {
+          session: tracker.session,
+          seq: tracker.seq,
+          applied: (waitOptions?: WriteWaitOptions) => this.waitForApplied(tracker, waitOptions),
+          [ON_SETTLED]: (listener: (outcome: OperationView | WriteError) => void) => {
+            if (tracker.settled !== null) {
+              listener(tracker.settled);
+              return () => undefined;
+            }
+            tracker.doneListeners.add(listener);
+            return () => {
+              tracker.doneListeners.delete(listener);
+            };
+          },
+        };
+        resolve(queued);
       });
     });
+  }
+
+  write(
+    writes: Record<string, Record<string, number | boolean | string>>,
+    options?: WriteOptions,
+  ): Promise<OperationView> {
+    return this.enqueue(writes, options).then((queued) =>
+      queued.applied({
+        ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+      }),
+    );
   }
 
   // --- watch ----------------------------------------------------------------------------------
@@ -1420,8 +2042,6 @@ export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
         return { peer: key.slice(0, cut), name: key.slice(cut + 1) };
       }),
     );
-    // With many long names, one message would exceed the server's limit (the server closes the connection on such a
-    // message). Ask for all instead (and use only the watched variables on receipt)
     return utf8Length(JSON.stringify(named)) > WATCH_MESSAGE_BYTES ? message('all') : named;
   }
 

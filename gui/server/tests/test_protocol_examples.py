@@ -1150,8 +1150,9 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
             await sock.until(lambda m: m["type"] == "values" and m["paused"])
             req = {"run_id": sid, "writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}}
             status, body = await c.post("api/write", req)
-            check_example("write", http("A write: checked against the schema and given to the run's control server "
-                                        "(what became of it comes as operation messages).", "POST", "api/write", req,
+            check_example("write", http("A write: checked against the schema, given to the run's control server, "
+                                        "and answered once every target ECU has queued or settled it (its final "
+                                        "outcome comes as operation messages).", "POST", "api/write", req,
                                         status, body), gui)
             await sock.until(lambda m: m["type"] == "operation" and m["state"] == "queued")
             await c.post("api/time", {"command": "step", "ms": 200})

@@ -1,5 +1,5 @@
 {
-  "description": "A write: checked against the schema and given to the run's control server (what became of it comes as operation messages).",
+  "description": "A write: checked against the schema, given to the run's control server, and answered once every target ECU has queued or settled it (its final outcome comes as operation messages).",
   "request": {
     "method": "POST",
     "path": "api/write",

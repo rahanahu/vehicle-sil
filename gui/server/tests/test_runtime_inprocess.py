@@ -288,6 +288,9 @@ class _FakeSource:
     async def read_operation(self, seq: int, timeout_s: float):
         return None
 
+    async def wait_queued(self, seq: int, timeout_s: float):
+        return None
+
     async def write(self, writes, at_ns, late, timeout_s: float) -> int:
         return 1
 

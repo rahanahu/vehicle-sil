@@ -1,14 +1,35 @@
 // One variable as the front door shows it: `client.variable('Engine.engine.throttle')`. The value state, whether it can
-// be written and the write status are those of `client.low.variables.bind`; this adds a Promise for a write, a reason
-// with a sentence for what cannot be written, and a note for a value that is not a live one.
+// be written and the write status are those of `client.low.variables.bind`; this adds native Promises for `enqueue` and
+// `write`, a reason with a sentence for what cannot be written, and a note for a value that is not a live one.
 import type { GuiClient } from './client';
-import { ActionError, Control, FrontVariable, Reason, VariableView } from './front-types';
+import {
+  ActionError,
+  Control,
+  FrontVariable,
+  FrontWriteOptions,
+  QueuedWrite,
+  Reason,
+  VariableView,
+  WriteResult,
+} from './front-types';
 import { actionError } from './front-actions';
 import { sameData } from './front-compose';
 import type { BoundVariable, VariableBinding } from './variable-binding';
-import type { ValueCondition, WriteBlock, WriteValue } from './variable-state';
+import type { ValueCondition, WriteBlock, WriteStatus, WriteValue } from './variable-state';
 import { Readable, Writable } from './values';
-import { VariableRef, WriteError } from './variables';
+import {
+  InternalQueuedOperation,
+  ON_SETTLED,
+  OperationView,
+  VariableRef,
+  WriteError,
+  WriteOptions,
+  WriteWaitOptions,
+  validateWriteOptions,
+  validateWriteWaitOptions,
+} from './variables';
+
+const FRONT_WRITE_OPTION_FIELDS = new Set(['atMs', 'late', 'timeoutMs', 'keepalive', 'signal']);
 
 // `launcher` is not here: its sentence is the launcher's own (BoundVariable.launcherReason)
 const WHY_BLOCKED: Record<Exclude<WriteBlock, 'launcher'>, string> = {
@@ -70,6 +91,29 @@ export function refOf(ref: string | VariableRef): VariableRef {
   return { peer: ref.slice(0, dot), name: ref.slice(dot + 1) };
 }
 
+export function validateFrontWriteOptions(options: unknown): ActionError | null {
+  if (options === undefined) return null;
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    return new ActionError('invalid-argument', 'the options of write must be an object', 'refused');
+  }
+  const candidate = options as Record<string, unknown>;
+  const unknown = Object.keys(candidate).filter((k) => !FRONT_WRITE_OPTION_FIELDS.has(k));
+  if (unknown.length > 0) {
+    return new ActionError(
+      'unknown-field',
+      `the options of write have ${unknown.join(', ')}, which write does not know: the fields are ${[...FRONT_WRITE_OPTION_FIELDS].join(', ')}`,
+      'refused',
+    );
+  }
+  const err = validateWriteOptions(candidate);
+  return err ? new ActionError(err.code ?? 'invalid-argument', err.message, 'refused') : null;
+}
+
+export function validateFrontWaitOptions(options: unknown): ActionError | null {
+  const err = validateWriteWaitOptions(options);
+  return err ? new ActionError(err.code ?? 'invalid-argument', err.message, 'refused') : null;
+}
+
 interface Track {
   writing: boolean;
   problem: Reason | null;
@@ -121,16 +165,51 @@ export function viewOf(bound: BoundVariable, track: Track, launcher: Control): V
   };
 }
 
+function failedOutcome(operation: OperationView | null): 'refused' | 'unknown' {
+  if (!operation) return 'refused';
+  if (operation.state === 'unknown' || operation.state === 'mixed') return 'unknown';
+  for (const peer of Object.values(operation.peers)) {
+    if (
+      peer.state === 'unknown' ||
+      peer.state === 'applied' ||
+      (peer.appliedWrites !== null && peer.appliedWrites > 0)
+    ) {
+      return 'unknown';
+    }
+  }
+  return 'refused';
+}
+
 /** A write that failed, as an ActionError (`no-answer` and `closed` may have been applied: `unknown`). */
 export function writeFailure(error: unknown): ActionError {
+  if (error instanceof ActionError) return error;
   if (error instanceof WriteError) {
-    return new ActionError(
-      error.code ?? error.kind,
-      error.message,
-      error.kind === 'no-answer' || error.kind === 'closed' ? 'unknown' : 'refused',
-    );
+    const outcome =
+      error.kind === 'no-answer' || error.kind === 'closed'
+        ? 'unknown'
+        : error.kind === 'failed'
+          ? failedOutcome(error.operation)
+          : 'refused';
+    return new ActionError(error.code ?? error.kind, error.message, outcome);
   }
   return actionError(error);
+}
+
+function toLowWriteOptions(options?: FrontWriteOptions): WriteOptions | undefined {
+  if (!options) return undefined;
+  const out: WriteOptions = {};
+  if (options.atMs !== undefined) out.atMs = options.atMs;
+  if (options.late !== undefined) out.late = options.late;
+  if (options.timeoutMs !== undefined) out.timeoutMs = options.timeoutMs;
+  if (options.keepalive !== undefined) out.keepalive = options.keepalive;
+  if (options.signal !== undefined) out.signal = options.signal;
+  return out;
+}
+
+interface ScopedProblem {
+  scope: string;
+  reason: Reason;
+  binderStatusAtFailure: WriteStatus;
 }
 
 export function makeVariable(
@@ -141,15 +220,77 @@ export function makeVariable(
   /** What the launcher accepts for a write (see `viewOf`). */
   launcher: Readable<Control>,
 ): FrontVariable {
+  const active = new Map<symbol, string>();
+  let lastProblem: ScopedProblem | null = null;
   const track = new Writable<Track>({ writing: false, problem: null }, sameData);
-  const view = new Writable<VariableView | null>(null, sameData);
   let binding: VariableBinding | null = null;
   let count = 0;
   let stops: (() => void)[] = [];
 
+  const currentScope = (): string => {
+    const vars = low.variables as {
+      runEpoch?(): number;
+      state: Readable<{ session: string | null }>;
+    };
+    return `${vars.runEpoch?.() ?? 0}:${vars.state.get().session ?? ''}`;
+  };
+
+  const currentBinderStatus = (): WriteStatus => {
+    if (binding) return binding.state.get().writeStatus;
+    const once = low.variables.bind(ref, { visible: false });
+    try {
+      return once.state.get().writeStatus;
+    } finally {
+      once.close();
+    }
+  };
+
+  const computeTrack = (boundStatus?: WriteStatus): Track => {
+    const scope = currentScope();
+    for (const [token, tokenScope] of [...active]) {
+      if (tokenScope !== scope) active.delete(token);
+    }
+    if (lastProblem) {
+      if (lastProblem.scope !== scope) {
+        lastProblem = null;
+      } else if (
+        boundStatus !== undefined &&
+        boundStatus.kind === 'applied' &&
+        boundStatus !== lastProblem.binderStatusAtFailure
+      ) {
+        lastProblem = null;
+      }
+    }
+    return { writing: active.size > 0, problem: lastProblem?.reason ?? null };
+  };
+
+  const syncTrack = () => {
+    track.set(computeTrack(binding?.state.get().writeStatus));
+  };
+
+  const setProblemForScope = (writeScope: string, failure: ActionError) => {
+    if (currentScope() !== writeScope) return;
+    lastProblem = {
+      scope: writeScope,
+      reason: { code: failure.code, message: failure.message },
+      binderStatusAtFailure: currentBinderStatus(),
+    };
+  };
+
+  const clearProblemForScope = (writeScope: string) => {
+    if (lastProblem && lastProblem.scope === writeScope) {
+      lastProblem = null;
+    }
+  };
+
+  const view = new Writable<VariableView | null>(null, sameData);
+
   const refresh = (): VariableView | null => {
     if (!binding) return null;
-    const next = viewOf(binding.state.get(), track.get(), launcher.get());
+    const bound = binding.state.get();
+    const currentTrack = computeTrack(bound.writeStatus);
+    track.set(currentTrack);
+    const next = viewOf(bound, track.get(), launcher.get());
     if (!binding) return next;
     view.set(next);
     return view.get() ?? next;
@@ -160,7 +301,10 @@ export function makeVariable(
   const peek = (): VariableView => {
     const once = low.variables.bind(ref, { visible: false });
     try {
-      const next = viewOf(once.state.get(), track.get(), launcher.get());
+      const bound = once.state.get();
+      const currentTrack = computeTrack(bound.writeStatus);
+      track.set(currentTrack);
+      const next = viewOf(bound, track.get(), launcher.get());
       if (!peeked || !sameData(peeked, next)) peeked = next;
       return peeked;
     } finally {
@@ -175,6 +319,7 @@ export function makeVariable(
         binding = low.variables.bind(ref);
         stops = [
           binding.state.subscribe(refresh),
+          low.variables.state.subscribe(refresh),
           track.subscribe(refresh),
           launcher.subscribe(refresh),
         ];
@@ -197,31 +342,92 @@ export function makeVariable(
     },
   };
 
+  const enqueue = (value: WriteValue, options?: FrontWriteOptions): Promise<QueuedWrite> => {
+    const bad = validateFrontWriteOptions(options);
+    if (bad) return Promise.reject(bad);
+    if (options?.signal?.aborted) {
+      return Promise.reject(
+        new ActionError('aborted', 'the write was aborted before it was sent', 'refused'),
+      );
+    }
+    const own = refuse();
+    if (own) return Promise.reject(own);
+
+    const writeScope = currentScope();
+    const token = Symbol('write');
+    active.set(token, writeScope);
+    lastProblem = null;
+    syncTrack();
+
+    return low.variables
+      .enqueue({ [ref.peer]: { [ref.name]: value } }, toLowWriteOptions(options))
+      .then(
+        (queuedOp): QueuedWrite => {
+          const internal = queuedOp as InternalQueuedOperation;
+          const hasSettledHook = typeof internal[ON_SETTLED] === 'function';
+          internal[ON_SETTLED]?.((outcome) => {
+            const removed = active.delete(token);
+            if (!(outcome instanceof WriteError) && outcome.state === 'applied') {
+              clearProblemForScope(writeScope);
+            }
+            if (removed || lastProblem === null) syncTrack();
+          });
+          return {
+            session: queuedOp.session,
+            seq: queuedOp.seq,
+            peer: ref.peer,
+            name: ref.name,
+            value,
+            applied: (waitOptions?: WriteWaitOptions): Promise<WriteResult> => {
+              const badWait = validateFrontWaitOptions(waitOptions);
+              if (badWait) return Promise.reject(badWait);
+              return queuedOp.applied(waitOptions).then(
+                (operation): WriteResult => {
+                  if (!hasSettledHook) active.delete(token);
+                  clearProblemForScope(writeScope);
+                  syncTrack();
+                  const peerResult = operation.peers[ref.peer];
+                  return {
+                    session: operation.session,
+                    seq: operation.seq,
+                    peer: ref.peer,
+                    name: ref.name,
+                    value,
+                    appliedAtMs: peerResult?.appliedAtMs ?? null,
+                    late: peerResult?.late ?? false,
+                  };
+                },
+                (error: unknown) => {
+                  const failure = writeFailure(error);
+                  if (!hasSettledHook) active.delete(token);
+                  setProblemForScope(writeScope, failure);
+                  syncTrack();
+                  throw failure;
+                },
+              );
+            },
+          };
+        },
+        (error: unknown) => {
+          const failure = writeFailure(error);
+          active.delete(token);
+          setProblemForScope(writeScope, failure);
+          syncTrack();
+          throw failure;
+        },
+      );
+  };
+
   return {
     get: readable.get,
     subscribe: readable.subscribe,
-    write: (value: WriteValue, options?: { keepalive?: boolean }) => {
-      const own = refuse();
-      if (own) return Promise.reject(own);
-      track.set({ writing: true, problem: null });
-      return low.variables
-        .write(
-          { [ref.peer]: { [ref.name]: value } },
-          options?.keepalive !== undefined ? { keepalive: options.keepalive } : undefined,
-        )
-        .then(
-          () => {
-            track.set({ writing: false, problem: null });
-          },
-          (error: unknown) => {
-            const failure = writeFailure(error);
-            track.set({
-              writing: false,
-              problem: { code: failure.code, message: failure.message },
-            });
-            throw failure;
-          },
-        );
-    },
+    enqueue,
+    write: (value: WriteValue, options?: FrontWriteOptions): Promise<WriteResult> =>
+      enqueue(value, options).then((queued) =>
+        queued.applied({
+          ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+          ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+        }),
+      ),
   };
 }

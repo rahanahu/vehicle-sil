@@ -327,6 +327,112 @@ def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_pa
         run_async(talk, gui)
 
 
+def test_api_write_waits_for_queued_without_blocking_other_ecus_over_grpc(tmp_path: Path, control_env: dict) -> None:
+    import fake_control
+    from fake_runtime import in_process_gui
+    from vehicle_sil_gui import control
+    from vehicle_sil_gui.variables import Limits as VariableLimits
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "simple.yaml").write_text(
+        "vehicle_sil_simulation: 1\nparticipants:\n  - name: Engine\n    command: [echo, ok]\n"
+        "  - name: Body\n    command: [echo, ok]\n",
+        encoding="utf-8",
+    )
+    grpc_server = fake_control.FakeControl(
+        {"Engine": fake_control.variables("Engine"), "Body": fake_control.variables("Body")}
+    )
+    addr = grpc_server.start()
+    lib = control.load()
+
+    async def main() -> None:
+        async with in_process_gui(
+            root,
+            variable_limits=VariableLimits(write_timeout_s=0.25),
+            source=lambda _addr, _tok: control.GrpcSource(lib, addr, None),
+        ) as app:
+            sock = await app.client.ws()
+            await sock.until(lambda m: m["type"] == "synced")
+            status, started = await app.client.post("api/run", {"file": "simple.yaml", "start_paused": True})
+            assert status == 200
+            run_id = started["run_id"]
+            run = app.runtime.runs[0]
+            run.emit("control_server", address=addr, tls=False)
+            await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
+
+            # Hold Engine in SENT so its WaitOperation(WAIT_FOR_QUEUED) hangs; Body must still succeed concurrently!
+            grpc_server.hold_sent.add("Engine")
+            slow_engine = asyncio.create_task(
+                app.client.post("api/write", {"run_id": run_id, "writes": {"Engine": {"engine.demand": 25}}})
+            )
+            await asyncio.sleep(0.05)
+            assert not slow_engine.done()
+
+            b_status, b_body = await app.client.post(
+                "api/write", {"run_id": run_id, "writes": {"Body": {"body.demand": 60}}}
+            )
+            assert (b_status, b_body) == (200, {"run_id": run_id, "operation": 2})
+
+            # Engine times out with 504 write-timeout and detail {operation: 1, state: "sent"}.
+            e_status, e_body = await slow_engine
+            assert e_status == 504
+            assert e_body["error"]["code"] == "write-timeout"
+            assert e_body["error"]["detail"] == {"operation": 1, "state": "sent"}
+
+            # Even though WaitOperation timed out, releasing Engine and stepping still records the applied write!
+            grpc_server.hold_sent.clear()
+            grpc_server.release_sent("Engine")
+            grpc_server.step(0)
+            while not all(
+                any(m["type"] == "operation" and m["seq"] == s and m["done"] for m in sock.received)
+                for s in (1, 2)
+            ):
+                await sock.until(lambda m: m["type"] == "operation" and m["done"])
+            _, rec = await app.client.get("api/recording")
+            assert rec["recording"]["writes"] == 2
+            assert "Engine.engine.demand: 25.0" in rec["recording"]["yaml"]
+            assert "Body.body.demand: 60.0" in rec["recording"]["yaml"]
+
+            # WaitOperation RPC failure after seq -> 502 write-failed with detail {operation: 3, state: "sent"}.
+            grpc_server.hold_sent.add("Engine")
+            grpc_server.wait_queued_error = (grpc_server.grpc.StatusCode.UNAVAILABLE, "control link lost")
+            f_status, f_body = await app.client.post(
+                "api/write", {"run_id": run_id, "writes": {"Engine": {"engine.demand": 10}}}
+            )
+            assert f_status == 502
+            assert f_body["error"]["code"] == "write-failed"
+            assert f_body["error"]["detail"] == {"operation": 3, "state": "sent"}
+
+            # Run closing mid-wait_queued while still 'sent' & done=False MUST return 502 write-failed (never HTTP 200).
+            grpc_server.wait_queued_error = None
+            active_vars = app.server.runs.current.variables
+            orig_src_close = active_vars.source.close
+
+            async def slow_src_close() -> None:
+                await orig_src_close()
+                await asyncio.sleep(0.05)
+
+            active_vars.source.close = slow_src_close  # type: ignore[method-assign]
+            closing_write = asyncio.create_task(
+                app.client.post("api/write", {"run_id": run_id, "writes": {"Engine": {"engine.demand": 15}}})
+            )
+            await asyncio.sleep(0.05)
+            assert not closing_write.done()
+            close_task = asyncio.create_task(active_vars.close())
+            c_status, c_body = await closing_write
+            await close_task
+            assert c_status == 502
+            assert c_body["error"]["code"] == "write-failed"
+            assert c_body["error"]["detail"] == {"operation": 4, "state": "sent"}
+            await sock.close()
+
+    try:
+        asyncio.run(main())
+    finally:
+        grpc_server.stop()
+
+
 def test_watches_that_are_wrong_get_an_error_and_the_connection_goes_on(tmp_path: Path, control_env: dict) -> None:
     with gui_server(tmp_path, env=control_env) as gui:
         async def talk(c: Client) -> None:

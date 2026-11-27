@@ -548,6 +548,7 @@ describe('variables', () => {
     const request = http.expectOne('api/write');
     expect(request.request.body).toEqual({
       run_id: '1',
+      instance: 'x',
       writes: { Engine: { 'engine.demand': 40 } },
       at_ms: 100,
       late: 'apply',
@@ -588,43 +589,26 @@ describe('variables', () => {
     http.verify();
   });
 
-  it('tells when the server took a write, before its result, and not when it refused it', async () => {
-    const { client, http, deliver, errors } = setup();
+  it('tells when the server queued a write via enqueue(), before its result, and not when it refused it', async () => {
+    const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));
-    const accepted: unknown[] = [];
-    const taken = client.variables.write(
-      { Engine: { 'engine.demand': 40 } },
-      { onAccepted: (operation) => accepted.push(operation) },
-    );
+    const queuedPromise = client.variables.enqueue({ Engine: { 'engine.demand': 40 } });
     http.expectOne('api/write').flush({ run_id: '1', operation: 7 });
-    expect(accepted).toEqual([{ session: '1', seq: 7 }]);
+    const queued = await queuedPromise;
+    expect(queued).toMatchObject({ session: '1', seq: 7 });
+    const applied = queued.applied();
     await deliver(operation(7, 'applied', true, { applied_at_ms: 100 }));
-    await expect(taken).resolves.toMatchObject({ seq: 7 });
-    // Not called for a refused write. Even if the callback throws, the write goes ahead
-    const refused = client.variables.write(
-      { Engine: { 'engine.demand': 400 } },
-      { onAccepted: (operation) => accepted.push(operation) },
-    );
+    await expect(applied).resolves.toMatchObject({ seq: 7 });
+
+    // Refused write rejects enqueue() directly
+    const refused = client.variables.enqueue({ Engine: { 'engine.demand': 400 } });
     http
       .expectOne('api/write')
       .flush(
         { error: { code: 'invalid-field', message: 'out of range', detail: null } },
         { status: 400, statusText: 'Bad Request' },
       );
-    await expect(refused).rejects.toMatchObject({ kind: 'refused' });
-    const throwing = client.variables.write(
-      { Engine: { 'engine.demand': 41 } },
-      {
-        onAccepted: () => {
-          throw new Error('boom');
-        },
-      },
-    );
-    http.expectOne('api/write').flush({ run_id: '1', operation: 8 });
-    await deliver(operation(8, 'applied', true, { applied_at_ms: 110 }));
-    await expect(throwing).resolves.toMatchObject({ seq: 8 });
-    expect(accepted).toEqual([{ session: '1', seq: 7 }]);
-    expect(errors).toHaveLength(1);
+    await expect(refused).rejects.toMatchObject({ kind: 'refused', code: 'invalid-field' });
   });
 
   it('rejects a write that was refused, not applied, or not answered, and says which', async () => {
@@ -714,19 +698,17 @@ describe('variables', () => {
     });
     http.expectNone('api/write');
     await deliver(hello(1, ready()));
-    const accepted: unknown[] = [];
-    const write = client.variables
-      .write({ Engine: { 'engine.demand': 2 } }, { onAccepted: (o) => accepted.push(o) })
+    const enqueued = client.variables
+      .enqueue({ Engine: { 'engine.demand': 2 } })
       .catch((e: unknown) => e);
     const request = http.expectOne('api/write');
     expect(request.request.body).toMatchObject({ run_id: '1' });
     // The next run started before the answer
     await deliver({ type: 'session', session: summary(2) });
-    expect(await write).toMatchObject({ kind: 'no-answer' });
-    // A late answer for the previous run: not counted as accepted
+    expect(await enqueued).toMatchObject({ kind: 'no-answer' });
+    // A late answer for the previous run: ignored
     request.flush({ run_id: '1', operation: 3 });
     await vi.advanceTimersByTimeAsync(0);
-    expect(accepted).toEqual([]);
     // The next write is aimed at the new run
     const next = client.variables.write({ Engine: { 'engine.demand': 3 } }).catch(() => undefined);
     expect(http.expectOne('api/write').request.body).toMatchObject({ run_id: '2' });
@@ -765,10 +747,7 @@ describe('variables', () => {
     await deliver(hello(1, ready()));
     // A write while paused: does not settle until time advances
     let outcome: unknown = 'waiting';
-    const write = client.variables.write(
-      { Engine: { 'engine.demand': 40 } },
-      { timeoutMs: Infinity },
-    );
+    const write = client.variables.write({ Engine: { 'engine.demand': 40 } });
     write.then(
       (o) => (outcome = o),
       (e: unknown) => (outcome = e),
@@ -792,15 +771,12 @@ describe('variables', () => {
     const { client, http, socket, deliver } = setup();
     await deliver(hello(1, ready()));
     let first: unknown = 'waiting';
-    client.variables.write({ Engine: { 'engine.demand': 1 } }, { timeoutMs: Infinity }).then(
+    client.variables.write({ Engine: { 'engine.demand': 1 } }).then(
       (o) => (first = o),
       (e: unknown) => (first = e),
     );
     http.expectOne('api/write').flush({ run_id: '1', operation: 2 });
-    const second = client.variables.write(
-      { Engine: { 'engine.demand': 2 } },
-      { timeoutMs: Infinity },
-    );
+    const second = client.variables.write({ Engine: { 'engine.demand': 2 } });
     http.expectOne('api/write').flush({ run_id: '1', operation: 3 });
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
@@ -822,7 +798,7 @@ describe('variables', () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));
     const write = client.variables
-      .write({ Engine: { 'engine.demand': 40 } }, { timeoutMs: Infinity })
+      .write({ Engine: { 'engine.demand': 40 } })
       .catch((e: unknown) => e);
     http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
     const kept = [listed(5, 'queued', false), listed(6, 'queued', false)];
@@ -838,10 +814,11 @@ describe('variables', () => {
     const accepted: number[] = [];
     const write = (value: number) =>
       client.variables
-        .write(
-          { Engine: { 'engine.demand': value } },
-          { timeoutMs: Infinity, onAccepted: (o) => accepted.push(o.seq) },
-        )
+        .enqueue({ Engine: { 'engine.demand': value } })
+        .then((q) => {
+          accepted.push(q.seq);
+          return q.applied();
+        })
         .catch((e: unknown) => e);
     const gone = write(1);
     const done = write(2);
@@ -954,35 +931,57 @@ describe('variables: what the review found', () => {
     expect(await busy).toMatchObject({ kind: 'refused', code: 'write-busy' });
   });
 
-  it('waits as long as asked for a result: for ever, the longest a timer takes, or the default', async () => {
+  it('caps huge finite timeouts, rejects non-positive/non-finite timeouts and unknown fields, and clears on close()', async () => {
     const { client, http, deliver } = setup();
     await deliver(hello(1, ready()));
+    for (const bad of [Infinity, -Infinity, NaN, -5, 0]) {
+      await expect(
+        client.variables.write({ Engine: { 'engine.demand': 1 } }, { timeoutMs: bad }),
+      ).rejects.toMatchObject({ kind: 'refused', code: 'invalid-argument' });
+    }
+    await expect(
+      client.variables.write({ Engine: { 'engine.demand': 1 } }, {
+        onAccepted: () => undefined,
+      } as never),
+    ).rejects.toMatchObject({ kind: 'refused', code: 'unknown-field' });
+    http.expectNone('api/write');
+
     const outcomes: Record<string, string> = {};
-    let seq = 100;
-    const start = (name: string, timeoutMs: number) => {
-      const write = client.variables.write({ Engine: { 'engine.demand': 1 } }, { timeoutMs });
-      write.then(
-        () => (outcomes[name] = 'applied'),
-        (e: WriteError) => (outcomes[name] = e.kind),
-      );
-      http.expectOne('api/write').flush({ run_id: '1', operation: ++seq });
-      return seq;
-    };
-    const forever = start('forever', Infinity);
-    const huge = start('huge', 2 ** 40);
-    start('nan', NaN);
-    start('negative', -5);
-    start('zero', 0);
+    const defaultWrite = client.variables.write({ Engine: { 'engine.demand': 1 } });
+    defaultWrite.then(
+      () => (outcomes['default'] = 'applied'),
+      (e: WriteError) => (outcomes['default'] = e.kind),
+    );
+    http.expectOne('api/write').flush({ run_id: '1', operation: 101 });
+
+    const hugeWrite = client.variables.write(
+      { Engine: { 'engine.demand': 1 } },
+      { timeoutMs: 2 ** 40 },
+    );
+    hugeWrite.then(
+      () => (outcomes['huge'] = 'applied'),
+      (e: WriteError) => (outcomes['huge'] = e.kind),
+    );
+    http.expectOne('api/write').flush({ run_id: '1', operation: 102 });
+
     await vi.advanceTimersByTimeAsync(9_999);
-    expect(outcomes).toEqual({}); // Neither large values nor non-numbers time out at once
+    expect(outcomes).toEqual({});
     await vi.advanceTimersByTimeAsync(1);
-    expect(outcomes).toEqual({ nan: 'no-answer', negative: 'no-answer', zero: 'no-answer' });
+    expect(outcomes).toEqual({ default: 'no-answer' });
     await vi.advanceTimersByTimeAsync(24 * 3600 * 1000);
-    expect(Object.keys(outcomes).length).toBe(3);
-    await deliver(operation(huge, 'applied', true), operation(forever, 'applied', true));
-    expect(outcomes).toMatchObject({ forever: 'applied', huge: 'applied' });
-    // A write that never times out is still cleared by close(). So is a write waiting for the HTTP answer
-    start('open', Infinity);
+    expect(outcomes).toEqual({ default: 'no-answer' });
+    await deliver(operation(102, 'applied', true));
+    expect(outcomes).toEqual({ default: 'no-answer', huge: 'applied' });
+
+    const openWrite = client.variables.write(
+      { Engine: { 'engine.demand': 1 } },
+      { timeoutMs: 2 ** 40 },
+    );
+    openWrite.then(
+      () => (outcomes['open'] = 'applied'),
+      (e: WriteError) => (outcomes['open'] = e.kind),
+    );
+    http.expectOne('api/write').flush({ run_id: '1', operation: 103 });
     const flying = client.variables
       .write({ Engine: { 'engine.demand': 2 } })
       .catch((e: unknown) => e);
@@ -1175,6 +1174,7 @@ describe('variables: what the review found', () => {
     expect(req1.request.keepalive).toBeUndefined();
     expect(req1.request.body).toEqual({
       run_id: '1',
+      instance: 'x',
       writes: { Engine: { 'engine.demand': 10 } },
     });
     req1.flush({ run_id: '1', operation: 1 });
@@ -1189,6 +1189,7 @@ describe('variables: what the review found', () => {
     expect(req2.request.keepalive).toBe(true);
     expect(req2.request.body).toEqual({
       run_id: '1',
+      instance: 'x',
       writes: { Engine: { 'engine.demand': 0 } },
     });
     req2.flush({ run_id: '1', operation: 2 });
@@ -1241,5 +1242,875 @@ describe('the variables examples of the protocol', () => {
       status: 'failed',
       reason: expect.stringContaining('cannot be reached'),
     });
+  });
+});
+
+describe('four-stage write contract and virtual-time watchdog', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const multiRateCheck = {
+    vehicle_sil_check: 1,
+    file: 'simulation.yaml',
+    result: 'passed',
+    errors: 0,
+    warnings: 0,
+    notes: 0,
+    stop_at_ms: null,
+    participants: [
+      {
+        name: 'Engine',
+        role: 'ecu',
+        enabled: true,
+        manual: false,
+        step_ms: null,
+        reported: { step_ns: 10_000_000 },
+        variables: [],
+      },
+      {
+        name: 'Dashboard',
+        role: 'ecu',
+        enabled: true,
+        manual: false,
+        step_ms: null,
+        reported: { step_ns: 5_000_000 },
+        variables: [],
+      },
+    ],
+    networks: [],
+    findings: [],
+    scenario: null,
+  };
+
+  const multiPeersVariables = (engineConnected = true, dashConnected = true) => ({
+    state: 'ready',
+    reason: null,
+    peers: [
+      {
+        name: 'Engine',
+        connected: engineConnected,
+        variables: [
+          {
+            name: 'engine.demand',
+            type: 'real',
+            role: 'input',
+            writable: true,
+            builtin: false,
+            unit: '%',
+            min: 0,
+            max: 100,
+            step: null,
+            description: '',
+            enum: null,
+          },
+        ],
+      },
+      {
+        name: 'Dashboard',
+        connected: dashConnected,
+        variables: [
+          {
+            name: 'dash.brightness',
+            type: 'real',
+            role: 'input',
+            writable: true,
+            builtin: false,
+            unit: '%',
+            min: 0,
+            max: 100,
+            step: null,
+            description: '',
+            enum: null,
+          },
+        ],
+      },
+    ],
+    peers_omitted: 0,
+    variables_omitted: 0,
+    operations: [],
+  });
+
+  const syncedRunHello = (
+    id: string,
+    launcherState: object,
+    simMs: number | null = 0,
+    vars: object = multiPeersVariables(),
+  ) => [
+    {
+      type: 'hello',
+      vehicle_sil_gui: 4,
+      version: '0.1.0',
+      instance: 'inst-1',
+      session: {
+        id,
+        state: 'running',
+        launcher: { pid: 10, running: true, exit_code: null, signal: null, silent_s: null },
+        stop: 'none',
+        phase: 'running',
+        speed: 1,
+        start_paused: false,
+        check: multiRateCheck,
+        time: simMs === null ? null : { sim_ms: simMs, actual_speed: 1 },
+        launcher_state: launcherState,
+        variables: vars,
+      },
+      replay: null,
+    },
+    { type: 'synced', run_id: id, last_seq: 1 },
+  ];
+
+  const makeState = (seq: number, fields: object) => ({
+    seq,
+    rev: seq,
+    phase: 'running',
+    paused: false,
+    holding: false,
+    paused_at_ms: null,
+    speed: 1,
+    pacing: 'on-time',
+    stop: { requests: 0, by: null },
+    scenario: false,
+    allowed: { write: { ok: true, reason: null, message: null, caution: null } },
+    outside: [],
+    ...fields,
+  });
+
+  it('handles results arriving before applied() registration and never causes unhandled rejections when applied() is omitted', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(...syncedRunHello('1', makeState(1, { paused: true, paused_at_ms: 0 }), 0));
+
+    // 1) applied arrives before queued.applied() is registered
+    const q1Promise = client.variables.enqueue({ Engine: { 'engine.demand': 55 } });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 11 });
+    const q1 = await q1Promise;
+    await deliver(operation(11, 'applied', true, { applied_at_ms: 10 }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    const res1 = await q1.applied();
+    expect(res1).toMatchObject({ seq: 11, state: 'applied' });
+
+    // 2) terminal failure arrives after enqueue() but applied() is NEVER called -> zero unhandled rejection
+    const q2Promise = client.variables.enqueue({ Engine: { 'engine.demand': 60 } });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 12 });
+    await q2Promise;
+    await deliver(operation(12, 'late', true, { reason: 'missed step' }));
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    // 3) terminal failure already known when HTTP 200 arrives -> enqueue() rejects immediately with specific code
+    const q3Promise = client.variables.enqueue({ Engine: { 'engine.demand': 65 } });
+    await deliver(operation(13, 'invalid', true, { reason: 'out of range' }));
+    http.expectOne('api/write').flush({ run_id: '1', operation: 13 });
+    await expect(q3Promise).rejects.toMatchObject({
+      kind: 'failed',
+      code: 'invalid',
+      operation: { seq: 13, state: 'invalid' },
+    });
+
+    // 4) 504 write-timeout with detail { operation, state: 'sent' } preserves partial operation metadata
+    const q4Promise = client.variables.enqueue({ Engine: { 'engine.demand': 70 } });
+    http.expectOne('api/write').flush(
+      {
+        error: {
+          code: 'write-timeout',
+          message: 'timed out waiting for queued',
+          detail: { operation: 14, state: 'sent' },
+        },
+      },
+      { status: 504, statusText: 'Gateway Timeout' },
+    );
+    await expect(q4Promise).rejects.toMatchObject({
+      kind: 'no-answer',
+      code: 'write-timeout',
+      operation: { session: '1', seq: 14, state: 'sent', done: false },
+    });
+  });
+
+  it('suspends across multi-rate pause/holding even when simMs >= requested atMs, then resolves or times out past due', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(...syncedRunHello('1', makeState(1, { paused: true, paused_at_ms: 0 }), 0));
+
+    // Multi-rate write at atMs: 5 -> Dashboard (5 ms) due at 5 ms, Engine (10 ms) due at 10 ms -> overall due = 10 ms
+    const qPromise = client.variables.enqueue(
+      { Engine: { 'engine.demand': 50 }, Dashboard: { 'dash.brightness': 80 } },
+      { atMs: 5 },
+    );
+    http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
+    const queued = await qPromise;
+    let settled: unknown = 'pending';
+    const applied = queued.applied({ timeoutMs: 2_000 }).then(
+      (o) => (settled = o),
+      (e: unknown) => (settled = e),
+    );
+
+    // Advance to runUntil(5) and pause at 5 ms: Dashboard applied at 5 ms, Engine still queued for 10 ms!
+    await deliver(
+      {
+        type: 'operation',
+        run_id: '1',
+        seq: 1,
+        state: 'queued',
+        done: false,
+        peers: {
+          Dashboard: { state: 'applied', applied_at_ms: 5, late: false, reason: null },
+          Engine: { state: 'queued', applied_at_ms: null, late: false, reason: null },
+        },
+      },
+      {
+        type: 'event',
+        run_id: '1',
+        event: { event: 'time', seq: 2, t_ms: 5, sim_ms: 5, actual_speed: 1 },
+      },
+      {
+        type: 'event',
+        run_id: '1',
+        event: { event: 'state', t_ms: 5, ...makeState(3, { paused: true, paused_at_ms: 5 }) },
+      },
+    );
+
+    // Paused at 5 ms while healthy and Engine connected: watchdog MUST stay suspended indefinitely!
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(settled).toBe('pending');
+
+    // Also verify pause AT due (10 ms) stays suspended while healthy & connected (§2.1 F1 rule 2 > rule 3)
+    await deliver(
+      {
+        type: 'event',
+        run_id: '1',
+        event: { event: 'time', seq: 4, t_ms: 10, sim_ms: 10, actual_speed: 1 },
+      },
+      {
+        type: 'event',
+        run_id: '1',
+        event: { event: 'state', t_ms: 10, ...makeState(5, { paused: true, paused_at_ms: 10 }) },
+      },
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(settled).toBe('pending');
+
+    // Resume at 10 ms: step [10, 20) is in liveness until sim_ms passes duePass = 20 ms, then enters armed-due and
+    // never resets on further simMs progress!
+    await deliver({
+      type: 'event',
+      run_id: '1',
+      event: { event: 'state', t_ms: 11, ...makeState(6, { paused: false, paused_at_ms: null }) },
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(settled).toBe('pending');
+    await deliver({
+      type: 'event',
+      run_id: '1',
+      event: { event: 'time', seq: 7, t_ms: 20, sim_ms: 20, actual_speed: 1 },
+    });
+    await vi.advanceTimersByTimeAsync(1_200);
+    await deliver({
+      type: 'event',
+      run_id: '1',
+      event: { event: 'time', seq: 8, t_ms: 30, sim_ms: 30, actual_speed: 1 },
+    });
+    expect(settled).toBe('pending');
+    await vi.advanceTimersByTimeAsync(800);
+    await applied;
+    expect(settled).toBeInstanceOf(WriteError);
+    expect(settled).toMatchObject({ kind: 'no-answer' });
+  });
+
+  it('scales liveness and armed-due with targetStepMs/speed without inflating timeoutMs/speed, and handles late:apply and coarse time_step_ms', async () => {
+    const { client, http, deliver } = setup();
+    const slowCheck = {
+      ...multiRateCheck,
+      participants: [
+        ...multiRateCheck.participants,
+        {
+          name: 'SlowECU',
+          role: 'ecu',
+          enabled: true,
+          manual: false,
+          step_ms: 50,
+          variables: [],
+        },
+      ],
+    };
+    const slowVars = {
+      ...multiPeersVariables(),
+      peers: [
+        ...multiPeersVariables().peers,
+        {
+          name: 'SlowECU',
+          connected: true,
+          variables: [
+            {
+              name: 'slow.in',
+              type: 'real',
+              role: 'input',
+              writable: true,
+              builtin: false,
+              unit: '',
+              min: null,
+              max: null,
+              step: null,
+              description: '',
+              enum: null,
+            },
+          ],
+        },
+      ],
+    };
+    await deliver(
+      {
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.1.0',
+        instance: 'inst-1',
+        session: {
+          id: '1',
+          state: 'running',
+          launcher: { pid: 10, running: true, exit_code: null, signal: null, silent_s: null },
+          stop: 'none',
+          phase: 'running',
+          speed: 0.02,
+          start_paused: false,
+          check: slowCheck,
+          time: { sim_ms: 0, actual_speed: 0.02 },
+          launcher_state: makeState(1, { paused: false, speed: 0.02 }),
+          variables: slowVars,
+        },
+        replay: null,
+      },
+      { type: 'synced', run_id: '1', last_seq: 1 },
+    );
+
+    // 1) At 0.02x with Engine (step 10 ms), effectiveMs = max(10_000, ceil((10/0.02)*2)+2000 = 3_000) = 10_000 ms
+    //    (NOT inflated to 500_000 ms via timeoutMs / speed!).
+    const qDeadlock = client.variables.enqueue(
+      { Engine: { 'engine.demand': 40 } },
+      { atMs: 1000, timeoutMs: 10_000 },
+    );
+    http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
+    const q1 = await qDeadlock;
+    let state1: unknown = 'pending';
+    const p1 = q1.applied().then(
+      (o) => (state1 = o),
+      (e: unknown) => (state1 = e),
+    );
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(state1).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    await p1;
+    expect(state1).toMatchObject({ kind: 'no-answer' });
+
+    // 2) At 0.001x multi-rate (Dashboard 5 ms + SlowECU 50 ms) with atMs: 50 and { atMs: 0, late: 'apply' } at sim_ms=10:
+    //    effectiveMs = max(10_000, ceil((50/0.001)*2) + 2000) = 102_000 ms; duePass = 50 + 50 = 100 ms.
+    await deliver(
+      {
+        type: 'event',
+        run_id: '1',
+        event: { event: 'time', seq: 2, t_ms: 10_000, sim_ms: 10, actual_speed: 0.001 },
+      },
+      {
+        type: 'event',
+        run_id: '1',
+        event: { event: 'state', t_ms: 10_000, ...makeState(3, { paused: false, speed: 0.001 }) },
+      },
+    );
+    const qMulti = client.variables.enqueue(
+      { Dashboard: { 'dash.brightness': 50 }, SlowECU: { 'slow.in': 7 } },
+      { atMs: 50, timeoutMs: 10_000 },
+    );
+    const qLateApply = client.variables.enqueue(
+      { SlowECU: { 'slow.in': 9 } },
+      { atMs: 0, late: 'apply', timeoutMs: 10_000 },
+    );
+    http.requests[0].flush({ run_id: '1', operation: 2 });
+    http.requests[1].flush({ run_id: '1', operation: 3 });
+    http.requests.splice(0, 2);
+    const [qm, ql] = await Promise.all([qMulti, qLateApply]);
+    let outMulti: unknown = 'pending';
+    let outLate: unknown = 'pending';
+    const pm = qm.applied().then(
+      (o) => (outMulti = o),
+      (e: unknown) => (outMulti = e),
+    );
+    const pl = ql.applied().then(
+      (o) => (outLate = o),
+      (e: unknown) => (outLate = e),
+    );
+
+    // Advance 10 ms ticks up to sim_ms = 55 ms (45 s wall time): Dashboard applied at 50 ms, SlowECU still running [50, 100)!
+    for (const sim of [20, 30, 40, 50, 55]) {
+      await vi.advanceTimersByTimeAsync(sim === 55 ? 5_000 : 10_000);
+      await deliver({
+        type: 'event',
+        run_id: '1',
+        event: { event: 'time', seq: sim, t_ms: sim * 1000, sim_ms: sim, actual_speed: 0.001 },
+      });
+      if (sim === 50) {
+        await deliver({
+          type: 'operation',
+          run_id: '1',
+          seq: 2,
+          state: 'queued',
+          done: false,
+          peers: {
+            Dashboard: { state: 'applied', applied_at_ms: 50, late: false, reason: null },
+            SlowECU: { state: 'queued', applied_at_ms: null, late: false, reason: null },
+          },
+        });
+      }
+    }
+    // Wait another 40 s inside [50, 100) before SlowECU's step_end at 100 ms -> MUST NOT false-timeout!
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(outMulti).toBe('pending');
+    expect(outLate).toBe('pending');
+
+    await deliver(
+      {
+        type: 'operation',
+        run_id: '1',
+        seq: 2,
+        state: 'applied',
+        done: true,
+        peers: {
+          Dashboard: { state: 'applied', applied_at_ms: 50, late: false, reason: null },
+          SlowECU: { state: 'applied', applied_at_ms: 50, late: false, reason: null },
+        },
+      },
+      {
+        type: 'operation',
+        run_id: '1',
+        seq: 3,
+        state: 'applied',
+        done: true,
+        peers: {
+          SlowECU: { state: 'applied', applied_at_ms: 50, late: true, reason: null },
+        },
+      },
+    );
+    await Promise.all([pm, pl]);
+    expect(outMulti).toMatchObject({ seq: 2, state: 'applied' });
+    expect(outLate).toMatchObject({ seq: 3, state: 'applied' });
+
+    // 3) Mid-flight speed switch in armed-due preserves fractional dueUsed without resetting on simMs progress.
+    const qDue = client.variables.enqueue(
+      { SlowECU: { 'slow.in': 11 } },
+      { atMs: 50, timeoutMs: 2_000 },
+    );
+    http.expectOne('api/write').flush({ run_id: '1', operation: 4 });
+    const q4 = await qDue;
+    let outDue: unknown = 'pending';
+    const p4 = q4.applied().then(
+      (o) => (outDue = o),
+      (e: unknown) => (outDue = e),
+    );
+    await deliver({
+      type: 'event',
+      run_id: '1',
+      event: { event: 'time', seq: 110, t_ms: 160_000, sim_ms: 160, actual_speed: 0.001 },
+    });
+    // At 0.001x, armed-due effectiveMs = 102_000 ms; consume 51_000 ms (50% of budget, including deliver's BATCH_MS),
+    // then switch speed 0.001 -> 1!
+    await vi.advanceTimersByTimeAsync(51_000 - BATCH_MS);
+    expect(outDue).toBe('pending');
+    await deliver(
+      {
+        type: 'event',
+        run_id: '1',
+        event: { event: 'state', t_ms: 211_000, ...makeState(115, { paused: false, speed: 1 }) },
+      },
+      {
+        type: 'event',
+        run_id: '1',
+        event: { event: 'time', seq: 120, t_ms: 211_000, sim_ms: 170, actual_speed: 1 },
+      },
+    );
+    // Remaining 50% of 2_000 ms = 1_000 ms (and simMs progress 110 -> 120 did NOT reset dueUsed!).
+    await vi.advanceTimersByTimeAsync(999);
+    expect(outDue).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    await p4;
+    expect(outDue).toMatchObject({ kind: 'no-answer' });
+
+    // 4) Coarse controller time_step_ms (5000 ms) > participant.step_ms (10 ms) uses targetStepMs = 5000 ms.
+    await deliver(
+      {
+        type: 'hello',
+        vehicle_sil_gui: 4,
+        version: '0.1.0',
+        instance: 'inst-1',
+        session: {
+          id: '2',
+          state: 'running',
+          launcher: { pid: 11, running: true, exit_code: null, signal: null, silent_s: null },
+          stop: 'none',
+          phase: 'running',
+          speed: 0.5,
+          start_paused: false,
+          check: {
+            ...multiRateCheck,
+            time_step_ms: 5000,
+            participants: [
+              {
+                name: 'Engine',
+                role: 'ecu',
+                enabled: true,
+                manual: false,
+                step_ms: 10,
+                variables: [],
+              },
+            ],
+          },
+          time: { sim_ms: 0, actual_speed: 0.5 },
+          launcher_state: makeState(1, { paused: false, speed: 0.5 }),
+          variables: multiPeersVariables(),
+        },
+        replay: null,
+      },
+      { type: 'synced', run_id: '2', last_seq: 1 },
+    );
+    // At speed 0.5 and targetStepMs = 5000, effectiveMs = max(2_000, ceil((5000/0.5)*2) + 2000) = 22_000 ms.
+    const qCoarse = client.variables.enqueue(
+      { Engine: { 'engine.demand': 15 } },
+      { timeoutMs: 2_000 },
+    );
+    http.expectOne('api/write').flush({ run_id: '2', operation: 1 });
+    const qc = await qCoarse;
+    let outCoarse: unknown = 'pending';
+    const pc = qc.applied().then(
+      (o) => (outCoarse = o),
+      (e: unknown) => (outCoarse = e),
+    );
+    await vi.advanceTimersByTimeAsync(9_500);
+    expect(outCoarse).toBe('pending');
+    await deliver(operation(1, 'applied', true, { applied_at_ms: 5000 }, 2));
+    await pc;
+    expect(outCoarse).toMatchObject({ seq: 1, state: 'applied' });
+  });
+
+  it('bounds armed-unhealthy across ECU disconnect while paused, flapping health, and stuck non-sync', async () => {
+    const { client, http, socket, deliver } = setup();
+    await deliver(...syncedRunHello('1', makeState(1, { paused: true, paused_at_ms: 0 }), 0));
+
+    // 1) ECU disconnect while paused -> exits suspended into armed-unhealthy and rejects within timeoutMs
+    const q1Promise = client.variables.enqueue({ Engine: { 'engine.demand': 10 } });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
+    const q1 = await q1Promise;
+    let out1: unknown = 'pending';
+    const p1 = q1.applied({ timeoutMs: 3_000 }).then(
+      (o) => (out1 = o),
+      (e: unknown) => (out1 = e),
+    );
+    await vi.advanceTimersByTimeAsync(20_000); // suspended while healthy & paused
+    expect(out1).toBe('pending');
+
+    await deliver({
+      type: 'variables',
+      run_id: '1',
+      variables: multiPeersVariables(false, true),
+    });
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(out1).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    await p1;
+    expect(out1).toMatchObject({ kind: 'no-answer' });
+
+    // Reconnect Engine and test flapping health (4s unhealthy -> 30s healthy paused -> 4s unhealthy -> 30s healthy -> 2s unhealthy)
+    await deliver({
+      type: 'variables',
+      run_id: '1',
+      variables: multiPeersVariables(true, true),
+    });
+    const q2Promise = client.variables.enqueue({ Engine: { 'engine.demand': 20 } });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 2 });
+    const q2 = await q2Promise;
+    let out2: unknown = 'pending';
+    const p2 = q2.applied({ timeoutMs: 10_000 }).then(
+      (o) => (out2 = o),
+      (e: unknown) => (out2 = e),
+    );
+
+    // Flap 1: 4_000 ms unhealthy via resync (without synced)
+    await deliver({ type: 'resync' });
+    await vi.advanceTimersByTimeAsync(4_000 - BATCH_MS);
+    expect(out2).toBe('pending');
+    await deliver(...syncedRunHello('1', makeState(2, { paused: true, paused_at_ms: 0 }), 0));
+    await vi.advanceTimersByTimeAsync(30_000); // suspended while healthy
+    expect(out2).toBe('pending');
+
+    // Flap 2: another 4_000 ms unhealthy via socket drop (cumulative ~8_000 ms)
+    socket().fail();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(out2).toBe('pending');
+    socket().open();
+    await deliver(...syncedRunHello('1', makeState(3, { paused: true, paused_at_ms: 0 }), 0));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(out2).toBe('pending');
+
+    // Flap 3: remaining ~2_000 ms unhealthy -> MUST reject instead of resetting to 10_000 ms!
+    await deliver({ type: 'resync' });
+    await vi.advanceTimersByTimeAsync(2_100);
+    await p2;
+    expect(out2).toMatchObject({ kind: 'no-answer' });
+  });
+
+  it('supports AbortSignal before dispatch, during HTTP dispatch, and during applied()', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(...syncedRunHello('1', makeState(1, { paused: true, paused_at_ms: 0 }), 0));
+
+    // Pre-aborted before enqueue
+    const pre = new AbortController();
+    pre.abort();
+    await expect(
+      client.variables.enqueue({ Engine: { 'engine.demand': 1 } }, { signal: pre.signal }),
+    ).rejects.toMatchObject({ kind: 'refused', code: 'aborted' });
+    http.expectNone('api/write');
+
+    // Aborted while HTTP POST api/write is in flight
+    const midHttp = new AbortController();
+    const enqMid = client.variables.enqueue(
+      { Engine: { 'engine.demand': 2 } },
+      { signal: midHttp.signal },
+    );
+    const reqMid = http.expectOne('api/write');
+    midHttp.abort();
+    reqMid.fail(new HttpError(0, 'aborted', null));
+    await expect(enqMid).rejects.toMatchObject({ kind: 'no-answer', code: 'aborted' });
+
+    // Aborted while waiting on queued.applied()
+    const midWait = new AbortController();
+    const qPromise = client.variables.enqueue({ Engine: { 'engine.demand': 3 } });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 9 });
+    const queued = await qPromise;
+    await deliver(operation(9, 'queued', false));
+    const applied = queued.applied({ signal: midWait.signal });
+    midWait.abort();
+    await expect(applied).rejects.toMatchObject({
+      kind: 'no-answer',
+      code: 'aborted',
+      operation: { seq: 9, state: 'queued' },
+    });
+
+    // Explicit queued.applied() with no signal MUST NOT inherit enqueue()'s signal!
+    const enqOnly = new AbortController();
+    const qNoInheritPromise = client.variables.enqueue(
+      { Engine: { 'engine.demand': 4 } },
+      { signal: enqOnly.signal },
+    );
+    http.expectOne('api/write').flush({ run_id: '1', operation: 10 });
+    const qNoInherit = await qNoInheritPromise;
+    enqOnly.abort();
+    let plainApplied: unknown = 'pending';
+    const plainWait = qNoInherit.applied().then(
+      (o) => (plainApplied = o),
+      (e: unknown) => (plainApplied = e),
+    );
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(plainApplied).toBe('pending');
+    await deliver(operation(10, 'applied', true, { applied_at_ms: 10 }));
+    await plainWait;
+    expect(plainApplied).toMatchObject({ seq: 10, state: 'applied' });
+  });
+
+  it('exits suspended during in-flight step()/runUntil() (onItsWay or paused_at_ms: null) so hung ECUs time out', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(
+      ...syncedRunHello(
+        '1',
+        makeState(1, { phase: 'waiting', paused: true, holding: true, paused_at_ms: null }),
+        null,
+      ),
+    );
+
+    // 1) step(10) accepted while holding: command arrives before state update -> onItsWay === true -> liveness catches hang!
+    const q1p = client.variables.enqueue({ Engine: { 'engine.demand': 42 } }, { timeoutMs: 5_000 });
+    http.expectOne('api/write').flush({ run_id: '1', operation: 1 });
+    const q1 = await q1p;
+    let out1: unknown = 'pending';
+    const p1 = q1.applied().then(
+      (o) => (out1 = o),
+      (e: unknown) => (out1 = e),
+    );
+    await vi.advanceTimersByTimeAsync(60_000); // suspended while holding before step
+    expect(out1).toBe('pending');
+
+    await deliver({
+      type: 'event',
+      run_id: '1',
+      event: {
+        event: 'command',
+        seq: 2,
+        t_ms: 10,
+        command: 'step',
+        id: 1,
+        accepted: true,
+        ms: 10,
+        at_ms: 10,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(5_000 - BATCH_MS - 1);
+    expect(out1).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    await p1;
+    expect(out1).toMatchObject({ kind: 'no-answer' });
+
+    // 2) state { holding: false, paused: true, paused_at_ms: null } (released holding, not yet standing) -> liveness catches hang!
+    await deliver(
+      ...syncedRunHello(
+        '2',
+        makeState(1, { phase: 'running', paused: true, holding: false, paused_at_ms: null }),
+        0,
+      ),
+    );
+    const q2p = client.variables.enqueue({ Engine: { 'engine.demand': 43 } }, { timeoutMs: 4_000 });
+    http.expectOne('api/write').flush({ run_id: '2', operation: 1 });
+    const q2 = await q2p;
+    let out2: unknown = 'pending';
+    const p2 = q2.applied().then(
+      (o) => (out2 = o),
+      (e: unknown) => (out2 = e),
+    );
+    await vi.advanceTimersByTimeAsync(4_000);
+    await p2;
+    expect(out2).toMatchObject({ kind: 'no-answer' });
+  });
+
+  it('validates atMs, late, keepalive, signal, sub-ms timeoutMs, and preserves multi-ECU settled peers across OPERATIONS_KEPT eviction', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(...syncedRunHello('1', makeState(1, { paused: true, paused_at_ms: 0 }), 0));
+
+    for (const badOpts of [
+      { atMs: Number.NaN },
+      { atMs: Number.POSITIVE_INFINITY },
+      { atMs: Number.NEGATIVE_INFINITY },
+      { atMs: -1 },
+      { atMs: '10' as unknown as number },
+      { late: 'never' as unknown as 'reject' },
+      { late: null as unknown as 'reject' },
+      { keepalive: 1 as unknown as boolean },
+      { signal: {} as unknown as AbortSignal },
+      { signal: { aborted: false } as unknown as AbortSignal },
+    ]) {
+      await expect(
+        client.variables.enqueue({ Engine: { 'engine.demand': 1 } }, badOpts),
+      ).rejects.toMatchObject({ kind: 'refused', code: 'invalid-argument' });
+    }
+    http.expectNone('api/write');
+
+    // Multi-ECU write: Dashboard settles early ('applied' in op 1, 'late' in op 2), then disconnects while paused,
+    // and 64 other operations evict ops 1 & 2 from operationsValue -> neither falsely enters armed-unhealthy!
+    const qAppliedPeer = client.variables.enqueue({
+      Engine: { 'engine.demand': 10 },
+      Dashboard: { 'dash.brightness': 20 },
+    });
+    const qLatePeer = client.variables.enqueue({
+      Engine: { 'engine.demand': 15 },
+      Dashboard: { 'dash.brightness': 25 },
+    });
+    http.requests[0].flush({ run_id: '1', operation: 1 });
+    http.requests[1].flush({ run_id: '1', operation: 2 });
+    http.requests.splice(0, 2);
+    const [qa, ql] = await Promise.all([qAppliedPeer, qLatePeer]);
+
+    await deliver(
+      {
+        type: 'operation',
+        run_id: '1',
+        seq: 1,
+        state: 'queued',
+        done: false,
+        peers: {
+          Dashboard: { state: 'applied', applied_at_ms: 0, late: false, reason: null },
+          Engine: { state: 'queued', applied_at_ms: null, late: false, reason: null },
+        },
+      },
+      {
+        type: 'operation',
+        run_id: '1',
+        seq: 2,
+        state: 'queued',
+        done: false,
+        peers: {
+          Dashboard: { state: 'late', applied_at_ms: null, late: false, reason: 'missed' },
+          Engine: { state: 'queued', applied_at_ms: null, late: false, reason: null },
+        },
+      },
+    );
+
+    let stateA: unknown = 'pending';
+    let stateL: unknown = 'pending';
+    const pa = qa.applied({ timeoutMs: 3_000 }).then(
+      (o) => (stateA = o),
+      (e: unknown) => (stateA = e),
+    );
+    const pl = ql.applied({ timeoutMs: 3_000 }).then(
+      (o) => (stateL = o),
+      (e: unknown) => (stateL = e),
+    );
+
+    // Evict seq 1 & 2 with 70 completed operations, then disconnect already-settled Dashboard while Engine stays paused!
+    const flood = Array.from({ length: OPERATIONS_KEPT + 6 }, (_, i) =>
+      operation(100 + i, 'applied', true),
+    );
+    await deliver(...flood, {
+      type: 'variables',
+      run_id: '1',
+      variables: multiPeersVariables(true, false),
+    });
+    expect(client.variables.operations.get().some((o) => o.seq <= 2)).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(stateA).toBe('pending');
+    expect(stateL).toBe('pending');
+
+    // Also validate waitOptions signal & sub-ms timeoutMs > 0 (0.5 ms arms 1 ms timer rather than synchronous 0 ms reject)
+    await expect(qa.applied({ signal: {} as unknown as AbortSignal })).rejects.toMatchObject({
+      kind: 'refused',
+      code: 'invalid-argument',
+    });
+
+    await deliver({
+      type: 'event',
+      run_id: '1',
+      event: { event: 'state', t_ms: 50, ...makeState(10, { paused: false, paused_at_ms: null }) },
+    });
+    let subMsSettled = false;
+    const subMsPromise = qa.applied({ timeoutMs: 0.5 }).catch((e: unknown) => {
+      subMsSettled = true;
+      return e;
+    });
+    await Promise.resolve();
+    expect(subMsSettled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const subMsErr = await subMsPromise;
+    expect(subMsErr).toMatchObject({
+      kind: 'no-answer',
+      operation: { seq: 1, state: 'queued' },
+    });
+
+    // Settle ops 1 & 2 deterministically
+    await deliver(
+      {
+        type: 'operation',
+        run_id: '1',
+        seq: 1,
+        state: 'applied',
+        done: true,
+        peers: {
+          Dashboard: { state: 'applied', applied_at_ms: 0, late: false, reason: null },
+          Engine: { state: 'applied', applied_at_ms: 10, late: false, reason: null },
+        },
+      },
+      {
+        type: 'operation',
+        run_id: '1',
+        seq: 2,
+        state: 'mixed',
+        done: true,
+        peers: {
+          Dashboard: { state: 'late', applied_at_ms: null, late: false, reason: 'missed' },
+          Engine: { state: 'applied', applied_at_ms: 10, late: false, reason: null },
+        },
+      },
+    );
+    await Promise.all([pa, pl]);
+    expect(stateA).toMatchObject({ seq: 1, state: 'applied' });
+    expect(stateL).toMatchObject({ kind: 'failed', code: 'mixed' });
   });
 });

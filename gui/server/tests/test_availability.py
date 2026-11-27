@@ -8,7 +8,7 @@ import asyncio
 import json
 
 from vehicle_sil_gui.hub import encode
-from vehicle_sil_gui.source import ListSample, PeerInfo, SnapshotInfo, TimeInfo
+from vehicle_sil_gui.source import ListSample, OperationInfo, PeerInfo, SnapshotInfo, TargetInfo, TimeInfo
 from vehicle_sil_gui.variables import TOLD_TOGETHER_S, Limits, Variables, Watch
 
 MS = 1_000_000
@@ -64,6 +64,11 @@ class Source:
     async def write(self, writes, at_ns, late, timeout_s: float) -> int:
         self.written.append(writes)
         return len(self.written)
+
+    async def wait_queued(self, seq: int, timeout_s: float) -> OperationInfo | None:
+        writes = self.written[seq - 1]
+        peers = dict.fromkeys(w[0] for w in writes)
+        return OperationInfo(seq, False, [TargetInfo(peer, "queued") for peer in peers])
 
     async def close(self) -> None:
         pass

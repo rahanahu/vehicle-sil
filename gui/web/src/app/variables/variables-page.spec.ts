@@ -242,6 +242,7 @@ describe('VariablesPage', () => {
     const write = http.expectOne('api/write');
     expect(write.request.body).toEqual({
       run_id: '1',
+      instance: 'inst-1',
       writes: { Engine: { 'engine.enabled': true } },
     });
     write.flush({ run_id: '1', operation: 1 });

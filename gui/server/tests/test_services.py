@@ -313,7 +313,14 @@ def test_run_manager_write_variables_honors_handover_and_prestate_refusals(tmp_p
             sink.on_synced()
 
         async def write(self, writes, at_ns, late, timeout):
+            from vehicle_sil_gui.source import OperationInfo, TargetInfo
+            self._last_peers = list(dict.fromkeys(w[0] for w in writes))
             return 1
+
+        async def wait_queued(self, seq, timeout):
+            from vehicle_sil_gui.source import OperationInfo, TargetInfo
+            peers = getattr(self, "_last_peers", ["Engine"])
+            return OperationInfo(seq, False, [TargetInfo(p, "queued") for p in peers])
 
         async def close(self) -> None:
             return

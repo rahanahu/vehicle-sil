@@ -431,3 +431,66 @@ try {
         assert stopped.stdout.strip() == "stopped: end=stopped ok=True" or \
             stopped.stdout.strip() == "stopped: end=stopped ok=true", stopped.stdout
 
+
+@pytest.mark.skipif(not REAL or not real_configs.usable(real_configs.examples_dir(REAL)),
+                    reason="no real launcher with the ecu_main example next to it (scripts/verify-gui.py --launcher)")
+def test_four_stage_write_enqueue_step_and_run_until_zero_sleep_with_real_launcher(tmp_path: Path,
+                                                                                   bundle: Path) -> None:
+    """Real C++ launcher + ecu_main: connect() -> start_paused -> enqueue() -> step()/runUntil() -> applied()
+    with competing scheduled writes and ZERO fixed sleep."""
+    import json
+
+    configs = tmp_path / "configs"
+    real_configs.write(configs, real_configs.examples_dir(REAL))
+    code = """
+const { connect, until } = await import(process.env.VEHICLE_SIL_GUI_CLIENT_URL);
+const u = new URL(process.env.VEHICLE_SIL_GUI_URL);
+const token = new URLSearchParams(u.hash.slice(1)).get('token') ?? '';
+u.hash = '';
+const front = await connect({ baseUrl: u.href, token });
+try {
+  await front.run.start({ start_paused: true }, { file: 'forever.yaml' });
+  await until(front.status, (s) => s.link === 'online' && s.run === 'paused', { timeoutMs: 30_000 });
+  await until(
+    front.low.variables.state,
+    (v) => v.status === 'ready' && v.peers.length === 2 && v.peers.every((p) => p.connected && p.variables.length > 0),
+    { timeoutMs: 30_000 },
+  );
+  const throttle = front.variable('Engine.engine.throttle');
+
+  // 1. Immediate write while paused before step 0 -> step(10) -> applied at 0 ms (zero sleep)
+  const q1 = await throttle.enqueue(50);
+  await front.time.step(10);
+  const r1 = await q1.applied();
+
+  // 2. Competing scheduled writes at 50 ms and 100 ms -> writing stays true until both apply
+  const q2 = await throttle.enqueue(80, { atMs: 50 });
+  const q3 = await throttle.enqueue(20, { atMs: 100 });
+  const writingBefore50 = throttle.get().writing;
+
+  await front.time.runUntil(50);
+  const r2 = await q2.applied();
+  const writingAt50 = throttle.get().writing;
+
+  await front.time.runUntil(100);
+  const r3 = await q3.applied();
+  const writingAt100 = throttle.get().writing;
+
+  await front.run.stop();
+  await until(front.status, (s) => s.run === 'ended' || s.run === 'crashed', { timeoutMs: 30_000 });
+  console.log(JSON.stringify({ r1, r2, r3, writingBefore50, writingAt50, writingAt100 }));
+} finally {
+  front.close();
+}
+"""
+    with gui_server(tmp_path, root=configs, launcher=Path(REAL)) as gui:
+        out = _run_node_module(bundle, gui.url, code)
+    assert out.returncode == 0, out.stdout + out.stderr
+    payload = json.loads(out.stdout.strip().splitlines()[-1])
+    assert payload["r1"]["appliedAtMs"] == 0 and payload["r1"]["value"] == 50 and payload["r1"]["late"] is False, payload
+    assert payload["r2"]["appliedAtMs"] == 50 and payload["r2"]["value"] == 80 and payload["r2"]["late"] is False, payload
+    assert payload["r3"]["appliedAtMs"] == 100 and payload["r3"]["value"] == 20 and payload["r3"]["late"] is False, payload
+    assert (payload["writingBefore50"], payload["writingAt50"], payload["writingAt100"]) == (True, True, False), payload
+    assert gui.stderr_text() == ""
+
+
