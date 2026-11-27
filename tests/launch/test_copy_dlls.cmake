@@ -303,6 +303,77 @@ esac")
   if(NOT _got STREQUAL "")
     message(FATAL_ERROR "case 6i mismatch: expected empty, got ${_got}")
   endif()
+
+  # 6j. COMPILER_TARGET and SYSROOT are forwarded to both -print-file-name= and -print-sysroot probes
+  set(_c10 "${WORK}/case_target_sysroot_probe")
+  set(_c10_sys "${_c10}/custom sysroot")
+  file(MAKE_DIRECTORY "${_c10}/bin" "${_c10}/target_dlls" "${_c10}/sysroot_from_probe/bin" "${_c10_sys}")
+  file(WRITE "${_c10}/target_dlls/libc++.dll" "c-target")
+  file(WRITE "${_c10}/sysroot_from_probe/bin/libunwind.dll" "u-probed-sysroot")
+  file(WRITE "${_c10}/sysroot_from_probe/bin/libwinpthread-1.dll" "p-probed-sysroot")
+  _write_fake_compiler("${_c10}/bin/fake-clang++"
+"got_target=''
+got_sysroot=''
+probe=''
+for a in \"\$@\"; do
+  case \"\$a\" in
+    --target=*) got_target=\"\${a#--target=}\" ;;
+    --sysroot=*) got_sysroot=\"\${a#--sysroot=}\" ;;
+    *) probe=\"\$a\" ;;
+  esac
+done
+if [ \"\$got_target\" != 'x86_64-w64-windows-gnu' ] || [ \"\$got_sysroot\" != '${_c10_sys}' ]; then
+  echo \"unexpected flags: target='\$got_target' sysroot='\$got_sysroot'\" >&2
+  exit 2
+fi
+case \"\$probe\" in
+  -print-sysroot) echo '${_c10}/sysroot_from_probe' ;;
+  -print-file-name=libc++.dll) echo '${_c10}/target_dlls/libc++.dll' ;;
+  -print-file-name=*) echo \"\${probe#-print-file-name=}\" ;;
+esac")
+  _vehicle_sil_find_mingw_runtime_dlls(
+    "${_c10}/bin/fake-clang++" "Clang" "" "c++;mingw32" _got
+    "x86_64-w64-windows-gnu"
+    "${_c10_sys}")
+  set(_want "${_c10}/target_dlls/libc++.dll;${_c10}/sysroot_from_probe/bin/libunwind.dll;${_c10}/sysroot_from_probe/bin/libwinpthread-1.dll")
+  if(NOT _got STREQUAL _want)
+    message(FATAL_ERROR "case 6j mismatch:\n  got:  ${_got}\n  want: ${_want}")
+  endif()
+
+  # 6k. Explicit SYSROOT adds <sysroot>/bin and <sysroot>/mingw/bin to fallback dirs (and GNU never passes --target= even when compiler_target is non-empty)
+  set(_c11 "${WORK}/case_explicit_sysroot_fallback")
+  set(_c11_sys "${_c11}/explicit sysroot")
+  file(MAKE_DIRECTORY "${_c11}/compiler_bin" "${_c11_sys}/bin" "${_c11_sys}/mingw/bin")
+  file(WRITE "${_c11_sys}/bin/libstdc++-6.dll" "s-sysroot")
+  file(WRITE "${_c11_sys}/mingw/bin/libgcc_s_seh-1.dll" "g-mingw-bin")
+  file(WRITE "${_c11_sys}/mingw/bin/libwinpthread-1.dll" "p-mingw-bin")
+  file(WRITE "${_c11}/compiler_bin/libstdc++-6.dll" "s-wrong-compiler-bin")
+  _write_fake_compiler("${_c11}/compiler_bin/fake-g++"
+"got_sysroot=''
+probe=''
+for a in \"\$@\"; do
+  case \"\$a\" in
+    --target=*) echo 'unexpected --target flag passed to GNU g++' >&2; exit 3 ;;
+    --sysroot=*) got_sysroot=\"\${a#--sysroot=}\" ;;
+    *) probe=\"\$a\" ;;
+  esac
+done
+if [ \"\$got_sysroot\" != '${_c11_sys}' ]; then
+  echo \"missing --sysroot flag: got='\$got_sysroot'\" >&2
+  exit 2
+fi
+case \"\$probe\" in
+  -print-sysroot) echo '' ;;
+  -print-file-name=*) echo \"\${probe#-print-file-name=}\" ;;
+esac")
+  _vehicle_sil_find_mingw_runtime_dlls(
+    "${_c11}/compiler_bin/fake-g++" "GNU" "" "" _got
+    "x86_64-w64-mingw32"
+    "${_c11_sys}")
+  set(_want "${_c11_sys}/bin/libstdc++-6.dll;${_c11_sys}/mingw/bin/libgcc_s_seh-1.dll;${_c11_sys}/mingw/bin/libwinpthread-1.dll")
+  if(NOT _got STREQUAL _want)
+    message(FATAL_ERROR "case 6k mismatch:\n  got:  ${_got}\n  want: ${_want}")
+  endif()
 endif()
 
 file(REMOVE_RECURSE "${WORK}")

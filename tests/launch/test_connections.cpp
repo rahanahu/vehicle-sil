@@ -280,14 +280,16 @@ TEST_CASE(connections_make_a_list_for_a_bridge_that_gives_none)
     check_text(error_of(interpret_list(NetworkKind::Can, "vehicle_sil_vector_xl_bridge", dll)),
                "tool-cannot-start: vehicle_sil_vector_xl_bridge --list-channels --json could not start (exit status "
                "0xC0000135): Windows did not find a DLL that it needs: vehicle_sil_vector_xl_bridge needs vxlapi64.dll of the "
-               "Vector XL Driver Library: install the library, or put vxlapi64.dll next to the bridge; for another DLL, call "
-               "vehicle_sil_copy_runtime_dlls(<target>) in CMake, or put that DLL, of the version the executable was built "
-               "with, next to the executable or in a folder on PATH (inspect imports with ldd in MSYS2 or where.exe <dll>)");
+               "Vector XL Driver Library: install the library, or put vxlapi64.dll next to the bridge; for another DLL, "
+               "check DLLs next to the executable first and match the build toolchain (call "
+               "vehicle_sil_copy_runtime_dlls(<target>) in CMake or do a clean rebuild), or put the matching DLL next to the "
+               "executable or on PATH (inspect imports with ldd in MSYS2; where.exe <dll> only lists PATH candidates)");
     check_text(error_of(interpret_list(NetworkKind::Ethernet, "vehicle_sil_ethernet_bridge", run(static_cast<int>(0xC0000139u)))),
                "tool-cannot-start: vehicle_sil_ethernet_bridge --list-interfaces --json could not start (exit status "
-               "0xC0000139): a DLL that it needs is of another version (a function in it is missing): call "
-               "vehicle_sil_copy_runtime_dlls(<target>) in CMake, or put that DLL, of the version the executable was built "
-               "with, next to the executable or in a folder on PATH (inspect imports with ldd in MSYS2 or where.exe <dll>)");
+               "0xC0000139): a DLL that it needs is of another version (a function in it is missing): check DLLs next to the "
+               "executable first and match the build toolchain (call vehicle_sil_copy_runtime_dlls(<target>) in CMake or do "
+               "a clean rebuild), or put the matching DLL next to the executable or on PATH (inspect imports with ldd in "
+               "MSYS2; where.exe <dll> only lists PATH candidates)");
     // A bridge of before the lists as JSON: its own line says why.
     const TargetList old = interpret_list(NetworkKind::Ethernet, "vehicle_sil_ethernet_bridge",
                                           run(4, "", "[eth-bridge] error: unknown option --json\nusage: ...\n"));

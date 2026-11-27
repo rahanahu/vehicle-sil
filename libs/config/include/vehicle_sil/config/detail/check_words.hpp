@@ -111,8 +111,9 @@ inline std::string dll_start_failure(int exit_code)
 
 /// What to do after dll_start_failure().
 inline constexpr const char* kDllFix =
-    "call vehicle_sil_copy_runtime_dlls(<target>) in CMake, or put that DLL, of the version the executable was built "
-    "with, next to the executable or in a folder on PATH (inspect imports with ldd in MSYS2 or where.exe <dll>)";
+    "check DLLs next to the executable first and match the build toolchain (call "
+    "vehicle_sil_copy_runtime_dlls(<target>) in CMake or do a clean rebuild), or put the matching DLL next to the "
+    "executable or on PATH (inspect imports with ldd in MSYS2; where.exe <dll> only lists PATH candidates)";
 
 /// What to do after dll_start_failure() of the bridge of a network of `kind`: the Vector XL bridge
 /// needs the DLL of the Vector XL Driver Library first.

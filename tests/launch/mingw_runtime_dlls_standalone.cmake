@@ -69,6 +69,11 @@ set(_minimal_path "${_sys32_nat};${_sysroot_nat};${_wbem_nat}")
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
 set(ENV{PATH} "${_minimal_path}")
+file(GLOB _copied_dlls RELATIVE "${_ecu_dir}" "${_ecu_dir}/*.dll")
+list(SORT _copied_dlls)
+list(JOIN _copied_dlls ", " _copied_dlls_list)
+message(STATUS "launch.mingw_runtime_dlls_standalone: stripped PATH=${_minimal_path}")
+message(STATUS "launch.mingw_runtime_dlls_standalone: DLLs beside ${_ecu_name}: ${_copied_dlls_list}")
 
 # 1. Run vehicle_sil_launch check first: the launcher sets SEM_FAILCRITICALERRORS |
 # SEM_NOOPENFILEERRORBOX, so any unexpected missing transitive DLL fails non-interactively
@@ -93,6 +98,7 @@ if(NOT _rc EQUAL 0)
     "${_launch} check failed on built ECU with PATH=${_minimal_path} (exit code ${_rc}):\n"
     "stdout: ${_out}\nstderr: ${_err}")
 endif()
+message(STATUS "launch.mingw_runtime_dlls_standalone: PASS vehicle_sil_launch check without MSYS2 on PATH")
 
 # 2. Direct ECU execution outside UCRT64 shell.
 execute_process(
@@ -109,6 +115,7 @@ endif()
 if(NOT _out MATCHES "\"vehicle_sil\"" OR NOT _out MATCHES "\"Engine\"")
   message(FATAL_ERROR "unexpected --describe output from ${_ecu}:\n${_out}")
 endif()
+message(STATUS "launch.mingw_runtime_dlls_standalone: PASS ${_ecu_name} --describe without MSYS2 on PATH")
 
 # 3. Negative control: copy ONLY the ECU and ${SILKIT_DLL} (omitting MinGW runtime DLLs) and run
 # through vehicle_sil_launch check (which sets SEM_FAILCRITICALERRORS so Windows never opens a
@@ -144,5 +151,7 @@ if(NOT _combined MATCHES "0xC0000135" OR NOT _combined MATCHES "vehicle_sil_copy
   message(FATAL_ERROR
     "negative control failed with exit code ${_rc}, expected 0xC0000135 + vehicle_sil_copy_runtime_dlls:\n${_combined}")
 endif()
+string(STRIP "${_combined}" _combined_trimmed)
+message(STATUS "launch.mingw_runtime_dlls_standalone: PASS negative control (exit code ${_rc}, 0xC0000135 + vehicle_sil_copy_runtime_dlls):\n${_combined_trimmed}")
 
 file(REMOVE_RECURSE "${WORK}")

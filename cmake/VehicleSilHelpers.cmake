@@ -42,15 +42,15 @@ function(vehicle_sil_target_defaults target)
   vehicle_sil_set_warnings(${target})
 endfunction()
 
-# Queries `${compiler} -print-file-name=<name>` and sets <out_var> to the normalized absolute
-# existing file path, or "" if the driver could not locate it.
+# Queries `${compiler} [<driver-flags>...] -print-file-name=<name>` and sets <out_var> to the
+# normalized absolute existing file path, or "" if the driver could not locate it.
 function(_vehicle_sil_compiler_print_file compiler name out_var)
   set(${out_var} "" PARENT_SCOPE)
   if("${compiler}" STREQUAL "" OR "${name}" STREQUAL "")
     return()
   endif()
   execute_process(
-    COMMAND "${compiler}" "-print-file-name=${name}"
+    COMMAND "${compiler}" ${ARGN} "-print-file-name=${name}"
     RESULT_VARIABLE _rc
     OUTPUT_VARIABLE _out
     ERROR_QUIET
@@ -90,8 +90,17 @@ endfunction()
 
 # Resolves MinGW compiler runtime DLLs matching `compiler_id` (and for Clang, whether `stdc++` is
 # in `implicit_link_libs`, e.g. MSYS2 UCRT64 clang++ vs CLANG64 libc++) via `-print-file-name=<dll>`
-# with sysroot, static-archive `../bin`, implicit link directories, and compiler REALPATH fallbacks.
+# with optional `compiler_target` (ARGV5) / `sysroot` (ARGV6) forwarding plus sysroot,
+# static-archive `../bin`, implicit link directories, and compiler REALPATH fallbacks.
 function(_vehicle_sil_find_mingw_runtime_dlls compiler compiler_id implicit_link_dirs implicit_link_libs out_var)
+  set(_compiler_target "")
+  if(ARGC GREATER 5)
+    set(_compiler_target "${ARGV5}")
+  endif()
+  set(_explicit_sysroot "")
+  if(ARGC GREATER 6)
+    set(_explicit_sysroot "${ARGV6}")
+  endif()
   set(${out_var} "" PARENT_SCOPE)
   set(_use_libstdcxx FALSE)
   if(compiler_id STREQUAL "GNU")
@@ -130,11 +139,23 @@ function(_vehicle_sil_find_mingw_runtime_dlls compiler compiler_id implicit_link
     return()
   endif()
 
+  set(_probe_args "")
+  if(compiler_id STREQUAL "Clang" AND NOT "${_compiler_target}" STREQUAL "")
+    list(APPEND _probe_args "--target=${_compiler_target}")
+  endif()
+  if(NOT "${_explicit_sysroot}" STREQUAL "")
+    list(APPEND _probe_args "--sysroot=${_explicit_sysroot}")
+  endif()
+
   set(_fallback_dirs "")
-  # 1. Sysroot bin directories.
+  # 1. Explicit CMAKE_SYSROOT and compiler `-print-sysroot` bin directories.
+  if(NOT "${_explicit_sysroot}" STREQUAL "")
+    _vehicle_sil_append_existing_dir(_fallback_dirs "${_explicit_sysroot}/bin")
+    _vehicle_sil_append_existing_dir(_fallback_dirs "${_explicit_sysroot}/mingw/bin")
+  endif()
   if(NOT "${compiler}" STREQUAL "")
     execute_process(
-      COMMAND "${compiler}" -print-sysroot
+      COMMAND "${compiler}" ${_probe_args} -print-sysroot
       RESULT_VARIABLE _sysroot_rc
       OUTPUT_VARIABLE _sysroot
       ERROR_QUIET
@@ -148,7 +169,7 @@ function(_vehicle_sil_find_mingw_runtime_dlls compiler compiler_id implicit_link
   endif()
   # 2. Static/import archive sibling `../bin` (and archive directory itself).
   foreach(_archive IN LISTS _probe_archives)
-    _vehicle_sil_compiler_print_file("${compiler}" "${_archive}" _archive_path)
+    _vehicle_sil_compiler_print_file("${compiler}" "${_archive}" _archive_path ${_probe_args})
     if(NOT "${_archive_path}" STREQUAL "")
       cmake_path(GET _archive_path PARENT_PATH _archive_dir)
       _vehicle_sil_append_existing_dir(_fallback_dirs "${_archive_dir}/../bin")
@@ -170,7 +191,7 @@ function(_vehicle_sil_find_mingw_runtime_dlls compiler compiler_id implicit_link
 
   set(_resolved "")
   foreach(_dll IN LISTS _candidates)
-    _vehicle_sil_compiler_print_file("${compiler}" "${_dll}" _found)
+    _vehicle_sil_compiler_print_file("${compiler}" "${_dll}" _found ${_probe_args})
     if("${_found}" STREQUAL "")
       foreach(_dir IN LISTS _fallback_dirs)
         if(EXISTS "${_dir}/${_dll}" AND NOT IS_DIRECTORY "${_dir}/${_dll}")
@@ -200,7 +221,9 @@ function(_vehicle_sil_resolve_mingw_runtime_dlls out_var)
       "${CMAKE_CXX_COMPILER_ID}"
       "${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}"
       "${CMAKE_CXX_IMPLICIT_LINK_LIBRARIES}"
-      _dlls)
+      _dlls
+      "${CMAKE_CXX_COMPILER_TARGET}"
+      "${CMAKE_SYSROOT}")
     set_property(GLOBAL PROPERTY _VEHICLE_SIL_MINGW_RUNTIME_DLLS "${_dlls}")
     set_property(GLOBAL PROPERTY _VEHICLE_SIL_MINGW_RUNTIME_DLLS_CACHED TRUE)
   else()
