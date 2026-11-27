@@ -1,4 +1,11 @@
-import { ClientConnection, Connection, SocketFactory, webSocketFactory } from './connection';
+import {
+  BATCH_MS_MAX,
+  BATCH_MS_MIN,
+  ClientConnection,
+  Connection,
+  SocketFactory,
+  webSocketFactory,
+} from './connection';
 import { ActionError } from './front-types';
 import { DEFAULT_TIMEOUT_MS, HttpRequest, HttpTransport, fetchTransport } from './http';
 import {
@@ -35,7 +42,13 @@ import { ClientSession, SessionFeed } from './session';
 import { ANSWER_TIMEOUT_MS, ClientTime, SendResult, TimeControl } from './time';
 import { webSocketUrl } from './urls';
 import { VariableBinder } from './variable-binding';
-import { ClientVariables, VariablesFeed } from './variables';
+import {
+  ClientVariables,
+  WATCH_PERIOD_MS,
+  WATCH_PERIOD_MS_MAX,
+  WATCH_PERIOD_MS_MIN,
+  VariablesFeed,
+} from './variables';
 import { ErrorSink, Readable, Writable } from './values';
 
 /**
@@ -87,6 +100,17 @@ export interface ClientOptions {
   socket?: SocketFactory;
   /** How long to wait for the answer to a time command (ms; default ANSWER_TIMEOUT_MS). */
   answerTimeoutMs?: number;
+  /**
+   * Interval for batching incoming WebSocket notifications (ms; finite number `0..1000`, default `BATCH_MS` = 100).
+   * `0` flushes each turn's messages on a microtask.
+   */
+  batchMs?: number;
+  /**
+   * Default interval for variable watches created through this client (ms; finite number `20..60_000`, default
+   * `WATCH_PERIOD_MS` = 100). Rounded down to the nearest tier in `WATCH_PERIODS_MS` and clamped to the server's
+   * limits. Note: latest-value polling at 20 ms does not guarantee capturing pulses shorter than 20 ms.
+   */
+  watchPeriodMs?: number;
   /**
    * Receives what subscribers (functions passed to subscribe, onBatch, onMessages, onUnreadable) threw. The client
    * carries on (other subscribers still get notified, and handling such as disconnecting after a refusal still
@@ -226,6 +250,8 @@ const CLIENT_OPTION_FIELDS = new Set([
   'http',
   'socket',
   'answerTimeoutMs',
+  'batchMs',
+  'watchPeriodMs',
   'onError',
 ]);
 
@@ -273,6 +299,34 @@ export function validateClientOptions(options: unknown): asserts options is Clie
       'refused',
     );
   }
+  const batchMs = candidate['batchMs'];
+  if (
+    batchMs !== undefined &&
+    (typeof batchMs !== 'number' ||
+      !Number.isFinite(batchMs) ||
+      batchMs < BATCH_MS_MIN ||
+      batchMs > BATCH_MS_MAX)
+  ) {
+    throw new ActionError(
+      'invalid-argument',
+      `options.batchMs must be a finite number of milliseconds between ${BATCH_MS_MIN} and ${BATCH_MS_MAX}`,
+      'refused',
+    );
+  }
+  const watchPeriodMs = candidate['watchPeriodMs'];
+  if (
+    watchPeriodMs !== undefined &&
+    (typeof watchPeriodMs !== 'number' ||
+      !Number.isFinite(watchPeriodMs) ||
+      watchPeriodMs < WATCH_PERIOD_MS_MIN ||
+      watchPeriodMs > WATCH_PERIOD_MS_MAX)
+  ) {
+    throw new ActionError(
+      'invalid-argument',
+      `options.watchPeriodMs must be a finite number of milliseconds between ${WATCH_PERIOD_MS_MIN} and ${WATCH_PERIOD_MS_MAX}`,
+      'refused',
+    );
+  }
 }
 
 /** createClient, and the parts the front door is built from. */
@@ -302,6 +356,7 @@ export function buildClient(options: ClientOptions): ClientParts {
       },
     ],
     afterGreeting: () => variablesFeed?.resume() ?? [],
+    ...(options.batchMs !== undefined ? { batchMs: options.batchMs } : {}),
     onError,
   });
   feed = new SessionFeed(connection, onError, undefined, {
@@ -326,6 +381,7 @@ export function buildClient(options: ClientOptions): ClientParts {
       incompatible: session.incompatible,
       session: session.session,
     },
+    options.watchPeriodMs ?? WATCH_PERIOD_MS,
   );
   const variables = variablesFeed;
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
