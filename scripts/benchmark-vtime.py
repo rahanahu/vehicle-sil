@@ -86,7 +86,7 @@ TARGET_TU_SUFFIXES = {
     "vehicle_sil_bench_ecu": "tools/bench_ecu/main.cpp",
 }
 
-COMPILER_WRAPPERS = frozenset({"ccache", "sccache", "distcc", "icecc", "env"})
+COMPILER_WRAPPERS = frozenset({"ccache", "sccache", "distcc", "icecc"})
 
 
 class UsageError(Exception):
@@ -262,7 +262,7 @@ def _strip_matching_quotes(tok: str) -> str:
     return tok
 
 
-def _split_windows_cmd_tokens(cmd: str) -> list[str]:
+def _split_windows_cmd_tokens(cmd: str, *, reject_shell_ops: bool = False) -> list[str]:
     """Split a Windows command line / response file honoring mid-token quotes and \\\" escapes."""
     tokens: list[str] = []
     buf: list[str] = []
@@ -272,6 +272,8 @@ def _split_windows_cmd_tokens(cmd: str) -> list[str]:
     n = len(cmd)
     while i < n:
         ch = cmd[i]
+        if reject_shell_ops and (ch in ("\n", "\r") or (not in_quote and ch in ("&", "|"))):
+            raise ValueError("unsupported shell operator in command")
         if ch.isspace() and not in_quote:
             if has_token:
                 tokens.append("".join(buf))
@@ -314,6 +316,128 @@ def _split_cmd_tokens(cmd: str, windows: bool) -> list[str]:
     return shlex.split(cmd, posix=True)
 
 
+def _validate_posix_shell_command(cmd: str) -> None:
+    """Reject unquoted shell operators/newlines and unescaped POSIX expansions before quote stripping."""
+    in_single = False
+    in_double = False
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+            i += 1
+            continue
+        if in_double:
+            if ch == "\\" and i + 1 < n:
+                nxt = cmd[i + 1]
+                if nxt in ("\n", "\r"):
+                    raise ValueError("unsupported shell line continuation in command")
+                if nxt in ('"', "\\", "$", "`"):
+                    i += 2
+                    continue
+            if ch == '"':
+                in_double = False
+                i += 1
+                continue
+            if ch in ("$", "`"):
+                raise ValueError(f"unsupported shell expansion in command: {ch!r}")
+            i += 1
+            continue
+        if ch == "\\":
+            if i + 1 >= n:
+                raise ValueError("No escaped character")
+            if cmd[i + 1] in ("\n", "\r"):
+                raise ValueError("unsupported shell line continuation in command")
+            i += 2
+            continue
+        if ch == "'":
+            in_single = True
+            i += 1
+            continue
+        if ch == '"':
+            in_double = True
+            i += 1
+            continue
+        if ch == "#" and (i == 0 or cmd[i - 1].isspace()):
+            raise ValueError("unsupported shell comment in command")
+        if ch in (";", "&", "|", "\n", "\r", "$", "`"):
+            raise ValueError(f"unsupported shell syntax in command: {ch!r}")
+        i += 1
+    if in_single or in_double:
+        raise ValueError("No closing quotation")
+
+
+def _split_cc_command(cmd: str, windows: bool) -> list[str]:
+    """Split a compile_commands.json command string, failing closed on shell operators/expansions."""
+    if windows:
+        return _split_windows_cmd_tokens(cmd, reject_shell_ops=True)
+    _validate_posix_shell_command(cmd)
+    return shlex.split(cmd, posix=True)
+
+
+def _is_existing_dir(path: Path | None) -> bool:
+    if path is None:
+        return False
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _resolve_path_in_dir(base_dir: Path | None, path_str: str, *, windows: bool) -> Path | None:
+    if not path_str or "\x00" in path_str:
+        return None
+    if windows:
+        win_p = PureWindowsPath(path_str)
+        if win_p.is_absolute():
+            return Path(path_str)
+        if win_p.drive:
+            return None
+        if path_str.startswith("\\"):
+            if os.name == "nt" and _is_existing_dir(base_dir):
+                assert base_dir is not None
+                return base_dir / path_str
+            return None
+        if path_str.startswith("/"):
+            if os.name == "nt":
+                if _is_existing_dir(base_dir):
+                    assert base_dir is not None
+                    return base_dir / path_str
+                return None
+            return Path(path_str)
+        if not _is_existing_dir(base_dir):
+            return None
+        assert base_dir is not None
+        rel = path_str.replace("\\", "/") if os.name != "nt" else path_str
+        return base_dir / rel
+    p = Path(path_str)
+    if p.is_absolute():
+        return p
+    if not _is_existing_dir(base_dir):
+        return None
+    assert base_dir is not None
+    return base_dir / p
+
+
+def _validate_entry_dir(raw_dir: Any, *, windows: bool) -> Path | None:
+    if not isinstance(raw_dir, str):
+        return None
+    if not raw_dir.strip() or "\x00" in raw_dir:
+        return None
+    if windows:
+        if PureWindowsPath(raw_dir).is_absolute():
+            return Path(raw_dir)
+        if os.name != "nt" and Path(raw_dir).is_absolute():
+            return Path(raw_dir)
+        return None
+    p = Path(raw_dir)
+    if not p.is_absolute():
+        return None
+    return p
+
+
 def _read_response_file_text(rsp_path: Path) -> str:
     raw = rsp_path.read_bytes()
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
@@ -347,17 +471,19 @@ def _uses_windows_rsp_quoting(
 def _is_literal_at_argument(
     tok: str,
     prev_tok: str | None,
-    rsp_path: Path,
+    rsp_path: Path | None,
     base_dir: Path | None,
+    *,
+    windows: bool = False,
 ) -> bool:
     if prev_tok == "-Xlinker" and tok.startswith(("@loader_path", "@executable_path", "@rpath")):
         return True
     lit_str = _strip_matching_quotes(tok)
-    lit_path = Path(lit_str)
-    if not lit_path.is_absolute() and base_dir is not None:
-        lit_path = base_dir / lit_path
+    lit_path = _resolve_path_in_dir(base_dir, lit_str, windows=windows)
+    if lit_path is None:
+        return False
     try:
-        return lit_path.exists() and not rsp_path.exists()
+        return lit_path.exists() and (rsp_path is None or not rsp_path.exists())
     except OSError:
         return False
 
@@ -380,26 +506,25 @@ def _expand_response_files(
     for tok in tokens:
         if tok.startswith("@") and len(tok) > 1:
             rsp_str = _strip_matching_quotes(tok[1:])
-            rsp_path = Path(rsp_str)
-            if not rsp_path.is_absolute() and base_dir is not None:
-                rsp_path = base_dir / rsp_path
-            try:
-                if rsp_path.is_file():
-                    rsp_text = _read_response_file_text(rsp_path)
-                    rsp_tokens = _split_cmd_tokens(rsp_text, use_win_rsp)
-                    nested_out, nested_unreadable = _expand_response_files(
-                        rsp_tokens, base_dir, windows, depth + 1, rsp_windows=use_win_rsp
-                    )
-                    out.extend(nested_out)
-                    unreadable.extend(nested_unreadable)
-                    prev_tok = nested_out[-1] if nested_out else None
+            rsp_path = _resolve_path_in_dir(base_dir, rsp_str, windows=windows)
+            if rsp_path is not None:
+                try:
+                    if rsp_path.is_file():
+                        rsp_text = _read_response_file_text(rsp_path)
+                        rsp_tokens = _split_cmd_tokens(rsp_text, use_win_rsp)
+                        nested_out, nested_unreadable = _expand_response_files(
+                            rsp_tokens, base_dir, windows, depth + 1, rsp_windows=use_win_rsp
+                        )
+                        out.extend(nested_out)
+                        unreadable.extend(nested_unreadable)
+                        prev_tok = nested_out[-1] if nested_out else None
+                        continue
+                except (OSError, ValueError):
+                    unreadable.append(tok)
+                    out.append(tok)
+                    prev_tok = tok
                     continue
-            except (OSError, ValueError):
-                unreadable.append(tok)
-                out.append(tok)
-                prev_tok = tok
-                continue
-            if _is_literal_at_argument(tok, prev_tok, rsp_path, base_dir):
+            if _is_literal_at_argument(tok, prev_tok, rsp_path, base_dir, windows=windows):
                 out.append(tok)
                 prev_tok = tok
                 continue
@@ -451,75 +576,212 @@ def parse_flag_tokens(tokens: list[str]) -> dict[str, Any]:
     }
 
 
-_ENV_VALUE_FLAGS = frozenset({"-u", "--unset", "-C", "--chdir"})
-_CCACHE_VALUE_FLAGS = frozenset({"-o", "--set-config", "-c", "--config-path", "-f"})
+_COMPILER_BASENAME_RE = re.compile(
+    r"^(?:[a-z0-9][a-z0-9_+.-]*-)?"
+    r"(?:(?:g\+\+|gcc|clang\+\+|clang-cl|clang)(?:-mp-\d+(?:\.\d+)*|-?\d+(?:\.\d+)*)?(?:-(?:posix|win32))?|"
+    r"(?:c\+\+|cc|cl|icpx|icx-cl|icx-cc|icx|icpc|icc|nvc\+\+|nvc|nvcc|armclang\+\+|armclang|"
+    r"em\+\+|emcc|q\+\+|qcc|mpicxx|mpic\+\+|mpicc)(?:-\d+(?:\.\d+)*)?)$"
+)
+_CCACHE_VALUE_FLAGS = frozenset({"-o", "--set-config", "--config-path"})
 
 
-def _skip_env_args(tokens: list[str], i: int) -> int | None:
+def _is_plausible_compiler_token(tok: str, *, windows: bool) -> bool:
+    if not tok or tok != tok.strip() or "\x00" in tok:
+        return False
+    if tok[0] in ('"', "'") or tok[-1] in ('"', "'"):
+        return False
+    if tok.startswith("-"):
+        return False
+    if windows and tok.startswith("/"):
+        return False
+    if "=" in tok and "/" not in tok and "\\" not in tok:
+        return False
+    norm = tok.replace("\\", "/")
+    if tok.startswith("@") and "/" not in norm:
+        return False
+    base = norm.rsplit("/", 1)[-1].lower()
+    for ext in (".exe", ".bat", ".cmd"):
+        if base.endswith(ext):
+            base = base[: -len(ext)]
+            break
+    if base.endswith(".real"):
+        base = base[: -len(".real")]
+    return bool(_COMPILER_BASENAME_RE.fullmatch(base))
+
+
+def _resolve_compiler_path(
+    compiler_path: str,
+    effective_dir: Path | None,
+    *,
+    windows: bool,
+) -> str | None:
+    has_sep = "/" in compiler_path or (windows and "\\" in compiler_path)
+    has_win_drive = windows and bool(PureWindowsPath(compiler_path).drive)
+    if not has_sep and not has_win_drive:
+        return compiler_path
+    resolved = _resolve_path_in_dir(effective_dir, compiler_path, windows=windows)
+    if resolved is None:
+        return None
+    return str(resolved)
+
+
+def _parse_env_args(tokens: list[str], i: int) -> tuple[int, str | None] | None:
+    """Parse simple unambiguous env options and assignments; fail closed on anything else."""
+    chdir_target: str | None = None
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in ("--", "-"):
+            i += 1
+            break
+        if not tok.startswith("-"):
+            break
+        if tok in ("-i", "--ignore-environment"):
+            i += 1
+            continue
+        if tok in ("-u", "--unset"):
+            if i + 1 >= len(tokens) or not tokens[i + 1]:
+                return None
+            i += 2
+            continue
+        if tok.startswith("--unset="):
+            if len(tok) == len("--unset="):
+                return None
+            i += 1
+            continue
+        if tok in ("-C", "--chdir"):
+            if i + 1 >= len(tokens) or not tokens[i + 1]:
+                return None
+            chdir_target = tokens[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--chdir="):
+            val = tok[len("--chdir=") :]
+            if not val:
+                return None
+            chdir_target = val
+            i += 1
+            continue
+        return None
+    while i < len(tokens):
+        tok = tokens[i]
+        if "=" in tok and not tok.startswith(("-", "=")):
+            i += 1
+            continue
+        break
+    return i, chdir_target
+
+
+def _parse_cmake_env_args(tokens: list[str], i: int) -> int | None:
+    """Parse `cmake -E env` options and assignments; return next_index or None."""
     while i < len(tokens):
         tok = tokens[i]
         if tok == "--":
             return i + 1
-        if "=" in tok and not tok.startswith("-"):
+        if tok.startswith("--unset="):
+            if len(tok) == len("--unset="):
+                return None
             i += 1
             continue
-        if tok in ("-S", "--split-string") or tok.startswith(("-S", "--split-string=")):
-            return None
-        if tok in _ENV_VALUE_FLAGS:
-            if i + 1 >= len(tokens):
-                return len(tokens)
+        if tok == "--modify":
+            if i + 1 >= len(tokens) or not tokens[i + 1]:
+                return None
             i += 2
             continue
-        if tok.startswith("-"):
+        if "=" in tok and not tok.startswith(("-", "=")):
             i += 1
             continue
+        if tok.startswith("-"):
+            return None
         break
     return i
 
 
-def _extract_compiler_and_arg_start(tokens: list[str]) -> tuple[str | None, int]:
+def _resolve_compiler_invocation(
+    tokens: list[str],
+    base_dir: Path | None,
+    *,
+    windows: bool,
+) -> tuple[str | None, int, Path | None]:
+    """Peel known compiler wrappers, track effective working directory, and validate compiler token."""
+    if not tokens or any("\x00" in tok for tok in tokens):
+        return None, len(tokens), None
+    effective_dir = base_dir
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        base = _strip_matching_quotes(tok).replace("\\", "/").rsplit("/", 1)[-1].lower()
+        base = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
         if base.endswith(".exe"):
             base = base[:-4]
         if base == "cmake":
-            if i + 2 < len(tokens) and tokens[i + 1] == "-E" and tokens[i + 2].lower() == "env":
-                next_i = _skip_env_args(tokens, i + 3)
-                if next_i is None:
-                    return None, len(tokens)
-                i = next_i
-                continue
+            if i + 2 < len(tokens) and tokens[i + 1] == "-E":
+                subcmd = tokens[i + 2].lower()
+                if subcmd == "env":
+                    next_i = _parse_cmake_env_args(tokens, i + 3)
+                    if next_i is None:
+                        return None, len(tokens), None
+                    i = next_i
+                    continue
+                if subcmd == "chdir":
+                    if i + 4 >= len(tokens):
+                        return None, len(tokens), None
+                    new_dir = _resolve_path_in_dir(effective_dir, tokens[i + 3], windows=windows)
+                    if new_dir is None:
+                        return None, len(tokens), None
+                    effective_dir = new_dir
+                    i += 4
+                    continue
+            return None, len(tokens), None
         if base == "env":
-            next_i = _skip_env_args(tokens, i + 1)
-            if next_i is None:
-                return None, len(tokens)
+            parsed_env = _parse_env_args(tokens, i + 1)
+            if parsed_env is None:
+                return None, len(tokens), None
+            next_i, chdir_target = parsed_env
+            if chdir_target is not None:
+                new_dir = _resolve_path_in_dir(effective_dir, chdir_target, windows=windows)
+                if new_dir is None:
+                    return None, len(tokens), None
+                effective_dir = new_dir
             i = next_i
             continue
         if base in COMPILER_WRAPPERS:
             i += 1
-            while i < len(tokens):
-                cur = tokens[i]
-                if "=" in cur and not cur.startswith("-"):
+            if base == "ccache":
+                while i < len(tokens):
+                    cur = tokens[i]
+                    if "=" in cur and not cur.startswith(("-", "=")):
+                        i += 1
+                    elif cur in _CCACHE_VALUE_FLAGS:
+                        if i + 1 >= len(tokens) or not tokens[i + 1]:
+                            return None, len(tokens), None
+                        i += 2
+                    elif cur.startswith("--set-config=") and "=" in cur[len("--set-config=") :]:
+                        i += 1
+                    elif cur.startswith("--config-path=") and len(cur) > len("--config-path="):
+                        i += 1
+                    elif cur.startswith("-o") and "=" in cur[2:]:
+                        i += 1
+                    elif cur == "--":
+                        i += 1
+                        break
+                    elif cur.startswith("-"):
+                        return None, len(tokens), None
+                    else:
+                        break
+            else:
+                if i < len(tokens) and tokens[i] == "--":
                     i += 1
-                elif cur in _CCACHE_VALUE_FLAGS:
-                    i += 2
-                elif cur == "--":
-                    i += 1
-                    break
-                elif cur.startswith("-"):
-                    i += 1
-                else:
-                    break
+                elif i < len(tokens) and tokens[i].startswith("-"):
+                    return None, len(tokens), None
             continue
-        return tok, i + 1
-    return None, len(tokens)
-
-
-def _extract_compiler_path(tokens: list[str]) -> str | None:
-    compiler_path, _ = _extract_compiler_and_arg_start(tokens)
-    return compiler_path
+        if not _is_plausible_compiler_token(tok, windows=windows):
+            return None, len(tokens), None
+        if i + 1 >= len(tokens):
+            return None, len(tokens), None
+        resolved_compiler = _resolve_compiler_path(tok, effective_dir, windows=windows)
+        if resolved_compiler is None:
+            return None, len(tokens), None
+        return resolved_compiler, i + 1, effective_dir
+    return None, len(tokens), None
 
 
 def _compiler_banner(compiler_path: str | None, cache: dict[str, str | None]) -> str | None:
@@ -756,7 +1018,7 @@ def extract_build_provenance(
                 entries = json.loads(cc_path.read_text(encoding="utf-8", errors="replace"))
             except (OSError, json.JSONDecodeError):
                 entries = None
-        if not isinstance(entries, list):
+        if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
             extra_warnings.append("unreadable or invalid compile_commands.json")
             block_cache_fallback = True
         else:
@@ -767,35 +1029,55 @@ def extract_build_provenance(
                 name: [] for name in TARGET_TU_SUFFIXES
             }
             malformed_by_target: set[str] = set()
+            has_invalid_file_entry = False
             for entry in entries:
-                if not isinstance(entry, dict):
+                file_raw = entry.get("file")
+                if not isinstance(file_raw, str) or not file_raw.strip():
+                    has_invalid_file_entry = True
                     continue
-                file_str = str(entry.get("file", "")).replace("\\", "/")
+                file_str = file_raw.replace("\\", "/")
                 for target_name, suffix in TARGET_TU_SUFFIXES.items():
                     if file_str.endswith("/" + suffix) or file_str == suffix:
-                        entry_dir_raw = entry.get("directory")
-                        entry_dir = Path(str(entry_dir_raw)) if entry_dir_raw else build_dir
-                        raw_args = entry.get("arguments")
-                        try:
-                            if isinstance(raw_args, list) and all(isinstance(x, str) for x in raw_args):
-                                tokens = (
-                                    [_strip_matching_quotes(x) for x in raw_args]
-                                    if windows
-                                    else list(raw_args)
-                                )
-                            else:
-                                cmd_str = str(entry.get("command", ""))
-                                tokens = _split_cmd_tokens(cmd_str, windows)
-                        except ValueError:
+                        entry_dir = _validate_entry_dir(entry.get("directory"), windows=windows)
+                        if entry_dir is None:
                             malformed_by_target.add(target_name)
                             continue
-                        compiler_path, arg_start = _extract_compiler_and_arg_start(tokens)
-                        if compiler_path is None:
+                        if "arguments" in entry:
+                            raw_args = entry["arguments"]
+                            if not (
+                                isinstance(raw_args, list)
+                                and raw_args
+                                and all(isinstance(x, str) for x in raw_args)
+                            ):
+                                malformed_by_target.add(target_name)
+                                continue
+                            tokens = (
+                                [_strip_matching_quotes(x) for x in raw_args]
+                                if windows
+                                else list(raw_args)
+                            )
+                        elif "command" in entry:
+                            raw_cmd = entry["command"]
+                            if not isinstance(raw_cmd, str) or not raw_cmd.strip():
+                                malformed_by_target.add(target_name)
+                                continue
+                            try:
+                                tokens = _split_cc_command(raw_cmd, windows)
+                            except ValueError:
+                                malformed_by_target.add(target_name)
+                                continue
+                        else:
+                            malformed_by_target.add(target_name)
+                            continue
+                        compiler_path, arg_start, effective_dir = _resolve_compiler_invocation(
+                            tokens, entry_dir, windows=windows
+                        )
+                        if compiler_path is None or effective_dir is None:
                             malformed_by_target.add(target_name)
                             continue
                         rsp_win = _uses_windows_rsp_quoting(compiler_path, compiler_id_cmake, windows)
                         expanded_args, unreadable_rsps = _expand_response_files(
-                            tokens[arg_start:], entry_dir, windows, rsp_windows=rsp_win
+                            tokens[arg_start:], effective_dir, windows, rsp_windows=rsp_win
                         )
                         for ref in unreadable_rsps:
                             if ref not in unreadable_rsps_by_target[target_name]:
@@ -808,6 +1090,9 @@ def extract_build_provenance(
                             **parsed,
                         }
                         matched_entries[target_name].append((compiler_path, entry_flags))
+            if has_invalid_file_entry:
+                extra_warnings.append("malformed entry in compile_commands.json (missing or non-string file)")
+                block_cache_fallback = True
             unambiguous_any = False
             for target_name in TARGET_TU_SUFFIXES:
                 target_matches = matched_entries[target_name]

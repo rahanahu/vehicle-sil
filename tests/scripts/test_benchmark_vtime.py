@@ -922,10 +922,503 @@ class TestBuildFlagExtraction(unittest.TestCase):
             self.assertEqual(info["flags_source"], "compile_commands.json")
             self.assertIsNone(info["flags_warning"])
             self.assertEqual(info["targets"]["vehicle_sil_launch"]["compiler_banner"], "banner:g++.exe")
-            self.assertEqual(info["targets"]["vehicle_sil_core"]["compiler_banner"], "banner:@tools/g++.exe")
+            self.assertEqual(
+                info["targets"]["vehicle_sil_core"]["compiler_banner"],
+                f"banner:{bdir / '@tools/g++.exe'}",
+            )
             for name in BV.TARGET_TU_SUFFIXES:
                 self.assertEqual(info["targets"][name]["effective_opt_level"], "-O3")
                 self.assertTrue(info["targets"][name]["ndebug"])
+
+    def test_chdir_wrappers_resolve_response_files_in_effective_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            alt = bdir / "alt"
+            alt_sub = alt / "sub"
+            a_dir = bdir / "a"
+            ab_dir = a_dir / "b"
+            b_dir = bdir / "b"
+            for d in (alt_sub, ab_dir, b_dir):
+                d.mkdir(parents=True)
+
+            # Poison original directory with -O0 same-named response files; none of these may be read.
+            (bdir / "flags.rsp").write_text("-O0\n", encoding="utf-8")
+            (bdir / "inner.rsp").write_text("-O0\n", encoding="utf-8")
+            (a_dir / "flags.rsp").write_text("-O1\n", encoding="utf-8")
+
+            # Effective-dir response files carry -O3 -DNDEBUG.
+            (alt / "flags.rsp").write_text("-O3 -DNDEBUG\n", encoding="utf-8")
+            (alt / "inner.rsp").write_text("-O3 -DNDEBUG\n", encoding="utf-8")
+            (alt_sub / "outer.rsp").write_text("@inner.rsp\n", encoding="utf-8")
+            (ab_dir / "flags.rsp").write_text("-O3 -DNDEBUG\n", encoding="utf-8")
+            (b_dir / "flags.rsp").write_text("-O3 -DNDEBUG\n", encoding="utf-8")
+
+            # 1. env -C / --chdir / -iCalt, cmake -E chdir, and nested @inner.rsp under alt/.
+            cc_chdir = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "env -C alt /usr/bin/g++ @flags.rsp -c main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "cmake -E chdir alt /usr/bin/g++ @sub/outer.rsp -c participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "arguments": ["env", "--chdir=alt", "/usr/bin/g++", "@flags.rsp", "-c", "main.cpp"],
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_chdir), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info["flags_source"], "compile_commands.json")
+            self.assertIsNone(info["flags_warning"])
+            for name in BV.TARGET_TU_SUFFIXES:
+                self.assertEqual(info["targets"][name]["optimization_flags"], ["-O3"])
+                self.assertEqual(info["targets"][name]["effective_opt_level"], "-O3")
+                self.assertTrue(info["targets"][name]["ndebug"])
+
+            # 2. Chained wrappers (env -C a env -C b, cmake -E chdir a cmake -E chdir b) and
+            # single-env repeated -C (GNU env last-wins: env -C a -C b -> b, not a/b).
+            (ab_dir / "flags.rsp").write_text("-O2 -DNDEBUG\n", encoding="utf-8")
+            cc_chained = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "env -C a env -i -C b /usr/bin/g++ @flags.rsp -c main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "cmake -E chdir a cmake -E chdir b cmake -E env FOO=1 ccache /usr/bin/g++ @flags.rsp -c participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "env -C a -C b /usr/bin/g++ @flags.rsp -c main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_chained), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info_chain, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_chain["flags_source"], "compile_commands.json")
+            self.assertEqual(info_chain["targets"]["vehicle_sil_launch"]["effective_opt_level"], "-O2")
+            self.assertEqual(info_chain["targets"]["vehicle_sil_core"]["effective_opt_level"], "-O2")
+            self.assertEqual(info_chain["targets"]["vehicle_sil_bench_ecu"]["effective_opt_level"], "-O3")
+
+            # 3. Missing response file in alt/ or nonexistent chdir target must NEVER fall back to directory/flags.rsp.
+            (alt / "flags.rsp").unlink()
+            (bdir / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG\n",
+                encoding="utf-8",
+            )
+            cc_missing_in_alt = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "env -C alt /usr/bin/g++ @flags.rsp -c main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "env -C nonexistent /usr/bin/g++ @../flags.rsp -c participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "cmake -E chdir nonexistent /usr/bin/g++ @flags.rsp -c main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_missing_in_alt), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info_missing, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_missing["flags_source"], "unavailable")
+            for target_flags in info_missing["targets"].values():
+                self.assertEqual(target_flags, BV._empty_target_flags())
+            warn_missing = info_missing["flags_warning"] or ""
+            self.assertIn("unreadable response file(s)", warn_missing)
+            self.assertIn("@flags.rsp", warn_missing)
+            self.assertIn("@../flags.rsp", warn_missing)
+
+    def test_unsupported_chdir_and_shell_wrappers_fail_closed_without_reading_base_rsp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            alt = bdir / "alt"
+            alt.mkdir()
+            (bdir / "flags.rsp").write_text("-O0\n", encoding="utf-8")
+            (alt / "flags.rsp").write_text("-O3 -DNDEBUG\n", encoding="utf-8")
+            (bdir / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG\n",
+                encoding="utf-8",
+            )
+
+            posix_cases = [
+                'sh -c "cd alt && /usr/bin/g++ @flags.rsp -c main.cpp"',
+                "cd alt && /usr/bin/g++ @flags.rsp -c main.cpp",
+                "env --ch=alt /usr/bin/g++ @flags.rsp -c main.cpp",
+                "env -iCalt /usr/bin/g++ @flags.rsp -c main.cpp",
+                "env -0 /usr/bin/g++ @flags.rsp -c main.cpp",
+                "env --null /usr/bin/g++ @flags.rsp -c main.cpp",
+                'env -iS "/usr/bin/g++ @flags.rsp -c main.cpp"',
+                "ccache -other-flag /usr/bin/g++ @flags.rsp -c main.cpp",
+                "cmake -E env --chdir=alt /usr/bin/g++ @flags.rsp -c main.cpp",
+                "cmake -E time /usr/bin/g++ @flags.rsp -c main.cpp",
+                "python3 wrap_chdir.py alt /usr/bin/g++ @flags.rsp -c main.cpp",
+                "/usr/bin/g++ -O3 -c main.cpp && /usr/bin/g++ -O0 -c main.cpp",
+                "/usr/bin/g++ $(cat alt/flags.rsp) -c main.cpp",
+                '/usr/bin/g++ "$(cat alt/flags.rsp)" -c main.cpp',
+                "/usr/bin/g++ `cat alt/flags.rsp` -c main.cpp",
+                "/usr/bin/g++ $FLAGS -c main.cpp",
+                "/usr/bin/g++ -O3 -c main.cpp\n/usr/bin/g++ -O0 -c main.cpp",
+                "/usr/bin/g++ -O3 -c main.cpp\r\n/usr/bin/g++ -O0 -c main.cpp",
+                "/usr/bin/g++ -O3 \\\n-O0 -c main.cpp",
+                "/usr/bin/g++ \\\n@flags.rsp -c main.cpp",
+                '/usr/bin/g++ -O3 "-O\\\n0" -c main.cpp',
+                "/usr/bin/g++ -O3 -c main.cpp # -O0",
+            ]
+            for cmd in posix_cases:
+                with self.subTest(posix_cmd=cmd):
+                    cc = [{"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": cmd}]
+                    (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+                    with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                        info, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+                    self.assertEqual(info["flags_source"], "unavailable")
+                    self.assertEqual(info["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+                    self.assertIn("malformed compile_commands.json command", info["flags_warning"] or "")
+
+            win_cases = [
+                'cmd.exe /c "cd alt && cl.exe @flags.rsp /c main.cpp"',
+                "cl.exe /O2 /c main.cpp && cl.exe /Od /c main.cpp",
+                "cl.exe /O2 /c main.cpp\ncl.exe /Od /c main.cpp",
+                "cl.exe /O2 /c main.cpp\r\ncl.exe /Od /c main.cpp",
+            ]
+            for cmd in win_cases:
+                with self.subTest(win_cmd=cmd):
+                    cc = [{"directory": tmp, "file": f"{tmp}\\tools\\launch\\main.cpp", "command": cmd}]
+                    (bdir / "compile_commands.json").write_text(json.dumps(cc), encoding="utf-8")
+                    with mock.patch.object(BV, "_compiler_banner", return_value="cl"):
+                        info, _ = BV.extract_build_provenance(bdir, None, is_windows=True)
+                    self.assertEqual(info["flags_source"], "unavailable")
+                    self.assertEqual(info["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+                    self.assertIn("malformed compile_commands.json command", info["flags_warning"] or "")
+
+            # Legitimately quoted shell metacharacters, single-quoted/escaped $, and arguments[] with $ must pass.
+            cc_safe_quotes = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": '/usr/bin/g++ -DSEP=";" -DMAC=\'a;b $FOO `x`\' -DESC=\\$BAR -O3 -DNDEBUG -c main.cpp',
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "arguments": ["/usr/bin/g++", "-DFOO=$BAR", "-DSEP=;", "-O3", "-DNDEBUG", "-c", "participant_runtime.cpp"],
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": '/usr/bin/g++ -DSTR="\\$ESCAPED" -DFOO=#1 -O3 -DNDEBUG -c main.cpp',
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_safe_quotes), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info_safe, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_safe["flags_source"], "compile_commands.json")
+            self.assertIsNone(info_safe["flags_warning"])
+            for target_flags in info_safe["targets"].values():
+                self.assertEqual(target_flags["effective_opt_level"], "-O3")
+                self.assertTrue(target_flags["ndebug"])
+
+    def test_null_command_malformed_types_and_compilerless_arguments_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            (bdir / "flags.rsp").write_text("-O3\n", encoding="utf-8")
+            (bdir / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG\n",
+                encoding="utf-8",
+            )
+
+            # 1. Partial: command: null for one TU must leave that target null (never optimization_flags: [])
+            # with malformed warning and without false missing-TU warning.
+            cc_partial_null = [
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": None},
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "arguments": ["/usr/bin/g++", "-O3", "-DNDEBUG", "-c", "participant_runtime.cpp"],
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_partial_null), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info_null, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_null["flags_source"], "compile_commands.json")
+            self.assertEqual(info_null["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            self.assertIsNone(info_null["targets"]["vehicle_sil_launch"]["optimization_flags"])
+            self.assertEqual(info_null["targets"]["vehicle_sil_core"]["effective_opt_level"], "-O3")
+            self.assertEqual(info_null["targets"]["vehicle_sil_bench_ecu"]["effective_opt_level"], "-O3")
+            warn_null = info_null["flags_warning"] or ""
+            self.assertIn("malformed compile_commands.json command for vehicle_sil_launch", warn_null)
+            self.assertNotIn("missing target TU(s)", warn_null)
+
+            # 2. Compiler-less arguments (e.g. ["-O3"] or ["-O3", "-DNDEBUG", "-c", "file.cpp"]) must fail closed.
+            cc_compilerless = [
+                {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": ["-O3"]},
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "arguments": ["-O3", "-DNDEBUG", "-c", "participant_runtime.cpp"],
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "/usr/bin/g++ -O3 -DNDEBUG -c main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_compilerless), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info_cl, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_cl["flags_source"], "compile_commands.json")
+            self.assertEqual(info_cl["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            self.assertEqual(info_cl["targets"]["vehicle_sil_core"], BV._empty_target_flags())
+            self.assertEqual(info_cl["targets"]["vehicle_sil_bench_ecu"]["effective_opt_level"], "-O3")
+            warn_cl = info_cl["flags_warning"] or ""
+            self.assertIn("malformed compile_commands.json command for vehicle_sil_launch, vehicle_sil_core", warn_cl)
+            self.assertNotIn("missing target TU(s)", warn_cl)
+
+            # 3. Single/all malformed entries must be unavailable and never fall back to CMakeCache.txt.
+            malformed_entries: list[tuple[str, dict, bool]] = [
+                ("command_null", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": None}, False),
+                ("command_int", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": 123}, False),
+                ("command_list", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": ["-O3"]}, False),
+                ("command_literal_none", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "None"}, False),
+                ("command_flag_only", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "-O3 -c main.cpp"}, False),
+                ("command_ccache_flag_only", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "ccache -O3 -c main.cpp"}, False),
+                ("command_env_flag_only", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "command": "env -- -O3 -c main.cpp"}, False),
+                ("args_null", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": None}, False),
+                ("args_empty", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": []}, False),
+                ("args_non_str", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": ["/usr/bin/g++", 123]}, False),
+                ("args_empty_compiler", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": ["", "-O3"]}, False),
+                ("args_rsp_only", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": ["@flags.rsp", "-c", "main.cpp"]}, False),
+                ("args_compiler_no_args", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": ["/usr/bin/g++"]}, False),
+                ("args_quoted_dash_gcc", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": ['"--gcc"', "-O3", "-c", "main.cpp"]}, False),
+                ("args_single_quoted_dash_cl", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": ["'--cl'", "-O3", "-c", "main.cpp"]}, False),
+                ("args_quoted_posix_compiler", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp", "arguments": ['"/usr/bin/g++"', "-O3", "-c", "main.cpp"]}, False),
+                ("win_args_msvc_flag_only", {"directory": tmp, "file": f"{tmp}\\tools\\launch\\main.cpp", "arguments": ["/O2", "/c", "main.cpp"]}, True),
+                ("win_args_slash_cl_flag", {"directory": tmp, "file": f"{tmp}\\tools\\launch\\main.cpp", "arguments": ["/cl", "/O2", "/c", "main.cpp"]}, True),
+                ("win_args_msvc_include_cl", {"directory": tmp, "file": f"{tmp}\\tools\\launch\\main.cpp", "arguments": ["/I/path/to/cl", "/O2", "/c", "main.cpp"]}, True),
+                ("win_args_msvc_fo_cc", {"directory": tmp, "file": f"{tmp}\\tools\\launch\\main.cpp", "arguments": ["/Fo/build/cc", "/O2", "/c", "main.cpp"]}, True),
+                ("win_drive_relative_compiler", {"directory": tmp, "file": f"{tmp}\\tools\\launch\\main.cpp", "arguments": ["D:g++.exe", "-O3", "-c", "main.cpp"]}, True),
+                ("missing_cmd_and_args", {"directory": tmp, "file": f"{tmp}/tools/launch/main.cpp"}, False),
+                ("dir_null", {"directory": None, "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ -O3 -c main.cpp"}, False),
+                ("dir_relative", {"directory": "rel/dir", "file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ -O3 -c main.cpp"}, False),
+                ("dir_missing", {"file": f"{tmp}/tools/launch/main.cpp", "command": "/usr/bin/g++ -O3 -c main.cpp"}, False),
+            ]
+            for label, entry, is_win in malformed_entries:
+                with self.subTest(case=label):
+                    (bdir / "compile_commands.json").write_text(json.dumps([entry]), encoding="utf-8")
+                    with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                        info_m, _ = BV.extract_build_provenance(bdir, None, is_windows=is_win)
+                    self.assertEqual(info_m["flags_source"], "unavailable")
+                    for target_flags in info_m["targets"].values():
+                        self.assertEqual(target_flags, BV._empty_target_flags())
+                    self.assertIn("malformed compile_commands.json command for vehicle_sil_launch", info_m["flags_warning"] or "")
+
+            # 4. Non-dict elements or null/empty/whitespace file entries must not fall back to CMakeCache.txt.
+            for label, payload in [
+                ("non_dict_element", [None]),
+                ("null_file_entry", [{"directory": tmp, "file": None, "command": "/usr/bin/g++ -O3 -c main.cpp"}]),
+                ("empty_file_entry", [{"directory": tmp, "file": "", "command": "/usr/bin/g++ -O3 -c main.cpp"}]),
+                ("whitespace_file_entry", [{"directory": tmp, "file": "   ", "command": "/usr/bin/g++ -O3 -c main.cpp"}]),
+            ]:
+                with self.subTest(corrupt=label):
+                    (bdir / "compile_commands.json").write_text(json.dumps(payload), encoding="utf-8")
+                    info_bad, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+                    self.assertEqual(info_bad["flags_source"], "unavailable")
+                    self.assertIsNotNone(info_bad["flags_warning"])
+                    for target_flags in info_bad["targets"].values():
+                        self.assertEqual(target_flags, BV._empty_target_flags())
+
+            # 5. Legitimate compiler invocation with no -O flag still records optimization_flags: [].
+            cc_unopt = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "arguments": ["/usr/bin/g++", "-c", "main.cpp"],
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "arguments": ["/usr/bin/g++", "-c", "participant_runtime.cpp"],
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "arguments": ["/usr/bin/g++", "-c", "main.cpp"],
+                },
+            ]
+            (bdir / "CMakeCache.txt").unlink()
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_unopt), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="g++"):
+                info_unopt, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_unopt["flags_source"], "compile_commands.json")
+            self.assertIsNone(info_unopt["flags_warning"])
+            for target_flags in info_unopt["targets"].values():
+                self.assertEqual(target_flags["optimization_flags"], [])
+                self.assertIsNone(target_flags["effective_opt_level"])
+
+    def test_relative_compiler_resolved_in_effective_dir_and_ambiguity_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            alt1 = bdir / "alt1"
+            alt2 = bdir / "alt2"
+            alt1.mkdir()
+            alt2.mkdir()
+            (bdir / "flags.rsp").write_text("-O0\n", encoding="utf-8")
+            (alt1 / "flags.rsp").write_text("-O3 -DNDEBUG\n", encoding="utf-8")
+
+            if os.name != "nt":
+                for d, banner in [
+                    (bdir, "POISON_IN_BASE 0.0"),
+                    (alt1, "g++ (GCC) 14.2.0"),
+                    (alt2, "clang version 22.1.8"),
+                ]:
+                    exe = d / "my-g++"
+                    exe.write_text(f"#!/bin/sh\necho '{banner}'\n", encoding="utf-8")
+                    exe.chmod(0o755)
+
+                cc_rel = [
+                    {
+                        "directory": tmp,
+                        "file": f"{tmp}/{suffix}",
+                        "command": "env -C alt1 ./my-g++ @flags.rsp -c x.cpp",
+                    }
+                    for suffix in BV.TARGET_TU_SUFFIXES.values()
+                ]
+                (bdir / "compile_commands.json").write_text(json.dumps(cc_rel), encoding="utf-8")
+
+                # Must resolve ./my-g++ in alt1 regardless of caller cwd (repo root or bdir with poison binary).
+                info_root, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+                self.assertEqual(info_root["flags_source"], "compile_commands.json")
+                self.assertEqual(info_root["targets"]["vehicle_sil_launch"]["compiler_banner"], "g++ (GCC) 14.2.0")
+                self.assertEqual(info_root["targets"]["vehicle_sil_launch"]["effective_opt_level"], "-O3")
+                self.assertIsNone(info_root["flags_warning"])
+
+                old_cwd = os.getcwd()
+                try:
+                    os.chdir(bdir)
+                    info_bdir, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+                finally:
+                    os.chdir(old_cwd)
+                self.assertEqual(info_bdir["targets"]["vehicle_sil_launch"]["compiler_banner"], "g++ (GCC) 14.2.0")
+
+            # Conflicting relative compilers across alt1 vs alt2 must trigger ambiguity even when banner is None.
+            cc_amb = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "env -C alt1 ./my-g++ -O3 -DNDEBUG -c main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "env -C alt2 ./my-g++ -O3 -DNDEBUG -c main.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/libs/core/src/participant_runtime.cpp",
+                    "command": "env -C alt1 ./my-g++ -O3 -DNDEBUG -c participant_runtime.cpp",
+                },
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/bench_ecu/main.cpp",
+                    "command": "env -C alt1 ./my-g++ -O3 -DNDEBUG -c main.cpp",
+                },
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_amb), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value=None):
+                info_amb, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_amb["flags_source"], "compile_commands.json")
+            self.assertEqual(info_amb["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            self.assertIn("ambiguous compile_commands.json entries for vehicle_sil_launch", info_amb["flags_warning"] or "")
+
+            # Nonexistent effective_dir with a relative compiler must fail closed (never execute in caller cwd).
+            cc_missing_dir = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}/tools/launch/main.cpp",
+                    "command": "env -C nonexistent ./my-g++ -O3 -c main.cpp",
+                }
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_missing_dir), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", side_effect=AssertionError("must not invoke banner")):
+                info_nonexist, _ = BV.extract_build_provenance(bdir, None, is_windows=False)
+            self.assertEqual(info_nonexist["flags_source"], "unavailable")
+            self.assertEqual(info_nonexist["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            self.assertIn("malformed compile_commands.json command for vehicle_sil_launch", info_nonexist["flags_warning"] or "")
+
+    def test_compiler_token_real_world_names_and_windows_drive_relative_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bdir = Path(tmp)
+            valid_compilers = [
+                ("x86_64-w64-mingw32-g++-posix", False),
+                ("x86_64-w64-mingw32-g++-win32", False),
+                ("g++-mp-14", False),
+                ("/usr/bin/g++.real", False),
+                ("/usr/bin/clang++.real", False),
+                ("C:\\emsdk\\em++.bat", True),
+                ("armclang++", False),
+                ("icx-cl", False),
+                ("mpicxx", False),
+                ("mpic++", False),
+            ]
+            for compiler, is_win in valid_compilers:
+                with self.subTest(compiler=compiler):
+                    self.assertTrue(BV._is_plausible_compiler_token(compiler, windows=is_win))
+
+            # Windows drive-relative paths (e.g. D:flags.rsp, C:alt) must fail closed and never escape base_dir.
+            self.assertIsNone(BV._resolve_path_in_dir(bdir, "D:flags.rsp", windows=True))
+            self.assertIsNone(BV._resolve_path_in_dir(bdir, "C:alt", windows=True))
+            (bdir / "flags.rsp").write_text("-O0\n", encoding="utf-8")
+            (bdir / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG\n",
+                encoding="utf-8",
+            )
+            cc_drive_rel_rsp = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\launch\\main.cpp",
+                    "command": "cl.exe @D:flags.rsp /c main.cpp",
+                }
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_drive_rel_rsp), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="cl"):
+                info_dr, _ = BV.extract_build_provenance(bdir, None, is_windows=True)
+            self.assertEqual(info_dr["flags_source"], "unavailable")
+            self.assertEqual(info_dr["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            self.assertIn("unreadable response file(s)", info_dr["flags_warning"] or "")
+            self.assertIn("@D:flags.rsp", info_dr["flags_warning"] or "")
+
+            cc_drive_rel_chdir = [
+                {
+                    "directory": tmp,
+                    "file": f"{tmp}\\tools\\launch\\main.cpp",
+                    "command": "cmake.exe -E chdir D:alt cl.exe @flags.rsp /c main.cpp",
+                }
+            ]
+            (bdir / "compile_commands.json").write_text(json.dumps(cc_drive_rel_chdir), encoding="utf-8")
+            with mock.patch.object(BV, "_compiler_banner", return_value="cl"):
+                info_dc, _ = BV.extract_build_provenance(bdir, None, is_windows=True)
+            self.assertEqual(info_dc["flags_source"], "unavailable")
+            self.assertEqual(info_dc["targets"]["vehicle_sil_launch"], BV._empty_target_flags())
+            self.assertIn("malformed compile_commands.json command", info_dc["flags_warning"] or "")
 
 
 @unittest.skipUnless(shutil.which("git"), "git executable is required for dependency provenance tests")
