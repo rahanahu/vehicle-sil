@@ -1530,7 +1530,8 @@ TEST_CASE(check_scenario_with_cases_and_case_selection)
     }
     const vehicle_sil::config::test::InDirectory there(dir);
 
-    // Multi-case and single-case without --case return exit 4 (usage) listing available cases.
+    // Multi-case and single-case without --case return exit 4 (usage) listing available cases,
+    // while preserving config, participants, networks, hot_eligibility (before usage=true), and scenario metadata.
     RunRequest req;
     req.host.config = "sim.yaml";
     req.intent.variant = "small";
@@ -1539,27 +1540,79 @@ TEST_CASE(check_scenario_with_cases_and_case_selection)
     CHECK(missingCase.usage);
     CHECK_EQ(check_exit_code(missingCase), 4);
     CHECK(missingCase.findings.front().message.find("無負荷, 定格") != std::string::npos);
+    CHECK(missingCase.config.has_value());
+    CHECK_EQ(missingCase.participants.size(), std::size_t{1});
+    CHECK(missingCase.hot_eligibility.eligible);
+    CHECK(missingCase.hot_eligibility.reason.empty());
+    CHECK(missingCase.scenario.has_value());
+    CHECK(missingCase.scenario->case_name.empty());
+    CHECK(missingCase.scenario->cases == std::vector<std::string>({"無負荷", "定格"}));
+    const std::string missingJson = format_json(missingCase);
+    CHECK(missingJson.find("\"result\": \"usage\"") != std::string::npos);
+    CHECK(missingJson.find("\"eligible\": true") != std::string::npos);
+    CHECK(missingJson.find("\"name\": \"Engine\"") != std::string::npos);
+    CHECK(missingJson.find("\"case\": null") != std::string::npos);
+    CHECK(missingJson.find("\"case_details\": [") != std::string::npos);
+    // Human-readable text output stays concise on usage (does not dump participant/scenario tables).
+    const std::string missingText = format_text(missingCase);
+    CHECK(missingText.find("participant  step") == std::string::npos);
+    CHECK(missingText.find("scenario cases.yaml") == std::string::npos);
+    CHECK(missingText.find("cannot read sim.yaml: 1 error, 0 warnings, 0 notes") != std::string::npos);
 
     req.intent.scenario = "single_case.yaml";
     const Checked singleMissing = check_file(req);
     CHECK(singleMissing.usage);
     CHECK_EQ(check_exit_code(singleMissing), 4);
     CHECK(singleMissing.findings.front().message.find("only_one") != std::string::npos);
+    CHECK(singleMissing.config.has_value() && singleMissing.scenario.has_value() && singleMissing.hot_eligibility.eligible);
 
-    // Unknown --case returns exit 4 with "did you mean".
+    // Unknown --case returns exit 4 with "did you mean" and still preserves config/participants/scenario.
     req.intent.scenario = "cases.yaml";
     req.intent.scenario_case = "定格X";
     const Checked typoCase = check_file(req);
     CHECK(typoCase.usage);
     CHECK_EQ(check_exit_code(typoCase), 4);
     CHECK(typoCase.findings.front().message.find("did you mean '定格'?") != std::string::npos);
+    CHECK(typoCase.config.has_value() && typoCase.scenario.has_value() && typoCase.hot_eligibility.eligible);
+    CHECK(format_json(typoCase).find("\"case\": null") != std::string::npos);
 
-    // --case on caseless returns exit 4.
+    // Fixed registry configuration preserves hot_eligibility.reason == "fixed-registry" (not "usage").
+    {
+        std::ofstream out(dir / "sim_fixed.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\nregistry_uri: silkit://127.0.0.1:8500\nnetworks: []\n"
+               "participants:\n  - name: Engine\n    command: [missing/engine]\n";
+    }
+    RunRequest fixedReq;
+    fixedReq.host.config = "sim_fixed.yaml";
+    fixedReq.intent.scenario = "cases.yaml";
+    const Checked fixedMissing = check_file(fixedReq);
+    CHECK(fixedMissing.usage);
+    CHECK(!fixedMissing.hot_eligibility.eligible);
+    CHECK(fixedMissing.hot_eligibility.reason == "fixed-registry");
+    CHECK(fixedMissing.scenario.has_value());
+
+    // Variant missing remains distinct: variant is null, config/scenario are absent, hot_eligibility is "usage".
+    RunRequest noVariant;
+    noVariant.host.config = "sim.yaml";
+    noVariant.intent.scenario = "cases.yaml";
+    const Checked missingVariant = check_file(noVariant);
+    CHECK(missingVariant.usage && !missingVariant.config.has_value() && !missingVariant.scenario.has_value());
+    CHECK(missingVariant.hot_eligibility.reason == "usage");
+    CHECK(format_json(missingVariant).find("\"variant\": null") != std::string::npos);
+
+    // --case on caseless returns exit 4 and omits scenario.
     req.intent.scenario = "caseless.yaml";
     req.intent.scenario_case = "nominal";
     const Checked onCaseless = check_file(req);
-    CHECK(onCaseless.usage);
+    CHECK(onCaseless.usage && !onCaseless.scenario.has_value());
     CHECK_EQ(check_exit_code(onCaseless), 4);
+
+    // Caseless scenario omits "case" key completely.
+    req.intent.scenario = "caseless.yaml";
+    req.intent.scenario_case.reset();
+    const Checked caselessChecked = check_file(req);
+    CHECK(!caselessChecked.usage && caselessChecked.scenario.has_value());
+    CHECK(format_json(caselessChecked).find("\"case\":") == std::string::npos);
 
     // Valid --case emits case + cases + from: "case" in text and JSON.
     req.intent.scenario = "cases.yaml";
@@ -1735,6 +1788,14 @@ TEST_CASE(check_json_emits_param_metadata_case_details_missing_params_and_hex_in
     const std::string missJson = format_json(rMiss);
     CHECK(missJson.find("\"missing_params\": [") != std::string::npos);
     CHECK(missJson.find("\"need_lvl\"") != std::string::npos);
+    // Template parameter metadata for missing (valueless) required params is surfaced via scenario.param_meta
+    // without breaking scenario.params[] (which contains only resolved {name, value, from} entries).
+    CHECK(missJson.find("\"params\":") == std::string::npos);
+    CHECK(missJson.find("\"param_meta\": [") != std::string::npos);
+    CHECK(missJson.find("\"name\": \"need_lvl\"") != std::string::npos);
+    CHECK(missJson.find("\"type\": \"integer\"") != std::string::npos);
+    CHECK(missJson.find("\"values\": [") != std::string::npos);
+    CHECK(missJson.find("\"description\": \"Target level\"") != std::string::npos);
 }
 
 TEST_CASE(check_template_static_error_and_same_line_attribution)

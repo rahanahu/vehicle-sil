@@ -722,6 +722,7 @@ class Serve:
         variant: Optional[str] = None,
         params: Optional[Mapping[str, Union[bool, int, float, str]]] = None,
         scenario: Optional[Union[str, os.PathLike]] = None,
+        case: Optional[str] = None,
         disable: Sequence[str] = (),
         enable: Sequence[str] = (),
         manual: Sequence[str] = (),
@@ -732,6 +733,7 @@ class Serve:
         strict: Optional[bool] = None,
         stop_at_ms: Optional[int] = None,
         late_tolerance_ms: Optional[int] = None,
+        after_scenario: Optional[str] = None,
         timeline: Optional[Union[str, os.PathLike]] = None,
         id: Optional[int] = None,
         timeout: float = 60.0,
@@ -751,6 +753,7 @@ class Serve:
                     variant,
                     params,
                     scenario,
+                    case,
                     connect,
                     time_policy,
                     speed,
@@ -758,6 +761,7 @@ class Serve:
                     strict,
                     stop_at_ms,
                     late_tolerance_ms,
+                    after_scenario,
                 )
             )
             or bool(disable_list or enable_list or manual_list)
@@ -776,6 +780,10 @@ class Serve:
                 intent_dict["variant"] = variant
             if scenario is not None:
                 intent_dict["scenario"] = os.fspath(scenario)
+            if case is not None:
+                if not isinstance(case, str):
+                    raise TypeError("case must be a str")
+                intent_dict["case"] = case
             if params is not None:
                 if not isinstance(params, Mapping):
                     raise TypeError("params must be a mapping")
@@ -812,6 +820,10 @@ class Serve:
                 if isinstance(late_tolerance_ms, bool) or not isinstance(late_tolerance_ms, int):
                     raise TypeError("late_tolerance_ms must be an int")
                 intent_dict["late_tolerance_ms"] = late_tolerance_ms
+            if after_scenario is not None:
+                if not isinstance(after_scenario, str):
+                    raise TypeError("after_scenario must be a str")
+                intent_dict["after_scenario"] = after_scenario
 
         with self._changed:
             cmd_id = self._next_command_id() if id is None else id
@@ -828,6 +840,8 @@ class Serve:
         elif intent_dict is not None:
             line_bytes = _encode_ndjson({**base_payload, "intent": intent_dict})
             if len(line_bytes) > MAX_COMMAND_LINE:
+                if "cli_params" in intent_dict:
+                    raise ServeError("run command exceeds 64 KiB line limit", reason="invalid-command")
                 if "vehicle_sil_run_request" in intent_dict:
                     file_payload = dict(intent_dict)
                 else:

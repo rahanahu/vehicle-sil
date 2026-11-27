@@ -312,6 +312,7 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
     std::optional<std::string> timeline;
     std::optional<std::string> variant;
     std::optional<std::string> scenario;
+    std::optional<std::string> scenario_case;
     std::optional<std::string> speed;
     std::optional<std::string> stop_at_ms;
     std::optional<std::string> late_tolerance_ms;
@@ -425,6 +426,16 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
                 break;
             }
             scenario = std::move(val);
+            continue;
+        }
+        if (a == "--case")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            scenario_case = std::move(val);
             continue;
         }
         if (a == "--speed")
@@ -556,6 +567,10 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
     {
         intent_fields.push_back("\"scenario\":" + json_quote(*scenario));
     }
+    if (scenario_case)
+    {
+        intent_fields.push_back("\"case\":" + json_quote(*scenario_case));
+    }
     if (!params.empty())
     {
         std::string obj = "{";
@@ -568,7 +583,7 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
             obj += json_quote(params[i].first) + ':' + json_quote(params[i].second);
         }
         obj += '}';
-        intent_fields.push_back("\"params\":" + obj);
+        intent_fields.push_back("\"cli_params\":" + obj);
     }
     if (!disable.empty())
     {

@@ -39,7 +39,7 @@ struct RunIntent
     /// the working directory; one of a request file (RunRequest::origin has "scenario") from the
     /// directory of the configuration file.
     std::optional<std::string> scenario{};
-    /// Selected case name from `cases:` (--case), CLI-only.
+    /// Selected case name from `cases:` (--case, or "case" in a request file / serve intent).
     std::optional<std::string> scenario_case{};
     std::vector<std::string> disable{};
     std::vector<std::string> enable{};
@@ -180,15 +180,17 @@ struct RequestFileRead
 };
 
 /// Reads the text of a request file named `shown`: a JSON object with "vehicle_sil_run_request": 1
-/// and any of variant, params, scenario, disable, enable, manual, connect, time_policy, speed,
-/// start_paused, strict, stop_at_ms and late_tolerance_ms. An unknown key, a key written twice, a value of the wrong type (null
+/// and any of variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed,
+/// start_paused, strict, stop_at_ms, late_tolerance_ms and after_scenario. An unknown key, a key written twice, a value of the wrong type (null
 /// too: a key that is not meant is left out) and another version are errors. The format is JSON;
 /// the reader may take more than JSON (it is the YAML reader), which is no promise. Only the form is read: whether the file has the variant, the
 /// participants and the networks is the check's to say. No file system access.
 [[nodiscard]] RequestFileRead read_request_file(std::string_view text, std::string_view shown);
 
 /// Reads inline run-request JSON ("intent" of serve's run command): same rules as
-/// read_request_file(), except "vehicle_sil_run_request" is optional (validated == 1 if present).
+/// read_request_file(), except "vehicle_sil_run_request" is optional (validated == 1 if present)
+/// and "cli_params" (mapping parameter names to string values, read as ParamSource::CommandLine
+/// with from_cli = true) is accepted alongside typed "params".
 [[nodiscard]] RequestFileRead read_request_intent(std::string_view text, std::string_view shown);
 
 /// The --connect requests of a run: those of the command line (`arguments`), then those of the

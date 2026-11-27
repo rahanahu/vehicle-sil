@@ -93,6 +93,9 @@ def _split_once_arguments(
     arguments: Sequence[str],
     *,
     start_paused: bool,
+    case: Optional[str] = None,
+    params: Optional[Mapping[str, Union[bool, int, float, str]]] = None,
+    after_scenario: Optional[str] = None,
 ) -> Tuple[List[str], Dict[str, Any]]:
     """Splits legacy single-run CLI `arguments` into `serve --once` host CLI flags and the initial
     stdin `{"command": "run", ...}` payload."""
@@ -101,6 +104,18 @@ def _split_once_arguments(
     run_cmd: Dict[str, Any] = {"command": "run"}
     if start_paused:
         intent["start_paused"] = True
+    if case is not None:
+        if not isinstance(case, str):
+            raise TypeError("case must be a str")
+        intent["case"] = case
+    if params is not None:
+        if not isinstance(params, Mapping):
+            raise TypeError("params must be a mapping")
+        intent["params"] = dict(params)
+    if after_scenario is not None:
+        if not isinstance(after_scenario, str):
+            raise TypeError("after_scenario must be a str")
+        intent["after_scenario"] = after_scenario
 
     i = 0
     n = len(arguments)
@@ -128,6 +143,20 @@ def _split_once_arguments(
         elif arg == "--scenario" and i + 1 < n:
             intent["scenario"] = arguments[i + 1]
             i += 2
+        elif arg == "--case" and i + 1 < n:
+            val = arguments[i + 1]
+            if "case" in intent:
+                raise ValueError(f"case is given more than once ({intent['case']!r} and {val!r})")
+            intent["case"] = val
+            i += 2
+        elif arg == "--after-scenario" and i + 1 < n:
+            val = arguments[i + 1]
+            if "after_scenario" in intent:
+                raise ValueError(
+                    f"after_scenario is given more than once ({intent['after_scenario']!r} and {val!r})"
+                )
+            intent["after_scenario"] = val
+            i += 2
         elif arg == "--variant" and i + 1 < n:
             intent["variant"] = arguments[i + 1]
             i += 2
@@ -139,8 +168,16 @@ def _split_once_arguments(
             intent.setdefault(key, []).append(arguments[i + 1])
             i += 2
         elif arg == "--param" and i + 1 < n:
-            k, _, v = arguments[i + 1].partition("=")
-            intent.setdefault("params", {})[k] = v
+            raw = arguments[i + 1]
+            k, sep, v = raw.partition("=")
+            if not sep:
+                raise ValueError(f"--param {raw!r}: write --param <name>=<value>")
+            cli_params = intent.setdefault("cli_params", {})
+            if k in cli_params:
+                raise ValueError(
+                    f"--param {k} is given twice ({cli_params[k]} and {v}): give each parameter one value"
+                )
+            cli_params[k] = v
             i += 2
         elif arg == "--connect" and i + 1 < n:
             net, _, target = arguments[i + 1].partition("=")
@@ -156,7 +193,12 @@ def _split_once_arguments(
             host_args.append(arg)
             i += 1
 
-    if intent and "request" not in run_cmd:
+    if "request" in run_cmd and intent:
+        raise ValueError(
+            "cannot combine --request with inline run options "
+            f"({', '.join(sorted(intent))}): put them in the request file or omit --request"
+        )
+    if intent:
         run_cmd["intent"] = intent
     return host_args, run_cmd
 
@@ -172,12 +214,21 @@ class Launch:
         *,
         address: str = "0",
         start_paused: bool = False,
+        case: Optional[str] = None,
+        params: Optional[Mapping[str, Union[bool, int, float, str]]] = None,
+        after_scenario: Optional[str] = None,
         arguments: Sequence[str] = (),
         cwd: Optional[str] = None,
         stderr=None,
         keep_logs: bool = True,
     ):
-        host_args, run_cmd = _split_once_arguments(arguments, start_paused=start_paused)
+        host_args, run_cmd = _split_once_arguments(
+            arguments,
+            start_paused=start_paused,
+            case=case,
+            params=params,
+            after_scenario=after_scenario,
+        )
         command = [
             os.fspath(launcher),
             "serve",

@@ -702,7 +702,9 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "serve-prepare",
     "control-metrics",
     "scenario-end-ms",
-    "scenario-handover"
+    "scenario-handover",
+    "scenario-cases",
+    "scenario-templates"
   ]
 }
 ```
@@ -773,6 +775,8 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `control-metrics` | `run --control-metrics <file>`: writes cumulative Control Hub SIL Kit transport counters to a JSON file (`vehicle_sil_control_metrics: 1`, see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](simulation-run.md#recording-control-hub-transport-metrics---control-metrics)) |
 | `scenario-end-ms` | Top-level `end_ms` in scenario files and `end_ms` in scenario JSON outputs (see [scenario.md](scenario.md)) |
 | `scenario-handover` | `after_scenario: "pause"` in run requests: pauses at scenario pass for manual handover with dynamic write unlock (`handed_over` and `scenario_over_at_ms` in `state`) |
+| `scenario-cases` | Named scenario `cases:`, `--case` / request `"case"`, `case_details` and preserved multi-case `check --json` usage metadata, and inline `serve` `intent.cli_params` |
+| `scenario-templates` | Reusable scenario templates (`vehicle_sil_scenario_template: 1`), `call_stack` provenance, and template parameter metadata (`param_meta` and `missing_params`) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 | `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |
@@ -803,6 +807,8 @@ Each name indicates that the following are present:
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 | `scenario-end-ms` | Top-level `end_ms` in scenario files, and `end_ms` in `check --json`, `run --json`, and `--timeline` |
 | `scenario-handover` | `after_scenario` (`"stop"` \| `"pause"`) in run requests, `handed_over` and `scenario_over_at_ms` in the `state` event, and dynamic write unlock on handover |
+| `scenario-cases` | `cases:` in scenarios, `--case` and `"case"` in request files / `serve` `intent`, `scenario.case` (`null` when unselected/unknown), `cases`, `case_details`, and inline `intent.cli_params` |
+| `scenario-templates` | Scenario templates (`- template:`), `steps[].file` / `call_stack`, `scenario.param_meta`, `scenario.missing_params`, and template-derived `type` / `values` / `description` on `scenario.params[]` |
 
 In a build with `scenario-control`, clients cannot write while a scenario runs: calls that write are rejected with `FAILED_PRECONDITION` (reason `scenario-running`). In a build with `scenario-time`, calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) are accepted during a scenario, as the same commands from stdin are, and do not change the result of the scenario; a build with `scenario-control` alone rejects them with the same reason (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
 
@@ -843,7 +849,7 @@ If `serve` fails at startup (usage error, including `VEHICLE_SIL_TRACE` without 
 
 - `prepare`: verifies the bound `<file>` with `--file-only` semantics (optional `"variant"`, `"disable"`, `"enable"`, `"manual"` arrays; rejects `"config"`) and replies with a `prepare` event containing `status`, `metadata`, `file_sha256`, and `findings`. Refused (`accepted: false`) with `"busy"`, `"launcher-ending"`, or `"contaminated"` when a run is active or ending.
 - `status`: replies with a `status` event holding the current launcher and active run state (`run_state` is `null` when no run is active).
-- `run`: starts a run when ready (or unprepared). `"request"` (path to a run request JSON file) and `"intent"` (inline run-request JSON object up to the 64 KiB line limit, with `"vehicle_sil_run_request"` optional, supporting fields such as `"after_scenario"`) are mutually exclusive; `"timeline"` (path to write the timeline JSON) and `"id"` are optional. Refused with `"busy"` while a run or prepare is active, or `"launcher-ending"` once the launcher is ending.
+- `run`: starts a run when ready (or unprepared). `"request"` (path to a run request JSON file) and `"intent"` (inline run-request JSON object up to the 64 KiB line limit, with `"vehicle_sil_run_request"` optional, supporting fields such as `"case"`, `"after_scenario"`, and inline-only `"cli_params": { "<name>": "<value>" }` parsed with `--param` command-line semantics and precedence) are mutually exclusive; `"timeline"` (path to write the timeline JSON) and `"id"` are optional. Refused with `"busy"` while a run or prepare is active, or `"launcher-ending"` once the launcher is ending.
 - `stop`, `pause`, `resume`, `step`, `run_until`, `speed`: in multi-run `serve`, require `"run": "<run ID>"` (missing `"run"` is refused with `"run-required"`; any other value is refused with `"run-changed"` and `"asked_run"`); in `serve --once`, `"run"` may be omitted. On `stop`, optional boolean `"force"` selects idempotent graceful (`false`, stops at 1 request) or immediate force (`true`, raises to 2 requests). Launcher-level commands (`run`, `prepare`, `status`) ignore `"run"` if omitted or a valid string.
 - Closing stdin (EOF) ends the launcher (exit code 0 when idle; stops the active run and exits with 130 when a run is in progress).
 

@@ -16,9 +16,10 @@
 namespace vehicle_sil::launch {
 namespace {
 
-const std::vector<std::string> kKeys{"vehicle_sil_run_request", "variant", "params",      "scenario",     "disable", "enable",
-                                     "manual",                  "connect", "time_policy", "speed",        "start_paused",
-                                     "strict",                  "stop_at_ms", "late_tolerance_ms", "after_scenario"};
+const std::vector<std::string> kKeys{"vehicle_sil_run_request", "variant",      "params",      "scenario",
+                                     "case",                    "disable",      "enable",      "manual",
+                                     "connect",                 "time_policy",  "speed",       "start_paused",
+                                     "strict",                  "stop_at_ms",   "late_tolerance_ms", "after_scenario"};
 
 class Reader : private config::detail::YamlReader
 {
@@ -31,6 +32,8 @@ public:
         RunIntent& intent = out.intent;
         const ryml::id_type root = doc().root();
         bool version = false;
+        std::vector<config::ParamValue> file_params;
+        std::vector<config::ParamValue> cli_params;
         std::map<std::string, std::size_t> seen;
         for (auto child = tree().first_child(root); child != ryml::NONE; child = tree().next_sibling(child))
         {
@@ -56,7 +59,8 @@ public:
             {
                 continue; // an editor's: where the schema of this file is
             }
-            if (std::find(kKeys.begin(), kKeys.end(), key) == kKeys.end())
+            const bool is_cli_params = !require_version && key == "cli_params";
+            if (!is_cli_params && std::find(kKeys.begin(), kKeys.end(), key) == kKeys.end())
             {
                 unknown_key(child, key, "", kKeys);
                 continue;
@@ -71,13 +75,21 @@ public:
                 intent.scenario = text(child, "scenario",
                                        "the path of a scenario file (from the directory of the configuration file)");
             }
+            else if (key == "case")
+            {
+                intent.scenario_case = text(child, "case", "the name of a case of the scenario");
+            }
             else if (key == "params")
             {
-                intent.params = read_params(child, "", config::ParamSource::RequestFile);
-                for (config::ParamValue& param : intent.params)
+                file_params = read_params(child, "", config::ParamSource::RequestFile);
+                for (config::ParamValue& param : file_params)
                 {
                     param.line = 0; // a line of the configuration file, which this is not
                 }
+            }
+            else if (is_cli_params)
+            {
+                cli_params = read_cli_params(child);
             }
             else if (key == "disable")
             {
@@ -185,6 +197,16 @@ public:
                   "vehicle_sil_run_request is missing: write \"vehicle_sil_run_request\": " +
                       std::to_string(kRunRequestFormat) + " (it says that this is a request file, and of which version)");
         }
+        // Merge params and cli_params (CommandLine wins over RequestFile regardless of key order).
+        intent.params = std::move(cli_params);
+        for (config::ParamValue& param : file_params)
+        {
+            if (std::none_of(intent.params.begin(), intent.params.end(),
+                             [&](const config::ParamValue& p) { return p.name == param.name; }))
+            {
+                intent.params.push_back(std::move(param));
+            }
+        }
         both(intent.disable, intent.enable, "enable", "");
         both(intent.disable, intent.manual, "manual", " (disable leaves it out, manual has you start it)");
         return out;
@@ -192,6 +214,50 @@ public:
 
 private:
     bool quoted(ryml::id_type node) const { return is_scalar(node) && !is_null(node) && tree().is_val_quoted(node); }
+
+    /// "cli_params": { "<name>": "<value>" } (serve stdin intent only; read as CLI --param).
+    std::vector<config::ParamValue> read_cli_params(ryml::id_type node)
+    {
+        std::vector<config::ParamValue> out;
+        if (!tree().is_map(node))
+        {
+            error("value", doc().line(node),
+                  "cli_params must be a mapping of parameter names to string values (cli_params: { \"idle_rpm\": \"800\" }), not " +
+                      shown_value(node));
+            return out;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
+        {
+            config::ParamValue param;
+            param.name = config::detail::to_string(tree().key(child));
+            param.source = config::ParamSource::CommandLine;
+            param.line = 0;
+            param.from_cli = true;
+            if (!first_occurrence(seen, param.name, child, "cli_params: "))
+            {
+                continue;
+            }
+            if (!config::is_param_name(param.name))
+            {
+                error("value", doc().line(child),
+                      "cli_params: '" + param.name +
+                          "' cannot be a parameter's name: use letters, digits and _ (not a digit first), as a scenario "
+                          "writes it in ${...}");
+                continue;
+            }
+            if (!quoted(child))
+            {
+                error("value", doc().line(child),
+                      "cli_params: " + param.name + " must be a string value (as passed to --param), not " + shown_value(child));
+                continue;
+            }
+            param.text = config::detail::to_string(tree().val(child));
+            param.quoted = false;
+            out.push_back(std::move(param));
+        }
+        return out;
+    }
 
     /// A text that is not empty; "" with an error.
     std::string text(ryml::id_type node, const std::string& key, const std::string& meaning)

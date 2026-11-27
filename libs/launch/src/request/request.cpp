@@ -76,7 +76,11 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
     }
     if (command != RequestCommand::Test && intent.scenario_case && !intent.scenario)
     {
-        out.push_back(usage("--case chooses a case of a scenario: give --scenario <file> too, or leave --case out"));
+        const std::string case_ref = origin.named("case", "--case", "case");
+        out.push_back(usage(case_ref + " chooses a case of a scenario: " +
+                            (origin.has("case")
+                                 ? "give --scenario <file> or \"scenario\" in " + origin.file + ", or leave " + case_ref + " out"
+                                 : "give --scenario <file> too, or leave --case out")));
     }
     if (!host.timeline.empty() && !intent.scenario)
     {
@@ -199,6 +203,11 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
         intent.scenario = written.scenario;
         origin.fields.emplace_back("scenario");
     }
+    if (!given.scenario_case && written.scenario_case)
+    {
+        intent.scenario_case = written.scenario_case;
+        origin.fields.emplace_back("case");
+    }
     if (!given.speed && written.speed)
     {
         intent.speed = written.speed;
@@ -240,8 +249,11 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
     {
         if (std::none_of(given.params.begin(), given.params.end(), [&](const config::ParamValue& p) { return p.name == param.name; }))
         {
+            if (param.source == config::ParamSource::RequestFile)
+            {
+                params = true;
+            }
             intent.params.push_back(param);
-            params = true;
         }
     }
     if (params)

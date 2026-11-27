@@ -147,7 +147,7 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
 {
     check_text(errors_of("{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}"),
                "bench.json, line 3: unknown key 'conect': did you mean 'connect'? (the keys here: vehicle_sil_run_request, "
-               "variant, params, scenario, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario)\n");
+               "variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario)\n");
     // What the caller decides is not in the file.
     CHECK(errors_of(with("\"timeline\": \"t.json\"")).find("unknown key 'timeline'") != std::string::npos);
     CHECK(errors_of(with("\"file\": \"sim.yaml\"")).find("unknown key 'file'") != std::string::npos);
@@ -743,16 +743,19 @@ TEST_CASE(request_file_parameter_precedence_with_variant_case_cli_and_template)
 
     const vehicle_sil::config::test::InDirectory there(dir / "project");
     const RequestFile reqFile = *read_request_file(
-        with("\"variant\": \"fast\", \"scenario\": \"scenarios/prec.yaml\", \"params\": {\"p_req\": 40, \"p_cli\": 40}"),
+        with("\"variant\": \"fast\", \"scenario\": \"scenarios/prec.yaml\", \"case\": \"c1\", \"params\": {\"p_req\": 40, \"p_cli\": 40}"),
         "bench.json").file;
     RunRequest cli;
     cli.host.config = "sim.yaml";
-    cli.intent.scenario_case = "c1";
     cli.intent.params.push_back(argument("p_cli", "50"));
 
-    const Checked checked = check_file(with_request_file(cli, reqFile, false));
+    const RunRequest merged = with_request_file(cli, reqFile, false);
+    CHECK(merged.intent.scenario_case == std::optional<std::string>("c1"));
+    CHECK(merged.origin.has("case"));
+    const Checked checked = check_file(merged);
     CHECK(!checked.usage);
     CHECK(checked.scenario.has_value());
+    CHECK(checked.scenario->case_name == "c1");
     const auto find_param = [&](std::string_view name) -> const ParamValue* {
         for (const ParamValue& p : checked.scenario->params)
         {
@@ -773,4 +776,130 @@ TEST_CASE(request_file_parameter_precedence_with_variant_case_cli_and_template)
     CHECK(cas && cas->text == "30" && cas->source == ParamSource::Case);
     CHECK(req && req->text == "40" && req->source == ParamSource::RequestFile);
     CHECK(clp && clp->text == "50" && clp->source == ParamSource::CommandLine);
+}
+
+TEST_CASE(request_file_case_validation_origin_and_cli_override)
+{
+    const RequestFile file = file_of(with("\"scenario\": \"scenarios/c.yaml\", \"case\": \"nominal\""));
+    CHECK(file.intent.scenario_case == std::optional<std::string>("nominal"));
+    CHECK(file.fields == list("scenario", "case"));
+
+    CHECK(errors_of(with("\"case\": \"\"")).find("case must be the name of a case of the scenario") != std::string::npos);
+    CHECK(errors_of(with("\"case\": 1")).find("case must be the name of a case of the scenario") != std::string::npos);
+    CHECK(errors_of(with("\"case\": null")).find("case must be the name of a case of the scenario") != std::string::npos);
+    // cli_params is accepted only in inline serve intent, never in external --request files.
+    CHECK(errors_of(with("\"cli_params\": {\"x\": \"1\"}")).find("unknown key 'cli_params'") != std::string::npos);
+
+    // Case without scenario from request file names the key and file.
+    const RequestFile caseOnly = file_of(with("\"case\": \"nominal\""));
+    const RunRequest mergedNoScenario = with_request_file(RunRequest{}, caseOnly, false);
+    CHECK(mergedNoScenario.origin.has("case"));
+    const auto errs = messages(mergedNoScenario, RequestCommand::Check);
+    CHECK_EQ(errs.size(), std::size_t{1});
+    CHECK(errs[0].find("case in bench.json chooses a case of a scenario") != std::string::npos);
+
+    // CLI --case overrides request file "case" and removes "case" from origin.
+    RunRequest cli;
+    cli.intent.scenario_case = "override";
+    const RunRequest overridden = with_request_file(cli, file, false);
+    CHECK(overridden.intent.scenario_case == std::optional<std::string>("override"));
+    CHECK(!overridden.origin.has("case"));
+
+    // Unknown case and caseless scenario attribute errors to the request file when case came from it.
+    const std::filesystem::path dir = project("case_origin");
+    std::ofstream(dir / "project" / "scenarios" / "cases.yaml", std::ios::binary)
+        << "vehicle_sil_scenario: 1\ncases:\n  low: {}\n  high: {}\nsteps:\n  - set: { A.level: 1 }\n";
+    const vehicle_sil::config::test::InDirectory there(dir / "project");
+    RunRequest base;
+    base.host.config = "sim.yaml";
+
+    const RequestFile badCase = file_of(with("\"scenario\": \"scenarios/cases.yaml\", \"case\": \"lo\""), "bench.json");
+    const Checked unknown = check_file(with_request_file(base, badCase, false));
+    CHECK(unknown.usage);
+    CHECK(unknown.findings.front().message.find("case lo in bench.json: the scenario has no case with this name") != std::string::npos);
+    CHECK(unknown.scenario.has_value() && unknown.scenario->cases == list("low", "high"));
+
+    const RequestFile onCaseless = file_of(with("\"scenario\": \"scenarios/drive.yaml\", \"case\": \"low\""), "bench.json");
+    const Checked noCases = check_file(with_request_file(base, onCaseless, false));
+    CHECK(noCases.usage);
+    CHECK(noCases.findings.front().message.find("case low in bench.json: the scenario has no cases: remove case from bench.json") !=
+          std::string::npos);
+}
+
+TEST_CASE(read_request_intent_cli_params_preserves_strings_hex_and_precedence)
+{
+    // Both JSON key orders: cli_params always wins over params by name, and carries CommandLine + from_cli=true.
+    for (const char* json : {
+             R"({"scenario":"scenarios/t.yaml","case":"c1","params":{"code":123,"tag":50,"keep":7},"cli_params":{"code":"0123","tag":"50","hex":"0x10"}})",
+             R"({"scenario":"scenarios/t.yaml","case":"c1","cli_params":{"code":"0123","tag":"50","hex":"0x10"},"params":{"code":123,"tag":50,"keep":7}})"})
+    {
+        const RequestFileRead read = read_request_intent(json, "intent");
+        CHECK(read.findings.empty() && read.file.has_value());
+        if (!read.file)
+        {
+            continue;
+        }
+        const auto find_p = [&](std::string_view name) -> const ParamValue* {
+            for (const ParamValue& p : read.file->intent.params)
+            {
+                if (p.name == name)
+                {
+                    return &p;
+                }
+            }
+            return nullptr;
+        };
+        const ParamValue* code = find_p("code");
+        const ParamValue* tag = find_p("tag");
+        const ParamValue* hex = find_p("hex");
+        const ParamValue* keep = find_p("keep");
+        CHECK(code && code->text == "0123" && !code->quoted && code->from_cli && code->source == ParamSource::CommandLine);
+        CHECK(tag && tag->text == "50" && !tag->quoted && tag->from_cli && tag->source == ParamSource::CommandLine);
+        CHECK(hex && hex->text == "0x10" && !hex->quoted && hex->from_cli && hex->source == ParamSource::CommandLine);
+        CHECK(keep && keep->text == "7" && !keep->quoted && !keep->from_cli && keep->source == ParamSource::RequestFile);
+    }
+
+    // Invalid cli_params forms are refused.
+    CHECK(!read_request_intent(R"({"cli_params": [1]})", "intent").file.has_value());
+    CHECK(!read_request_intent(R"({"cli_params": {"x": 50}})", "intent").file.has_value());
+    CHECK(!read_request_intent(R"({"cli_params": {"x": true}})", "intent").file.has_value());
+    CHECK(!read_request_intent(R"({"cli_params": {"x": null}})", "intent").file.has_value());
+    CHECK(!read_request_intent(R"({"cli_params": {"1bad": "50"}})", "intent").file.has_value());
+
+    // Full check_file roundtrip: leading-zero "0123", numeric-looking "50" into type: string, and hex "0x10" into integer.
+    const std::filesystem::path dir = project("cli_params_roundtrip");
+    std::filesystem::create_directories(dir / "project" / "scenarios" / "templates");
+    std::ofstream(dir / "project" / "scenarios" / "templates" / "typed.yaml", std::ios::binary)
+        << "vehicle_sil_scenario_template: 1\n"
+        << "parameters:\n"
+        << "  code: { type: string }\n"
+        << "  tag: { type: string }\n"
+        << "  hex: { type: integer }\n"
+        << "  keep: { type: integer }\n"
+        << "steps:\n"
+        << "  - name: \"Run ${code}-${tag}\"\n"
+        << "    set: { A.level: \"${hex}\" }\n"
+        << "  - after_ms: 10\n"
+        << "    set: { A.level: \"${keep}\" }\n";
+    std::ofstream(dir / "project" / "scenarios" / "t.yaml", std::ios::binary)
+        << "vehicle_sil_scenario: 1\n"
+        << "cases:\n"
+        << "  c1: { params: { code: \"9999\", tag: \"99\", hex: 1, keep: 2 } }\n"
+        << "steps:\n"
+        << "  - template: templates/typed.yaml\n"
+        << "    params: { code: \"${code}\", tag: \"${tag}\", hex: \"${hex}\", keep: \"${keep}\" }\n";
+    const vehicle_sil::config::test::InDirectory there(dir / "project");
+    const RequestFileRead intent = read_request_intent(
+        R"({"scenario":"scenarios/t.yaml","case":"c1","params":{"keep":7,"hex":2},"cli_params":{"code":"0123","tag":"50","hex":"0x10"}})",
+        "intent");
+    CHECK(intent.file.has_value());
+    RunRequest base;
+    base.host.config = "sim.yaml";
+    const Checked checked = check_file(with_request_file(base, *intent.file, false));
+    CHECK(!checked.usage && checked.scenario.has_value());
+    const std::string json = format_json(checked);
+    CHECK(json.find("\"value\": \"0123\"") != std::string::npos);
+    CHECK(json.find("\"value\": \"50\"") != std::string::npos);
+    CHECK(json.find("\"value\": 16") != std::string::npos);
+    CHECK(json.find("\"value\": 7") != std::string::npos);
 }

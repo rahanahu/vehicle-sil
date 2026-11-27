@@ -401,6 +401,9 @@ struct ScenarioContext
     std::function<std::optional<std::string>(const std::string& path, std::string& problem)> read_template{};
     /// Selected case name from `cases:`, or empty when none was given.
     std::optional<std::string> case_name{};
+    /// When `case_name` came from a request file or inline serve intent, its shown name (e.g.
+    /// "bench.json" or "intent"), used to attribute case usage errors consistently. Empty for CLI `--case`.
+    std::string case_request_file{};
 };
 
 struct ScenarioRead

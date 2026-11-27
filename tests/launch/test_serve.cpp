@@ -1397,4 +1397,96 @@ TEST_CASE(serve_rejects_multi_case_scenario_intent_without_case)
     CHECK(res->raw.find(R"("ok":false)") != std::string::npos);
     CHECK(res->raw.find("--case") != std::string::npos);
     CHECK(res->raw.find("low, high") != std::string::npos);
+    // Preserved check metadata on multi-case usage: case is null, cases and participants are kept.
+    CHECK(res->raw.find(R"("case":null)") != std::string::npos);
+    CHECK(res->raw.find(R"("cases":["low","high"])") != std::string::npos);
+    CHECK(res->raw.find(R"("eligible":true)") != std::string::npos);
+}
+
+TEST_CASE(serve_intent_supports_case_cli_params_and_keeps_ready_across_case_switches)
+{
+    const std::filesystem::path dir = scratch_dir("serve_case_cli_params");
+    std::filesystem::create_directories(dir / "templates");
+    {
+        std::ofstream out(dir / "sim.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Engine\n"
+               "    command: [missing/engine]\n"
+               "    describe: false\n";
+    }
+    {
+        std::ofstream out(dir / "templates" / "typed.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  lvl: { type: integer }\n"
+               "  code: { type: string }\n"
+               "steps:\n"
+               "  - name: \"Code ${code}\"\n"
+               "    set: { Engine.level: \"${lvl}\" }\n";
+    }
+    {
+        std::ofstream out(dir / "cases.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\n"
+               "cases:\n"
+               "  low: { params: { lvl: 10, code: \"0001\" } }\n"
+               "  high: { params: { lvl: 90, code: \"0002\" } }\n"
+               "steps:\n"
+               "  - template: templates/typed.yaml\n"
+               "    params: { lvl: \"${lvl}\", code: \"${code}\" }\n";
+    }
+
+    // 1. Parse serve NDJSON command -> prepare_execution_run -> check_file preserves case & cli_params verbatim.
+    const ServeCommand parsed = cmd(
+        R"({"command":"run","id":1,"intent":{"scenario":"cases.yaml","case":"low","params":{"lvl":20},"cli_params":{"lvl":"0x10","code":"0123"}}})");
+    CHECK(parsed.intent_json.has_value());
+    RunSubmission sub;
+    sub.intent_json = parsed.intent_json;
+    RunRequest base;
+    base.host.config = (dir / "sim.yaml").string();
+    const PreparedRun prepared = prepare_execution_run(base, sub, "inst-1", false);
+    CHECK(prepared.usage.empty());
+    CHECK(prepared.request.intent.scenario_case == std::optional<std::string>("low"));
+    const Checked checked = check_file(prepared.request);
+    CHECK(!checked.usage && checked.scenario.has_value());
+    CHECK(checked.scenario->case_name == "low");
+    const std::string checkedJson = format_json(checked);
+    CHECK(checkedJson.find("\"value\": 16") != std::string::npos);
+    CHECK(checkedJson.find("\"value\": \"0123\"") != std::string::npos);
+
+    // 2. Switching scenario/case/params across sequential serve runs preserves hot-standby Ready state.
+    CaptureStream cap;
+    LauncherEnd end;
+    ServeOptions options;
+    options.instance = "abcdef0123456789";
+    options.base.host.config = (dir / "sim.yaml").string();
+    std::vector<std::optional<std::string>> seen_cases;
+    options.run = [&](const RunRequest& req, const RunObservers&, const RunLent& lent) {
+        seen_cases.push_back(req.intent.scenario_case);
+        lent.controls->set_phase(Phase::Running);
+        lent.controls->set_phase(Phase::Ended);
+        return passed_report();
+    };
+
+    Serve serve(cap.stream(), end, std::move(options));
+    auto done = std::async(std::launch::async, [&] { return serve.run(); });
+    cap.wait_for([](const JsonLine& l) { return l.event == "status" && l.launcher_state == "unprepared"; });
+
+    serve.command(cmd(R"({"command":"prepare","id":1})"));
+    cap.wait_for([](const JsonLine& l) { return l.event == "prepare" && l.id == 1; });
+
+    serve.command(cmd(R"({"command":"run","id":2,"intent":{"scenario":"cases.yaml","case":"low","params":{"lvl":11}}})"));
+    const JsonLine r1 = cap.wait_for([](const JsonLine& l) { return l.event == "result" && l.run == "abcdef0123456789-1"; });
+    CHECK(r1.status_launcher_state == "ready");
+
+    serve.command(cmd(R"({"command":"run","id":3,"intent":{"scenario":"cases.yaml","case":"high","cli_params":{"code":"50"}}})"));
+    const JsonLine r2 = cap.wait_for([](const JsonLine& l) { return l.event == "result" && l.run == "abcdef0123456789-2"; });
+    CHECK(r2.status_launcher_state == "ready");
+
+    serve.end_of_input();
+    CHECK_EQ(done.get().code, 0);
+    CHECK_EQ(seen_cases.size(), std::size_t{2});
+    CHECK(seen_cases[0] == std::optional<std::string>("low"));
+    CHECK(seen_cases[1] == std::optional<std::string>("high"));
 }

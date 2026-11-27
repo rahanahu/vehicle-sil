@@ -1160,12 +1160,13 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario` のキー | あるとき | 意味 |
 |---|---|---|
 | `file`、`name` | いつも | シナリオのファイルと名前 |
-| `case` | 選択されたときだけ | 選択されたケース名（`--case`） |
+| `case` | `cases` が定義されたときだけ | 選択されたケース名（`--case` または要求ファイルの `case`）。未選択・不明時は `null`（`cases` のないシナリオでは省略） |
 | `cases` | 定義されたときだけ | ファイル順のケース名一覧 |
 | `case_details` | `cases` が定義されたときだけ | ケースごとの要約オブジェクト（`{ name, only }`、`only` は有効な機種配列または `null`） |
 | `steps` | いつも | 手順の数 |
 | `only` | あるときだけ | 機種の名前の配列 |
-| `params` | あるときだけ | シナリオが宣言したか使ったパラメーターごとに、`name`、`value`、`from`、および呼び出し先テンプレートから確定する任意の `type`、`values`、`description` |
+| `params` | あるときだけ | 値が確定したパラメーターごとに、`name`、`value`、`from`、および呼び出し先テンプレートから確定する任意の `type`、`values`、`description` |
+| `param_meta` | あるときだけ | 呼び出し先テンプレートから確定したパラメーターメタデータ（`{ name, type, values?, description? }`。値が確定したパラメーターと未指定の必須パラメーターの双方を含む） |
 | `missing_params` | あるときだけ | 値が未指定の必須パラメーター名（ルートスコープで未定義の `${name}`、または呼び出し側で省略された必須テンプレート引数） |
 | `skipped_steps` | あるときだけ | スキップする手順の数 |
 | `unchecked_expects` | あるときだけ | 確認しない横の `expect` の数 |
@@ -1363,6 +1364,8 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かす（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | これらの呼び出しを理由 `scenario-running` で拒否します（標準入力のコマンドは使えます。Control Server を持つビルドだけにあります）。 |
 | `scenario-end-ms` | シナリオ最上位の `end_ms` キー | `end_ms` は知らないキーのエラーです。 |
 | `scenario-handover` | 実行要求の `after_scenario: "pause"`（シナリオ成功時に一時停止して手動制御へ引き継ぐ） | `after_scenario` は知らないキーのエラーです。 |
+| `scenario-cases` | 名前付きケース（`cases:`）、`--case`・要求ファイルの `"case"`、`case_details`、`serve` インライン `intent.cli_params` | `cases` と要求ファイルの `"case"` は知らないキーのエラーです。 |
+| `scenario-templates` | 再利用可能なシナリオテンプレート（`- template:`）、`call_stack` 出典情報、`param_meta`・`missing_params` | `template` は知らないキーのエラーです。 |
 
 `features` の名前の全部は、[simulation-events.md](simulation-events.md) にあります。
 

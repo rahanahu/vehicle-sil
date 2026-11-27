@@ -675,6 +675,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `variant` | A text | `--variant` |
 | `params` | A mapping of parameter names to values (a number, `true` or `false`, or a text). Used only when a scenario runs. | `--param` |
 | `scenario` | The path of the scenario file. A relative path is from the directory of the configuration file. | `--scenario` |
+| `case` | The named case of the scenario (its `cases:`) to check or run. Requires `scenario`. | `--case` |
 | `disable` | A list of participant names | `--disable` |
 | `enable` | A list of participant names | `--enable` |
 | `manual` | A list of participant names | `--manual` |
@@ -693,7 +694,7 @@ An argument wins over the file, field by field.
 
 | Key | With an argument for the same thing |
 |---|---|
-| `variant`, `scenario`, `speed`, `time_policy` | The argument replaces the file's value. |
+| `variant`, `scenario`, `case`, `speed`, `time_policy` | The argument replaces the file's value. |
 | `start_paused`, `strict` | On if the file or the argument says so. No argument switches them off. |
 | `connect` | By network: `--connect <network>=<target>` replaces the file's target of that network, and `--connect <network>=none` takes it away for this run. The other networks of the file stay. |
 | `params` | By name: `--param <name>=<value>` replaces the file's value of that parameter. The others stay; their `from` in the check JSON is `request_file`. |

@@ -945,9 +945,12 @@ const Reader::CaseDef* Reader::resolve_case_selection(ryml::id_type casesNode, b
         if (it == cases_.end())
         {
             const std::string guess = config::detail::closest(*context_.case_name, out_.cases);
+            const std::string caseRef = context_.case_request_file.empty()
+                                            ? "--case " + *context_.case_name
+                                            : "case " + *context_.case_name + " in " + context_.case_request_file;
             out_.usage_errors.push_back(config::Finding{
                 config::Severity::Error, "usage",
-                "--case " + *context_.case_name + ": the scenario has no case with this name" +
+                caseRef + ": the scenario has no case with this name" +
                     (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its cases are " +
                     config::detail::join(out_.cases) +
                     (hasTopLevelErrors ? "; the file has errors too, which a check with one of these cases reports" : ""),
@@ -962,9 +965,15 @@ const Reader::CaseDef* Reader::resolve_case_selection(ryml::id_type casesNode, b
     }
     if (context_.case_name && !hasTopLevelErrors)
     {
+        const std::string caseRef = context_.case_request_file.empty()
+                                        ? "--case " + *context_.case_name
+                                        : "case " + *context_.case_name + " in " + context_.case_request_file;
+        const std::string leaveOut = context_.case_request_file.empty()
+                                         ? "leave --case out"
+                                         : "remove case from " + context_.case_request_file;
         out_.usage_errors.push_back(config::Finding{
             config::Severity::Error, "usage",
-            "--case " + *context_.case_name + ": the scenario has no cases: leave --case out, or add cases to the scenario",
+            caseRef + ": the scenario has no cases: " + leaveOut + ", or add cases to the scenario",
             0, "", ""});
         skipReading = true;
         out_.params_incomplete = true;

@@ -521,7 +521,7 @@ with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulati
     print(launch.wait()["result"])       # run --json と同じ結果
 ```
 
-`Launch(launcher, config, *, address="0", start_paused=False, arguments=(), cwd=None, stderr=None, keep_logs=True)` の `config` より後の引数はすべてキーワード専用です。`arguments` には `run` の引数を渡せます。実行ごとの引数（`--speed`、`--stop-at-ms`、`--scenario`、`--variant`、`--disable`、`--enable`、`--manual`、`--param`、`--connect`、`--time-policy`、`--strict`、`--late-tolerance-ms`、`--request`、`--timeline`、`--start-paused`）は最初の標準入力 `run` コマンドに変換され、ホスト側の引数（`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`--log-dir`、`--timeout-ms`、`--describe-timeout-ms`、`--participant-start-timeout-ms`、`--participant-stop-timeout-ms`、`--events-stall-ms`）は `serve --once` に渡されます。
+`Launch(launcher, config, *, address="0", start_paused=False, case=None, params=None, after_scenario=None, arguments=(), cwd=None, stderr=None, keep_logs=True)` の `config` より後の引数はすべてキーワード専用です。`case`、`params`（型付き JSON パラメーターの対応）、`after_scenario` は最初の標準入力 `run` コマンドの `intent` へそのまま入ります。`arguments` には実行ごとの引数（`--speed`、`--stop-at-ms`、`--scenario`、`--case`、`--variant`、`--disable`、`--enable`、`--manual`、`--param`、`--connect`、`--time-policy`、`--strict`、`--late-tolerance-ms`、`--request`、`--timeline`、`--start-paused` に加え、`after_scenario=` キーワードの短縮記法である `Launch` 専用の `--after-scenario`。`vehicle_sil_launch run` の CLI オプション自体には存在しません）を渡せて最初の標準入力 `run` コマンドに変換され、ホスト側の引数（`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`--log-dir`、`--timeout-ms`、`--describe-timeout-ms`、`--participant-start-timeout-ms`、`--participant-stop-timeout-ms`、`--events-stall-ms`）は `serve --once` に渡されます。`--param <k>=<v>` は Python 側で型推測せず `intent.cli_params` へそのまま転送されます（型付き `params` よりコマンドライン優先順位で優先し、同一キーの重複指定は `ValueError` です）。`--request` とインライン実行指定（キーワード引数または `arguments` 内の実行ごとの引数）の併用や、`case`・`after_scenario` の重複指定も `ValueError` です。
 
 | メンバー | 内容 |
 |---|---|
@@ -568,7 +568,7 @@ with Serve("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulatio
 | `pid`、`returncode`、`stderr_text` | 子プロセスの PID、終了コード（実行中は `None`）、`stderr=subprocess.PIPE` 時の標準エラー出力末尾（上限 64 KiB）です。 |
 | `prepare(*, variant=None, disable=(), enable=(), manual=(), id=None, timeout=30.0)` | `prepare` を送り、`prepare` の応答（`accepted`、`status`、`metadata`、`findings`）を返します。 |
 | `status(timeout=30.0, *, id=None)` | `status` を送り、現在の `status` イベントを返します。 |
-| `start(*, request=None, intent=None, ..., timeline=None, id=None, timeout=60.0)` | 実行を 1 つ始めて `RunHandle` を返します。`request`、`intent`、実行ごとのキーワード引数（`variant`、`params`、`scenario`、`disable`、`enable`、`manual`、`connect`、`time_policy`、`speed`、`start_paused`、`strict`、`stop_at_ms`、`late_tolerance_ms`）は最大 1 つだけ渡せます。大きすぎるインラインのインテントは自動で一時要求ファイルに切り替え、後で削除します。 |
+| `start(*, request=None, intent=None, ..., timeline=None, id=None, timeout=60.0)` | 実行を 1 つ始めて `RunHandle` を返します。`request`、`intent`、実行ごとのキーワード引数（`variant`、`params`、`scenario`、`case`、`disable`、`enable`、`manual`、`connect`、`time_policy`、`speed`、`start_paused`、`strict`、`stop_at_ms`、`late_tolerance_ms`、`after_scenario`）は最大 1 つだけ渡せます。大きすぎるインラインのインテントは自動で一時要求ファイルに切り替え、後で削除します。 |
 | `wait(timeout=60.0)` | ランチャーの子プロセスが終了するのを待ち、終了コードを返します（`RunHandle.wait()` とは異なります）。 |
 | `close_input()`、`close(timeout=60.0)` | `close_input()` は待たずに標準入力を閉じて（EOF 終了）終了を求めます。`close()` は標準入力を閉じ、子プロセスと読み取りスレッドの終了を待ち、残った一時要求ファイルを削除します。 |
 

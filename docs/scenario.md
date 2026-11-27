@@ -1160,12 +1160,13 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario` key | Present | Meaning |
 |---|---|---|
 | `file`, `name` | Always | The scenario's file and name |
-| `case` | Only if selected | The selected case name (`--case`) |
+| `case` | Only if `cases` is defined | The selected case name (`--case` or request `case`), or `null` when unselected or unknown (omitted for scenarios without `cases`) |
 | `cases` | Only if defined | The scenario's case names in file order |
 | `case_details` | Only if `cases` is defined | Per-case summary objects (`{ name, only }`, where `only` is the effective variant array or `null`) |
 | `steps` | Always | The number of steps |
 | `only` | Only if set | An array of variant names |
-| `params` | Only if any | For each parameter that the scenario declares or uses: `name`, `value`, `from`, plus optional `type`, `values`, `description` derived from called templates |
+| `params` | Only if any | For each resolved parameter that the scenario declares or uses: `name`, `value`, `from`, plus optional `type`, `values`, `description` derived from called templates |
+| `param_meta` | Only if any | Template-derived parameter metadata (`{ name, type, values?, description? }`) for both resolved and missing parameters |
 | `missing_params` | Only if any | Required parameter names that currently have no value (undefined root `${name}` references or omitted required template parameters) |
 | `skipped_steps` | Only if any | The number of steps to be skipped |
 | `unchecked_expects` | Only if any | The number of `expect`s beside steps that will not be checked |
@@ -1363,6 +1364,8 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `scenario-time` | Control Server clients can move time during a scenario (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) | These calls are rejected with the reason `scenario-running` (stdin commands work). Only builds with the Control Server have this name. |
 | `scenario-end-ms` | The top-level `end_ms` key in scenarios | `end_ms` is an unknown-key error. |
 | `scenario-handover` | `after_scenario: "pause"` in run requests (pausing at scenario pass for manual control) | `after_scenario` is an unknown-key error. |
+| `scenario-cases` | Named scenario `cases:`, `--case` / request `"case"`, `case_details`, and `serve` inline `intent.cli_params` | `cases` and request `"case"` are unknown-key errors. |
+| `scenario-templates` | Reusable scenario templates (`- template:`), `call_stack` provenance, and `param_meta` / `missing_params` | `template` is an unknown-key error. |
 
 [simulation-events.md](simulation-events.md) lists every `features` name.
 

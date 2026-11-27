@@ -443,7 +443,8 @@ Top-level keys:
 | `file_sha256` | Lowercase hex SHA-256 of the raw configuration file bytes (`null` if unreadable or not read) |
 | `hot_eligibility` | Object `{ "eligible": bool, "reason": string\|null, "message": string\|null }` for `vehicle_sil_launch serve` (`reason` is `"usage"`, `"config-unreadable"`, `"fixed-registry"`, `"manual-participants"`, `"trace-enabled"`, or `null` when eligible) |
 
-- If `--variant` is missing or names no variant (`result` is `"usage"`), `variant` is `null` and `variants` gives the names you can choose from.
+- If `--variant` is missing or names no variant (`result` is `"usage"`), `variant` is `null`, `variants` gives the names you can choose from, `participants` and `networks` are empty, `scenario` is omitted, and `hot_eligibility.reason` is `"usage"`.
+- If `--scenario` names a multi-case scenario and `--case` (or `case` in a request file) is missing or names no case (`result` is `"usage"`, exit code 4), `check --json` evaluates `hot_eligibility` for the configuration before setting `usage`, and keeps `participants`, `networks`, `time_lock`, and `scenario` (`"case": null`, `cases`, `case_details`, `params`, `param_meta`, `missing_params`). Human-readable output stays concise.
 - Each element of `params` has `name`, `value` (`true`/`false`, a number or a string) and `from` (`configuration` or `variant`).
 - If Check cannot resolve a run plan, the run timing fields are `null`. Without a specified stop time, `stop_at_ms` is `null`.
 

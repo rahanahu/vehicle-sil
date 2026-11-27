@@ -24,7 +24,7 @@ if str(_PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(_PYTHON_DIR))
 
 from vehicle_sil_control import Launch, LaunchError, RunHandle, Serve, ServeError, __version__, control_address  # noqa: E402
-from vehicle_sil_control.launcher import _MAX_FINDING_DETAIL_CHARS, _why  # noqa: E402
+from vehicle_sil_control.launcher import _MAX_FINDING_DETAIL_CHARS, _split_once_arguments, _why  # noqa: E402
 from vehicle_sil_control.serve import MAX_COMMAND_ID, MAX_COMMAND_LINE, _MAX_BAD_LINES, _MAX_STDERR_CHARS  # noqa: E402
 
 
@@ -1501,6 +1501,189 @@ class ServeUnitTest(unittest.TestCase):
                 r2.wait()
                 self.assertEqual(r2.participant_pids, {"Engine": 9002})
                 self.assertEqual(r1.participant_pids, {"Engine": 9001})
+
+    def test_serve_start_case_params_and_after_scenario(self) -> None:
+        sent: list[dict] = []
+
+        def handler(proc: _FakeProcess, cmd: dict) -> None:
+            sent.append(cmd)
+            if cmd["command"] == "run":
+                run_id = f"0123456789abcdef-{len(sent)}"
+                proc.stdout.push_event({"event": "run_start", "seq": len(sent) * 10, "t_ms": 1, "run": run_id, "id": cmd["id"]})
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": len(sent) * 10 + 1,
+                    "t_ms": 2,
+                    "run": run_id,
+                    "launcher_ends": False,
+                    "status": {"launcher_state": "ready"},
+                    "result": {"result": "passed"},
+                })
+
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen",
+                        side_effect=lambda cmd, **kw: _FakeProcess(cmd, handler)):
+            with Serve("/fake/launch", "sim.yaml") as runner:
+                r = runner.start(
+                    scenario="scenarios/cases.yaml",
+                    case="-10C",
+                    params={"lvl": 50, "tag": "0123", "flag": True, "gain": 1.5},
+                    after_scenario="pause",
+                )
+                self.assertEqual(r.wait()["result"], "passed")
+                self.assertEqual(
+                    sent[0]["intent"],
+                    {
+                        "scenario": "scenarios/cases.yaml",
+                        "case": "-10C",
+                        "params": {"lvl": 50, "tag": "0123", "flag": True, "gain": 1.5},
+                        "after_scenario": "pause",
+                    },
+                )
+
+                with self.assertRaises(TypeError):
+                    runner.start(scenario="s.yaml", case=123)  # type: ignore[arg-type]
+                with self.assertRaises(TypeError):
+                    runner.start(scenario="s.yaml", after_scenario=True)  # type: ignore[arg-type]
+                with self.assertRaises(ServeError) as big_ctx:
+                    runner.start(intent={"scenario": "s.yaml", "cli_params": {"pad": "x" * 70000}})
+                self.assertEqual(big_ctx.exception.reason, "invalid-command")
+
+    def test_launch_split_once_arguments_case_cli_params_and_kwargs(self) -> None:
+        # --param forwards raw strings verbatim under cli_params without type guessing.
+        host, cmd = _split_once_arguments(
+            [
+                "--scenario",
+                "scn.yaml",
+                "--case",
+                "cold",
+                "--after-scenario",
+                "pause",
+                "--param",
+                "code=0123",
+                "--param",
+                "tag=50",
+                "--param",
+                "hex=0x10",
+                "--param",
+                "eq=a=b",
+                "--log-dir",
+                "logs",
+            ],
+            start_paused=False,
+        )
+        self.assertEqual(host, ["--log-dir", "logs"])
+        self.assertEqual(
+            cmd,
+            {
+                "command": "run",
+                "intent": {
+                    "scenario": "scn.yaml",
+                    "case": "cold",
+                    "after_scenario": "pause",
+                    "cli_params": {"code": "0123", "tag": "50", "hex": "0x10", "eq": "a=b"},
+                },
+            },
+        )
+
+        # Typed params kwarg coexists with cli_params from --param alongside case and after_scenario kwargs.
+        _, merged = _split_once_arguments(
+            ["--scenario", "scn.yaml", "--param", "tag=50"],
+            start_paused=False,
+            case="kw_case",
+            params={"tag": 10, "keep": True, "ratio": 0.25},
+            after_scenario="pause",
+        )
+        self.assertEqual(
+            merged["intent"],
+            {
+                "scenario": "scn.yaml",
+                "case": "kw_case",
+                "params": {"tag": 10, "keep": True, "ratio": 0.25},
+                "after_scenario": "pause",
+                "cli_params": {"tag": "50"},
+            },
+        )
+
+        # Validation errors: malformed/duplicate --param, bad types, conflicting/duplicate case or
+        # after_scenario, and combining --request with any inline run option.
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--param", "missing_equals"], start_paused=False)
+        with self.assertRaises(ValueError) as dup_param:
+            _split_once_arguments(["--param", "n_thr=11", "--param", "n_thr=22"], start_paused=False)
+        self.assertIn("n_thr", str(dup_param.exception))
+        with self.assertRaises(TypeError):
+            _split_once_arguments([], start_paused=False, case=1)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            _split_once_arguments([], start_paused=False, params=["a=1"])  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            _split_once_arguments([], start_paused=False, after_scenario=1)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--case", "cli_case"], start_paused=False, case="kw_case")
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--case", "c1", "--case", "c2"], start_paused=False)
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--after-scenario", "stop"], start_paused=False, after_scenario="pause")
+        with self.assertRaises(ValueError):
+            _split_once_arguments(
+                ["--after-scenario", "pause", "--after-scenario", "stop"], start_paused=False
+            )
+        for bad_args, bad_kwargs in [
+            (["--request", "bench.json"], {"case": "c1"}),
+            (["--request", "bench.json"], {"params": {"k": 1}}),
+            (["--request", "bench.json"], {"after_scenario": "pause"}),
+            (["--request", "bench.json", "--case", "high"], {}),
+            (["--request", "bench.json", "--param", "n_thr=77"], {}),
+            (["--request", "bench.json", "--after-scenario", "pause"], {}),
+            (["--request", "bench.json", "--variant", "v1"], {}),
+            (["--request", "bench.json"], {"start_paused": True}),
+        ]:
+            with self.assertRaises(ValueError):
+                _split_once_arguments(
+                    bad_args,
+                    start_paused=bool(bad_kwargs.pop("start_paused", False)),
+                    **bad_kwargs,
+                )
+        # Host flags and --timeline still work alongside --request.
+        req_host, req_cmd = _split_once_arguments(
+            ["--request", "bench.json", "--timeline", "out.json", "--log-dir", "logs"],
+            start_paused=False,
+        )
+        self.assertEqual(req_host, ["--log-dir", "logs"])
+        self.assertEqual(req_cmd, {"command": "run", "request": "bench.json", "timeline": "out.json"})
+
+        # Launch constructor forwards case, params, after_scenario, and --param cli_params to stdin.
+        captured_procs: list[_FakeProcess] = []
+
+        def launch_popen(argv, **kw):
+            proc = _FakeProcess(argv, auto_hello=False)
+            proc.stdout.push_event({"event": "result", "seq": 1, "result": {"result": "passed"}})
+            proc.finish(0)
+            captured_procs.append(proc)
+            return proc
+
+        with mock.patch("vehicle_sil_control.launcher.subprocess.Popen", side_effect=launch_popen):
+            with Launch(
+                "/fake/launch",
+                "sim.yaml",
+                case="nominal",
+                params={"keep": 7},
+                after_scenario="stop",
+                arguments=["--scenario", "scn.yaml", "--param", "code=0123"],
+            ) as launch:
+                self.assertEqual(launch.wait()["result"], "passed")
+        self.assertEqual(
+            captured_procs[0].stdin.commands[0],
+            {
+                "command": "run",
+                "intent": {
+                    "case": "nominal",
+                    "params": {"keep": 7},
+                    "after_scenario": "stop",
+                    "scenario": "scn.yaml",
+                    "cli_params": {"code": "0123"},
+                },
+            },
+        )
 
 
 if __name__ == "__main__":

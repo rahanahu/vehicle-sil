@@ -21,7 +21,7 @@ from unittest import mock
 
 import grpc
 
-from vehicle_sil_control import Control, ControlError, Serve, ServeError, ms
+from vehicle_sil_control import Control, ControlError, Launch, Serve, ServeError, ms
 
 _COMMON_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "common")
 if _COMMON_DIR not in sys.path:
@@ -237,6 +237,109 @@ class ServeClientTest(unittest.TestCase):
         self.assertGreaterEqual(sum(1 for e in seen if e.get("event") == "run_start"), 3)
         self.assertGreaterEqual(sum(1 for e in seen if e.get("event") == "result"), 3)
         self.assertEqual(seen[0].get("event"), "hello")
+
+    def test_case_params_cli_params_and_after_scenario_roundtrip(self) -> None:
+        cfg = _config("serve_case_cli_params")
+        tpl_dir = SCRATCH / "case_tpl_templates"
+        tpl_dir.mkdir(parents=True, exist_ok=True)
+        (tpl_dir / "step.yaml").write_text(
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  throttle: { type: number }\n"
+            "  min_rpm: { type: integer }\n"
+            "  code: { type: string }\n"
+            "  tag: { type: string }\n"
+            "steps:\n"
+            "  - name: \"Run ${code}-${tag}\"\n"
+            "    at_ms: 0\n"
+            "    set: { Engine.engine.throttle: \"${throttle}\" }\n"
+            "  - after_ms: 20\n"
+            "    expect:\n"
+            "      Engine.engine.throttle: \"${throttle}\"\n"
+            "      Engine.engine.speed: { ge: \"${min_rpm}\" }\n",
+            encoding="utf-8",
+        )
+        scn = SCRATCH / "serve_cases_roundtrip.yaml"
+        scn.write_text(
+            "vehicle_sil_scenario: 1\n"
+            "name: case roundtrip\n"
+            "cases:\n"
+            "  low: { params: { throttle: 10, min_rpm: 10, code: \"0001\", tag: \"10\" } }\n"
+            "  high: { params: { throttle: 50, min_rpm: 100, code: \"0002\", tag: \"20\" } }\n"
+            "steps:\n"
+            "  - template: case_tpl_templates/step.yaml\n"
+            "    params: { throttle: \"${throttle}\", min_rpm: \"${min_rpm}\", code: \"${code}\", tag: \"${tag}\" }\n",
+            encoding="utf-8",
+        )
+
+        # 1. Serve: prepare once -> switch cases & typed params -> hot standby stays Ready; after_scenario="pause" works.
+        with Serve(LAUNCH, cfg, control=True, startup_timeout=scaled(30.0)) as runner:
+            prep = runner.prepare(timeout=scaled(30.0))
+            self.assertEqual(prep["status"]["launcher_state"], "ready")
+
+            with runner.start(
+                scenario=scn.as_posix(),
+                case="low",
+                params={"throttle": 25, "min_rpm": 50, "code": "0123", "tag": "50"},
+                timeout=scaled(60.0),
+            ) as run1:
+                res1 = run1.wait(timeout=scaled(120.0))
+                self.assertEqual(res1["result"], "passed", res1)
+                self.assertEqual(res1["scenario"]["case"], "low")
+                self.assertEqual(res1["scenario"]["steps"][0]["name"], "Run 0123-50")
+                by_name = {p["name"]: p for p in res1["scenario"]["params"]}
+                self.assertEqual(by_name["throttle"]["value"], 25)
+                self.assertEqual(by_name["min_rpm"]["value"], 50)
+                self.assertEqual(by_name["code"]["value"], "0123")
+                self.assertEqual(by_name["tag"]["value"], "50")
+                self.assertEqual(run1.status["launcher_state"], "ready")
+
+            with runner.start(
+                scenario=scn.as_posix(),
+                case="high",
+                after_scenario="pause",
+                timeout=scaled(60.0),
+            ) as run2:
+                handover = run2.wait_for_event("state", handed_over=True, timeout=scaled(30.0))
+                self.assertTrue(handover["paused"])
+                with run2.control(timeout=scaled(10.0)) as c:
+                    c.sim.stop()
+                res2 = run2.wait(timeout=scaled(120.0))
+                self.assertEqual(res2["scenario"]["status"], "passed", res2)
+                self.assertEqual(res2["scenario"]["case"], "high")
+                self.assertEqual(run2.status["launcher_state"], "ready")
+
+        # 2. Launch: typed params vs CLI --param (cli_params) precedence, leading-zero "0123",
+        #    numeric-looking string "50" for type: string, and hex integer "0x10".
+        with Launch(
+            LAUNCH,
+            cfg,
+            case="low",
+            params={"throttle": 40, "min_rpm": 500, "code": "9999", "tag": "99"},
+            arguments=[
+                "--scenario",
+                scn.as_posix(),
+                "--param",
+                "min_rpm=0x10",
+                "--param",
+                "code=0123",
+                "--param",
+                "tag=50",
+            ],
+        ) as launch:
+            res = launch.wait(timeout=scaled(120.0))
+            self.assertEqual(res["result"], "passed", res)
+            self.assertEqual(res["scenario"]["case"], "low")
+            self.assertEqual(res["scenario"]["steps"][0]["name"], "Run 0123-50")
+            by_name = {p["name"]: p for p in res["scenario"]["params"]}
+            self.assertEqual(by_name["throttle"]["value"], 40)
+            self.assertEqual(by_name["throttle"]["from"], "request_file")
+            self.assertEqual(by_name["min_rpm"]["value"], 16)
+            self.assertEqual(by_name["min_rpm"]["from"], "command_line")
+            self.assertEqual(by_name["code"]["value"], "0123")
+            self.assertEqual(by_name["code"]["from"], "command_line")
+            self.assertEqual(by_name["tag"]["value"], "50")
+            self.assertEqual(by_name["tag"]["from"], "command_line")
 
 
 if __name__ == "__main__":

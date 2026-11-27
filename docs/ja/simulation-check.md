@@ -443,7 +443,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `file_sha256` | 生の設定ファイルバイト列の小文字 16 進 SHA-256（読めない・未読時は `null`） |
 | `hot_eligibility` | `vehicle_sil_launch serve` 向け適格性 `{ "eligible": bool, "reason": string\|null, "message": string\|null }`（`reason` は `"usage"`、`"config-unreadable"`、`"fixed-registry"`、`"manual-participants"`、`"trace-enabled"`、適格時は `null`） |
 
-- `--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます。
+- `--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます。このとき `participants` と `networks` は空、`scenario` は省かれ、`hot_eligibility.reason` は `"usage"` です。
+- `--scenario` で複数ケースを持つシナリオを指定し、`--case`（または要求ファイルの `case`）が未指定・不明なとき（`result` が `"usage"`、終了コード 4）は、`usage` を立てる前に構成の `hot_eligibility` を評価して保持し、`participants`、`networks`、`time_lock`、`scenario`（`"case": null`、`cases`、`case_details`、`params`、`param_meta`、`missing_params`）をそのまま返します。人向けテキスト出力は簡潔な表示のままです。
 - `params` の要素は、`name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`）です。
 - Run の計画まで進めない場合は、刻みと Run のタイミング設定が `null` です。停止時刻を指定しなかった場合、`stop_at_ms` は `null` です。
 
