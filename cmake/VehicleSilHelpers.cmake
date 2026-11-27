@@ -42,17 +42,191 @@ function(vehicle_sil_target_defaults target)
   vehicle_sil_set_warnings(${target})
 endfunction()
 
-# On Windows, copies the DLLs a target depends on (SilKit.dll) next to it after
-# each build so that it can be started without changing PATH. No-op elsewhere.
+# Queries `${compiler} -print-file-name=<name>` and sets <out_var> to the normalized absolute
+# existing file path, or "" if the driver could not locate it.
+function(_vehicle_sil_compiler_print_file compiler name out_var)
+  set(${out_var} "" PARENT_SCOPE)
+  if("${compiler}" STREQUAL "" OR "${name}" STREQUAL "")
+    return()
+  endif()
+  execute_process(
+    COMMAND "${compiler}" "-print-file-name=${name}"
+    RESULT_VARIABLE _rc
+    OUTPUT_VARIABLE _out
+    ERROR_QUIET
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _rc EQUAL 0 OR "${_out}" STREQUAL "")
+    return()
+  endif()
+  string(REPLACE "\r" "" _out "${_out}")
+  string(REPLACE "\n" "" _out "${_out}")
+  cmake_path(SET _out NORMALIZE "${_out}")
+  if(_out STREQUAL "${name}")
+    return()
+  endif()
+  cmake_path(IS_ABSOLUTE _out _is_abs)
+  if(NOT _is_abs)
+    return()
+  endif()
+  if(EXISTS "${_out}" AND NOT IS_DIRECTORY "${_out}")
+    set(${out_var} "${_out}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+# Appends normalized existing directory <dir> to <list_var> in caller scope if not already present.
+function(_vehicle_sil_append_existing_dir list_var dir)
+  if("${dir}" STREQUAL "")
+    return()
+  endif()
+  cmake_path(SET _norm NORMALIZE "${dir}")
+  if(IS_DIRECTORY "${_norm}")
+    set(_items "${${list_var}}")
+    if(NOT "${_norm}" IN_LIST _items)
+      list(APPEND _items "${_norm}")
+      set(${list_var} "${_items}" PARENT_SCOPE)
+    endif()
+  endif()
+endfunction()
+
+# Resolves MinGW compiler runtime DLLs matching `compiler_id` (and for Clang, whether `stdc++` is
+# in `implicit_link_libs`, e.g. MSYS2 UCRT64 clang++ vs CLANG64 libc++) via `-print-file-name=<dll>`
+# with sysroot, static-archive `../bin`, implicit link directories, and compiler REALPATH fallbacks.
+function(_vehicle_sil_find_mingw_runtime_dlls compiler compiler_id implicit_link_dirs implicit_link_libs out_var)
+  set(${out_var} "" PARENT_SCOPE)
+  set(_use_libstdcxx FALSE)
+  if(compiler_id STREQUAL "GNU")
+    set(_use_libstdcxx TRUE)
+  elseif(compiler_id STREQUAL "Clang" AND "stdc++" IN_LIST implicit_link_libs)
+    set(_use_libstdcxx TRUE)
+  endif()
+
+  if(_use_libstdcxx)
+    set(_candidates
+        libstdc++-6.dll
+        libgcc_s_seh-1.dll
+        libgcc_s_dw2-1.dll
+        libgcc_s_sjlj-1.dll
+        libwinpthread-1.dll)
+    set(_probe_archives
+        libstdc++.dll.a
+        libstdc++.a
+        libgcc_s.a
+        libgcc.a
+        libwinpthread.dll.a
+        libwinpthread.a)
+  elseif(compiler_id STREQUAL "Clang")
+    set(_candidates
+        libc++.dll
+        libunwind.dll
+        libwinpthread-1.dll)
+    set(_probe_archives
+        libc++.dll.a
+        libc++.a
+        libunwind.dll.a
+        libunwind.a
+        libwinpthread.dll.a
+        libwinpthread.a)
+  else()
+    return()
+  endif()
+
+  set(_fallback_dirs "")
+  # 1. Sysroot bin directories.
+  if(NOT "${compiler}" STREQUAL "")
+    execute_process(
+      COMMAND "${compiler}" -print-sysroot
+      RESULT_VARIABLE _sysroot_rc
+      OUTPUT_VARIABLE _sysroot
+      ERROR_QUIET
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(_sysroot_rc EQUAL 0 AND NOT "${_sysroot}" STREQUAL "")
+      string(REPLACE "\r" "" _sysroot "${_sysroot}")
+      string(REPLACE "\n" "" _sysroot "${_sysroot}")
+      _vehicle_sil_append_existing_dir(_fallback_dirs "${_sysroot}/bin")
+      _vehicle_sil_append_existing_dir(_fallback_dirs "${_sysroot}/mingw/bin")
+    endif()
+  endif()
+  # 2. Static/import archive sibling `../bin` (and archive directory itself).
+  foreach(_archive IN LISTS _probe_archives)
+    _vehicle_sil_compiler_print_file("${compiler}" "${_archive}" _archive_path)
+    if(NOT "${_archive_path}" STREQUAL "")
+      cmake_path(GET _archive_path PARENT_PATH _archive_dir)
+      _vehicle_sil_append_existing_dir(_fallback_dirs "${_archive_dir}/../bin")
+      _vehicle_sil_append_existing_dir(_fallback_dirs "${_archive_dir}")
+    endif()
+  endforeach()
+  # 3. Implicit link directories (`../bin` and the directory itself).
+  foreach(_link_dir IN LISTS implicit_link_dirs)
+    _vehicle_sil_append_existing_dir(_fallback_dirs "${_link_dir}/../bin")
+    _vehicle_sil_append_existing_dir(_fallback_dirs "${_link_dir}")
+  endforeach()
+  # 4. Compiler REALPATH parent directory (and `../bin`).
+  if(NOT "${compiler}" STREQUAL "" AND EXISTS "${compiler}")
+    file(REAL_PATH "${compiler}" _compiler_real)
+    cmake_path(GET _compiler_real PARENT_PATH _compiler_dir)
+    _vehicle_sil_append_existing_dir(_fallback_dirs "${_compiler_dir}")
+    _vehicle_sil_append_existing_dir(_fallback_dirs "${_compiler_dir}/../bin")
+  endif()
+
+  set(_resolved "")
+  foreach(_dll IN LISTS _candidates)
+    _vehicle_sil_compiler_print_file("${compiler}" "${_dll}" _found)
+    if("${_found}" STREQUAL "")
+      foreach(_dir IN LISTS _fallback_dirs)
+        if(EXISTS "${_dir}/${_dll}" AND NOT IS_DIRECTORY "${_dir}/${_dll}")
+          cmake_path(SET _found NORMALIZE "${_dir}/${_dll}")
+          break()
+        endif()
+      endforeach()
+    endif()
+    if(NOT "${_found}" STREQUAL "" AND NOT "${_found}" IN_LIST _resolved)
+      list(APPEND _resolved "${_found}")
+    endif()
+  endforeach()
+
+  set(${out_var} "${_resolved}" PARENT_SCOPE)
+endfunction()
+
+# Cached per-configure wrapper around _vehicle_sil_find_mingw_runtime_dlls().
+function(_vehicle_sil_resolve_mingw_runtime_dlls out_var)
+  set(${out_var} "" PARENT_SCOPE)
+  if(NOT (WIN32 AND MINGW AND NOT VEHICLE_SIL_STATIC))
+    return()
+  endif()
+  get_property(_cached GLOBAL PROPERTY _VEHICLE_SIL_MINGW_RUNTIME_DLLS_CACHED)
+  if(NOT _cached)
+    _vehicle_sil_find_mingw_runtime_dlls(
+      "${CMAKE_CXX_COMPILER}"
+      "${CMAKE_CXX_COMPILER_ID}"
+      "${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}"
+      "${CMAKE_CXX_IMPLICIT_LINK_LIBRARIES}"
+      _dlls)
+    set_property(GLOBAL PROPERTY _VEHICLE_SIL_MINGW_RUNTIME_DLLS "${_dlls}")
+    set_property(GLOBAL PROPERTY _VEHICLE_SIL_MINGW_RUNTIME_DLLS_CACHED TRUE)
+  else()
+    get_property(_dlls GLOBAL PROPERTY _VEHICLE_SIL_MINGW_RUNTIME_DLLS)
+  endif()
+  set(${out_var} "${_dlls}" PARENT_SCOPE)
+endfunction()
+
+# On Windows, copies the DLLs a target depends on (SilKit.dll and, for non-static MinGW builds,
+# the toolchain's C++/GCC/Clang/winpthread runtime DLLs) next to it after each build so that it
+# can be started outside an MSYS2 shell without changing PATH. No-op elsewhere; when
+# VEHICLE_SIL_STATIC=ON, adds no compiler runtime DLLs.
 function(vehicle_sil_copy_runtime_dlls target)
   if(WIN32)
+    set(_mingw_dlls "")
+    if(MINGW AND NOT VEHICLE_SIL_STATIC)
+      _vehicle_sil_resolve_mingw_runtime_dlls(_mingw_dlls)
+    endif()
     add_custom_command(
       TARGET ${target}
       POST_BUILD
-      # A target without runtime DLLs (no SIL Kit) gets "cmake -E true" instead of a copy
-      # without source files, which fails.
-      COMMAND ${CMAKE_COMMAND} -E $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:${target}>>,copy_if_different,true>
-              $<TARGET_RUNTIME_DLLS:${target}> $<TARGET_FILE_DIR:${target}>
+      COMMAND ${CMAKE_COMMAND}
+              "-DDEST_DIR=$<TARGET_FILE_DIR:${target}>"
+              "-DLOCK_DIR=${CMAKE_BINARY_DIR}/CMakeFiles"
+              -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VehicleSilCopyDlls.cmake"
+              -- $<TARGET_RUNTIME_DLLS:${target}> ${_mingw_dlls}
       COMMAND_EXPAND_LISTS
       VERBATIM)
   endif()

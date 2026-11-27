@@ -11,6 +11,7 @@
 
 #include "vehicle_sil/config/detail/check_words.hpp"
 #include "vehicle_sil/runner/detail/run_close.hpp"
+#include "vehicle_sil/runner/detail/run_words.hpp"
 #include "run_connection.hpp"
 #include "run_control.hpp"
 #include "run_notes.hpp"
@@ -2236,4 +2237,28 @@ TEST_CASE(note_time_emits_time_and_state_from_one_gate_snapshot)
     controls.time().detach();
     controller.stop("test done");
     peer->stop("test done");
+}
+
+TEST_CASE(exit_code_text_explains_windows_dll_ntstatus_without_duplicating_prefix)
+{
+    using vehicle_sil::process::ExitStatus;
+    using vehicle_sil::runner::detail::exit_code_text;
+    using vehicle_sil::runner::detail::exit_text;
+
+    const auto missing = static_cast<int>(0xC0000135u);
+    const auto mismatch = static_cast<int>(0xC0000139u);
+    const auto ctrlc = static_cast<int>(0xC000013Au);
+    const auto crash = static_cast<int>(0xC0000005u);
+
+    check_text(exit_code_text(0), "0");
+    check_text(exit_code_text(crash), "0xC0000005");
+    check_text(exit_code_text(ctrlc), "0xC000013A (Windows ended it on a Ctrl+C, a Ctrl+Break or a closed console)");
+    check_text(exit_code_text(missing), "0xC0000135 (Windows did not find a DLL that it needs)");
+    check_text(exit_code_text(mismatch),
+               "0xC0000139 (a DLL that it needs is of another version: a function in it is missing)");
+
+    check_text(exit_text(ExitStatus{missing, std::nullopt}),
+               "exited with code 0xC0000135 (Windows did not find a DLL that it needs)");
+    check_text(exit_text(ExitStatus{mismatch, std::nullopt}),
+               "exited with code 0xC0000139 (a DLL that it needs is of another version: a function in it is missing)");
 }
