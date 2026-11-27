@@ -175,6 +175,13 @@
     'conditions.sampleOf': ({ at }) => ` (sample of ${at})`,
     'conditions.noSample': 'no sample came in the interval',
     'conditions.noValue': 'it had no value yet',
+    'conditions.while': '; while ',
+    'conditions.comparedSep': ', ',
+    'conditions.comparedValue': ({ value }) => ` was ${value}`,
+    'conditions.comparedNoSample': ' had no sample in the interval',
+    'conditions.comparedNoValue': ' had no value yet',
+    'conditions.rounded': ({ max }) =>
+      `Integer values beyond ±${max} are rounded by the browser; see the failure message above for exact 64-bit values.`,
     'participants.label': 'Participants',
 
     // --- the tables below the chart
@@ -271,8 +278,13 @@
     'band.title': ({ step, mode, compare, range, limit, result }) =>
       `Step ${step} (${mode}): ${compare}, ${range}${limit}: ${result}`,
     'band.expect': ({ compare }) => `expect ${compare}`,
+    'band.sliceRange': ({ compare, from, to }) => `${compare} (${from} to ${to})`,
     'mark.noValueAt': ({ at }) => `No value at ${at}`,
     'mark.was': ({ value, at }) => `It was ${value} (sample of ${at}): the condition did not hold`,
+    'mark.comparedNoValueAt': ({ at, variable }) =>
+      `Compared variable had no value at ${at} for ${variable}`,
+    'mark.comparedWas': ({ value, at, variable }) =>
+      `Compared value was ${value} (sample of ${at}) for ${variable}`,
     'mark.noValue': 'no value',
     'mark.applied': 'applied',
     'mark.notSent': 'not sent',
@@ -493,6 +505,13 @@
     'conditions.sampleOf': ({ at }) => `（${at} のサンプル）`,
     'conditions.noSample': '区間の中にサンプルが来なかった',
     'conditions.noValue': 'まだ値がなかった',
+    'conditions.while': '。比較対象の ',
+    'conditions.comparedSep': '、',
+    'conditions.comparedValue': ({ value }) => ` は ${value}`,
+    'conditions.comparedNoSample': ' は区間の中にサンプルが来なかった',
+    'conditions.comparedNoValue': ' はまだ値がなかった',
+    'conditions.rounded': ({ max }) =>
+      `±${max} を超える整数はブラウザーで丸められます。正確な 64 ビット整数は上の失敗メッセージを確認してください。`,
     'participants.label': 'participant',
 
     // --- 図の下の表
@@ -589,8 +608,13 @@
     'band.title': ({ step, mode, compare, range, limit, result }) =>
       `手順 ${step}（${mode}）: ${compare}、${range}${limit}: ${result}`,
     'band.expect': ({ compare }) => `expect ${compare}`,
+    'band.sliceRange': ({ compare, from, to }) => `${compare}（${from} から ${to}）`,
     'mark.noValueAt': ({ at }) => `${at} に値がない`,
     'mark.was': ({ value, at }) => `値は ${value}（${at} のサンプル）: 条件は成り立たなかった`,
+    'mark.comparedNoValueAt': ({ at, variable }) =>
+      `比較対象の変数は ${at} に値がなかった: ${variable} の条件`,
+    'mark.comparedWas': ({ value, at, variable }) =>
+      `比較対象の値は ${value}（${at} のサンプル）: ${variable} の条件`,
     'mark.noValue': '値なし',
     'mark.applied': '入った',
     'mark.notSent': '送っていない',

@@ -168,15 +168,18 @@
     return fmtNum(v, exact);
   }
 
-  /** One condition's comparisons, the way the scenario writes them ("le 200", "near 200 ± 0.5"). */
+  const nonEmptyString = (v) => (typeof v === 'string' && v !== '' ? v : null);
+  const compareTarget = (c) => (isObject(c) ? nonEmptyString(c.variable) : null);
+
+  /** One condition's comparisons, the way the scenario writes them ("le 200", "near 200 ± 0.5", "near Engine.speed ± 10"). */
   function compareText(compare, info) {
     if (!Array.isArray(compare)) return '';
     return compare
       .map((c) => {
         if (!isObject(c)) return '?';
-        const tol =
-          c.op === 'near' && c.tolerance !== undefined ? ` ± ${fmtNum(c.tolerance, true)}` : '';
-        return `${c.op} ${fmtValue(c.value, info, true)}${tol}`;
+        const tol = c.op === 'near' && isNum(c.tolerance) ? ` ± ${fmtNum(c.tolerance, true)}` : '';
+        const rhs = compareTarget(c) ?? fmtValue(c.value, info, true);
+        return `${c.op} ${rhs}${tol}`;
       })
       .join(t('compare.and'));
   }
@@ -290,12 +293,293 @@
   }
 
   /**
+   * Zero-order-hold segments of a right-hand variable's sampled series within [from, to].
+   * Uses rhsVar.sampled exclusively (never written), skips unobserved intervals and gaps.sampled,
+   * and in "during" mode uses only samples with sample_ms >= from.
+   */
+  function rhsSampleSegments(rhsVar, from, to, mode) {
+    if (!rhsVar || !rhsVar.sampled || !rhsVar.sampled.t.length) return [];
+    const s = rhsVar.sampled;
+    const gap =
+      rhsVar.gaps && rhsVar.gaps.sampled && rhsVar.gaps.sampled.before > rhsVar.gaps.sampled.from
+        ? rhsVar.gaps.sampled
+        : null;
+    const n = s.t.length;
+    const instant = to === from;
+    const segs = [];
+    for (let i = 0; i < n; i++) {
+      const tStart = s.t[i];
+      const tNext = i + 1 < n ? s.t[i + 1] : null;
+      const val = s.v[i];
+      if (val === null || val === undefined) continue;
+      if (mode === 'during' && tStart < from) continue;
+      if (gap && tStart >= gap.from && tStart < gap.before) continue;
+      let rawEnd = tNext !== null ? tNext : Math.max(to, s.lastMs ?? tStart, tStart);
+      if (gap && tStart < gap.from && rawEnd > gap.from) rawEnd = gap.from;
+      if (instant) {
+        if (gap && from >= gap.from && from < gap.before) continue;
+        const active = tStart <= from && (tNext === null ? from <= rawEnd : from < rawEnd);
+        if (active) segs.push({ from, to, value: val, atEnd: true });
+      } else {
+        const coversTo =
+          !(gap && to >= gap.from && to < gap.before) &&
+          tStart <= to &&
+          (tNext === null ? to <= rawEnd : to < rawEnd);
+        const a = Math.max(tStart, from);
+        const b = Math.min(rawEnd, to);
+        if (b > a) segs.push({ from: a, to: b, value: val, atEnd: coversTo });
+        else if (tStart === to && coversTo) segs.push({ from: to, to, value: val, atEnd: true });
+      }
+    }
+    return segs;
+  }
+
+  /** Intersection of resolved numeric comparisons on a slice, or null when empty. */
+  function intersectNumeric(resolved, info) {
+    let lo = -Infinity;
+    let loOpen = false;
+    let hi = Infinity;
+    let hiOpen = false;
+    let hasBound = false;
+    const excluded = [];
+    for (const r of resolved) {
+      if (!isNum(r.value)) return null;
+      if (r.op === 'ge') {
+        hasBound = true;
+        if (r.value > lo) {
+          lo = r.value;
+          loOpen = false;
+        }
+      } else if (r.op === 'gt') {
+        hasBound = true;
+        if (r.value > lo || (r.value === lo && !loOpen)) {
+          lo = r.value;
+          loOpen = true;
+        }
+      } else if (r.op === 'le') {
+        hasBound = true;
+        if (r.value < hi) {
+          hi = r.value;
+          hiOpen = false;
+        }
+      } else if (r.op === 'lt') {
+        hasBound = true;
+        if (r.value < hi || (r.value === hi && !hiOpen)) {
+          hi = r.value;
+          hiOpen = true;
+        }
+      } else if (r.op === 'eq') {
+        hasBound = true;
+        if (r.value > lo) {
+          lo = r.value;
+          loOpen = false;
+        }
+        if (r.value < hi) {
+          hi = r.value;
+          hiOpen = false;
+        }
+      } else if (r.op === 'near') {
+        if (!isNum(r.tolerance) || r.tolerance < 0) return null;
+        hasBound = true;
+        const nLo = r.value - r.tolerance;
+        const nHi = r.value + r.tolerance;
+        if (nLo > lo) {
+          lo = nLo;
+          loOpen = false;
+        }
+        if (nHi < hi) {
+          hi = nHi;
+          hiOpen = false;
+        }
+      } else if (r.op === 'ne') {
+        if (!excluded.includes(r.value)) excluded.push(r.value);
+      }
+    }
+    if (lo > hi) return null;
+    if (lo === hi && (loOpen || hiOpen || excluded.includes(lo))) return null;
+    if (info && info.type === 'integer' && (lo !== -Infinity || hi !== Infinity)) {
+      const intLo = lo === -Infinity ? -Infinity : loOpen ? Math.floor(lo) + 1 : Math.ceil(lo);
+      const intHi = hi === Infinity ? Infinity : hiOpen ? Math.ceil(hi) - 1 : Math.floor(hi);
+      if (intLo > intHi) return null;
+      if (intLo === intHi && excluded.includes(intLo)) return null;
+      if (
+        Number.isSafeInteger(intLo) &&
+        Number.isSafeInteger(intHi) &&
+        intHi - intLo < excluded.length
+      ) {
+        let allExcluded = true;
+        for (let k = intLo; k <= intHi; k++) {
+          if (!excluded.includes(k)) {
+            allExcluded = false;
+            break;
+          }
+        }
+        if (allExcluded) return null;
+      }
+    }
+    return { discrete: false, lo, loOpen, hi, hiOpen, hasBound, excluded, resolved };
+  }
+
+  /** Intersection of resolved discrete (bool/enum) comparisons on a slice, or null when empty. */
+  function intersectDiscrete(resolved, info) {
+    let required;
+    const forbidden = [];
+    for (const r of resolved) {
+      if (r.value === null || r.value === undefined) return null;
+      if (r.op === 'eq') {
+        if (required !== undefined && required !== r.value) return null;
+        required = r.value;
+      } else if (r.op === 'ne') {
+        if (!forbidden.includes(r.value)) forbidden.push(r.value);
+      }
+    }
+    if (required !== undefined && forbidden.includes(required)) return null;
+    if (required === undefined) {
+      if (info && info.type === 'bool' && forbidden.includes(false) && forbidden.includes(true))
+        return null;
+      if (
+        info &&
+        info.type === 'enum' &&
+        Array.isArray(info.items) &&
+        info.items.length > 0 &&
+        info.items.every((item) => item && forbidden.includes(item.value))
+      )
+        return null;
+    }
+    return {
+      discrete: true,
+      value: required !== undefined ? required : null,
+      excluded: forbidden,
+      resolved,
+    };
+  }
+
+  function sameSlice(a, b) {
+    if (a.discrete !== b.discrete || a.to !== b.from) return false;
+    if (a.discrete) {
+      if (a.value !== b.value || a.excluded.length !== b.excluded.length) return false;
+      return a.excluded.every((x, i) => x === b.excluded[i]);
+    }
+    if (
+      a.lo !== b.lo ||
+      a.loOpen !== b.loOpen ||
+      a.hi !== b.hi ||
+      a.hiOpen !== b.hiOpen ||
+      a.hasBound !== b.hasBound ||
+      a.excluded.length !== b.excluded.length ||
+      a.resolved.length !== b.resolved.length
+    )
+      return false;
+    return (
+      a.excluded.every((x, i) => x === b.excluded[i]) &&
+      a.resolved.every(
+        (r, i) =>
+          r.op === b.resolved[i].op &&
+          r.value === b.resolved[i].value &&
+          r.tolerance === b.resolved[i].tolerance,
+      )
+    );
+  }
+
+  /**
+   * Resolves a band's comparisons into non-empty ZOH slices over [from, to], intersecting all comparisons
+   * in the condition at every elementary sub-interval.
+   */
+  function resolveBandSlices(compare, from, to, mode, info, byName) {
+    if (!compare.length) return [];
+    const discrete = info && (info.type === 'bool' || info.type === 'enum');
+    const sources = compare.map((c) => {
+      const target = compareTarget(c);
+      if (!target) return { c, segs: null };
+      return {
+        c,
+        segs: rhsSampleSegments(byName ? byName.get(target) : null, from, to, mode),
+      };
+    });
+    if (sources.some((src) => src.segs && src.segs.length === 0)) return [];
+
+    const intervals = [];
+    if (to === from) {
+      intervals.push([from, to]);
+    } else {
+      const pts = new Set([from, to]);
+      for (const src of sources) {
+        if (!src.segs) continue;
+        for (const seg of src.segs) {
+          pts.add(seg.from);
+          pts.add(seg.to);
+        }
+      }
+      const ts = [...pts].sort((a, b) => a - b);
+      for (let i = 0; i + 1 < ts.length; i++) {
+        if (ts[i + 1] > ts[i]) intervals.push([ts[i], ts[i + 1]]);
+      }
+      const hasTerminalPoint = sources.some(
+        (src) => src.segs && src.segs.some((sg) => sg.from === to && sg.to === to),
+      );
+      if (hasTerminalPoint) intervals.push([to, to]);
+    }
+
+    const slices = [];
+    for (const [a, b] of intervals) {
+      const resolved = [];
+      let missing = false;
+      for (const src of sources) {
+        let val;
+        if (!src.segs) {
+          val = src.c.value;
+        } else {
+          const seg =
+            b > a
+              ? src.segs.find((sg) => sg.from <= a && sg.to >= b)
+              : src.segs.find((sg) => sg.atEnd && sg.from <= a && sg.to >= b);
+          if (!seg) {
+            missing = true;
+            break;
+          }
+          val = seg.value;
+        }
+        resolved.push({
+          op: src.c.op,
+          value: val,
+          tolerance: src.c.op === 'near' && isNum(src.c.tolerance) ? src.c.tolerance : null,
+        });
+      }
+      if (missing) continue;
+      const body = discrete ? intersectDiscrete(resolved, info) : intersectNumeric(resolved, info);
+      if (!body) continue;
+      const slice = { from: a, to: b, ...body };
+      const prev = slices[slices.length - 1];
+      if (prev && sameSlice(prev, slice)) prev.to = slice.to;
+      else slices.push(slice);
+    }
+    return slices;
+  }
+
+  /** Numeric y-position for a "once" band's timeout extension line, resolving dynamic compare[0] when value is null. */
+  function resolveLimitValue(compare, slices) {
+    const last = slices.length ? slices[slices.length - 1] : null;
+    if (last && !last.discrete) {
+      if (last.resolved.length && isNum(last.resolved[0].value)) return last.resolved[0].value;
+      const num = last.resolved.find((r) => isNum(r.value));
+      if (num) return num.value;
+      if (isNum(last.lo) && isNum(last.hi)) return (last.lo + last.hi) / 2;
+      if (isNum(last.lo)) return last.lo;
+      if (isNum(last.hi)) return last.hi;
+    }
+    for (const c of compare) {
+      if (isNum(c.value)) return c.value;
+    }
+    return null;
+  }
+
+  /**
    * The bands that conditions put on a variable's lane. A band covers the samples the condition looks at:
    * at: the instant from_ms; always and during: from_ms to to_ms, but not past the failure of the step or the
    * end of the record (`recordedTo`), since no sample was looked at after them; once: from_ms to the time it held
    * (passed) or to the limit, with a thin line on to the limit. `until` is the end the scenario gave.
    */
-  function watchBands(step, variable, recordedTo) {
+  function watchBands(step, variable, recordedTo, byName) {
     const w = step.watch;
     if (!isObject(w) || !Array.isArray(w.conditions) || !isNum(w.from_ms))
       return { bands: [], notes: [] };
@@ -305,6 +589,7 @@
       isObject(step.failed) && Array.isArray(step.failed.conditions)
         ? step.failed.conditions.map((c) => c && c.condition)
         : [];
+    const targetVar = byName ? byName.get(variable) : null;
     w.conditions.forEach((c, index) => {
       if (!isObject(c) || c.variable !== variable) return;
       if (!knows(KNOWN.mode, w.mode)) {
@@ -331,23 +616,34 @@
           to = Math.min(to, step.failed.at_ms);
         if (isNum(recordedTo)) to = Math.min(to, recordedTo);
       }
+      const bandTo = Math.max(to, from);
+      const dynamic = compare.some((x) => compareTarget(x) !== null);
+      const slices = resolveBandSlices(
+        compare,
+        from,
+        bandTo,
+        w.mode,
+        targetVar && targetVar.info,
+        byName,
+      );
       bands.push({
         step: step.index,
         condition: index,
         mode: w.mode,
         from,
-        to: Math.max(to, from),
+        to: bandTo,
         until: Math.max(until, from),
         limit,
+        limitValue: resolveLimitValue(compare, slices),
         compare,
+        dynamic,
+        slices,
         status: knows(KNOWN.stepStatus, step.status) ? step.status : 'unknown',
         failed: failedConditions.includes(index),
       });
     });
     return { bands, notes };
   }
-
-  const nonEmptyString = (v) => (typeof v === 'string' && v !== '' ? v : null);
 
   function stepFile(step, scenarioFile) {
     return (isObject(step) && nonEmptyString(step.file)) || nonEmptyString(scenarioFile) || null;
@@ -415,7 +711,20 @@
             : null;
         const variable = isObject(wc) ? wc.variable : null;
         const info = byName.get(variable);
-        return {
+        const compared = (Array.isArray(c.compared) ? c.compared : [])
+          .filter(isObject)
+          .map((rhs) => {
+            const rhsName = nonEmptyString(rhs.variable);
+            const rhsInfo = rhsName ? byName.get(rhsName) : null;
+            const rhsVal = rhs.value === undefined ? null : rhs.value;
+            return {
+              variable: rhsName,
+              value: rhsVal,
+              valueText: rhsVal === null ? null : fmtValue(rhsVal, rhsInfo && rhsInfo.info, true),
+              sampleMs: isNum(rhs.sample_ms) ? rhs.sample_ms : null,
+            };
+          });
+        const entry = {
           variable,
           compare: isObject(wc) ? compareText(wc.compare, info && info.info) : null,
           value: c.value,
@@ -426,6 +735,8 @@
           sampleMs: isNum(c.sample_ms) ? c.sample_ms : null,
           mode: isObject(step.watch) ? step.watch.mode : null,
         };
+        if (compared.length) entry.compared = compared;
+        return entry;
       });
     const writes = (f && Array.isArray(f.writes) ? f.writes : []).map((w, i) => {
       if (!isObject(w)) return null;
@@ -570,7 +881,7 @@
       for (const name of names) {
         if (typeof name !== 'string') continue;
         const v = varOf(name);
-        const { bands, notes } = watchBands(step, name, recordedTo);
+        const { bands, notes } = watchBands(step, name, recordedTo, byName);
         v.bands.push(...bands);
         v.notes.push(...notes);
       }
@@ -579,15 +890,41 @@
     const failure = failureOf(tl, byName);
     if (failure) {
       for (const c of failure.conditions) {
-        if (typeof c.variable !== 'string') continue;
-        const v = varOf(c.variable);
-        v.failing = true;
-        v.marks.push({
-          kind: 'condition',
-          at: c.sampleMs ?? failure.at,
-          value: c.value,
-          text: c.valueText,
-        });
+        if (typeof c.variable === 'string') {
+          const v = varOf(c.variable);
+          v.failing = true;
+          v.marks.push({
+            kind: 'condition',
+            at: c.sampleMs ?? failure.at,
+            value: c.value,
+            text: c.valueText,
+          });
+        }
+        if (Array.isArray(c.compared)) {
+          for (const rhs of c.compared) {
+            if (typeof rhs.variable !== 'string' || rhs.variable === '') continue;
+            const rv = varOf(rhs.variable);
+            rv.failing = true;
+            const at = rhs.sampleMs ?? failure.at;
+            const against = c.variable ?? '?';
+            const dup = rv.marks.some(
+              (mk) =>
+                mk.kind === 'compared' &&
+                mk.at === at &&
+                mk.value === rhs.value &&
+                mk.against === against,
+            );
+            if (!dup) {
+              rv.marks.push({
+                kind: 'compared',
+                at,
+                value: rhs.value,
+                text: rhs.valueText,
+                against,
+              });
+            }
+          }
+        }
       }
       for (const w of failure.writes) {
         if (typeof w.variable !== 'string') continue;
@@ -942,9 +1279,20 @@
       if (s.base) s.base.forEach(take);
     }
     for (const b of v.bands) {
+      if (Array.isArray(b.slices) && b.slices.length) {
+        for (const sl of b.slices) {
+          if (sl.discrete) continue;
+          take(sl.lo);
+          take(sl.hi);
+          if (Array.isArray(sl.excluded)) sl.excluded.forEach(take);
+          if (Array.isArray(sl.resolved)) {
+            for (const r of sl.resolved) take(r.value);
+          }
+        }
+      }
       for (const c of b.compare) {
         take(c.value);
-        if (c.op === 'near' && isNum(c.tolerance)) {
+        if (c.op === 'near' && isNum(c.value) && isNum(c.tolerance)) {
           take(c.value - c.tolerance);
           take(c.value + c.tolerance);
         }
@@ -1287,7 +1635,7 @@
           f.message
             ? h('p', { class: 'message', 'data-testid': 'failure-message', text: f.message })
             : null,
-          f.conditions.length ? renderConditions(f) : null,
+          f.conditions.length ? renderConditions(f, m) : null,
           f.writes.length ? renderWrites(f) : null,
         ),
       );
@@ -1356,26 +1704,85 @@
     box.replaceChildren(...parts);
   }
 
-  function renderConditions(f) {
+  function isRoundedInteger(val, info) {
+    return Boolean(
+      info &&
+      info.type === 'integer' &&
+      isNum(val) &&
+      Number.isInteger(val) &&
+      !Number.isSafeInteger(val),
+    );
+  }
+
+  function renderConditions(f, m) {
+    let anyRounded = false;
+    const rawFailed =
+      isObject(f.step?.failed) && Array.isArray(f.step.failed.conditions)
+        ? f.step.failed.conditions.filter(isObject)
+        : [];
+    const watchConds =
+      isObject(f.step?.watch) && Array.isArray(f.step.watch.conditions)
+        ? f.step.watch.conditions
+        : [];
+    const items = f.conditions.map((c, idx) => {
+      const what = `${c.variable ?? '?'} ${c.compare ?? ''}`.trim();
+      const lhsInfo = m && c.variable ? m.byName.get(c.variable)?.info : null;
+      if (isRoundedInteger(c.value, lhsInfo)) anyRounded = true;
+      const fc = rawFailed[idx];
+      const wc = isObject(fc) ? watchConds[fc.condition] : null;
+      if (isObject(wc) && Array.isArray(wc.compare)) {
+        for (const comp of wc.compare) {
+          if (
+            isObject(comp) &&
+            (isRoundedInteger(comp.value, lhsInfo) || isRoundedInteger(comp.tolerance, lhsInfo))
+          ) {
+            anyRounded = true;
+          }
+        }
+      }
+      let got;
+      if (c.valueText !== null)
+        got =
+          t('conditions.was', { value: c.valueText }) +
+          (c.sampleMs !== null ? t('conditions.sampleOf', { at: fmtMs(c.sampleMs) }) : '');
+      else if (c.mode === 'during') got = t('conditions.noSample');
+      else got = t('conditions.noValue');
+      const parts = [h('code', { text: what }), `: ${got}`];
+      if (Array.isArray(c.compared) && c.compared.length) {
+        parts.push(t('conditions.while'));
+        c.compared.forEach((rhs, i) => {
+          if (i > 0) parts.push(t('conditions.comparedSep'));
+          const rhsInfo = m && rhs.variable ? m.byName.get(rhs.variable)?.info : null;
+          if (isRoundedInteger(rhs.value, rhsInfo)) anyRounded = true;
+          parts.push(h('code', { text: rhs.variable ?? '?' }));
+          if (rhs.valueText !== null) {
+            parts.push(
+              t('conditions.comparedValue', { value: rhs.valueText }) +
+                (rhs.sampleMs !== null
+                  ? t('conditions.sampleOf', { at: fmtMs(rhs.sampleMs) })
+                  : ''),
+            );
+          } else if (c.mode === 'during') {
+            parts.push(t('conditions.comparedNoSample'));
+          } else {
+            parts.push(t('conditions.comparedNoValue'));
+          }
+        });
+      }
+      return h('li', {}, ...parts);
+    });
     return h(
       'div',
       {},
       h('h4', { text: t('conditions.heading') }),
-      h(
-        'ul',
-        { 'data-testid': 'failed-conditions' },
-        ...f.conditions.map((c) => {
-          const what = `${c.variable ?? '?'} ${c.compare ?? ''}`.trim();
-          let got;
-          if (c.valueText !== null)
-            got =
-              t('conditions.was', { value: c.valueText }) +
-              (c.sampleMs !== null ? t('conditions.sampleOf', { at: fmtMs(c.sampleMs) }) : '');
-          else if (c.mode === 'during') got = t('conditions.noSample');
-          else got = t('conditions.noValue');
-          return h('li', {}, h('code', { text: what }), `: ${got}`);
-        }),
-      ),
+      h('ul', { 'data-testid': 'failed-conditions' }, ...items),
+      anyRounded
+        ? h('p', {
+            class: 'note small',
+            'data-testid': 'conditions-rounded-note',
+            text: t('conditions.rounded', { max: Number.MAX_SAFE_INTEGER }),
+          })
+        : null,
     );
   }
 
@@ -2308,36 +2715,83 @@
   function drawBandsNumber(svg, v, scale, y, area, lo, hi) {
     const clampY = (val) => y(Math.min(hi, Math.max(lo, val)));
     for (const b of v.bands) {
-      if (b.to < scale.t0 || b.from > scale.t1) continue;
+      const bandEnd = b.limit !== null ? Math.max(b.to, b.limit) : b.to;
+      if (bandEnd < scale.t0 || b.from > scale.t1) continue;
       const x0 = scale.x(b.from);
       const x1 = Math.max(scale.x(b.to), x0 + 3);
       const g = tooltip(s('g', { class: `band ${bandClass(b)}` }, svg), bandTitle(b, v.info));
-      for (const c of b.compare) {
-        if (!isNum(c.value)) continue;
-        let top;
-        let bottom;
-        if (c.op === 'ge' || c.op === 'gt') [top, bottom] = [area.y0, clampY(c.value)];
-        else if (c.op === 'le' || c.op === 'lt') [top, bottom] = [clampY(c.value), area.y1];
-        else if (c.op === 'near' && isNum(c.tolerance))
-          [top, bottom] = [clampY(c.value + c.tolerance), clampY(c.value - c.tolerance)];
-        else if (c.op === 'eq') [top, bottom] = [clampY(c.value) - 2, clampY(c.value) + 2];
-        if (top !== undefined)
+      const slices = Array.isArray(b.slices) ? b.slices : [];
+      for (const sl of slices) {
+        if (sl.discrete || sl.to < scale.t0 || sl.from > scale.t1) continue;
+        const sx0 = scale.x(sl.from);
+        const minW = sl.to === sl.from || slices.length === 1 ? 3 : 0.5;
+        const sx1 = Math.max(scale.x(sl.to), sx0 + minW);
+        const target = b.dynamic
+          ? tooltip(
+              s('g', { class: 'band-slice' }, g),
+              t('band.sliceRange', {
+                compare: compareText(sl.resolved, v.info),
+                from: fmtMs(sl.from),
+                to: fmtMs(sl.to),
+              }),
+            )
+          : g;
+        if (sl.hasBound) {
+          let top;
+          let bottom;
+          if (sl.lo === sl.hi) {
+            const cy = clampY(sl.lo);
+            [top, bottom] = [cy - 2, cy + 2];
+          } else {
+            top = sl.hi === Infinity ? area.y0 : clampY(sl.hi);
+            bottom = sl.lo === -Infinity ? area.y1 : clampY(sl.lo);
+          }
           s(
             'rect',
-            { class: 'allowed', x: x0, y: top, width: x1 - x0, height: Math.max(2, bottom - top) },
-            g,
+            {
+              class: 'allowed',
+              x: sx0,
+              y: top,
+              width: sx1 - sx0,
+              height: Math.max(2, bottom - top),
+            },
+            target,
           );
-        const ty = clampY(c.value);
-        s(
-          'line',
-          { class: `threshold${c.op === 'ne' ? ' ne' : ''}`, x1: x0, x2: x1, y1: ty, y2: ty },
-          g,
-        );
+        }
+        const drawn = new Set();
+        const drawLine = (val, ne) => {
+          const key = `${ne ? 'ne' : 'th'}:${val}`;
+          if (drawn.has(key)) return;
+          drawn.add(key);
+          const ty = clampY(val);
+          s(
+            'line',
+            { class: `threshold${ne ? ' ne' : ''}`, x1: sx0, x2: sx1, y1: ty, y2: ty },
+            target,
+          );
+        };
+        for (const r of sl.resolved) {
+          if (!isNum(r.value)) continue;
+          if (r.op === 'ne') drawLine(r.value, true);
+          else if (r.op === 'eq') drawLine(r.value, false);
+          else if (r.op === 'near') {
+            if (r.value >= sl.lo && r.value <= sl.hi) drawLine(r.value, false);
+          } else if (r.op === 'ge' || r.op === 'gt') {
+            if (r.value === sl.lo) drawLine(sl.lo, false);
+          } else if (r.op === 'le' || r.op === 'lt') {
+            if (r.value === sl.hi) drawLine(sl.hi, false);
+          }
+        }
       }
       if (b.limit !== null && b.limit > b.to) {
         const xl = scale.x(b.limit);
-        const ty = isNum(b.compare[0] && b.compare[0].value) ? clampY(b.compare[0].value) : area.y0;
-        s('line', { class: 'threshold limit', x1: x1, x2: xl, y1: ty, y2: ty }, g);
+        const limitVal = isNum(b.limitValue)
+          ? b.limitValue
+          : isNum(b.compare[0] && b.compare[0].value)
+            ? b.compare[0].value
+            : null;
+        const ty = limitVal !== null ? clampY(limitVal) : (area.y0 + area.y1) / 2;
+        s('line', { class: 'threshold limit', x1, x2: xl, y1: ty, y2: ty }, g);
       }
     }
   }
@@ -2345,23 +2799,59 @@
   function drawBandsState(svg, v, scale, area, info) {
     for (const b of v.bands) {
       if (b.to < scale.t0 || b.from > scale.t1) continue;
-      const x0 = scale.x(b.from);
-      const x1 = Math.max(scale.x(b.to), x0 + 3);
       const g = tooltip(s('g', { class: `band ${bandClass(b)}` }, svg), bandTitle(b, info));
-      s(
-        'rect',
-        {
-          class: 'expect-box',
-          x: x0,
-          y: area.y0 - 2,
-          width: x1 - x0,
-          height: area.y1 - area.y0 + 4,
-        },
-        g,
-      );
-      const text = t('band.expect', { compare: compareText(b.compare, info) });
-      if (x1 - x0 > text.length * 6 + 4)
-        s('text', { class: 'expect-label', x: x0 + 3, y: area.y1 - 1, text }, g);
+      const slices = Array.isArray(b.slices) ? b.slices : [];
+      if (!b.dynamic) {
+        if (!slices.length) continue;
+        const x0 = scale.x(b.from);
+        const x1 = Math.max(scale.x(b.to), x0 + 3);
+        s(
+          'rect',
+          {
+            class: 'expect-box',
+            x: x0,
+            y: area.y0 - 2,
+            width: x1 - x0,
+            height: area.y1 - area.y0 + 4,
+          },
+          g,
+        );
+        const text = t('band.expect', { compare: compareText(b.compare, info) });
+        if (x1 - x0 > text.length * 6 + 4)
+          s('text', { class: 'expect-label', x: x0 + 3, y: area.y1 - 1, text }, g);
+        continue;
+      }
+      for (const sl of slices) {
+        if (sl.to < scale.t0 || sl.from > scale.t1) continue;
+        const sx0 = scale.x(sl.from);
+        const minW = sl.to === sl.from || slices.length === 1 ? 3 : 1;
+        const sx1 = Math.max(scale.x(sl.to), sx0 + minW);
+        const resolvedText = compareText(sl.resolved, info);
+        const sg = tooltip(
+          s('g', { class: 'band-slice' }, g),
+          t('band.sliceRange', {
+            compare: resolvedText,
+            from: fmtMs(sl.from),
+            to: fmtMs(sl.to),
+          }),
+        );
+        s(
+          'rect',
+          {
+            class: 'expect-box dynamic',
+            x: sx0,
+            y: area.y0 - 2,
+            width: sx1 - sx0,
+            height: area.y1 - area.y0 + 4,
+          },
+          sg,
+        );
+        const label = t('band.expect', { compare: resolvedText });
+        if (sx1 - sx0 > label.length * 6 + 4)
+          s('text', { class: 'expect-label', x: sx0 + 3, y: area.y1 - 1, text: label }, sg);
+        else if (sx1 - sx0 > resolvedText.length * 6 + 4)
+          s('text', { class: 'expect-label', x: sx0 + 3, y: area.y1 - 1, text: resolvedText }, sg);
+      }
     }
   }
 
@@ -2384,6 +2874,30 @@
           'text',
           {
             x: left ? x - 8 : x + 8,
+            y: Math.max(area.y0 + 10, cy - 4),
+            'text-anchor': left ? 'end' : 'start',
+            text: label,
+          },
+          g,
+        );
+      } else if (mk.kind === 'compared') {
+        const g = tooltip(
+          s('g', { class: 'mark bad compared' }, svg),
+          mk.text === null
+            ? t('mark.comparedNoValueAt', { at: fmtMs(mk.at), variable: mk.against ?? '?' })
+            : t('mark.comparedWas', {
+                value: mk.text,
+                at: fmtMs(mk.at),
+                variable: mk.against ?? '?',
+              }),
+        );
+        s('path', { d: `M${x} ${cy - 6} l6 6 l-6 6 l-6 -6 z` }, g);
+        const label = mk.text === null ? t('mark.noValue') : mk.text;
+        const left = x + label.length * 6.5 + 10 > scale.width;
+        s(
+          'text',
+          {
+            x: left ? x - 9 : x + 9,
             y: Math.max(area.y0 + 10, cy - 4),
             'text-anchor': left ? 'end' : 'start',
             text: label,
@@ -2539,41 +3053,45 @@
     };
     const mode = Object.hasOwn(modes, watch?.mode) ? modes[watch.mode] : null;
     panel.replaceChildren(
-      h(
-        'div',
-        { class: 'detail-heading' },
-        h('strong', { text: title }),
-        stepName ? h('span', { text: stepName }) : null,
-        h('span', { class: 'muted', text: timings }),
-      ),
-      frames.length
-        ? h(
-            'div',
-            { class: 'muted small', 'data-testid': 'step-call-stack' },
-            `${t('failure.calledFrom')} ${frames.join(' → ')}`,
-          )
-        : null,
-      conditions.length
-        ? h(
-            'div',
-            {},
-            mode
-              ? h('div', { text: t(mode, { from: fmtMs(watch.from_ms), to: fmtMs(watch.to_ms) }) })
-              : null,
-            h(
-              'ul',
+      ...[
+        h(
+          'div',
+          { class: 'detail-heading' },
+          h('strong', { text: title }),
+          stepName ? h('span', { text: stepName }) : null,
+          h('span', { class: 'muted', text: timings }),
+        ),
+        frames.length
+          ? h(
+              'div',
+              { class: 'muted small', 'data-testid': 'step-call-stack' },
+              `${t('failure.calledFrom')} ${frames.join(' → ')}`,
+            )
+          : null,
+        conditions.length
+          ? h(
+              'div',
               {},
-              conditions.map((c) =>
-                h(
-                  'li',
-                  {},
-                  h('code', { text: c.variable }),
-                  ` ${compareText(c.compare, m.byName.get(c.variable)?.info)}`,
+              mode
+                ? h('div', {
+                    text: t(mode, { from: fmtMs(watch.from_ms), to: fmtMs(watch.to_ms) }),
+                  })
+                : null,
+              h(
+                'ul',
+                {},
+                conditions.map((c) =>
+                  h(
+                    'li',
+                    {},
+                    h('code', { text: c.variable }),
+                    ` ${compareText(c.compare, m.byName.get(c.variable)?.info)}`,
+                  ),
                 ),
               ),
-            ),
-          )
-        : h('div', { text: step.text ?? '' }),
+            )
+          : h('div', { text: step.text ?? '' }),
+      ].filter(Boolean),
     );
     panel.scrollTop = 0;
   }

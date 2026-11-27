@@ -16,6 +16,39 @@ export type VehicleSilTimelineMessages = Record<
 export type VehicleSilTimelinePart =
   'header' | 'summary' | 'toolbar' | 'help' | 'steps' | 'readout' | 'legend' | 'tables';
 
+/** One comparison in a step's watch condition (constant value or right-hand variable). */
+export interface VehicleSilTimelineComparison {
+  op: string;
+  /** Constant value compared against; null when `variable` names a right-hand variable. */
+  value: boolean | number | null;
+  /** Right-hand variable (`<participant>.<name>`) when comparing two variables; omitted for constants. */
+  variable?: string;
+  /** Tolerance for `near`; null for other operators. */
+  tolerance: number | null;
+}
+
+/** One variable condition watched by a step. */
+export interface VehicleSilTimelineWatchCondition {
+  variable: string;
+  compare: VehicleSilTimelineComparison[];
+}
+
+/** A right-hand variable's value and sample time recorded on a failed condition. */
+export interface VehicleSilTimelineFailedCompared {
+  variable: string;
+  value: boolean | number | null;
+  sample_ms: number | null;
+}
+
+/** One unmet condition recorded in a failed step. */
+export interface VehicleSilTimelineFailedCondition {
+  condition: number;
+  value: boolean | number | null;
+  sample_ms: number | null;
+  /** Right-hand variables of failed comparisons on this condition; omitted when none failed. */
+  compared?: VehicleSilTimelineFailedCompared[];
+}
+
 export interface VehicleSilTimelineLoadDetail {
   /** The file's name (file-name, or the name the server gives), or null. */
   file: string | null;

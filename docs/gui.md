@@ -1166,6 +1166,8 @@ Hover over the chart to see each signal's value at the same virtual time. When b
 
 The step details above the chart show the expected values, the rule for when they must match, and the actual decision time. Hover over a step or click it to inspect it. The cursor line runs across the chart so you can compare signals at the same time.
 
+For variable-to-variable comparisons (`compare[].variable`), watch bands follow the right-hand variable's recorded `sampled` values as zero-order-hold slices on both numeric and `bool`/`enum` lanes. When one condition combines multiple comparisons, each slice draws their intersection and omits empty intervals; intervals where the right-hand variable has no sample yet, lost samples at the file's limits (`dropped`), or (in `during` mode) has only samples before `from_ms` are left unshaded. When a variable-to-variable comparison fails, the failure banner shows both sides' values and sample times, and failure markers appear on both the left-hand lane and the unmet right-hand lane. Because JavaScript numbers round 64-bit integers beyond `±9007199254740991`, the viewer notes rounded integer values and keeps the exact 64-bit numbers in the failure message.
+
 Every option below can be changed after the element is on the page. The element redraws once for the changes made together. A simple option is both an attribute (kebab-case) and a property (camelCase); objects are properties only. A value it cannot use is ignored with a warning in the browser's console (a number that is not one, a word of `hide` or a `theme` it does not know, `from` not before `to`), and the names of `variables` that match no variable are said above the chart.
 
 | Attribute | Property | Type | Default | What it does |

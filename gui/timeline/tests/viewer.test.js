@@ -1245,3 +1245,1539 @@ test('element DOM escapes XSS in scenario.case facts, multiline step.name, and m
   assert.ok(stepsText.includes('line 9 of templates/mid.yaml · key = <svg onload=1>'), stepsText);
   assert.ok(!stepsText.includes('()'), stepsText);
 });
+
+// --- variable-to-variable dynamic watch bands, compared failures, and 2^53 integers
+
+/** Builds a minimal valid format-1 timeline object for dynamic-band tests. */
+function makeDynamicTimeline(overrides) {
+  return {
+    vehicle_sil_timeline: 1,
+    vehicle_sil: '0.6.0',
+    stage: 'run',
+    file: 'simulation.yaml',
+    variant: null,
+    params: [],
+    time_step_ms: 10,
+    scenario: {
+      file: 'scenarios/tracking.yaml',
+      name: 'dynamic tracking',
+      status: 'passed',
+      over_at_ms: 100,
+      recorded_to_ms: 100,
+      end_ms: null,
+    },
+    variables: [
+      {
+        name: 'Engine.speed',
+        participant: 'Engine',
+        type: 'real',
+        causality: 'output',
+        unit: 'rpm',
+        min: 0,
+        max: 6000,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Dashboard.speed',
+        participant: 'Dashboard',
+        type: 'real',
+        causality: 'output',
+        unit: 'rpm',
+        min: 0,
+        max: 6000,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [],
+    series: [],
+    lines: [],
+    findings: [],
+    limits: { points_per_series: 10000, points_total: 100000, dropped: [] },
+    ...overrides,
+  };
+}
+
+function makeSeries(variable, source, points, extra) {
+  return {
+    variable,
+    source,
+    encoding: source === 'sampled' ? 'changes' : 'all',
+    samples: source === 'sampled' ? points.length : null,
+    first_ms: source === 'sampled' && points.length ? points[0][0] : null,
+    last_ms: source === 'sampled' && points.length ? points[points.length - 1][0] : null,
+    not_applied_from: null,
+    columns: ['at_ms', 'value'],
+    points,
+    ...extra,
+  };
+}
+
+function findNodes(root, pred, out = []) {
+  for (const ch of root.children || []) {
+    if (pred(ch)) out.push(ch);
+    findNodes(ch, pred, out);
+  }
+  return out;
+}
+
+test('dynamic band resolves ZOH slices from rhsVar.sampled only (never written) and skips unobserved intervals', () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Engine.speed',
+        participant: 'Engine',
+        type: 'real',
+        causality: 'input',
+        unit: 'rpm',
+        min: 0,
+        max: 6000,
+        items: [],
+        ecu_step_ms: 10,
+        written: true,
+        watched: true,
+      },
+      {
+        name: 'Dashboard.speed',
+        participant: 'Dashboard',
+        type: 'real',
+        causality: 'output',
+        unit: 'rpm',
+        min: 0,
+        max: 6000,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 5,
+        kind: 'expect',
+        text: 'expect Dashboard.speed near Engine.speed (tolerance 10)',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 100,
+        end_ms: 100,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 100,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'near', value: null, variable: 'Engine.speed', tolerance: 10 }],
+            },
+          ],
+        },
+        failed: null,
+      },
+    ],
+    series: [
+      // Written series has completely different values (9999) and starts at 0 ms: MUST be ignored!
+      makeSeries('Engine.speed', 'written', [
+        [0, 9999],
+        [50, 8888],
+      ]),
+      // Sampled series starts at 20 ms (unobserved during [0, 20)), then steps at 60 ms, then NaN at 80 ms.
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [20, 1200],
+          [60, 1500],
+          [80, null],
+          [90, 1600],
+        ],
+        { last_ms: 100 },
+      ),
+      makeSeries(
+        'Dashboard.speed',
+        'sampled',
+        [
+          [20, 1205],
+          [60, 1495],
+          [90, 1600],
+        ],
+        { last_ms: 100 },
+      ),
+    ],
+  });
+
+  const m = model(tl);
+  const dash = m.byName.get('Dashboard.speed');
+  assert.equal(dash.bands.length, 1);
+  const band = dash.bands[0];
+  assert.equal(band.dynamic, true);
+  // [0, 20) unobserved, [80, 90) non-finite null -> both skipped; written values (9999, 8888) ignored.
+  assert.deepEqual(
+    band.slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [20, 60, 1190, 1210],
+      [60, 80, 1490, 1510],
+      [90, 100, 1590, 1610],
+    ],
+  );
+  assert.equal(T.compareText(band.compare, dash.info), 'near Engine.speed ± 10');
+
+  // If rhsVar has ONLY a written series (no sampled series), NO dynamic slices are produced.
+  const writtenOnly = JSON.parse(JSON.stringify(tl));
+  writtenOnly.series = writtenOnly.series.filter(
+    (s) => !(s.variable === 'Engine.speed' && s.source === 'sampled'),
+  );
+  const mWrittenOnly = model(writtenOnly);
+  assert.deepEqual(mWrittenOnly.byName.get('Dashboard.speed').bands[0].slices, []);
+});
+
+test('dynamic band splits and skips rhsVar.gaps.sampled intervals without painting missing ranges', () => {
+  const tl = makeDynamicTimeline({
+    steps: [
+      {
+        index: 1,
+        line: 4,
+        kind: 'expect',
+        text: 'expect Dashboard.speed near Engine.speed (tolerance 15)',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 100,
+        end_ms: 100,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 100,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'near', value: null, variable: 'Engine.speed', tolerance: 15 }],
+            },
+          ],
+        },
+        failed: null,
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [0, 1000],
+          [30, 1100], // inside gap [20, 60): must not be held as a valid band
+          [60, 1400],
+          [80, 1500],
+        ],
+        { last_ms: 100 },
+      ),
+      makeSeries('Dashboard.speed', 'sampled', [[0, 1000]], { last_ms: 100 }),
+    ],
+    limits: {
+      points_per_series: 10,
+      points_total: 100,
+      dropped: [
+        {
+          variable: 'Engine.speed',
+          source: 'sampled',
+          dropped: 4,
+          dropped_from_ms: 20,
+          dropped_before_ms: 60,
+        },
+      ],
+    },
+  });
+
+  const m = model(tl);
+  const band = m.byName.get('Dashboard.speed').bands[0];
+  // [0, 20] held from 0 ms (cut at gap.from = 20), [20, 60) skipped, [60, 80] and [80, 100] resumed.
+  assert.deepEqual(
+    band.slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [0, 20, 985, 1015],
+      [60, 80, 1385, 1415],
+      [80, 100, 1485, 1515],
+    ],
+  );
+});
+
+test('during mode uses only rhs samples with sample_ms >= from_ms, while always carries earlier samples', () => {
+  const makeCase = (mode) =>
+    makeDynamicTimeline({
+      steps: [
+        {
+          index: 1,
+          line: 4,
+          kind: mode === 'during' ? 'ramp' : 'expect',
+          text: 'check speed',
+          status: 'passed',
+          start_ms: 50,
+          at_ms: 100,
+          end_ms: 100,
+          code: null,
+          message: null,
+          lines: [],
+          watch: {
+            mode,
+            from_ms: 50,
+            to_ms: 100,
+            conditions: [
+              {
+                variable: 'Dashboard.speed',
+                compare: [{ op: 'ge', value: null, variable: 'Engine.speed', tolerance: null }],
+              },
+            ],
+          },
+          failed: null,
+        },
+      ],
+      series: [
+        makeSeries(
+          'Engine.speed',
+          'sampled',
+          [
+            [0, 500],
+            [40, 700],
+            [70, 900],
+          ],
+          { last_ms: 100 },
+        ),
+        makeSeries('Dashboard.speed', 'sampled', [[50, 950]], { last_ms: 100 }),
+      ],
+    });
+
+  // In "during" [50, 100]: samples at 0 ms and 40 ms are < 50 ms so [50, 70) has no valid slice!
+  const mDuring = model(makeCase('during'));
+  assert.deepEqual(
+    mDuring.byName.get('Dashboard.speed').bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [[70, 100, 900, Infinity]],
+  );
+
+  // Sample right at sample_ms === from_ms (50 ms) IS included in "during" mode!
+  const atBoundary = makeCase('during');
+  atBoundary.series[0].points = [
+    [40, 700],
+    [50, 800],
+    [80, 900],
+  ];
+  assert.deepEqual(
+    model(atBoundary)
+      .byName.get('Dashboard.speed')
+      .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [50, 80, 800, Infinity],
+      [80, 100, 900, Infinity],
+    ],
+  );
+
+  // In "always" [50, 100]: sample at 40 ms carries forward across [50, 70)!
+  const mAlways = model(makeCase('always'));
+  assert.deepEqual(
+    mAlways.byName.get('Dashboard.speed').bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [50, 70, 700, Infinity],
+      [70, 100, 900, Infinity],
+    ],
+  );
+});
+
+test('multi-comparison intersection combines constants and multiple variables per slice and omits empty intervals', () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'A.val',
+        participant: 'A',
+        type: 'integer',
+        causality: 'output',
+        unit: '',
+        min: 0,
+        max: 500,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'B.val',
+        participant: 'B',
+        type: 'integer',
+        causality: 'output',
+        unit: '',
+        min: 0,
+        max: 500,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Target.val',
+        participant: 'Target',
+        type: 'integer',
+        causality: 'output',
+        unit: '',
+        min: 0,
+        max: 500,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'expect',
+        text: 'expect Target.val ge A.val and le B.val and le 200',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 100,
+        end_ms: 100,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 100,
+          conditions: [
+            {
+              variable: 'Target.val',
+              compare: [
+                { op: 'ge', value: null, variable: 'A.val', tolerance: null },
+                { op: 'le', value: null, variable: 'B.val', tolerance: null },
+                { op: 'le', value: 200, tolerance: null },
+              ],
+            },
+          ],
+        },
+        failed: null,
+      },
+    ],
+    series: [
+      // [0, 30): A=100, B=250 -> [100, min(250, 200)] = [100, 200]
+      // [30, 50): A=220, B=250 -> [220, 200] EMPTY -> omitted!
+      // [50, 70): A=120, B=110 -> [120, 110] EMPTY -> omitted!
+      // [70, 100]: A=120, B=180 -> [120, 180]
+      makeSeries(
+        'A.val',
+        'sampled',
+        [
+          [0, 100],
+          [30, 220],
+          [50, 120],
+        ],
+        { last_ms: 100 },
+      ),
+      makeSeries(
+        'B.val',
+        'sampled',
+        [
+          [0, 250],
+          [50, 110],
+          [70, 180],
+        ],
+        { last_ms: 100 },
+      ),
+      makeSeries('Target.val', 'sampled', [[0, 150]], { last_ms: 100 }),
+    ],
+  });
+
+  const m = model(tl);
+  const band = m.byName.get('Target.val').bands[0];
+  assert.deepEqual(
+    band.slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [0, 30, 100, 200],
+      [70, 100, 120, 180],
+    ],
+  );
+
+  // Integer strict emptiness: gt 5 and lt 6 has no integer solution -> omitted.
+  const strictTl = JSON.parse(JSON.stringify(tl));
+  strictTl.steps[0].watch.conditions[0].compare = [
+    { op: 'gt', value: 5, tolerance: null },
+    { op: 'lt', value: 6, tolerance: null },
+  ];
+  assert.deepEqual(model(strictTl).byName.get('Target.val').bands[0].slices, []);
+});
+
+test('laneRange keeps 2-argument compatibility, ignores null ± tolerance coercion, and fits dynamic slices', () => {
+  assert.equal(T.laneRange.length, 2);
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Engine.speed',
+        participant: 'Engine',
+        type: 'real',
+        causality: 'output',
+        unit: 'rpm',
+        min: 0,
+        max: 6000,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Dashboard.speed',
+        participant: 'Dashboard',
+        type: 'real',
+        causality: 'output',
+        unit: 'rpm',
+        min: 0,
+        max: 6000,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'expect',
+        text: 'expect Dashboard.speed near Engine.speed (tolerance 20)',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 40,
+        end_ms: 40,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 40,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'near', value: null, variable: 'Engine.speed', tolerance: 20 }],
+            },
+          ],
+        },
+        failed: null,
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [0, 1500],
+          [20, 1800],
+        ],
+        { last_ms: 40 },
+      ),
+      makeSeries('Dashboard.speed', 'sampled', [[0, 1510]], { last_ms: 40 }),
+    ],
+  });
+
+  const m = model(tl);
+  const dash = m.byName.get('Dashboard.speed');
+  assert.deepEqual(T.laneRange(dash, false), [0, 6000]);
+  const [lo, hi] = T.laneRange(dash, true);
+  // Must include dynamic band bounds [1480, 1820] and MUST NOT coerce null ± 20 into [-20, 20]!
+  assert.ok(lo > 1400 && lo <= 1480, `unexpected lo=${lo}`);
+  assert.ok(hi >= 1820 && hi < 1900, `unexpected hi=${hi}`);
+});
+
+test('once timeout dashed line resolves dynamic limitValue when compare[0].value is null', async () => {
+  const tl = makeDynamicTimeline({
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'wait_until',
+        text: 'wait_until Dashboard.speed near Engine.speed (tolerance 10)',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 30,
+        end_ms: 30,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'once',
+          from_ms: 0,
+          to_ms: 200,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'near', value: null, variable: 'Engine.speed', tolerance: 10 }],
+            },
+          ],
+        },
+        failed: null,
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [0, 1000],
+          [20, 1400],
+        ],
+        { last_ms: 30 },
+      ),
+      makeSeries(
+        'Dashboard.speed',
+        'sampled',
+        [
+          [0, 500],
+          [30, 1400],
+        ],
+        { last_ms: 30 },
+      ),
+    ],
+  });
+  tl.scenario.recorded_to_ms = 30;
+  tl.scenario.over_at_ms = 30;
+
+  const m = model(tl);
+  const band = m.byName.get('Dashboard.speed').bands[0];
+  assert.equal(band.mode, 'once');
+  assert.equal(band.to, 30);
+  assert.equal(band.limit, 200);
+  assert.equal(band.limitValue, 1400);
+
+  // Verify DOM rendering places .threshold.limit at the resolved y (not at area.y0 = 4).
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const limitLines = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'line' && n.attrs.class === 'threshold limit',
+  );
+  assert.equal(limitLines.length, 1);
+  const y1 = Number(limitLines[0].attrs.y1);
+  assert.ok(y1 > 4, `limit line y1=${y1} should not fall back to top edge area.y0=4`);
+});
+
+test('discrete bool and enum lanes resolve and render dynamic watch bands with intersection', async () => {
+  const gearItems = [
+    { name: 'P', value: 0 },
+    { name: 'R', value: 1 },
+    { name: 'D', value: 2 },
+  ];
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Trans.gear',
+        participant: 'Trans',
+        type: 'enum',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: gearItems,
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Dash.gear',
+        participant: 'Dash',
+        type: 'enum',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: gearItems,
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Body.lamp',
+        participant: 'Body',
+        type: 'bool',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Dash.lamp',
+        participant: 'Dash',
+        type: 'bool',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'expect',
+        text: 'expect Dash.gear eq Trans.gear and ne P, Dash.lamp eq Body.lamp',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 100,
+        end_ms: 100,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 100,
+          conditions: [
+            {
+              variable: 'Dash.gear',
+              compare: [
+                { op: 'eq', value: null, variable: 'Trans.gear', tolerance: null },
+                { op: 'ne', value: 0, tolerance: null },
+              ],
+            },
+            {
+              variable: 'Dash.lamp',
+              compare: [{ op: 'eq', value: null, variable: 'Body.lamp', tolerance: null }],
+            },
+          ],
+        },
+        failed: null,
+      },
+    ],
+    series: [
+      // [0, 30): Trans.gear = 0 (P) -> contradicts ne 0 -> EMPTY slice!
+      // [30, 100]: Trans.gear = 2 (D) -> valid discrete slice value = 2!
+      makeSeries(
+        'Trans.gear',
+        'sampled',
+        [
+          [0, 0],
+          [30, 2],
+        ],
+        { last_ms: 100 },
+      ),
+      makeSeries(
+        'Dash.gear',
+        'sampled',
+        [
+          [0, 2],
+          [30, 2],
+        ],
+        { last_ms: 100 },
+      ),
+      makeSeries(
+        'Body.lamp',
+        'sampled',
+        [
+          [0, false],
+          [50, true],
+        ],
+        { last_ms: 100 },
+      ),
+      makeSeries(
+        'Dash.lamp',
+        'sampled',
+        [
+          [0, false],
+          [50, true],
+        ],
+        { last_ms: 100 },
+      ),
+    ],
+  });
+
+  const m = model(tl);
+  const gearBand = m.byName.get('Dash.gear').bands[0];
+  assert.equal(gearBand.dynamic, true);
+  assert.deepEqual(
+    gearBand.slices.map((s) => [s.from, s.to, s.value, s.excluded]),
+    [[30, 100, 2, [0]]],
+  );
+  const lampBand = m.byName.get('Dash.lamp').bands[0];
+  assert.equal(lampBand.dynamic, true);
+  assert.deepEqual(
+    lampBand.slices.map((s) => [s.from, s.to, s.value]),
+    [
+      [0, 50, false],
+      [50, 100, true],
+    ],
+  );
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const dynBoxes = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'rect' && n.attrs.class === 'expect-box dynamic',
+  );
+  // 1 slice on Dash.gear + 2 slices on Dash.lamp = 3 dynamic discrete boxes.
+  assert.equal(dynBoxes.length, 3);
+  const titles = findNodes(el._shadow, (n) => n.tagName === 'title').map((n) => n.textContent);
+  assert.ok(titles.some((txt) => txt.includes('eq D (2) and ne P (0) (30 ms to 100 ms)')));
+  assert.ok(titles.some((txt) => txt.includes('eq true (50 ms to 100 ms)')));
+});
+
+test('failed variable comparison renders both-side values, sample times, both-lane markers, null compared, and escapes XSS', async () => {
+  const tl = makeDynamicTimeline({
+    scenario: {
+      file: 'scenarios/tracking.yaml',
+      name: 'speed mismatch',
+      status: 'failed',
+      over_at_ms: 40,
+      recorded_to_ms: 40,
+      end_ms: null,
+    },
+    steps: [
+      {
+        index: 1,
+        line: 8,
+        kind: 'expect',
+        text: 'expect Dashboard.speed near Engine.speed (tolerance 10)',
+        status: 'failed',
+        start_ms: 0,
+        at_ms: 40,
+        end_ms: null,
+        code: 'scenario-failed',
+        message:
+          'at 40 ms Dashboard.speed near Engine.speed (tolerance 10), but it was 1650 (its sample of 40 ms) while Engine.speed was 1800 (its sample of 30 ms)',
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 100,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'near', value: null, variable: 'Engine.speed', tolerance: 10 }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 40,
+          code: 'scenario-failed',
+          conditions: [
+            {
+              condition: 0,
+              value: 1650,
+              sample_ms: 40,
+              compared: [{ variable: 'Engine.speed', value: 1800, sample_ms: 30 }],
+            },
+          ],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [0, 1650],
+          [30, 1800],
+        ],
+        { last_ms: 30 },
+      ),
+      makeSeries('Dashboard.speed', 'sampled', [[0, 1650]], { last_ms: 40 }),
+    ],
+  });
+
+  const m = model(tl);
+  assert.equal(m.byName.get('Dashboard.speed').failing, true);
+  assert.equal(m.byName.get('Engine.speed').failing, true);
+  assert.deepEqual(m.byName.get('Dashboard.speed').marks, [
+    { kind: 'condition', at: 40, value: 1650, text: '1650' },
+  ]);
+  assert.deepEqual(m.byName.get('Engine.speed').marks, [
+    { kind: 'compared', at: 30, value: 1800, text: '1800', against: 'Dashboard.speed' },
+  ]);
+  assert.deepEqual(m.failure.conditions[0].compared, [
+    { variable: 'Engine.speed', value: 1800, valueText: '1800', sampleMs: 30 },
+  ]);
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const condText = el._shadow.querySelectorAll('[data-testid=failed-conditions]')[0].textContent;
+  assert.equal(
+    condText,
+    'Dashboard.speed near Engine.speed ± 10: it was 1650 (sample of 40 ms); while Engine.speed was 1800 (sample of 30 ms)',
+  );
+  const lhsMarks = findNodes(el._shadow, (n) => n.tagName === 'g' && n.attrs.class === 'mark bad');
+  const rhsMarks = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'g' && n.attrs.class === 'mark bad compared',
+  );
+  assert.equal(lhsMarks.length, 1);
+  assert.equal(rhsMarks.length, 1);
+  assert.match(
+    rhsMarks[0].textContent,
+    /Compared value was 1800 \(sample of 30 ms\) for Dashboard\.speed/,
+  );
+
+  // Japanese rendering
+  el.setAttribute('lang', 'ja');
+  el.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  const condTextJa = el._shadow.querySelectorAll('[data-testid=failed-conditions]')[0].textContent;
+  assert.equal(
+    condTextJa,
+    'Dashboard.speed near Engine.speed ± 10: 値は 1650（40 ms のサンプル）。比較対象の Engine.speed は 1800（30 ms のサンプル）',
+  );
+
+  // Null compared (during unseen RHS) + XSS variable name
+  const nullXss = JSON.parse(JSON.stringify(tl));
+  const xssVar = 'Rhs.<img src=x onerror="xss()">';
+  nullXss.variables[0].name = xssVar;
+  nullXss.series[0].variable = xssVar;
+  nullXss.steps[0].watch.mode = 'during';
+  nullXss.steps[0].watch.conditions[0].compare[0].variable = xssVar;
+  nullXss.steps[0].failed.conditions[0].compared = [
+    { variable: xssVar, value: null, sample_ms: null },
+  ];
+  const el2 = new Element();
+  el2.data = nullXss;
+  el2.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el2._shadow.querySelectorAll('img').length, 0);
+  const condNull = el2._shadow.querySelectorAll('[data-testid=failed-conditions]')[0].textContent;
+  assert.ok(
+    condNull.includes(`while ${xssVar} had no sample in the interval`),
+    `unexpected text: ${condNull}`,
+  );
+  const rhsNullMark = findNodes(
+    el2._shadow,
+    (n) => n.tagName === 'g' && n.attrs.class === 'mark bad compared',
+  );
+  assert.equal(rhsNullMark.length, 1);
+  assert.ok(rhsNullMark[0].textContent.includes('no value'));
+  assert.ok(rhsNullMark[0].textContent.includes('Compared variable had no value at 40 ms'));
+});
+
+test('over-2^53 64-bit integer comparison failure: browser Number rounds 9007199254740993 to 9007199254740992 while failure message and rounding notes preserve distinction', async () => {
+  // Raw JSON text as C++ JsonWriter emits for exact int64_t 9007199254740993 vs 9007199254740992.
+  const rawJson = `{
+    "vehicle_sil_timeline": 1,
+    "vehicle_sil": "0.6.0",
+    "stage": "run",
+    "file": "simulation.yaml",
+    "variant": null,
+    "params": [],
+    "time_step_ms": 10,
+    "scenario": {
+      "file": "scenarios/int64_compare.yaml",
+      "name": "int64 above 2^53",
+      "status": "failed",
+      "over_at_ms": 10,
+      "recorded_to_ms": 10,
+      "end_ms": null
+    },
+    "variables": [
+      {
+        "name": "Engine.counter",
+        "participant": "Engine",
+        "type": "integer",
+        "causality": "output",
+        "unit": "",
+        "min": null,
+        "max": null,
+        "items": [],
+        "ecu_step_ms": 10,
+        "written": false,
+        "watched": true
+      },
+      {
+        "name": "Dashboard.counter",
+        "participant": "Dashboard",
+        "type": "integer",
+        "causality": "output",
+        "unit": "",
+        "min": null,
+        "max": null,
+        "items": [],
+        "ecu_step_ms": 10,
+        "written": false,
+        "watched": true
+      }
+    ],
+    "steps": [
+      {
+        "index": 1,
+        "line": 4,
+        "kind": "expect",
+        "text": "expect Dashboard.counter eq Engine.counter",
+        "status": "failed",
+        "start_ms": 10,
+        "at_ms": 10,
+        "end_ms": null,
+        "code": "scenario-failed",
+        "message": "at 10 ms Dashboard.counter eq Engine.counter, but it was 9007199254740993 (its sample of 10 ms) while Engine.counter was 9007199254740992 (its sample of 10 ms)",
+        "lines": [],
+        "watch": {
+          "mode": "at",
+          "from_ms": 10,
+          "to_ms": null,
+          "conditions": [
+            {
+              "variable": "Dashboard.counter",
+              "compare": [{ "op": "eq", "value": null, "variable": "Engine.counter", "tolerance": null }]
+            }
+          ]
+        },
+        "failed": {
+          "at_ms": 10,
+          "code": "scenario-failed",
+          "conditions": [
+            {
+              "condition": 0,
+              "value": 9007199254740993,
+              "sample_ms": 10,
+              "compared": [{ "variable": "Engine.counter", "value": 9007199254740992, "sample_ms": 10 }]
+            }
+          ],
+          "writes": [],
+          "write": null
+        }
+      }
+    ],
+    "series": [
+      {
+        "variable": "Engine.counter",
+        "source": "sampled",
+        "encoding": "changes",
+        "samples": 1,
+        "first_ms": 10,
+        "last_ms": 10,
+        "not_applied_from": null,
+        "columns": ["at_ms", "value"],
+        "points": [[10, 9007199254740992]]
+      },
+      {
+        "variable": "Dashboard.counter",
+        "source": "sampled",
+        "encoding": "changes",
+        "samples": 1,
+        "first_ms": 10,
+        "last_ms": 10,
+        "not_applied_from": null,
+        "columns": ["at_ms", "value"],
+        "points": [[10, 9007199254740993]]
+      }
+    ],
+    "lines": [],
+    "findings": [],
+    "limits": { "points_per_series": 10000, "points_total": 100000, "dropped": [] }
+  }`;
+
+  const read = T.readTimeline(rawJson, 'int64.timeline.json');
+  assert.equal(read.error, undefined);
+  const m = T.buildModel(read.timeline);
+  // JS JSON.parse rounds 9007199254740993 to IEEE-754 double 9007199254740992 (same as RHS!).
+  assert.equal(m.failure.conditions[0].value, 9007199254740992);
+  assert.equal(m.failure.conditions[0].compared[0].value, 9007199254740992);
+  assert.equal(m.failure.conditions[0].valueText, '9007199254740992');
+  assert.equal(m.failure.conditions[0].compared[0].valueText, '9007199254740992');
+  // Both lanes warn about precision loss beyond ±9007199254740991.
+  assert.match(m.byName.get('Dashboard.counter').notes.join(), /beyond ±9007199254740991/);
+  assert.match(m.byName.get('Engine.counter').notes.join(), /beyond ±9007199254740991/);
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = rawJson;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  // Failure message string preserves the exact C++ 64-bit integer difference.
+  const msg = el._shadow.querySelectorAll('[data-testid=failure-message]')[0].textContent;
+  assert.ok(msg.includes('9007199254740993'), msg);
+  assert.ok(msg.includes('9007199254740992'), msg);
+  // Conditions block warns about browser rounding.
+  const note = el._shadow.querySelectorAll('[data-testid=conditions-rounded-note]')[0].textContent;
+  assert.match(note, /beyond ±9007199254740991.*exact 64-bit values/);
+});
+
+test('ne-only dynamic band draws threshold.ne without allowed rect, and unobserved once falls back to lane center', async () => {
+  const tl = makeDynamicTimeline({
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'expect',
+        text: 'expect Dashboard.speed ne Engine.speed',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 40,
+        end_ms: 40,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 40,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'ne', value: null, variable: 'Engine.speed', tolerance: null }],
+            },
+          ],
+        },
+        failed: null,
+      },
+      {
+        index: 2,
+        line: 6,
+        kind: 'wait_until',
+        text: 'wait_until Dashboard.speed eq Engine.speed',
+        status: 'failed',
+        start_ms: 50,
+        at_ms: 60,
+        end_ms: null,
+        code: 'scenario-timeout',
+        message: 'timed out',
+        lines: [],
+        watch: {
+          mode: 'once',
+          from_ms: 50,
+          to_ms: 100,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'eq', value: null, variable: 'Missing.speed', tolerance: null }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 60,
+          code: 'scenario-timeout',
+          conditions: [
+            {
+              condition: 0,
+              value: 1200,
+              sample_ms: 60,
+              compared: [{ variable: 'Missing.speed', value: null, sample_ms: null }],
+            },
+          ],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries('Engine.speed', 'sampled', [[0, 1000]], { last_ms: 60 }),
+      makeSeries('Dashboard.speed', 'sampled', [[0, 1200]], { last_ms: 60 }),
+    ],
+  });
+  tl.scenario.status = 'failed';
+  tl.scenario.recorded_to_ms = 60;
+  tl.scenario.over_at_ms = 60;
+
+  const m = model(tl);
+  const bands = m.byName.get('Dashboard.speed').bands;
+  assert.equal(bands[0].slices.length, 1);
+  assert.equal(bands[0].slices[0].hasBound, false);
+  assert.deepEqual(bands[0].slices[0].excluded, [1000]);
+  assert.equal(bands[1].slices.length, 0);
+  assert.equal(bands[1].limitValue, null);
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.from = 0;
+  el.to = 110;
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(
+    findNodes(el._shadow, (n) => n.tagName === 'rect' && n.attrs.class === 'allowed').length,
+    0,
+  );
+  assert.equal(
+    findNodes(el._shadow, (n) => n.tagName === 'line' && n.attrs.class === 'threshold ne').length,
+    1,
+  );
+  const limitLines = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'line' && n.attrs.class === 'threshold limit',
+  );
+  assert.equal(limitLines.length, 1);
+  // Unobserved once limit falls back to vertical center of the numeric lane (40 px), not top edge (4 px).
+  assert.equal(Number(limitLines[0].attrs.y1), 38);
+});
+
+test('terminal rhs sample at exact watch endpoint resolves slice, limitValue, and laneRange across once, during, and always', async () => {
+  // 1. Passed once [0, 200] where rhs jumps at exact at_ms = 40: terminal slice [40, 40] and limitValue = 50.
+  const onceJump = makeDynamicTimeline({
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'wait_until',
+        text: 'wait_until Dashboard.speed near Engine.speed (tolerance 5)',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 40,
+        end_ms: 40,
+        code: null,
+        message: null,
+        lines: [],
+        watch: {
+          mode: 'once',
+          from_ms: 0,
+          to_ms: 200,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'near', value: null, variable: 'Engine.speed', tolerance: 5 }],
+            },
+          ],
+        },
+        failed: null,
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [0, 100],
+          [40, 50],
+        ],
+        { last_ms: 40 },
+      ),
+      makeSeries('Dashboard.speed', 'sampled', [[0, 50]], { last_ms: 40 }),
+    ],
+  });
+  onceJump.scenario.recorded_to_ms = 40;
+  onceJump.scenario.over_at_ms = 40;
+  const mOnceJump = model(onceJump);
+  const bOnceJump = mOnceJump.byName.get('Dashboard.speed').bands[0];
+  assert.deepEqual(
+    bOnceJump.slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [0, 40, 95, 105],
+      [40, 40, 45, 55],
+    ],
+  );
+  assert.equal(bOnceJump.limitValue, 50);
+
+  // Verify DOM rendering draws both slices and aligns .threshold.limit with the matched 50 slice.
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = onceJump;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const sliceTitles = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'g' && n.attrs.class === 'band-slice',
+  ).map((g) => g.textContent);
+  assert.deepEqual(sliceTitles, ['near 100 ± 5 (0 ms to 40 ms)', 'near 50 ± 5 (40 ms to 40 ms)']);
+  const limitLine = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'line' && n.attrs.class === 'threshold limit',
+  )[0];
+  const thLines = findNodes(
+    el._shadow,
+    (n) => n.tagName === 'line' && n.attrs.class === 'threshold',
+  );
+  assert.equal(thLines.length, 2);
+  assert.equal(limitLine.attrs.y1, thLines[1].attrs.y1);
+
+  // 2. Passed once [0, 200] where rhs first arrives at exact at_ms = 50: terminal slice [50, 50], limitValue = 80, laneRange includes 80.
+  const onceFirst = JSON.parse(JSON.stringify(onceJump));
+  onceFirst.steps[0].at_ms = 50;
+  onceFirst.steps[0].end_ms = 50;
+  onceFirst.scenario.recorded_to_ms = 50;
+  onceFirst.scenario.over_at_ms = 50;
+  onceFirst.series[0] = makeSeries('Engine.speed', 'sampled', [[50, 80]], { last_ms: 50 });
+  onceFirst.series[1] = makeSeries('Dashboard.speed', 'sampled', [[0, 10]], { last_ms: 50 });
+  const mOnceFirst = model(onceFirst);
+  const dashFirst = mOnceFirst.byName.get('Dashboard.speed');
+  assert.deepEqual(
+    dashFirst.bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [[50, 50, 75, 85]],
+  );
+  assert.equal(dashFirst.bands[0].limitValue, 80);
+  const [, hiFirst] = T.laneRange(dashFirst, true);
+  assert.ok(hiFirst >= 85, `expected laneRange hi >= 85, got ${hiFirst}`);
+
+  // 3. Passed once with intersection (ge rhs and le 100) empty on [0, 50) and non-empty at endpoint 50.
+  const onceIntersect = JSON.parse(JSON.stringify(onceFirst));
+  onceIntersect.steps[0].watch.conditions[0].compare = [
+    { op: 'ge', value: null, variable: 'Engine.speed', tolerance: null },
+    { op: 'le', value: 100, tolerance: null },
+  ];
+  onceIntersect.series[0] = makeSeries(
+    'Engine.speed',
+    'sampled',
+    [
+      [0, 120],
+      [50, 80],
+    ],
+    { last_ms: 50 },
+  );
+  const bOnceInt = model(onceIntersect).byName.get('Dashboard.speed').bands[0];
+  assert.deepEqual(
+    bOnceInt.slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [[50, 50, 80, 100]],
+  );
+  assert.equal(bOnceInt.limitValue, 80);
+
+  // 4. Failed during [10, 40] where rhs's only in-window sample arrives at exact endpoint 40.
+  const duringEnd = makeDynamicTimeline({
+    scenario: {
+      file: 'scenarios/tracking.yaml',
+      name: 'during endpoint',
+      status: 'failed',
+      over_at_ms: 40,
+      recorded_to_ms: 40,
+      end_ms: null,
+    },
+    steps: [
+      {
+        index: 1,
+        line: 4,
+        kind: 'ramp',
+        text: 'ramp with expect Dashboard.speed le Engine.speed',
+        status: 'failed',
+        start_ms: 10,
+        at_ms: 40,
+        end_ms: null,
+        code: 'scenario-failed',
+        message: 'failed at 40 ms',
+        lines: [],
+        watch: {
+          mode: 'during',
+          from_ms: 10,
+          to_ms: 40,
+          conditions: [
+            {
+              variable: 'Dashboard.speed',
+              compare: [{ op: 'le', value: null, variable: 'Engine.speed', tolerance: null }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 40,
+          code: 'scenario-failed',
+          conditions: [
+            {
+              condition: 0,
+              value: 50,
+              sample_ms: 40,
+              compared: [{ variable: 'Engine.speed', value: 20, sample_ms: 40 }],
+            },
+          ],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.speed',
+        'sampled',
+        [
+          [0, 100],
+          [40, 20],
+        ],
+        { last_ms: 40 },
+      ),
+      makeSeries('Dashboard.speed', 'sampled', [[10, 50]], { last_ms: 40 }),
+    ],
+  });
+  assert.deepEqual(
+    model(duringEnd)
+      .byName.get('Dashboard.speed')
+      .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [[40, 40, -Infinity, 20]],
+  );
+
+  // 5. Failed always [0, 100] where rhs jumps at exact failed.at_ms = 40.
+  const alwaysEnd = JSON.parse(JSON.stringify(duringEnd));
+  alwaysEnd.steps[0].kind = 'expect';
+  alwaysEnd.steps[0].watch.mode = 'always';
+  alwaysEnd.steps[0].watch.from_ms = 0;
+  alwaysEnd.steps[0].watch.to_ms = 100;
+  assert.deepEqual(
+    model(alwaysEnd)
+      .byName.get('Dashboard.speed')
+      .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi]),
+    [
+      [0, 40, -Infinity, 100],
+      [40, 40, -Infinity, 20],
+    ],
+  );
+});
+
+test('constant comparison bound above 2^53 triggers conditions-rounded-note while fractional tolerances do not', async () => {
+  const rawConstOver = `{
+    "vehicle_sil_timeline": 1,
+    "vehicle_sil": "0.6.0",
+    "stage": "run",
+    "file": "simulation.yaml",
+    "variant": null,
+    "params": [],
+    "time_step_ms": 10,
+    "scenario": {
+      "file": "scenarios/const_int64.yaml",
+      "name": "constant int64 bound",
+      "status": "failed",
+      "over_at_ms": 50,
+      "recorded_to_ms": 50,
+      "end_ms": null
+    },
+    "variables": [
+      { "name": "ECU.a", "participant": "ECU", "type": "integer", "causality": "output", "unit": "", "min": null, "max": null, "items": [], "ecu_step_ms": 10, "written": false, "watched": true }
+    ],
+    "steps": [
+      {
+        "index": 1,
+        "line": 4,
+        "kind": "expect",
+        "text": "expect ECU.a eq 9007199254740993",
+        "status": "failed",
+        "start_ms": 50,
+        "at_ms": 50,
+        "end_ms": null,
+        "code": "scenario-failed",
+        "message": "at 50 ms ECU.a eq 9007199254740993, but it was 100 (its sample of 50 ms)",
+        "lines": [],
+        "watch": {
+          "mode": "at",
+          "from_ms": 50,
+          "to_ms": null,
+          "conditions": [
+            { "variable": "ECU.a", "compare": [{ "op": "eq", "value": 9007199254740993, "tolerance": null }] }
+          ]
+        },
+        "failed": {
+          "at_ms": 50,
+          "code": "scenario-failed",
+          "conditions": [{ "condition": 0, "value": 100, "sample_ms": 50 }],
+          "writes": [],
+          "write": null
+        }
+      }
+    ],
+    "series": [
+      { "variable": "ECU.a", "source": "sampled", "encoding": "changes", "samples": 1, "first_ms": 0, "last_ms": 50, "not_applied_from": null, "columns": ["at_ms", "value"], "points": [[0, 100]] }
+    ],
+    "lines": [],
+    "findings": [],
+    "limits": { "points_per_series": 10000, "points_total": 100000, "dropped": [] }
+  }`;
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = rawConstOver;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const notes = el._shadow.querySelectorAll('[data-testid=conditions-rounded-note]');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].textContent, /beyond ±9007199254740991/);
+
+  // Fractional tolerance on a safe integer variable must NOT falsely trigger the rounding note.
+  const safeFrac = JSON.parse(rawConstOver);
+  safeFrac.steps[0].watch.conditions[0].compare = [{ op: 'near', value: 200, tolerance: 0.5 }];
+  const el2 = new Element();
+  el2.data = safeFrac;
+  el2.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el2._shadow.querySelectorAll('[data-testid=conditions-rounded-note]').length, 0);
+});
+
+test('multi-ne integer intersection omits slices when every integer in [intLo, intHi] is excluded', () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'ECU.count',
+        participant: 'ECU',
+        type: 'integer',
+        causality: 'output',
+        unit: '',
+        min: 0,
+        max: 100,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 3,
+        kind: 'expect',
+        text: 'expect ECU.count ge 10 and le 11 and ne 10 and ne 11',
+        status: 'failed',
+        start_ms: 0,
+        at_ms: 20,
+        end_ms: null,
+        code: 'scenario-failed',
+        message: 'failed',
+        lines: [],
+        watch: {
+          mode: 'always',
+          from_ms: 0,
+          to_ms: 20,
+          conditions: [
+            {
+              variable: 'ECU.count',
+              compare: [
+                { op: 'ge', value: 10, tolerance: null },
+                { op: 'le', value: 11, tolerance: null },
+                { op: 'ne', value: 10, tolerance: null },
+                { op: 'ne', value: 11, tolerance: null },
+              ],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 20,
+          code: 'scenario-failed',
+          conditions: [{ condition: 0, value: 10, sample_ms: 20 }],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [makeSeries('ECU.count', 'sampled', [[0, 10]], { last_ms: 20 })],
+  });
+  tl.scenario.status = 'failed';
+  tl.scenario.recorded_to_ms = 20;
+  tl.scenario.over_at_ms = 20;
+
+  assert.deepEqual(model(tl).byName.get('ECU.count').bands[0].slices, []);
+
+  // When one integer (11) remains allowed, the slice is preserved.
+  const nonEmpty = JSON.parse(JSON.stringify(tl));
+  nonEmpty.steps[0].watch.conditions[0].compare.pop();
+  assert.deepEqual(
+    model(nonEmpty)
+      .byName.get('ECU.count')
+      .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi, s.excluded]),
+    [[0, 20, 10, 11, [10]]],
+  );
+});
