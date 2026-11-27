@@ -163,7 +163,15 @@ void write_watch(JsonWriter& w, const scenario::Scenario& scenario, const scenar
         {
             w.begin_object();
             w.string("op", scenario::compare_name(c.op));
-            write_value(w, "value", c.value);
+            if (c.rhs_variable)
+            {
+                w.null("value");
+                w.string("variable", scenario.variables[*c.rhs_variable].text);
+            }
+            else
+            {
+                write_value(w, "value", c.value);
+            }
             if (c.op == scenario::Compare::Near)
             {
                 w.real("tolerance", c.tolerance);
@@ -201,6 +209,19 @@ void write_failed(JsonWriter& w, const scenario::Scenario& scenario, const scena
             w.integer("condition", static_cast<std::int64_t>(c.condition));
             write_value(w, "value", c.value);
             write_ms(w, "sample_ms", c.sample);
+            if (!c.compared.empty())
+            {
+                w.begin_array("compared");
+                for (const scenario::TimelineComparedValue& rhs : c.compared)
+                {
+                    w.begin_object();
+                    w.string("variable", scenario.variables[rhs.variable].text);
+                    write_value(w, "value", rhs.value);
+                    write_ms(w, "sample_ms", rhs.sample);
+                    w.end_object();
+                }
+                w.end_array();
+            }
             w.end_object();
         }
     }

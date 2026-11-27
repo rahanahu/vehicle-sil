@@ -18,12 +18,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -5227,5 +5229,522 @@ TEST_CASE(scenario_template_multiple_calls_isolation_timing_hex_and_quoting)
             catalog(), ctx);
         CHECK(okRef.scenario.has_value());
         CHECK(std::get<std::int64_t>(okRef.scenario->steps[0].writes[0].value) == 30);
+    }
+}
+
+TEST_CASE(scenario_variable_to_variable_comparisons_syntax_and_static_checks)
+{
+    // All 7 operators, shorthand equality, mixed constant + variable comparisons, tolerance parameter,
+    // expect (at-point, within_ms, hold_for_ms, beside ramp/wave), wait_until, and reordered enum items.
+    ScenarioCatalog cat = catalog();
+    for (auto& v : cat[1].variables)
+    {
+        if (v.name == "mode")
+        {
+            v.items = {{"auto", 2}, {"off", 0}, {"on", 1}}; // same (name, value) pairs in another order
+        }
+    }
+    const Scenario s = read(
+        "vehicle_sil_scenario: 1\n"
+        "params: { tol: 2.5 }\n"
+        "steps:\n"
+        "  - expect: { Body.level: { variable: Door.level }, Door.mode: { eq: { variable: Body.mode }, ne: { variable: Body.mode } } }\n"
+        "  - expect: { Body.level: { ge: { variable: Door.ratio }, le: 100 } }\n"
+        "    hold_for_ms: 20\n"
+        "  - expect: { Body.ratio: { gt: { variable: Door.level }, lt: { variable: Door.body.speed } } }\n"
+        "    within_ms: 30\n"
+        "  - expect: { Body.body.speed: { near: { variable: Door.level }, tolerance: \"${tol}\" } }\n"
+        "  - wait_until: { Body.lamp: { ne: { variable: Door.pulse } } }\n"
+        "    timeout_ms: 50\n"
+        "  - ramp: { Body.level: { from: 0, to: 10, over_ms: 20 } }\n"
+        "    expect: { Body.level: { ge: { variable: Door.level } } }\n"
+        "  - wave: { Body.level: { pulse: { value: 5, width_ms: 20 } } }\n"
+        "    expect: { Body.level: { near: { variable: Door.level }, tolerance: 10 } }\n",
+        cat);
+    CHECK_EQ(s.steps.size(), std::size_t{7});
+    std::string texts;
+    for (const auto& step : s.steps)
+    {
+        texts += step.text + "\n";
+    }
+    check_text(texts,
+               "expect Body.level eq Door.level; Door.mode eq Body.mode, ne Body.mode\n"
+               "expect Body.level ge Door.ratio, le 100 (for 20 ms)\n"
+               "expect Body.ratio gt Door.level, lt Door.body.speed (within 30 ms)\n"
+               "expect Body.body.speed near Door.level (tolerance 2.5)\n"
+               "wait_until Body.lamp ne Door.pulse (timeout 50 ms)\n"
+               "ramp Body.level from 0 to 10 over 20 ms, expecting Body.level ge Door.level\n"
+               "wave Body.level pulse 5 width 20 ms, expecting Body.level near Door.level (tolerance 10)\n");
+
+    const auto errs = [](const std::string& body, const ScenarioCatalog& c = catalog(), const ScenarioContext& ctx = {}) {
+        return lines(read_scenario(body, c, ctx).findings);
+    };
+
+    // Bare dotted identifier guidance across Integer, Real, Bool, and Enum.
+    check_text(errs(kHead + "  - expect: { Body.level: Door.level }\n"),
+               "E 3 scenario-value: the value of Body.level (integer) must be a whole number, not 'Door.level'; to compare with "
+               "another variable, write { variable: Door.level }\n");
+    check_text(errs(kHead + "  - expect: { Body.ratio: Door.ratio }\n"),
+               "E 3 scenario-value: the value of Body.ratio (real) must be a number, not 'Door.ratio'; to compare with another "
+               "variable, write { variable: Door.ratio }\n");
+    check_text(errs(kHead + "  - expect: { Body.lamp: Door.lamp }\n"),
+               "E 3 scenario-value: the value of Body.lamp (bool) must be true or false, not 'Door.lamp'; to compare with another "
+               "variable, write { variable: Door.lamp }\n");
+    check_text(errs(kHead + "  - expect: { Body.mode: Door.mode }\n"),
+               "E 3 scenario-value: the value of Body.mode (enum) must be one of its items, by name or by value, not 'Door.mode': the "
+               "items are off (0), on (1), auto (2); to compare with another variable, write { variable: Door.mode }\n");
+
+    // Mixing variable and tolerance, mixing variable and operator, and condition key typo suggestion.
+    check_text(errs(kHead + "  - expect: { Body.level: { variable: Door.level, tolerance: 5 } }\n"),
+               "E 3 value: Body.level: variable and tolerance cannot be combined directly: write { near: { variable: Door.level }, "
+               "tolerance: 5 }\n");
+    check_text(errs(kHead + "  - expect: { Body.level: { near: { variable: Door.level, tolerance: 5 }, tolerance: 5 } }\n"),
+               "E 3 unknown-key: Body.level: near: tolerance goes beside near, not inside { variable: ... }: write { near: { variable: "
+               "Door.level }, tolerance: 5 }\n");
+    CHECK(errs(kHead + "  - expect: { Body.level: { eq: 5, variable: Door.level } }\n")
+              .find("variable cannot be combined with eq") != std::string::npos);
+    CHECK(errs(kHead + "  - expect: { Body.level: { variabl: Door.level } }\n")
+              .find("did you mean 'variable'?") != std::string::npos);
+
+    // Parameters inside variable: are forbidden and never mark parameters as used or missing.
+    {
+        ScenarioContext ctx;
+        ctx.params = {ParamValue{"rhs", "Door.level", false, ParamSource::CommandLine, 0, true}};
+        const ScenarioRead r = read_scenario(kHead + "  - expect: { Body.level: { variable: \"${rhs}\" } }\n", catalog(), ctx);
+        CHECK(!r.scenario.has_value());
+        CHECK(lines(r.findings).find("E 3 scenario-param: '${rhs}': a parameter (${...}) stands for a value, not for a variable's name") !=
+              std::string::npos);
+        CHECK(r.params.empty()); // CLI --param rhs is never recorded as a used parameter!
+
+        const ScenarioRead scan =
+            read_scenario(kHead + "  - expect: { Body.level: { near: { variable: \"${rhs}\" }, tolerance: \"${tol}\" } }\n", catalog());
+        CHECK(std::find(scan.missing_params.begin(), scan.missing_params.end(), "rhs") == scan.missing_params.end());
+        CHECK(std::find(scan.missing_params.begin(), scan.missing_params.end(), "tol") != scan.missing_params.end());
+    }
+
+    // Self-comparison and type/enum mismatches.
+    check_text(errs(kHead + "  - expect: { Body.level: { variable: Body.level } }\n"),
+               "E 3 scenario-value: the value of Body.level (integer) compares Body.level with itself: name another variable, or write "
+               "a constant value\n");
+    CHECK(errs(kHead + "  - expect: { Body.lamp: { eq: { variable: Door.level } } }\n")
+              .find("a bool variable can be compared only with another bool variable") != std::string::npos);
+    CHECK(errs(kHead + "  - expect: { Body.level: { eq: { variable: Door.mode } } }\n")
+              .find("an integer or real variable can be compared only with another integer or real variable") != std::string::npos);
+    CHECK(errs(kHead + "  - expect: { Body.lamp: { ge: { variable: Door.lamp } } }\n")
+              .find("ge compares numbers, and Body.lamp is a bool: use eq or ne") != std::string::npos);
+
+    ScenarioCatalog badEnum = catalog();
+    for (auto& v : badEnum[1].variables)
+    {
+        if (v.name == "mode")
+        {
+            v.items = {{"off", 0}, {"on", 10}, {"auto", 2}};
+        }
+    }
+    const std::string enumErr = errs(kHead + "  - expect: { Body.mode: { eq: { variable: Door.mode } } }\n", badEnum);
+    CHECK(enumErr.find("their enum items do not match") != std::string::npos);
+    CHECK(enumErr.find("variables.<name>.map") != std::string::npos);
+}
+
+TEST_CASE(scenario_variable_comparisons_absent_skip_vs_runtime_mismatch)
+{
+    // 1. Static absent: true and not_in_variant on RHS skip the step (or only expect beside ramp/wave)
+    // without false "nothing to compare with" / "tolerance goes with near" errors or duplicate variable names.
+    ScenarioCatalog cat = catalog();
+    cat[1].absent.push_back("missing");
+    CatalogParticipant opt;
+    opt.name = "Opt";
+    opt.not_in_variant = true;
+    cat.push_back(opt);
+
+    ScenarioContext ctx;
+    ctx.variant = "small";
+    const ScenarioRead r = read_scenario(
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - set: { Body.level: 10 }\n"
+        "  - expect: { Body.level: { near: { variable: Door.missing }, tolerance: 5 } }\n"
+        "  - wait_until: { Body.level: { variable: Opt.speed } }\n"
+        "    timeout_ms: 50\n"
+        "  - ramp: { Body.level: { from: 10, to: 20, over_ms: 20 } }\n"
+        "    expect: { Body.level: { near: { variable: Door.missing }, tolerance: 5 } }\n"
+        "  - expect: { Body.level: 20 }\n",
+        cat, ctx);
+    if (!r.scenario)
+    {
+        throw unit::Failure("unexpected errors:\n" + lines(r.findings));
+    }
+    CHECK_EQ(r.skipped, std::size_t{2});
+    CHECK_EQ(r.unchecked_expects, std::size_t{1});
+    check_text(r.scenario->steps[1].text, "expect Body.level near Door.missing (tolerance 5)");
+    check_text(r.scenario->steps[2].text, "wait_until Body.level eq Opt.speed (timeout 50 ms)");
+    check_text(r.scenario->steps[3].text,
+               "ramp Body.level from 10 to 20 over 20 ms, expect not checked: Body.level near Door.missing (tolerance 5)");
+    CHECK(!r.scenario->steps[1].skipped.empty());
+    CHECK(!r.scenario->steps[2].skipped.empty());
+    CHECK(r.scenario->steps[3].skipped.empty() && !r.scenario->steps[3].expect_skipped.empty());
+    // Door is never read when its only use was in skipped/unchecked conditions.
+    const std::vector<bool> readFlags = participants_read(*r.scenario);
+    for (std::size_t i = 0; i < r.scenario->participants.size(); ++i)
+    {
+        if (r.scenario->participants[i].name == "Door")
+        {
+            CHECK(!readFlags[i]);
+        }
+    }
+
+    // 2. When both LHS and RHS are absent, step.text does not duplicate the absent variable names.
+    cat[0].absent.push_back("gone");
+    const ScenarioRead bothAbsent = read_scenario(
+        kHead + "  - set: { Body.level: 1 }\n  - expect: { Body.gone: { variable: Door.missing }, Body.level: { variable: Door.missing } }\n",
+        cat, ctx);
+    CHECK(bothAbsent.scenario.has_value());
+    check_text(bothAbsent.scenario->steps[1].text, "expect Body.gone; Body.level eq Door.missing");
+
+    // 3. Runtime disconnected RHS participant and runtime schema/enum mismatch fail immediately (never skipped).
+    const Scenario sNum = read(kHead + "  - expect: { Body.level: { variable: Door.level } }\n");
+    {
+        World world;
+        TimelineRecord record(sNum);
+        ScenarioEngine engine(sNum, 10ms, world, {}, &record);
+        std::vector<EnginePeer> peers(2);
+        peers[0].connected = true;
+        peers[0].schema = model_variables();
+        peers[1].connected = false; // Door disconnected at runtime
+        engine.begin(peers);
+        CHECK(engine.tick(at(0ms)));
+        const ScenarioRun run = engine.run();
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].status == StepStatus::Failed);
+        CHECK(run.steps[0].message.find("participant 'Door' has no control link") != std::string::npos);
+        CHECK_EQ(record.failures()[0].value().conditions.size(), std::size_t{1});
+        CHECK_EQ(record.failures()[0].value().conditions[0].compared.size(), std::size_t{1});
+    }
+    const Scenario sEnum = read(kHead + "  - expect: { Body.mode: { eq: { variable: Door.mode } } }\n");
+    {
+        World world;
+        ScenarioEngine engine(sEnum, 10ms, world);
+        std::vector<EnginePeer> peers(2);
+        peers[0].connected = true;
+        peers[0].schema = model_variables();
+        peers[1].connected = true;
+        peers[1].schema = model_variables();
+        for (auto& v : peers[1].schema)
+        {
+            if (v.name == "mode")
+            {
+                v.items = {{"off", 0}, {"on", 99}, {"auto", 2}}; // runtime enum item drift!
+            }
+        }
+        engine.begin(peers);
+        CHECK(engine.tick(at(0ms)));
+        const ScenarioRun run = engine.run();
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].message.find("does not offer the variable 'mode' as --describe said it would") != std::string::npos);
+    }
+}
+
+TEST_CASE(scenario_holds_exact_numeric_and_non_finite_semantics)
+{
+    using control::Value;
+    constexpr std::int64_t kTwo53 = (std::int64_t{1} << 53);
+    constexpr std::int64_t kTwo53Plus1 = kTwo53 + 1;
+    constexpr std::int64_t kTwo62Plus1 = (std::int64_t{1} << 62) + 1;
+    const double dTwo53 = static_cast<double>(kTwo53);         // exact 9007199254740992.0
+    const double dTwo62 = std::ldexp(1.0, 62);                 // exact 4611686018427387904.0
+    const double dTwo63 = std::ldexp(1.0, 63);                 // exact 9223372036854775808.0 (> INT64_MAX)
+    const double dNegTwo63 = -std::ldexp(1.0, 63);             // exact INT64_MIN
+
+    // 1. int64_t vs int64_t above 2^53 and at 64-bit signed extremes.
+    CHECK(!holds(Compare::Eq, Value{kTwo53Plus1}, Value{kTwo53}));
+    CHECK(holds(Compare::Ne, Value{kTwo53Plus1}, Value{kTwo53}));
+    CHECK(holds(Compare::Gt, Value{kTwo53Plus1}, Value{kTwo53}));
+    CHECK(!holds(Compare::Le, Value{kTwo53Plus1}, Value{kTwo53}));
+    CHECK(holds(Compare::Near, Value{kTwo62Plus1}, Value{std::int64_t{1} << 62}, 1.0));
+    CHECK(!holds(Compare::Near, Value{kTwo62Plus1}, Value{std::int64_t{1} << 62}, 0.5));
+    CHECK(!holds(Compare::Near, Value{std::numeric_limits<std::int64_t>::min()},
+                 Value{std::numeric_limits<std::int64_t>::max()}, std::ldexp(1.0, 63)));
+    CHECK(holds(Compare::Near, Value{std::numeric_limits<std::int64_t>::min()},
+                Value{std::numeric_limits<std::int64_t>::max()}, std::ldexp(1.0, 64)));
+
+    // 2. int64_t vs double above 2^53 (2^53 + 1 != double(2^53) in both directions across all 7 ops).
+    CHECK(!holds(Compare::Eq, Value{kTwo53Plus1}, Value{dTwo53}));
+    CHECK(!holds(Compare::Eq, Value{dTwo53}, Value{kTwo53Plus1}));
+    CHECK(holds(Compare::Ne, Value{kTwo53Plus1}, Value{dTwo53}));
+    CHECK(holds(Compare::Gt, Value{kTwo53Plus1}, Value{dTwo53}));
+    CHECK(holds(Compare::Ge, Value{kTwo53Plus1}, Value{dTwo53}));
+    CHECK(!holds(Compare::Lt, Value{kTwo53Plus1}, Value{dTwo53}));
+    CHECK(!holds(Compare::Le, Value{kTwo53Plus1}, Value{dTwo53}));
+    CHECK(holds(Compare::Lt, Value{dTwo53}, Value{kTwo53Plus1}));
+    CHECK(holds(Compare::Near, Value{kTwo62Plus1}, Value{dTwo62}, 1.0));
+    CHECK(!holds(Compare::Near, Value{kTwo62Plus1}, Value{dTwo62}, 0.9999999999999999));
+
+    // 3. Boundary at 2^63 and -2^63, and Sterbenz sub-ULP fractional boundary.
+    CHECK(holds(Compare::Lt, Value{std::numeric_limits<std::int64_t>::max()}, Value{dTwo63}));
+    CHECK(!holds(Compare::Eq, Value{std::numeric_limits<std::int64_t>::max()}, Value{dTwo63}));
+    CHECK(holds(Compare::Near, Value{std::numeric_limits<std::int64_t>::max()}, Value{dTwo63}, 1.0));
+    CHECK(!holds(Compare::Near, Value{std::numeric_limits<std::int64_t>::max()}, Value{dTwo63}, 0.5));
+    CHECK(holds(Compare::Eq, Value{std::numeric_limits<std::int64_t>::min()}, Value{dNegTwo63}));
+
+    // i = 1, d = 2^-54: true |1 - 2^-54| = 1 - 2^-54. With tol = 1 - 2^-53, true tol < |i - d|,
+    // even though (2^-54) + (1 - 2^-53) rounds to 1.0 in IEEE-754 double! Sterbenz must reject!
+    const double dSmall = std::ldexp(1.0, -54);
+    const double tolTight = 1.0 - std::ldexp(1.0, -53);
+    const double tolExact = 1.0 - std::ldexp(1.0, -54); // == tolTight? No, 1 - 2^-53 < 1 - 2^-54; 1.0 >= |1 - 2^-54|
+    static_cast<void>(tolExact);
+    CHECK(!holds(Compare::Near, Value{std::int64_t{1}}, Value{dSmall}, tolTight));
+    CHECK(holds(Compare::Near, Value{std::int64_t{1}}, Value{std::ldexp(1.0, -53)}, tolTight));
+    // Negative fractional d = -1e-20 vs i = 0: std::modf keeps |fpart| = 1e-20 (d - floor(d) would round to 1.0).
+    CHECK(holds(Compare::Near, Value{std::int64_t{0}}, Value{-1e-20}, 1e-19));
+    CHECK(!holds(Compare::Near, Value{std::int64_t{0}}, Value{-1e-20}, 1e-21));
+
+    // 4. Non-finite values (NaN, +Inf, -Inf) evaluate to false for ALL operators including Ne.
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+    for (const Compare op : {Compare::Eq, Compare::Ne, Compare::Ge, Compare::Le, Compare::Gt, Compare::Lt, Compare::Near})
+    {
+        for (const double bad : {nan, inf, -inf})
+        {
+            CHECK(!holds(op, Value{bad}, Value{0.0}, 10.0));
+            CHECK(!holds(op, Value{0.0}, Value{bad}, 10.0));
+            CHECK(!holds(op, Value{bad}, Value{std::int64_t{0}}, 10.0));
+            CHECK(!holds(op, Value{std::int64_t{0}}, Value{bad}, 10.0));
+            CHECK(!holds(op, Value{bad}, Value{bad}, 10.0));
+        }
+    }
+
+    // 5. In ScenarioEngine: missing RHS sample or NaN on RHS makes even `ne` fail!
+    const Scenario sNe = read(kHead + "  - expect: { Body.ratio: { ne: { variable: Door.ratio } } }\n");
+    {
+        // Door has not sent a sample yet -> `ne` must fail (not pass!).
+        World world;
+        ScenarioEngine engine(sNe, 10ms, world);
+        std::vector<EnginePeer> peers(2);
+        peers[0].connected = peers[1].connected = true;
+        peers[0].schema = peers[1].schema = model_variables();
+        engine.begin(peers);
+        auto bodySnap = std::make_shared<control::Snapshot>();
+        bodySnap->time = at(0ms);
+        bodySnap->sequence = 1;
+        bodySnap->values = {Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{false}, Value{0.25},
+                            Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{false},           Value{0.0}};
+        engine.sample(0, bodySnap);
+        CHECK(!engine.tick(at(0ms))); // waits for samples of 0 ms until next controller tick
+        CHECK(engine.tick(at(10ms)));
+        const ScenarioRun run = engine.run();
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].message.find("Door.ratio had no value yet") != std::string::npos);
+    }
+    {
+        // Door sends NaN -> `ne` must fail and report NaN!
+        World world;
+        TimelineRecord record(sNe);
+        ScenarioEngine engine(sNe, 10ms, world, {}, &record);
+        std::vector<EnginePeer> peers(2);
+        peers[0].connected = peers[1].connected = true;
+        peers[0].schema = peers[1].schema = model_variables();
+        engine.begin(peers);
+        auto snap0 = std::make_shared<control::Snapshot>();
+        snap0->time = at(0ms);
+        snap0->sequence = 1;
+        snap0->values = {Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{false}, Value{0.25},
+                         Value{std::int64_t{0}}, Value{std::int64_t{0}}, Value{false},           Value{0.0}};
+        auto snap1 = std::make_shared<control::Snapshot>(*snap0);
+        snap1->values[4] = Value{nan};
+        engine.sample(0, snap0);
+        engine.sample(1, snap1);
+        CHECK(engine.tick(at(10ms)));
+        const ScenarioRun run = engine.run();
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].message.find("while Door.ratio was nan (its sample of 0 ms)") != std::string::npos);
+        CHECK(!record.failures()[0].value().conditions[0].compared[0].value.has_value());
+    }
+}
+
+TEST_CASE(scenario_variable_comparisons_multirate_batch_latch_and_driven_dither)
+{
+    // 1. Simultaneous sample batch-latch invariant: at t = 10 ms both Body and Door jump from 10 to 50.
+    // During hold_for_ms, `Body.level eq Door.level` must hold at t = 10 ms regardless of whether Body or Door
+    // is participant 0 in the catalog/scenario! (Evaluating watches per-sample instead of batch-latching all
+    // samples at timestamp t = 10 ms would see 50 != 10 and fail!)
+    for (const bool doorFirst : {false, true})
+    {
+        ScenarioCatalog cat;
+        if (doorFirst)
+        {
+            cat.push_back(CatalogParticipant{"Door", "", 10ms, model_variables()});
+            cat.push_back(CatalogParticipant{"Body", "", 10ms, model_variables()});
+        }
+        else
+        {
+            cat.push_back(CatalogParticipant{"Body", "", 10ms, model_variables()});
+            cat.push_back(CatalogParticipant{"Door", "", 10ms, model_variables()});
+        }
+        const Scenario s = read(
+            kHead + "  - expect: { Body.level: { variable: Door.level } }\n"
+                    "    hold_for_ms: 20\n",
+            cat);
+        World world;
+        ScenarioEngine engine(s, 10ms, world);
+        std::vector<EnginePeer> peers(2);
+        peers[0].connected = peers[1].connected = true;
+        peers[0].schema = peers[1].schema = model_variables();
+        engine.begin(peers);
+        const auto makeSnap = [](SimTime t, std::uint64_t seq, std::int64_t lvl) {
+            auto snap = std::make_shared<control::Snapshot>();
+            snap->time = t;
+            snap->sequence = seq;
+            snap->values = {control::Value{lvl},            control::Value{std::int64_t{0}}, control::Value{std::int64_t{0}},
+                            control::Value{false},          control::Value{0.0},             control::Value{std::int64_t{0}},
+                            control::Value{std::int64_t{0}}, control::Value{false},          control::Value{0.0}};
+            return snap;
+        };
+        engine.sample(0, makeSnap(at(0ms), 1, 10));
+        engine.sample(1, makeSnap(at(0ms), 1, 10));
+        CHECK(!engine.tick(at(10ms)));
+        engine.sample(0, makeSnap(at(10ms), 2, 50));
+        engine.sample(1, makeSnap(at(10ms), 2, 50));
+        engine.sample(0, makeSnap(at(20ms), 3, 50));
+        engine.sample(1, makeSnap(at(20ms), 3, 50));
+        CHECK(engine.tick(at(30ms)));
+        CHECK(engine.run().status == ScenarioStatus::Passed);
+    }
+
+    // 2. Multi-rate (10 ms x 20 ms) and both participant declaration orders across all delivery policies.
+    for (const bool swapOrder : {false, true})
+    {
+        ScenarioCatalog cat;
+        if (swapOrder)
+        {
+            cat.push_back(CatalogParticipant{"Door", "", 20ms, model_variables()});
+            cat.push_back(CatalogParticipant{"Body", "", 10ms, model_variables()});
+        }
+        else
+        {
+            cat.push_back(CatalogParticipant{"Body", "", 10ms, model_variables()});
+            cat.push_back(CatalogParticipant{"Door", "", 20ms, model_variables()});
+        }
+        const Scenario s = read(
+            kHead + "  - set: { Body.level: 20, Door.level: 20 }\n"
+                    "  - wait_until: { Body.body.speed: { eq: { variable: Door.body.speed }, ge: 200 } }\n"
+                    "    timeout_ms: 200\n"
+                    "  - expect: { Body.body.speed: { near: { variable: Door.body.speed }, tolerance: 1 } }\n"
+                    "    hold_for_ms: 40\n",
+            cat);
+        for (const auto& [pname, policy] : policies())
+        {
+            for (const bool rev : {false, true})
+            {
+                World world;
+                world.ecus[1].step = 20ms;
+                world.policy = policy;
+                world.reverse = rev;
+                const ScenarioRun run = world.run(s);
+                if (run.status != ScenarioStatus::Passed)
+                {
+                    throw unit::Failure(pname + ": " + text_of(run));
+                }
+            }
+        }
+    }
+
+    // 3. Scenario-driven Input + dither on RHS compares against the ECU's sampled value, never the scheduled written value.
+    // Door has dither on Door.level and also overrides its own level in step 20 ms (`own_level = {20ms, 77}`):
+    // scheduled written value for Door.level at 20 ms is 40 + dither (40), while ECU sampled value is 77!
+    {
+        const Scenario s = read(
+            "vehicle_sil_scenario: 1\n"
+            "inputs:\n"
+            "  Door.level: { dither: { triangle: { amplitude: 4, period_ms: 40 } } }\n"
+            "steps:\n"
+            "  - at_ms: 0\n"
+            "    set: { Body.level: 77, Door.level: 40 }\n"
+            "  - at_ms: 20\n"
+            "    expect: { Body.level: { variable: Door.level } }\n");
+        World world;
+        world.ecus[1].own_level = {at(20ms), 77};
+        const ScenarioRun run = world.run(s);
+        CHECK(run.status == ScenarioStatus::Passed);
+
+        // Conversely, expecting Body.level == 40 (the scheduled written value) via Door.level when Door sampled 77 fails!
+        const Scenario sFail = read(
+            "vehicle_sil_scenario: 1\n"
+            "inputs:\n"
+            "  Door.level: { dither: { triangle: { amplitude: 4, period_ms: 40 } } }\n"
+            "steps:\n"
+            "  - at_ms: 0\n"
+            "    set: { Body.level: 40, Door.level: 40 }\n"
+            "  - at_ms: 20\n"
+            "    expect: { Body.level: { variable: Door.level } }\n");
+        World worldFail;
+        worldFail.ecus[1].own_level = {at(20ms), 77};
+        const ScenarioRun runFail = worldFail.run(sFail);
+        CHECK(runFail.status == ScenarioStatus::Failed);
+        CHECK(runFail.steps[1].message.find("it was 40 (its sample of 20 ms) while Door.level was 77 (its sample of 20 ms)") !=
+              std::string::npos);
+    }
+}
+
+TEST_CASE(scenario_variable_comparisons_during_boundaries_mixed_and_unseen_rhs)
+{
+    // 1. Mixed constant + variable comparison in During ([20, 40]):
+    // If Body.level > 50 at t = 20 ms BEFORE Door has sent any sample >= 20 ms, `le: 50` fails immediately at 20 ms!
+    {
+        ScenarioCatalog cat = catalog(10ms, 100ms);
+        const Scenario s = read(
+            "vehicle_sil_scenario: 1\n"
+            "samples: as_sent\n"
+            "steps:\n"
+            "  - at_ms: 20\n"
+            "    ramp: { Body.level: { from: 60, to: 70, over_ms: 20 } }\n"
+            "    expect: { Body.level: { ge: { variable: Door.level }, le: 50 } }\n",
+            cat);
+        World world;
+        world.ecus[1].step = 100ms;
+        world.ecus[1].level = 10; // Door only has its t = 0 ms sample (< 20 ms)!
+        TimelineRecord record(s);
+        world.record = &record;
+        const ScenarioRun run = world.run(s);
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].at == std::optional<SimTime>(at(20ms)));
+        CHECK(run.steps[0].message.find("at 20 ms Body.level ge Door.level, le 50, but it was 60 (its sample of 20 ms)") !=
+              std::string::npos);
+        // Only the constant `le 50` failed (ge Door.level had no >= 20 ms RHS sample yet), so `compared` is empty.
+        CHECK(record.failures()[0].value().conditions[0].compared.empty());
+    }
+
+    // 2. Symmetric `since = T` and `close(U)` when LHS arrives in [T, U] and RHS has only a stale (< T) sample:
+    // Step fails at U naming Door.level once (even when referenced twice), preserving LHS actual value/sample and
+    // recording `compared: [{ variable: Door.level, value: null, sample_ms: null }]`.
+    {
+        ScenarioCatalog cat = catalog(10ms, 100ms);
+        const Scenario s = read(
+            "vehicle_sil_scenario: 1\n"
+            "samples: as_sent\n"
+            "steps:\n"
+            "  - at_ms: 20\n"
+            "    ramp: { Body.level: { from: 10, to: 20, over_ms: 20 } }\n"
+            "    expect: { Body.level: { ge: { variable: Door.level }, le: { variable: Door.level } } }\n",
+            cat);
+        World world;
+        world.ecus[1].step = 100ms;
+        world.ecus[1].level = 99; // stale t = 0 ms sample on Door (99) must NOT be used at t = 20..40 ms!
+        TimelineRecord record(s);
+        world.record = &record;
+        const ScenarioRun run = world.run(s);
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.steps[0].at == std::optional<SimTime>(at(40ms)));
+        check_text(run.steps[0].message,
+                   "not checked during the ramp (from 20 ms to 40 ms): no sample of Door.level in that time (its ECU sends one after "
+                   "each of its steps; with samples: as_sent, every sample_period); make the ramp longer, or check in an expect step "
+                   "with within_ms after it");
+        const auto& failedConds = record.failures()[0].value().conditions;
+        CHECK_EQ(failedConds.size(), std::size_t{1});
+        // LHS Body.level WAS seen at 40 ms with value 20, while RHS Door.level was unseen in [20, 40]!
+        CHECK(failedConds[0].value == std::optional<control::Value>(control::Value{std::int64_t{20}}));
+        CHECK(failedConds[0].sample == std::optional<SimTime>(at(40ms)));
+        CHECK_EQ(failedConds[0].compared.size(), std::size_t{1});
+        CHECK(!failedConds[0].compared[0].value.has_value());
+        CHECK(!failedConds[0].compared[0].sample.has_value());
     }
 }

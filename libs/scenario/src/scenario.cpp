@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <map>
 #include <numeric>
 #include <set>
@@ -584,6 +585,61 @@ bool Reader::resolve_step_params(ryml::id_type steps_node)
                                 else
                                 {
                                     ok = resolve_params(pf) && ok;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            ok = resolve_params(part) && ok;
+                        }
+                    }
+                }
+            }
+            else if ((fieldKey == "expect" || fieldKey == "wait_until") && tree().is_map(field))
+            {
+                check_key(field);
+                const auto check_var_ref = [&](ryml::id_type varNode) {
+                    check_key(varNode);
+                    if (is_scalar(varNode) && !is_null(varNode))
+                    {
+                        const std::string raw = config::detail::to_string(tree().val(varNode));
+                        if (raw.find("${") != std::string::npos)
+                        {
+                            error("scenario-param", doc().line(varNode),
+                                  "'" + raw + "': a parameter (${...}) stands for a value, not for a variable's name: write "
+                                              "the name out");
+                            ok = false;
+                        }
+                    }
+                };
+                for (auto cond = tree().first_child(field); cond != ryml::NONE; cond = tree().next_sibling(cond))
+                {
+                    if (!tree().is_map(cond))
+                    {
+                        ok = resolve_params(cond) && ok;
+                        continue;
+                    }
+                    check_key(cond);
+                    for (auto part = tree().first_child(cond); part != ryml::NONE; part = tree().next_sibling(part))
+                    {
+                        const std::string partKey = tree().has_key(part) ? config::detail::to_string(tree().key(part)) : std::string{};
+                        if (partKey == "variable")
+                        {
+                            check_var_ref(part);
+                        }
+                        else if (compare_of(partKey).has_value() && tree().is_map(part))
+                        {
+                            check_key(part);
+                            for (auto sub = tree().first_child(part); sub != ryml::NONE; sub = tree().next_sibling(sub))
+                            {
+                                const std::string subKey = tree().has_key(sub) ? config::detail::to_string(tree().key(sub)) : std::string{};
+                                if (subKey == "variable")
+                                {
+                                    check_var_ref(sub);
+                                }
+                                else
+                                {
+                                    ok = resolve_params(sub) && ok;
                                 }
                             }
                         }
@@ -1859,6 +1915,139 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, StepReadS
     return longest;
 }
 
+bool Reader::read_rhs_variable(ryml::id_type var_node, std::size_t lhs_variable, const std::string& what,
+                               const std::string& prefix, StepReadState& state, std::optional<std::size_t>& rhs_out,
+                               std::string& rhs_text_out)
+{
+    rhs_out.reset();
+    rhs_text_out.clear();
+    const std::size_t varLine = doc().line(var_node);
+    if (!is_scalar(var_node) || is_null(var_node))
+    {
+        error("value", varLine,
+              prefix + "variable must be <participant>.<variable> (e.g. " + example_variable() + "), not " +
+                  shown_value(var_node));
+        return false;
+    }
+    const std::string rawText = config::detail::to_string(tree().val(var_node));
+    const bool isQuoted = tree().is_val_quoted(var_node);
+    if (param_at(var_node) != nullptr || rawText.find("${") != std::string::npos)
+    {
+        error("scenario-param", varLine,
+              "'" + rawText + "': a parameter (${...}) stands for a value, not for a variable's name: write the name out");
+        return false;
+    }
+    if (!isQuoted && is_yaml12_non_string_literal(rawText))
+    {
+        error("value", varLine,
+              prefix + "variable must be <participant>.<variable> (e.g. " + example_variable() + "), not " +
+                  shown_value(var_node));
+        return false;
+    }
+    const std::size_t absentBefore = state.absent.size();
+    const auto rhs = variable_by_name(rawText, varLine, state.absent);
+    if (!rhs)
+    {
+        if (state.absent.size() > absentBefore)
+        {
+            rhs_text_out = rawText;
+            return true;
+        }
+        return !check_catalog_;
+    }
+    const ScenarioVariable& lhsVar = scenario_.variables[lhs_variable];
+    const ScenarioVariable& rhsVar = scenario_.variables[*rhs];
+    const std::string pre = what + " of " + lhsVar.text + " (" + type_name(lhsVar.type) + ")";
+    if (*rhs == lhs_variable)
+    {
+        error("scenario-value", varLine,
+              pre + " compares " + lhsVar.text + " with itself: name another variable, or write a constant value");
+        return false;
+    }
+    const bool lhsNumeric = lhsVar.type == control::ValueType::Integer || lhsVar.type == control::ValueType::Real;
+    const bool rhsNumeric = rhsVar.type == control::ValueType::Integer || rhsVar.type == control::ValueType::Real;
+    if (lhsNumeric != rhsNumeric || (!lhsNumeric && lhsVar.type != rhsVar.type))
+    {
+        error("scenario-value", varLine,
+              pre + " cannot compare with " + rhsVar.text + " (" + type_name(rhsVar.type) + "): " +
+                  (lhsNumeric ? "an integer or real variable can be compared only with another integer or real variable"
+                              : lhsVar.type == control::ValueType::Bool
+                                    ? "a bool variable can be compared only with another bool variable"
+                                    : "an enum variable can be compared only with another enum variable with the same items"));
+        return false;
+    }
+    if (lhsVar.type == control::ValueType::Enum && !enum_items_match(lhsVar.items, rhsVar.items))
+    {
+        error("scenario-value", varLine,
+              pre + " cannot compare with " + rhsVar.text + ": their enum items do not match (" + lhsVar.text + " has " +
+                  items_text(lhsVar.items) + "; " + rhsVar.text + " has " + items_text(rhsVar.items) +
+                  "): normalize the enum items with variables.<name>.map in the configuration file (docs/simulation-config.md)");
+        return false;
+    }
+    rhs_out = *rhs;
+    rhs_text_out = rhsVar.text;
+    return true;
+}
+
+bool Reader::read_variable_ref_map(ryml::id_type map_node, std::size_t lhs_variable, Compare op, const std::string& lhs_name,
+                                   const std::string& key, StepReadState& state, std::optional<std::size_t>& rhs_out,
+                                   std::string& rhs_text_out)
+{
+    rhs_out.reset();
+    rhs_text_out.clear();
+    const ScenarioVariable& var = scenario_.variables[lhs_variable];
+    if (!tree().has_children(map_node))
+    {
+        error("value", doc().line(map_node),
+              key + " of " + var.text + " (" + type_name(var.type) +
+                  ") must be a value or { variable: <participant>.<variable> }, not an empty mapping");
+        return false;
+    }
+    ryml::id_type varNode = ryml::NONE;
+    ryml::id_type nestedTolNode = ryml::NONE;
+    bool ok = true;
+    std::map<std::string, std::size_t> refKeys;
+    const std::string prefix = lhs_name + ": " + key + ": ";
+    for (auto refChild = tree().first_child(map_node); refChild != ryml::NONE; refChild = tree().next_sibling(refChild))
+    {
+        const std::string refKey = config::detail::to_string(tree().key(refChild));
+        if (!first_occurrence(refKeys, refKey, refChild, prefix))
+        {
+            ok = false;
+            continue;
+        }
+        if (refKey == "variable")
+        {
+            varNode = refChild;
+        }
+        else if (refKey == "tolerance" && op == Compare::Near)
+        {
+            nestedTolNode = refChild;
+            ok = false;
+        }
+        else
+        {
+            unknown_key(refChild, refKey, prefix, kVariableRefKeys);
+            ok = false;
+        }
+    }
+    if (nestedTolNode != ryml::NONE)
+    {
+        const std::string shownVar = varNode != ryml::NONE && is_scalar(varNode) && !is_null(varNode)
+                                         ? config::detail::to_string(tree().val(varNode))
+                                         : "<participant>.<variable>";
+        const std::string shownTol = is_scalar(nestedTolNode) && !is_null(nestedTolNode) ? text_of(nestedTolNode) : "<number>";
+        error("unknown-key", doc().line(nestedTolNode),
+              prefix + "tolerance goes beside near, not inside { variable: ... }: write { near: { variable: " + shownVar +
+                  " }, tolerance: " + shownTol + " }");
+    }
+    if (varNode == ryml::NONE)
+    {
+        return false;
+    }
+    return read_rhs_variable(varNode, lhs_variable, key, prefix, state, rhs_out, rhs_text_out) && ok;
+}
+
 void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, StepReadState& state, const std::string& action)
 {
     if (!tree().is_map(node) || !tree().has_children(node))
@@ -1876,90 +2065,214 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, StepReadSta
         {
             continue;
         }
+        const std::size_t absentBeforeLhs = state.absent.size();
         const auto v = variable(child, state.absent);
         if (!v)
         {
+            for (std::size_t i = absentBeforeLhs; i < state.absent.size(); ++i)
+            {
+                state.condition_bare_absent.insert(state.absent[i]);
+            }
             continue;
         }
-        const ScenarioVariable& var = scenario_.variables[*v];
+        const control::ValueType lhsType = scenario_.variables[*v].type;
+        const std::string lhsText = scenario_.variables[*v].text;
         ScenarioCondition condition;
         condition.variable = *v;
+        std::vector<std::string> rhsTexts;
+        std::vector<std::string> condAbsent;
         bool good = true;
         if (tree().is_map(child))
         {
-            std::optional<double> tolerance;
-            std::size_t toleranceLine = 0;
-            bool hasNear = false;
-            std::map<std::string, std::size_t> keys;
+            bool hasDirectVariable = false;
             for (auto part = tree().first_child(child); part != ryml::NONE; part = tree().next_sibling(part))
             {
-                const std::string key = config::detail::to_string(tree().key(part));
-                if (!first_occurrence(keys, key, part, name + ": "))
+                if (config::detail::to_string(tree().key(part)) == "variable")
                 {
-                    continue;
+                    hasDirectVariable = true;
+                    break;
                 }
-                if (key == "tolerance")
+            }
+            if (hasDirectVariable)
+            {
+                ryml::id_type varPart = ryml::NONE;
+                ryml::id_type tolPart = ryml::NONE;
+                std::vector<std::string> opKeys;
+                std::map<std::string, std::size_t> keys;
+                for (auto part = tree().first_child(child); part != ryml::NONE; part = tree().next_sibling(part))
                 {
-                    record_direct_param_usage(part, ParamType::Number);
-                    double d = 0;
-                    if (!plain_number(part, d) || d < 0)
+                    const std::string key = config::detail::to_string(tree().key(part));
+                    if (!first_occurrence(keys, key, part, name + ": "))
                     {
-                        error("value", doc().line(part), "tolerance must be a number that is not negative, not " + shown_value(part));
+                        good = false;
+                        continue;
+                    }
+                    if (key == "variable")
+                    {
+                        varPart = part;
+                    }
+                    else if (key == "tolerance")
+                    {
+                        tolPart = part;
+                    }
+                    else if (compare_of(key).has_value())
+                    {
+                        opKeys.push_back(key);
+                    }
+                    else
+                    {
+                        unknown_key(part, key, name + ": ", kVariableRefKeys);
                         good = false;
                     }
-                    tolerance = d;
-                    toleranceLine = doc().line(part);
-                    continue;
                 }
-                const auto op = compare_of(key);
-                if (!op)
+                const std::string shownVar = varPart != ryml::NONE && is_scalar(varPart) && !is_null(varPart)
+                                                 ? config::detail::to_string(tree().val(varPart))
+                                                 : "<participant>.<variable>";
+                if (tolPart != ryml::NONE && opKeys.empty())
                 {
-                    unknown_key(part, key, name + ": ", kCompareKeys);
+                    const std::string shownTol = is_scalar(tolPart) && !is_null(tolPart) ? text_of(tolPart) : "<number>";
+                    error("value", doc().line(tolPart),
+                          name + ": variable and tolerance cannot be combined directly: write { near: { variable: " +
+                              shownVar + " }, tolerance: " + shownTol + " }");
                     good = false;
-                    continue;
                 }
-                const bool ordered = *op != Compare::Eq && *op != Compare::Ne;
-                if (ordered && (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum))
+                else if (!opKeys.empty())
                 {
-                    error("scenario-value", doc().line(part),
-                          key + " compares numbers, and " + var.text + " is " +
-                              (var.type == control::ValueType::Bool ? "a bool" : "an enum") + ": use eq or ne");
+                    error("value", doc().line(child),
+                          name + ": variable cannot be combined with " + config::detail::join(opKeys) +
+                              " in the same mapping: write { eq: { variable: " + shownVar + " }, ... }");
                     good = false;
-                    continue;
                 }
-                const auto value = value_of(part, *v, key, false);
-                if (!value)
+                else if (good && varPart != ryml::NONE)
                 {
-                    good = false;
-                    continue;
-                }
-                hasNear = hasNear || *op == Compare::Near;
-                condition.all.push_back(ScenarioComparison{*op, *value, 0.0});
-            }
-            if (hasNear != tolerance.has_value())
-            {
-                error("value", hasNear ? doc().line(child) : toleranceLine,
-                      hasNear ? name + ": near needs tolerance (how far from the value it may be): add tolerance: <number>"
-                              : name + ": tolerance goes with near (near: <value>, tolerance: <number>): add near or remove it");
-                good = false;
-            }
-            for (auto& c : condition.all)
-            {
-                if (c.op == Compare::Near)
-                {
-                    c.tolerance = tolerance.value_or(0.0);
+                    std::optional<std::size_t> rhsIdx;
+                    std::string rhsText;
+                    const std::size_t absentBefore = state.absent.size();
+                    if (read_rhs_variable(varPart, *v, "the value", name + ": ", state, rhsIdx, rhsText))
+                    {
+                        condition.all.push_back(ScenarioComparison{Compare::Eq, control::Value{}, 0.0, rhsIdx});
+                        rhsTexts.push_back(rhsText);
+                        for (std::size_t i = absentBefore; i < state.absent.size(); ++i)
+                        {
+                            condAbsent.push_back(state.absent[i]);
+                        }
+                    }
+                    else
+                    {
+                        good = false;
+                    }
                 }
             }
-            if (good && condition.all.empty())
+            else
             {
-                error("value", doc().line(child),
-                      name + ": nothing to compare with: give one of " + config::detail::join(kCompareKeys) + ", or the value itself");
-                good = false;
+                std::optional<double> tolerance;
+                std::size_t toleranceLine = 0;
+                bool hasNear = false;
+                std::map<std::string, std::size_t> keys;
+                for (auto part = tree().first_child(child); part != ryml::NONE; part = tree().next_sibling(part))
+                {
+                    const std::string key = config::detail::to_string(tree().key(part));
+                    if (!first_occurrence(keys, key, part, name + ": "))
+                    {
+                        continue;
+                    }
+                    if (key == "tolerance")
+                    {
+                        record_direct_param_usage(part, ParamType::Number);
+                        double d = 0;
+                        if (!plain_number(part, d) || d < 0)
+                        {
+                            error("value", doc().line(part),
+                                  "tolerance must be a number that is not negative, not " + shown_value(part));
+                            good = false;
+                        }
+                        tolerance = d;
+                        toleranceLine = doc().line(part);
+                        continue;
+                    }
+                    const auto op = compare_of(key);
+                    if (!op)
+                    {
+                        if (config::detail::closest(key, kConditionKeys) == "variable")
+                        {
+                            error("unknown-key", doc().line(part),
+                                  name + ": unknown key '" + key +
+                                      "': did you mean 'variable'? (write { variable: <participant>.<variable> }, or use one "
+                                      "of the keys here: " +
+                                      config::detail::join(kCompareKeys) + ")");
+                        }
+                        else
+                        {
+                            unknown_key(part, key, name + ": ", kCompareKeys);
+                        }
+                        good = false;
+                        continue;
+                    }
+                    hasNear = hasNear || *op == Compare::Near;
+                    const bool ordered = *op != Compare::Eq && *op != Compare::Ne;
+                    if (ordered && (lhsType == control::ValueType::Bool || lhsType == control::ValueType::Enum))
+                    {
+                        error("scenario-value", doc().line(part),
+                              key + " compares numbers, and " + lhsText + " is " +
+                                  (lhsType == control::ValueType::Bool ? "a bool" : "an enum") + ": use eq or ne");
+                        good = false;
+                        continue;
+                    }
+                    if (tree().is_map(part))
+                    {
+                        std::optional<std::size_t> rhsIdx;
+                        std::string rhsText;
+                        const std::size_t absentBefore = state.absent.size();
+                        if (!read_variable_ref_map(part, *v, *op, name, key, state, rhsIdx, rhsText))
+                        {
+                            good = false;
+                            continue;
+                        }
+                        condition.all.push_back(ScenarioComparison{*op, control::Value{}, 0.0, rhsIdx});
+                        rhsTexts.push_back(rhsText);
+                        for (std::size_t i = absentBefore; i < state.absent.size(); ++i)
+                        {
+                            condAbsent.push_back(state.absent[i]);
+                        }
+                    }
+                    else
+                    {
+                        const auto value = value_of(part, *v, key, false);
+                        if (!value)
+                        {
+                            good = false;
+                            continue;
+                        }
+                        condition.all.push_back(ScenarioComparison{*op, *value, 0.0});
+                        rhsTexts.emplace_back();
+                    }
+                }
+                if (hasNear != tolerance.has_value())
+                {
+                    error("value", hasNear ? doc().line(child) : toleranceLine,
+                          hasNear ? name + ": near needs tolerance (how far from the value it may be): add tolerance: <number>"
+                                  : name + ": tolerance goes with near (near: <value>, tolerance: <number>): add near or remove it");
+                    good = false;
+                }
+                for (auto& c : condition.all)
+                {
+                    if (c.op == Compare::Near)
+                    {
+                        c.tolerance = tolerance.value_or(0.0);
+                    }
+                }
+                if (good && condition.all.empty())
+                {
+                    error("value", doc().line(child),
+                          name + ": nothing to compare with: give one of " + config::detail::join(kCompareKeys) + ", or the value itself");
+                    good = false;
+                }
             }
         }
         else if (const auto value = value_of(child, *v, "the value", false))
         {
             condition.all.push_back(ScenarioComparison{Compare::Eq, *value, 0.0});
+            rhsTexts.emplace_back();
         }
         else
         {
@@ -1967,8 +2280,19 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, StepReadSta
         }
         if (good)
         {
-            condition.text = condition_text(var, condition);
+            for (const std::string& absName : condAbsent)
+            {
+                state.condition_formatted_absent.insert(absName);
+            }
+            condition.text = condition_text(scenario_.variables[*v], condition, rhsTexts);
             step.conditions.push_back(std::move(condition));
+        }
+        else
+        {
+            for (const std::string& absName : condAbsent)
+            {
+                state.condition_bare_absent.insert(absName);
+            }
         }
     }
 }
@@ -1985,13 +2309,16 @@ std::optional<Compare> Reader::compare_of(const std::string& key)
     return std::nullopt;
 }
 
-std::string Reader::condition_text(const ScenarioVariable& var, const ScenarioCondition& condition)
+std::string Reader::condition_text(const ScenarioVariable& var, const ScenarioCondition& condition,
+                                   const std::vector<std::string>& rhs_texts)
 {
     std::string out = var.text;
     bool first = true;
-    for (const auto& c : condition.all)
+    for (std::size_t i = 0; i < condition.all.size(); ++i)
     {
-        out += std::string(first ? " " : ", ") + compare_name(c.op) + " " + value_text(c.value, &var) +
+        const auto& c = condition.all[i];
+        const std::string rhs = i < rhs_texts.size() && !rhs_texts[i].empty() ? rhs_texts[i] : value_text(c.value, &var);
+        out += std::string(first ? " " : ", ") + compare_name(c.op) + " " + rhs +
                (c.op == Compare::Near ? " (tolerance " + number_text(c.tolerance) + ")" : "");
         first = false;
     }
@@ -2004,19 +2331,26 @@ std::string Reader::step_text(const ScenarioStep& step, const StepReadState& sta
     bool first = true;
     const auto sep = [&] { return std::exchange(first, false) ? " " : "; "; };
     // The variables that are absent, by name alone (what they would be is not read), once each.
-    const auto absent = [&](std::size_t from, std::size_t to) {
+    const auto absent = [&](std::size_t from, std::size_t to, bool in_conditions) {
         for (std::size_t i = from; i < to; ++i)
         {
+            const std::string& name = state.absent[i];
+            if (in_conditions && state.condition_formatted_absent.count(name) > 0 &&
+                state.condition_bare_absent.count(name) == 0)
+            {
+                continue;
+            }
             if (std::find(state.absent.begin() + static_cast<std::ptrdiff_t>(from),
-                          state.absent.begin() + static_cast<std::ptrdiff_t>(i), state.absent[i]) ==
+                          state.absent.begin() + static_cast<std::ptrdiff_t>(i), name) ==
                 state.absent.begin() + static_cast<std::ptrdiff_t>(i))
             {
-                out += sep() + state.absent[i];
+                out += sep() + name;
             }
         }
     };
     const std::size_t motion = state.beside ? state.motion_absent : state.absent.size();
-    absent(0, motion);
+    const bool standaloneCond = !state.beside && (step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil);
+    absent(0, motion, standaloneCond);
     for (const auto& w : step.writes)
     {
         const ScenarioVariable& var = scenario_.variables[w.variable];
@@ -2035,7 +2369,7 @@ std::string Reader::step_text(const ScenarioStep& step, const StepReadState& sta
         // "ramp Engine.engine.throttle to 80 over 1000 ms, expecting Engine.engine.speed le 3000"
         out += state.unchecked ? ", expect not checked:" : ", expecting";
         first = true;
-        absent(motion, state.absent.size());
+        absent(motion, state.absent.size(), true);
     }
     for (const auto& c : step.conditions)
     {
@@ -2146,25 +2480,284 @@ std::string value_text(const control::Value& value, const ScenarioVariable* vari
     return number_text(std::get<double>(value));
 }
 
-bool holds(const ScenarioComparison& comparison, const control::Value& value)
+bool enum_items_match(const std::vector<control::EnumItem>& a, const std::vector<control::EnumItem>& b)
 {
-    // Two integers are compared exactly; anything else as doubles.
-    const auto* a = std::get_if<std::int64_t>(&value);
-    const auto* b = std::get_if<std::int64_t>(&comparison.value);
-    const bool exact = a != nullptr && b != nullptr;
-    const double x = as_number(value);
-    const double y = as_number(comparison.value);
-    switch (comparison.op)
+    if (a.size() != b.size())
     {
-    case Compare::Eq: return exact ? *a == *b : x == y;
-    case Compare::Ne: return exact ? *a != *b : x != y;
-    case Compare::Ge: return exact ? *a >= *b : x >= y;
-    case Compare::Le: return exact ? *a <= *b : x <= y;
-    case Compare::Gt: return exact ? *a > *b : x > y;
-    case Compare::Lt: return exact ? *a < *b : x < y;
-    case Compare::Near: return std::fabs(x - y) <= comparison.tolerance;
+        return false;
+    }
+    const auto by_key = [](const control::EnumItem& x, const control::EnumItem& y) {
+        return x.value != y.value ? x.value < y.value : x.name < y.name;
+    };
+    std::vector<control::EnumItem> sa = a;
+    std::vector<control::EnumItem> sb = b;
+    std::sort(sa.begin(), sa.end(), by_key);
+    std::sort(sb.begin(), sb.end(), by_key);
+    for (std::size_t i = 0; i < sa.size(); ++i)
+    {
+        if (sa[i].value != sb[i].value || sa[i].name != sb[i].name)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+namespace {
+
+constexpr double kTwoPow63 = 9223372036854775808.0;
+constexpr double kTwoPow64 = 18446744073709551616.0;
+
+struct Uint128
+{
+    std::uint64_t hi = 0;
+    std::uint64_t lo = 0;
+
+    [[nodiscard]] bool operator<=(const Uint128& o) const noexcept { return hi != o.hi ? hi < o.hi : lo <= o.lo; }
+};
+
+/// Exact integer value of `x` where 2^63 <= x < 2^128 (already an integer in IEEE-754 double).
+Uint128 uint128_from_large_double(double x) noexcept
+{
+    int exp = 0;
+    const double mant = std::frexp(x, &exp); // 0.5 <= mant < 1.0, 64 <= exp <= 128
+    const auto sig = static_cast<std::uint64_t>(std::ldexp(mant, 53));
+    const int shift = exp - 53; // 11 <= shift <= 75
+    if (shift < 64)
+    {
+        return Uint128{sig >> (64 - shift), sig << shift};
+    }
+    return Uint128{sig << (shift - 64), 0};
+}
+
+Uint128 uint128_add64(Uint128 a, std::uint64_t b) noexcept
+{
+    const std::uint64_t lo = a.lo + b;
+    return Uint128{a.hi + (lo < a.lo ? 1u : 0u), lo};
+}
+
+Uint128 uint128_sub64(Uint128 a, std::uint64_t b) noexcept
+{
+    return Uint128{a.hi - (a.lo < b ? 1u : 0u), a.lo - b};
+}
+
+/// Exact comparison of `i` and finite `d`: -1 if i < d, 0 if i == d, +1 if i > d.
+int compare_int_double(std::int64_t i, double d) noexcept
+{
+    if (d < -kTwoPow63)
+    {
+        return 1;
+    }
+    if (d >= kTwoPow63)
+    {
+        return -1;
+    }
+    double ipart = 0.0;
+    const double fpart = std::modf(d, &ipart);
+    const auto di = static_cast<std::int64_t>(ipart);
+    if (i < di)
+    {
+        return -1;
+    }
+    if (i > di)
+    {
+        return 1;
+    }
+    return fpart > 0.0 ? -1 : fpart < 0.0 ? 1 : 0;
+}
+
+/// Exact check of a + b >= 1.0 for 0 <= a < 1 and 0 <= b < 1 without rounding error (Sterbenz).
+bool sum_at_least_one(double a, double b) noexcept
+{
+    const double hi = std::max(a, b);
+    const double lo = std::min(a, b);
+    if (hi < 0.5)
+    {
+        return false;
+    }
+    return lo >= (1.0 - hi);
+}
+
+bool uint64_within_tolerance(std::uint64_t diff, double tolerance) noexcept
+{
+    if (tolerance >= kTwoPow64)
+    {
+        return true;
+    }
+    return diff <= static_cast<std::uint64_t>(std::floor(tolerance));
+}
+
+/// Exact check of |i - d| <= tolerance for finite `d` and finite `tolerance` >= 0, without long double.
+bool int_double_near(std::int64_t i, double d, double tolerance) noexcept
+{
+    if (d >= -kTwoPow63 && d < kTwoPow63)
+    {
+        if (tolerance >= kTwoPow64)
+        {
+            return true;
+        }
+        double t_ipart_d = 0.0;
+        const double t_fpart = std::modf(tolerance, &t_ipart_d);
+        const auto t_ipart = static_cast<std::uint64_t>(t_ipart_d);
+
+        double d_ipart_d = 0.0;
+        const double d_fpart = std::modf(d, &d_ipart_d);
+        const auto di = static_cast<std::int64_t>(d_ipart_d);
+
+        if (i == di)
+        {
+            return t_ipart >= 1 || std::fabs(d_fpart) <= t_fpart;
+        }
+        if (i > di)
+        {
+            const std::uint64_t u = static_cast<std::uint64_t>(i) - static_cast<std::uint64_t>(di);
+            if (d_fpart <= 0.0)
+            {
+                const double af = -d_fpart;
+                return u != t_ipart ? u < t_ipart : af <= t_fpart;
+            }
+            if (u <= t_ipart)
+            {
+                return true;
+            }
+            return u - t_ipart == 1 && sum_at_least_one(d_fpart, t_fpart);
+        }
+        const std::uint64_t u = static_cast<std::uint64_t>(di) - static_cast<std::uint64_t>(i);
+        if (d_fpart >= 0.0)
+        {
+            return u != t_ipart ? u < t_ipart : d_fpart <= t_fpart;
+        }
+        if (u <= t_ipart)
+        {
+            return true;
+        }
+        return u - t_ipart == 1 && sum_at_least_one(-d_fpart, t_fpart);
+    }
+
+    const double kTwoPow128 = std::ldexp(1.0, 128);
+    const double abs_d = std::fabs(d);
+    if (abs_d >= kTwoPow128)
+    {
+        if (tolerance != abs_d)
+        {
+            return tolerance > abs_d;
+        }
+        return d > 0.0 ? i >= 0 : i <= 0;
+    }
+    if (tolerance >= kTwoPow128)
+    {
+        return true;
+    }
+    Uint128 diff = uint128_from_large_double(abs_d);
+    if (d > 0.0)
+    {
+        diff = i >= 0 ? uint128_sub64(diff, static_cast<std::uint64_t>(i))
+                      : uint128_add64(diff, std::uint64_t{0} - static_cast<std::uint64_t>(i));
+    }
+    else
+    {
+        diff = i <= 0 ? uint128_sub64(diff, std::uint64_t{0} - static_cast<std::uint64_t>(i))
+                      : uint128_add64(diff, static_cast<std::uint64_t>(i));
+    }
+    const double fl_t = std::floor(tolerance);
+    const Uint128 tol_u =
+        fl_t < kTwoPow64 ? Uint128{0, static_cast<std::uint64_t>(fl_t)} : uint128_from_large_double(fl_t);
+    return diff <= tol_u;
+}
+
+} // namespace
+
+bool holds(Compare op, const control::Value& lhs, const control::Value& rhs, double tolerance)
+{
+    if (const auto* lb = std::get_if<bool>(&lhs))
+    {
+        const auto* rb = std::get_if<bool>(&rhs);
+        if (rb == nullptr)
+        {
+            return false;
+        }
+        return op == Compare::Eq ? *lb == *rb : op == Compare::Ne ? *lb != *rb : false;
+    }
+    if (std::holds_alternative<bool>(rhs))
+    {
+        return false;
+    }
+    if (const auto* ld = std::get_if<double>(&lhs); ld != nullptr && !std::isfinite(*ld))
+    {
+        return false;
+    }
+    if (const auto* rd = std::get_if<double>(&rhs); rd != nullptr && !std::isfinite(*rd))
+    {
+        return false;
+    }
+    if (op == Compare::Near && (!std::isfinite(tolerance) || tolerance < 0.0))
+    {
+        return false;
+    }
+
+    const auto* li = std::get_if<std::int64_t>(&lhs);
+    const auto* ri = std::get_if<std::int64_t>(&rhs);
+    if (li != nullptr && ri != nullptr)
+    {
+        switch (op)
+        {
+        case Compare::Eq: return *li == *ri;
+        case Compare::Ne: return *li != *ri;
+        case Compare::Ge: return *li >= *ri;
+        case Compare::Le: return *li <= *ri;
+        case Compare::Gt: return *li > *ri;
+        case Compare::Lt: return *li < *ri;
+        case Compare::Near:
+        {
+            const std::uint64_t diff = *li >= *ri
+                                           ? static_cast<std::uint64_t>(*li) - static_cast<std::uint64_t>(*ri)
+                                           : static_cast<std::uint64_t>(*ri) - static_cast<std::uint64_t>(*li);
+            return uint64_within_tolerance(diff, tolerance);
+        }
+        }
+        return false;
+    }
+
+    if (li != nullptr || ri != nullptr)
+    {
+        if (op == Compare::Near)
+        {
+            return li != nullptr ? int_double_near(*li, std::get<double>(rhs), tolerance)
+                                 : int_double_near(*ri, std::get<double>(lhs), tolerance);
+        }
+        const int cmp =
+            li != nullptr ? compare_int_double(*li, std::get<double>(rhs)) : -compare_int_double(*ri, std::get<double>(lhs));
+        switch (op)
+        {
+        case Compare::Eq: return cmp == 0;
+        case Compare::Ne: return cmp != 0;
+        case Compare::Ge: return cmp >= 0;
+        case Compare::Le: return cmp <= 0;
+        case Compare::Gt: return cmp > 0;
+        case Compare::Lt: return cmp < 0;
+        case Compare::Near: break;
+        }
+        return false;
+    }
+
+    const double x = std::get<double>(lhs);
+    const double y = std::get<double>(rhs);
+    switch (op)
+    {
+    case Compare::Eq: return x == y;
+    case Compare::Ne: return x != y;
+    case Compare::Ge: return x >= y;
+    case Compare::Le: return x <= y;
+    case Compare::Gt: return x > y;
+    case Compare::Lt: return x < y;
+    case Compare::Near: return std::fabs(x - y) <= tolerance;
     }
     return false;
+}
+
+bool holds(const ScenarioComparison& comparison, const control::Value& value)
+{
+    return holds(comparison.op, value, comparison.value, comparison.tolerance);
 }
 
 const char* scenario_samples_name(ScenarioSamples samples)
@@ -2185,6 +2778,13 @@ std::vector<bool> participants_read(const Scenario& scenario)
         for (const ScenarioCondition& condition : step.conditions)
         {
             reads(condition.variable);
+            for (const ScenarioComparison& comparison : condition.all)
+            {
+                if (comparison.rhs_variable)
+                {
+                    reads(*comparison.rhs_variable);
+                }
+            }
         }
         for (const ScenarioMotion& motion : step.motions)
         {

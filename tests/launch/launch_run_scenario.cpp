@@ -1013,4 +1013,24 @@ void scenario_failures(const Options& o)
                 "check emits outside-not-real-time note under free time_policy:\n" + chk_free.standard_output);
         log("CHECK after_scenario: pause respects time_lock -> ok");
     }
+    {
+        // Runtime variable-to-variable comparisons across real SIL Kit ECUs: pass and two-variable failure with --timeline.
+        const fs::path dir = scenario_ecus(o, "",
+                                           head + "  - set: { Body.level: 35, Door.level: 35 }\n"
+                                                  "  - expect: { Body.level: { variable: Door.level } }\n"
+                                                  "    hold_for_ms: 20\n"
+                                                  "  - set: { Door.level: 40 }\n"
+                                                  "  - expect: { Body.level: { eq: { variable: Door.level } } }\n");
+        const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--timeline", "cmp.timeline.json"}, dir);
+        expect_code(run, 1, "run variable-to-variable failure with --timeline");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "it was 35 (its sample of 20 ms) while Door.level was 40 (its sample of 20 ms)"),
+                "two-variable failure message in real run:\n" + out);
+        const std::string tl = lf(read_text(dir / "cmp.timeline.json"));
+        require(contains(tl, "\"value\": null,\n                \"variable\": \"Door.level\"") &&
+                    contains(tl, "\"compared\": [\n              {\n                \"variable\": \"Door.level\",\n"
+                                 "                \"value\": 40,\n                \"sample_ms\": 20\n              }\n            ]"),
+                "timeline.json variable-to-variable watch and failed compared in real run:\n" + tl);
+        log("CHECK runtime variable-to-variable comparison in real SIL Kit run -> ok");
+    }
 }

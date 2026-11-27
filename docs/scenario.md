@@ -241,6 +241,17 @@ A condition is a comparison, nothing more. A bare value means "equal". A mapping
 
 - With several operators on one variable, all of them must hold (`{ ge: 1700, le: 1900 }`).
 - With several variables in one step, the conditions of all the variables must hold.
+- Instead of a constant value, any operator above or a shorthand equality condition can compare against another variable's runtime sample with `{ variable: <participant>.<variable> }`:
+
+```yaml
+  - expect:
+      Dashboard.dashboard.engine_speed:
+        near: { variable: Engine.engine.speed }
+        tolerance: "${max_lag_rpm}"
+      Dashboard.dashboard.engine_lost: { ne: { variable: Engine.ecu.connected } }
+```
+
+- Variable-to-variable type rules: `integer` and `real` variables can be compared with each other across all 7 operators (exact 64-bit integer and integer-to-double comparison without `2^53` precision loss); `bool` variables take `eq` or `ne` with another `bool`; `enum` variables take `eq` or `ne` with another `enum` whose `(name, value)` item set is identical regardless of order (use `variables.<name>.map` in `simulation.yaml` when two ECUs encode items differently). Comparing a variable with itself is an error (`scenario-value`), and `${name}` parameters are not allowed inside `variable:` (`scenario-param`; `tolerance` still accepts `"${name}"`). Arithmetic expressions, inline `scale`/`offset`, `or`/`not`, and past-time offsets are not supported.
 
 ### Schema
 
@@ -303,7 +314,8 @@ In a run with a scenario, every ECU whose values the scenario reads sends a samp
 
 - A value that changes and changes back within one ECU step is invisible: the values are read at the end of the step. The step size of the ECU is the finest that a scenario can judge.
 - An ECU must send its samples within its steps, as an `ecu_main` executable does. If an executable with its own Control API transport sends from another thread, a sample can arrive after the launcher has judged its time; that sample is not judged, and the run gets the warning `control-link-late-values`.
-- No condition holds for a variable that has no sample yet (the finding says `it had no value yet (no sample of its ECU had arrived)`).
+- No condition holds for a variable that has no sample yet (the finding says `it had no value yet (no sample of its ECU had arrived)`). In a variable-to-variable comparison, if either side has no sample yet or has a non-finite floating-point value (`NaN` or `Inf`), every operator—including `ne`—evaluates to `false`.
+- When a condition compares two variables (`{ variable: ... }`), both the left-hand and right-hand ECUs are read by the scenario (`--sample-every-step` under `samples: every_step`, and `watched: true` with a `sampled` series in `--timeline`). At each virtual timestamp, all samples arriving for that timestamp across all participants are latched together before conditions are evaluated, so the result does not depend on participant order in `simulation.yaml`. When the right-hand variable is an input driven by the scenario (including with `dither`), the comparison uses the `sampled` value reported by the ECU rather than the scheduled `written` value.
 - An `expect` at time 0 does not fail for lack of a sample: it looks at the sample of the ECU step that starts at 0 ms (`its sample of 0 ms`), which already shows the writes at time 0.
 - A missing sample fails a step at time 0 when a `ramp` without `from` or a `wave` without `around` moves a variable that the scenario has not written yet (`scenario-write`). Writes at time 0 are handed over before the first simulation step, so there is no sample yet to take the start value from (see [Writes](#writes)).
 
@@ -626,7 +638,7 @@ U is E if E falls on an ECU step, and the next ECU step if E falls between 2 ECU
 | A write was not applied | `scenario-write`. |
 | Both happened | `code` is whichever the launcher learned of first (see [Results](#results)). |
 
-- A variable without samples is handled differently from an `expect` with `hold_for_ms`: a sample before T is never used (see [Values that conditions see](#values-that-conditions-see)).
+- A variable without samples is handled differently from an `expect` with `hold_for_ms`: a sample before T is never used (see [Values that conditions see](#values-that-conditions-see)). In a variable-to-variable comparison, this applies symmetrically to the right-hand variable: samples before T are ignored on both sides, and at U any left-hand or right-hand variable with no sample in `[T, U]` fails the step. When constant and variable comparisons are combined on one variable (`{ ge: { variable: B.x }, le: 100 }`), each comparison is checked independently so a constant violation fails immediately without waiting for the right-hand variable's sample.
 - To check over a different interval, put the `expect` in a step of its own after the `ramp` or `wave`.
 - The failure message has the same form as for `hold_for_ms`, and shows the interval and the sample it looked at: `not true during the ramp (from 1000 ms to 2000 ms): at 1340 ms Engine.engine.speed le 3000, but it was 3050 (its sample of 1340 ms)`. When U differs from E, the interval gets `, where its end (2000 ms) takes effect`.
 
@@ -873,8 +885,8 @@ Only the steps that use such a variable are skipped.
 
 | Case | What is skipped |
 |---|---|
-| One step uses both present and absent variables | The whole step. The present variables are not written either. |
-| Only the `expect` beside `ramp` or `wave` uses an absent variable | Only that `expect` (see [When the `expect` variable is absent](#when-the-expect-variable-is-absent)). |
+| One step uses both present and absent variables | The whole step (including when an absent variable is on the right-hand side via `{ variable: ... }`). The present variables are not written either. |
+| Only the `expect` beside `ramp` or `wave` uses an absent variable | Only that `expect` (see [When the `expect` variable is absent](#when-the-expect-variable-is-absent)). A runtime disconnection or runtime schema/enum mismatch on a present variable is never skipped and fails the step immediately. |
 | A later step relies on a skipped `set` | The later step is not skipped; it runs. |
 
 For a step that does not hold on some variants, either make it use an absent variable, or split the scenario and add `only`.
@@ -960,7 +972,7 @@ The `at` of each step (`at_ms` in JSON) is the virtual time at which the step's 
 
 ### A failing example
 
-A failure finding shows the scenario file and line, the step, the time and the value at that time. The example below checks that the engine speed reaches 1700 rpm within 200 ms of setting the throttle, but the speed reaches it only at 330 ms (the `wait_until` of the example above).
+A failure finding shows the scenario file and line, the step, the time and the value at that time (when a variable-to-variable comparison fails, both variables' values and sample times are shown, such as `... but it was 1650 (its sample of 340 ms) while Engine.engine.speed was 1800 (its sample of 340 ms)`). The example below checks that the engine speed reaches 1700 rpm within 200 ms of setting the throttle, but the speed reaches it only at 330 ms (the `wait_until` of the example above).
 
 <!-- throttle_response.yaml -->
 ```yaml
@@ -1366,6 +1378,7 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `scenario-handover` | `after_scenario: "pause"` in run requests (pausing at scenario pass for manual control) | `after_scenario` is an unknown-key error. |
 | `scenario-cases` | Named scenario `cases:`, `--case` / request `"case"`, `case_details`, and `serve` inline `intent.cli_params` | `cases` and request `"case"` are unknown-key errors. |
 | `scenario-templates` | Reusable scenario templates (`- template:`), `call_stack` provenance, and `param_meta` / `missing_params` | `template` is an unknown-key error. |
+| `scenario-variable-compare` | Runtime variable-to-variable comparisons (`{ variable: <participant>.<variable> }`) in `expect` and `wait_until` | `variable` in a condition is an unknown-key or type error. |
 
 [simulation-events.md](simulation-events.md) lists every `features` name.
 

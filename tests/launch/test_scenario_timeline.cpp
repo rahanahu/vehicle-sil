@@ -1770,3 +1770,60 @@ TEST_CASE(timeline_json_records_template_dither_cancel_and_nested_every_step_ser
     CHECK(tl.find("\"variable\": \"Body.body.speed\"") != std::string::npos);
     CHECK(tl.find("\"source\": \"sampled\"") != std::string::npos);
 }
+
+TEST_CASE(timeline_json_records_variable_to_variable_watches_and_failures)
+{
+    // 1. Passing and failing variable-to-variable scenarios (including driven + dithered RHS):
+    // watch.conditions[].compare[] has `"value": null` + `"variable": "Door.level"`,
+    // failed.conditions[] has `"compared": [{ "variable", "value", "sample_ms" }]`,
+    // RHS has `"watched": true` and a `"sampled"` series (plus `"written"` when driven),
+    // and the timeline is independent of controller tick and delivery policy.
+    const std::string text =
+        "vehicle_sil_scenario: 1\n"
+        "inputs:\n"
+        "  Door.level: { dither: { triangle: { amplitude: 2, period_ms: 40 } } }\n"
+        "steps:\n"
+        "  - at_ms: 0\n"
+        "    set: { Body.level: 20, Door.level: 20 }\n"
+        "  - at_ms: 20\n"
+        "    expect: { Body.level: { eq: { variable: Door.level }, le: 100 } }\n"
+        "  - at_ms: 30\n"
+        "    expect: { Body.level: { eq: { variable: Door.level } } }\n";
+    const std::string first = compared(timeline_of(text, 10ms));
+    // At t = 20 ms triangle dither (period 40 ms) is 0 -> Door.level = 20 (step 2 passes);
+    // at t = 30 ms triangle dither is -2 -> Door.level = 18 != 20 (step 3 fails)!
+    CHECK(first.find("\"status\": \"failed\"") != std::string::npos);
+    CHECK(first.find("\"value\": null,\n                \"variable\": \"Door.level\"") != std::string::npos);
+    CHECK(first.find("\"compared\": [\n              {\n                \"variable\": \"Door.level\",\n                \"value\": 18,\n"
+                     "                \"sample_ms\": 30\n              }\n            ]") != std::string::npos);
+    // Door.level has both written and sampled series, and watched: true!
+    CHECK(first.find("\"name\": \"Door.level\"") != std::string::npos);
+    CHECK(first.find("\"variable\": \"Door.level\",\n      \"source\": \"written\"") != std::string::npos);
+    CHECK(first.find("\"variable\": \"Door.level\",\n      \"source\": \"sampled\"") != std::string::npos);
+    for (const SimDuration tick : {SimDuration{20ms}, SimDuration{5ms}, SimDuration{15ms}})
+    {
+        check_text(compared(timeline_of(text, tick)), first, "variable-to-variable timeline with another tick");
+    }
+    for (const auto& [name, policy] : policies())
+    {
+        check_text(compared(timeline_of(text, 10ms, [&](World& w) { w.policy = policy; })), first, name.c_str());
+    }
+
+    // 2. During unseen RHS in timeline JSON: LHS has actual value & sample_ms, while compared[] has null value & sample_ms.
+    const std::string unseenRhs =
+        "vehicle_sil_scenario: 1\n"
+        "samples: as_sent\n"
+        "steps:\n"
+        "  - at_ms: 20\n"
+        "    ramp: { Body.level: { from: 10, to: 20, over_ms: 20 } }\n"
+        "    expect: { Body.level: { ge: { variable: Door.level } } }\n";
+    const std::string tlUnseen = timeline_of(
+        unseenRhs, 10ms, [](World& w) {
+            w.ecus[1].step = 100ms;
+            w.ecus[1].level = 5;
+        },
+        catalog(10ms, 100ms));
+    CHECK(tlUnseen.find("\"condition\": 0,\n            \"value\": 20,\n            \"sample_ms\": 40,\n            \"compared\": [\n"
+                        "              {\n                \"variable\": \"Door.level\",\n                \"value\": null,\n"
+                        "                \"sample_ms\": null\n              }\n            ]") != std::string::npos);
+}

@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# Compare two variables directly across the two ECUs: the dashboard's shown speed tracks the engine's
+# speed within the J1939 broadcast interval during a ramp and matches it once settled (docs/scenario.md):
+#   vehicle_sil_launch run simulation.yaml --scenario scenarios/speed_tracking.yaml
+vehicle_sil_scenario: 1
+name: speed tracking
+params:
+  max_lag_rpm: 600
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - wait_until:
+      Engine.engine.speed: { ge: 1800 }
+      Dashboard.dashboard.engine_speed: { variable: Engine.engine.speed }
+      Dashboard.dashboard.engine_lost: { ne: { variable: Engine.ecu.connected } }
+    timeout_ms: 800
+  - expect: { Dashboard.dashboard.engine_speed: { variable: Engine.engine.speed } }
+    hold_for_ms: 100
+  - ramp: { Engine.engine.throttle: { to: 20, over_ms: 200 } }
+    expect:
+      Dashboard.dashboard.engine_speed:
+        near: { variable: Engine.engine.speed }
+        tolerance: "${max_lag_rpm}"
+  - expect: { Dashboard.dashboard.engine_speed: { variable: Engine.engine.speed } }
+    within_ms: 400

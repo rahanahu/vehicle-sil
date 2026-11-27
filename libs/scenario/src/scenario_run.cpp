@@ -279,7 +279,8 @@ void ScenarioEngine::begin(const std::vector<EnginePeer>& peers)
         }
         const auto& schema = peers[v.participant].schema;
         const auto it = std::find_if(schema.begin(), schema.end(), [&v](const control::VariableInfo& info) { return info.name == v.name; });
-        if (it == schema.end() || it->type != v.type)
+        if (it == schema.end() || it->type != v.type ||
+            (v.type == control::ValueType::Enum && !enum_items_match(it->items, v.items)))
         {
             variables_[i].problem = "participant '" + participant + "' does not offer the variable '" + v.name +
                                     "' as --describe said it would (is the executable the one that was checked?)";
@@ -467,6 +468,13 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
     for (const auto& c : step.conditions)
     {
         used.emplace_back(c.variable, false);
+        for (const auto& comp : c.all)
+        {
+            if (comp.rhs_variable)
+            {
+                used.emplace_back(*comp.rhs_variable, false);
+            }
+        }
     }
     for (const auto& [v, writes] : used)
     {
@@ -485,9 +493,26 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
             {
                 for (std::size_t c = 0; c < step.conditions.size(); ++c)
                 {
-                    if (step.conditions[c].variable == v)
+                    const ScenarioCondition& cond = step.conditions[c];
+                    const bool usesVar =
+                        cond.variable == v ||
+                        std::any_of(cond.all.begin(), cond.all.end(),
+                                    [variable = v](const ScenarioComparison& comp) { return comp.rhs_variable == variable; });
+                    if (usesVar)
                     {
-                        failure.conditions.push_back(TimelineFailedCondition{c, std::nullopt, std::nullopt});
+                        TimelineFailedCondition fc{c, std::nullopt, std::nullopt};
+                        for (const ScenarioComparison& comp : cond.all)
+                        {
+                            if (comp.rhs_variable &&
+                                std::none_of(fc.compared.begin(), fc.compared.end(),
+                                             [rhs = *comp.rhs_variable](const TimelineComparedValue& cv) {
+                                                 return cv.variable == rhs;
+                                             }))
+                            {
+                                fc.compared.push_back(TimelineComparedValue{*comp.rhs_variable, std::nullopt, std::nullopt});
+                            }
+                        }
+                        failure.conditions.push_back(std::move(fc));
                     }
                 }
             }
@@ -1531,20 +1556,67 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
     if (watch.beside)
     {
         // A variable whose ECU sent no sample in the time was not looked at: that is no pass.
-        std::string unseen;
+        const auto seen_in_window = [&](std::size_t v) {
+            return variables_[v].value.has_value() && variables_[v].value_time && *variables_[v].value_time >= watch.from;
+        };
+        std::vector<std::size_t> unseenVars;
+        const auto note_unseen = [&](std::size_t v) {
+            if (std::find(unseenVars.begin(), unseenVars.end(), v) == unseenVars.end())
+            {
+                unseenVars.push_back(v);
+            }
+        };
         TimelineFailure notSeen;
         for (std::size_t c = 0; c < step.conditions.size(); ++c)
         {
             const ScenarioCondition& condition = step.conditions[c];
-            const Variable& known = variables_[condition.variable];
-            if (!known.value_time || *known.value_time < watch.from)
+            const bool lhsSeen = seen_in_window(condition.variable);
+            if (!lhsSeen)
             {
-                unseen += (unseen.empty() ? "" : ", ") + scenario_.variables[condition.variable].text;
-                notSeen.conditions.push_back(TimelineFailedCondition{c, std::nullopt, std::nullopt});
+                note_unseen(condition.variable);
+            }
+            std::vector<std::size_t> rhsVars;
+            bool anyRhsUnseen = false;
+            for (const ScenarioComparison& comp : condition.all)
+            {
+                if (comp.rhs_variable && std::find(rhsVars.begin(), rhsVars.end(), *comp.rhs_variable) == rhsVars.end())
+                {
+                    rhsVars.push_back(*comp.rhs_variable);
+                    if (!seen_in_window(*comp.rhs_variable))
+                    {
+                        note_unseen(*comp.rhs_variable);
+                        anyRhsUnseen = true;
+                    }
+                }
+            }
+            if (!lhsSeen || anyRhsUnseen)
+            {
+                const Variable& lhs = variables_[condition.variable];
+                TimelineFailedCondition failed{
+                    c,
+                    lhsSeen ? lhs.value : std::nullopt,
+                    lhsSeen ? lhs.value_time : std::nullopt,
+                };
+                for (const std::size_t rhsIdx : rhsVars)
+                {
+                    const bool rhsSeen = seen_in_window(rhsIdx);
+                    const Variable& rhs = variables_[rhsIdx];
+                    failed.compared.push_back(TimelineComparedValue{
+                        rhsIdx,
+                        rhsSeen ? rhs.value : std::nullopt,
+                        rhsSeen ? rhs.value_time : std::nullopt,
+                    });
+                }
+                notSeen.conditions.push_back(std::move(failed));
             }
         }
-        if (!unseen.empty())
+        if (!unseenVars.empty())
         {
+            std::string unseen;
+            for (const std::size_t v : unseenVars)
+            {
+                unseen += (unseen.empty() ? "" : ", ") + scenario_.variables[v].text;
+            }
             fail(index, t, "scenario-failed",
                  "not checked during the " + std::string(step_kind_name(step.kind)) + " (" + during(index, watch) + "): no sample of " +
                      unseen + " in that time (its ECU sends one after each of its steps; with samples: as_sent, every sample_period); make the " + step_kind_name(step.kind) +
