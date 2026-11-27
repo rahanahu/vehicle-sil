@@ -182,7 +182,8 @@ Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more 
 |---|---|
 | 名前 | この実行にない名前は、ページのエラーにはなりません。部品が「this variable is not in the current run: check the names (ECU and variable)」と表示します。 |
 | 接続は 1 本 | 部品はページの接続を共有します。自分のスクリプトも同じ接続を使います。テンプレートの `main.js` の `connect()` が同じ接続を返します。断られた開始、停止、時間の操作は `<vsil-status>` に出ます。断られた変数の書き込みは、その変数を出している部品（たとえばスライダー）の所と、自分のスクリプトが受ける `ActionError` に出ます。 |
-| ボタンが使えない理由 | 今は仕事をできない部品（実行がないときの「Stop」）は `aria-disabled="true"` になり、理由のコードが `data-reason` に入ります。文はスクリーンリーダーが読みます。何もすることがないと言うだけの理由（実行がない）は、画面には出ません。 |
+| ボタンが使えない理由 | 今は仕事をできない部品（実行がないときの「Stop」）は `aria-disabled="true"` になり、理由のコードが `data-reason` に入ります。文はスクリーンリーダーが読み、空の説明や自明な `QUIET` 理由（`not-running`、`offline`、`connecting`、`already-running`、`paused`、`not-paused`、`not-stopping`、`already-stopping`、`starting`）は `hidden` が付いてレイアウトを乱しません。`.vsil-why` や `.vsil-note` に CSS を当てるときは `:not([hidden])` を使ってください（[gui.md](../gui.md#部品のスタイリングと書き込みイベントの購読) の「部品のスタイリングと書き込みイベントの購読」）。 |
+| 書き込みイベントと状態 | `<vsil-slider>` と `<vsil-write>` はバブリングする `vsil-write-queued` / `vsil-write-result` カスタムイベントを発火し、CSS 向けに `data-write-status`（`idle`、`sending`、`queued`、`applied`、`failed`）を設定します（`examples/gui_starter/style.css` 参照）。 |
 
 ## 手順 4: 配信して確認する
 
@@ -288,7 +289,7 @@ rm token.header
 | ファイルが 404 になる | 配信されない拡張子か、`.` で始まる名前、シンボリックリンクです。 | [gui.md](../gui.md) の「`--web` で配信するファイル」の表を確認します。 |
 | `curl` の `POST` が `forbidden-origin` で拒否される | `Origin` ヘッダーがないか、サーバー自身の origin と違います。 | `-H "Origin: http://127.0.0.1:<port>"` を付けます。 |
 | ファイルを直したのに、画面が変わらない | ブラウザが前のページを表示しています。 | ページを読み込み直します（GUI サーバーの再起動は不要です）。 |
-| `cannot listen on 127.0.0.1:<port> (Address already in use)` | 動いているサーバーと同じ `--port` で、2 つ目の GUI サーバーを起動しました。 | 1 つ目を止めるか、別の `--port` を選びます（`--port` を付けなくてもかまいません）。`--port` なしなら、2 つ目は別のポートで、自分のトークンと自分のランチャーで起動します。表示された URL を使ってください。 |
+| `cannot listen on 127.0.0.1:<port> (address already in use)` または `(permission denied or port already in use)` が出て終了コード 2 で終わる | すでにあるサーバーと同じ `--port` で起動しました（サーバーは日本語 Windows などのロケールに依存せず純 ASCII で理由を出力し、Windows の `SO_EXCLUSIVEADDRUSE` 下のポート競合・権限エラーでは `permission denied or port already in use` になります）。 | 1 つ目を止めるか、別の `--port` を選びます（`--port` を省くと空きポートを自動で選びます）。`--port` なしなら、2 つ目は別のポートで自分のトークンとランチャーで起動するため、表示された URL を使ってください。 |
 
 ## ネットワークを外につなぐ（任意）
 

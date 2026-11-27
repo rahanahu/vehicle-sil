@@ -88,7 +88,7 @@ A variable is written `<participant>.<variable>`, cut at the first dot (`Engine.
 | `watch(client.variable('Engine.engine.speed'), fn)` | A value drawn your own way (a meter). `fn` runs now and on every change. |
 | `await client.variable('Engine.engine.throttle').write(100)` | An operation of your own: a Promise that rejects with an `ActionError` (a sentence in `message`, and `outcome`: `refused` or `unknown`). |
 
-What the starter leaves out, because the sample screens do it: choosing the configuration file, **Check**, and a field to choose any variable and type a value. To choose the file, list the files with `client.low.configs()` and start with your own button: `client.run.start(intent, { file })` (`<vsil-run-controls>` starts the file of the last run). `client.low` is the lower library of the same connection (`check`, `variables.bind` and more); see "[Build widgets (`bind`)](../../gui/client/README.md#build-widgets-bind)" for widgets of your own.
+What the starter leaves out, because the sample screens do it: choosing the configuration file, **Check**, and a field to choose any variable and type a value. To choose the file, list the files with `client.low.configs()` and start with your own button: `client.run.start(intent, { file })` (`<vsil-run-controls>` starts the file of the last run). `client.low` is the lower library of the same connection (`check`, `variables.bind` and more); see "[Build widgets (`bind`)](../../docs/gui-client-low-level.md#build-widgets-bind)" for widgets of your own.
 
 ### Connect a network outside
 
@@ -130,10 +130,9 @@ try {
   await front.run.start({ start_paused: true }); // resolves when the server has accepted the start, not when the run is up
   await until(front.status, (status) => status.run === 'paused', { timeoutMs: 30_000 });
   unsubscribe = front.variable('Engine.engine.speed').subscribe((view) => console.log(view.text, view.unit)); // values arrive while you subscribe
-  const written = front.variable('Engine.engine.throttle').write(60); // not awaited yet: a paused run applies it in the next step
-  written.catch(() => undefined); // no unhandled rejection if the step fails first; `await written` below still throws
+  const queued = await front.variable('Engine.engine.throttle').enqueue(60); // resolves once queued by the ECU
   await front.time.step(100); // resolves when 100 ms of simulated time have passed and the run is paused again
-  await written;
+  await queued.applied();
   await front.time.resume();
   await front.time.pause(); // pause again when you like; `resume()` goes on
 } catch (error) {

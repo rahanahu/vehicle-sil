@@ -182,7 +182,8 @@ Some details of this page:
 |---|---|
 | Names | A name that is not in this run does not make an error in the page: the part shows "this variable is not in the current run: check the names (ECU and variable)". |
 | One connection | The parts share the connection of the page. A script of your own shares it too: `connect()` in the template's `main.js` returns the same connection. A refused start, stop or time operation shows in `<vsil-status>`. A refused write of a variable shows next to the part that shows that variable (the slider, for example), and in the `ActionError` that your own script receives. |
-| Why a button cannot be used | A part that cannot do its job now (**Stop** with no run) has `aria-disabled="true"` and the code of the reason in `data-reason`. The sentence is read by a screen reader; a reason that only says there is nothing to do (no run) is not shown on the screen. |
+| Why a button cannot be used | A part that cannot do its job now (**Stop** with no run) has `aria-disabled="true"` and the code of the reason in `data-reason`. The sentence is read by a screen reader; empty descriptions and self-evident `QUIET` reasons (`not-running`, `offline`, `connecting`, `already-running`, `paused`, `not-paused`, `not-stopping`, `already-stopping`, `starting`) carry `hidden` so they do not clutter the layout. When styling `.vsil-why` or `.vsil-note`, use `:not([hidden])` (see "[Styling parts and subscribing to write events](../gui.md#styling-parts-and-subscribing-to-write-events)" in `gui.md`). |
+| Write events and status | `<vsil-slider>` and `<vsil-write>` dispatch bubbling `vsil-write-queued` and `vsil-write-result` custom events and set `data-write-status` (`idle`, `sending`, `queued`, `applied`, `failed`) for CSS styling (see `examples/gui_starter/style.css`). |
 
 ## Step 4: Serve the screen and verify it
 
@@ -288,7 +289,7 @@ The answer (`{"instance": "...", "run_id": "..."}`) only says that the server re
 | A file returns 404 | Its extension is not served, its name starts with `.`, or it is a symbolic link. | See the table in "Files served with `--web`" in [gui.md](../gui.md#files-served-with---web). |
 | A `POST` with `curl` is rejected with `forbidden-origin` | The `Origin` header is missing or differs from the server's own origin. | Add `-H "Origin: http://127.0.0.1:<port>"`. |
 | The screen does not change after you edit a file | The browser shows the old page. | Reload the page. You do not need to restart the GUI server. |
-| `cannot listen on 127.0.0.1:<port> (Address already in use)` | You started a second GUI server with the `--port` of one that is running. | Stop the first one, or choose another `--port` (or leave it out). Without `--port`, the second server starts on another port with its own token and its own launcher: use the URL it prints. |
+| `cannot listen on 127.0.0.1:<port> (address already in use)` or `(permission denied or port already in use)`, and exit code 2 | You started a second GUI server with a `--port` already in use (the server always prints a locale-independent ASCII reason; on Windows with `SO_EXCLUSIVEADDRUSE`, port collisions or permission errors report `permission denied or port already in use`). | Stop the first server, or choose another `--port` (or leave `--port` out to pick a free port automatically). Without `--port`, a second server starts on another port with its own token and launcher: use the URL it prints. |
 
 ## Connect a network outside (optional)
 

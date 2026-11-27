@@ -43,3 +43,25 @@ vsil-value[data-on='true'] {
   background: #f5c400;
   color: #000;
 }
+
+/* Inline reason/note text next to parts: keep [hidden] elements hidden (QUIET reasons stay screen-reader only) */
+.vsil-why:not([hidden]),
+.vsil-note:not([hidden]) {
+  margin-left: 0.4rem;
+  font-size: 0.85em;
+  color: light-dark(#555, #bbb);
+}
+
+/* Write lifecycle state on <vsil-slider> and <vsil-write> */
+[data-write-status='sending'],
+[data-write-status='queued'] {
+  opacity: 0.75;
+}
+[data-write-status='applied'] {
+  outline: 1px solid light-dark(#1b7a3d, #6ee7a0);
+  outline-offset: 2px;
+}
+[data-write-status='failed'] {
+  outline: 1px solid light-dark(#b00020, #ff8a80);
+  outline-offset: 2px;
+}

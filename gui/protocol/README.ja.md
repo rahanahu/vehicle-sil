@@ -28,7 +28,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 - バージョンが違うときは、待っても直らないので再接続しません。ライブラリは `api/app` で `ProtocolError`、`hello` で `session.incompatible` を立てて止まります。
 - **受信し直すもの**: WebSocket のメッセージが JSON として読めない、または `hello` と `session` の要約の中心のフィールド（`id`、`state`、`launcher`、`stop`）が読めないときは、何が抜けたかわからないので、再接続して `hello` から受信し直します。要約を正とします。続けて起きるたびに、再接続するまでの間隔を延ばします。
 - ランチャーのイベント（`event` の中身）は、ランチャーの `serve [--once]` の Events v4 ストリーム（`hello` の `vehicle_sil_events: 4`）の形そのままです（[docs/simulation-events.md](../../docs/ja/simulation-events.md)）。
-- ランチャーのオブジェクト（要約と `api/check` のチェックと実行の結果、指摘、ランチャーのイベント）は、キーをすべて中継します。クライアントのライブラリは、画面に要るキーに型を付け、ランチャーのオブジェクト全体を `raw` に残します（[gui/client/README.md](../client/README.ja.md#ランチャーのキーraw) の「ランチャーのキー（`raw`）」）。
+- ランチャーのオブジェクト（要約と `api/check` のチェックと実行の結果、指摘、ランチャーのイベント）は、キーをすべて中継します。クライアントのライブラリは、画面に要るキーに型を付け、ランチャーのオブジェクト全体を `raw` に残します（[docs/ja/gui-client-low-level.md](../../docs/ja/gui-client-low-level.md#ランチャーのキーraw) の「ランチャーのキー（`raw`）」）。
 - エラーの `code` の名前は変えません（追加することはあります）。`message` は人向けの英語の 1 文で、文言は変わることがあります。プログラムは `code` で分けます。
 
 ## 認証と Origin

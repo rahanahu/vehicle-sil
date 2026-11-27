@@ -88,7 +88,7 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | `watch(client.variable('Engine.engine.speed'), fn)` | 自分の流儀で描く値（メーター）。`fn` はいま呼ばれ、変わるたびに呼ばれます。 |
 | `await client.variable('Engine.engine.throttle').write(100)` | 自分の操作。通らなければ `ActionError` で reject する Promise です（文は `message`、`outcome` は `refused` か `unknown`）。 |
 
-スターターに入れていないものは、サンプルの画面がやっていることです。設定ファイルの選択、「Check」、任意の変数を選んで値を入力する欄です。設定ファイルを選ぶには、`client.low.configs()` で一覧を取り、自分のボタンで `client.run.start(intent, { file })` を呼びます（`<vsil-run-controls>` は最後の実行のファイルを開始します）。同じ接続の低い口 `client.low`（`check`、`variables.bind` など）も使えます。自分の部品の作り方は「[コンポーネントを作る（`bind`）](../../gui/client/README.ja.md#コンポーネントを作るbind)」にあります。
+スターターに入れていないものは、サンプルの画面がやっていることです。設定ファイルの選択、「Check」、任意の変数を選んで値を入力する欄です。設定ファイルを選ぶには、`client.low.configs()` で一覧を取り、自分のボタンで `client.run.start(intent, { file })` を呼びます（`<vsil-run-controls>` は最後の実行のファイルを開始します）。同じ接続の低い口 `client.low`（`check`、`variables.bind` など）も使えます。自分の部品の作り方は「[コンポーネントを作る（`bind`）](../../docs/ja/gui-client-low-level.md#コンポーネントを作るbind)」にあります。
 
 ### ネットワークを外につなぐ
 
@@ -130,10 +130,9 @@ try {
   await front.run.start({ start_paused: true }); // サーバーが開始を受けたときに解決します。実行が立ち上がったときではありません
   await until(front.status, (status) => status.run === 'paused', { timeoutMs: 30_000 });
   unsubscribe = front.variable('Engine.engine.speed').subscribe((view) => console.log(view.text, view.unit)); // 値は購読している間に届きます
-  const written = front.variable('Engine.engine.throttle').write(60); // まだ待たない: 一時停止中の実行は、次のステップで適用します
-  written.catch(() => undefined); // ステップが先に失敗しても、未処理の拒否になりません。下の `await written` は投げます
+  const queued = await front.variable('Engine.engine.throttle').enqueue(60); // ECU キューへの到達で解決します
   await front.time.step(100); // 100 ms 進んで、再び一時停止したときに解決します
-  await written;
+  await queued.applied();
   await front.time.resume();
   await front.time.pause(); // 好きなときにまた一時停止できます。`resume()` で続けます
 } catch (error) {
