@@ -162,11 +162,47 @@ describe('the buttons', () => {
   it('puts a reason that only says there is nothing to do in the description, hidden', async () => {
     front.cells.controls.patch({ stop: refused('not-running', 'No run is going.') });
     const part = await mount('vsil-run-controls', front);
-    const why = described(button(part, 'Stop'));
+    const stop = button(part, 'Stop');
+    const why = described(stop);
     expect(why.textContent).toBe('No run is going.');
     expect(why.hidden).toBe(true);
     front.cells.controls.patch({ stop: refused('busy', 'Another action is on its way.') });
     expect(why.hidden).toBe(false);
+    // When ok with no caution, the empty description element stays hidden so it never causes layout jitter.
+    front.cells.controls.patch({ stop: ok() });
+    expect(why.textContent).toBe('');
+    expect(why.hidden).toBe(true);
+    expect(stop.dataset['reason']).toBeUndefined();
+    expect(document.getElementById(stop.getAttribute('aria-describedby')!)).toBe(why);
+  });
+
+  it('hides all self-evident QUIET reason codes visually while keeping data-reason and accessible descriptions', async () => {
+    const quietCodes = [
+      'not-running',
+      'offline',
+      'connecting',
+      'already-running',
+      'paused',
+      'not-paused',
+      'not-stopping',
+      'already-stopping',
+      'starting',
+    ];
+    const part = await mount('vsil-run-controls', front);
+    const start = button(part, 'Start');
+    const why = described(start);
+    for (const code of quietCodes) {
+      front.cells.controls.patch({ start: refused(code, `Reason: ${code}.`) });
+      expect(start.dataset['reason']).toBe(code);
+      expect(why.textContent).toBe(`Reason: ${code}.`);
+      expect(why.hidden).toBe(true);
+      await expect.element(start).toHaveAccessibleDescription(`Reason: ${code}.`);
+    }
+    // Non-quiet reasons remain visible.
+    front.cells.controls.patch({ start: refused('scenario-running', 'A scenario is running.') });
+    expect(start.dataset['reason']).toBe('scenario-running');
+    expect(why.hidden).toBe(false);
+    await expect.element(start).toHaveAccessibleDescription('A scenario is running.');
   });
 
   it('keeps a refused button focusable, and its reason is its accessible description even when hidden', async () => {

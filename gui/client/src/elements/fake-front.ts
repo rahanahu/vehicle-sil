@@ -58,9 +58,9 @@ export const viewOf = (fields: Partial<VariableView> = {}): VariableView =>
     why: null,
     writing: false,
     problem: null,
-    condition: 'live',
+    condition: { kind: 'live', reading: { value: 1, sampleMs: 0, simMs: 0, paused: false } },
     block: null,
-    write_status: 'idle',
+    write_status: { kind: 'idle' },
     ...fields,
   }) as VariableView;
 
@@ -171,28 +171,32 @@ export function fakeFront(): FakeFront {
         const dot = ref.indexOf('.');
         const peer = dot > 0 ? ref.slice(0, dot) : ref;
         const name = dot > 0 ? ref.slice(dot + 1) : ref;
-        const makeResult = (value: number | boolean | string): WriteResult => ({
+        let nextSeq = 0;
+        const makeResult = (value: number | boolean | string, seq: number): WriteResult => ({
           session: '1',
-          seq: 1,
+          seq,
           peer,
           name,
           value,
-          appliedAtMs: 0,
+          appliedAtMs: seq * 10,
           late: false,
         });
         variable = {
           cell,
           get: cell.get,
           subscribe: cell.subscribe,
-          enqueue: vi.fn(async (value: number | boolean | string): Promise<QueuedWrite> => ({
-            session: '1',
-            seq: 1,
-            peer,
-            name,
-            value,
-            applied: async () => makeResult(value),
-          })),
-          write: vi.fn(async (value: number | boolean | string) => makeResult(value)),
+          enqueue: vi.fn(async (value: number | boolean | string): Promise<QueuedWrite> => {
+            const seq = ++nextSeq;
+            return {
+              session: '1',
+              seq,
+              peer,
+              name,
+              value,
+              applied: async () => makeResult(value, seq),
+            };
+          }),
+          write: vi.fn(async (value: number | boolean | string) => makeResult(value, ++nextSeq)),
         };
         variables.set(ref, variable);
       }

@@ -69,8 +69,23 @@ export async function quietly(operation: () => Promise<unknown>): Promise<void> 
   }
 }
 
-/** Reasons that only say there is nothing to do yet: their sentence is in the description, hidden. */
-const QUIET = new Set(['not-running', 'offline']);
+/** Reasons that only say there is nothing to do yet or a state is already self-evident: their sentence is in the description, hidden. */
+const QUIET = new Set([
+  'not-running',
+  'offline',
+  'connecting',
+  'already-running',
+  'paused',
+  'not-paused',
+  'not-stopping',
+  'already-stopping',
+  'starting',
+]);
+
+/** Whether `code` is a self-evident state whose description stays hidden visually while remaining accessible. */
+export function isQuietReason(code: string): boolean {
+  return QUIET.has(code);
+}
 
 /**
  * The base of the parts. Subclasses draw into `root` in `draw()` and register what to stop with `own()`.
@@ -212,7 +227,7 @@ export abstract class Part extends HTMLElement {
   async #bind(): Promise<void> {
     this.#clear();
     const binding = ++this.#bindings;
-    const alive = () => binding === this.#bindings && this.isConnected;
+    const alive = () => binding === this.#bindings && !this.#bindScheduled && this.isConnected;
     let shared = false;
     try {
       let client = this.#client;
@@ -233,8 +248,9 @@ export abstract class Part extends HTMLElement {
   /**
    * Binds `element` to one control of `client.controls`: `aria-disabled` (the caller ignores input while it is true),
    * `data-reason` and `data-caution` (the codes), and a sentence in an element that describes it (`aria-describedby`;
-   * returned, to be put next to `element`). A reason that only says there is nothing to do (`not-running`, `offline`)
-   * is in that element too, but hidden: a screen reader reads it, the page does not show it seven times.
+   * returned, to be put next to `element`). Empty descriptions and self-evident `QUIET` reasons (`not-running`,
+   * `offline`, `connecting`, `already-running`, `paused`, `not-paused`, `not-stopping`, `already-stopping`, `starting`)
+   * stay hidden visually while remaining accessible to screen readers.
    */
   protected describe(client: Front, control: OperationName, element: HTMLElement): HTMLElement {
     const why = h('small', { id: `vsil-why-${++ids}`, class: 'vsil-why' });
@@ -246,8 +262,9 @@ export abstract class Part extends HTMLElement {
         setData(element, 'reason', reason?.code ?? null);
         setData(element, 'caution', caution?.code ?? null);
         const shown = reason ?? caution;
-        why.textContent = shown ? reasonText(shown) : '';
-        why.hidden = shown !== null && QUIET.has(shown.code);
+        const text = shown ? reasonText(shown) : '';
+        why.textContent = text;
+        why.hidden = text === '' || (shown !== null && QUIET.has(shown.code));
       }),
     );
     return why;

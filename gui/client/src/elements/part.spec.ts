@@ -284,11 +284,11 @@ describe('the life of a part', () => {
     expect(writeFalse.getAttribute('value')).toBe('false');
     expect(writeFalse.querySelector('button')!.textContent).toBe('Disconnect');
     writeFalse.querySelector('button')!.click();
-    expect(front.variables.get('E.e.connected')!.write).toHaveBeenCalledWith(false);
+    expect(front.variables.get('E.e.connected')!.enqueue).toHaveBeenCalledWith(false);
 
     expect(writeZero.getAttribute('value')).toBe('0');
     writeZero.querySelector('button')!.click();
-    expect(front.variables.get('E.e.throttle')!.write).toHaveBeenCalledWith(0);
+    expect(front.variables.get('E.e.throttle')!.enqueue).toHaveBeenCalledWith(0);
 
     expect(valueEl.hasAttribute('no-unit')).toBe(true);
     expect(valueEl.getAttribute('on')).toBe('HI');
