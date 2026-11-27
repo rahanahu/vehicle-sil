@@ -231,6 +231,8 @@ export interface ScenarioView {
   /** The scenario file (relative to root). */
   file: string;
   name: string | null;
+  /** Selected case name, if any. */
+  case?: string | null;
   /** Number of steps (from the check result; null until then). */
   stepCount: number | null;
   /** Steps received (in index order, the last state of each step). After the result, every step. */
@@ -259,6 +261,7 @@ function scenarioView(
   return {
     file: summary.file,
     name: summary.name,
+    ...(summary.case === undefined ? {} : { case: summary.case }),
     stepCount: summary.step_count,
     steps: summary.steps,
     stepsOmitted: summary.steps_omitted,
@@ -597,6 +600,9 @@ export function applySummary(session: SessionView, summary: SessionSummary): Ses
     scenario = {
       ...scenario,
       name: result.scenario.name ?? scenario.name,
+      ...(result.scenario.case !== undefined
+        ? { case: result.scenario.case ?? scenario.case ?? null }
+        : {}),
       stepCount: result.scenario.steps.length,
       steps: result.scenario.steps,
       stepsOmitted: 0,
@@ -797,7 +803,14 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         participants: mergeCheck(next.participants, event.check),
         scenario:
           next.scenario && found
-            ? { ...next.scenario, name: found.name, stepCount: found.steps }
+            ? {
+                ...next.scenario,
+                name: found.name,
+                ...(found.case !== undefined
+                  ? { case: found.case ?? next.scenario.case ?? null }
+                  : {}),
+                stepCount: found.steps,
+              }
             : next.scenario,
       };
     }
@@ -884,6 +897,9 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
               return {
                 ...next.scenario,
                 name: event.result.scenario.name,
+                ...(event.result.scenario.case !== undefined
+                  ? { case: event.result.scenario.case ?? next.scenario.case ?? null }
+                  : {}),
                 stepCount: next.scenario.stepCount ?? event.result.scenario.steps.length,
                 steps: event.result.scenario.steps,
                 status: event.result.scenario.status,

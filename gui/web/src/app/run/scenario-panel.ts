@@ -60,6 +60,9 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
       @if (s.name) {
         <span lang="en">（{{ s.name }}）</span>
       }
+      @if (s.case) {
+        <span class="case" lang="en" data-testid="scenario-case">[{{ s.case }}]</span>
+      }
     </p>
     <div class="table" role="region" [attr.aria-label]="tableLabel" tabindex="0">
       <table data-testid="scenario-steps">
@@ -74,9 +77,23 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
         <tbody>
           @for (step of s.steps; track step.index) {
             <tr [attr.data-status]="step.status" data-testid="scenario-step">
-              <td class="line">{{ step.line ?? '—' }}</td>
+              <td class="line" lang="en">{{ stepLocation(step, s.file) }}</td>
               <td class="text">
+                @if (step.name) {
+                  <span class="step-name" lang="en" data-testid="scenario-step-name">{{
+                    step.name
+                  }}</span>
+                }
                 <span lang="en">{{ step.text }}</span>
+                @if (stepCallStack(step); as stack) {
+                  <span
+                    class="call-stack"
+                    lang="en"
+                    data-testid="scenario-step-call-stack"
+                    [title]="stack"
+                    >{{ stack }}</span
+                  >
+                }
                 @if (step.message) {
                   <span class="reason">
                     <span class="code">{{ step.code }}</span>
@@ -142,6 +159,11 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
       margin: 0 0 var(--app-space-2);
       overflow-wrap: anywhere;
     }
+    .case {
+      margin-inline-start: var(--app-space-1);
+      font: var(--mat-sys-label-medium);
+      color: var(--mat-sys-on-surface-variant);
+    }
     .table {
       overflow-x: auto;
     }
@@ -163,6 +185,17 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
     .text {
       overflow-wrap: anywhere;
       min-inline-size: 12em;
+    }
+    .step-name {
+      display: block;
+      font: var(--mat-sys-label-medium);
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .call-stack {
+      display: block;
+      margin-block-start: var(--app-space-1);
+      font: var(--mat-sys-body-small);
+      color: var(--mat-sys-on-surface-variant);
     }
     .reason {
       display: block;
@@ -247,6 +280,29 @@ export class ScenarioPanel {
     if (s.status !== null || s.stepCount === null) return 0;
     return Math.max(0, s.stepCount - s.steps.length);
   });
+
+  protected stepLocation(step: ScenarioStep, rootFile: string): string {
+    if (step.file && step.file !== rootFile) {
+      return step.line !== null ? `${step.file}:${step.line}` : step.file;
+    }
+    return step.line !== null ? String(step.line) : '—';
+  }
+
+  protected stepCallStack(step: ScenarioStep): string | null {
+    if (!step.call_stack?.length) return null;
+    return step.call_stack
+      .map((frame) => {
+        const loc =
+          frame.file && frame.line !== null
+            ? `${frame.file}:${frame.line}`
+            : (frame.file ?? (frame.line !== null ? String(frame.line) : '?'));
+        const head = frame.name ? `${loc} (${frame.name})` : loc;
+        const entries = Object.entries(frame.params);
+        if (!entries.length) return head;
+        return `${head} [${entries.map(([k, v]) => `${k}=${String(v)}`).join(', ')}]`;
+      })
+      .join(' → ');
+  }
 
   protected stepState(step: ScenarioStep): string {
     return stepStateLabel(step.status);

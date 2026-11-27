@@ -812,6 +812,25 @@ class CheckNetwork(OpenContractModel):
     kind: StrictStr | None = None
 
 
+class CheckScenarioParam(OpenContractModel):
+    name: StrictStr
+    value: ParamScalar
+    from_: StrictStr = Field(alias="from")
+
+
+class CheckScenario(OpenContractModel):
+    file: StrictStr | None = None
+    name: StrictStr | None = None
+    case: StrictStr | None = None
+    cases: list[StrictStr] | None = None
+    steps: NonNegInt | None = None
+    only: list[StrictStr] | None = None
+    params: list[CheckScenarioParam] | None = None
+    skipped_steps: NonNegInt | None = None
+    unchecked_expects: NonNegInt | None = None
+    end_ms: NonNegInt | None = None
+
+
 class CheckObject(OpenContractModel):
     result: StrictStr | None = None
     participants: list[CheckParticipant] = Field(default_factory=list)
@@ -822,6 +841,7 @@ class CheckObject(OpenContractModel):
     notes: NonNegInt | None = None
     stop_at_ms: PosInt | None = None
     commands: StrictStr | None = None
+    scenario: CheckScenario | None = None
 
 
 class CheckResponse(ContractModel):
@@ -977,22 +997,33 @@ class SessionProblem(ContractModel):
     detail: Any
 
 
+class ScenarioCallFrame(OpenContractModel):
+    file: StrictStr | None = None
+    line: NonNegInt | None = None
+    name: StrictStr | None = None
+    params: dict[StrictStr, ParamScalar] = Field(default_factory=dict)
+
+
 class ScenarioStepSummary(OpenContractModel):
     index: PosInt
     status: StrictStr
+    file: StrictStr | None = None
     line: StrictInt | None = None
     kind: StrictStr | None = None
+    name: StrictStr | None = None
     text: StrictStr | None = None
     start_ms: FiniteNumber | None = None
     at_ms: FiniteNumber | None = None
     end_ms: FiniteNumber | None = None
     code: StrictStr | None = None
     message: StrictStr | None = None
+    call_stack: list[ScenarioCallFrame] | None = None
 
 
 class SessionScenarioSummary(ContractModel):
     file: NonEmptyStr
     name: StrictStr | None
+    case: StrictStr | None = None
     status: StrictStr | None
     step_count: NonNegInt | None
     over_at_ms: FiniteNumber | None

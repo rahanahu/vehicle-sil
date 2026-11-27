@@ -594,4 +594,128 @@ describe('raw of the launcher objects', () => {
     expect(resultWithEndMs.scenario?.end_ms).toBe(1500);
     expect(uResult.parts).toEqual([]);
   });
+
+  it('reads step file, name, call_stack (with raw) and scenario case with fallback on legacy or malformed inputs', () => {
+    const rawFrame = {
+      file: 'scenarios/cases.yaml',
+      line: 31,
+      name: 'run load check',
+      params: { throttle: 50, ok: true, label: '定格' },
+    };
+    const ev = readLauncherEvent(
+      {
+        event: 'scenario_step',
+        seq: 10,
+        t_ms: 100,
+        index: 1,
+        file: 'scenarios/templates/check.yaml',
+        line: 22,
+        kind: 'set',
+        name: '定格: apply',
+        text: 'set Engine.engine.throttle = 50',
+        status: 'skipped',
+        start_ms: 0,
+        at_ms: null,
+        end_ms: 0,
+        code: 'scenario-skipped',
+        message: 'absent',
+        call_stack: [rawFrame],
+      },
+      'event',
+      true,
+    );
+    expect(ev?.event).toBe('scenario_step');
+    if (ev?.event === 'scenario_step') {
+      expect(ev.step.file).toBe('scenarios/templates/check.yaml');
+      expect(ev.step.name).toBe('定格: apply');
+      expect(ev.step.status).toBe('skipped');
+      expect(ev.step.call_stack).toEqual([rawFrame]);
+      expect(rawOf(ev.step.call_stack?.[0])).toBe(rawFrame);
+    }
+    expect(ev?.unreadable).toBeUndefined();
+
+    const chk = readCheckResult(
+      {
+        vehicle_sil_check: 1,
+        file: 'sim.yaml',
+        result: 'passed',
+        errors: 0,
+        warnings: 0,
+        notes: 0,
+        stop_at_ms: null,
+        participants: [],
+        networks: [],
+        findings: [],
+        scenario: { file: 'scenarios/cases.yaml', name: 'cases', case: '定格', steps: 1 },
+      },
+      'check',
+    );
+    expect(chk.scenario?.case).toBe('定格');
+
+    const res = readRunResult(
+      {
+        vehicle_sil_run: 2,
+        result: 'passed',
+        end: 'completed',
+        ok: true,
+        message: 'ok',
+        errors: 0,
+        warnings: 0,
+        notes: 0,
+        simulation: 'ended',
+        interrupted_by: null,
+        timing: null,
+        participants: [],
+        findings: [],
+        check: null,
+        scenario: {
+          file: 'scenarios/cases.yaml',
+          name: 'cases',
+          case: '上限直前',
+          status: 'passed',
+          over_at_ms: 100,
+          steps: [{ index: 1, line: 5, kind: 'set', text: 'set', status: 'passed' }],
+        },
+      },
+      'result',
+    );
+    expect(res.scenario?.case).toBe('上限直前');
+    expect(res.scenario?.steps[0]).toMatchObject({ file: null, name: null, call_stack: null });
+
+    const badEv = readLauncherEvent(
+      {
+        event: 'scenario_step',
+        seq: 11,
+        t_ms: 110,
+        index: 1,
+        kind: 'set',
+        text: 'set',
+        status: 'passed',
+        file: 123,
+        name: ['bad'],
+        call_stack: [
+          { file: 'a.yaml', line: 'bad', name: null, params: { inf: Number.POSITIVE_INFINITY } },
+        ],
+      },
+      'event',
+      true,
+    );
+    expect(badEv?.event).toBe('scenario_step');
+    if (badEv?.event === 'scenario_step') {
+      expect(badEv.step.file).toBeNull();
+      expect(badEv.step.name).toBeNull();
+      expect(badEv.step.call_stack?.[0]).toEqual({
+        file: 'a.yaml',
+        line: null,
+        name: null,
+        params: {},
+      });
+    }
+    expect(badEv?.unreadable).toEqual([
+      'scenario_step.file',
+      'scenario_step.name',
+      'scenario_step.call_stack.line',
+      'scenario_step.call_stack.params.inf',
+    ]);
+  });
 });

@@ -13,6 +13,7 @@ from __future__ import annotations
 import heapq
 import itertools
 import json
+import math
 import time
 from array import array
 from bisect import bisect_left, insort
@@ -50,7 +51,12 @@ STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
 StopMode = Literal["graceful", "force"]
 # The summary's `variables` of a run without any (variables.Variables.summary makes the others).
 # The fields of a scenario step that the summary keeps (the launcher's scenario_step event and result.scenario.steps[])
-SCENARIO_STEP_FIELDS = ("index", "line", "kind", "text", "status", "start_ms", "at_ms", "end_ms", "code", "message")
+SCENARIO_STEP_FIELDS = (
+    "index", "file", "line", "kind", "name", "text", "status",
+    "start_ms", "at_ms", "end_ms", "code", "message", "call_stack",
+)
+MAX_CALL_STACK_FRAMES = 64
+MAX_CALL_STACK_PARAMS = 256
 NO_VARIABLES = {"state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
                 "operations": [], "operations_from_seq": 0, "operations_open_omitted": 0}
 
@@ -282,6 +288,7 @@ class Session:
         self.variables: Callable[[], dict] | None = None
         # The scenario's progress (a run with --scenario): from the check, the scenario_step events, the result.
         self.scenario_name: str | None = None
+        self.scenario_case: str | None = None
         self.scenario_step_count: int | None = None
         self.scenario_steps: dict[int, dict] = {}
         self.scenario_steps_omitted = 0
@@ -622,6 +629,45 @@ class Session:
                                                       "are named in omitted_fields)")
         return kept
 
+    def _keep_call_stack(self, raw: object) -> list[dict] | None:
+        if not isinstance(raw, list):
+            return None
+        frames: list[dict] = []
+        for frame in raw[:MAX_CALL_STACK_FRAMES]:
+            if not isinstance(frame, dict):
+                continue
+            file_val = frame.get("file")
+            line_val = frame.get("line")
+            name_val = frame.get("name")
+            raw_params = frame.get("params")
+            params: dict[str, bool | int | float | str] = {}
+            if isinstance(raw_params, dict):
+                for pk, pv in raw_params.items():
+                    if len(params) >= MAX_CALL_STACK_PARAMS:
+                        break
+                    if not isinstance(pk, str):
+                        continue
+                    if isinstance(pv, bool):
+                        kept_pv: bool | int | float | str = pv
+                    elif _is_int(pv):
+                        kept_pv = pv
+                    elif isinstance(pv, float):
+                        if not math.isfinite(pv):
+                            continue
+                        kept_pv = pv
+                    elif isinstance(pv, str):
+                        kept_pv = self._cut(pv, self.limits.message_chars)
+                    else:
+                        continue
+                    params[self._cut(pk, self.limits.message_chars)] = kept_pv
+            frames.append({
+                "file": self._cut(file_val, self.limits.message_chars) if isinstance(file_val, str) else None,
+                "line": line_val if _is_int(line_val) and line_val >= 0 else None,
+                "name": self._cut(name_val, self.limits.message_chars) if isinstance(name_val, str) else None,
+                "params": params,
+            })
+        return frames
+
     def _keep_step(self, step: object) -> None:
         if self.scenario is None or not isinstance(step, dict):
             return
@@ -631,11 +677,19 @@ class Session:
         if index > self.limits.scenario_steps:
             self.scenario_steps_omitted = max(self.scenario_steps_omitted, index - self.limits.scenario_steps)
             return
-        kept = {}
+        kept: dict[str, Any] = {}
         for k in SCENARIO_STEP_FIELDS:
             v = step.get(k)
-            kept[k] = self._cut(v, self.limits.message_chars) if isinstance(v, str) else v \
-                if v is None or isinstance(v, (int, float)) else None
+            if k == "call_stack":
+                kept[k] = self._keep_call_stack(v)
+            elif k == "index":
+                kept[k] = index
+            elif k == "line":
+                kept[k] = v if _is_int(v) and v >= 0 else None
+            elif k in ("start_ms", "at_ms", "end_ms"):
+                kept[k] = v if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+            else:
+                kept[k] = self._cut(v, self.limits.message_chars) if isinstance(v, str) else None
         self.scenario_steps[index] = kept
 
     def _scenario_of_check(self, check: dict) -> None:
@@ -644,6 +698,8 @@ class Session:
             return
         if isinstance(found.get("name"), str):
             self.scenario_name = self._cut(found["name"], self.limits.message_chars)
+        if isinstance(found.get("case"), str) and found["case"]:
+            self.scenario_case = self._cut(found["case"], self.limits.message_chars)
         if _is_count(found.get("steps")):
             self.scenario_step_count = found["steps"]
 
@@ -654,12 +710,14 @@ class Session:
         if isinstance(found.get("status"), str):
             self.scenario_status = self._cut(found["status"], 100)
         over = found.get("over_at_ms")
-        if isinstance(over, (int, float)) and not isinstance(over, bool):
+        if isinstance(over, (int, float)) and not isinstance(over, bool) and math.isfinite(over):
             self.scenario_over_at_ms = over
         elif not self.scenario_handed_over:
             self.scenario_over_at_ms = None
         if isinstance(found.get("name"), str):
             self.scenario_name = self._cut(found["name"], self.limits.message_chars)
+        if isinstance(found.get("case"), str) and found["case"]:
+            self.scenario_case = self._cut(found["case"], self.limits.message_chars)
         steps = found.get("steps")
         if isinstance(steps, list):
             for step in steps:
@@ -670,7 +728,8 @@ class Session:
     def scenario_summary(self) -> dict | None:
         if self.scenario is None:
             return None
-        return {"file": self.scenario, "name": self.scenario_name, "step_count": self.scenario_step_count,
+        return {"file": self.scenario, "name": self.scenario_name, "case": self.scenario_case,
+                "step_count": self.scenario_step_count,
                 "steps": [self.scenario_steps[i] for i in sorted(self.scenario_steps)],
                 "steps_omitted": self.scenario_steps_omitted, "status": self.scenario_status,
                 "over_at_ms": self.scenario_over_at_ms, "timeline_url": self.timeline_url,
