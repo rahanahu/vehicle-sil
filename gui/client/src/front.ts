@@ -178,6 +178,8 @@ function makeFront(options: ClientOptions, onClose: () => void): Front {
         ? {
             file: view.file,
             name: view.name,
+            ...(view.case === undefined ? {} : { case: view.case }),
+            ...(view.params === undefined ? {} : { params: view.params }),
             status: view.status,
             handed_over: view.handedOver,
             over_at_ms: view.overAtMs,

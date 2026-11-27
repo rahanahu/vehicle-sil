@@ -58,6 +58,7 @@ SCENARIO_STEP_EVENT = "scenario_step"
 FEATURE_TIMELINE = "timeline"
 FEATURE_RUN_STOP_AT = "run-stop-at"
 FEATURE_SCENARIO_HANDOVER = "scenario-handover"
+FEATURE_SCENARIO_CASES = "scenario-cases"
 FEATURE_EXTERNAL_REGISTRY = "external-registry"
 
 

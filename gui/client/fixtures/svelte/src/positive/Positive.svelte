@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Front, Intent } from '@vehicle-sil/gui-client';
   import '@vehicle-sil/gui-client/elements';
+  import type { WriteOutcome, WriteQueuedInfo } from '@vehicle-sil/gui-client/elements';
   import '@vehicle-sil/gui-client/svelte';
   import '@vehicle-sil/gui-client/timeline';
   import type {
@@ -11,6 +12,21 @@
   const front: Front | null = null;
   const intent: Intent = { speed: 'max' };
   const vars = ['Body.*'];
+
+  function onWriteQueued(event: CustomEvent<WriteQueuedInfo>) {
+    const seq: number = event.detail.seq;
+    void seq;
+  }
+
+  function onWriteResult(event: CustomEvent<WriteOutcome>) {
+    if (event.detail.ok) {
+      const at: number | null = event.detail.appliedAtMs;
+      void at;
+    } else {
+      const code: string = event.detail.error.code;
+      void code;
+    }
+  }
 
   function onLoad(event: CustomEvent<VehicleSilTimelineLoadDetail>) {
     const status: string = event.detail.status;
@@ -49,11 +65,24 @@
 <vsil-time-controls client={front} speeds="0.5 1 max" stepMs={25}></vsil-time-controls>
 <vsil-value client={front} variable="Dash.d.speed" on="HI" off="lo" no-unit noUnit={true}
 ></vsil-value>
-<vsil-slider client={front} variable="Engine.e.throttle"></vsil-slider>
-<vsil-write client={front} variable="Engine.e.flag" value={false} label="Cut"></vsil-write>
+<vsil-slider
+  client={front}
+  variable="Engine.e.throttle"
+  onvsil-write-queued={onWriteQueued}
+  onvsil-write-result={onWriteResult}
+></vsil-slider>
+<vsil-write
+  client={front}
+  variable="Engine.e.flag"
+  value={false}
+  label="Cut"
+  onvsil-write-queued={onWriteQueued}
+  onvsil-write-result={onWriteResult}
+></vsil-write>
 <vsil-write client={front} variable="Engine.e.throttle" value={0}></vsil-write>
 <vsil-write client={front} variable="Engine.e.mode" value="eco"></vsil-write>
 <vsil-scenario-select client={front}></vsil-scenario-select>
+<vsil-case-select client={front}></vsil-case-select>
 <vsil-scenario-result client={front}></vsil-scenario-result>
 <vsil-timeline client={front}></vsil-timeline>
 <vsil-connect client={front} network="CAN1" file="bench.yaml"></vsil-connect>

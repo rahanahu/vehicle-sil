@@ -3,9 +3,12 @@ import '@vehicle-sil/gui-client/elements';
 import type {
   VsilElementContracts,
   VsilRunControlsElement,
+  VsilSliderElement,
   VsilTimeControlsElement,
   VsilValueElement,
   VsilWriteElement,
+  WriteOutcome,
+  WriteQueuedInfo,
 } from '@vehicle-sil/gui-client/elements';
 import '@vehicle-sil/gui-client/timeline';
 import type {
@@ -41,9 +44,24 @@ export function checkVanilla(front: Front): void {
   val.off = 'off';
   val.noUnit = true;
 
-  const slider = document.createElement('vsil-slider');
+  const slider: VsilSliderElement = document.createElement('vsil-slider');
   slider.client = front;
   slider.variable = 'Engine.e.throttle';
+  slider.addEventListener('vsil-write-queued', (e) => {
+    const info: WriteQueuedInfo = e.detail;
+    const seq: number = info.seq;
+    void seq;
+  });
+  slider.addEventListener('vsil-write-result', (e) => {
+    const outcome: WriteOutcome = e.detail;
+    if (outcome.ok) {
+      const at: number | null = outcome.appliedAtMs;
+      void at;
+    } else {
+      const code: string = outcome.error.code;
+      void code;
+    }
+  });
 
   const write: VsilWriteElement = document.createElement('vsil-write');
   write.client = front;
@@ -53,9 +71,24 @@ export function checkVanilla(front: Front): void {
   write.value = 'eco';
   write.value = null;
   write.label = 'Cut';
+  write.addEventListener('vsil-write-queued', (e) => {
+    const session: string = e.detail.session;
+    void session;
+  });
+  write.addEventListener('vsil-write-result', (e) => {
+    if (e.detail.ok) {
+      const late: boolean = e.detail.late;
+      void late;
+    } else {
+      const outcome: 'refused' | 'unknown' = e.detail.error.outcome;
+      void outcome;
+    }
+  });
 
   const select = document.createElement('vsil-scenario-select');
   select.client = front;
+  const caseSelect = document.createElement('vsil-case-select');
+  caseSelect.client = front;
   const result = document.createElement('vsil-scenario-result');
   result.client = front;
   const tlWrap = document.createElement('vsil-timeline');
@@ -85,7 +118,22 @@ export function checkVanilla(front: Front): void {
     void c;
   });
 
-  const _tag: keyof VsilElementContracts = 'vsil-write';
+  const _tag: keyof VsilElementContracts = 'vsil-case-select';
   const _tlTag: keyof VehicleSilTimelineContract = 'vehicle-sil-timeline';
-  void [_tag, _tlTag, status, run, time, val, slider, write, select, result, tlWrap, conn, outside];
+  void [
+    _tag,
+    _tlTag,
+    status,
+    run,
+    time,
+    val,
+    slider,
+    write,
+    select,
+    caseSelect,
+    result,
+    tlWrap,
+    conn,
+    outside,
+  ];
 }

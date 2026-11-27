@@ -24,6 +24,8 @@ DEFAULT_FEATURES = (
     "run-stop-at",
     "scenario-end-ms",
     "scenario-handover",
+    "scenario-cases",
+    "scenario-templates",
     "control-links",
     "control-server",
     "external-registry",

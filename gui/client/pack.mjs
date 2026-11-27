@@ -54,30 +54,35 @@ document.body.append(timeline);
 const ELEMENTS_EXAMPLE = `
 import '@vehicle-sil/gui-client/elements';
 import { pageIntent, setReasonText } from '@vehicle-sil/gui-client/elements';
-import type { VsilElementContracts, VsilRunControlsElement } from '@vehicle-sil/gui-client/elements';
+import type {
+  VsilCaseSelectElement,
+  VsilElementContracts,
+  VsilRunControlsElement,
+} from '@vehicle-sil/gui-client/elements';
 setReasonText((reason) => (reason.code === 'busy' ? 'Wait a moment.' : null));
-pageIntent.update({ scenario: 'scenarios/a.yaml' });
+pageIntent.update({ scenario: 'scenarios/a.yaml', case: 'nominal' });
 const controls: VsilRunControlsElement | null = document.querySelector('vsil-run-controls');
 if (controls) {
   controls.intent = { speed: 'max' };
   controls.labelStart = 'Run';
 }
+const caseSelect: VsilCaseSelectElement = document.createElement('vsil-case-select');
 const write = document.createElement('vsil-write');
 write.variable = 'Engine.ecu.connected';
 write.value = false;
-const _contractCheck: keyof VsilElementContracts = 'vsil-write';
-void _contractCheck;
+const _contractCheck: keyof VsilElementContracts = 'vsil-case-select';
+void [_contractCheck, caseSelect];
 document.body.append(write);
 `;
 
 const EMPTY_MODULE =
   '// Runtime no-op module for type-only framework adapter entry points (./react, ./vue, ./svelte).\nexport {};\n';
 
-const ALL_CONTRACTS_DTS = `// Single source of truth combining all 11 vsil-* parts and <vehicle-sil-timeline>.
+const ALL_CONTRACTS_DTS = `// Single source of truth combining all 12 vsil-* parts and <vehicle-sil-timeline>.
 import type { VsilElementContracts } from '../elements/contracts.js';
 import type { VehicleSilTimelineContract } from '../../timeline/vehicle-sil-timeline.js';
 
-/** Combined contract map for all 12 vehicle-sil custom elements. */
+/** Combined contract map for all 13 vehicle-sil custom elements. */
 export type AllElementContracts = VsilElementContracts & VehicleSilTimelineContract;
 
 /** Per-key union of HTML attributes and JS properties (avoids intersection collapse on union types). */

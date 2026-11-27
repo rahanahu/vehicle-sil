@@ -1,7 +1,12 @@
 import type { VehicleSilTimelineContract } from '../../../timeline/vehicle-sil-timeline';
 import { fakeFront, viewOf } from './fake-front';
 import './index';
-import type { VsilElementContracts } from './index';
+import type {
+  VsilElementContracts,
+  VsilWriteEventMap,
+  WriteOutcome,
+  WriteQueuedInfo,
+} from './index';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -78,6 +83,9 @@ const _writableVsil: CheckWritable = {
   'vsil-scenario-select': (el, p) => {
     el.client = p.client;
   },
+  'vsil-case-select': (el, p) => {
+    el.client = p.client;
+  },
   'vsil-scenario-result': (el, p) => {
     el.client = p.client;
   },
@@ -115,7 +123,50 @@ const _writableTimeline = (
   el.messages = p.messages;
 };
 
-void [_tagsMatch, _elementsMatch, _writableVsil, _writableTimeline];
+const _sliderEventsMatch: AssertExact<
+  VsilElementContracts['vsil-slider']['events'],
+  VsilWriteEventMap
+> = true;
+const _writeEventsMatch: AssertExact<
+  VsilElementContracts['vsil-write']['events'],
+  VsilWriteEventMap
+> = true;
+const _typedWriteListeners = (
+  slider: VsilElementContracts['vsil-slider']['element'],
+  write: VsilElementContracts['vsil-write']['element'],
+) => {
+  const onQueued = (e: CustomEvent<WriteQueuedInfo>) => {
+    const seq: number = e.detail.seq;
+    void seq;
+  };
+  const onResult = (e: CustomEvent<WriteOutcome>) => {
+    if (e.detail.ok) {
+      const at: number | null = e.detail.appliedAtMs;
+      void at;
+    } else {
+      const code: string = e.detail.error.code;
+      void code;
+    }
+  };
+  slider.addEventListener('vsil-write-queued', onQueued);
+  slider.removeEventListener('vsil-write-queued', onQueued);
+  slider.addEventListener('vsil-write-result', onResult);
+  slider.removeEventListener('vsil-write-result', onResult);
+  write.addEventListener('vsil-write-queued', onQueued);
+  write.removeEventListener('vsil-write-queued', onQueued);
+  write.addEventListener('vsil-write-result', onResult);
+  write.removeEventListener('vsil-write-result', onResult);
+};
+
+void [
+  _tagsMatch,
+  _elementsMatch,
+  _writableVsil,
+  _writableTimeline,
+  _sliderEventsMatch,
+  _writeEventsMatch,
+  _typedWriteListeners,
+];
 
 const ALL_VSIL_TAGS: (keyof VsilElementContracts)[] = [
   'vsil-status',
@@ -125,6 +176,7 @@ const ALL_VSIL_TAGS: (keyof VsilElementContracts)[] = [
   'vsil-slider',
   'vsil-write',
   'vsil-scenario-select',
+  'vsil-case-select',
   'vsil-scenario-result',
   'vsil-timeline',
   'vsil-connect',
@@ -136,7 +188,7 @@ afterEach(() => {
 });
 
 describe('vsil-* element contracts and property reflection', () => {
-  it('exposes a camelCase getter/setter pair for all 19 observedAttributes across the 11 parts', () => {
+  it('exposes a camelCase getter/setter pair for all 19 observedAttributes across the 12 parts', () => {
     let totalObserved = 0;
     for (const tag of ALL_VSIL_TAGS) {
       const ctor = customElements.get(tag) as
@@ -304,7 +356,7 @@ describe('vsil-* element contracts and property reflection', () => {
     expect(el.label).toBe('Off');
     front.variables.get('Engine.e.flag')!.cell.set(viewOf({ value: true }));
     el.querySelector('button')!.click();
-    expect(front.variables.get('Engine.e.flag')!.write).toHaveBeenLastCalledWith(false);
+    expect(front.variables.get('Engine.e.flag')!.enqueue).toHaveBeenLastCalledWith(false);
 
     el.value = 0;
     el.label = null;
@@ -313,14 +365,14 @@ describe('vsil-* element contracts and property reflection', () => {
     expect(el.value).toBe(0);
     expect(el.querySelector('button')!.textContent).toBe('Engine.e.flag = 0');
     el.querySelector('button')!.click();
-    expect(front.variables.get('Engine.e.flag')!.write).toHaveBeenLastCalledWith(0);
+    expect(front.variables.get('Engine.e.flag')!.enqueue).toHaveBeenLastCalledWith(0);
 
     el.value = '';
     await settle();
     expect(el.getAttribute('value')).toBe('');
     expect(el.value).toBe('');
     el.querySelector('button')!.click();
-    expect(front.variables.get('Engine.e.flag')!.write).toHaveBeenLastCalledWith('');
+    expect(front.variables.get('Engine.e.flag')!.enqueue).toHaveBeenLastCalledWith('');
 
     el.value = null;
     await settle();
@@ -328,7 +380,7 @@ describe('vsil-* element contracts and property reflection', () => {
     expect(el.value).toBeNull();
     front.variables.get('Engine.e.flag')!.cell.set(viewOf({ value: false }));
     el.querySelector('button')!.click();
-    expect(front.variables.get('Engine.e.flag')!.write).toHaveBeenLastCalledWith(true);
+    expect(front.variables.get('Engine.e.flag')!.enqueue).toHaveBeenLastCalledWith(true);
   });
 
   it('reflects vsil-connect network and file properties', async () => {

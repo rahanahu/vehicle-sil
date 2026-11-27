@@ -193,7 +193,7 @@ def test_a_field_that_the_request_does_not_take_is_refused_not_ignored(gui: Gui)
     """A field that is ignored would leave its sender believing it had an effect: api/check and api/run answer 400
     invalid-field and name every unknown field and the fields they take (the same ones, and api/check text). The
     keys of the launcher's side of a run (control, timeline, log_dir) are among the unknown ones."""
-    takes_all = ("file, $schema, vehicle_sil_run_request, scenario, after_scenario, variant, params, disable, enable, "
+    takes_all = ("file, $schema, vehicle_sil_run_request, scenario, case, after_scenario, variant, params, disable, enable, "
                  "manual, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms")
 
     async def main(c: Client) -> None:

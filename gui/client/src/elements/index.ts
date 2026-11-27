@@ -9,10 +9,16 @@ import type {
   ElementContract,
   VsilElementContracts,
   VsilPartProps,
+  VsilWriteEventMap,
+  WriteFailure,
+  WriteOutcome,
+  WriteQueuedInfo,
+  WriteSuccess,
 } from './contracts';
 import { VsilConnectElement, VsilOutsideElement } from './outside-parts';
 import { VsilRunControlsElement, VsilStatusElement, VsilTimeControlsElement } from './run-parts';
 import {
+  VsilCaseSelectElement,
   VsilScenarioResultElement,
   VsilScenarioSelectElement,
   VsilTimelineElement,
@@ -20,8 +26,20 @@ import {
 import { VsilSliderElement, VsilValueElement, VsilWriteElement } from './variable-parts';
 
 export { pageIntent, setReasonText };
-export type { BooleanAttr, ElementContract, ReasonText, VsilElementContracts, VsilPartProps };
+export type {
+  BooleanAttr,
+  ElementContract,
+  ReasonText,
+  VsilElementContracts,
+  VsilPartProps,
+  VsilWriteEventMap,
+  WriteFailure,
+  WriteOutcome,
+  WriteQueuedInfo,
+  WriteSuccess,
+};
 export {
+  VsilCaseSelectElement,
   VsilConnectElement,
   VsilOutsideElement,
   VsilRunControlsElement,
@@ -44,6 +62,7 @@ declare global {
     'vsil-slider': VsilSliderElement;
     'vsil-write': VsilWriteElement;
     'vsil-scenario-select': VsilScenarioSelectElement;
+    'vsil-case-select': VsilCaseSelectElement;
     'vsil-scenario-result': VsilScenarioResultElement;
     'vsil-timeline': VsilTimelineElement;
     'vsil-connect': VsilConnectElement;
@@ -59,6 +78,7 @@ const PARTS: [string, CustomElementConstructor][] = [
   ['vsil-slider', VsilSliderElement],
   ['vsil-write', VsilWriteElement],
   ['vsil-scenario-select', VsilScenarioSelectElement],
+  ['vsil-case-select', VsilCaseSelectElement],
   ['vsil-scenario-result', VsilScenarioResultElement],
   ['vsil-timeline', VsilTimelineElement],
   ['vsil-connect', VsilConnectElement],

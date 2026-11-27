@@ -4,7 +4,13 @@ import type { Front, Intent } from '@vehicle-sil/gui-client';
 import '@vehicle-sil/gui-client/elements';
 import '@vehicle-sil/gui-client/react';
 import '@vehicle-sil/gui-client/timeline';
-import { SAMPLE_TIMELINE, createSmokeFront, initSmokeState } from './runtime-helpers';
+import {
+  SAMPLE_TIMELINE,
+  createSmokeFront,
+  initSmokeState,
+  recordQueued,
+  recordResult,
+} from './runtime-helpers';
 
 const smoke = initSmokeState();
 const front = createSmokeFront(smoke);
@@ -16,8 +22,39 @@ function App() {
   const [rcIntent, setRcIntent] = useState<Intent | undefined>({ speed: 'max' });
   return (
     <div>
-      <vsil-write id="w-false" client={front} variable="E.e.flag" value={false} label="Cut" />
-      <vsil-write id="w-zero" client={front} variable="E.e.throttle" value={0} />
+      <vsil-write
+        id="w-false"
+        client={front}
+        variable="E.e.flag"
+        value={false}
+        label="Cut"
+        onvsil-write-queued={(e) => recordQueued(smoke, 'w-false', e.detail)}
+        onvsil-write-result={(e) => recordResult(smoke, 'w-false', e.detail)}
+      />
+      <vsil-write
+        id="w-zero"
+        client={front}
+        variable="E.e.throttle"
+        value={0}
+        onvsil-write-queued={(e) => recordQueued(smoke, 'w-zero', e.detail)}
+        onvsil-write-result={(e) => recordResult(smoke, 'w-zero', e.detail)}
+      />
+      <vsil-write
+        id="w-fail"
+        client={front}
+        variable="E.e.fault"
+        value={true}
+        label="Fault"
+        onvsil-write-queued={(e) => recordQueued(smoke, 'w-fail', e.detail)}
+        onvsil-write-result={(e) => recordResult(smoke, 'w-fail', e.detail)}
+      />
+      <vsil-slider
+        id="sl"
+        client={front}
+        variable="E.e.throttle"
+        onvsil-write-queued={(e) => recordQueued(smoke, 'sl', e.detail)}
+        onvsil-write-result={(e) => recordResult(smoke, 'sl', e.detail)}
+      />
       <vsil-value id="val" client={front} variable="E.e.speed" noUnit={noUnit} />
       <button id="toggle-unit" type="button" onClick={() => setNoUnit((v) => !v)}>
         Toggle unit

@@ -74,7 +74,7 @@ There are 3 layers, and you use only as many as you need:
 | `<vsil-value>` | A value with its unit; a bool shows as `on` and `off` text (a lamp, with CSS) | `variable`, `on`, `off` |
 | `<vsil-slider>` | A number in the variable's range, written when the knob is released | `variable` |
 | `<vsil-write>` | A button that writes one value | `variable`, `value`, `label` |
-| `<vsil-scenario-select>`, `<vsil-scenario-result>` | The scenario of the next run, and its steps and result | none |
+| `<vsil-scenario-select>`, `<vsil-case-select>`, `<vsil-scenario-result>` | The scenario and case of the next run, and its steps, parameters and result | none |
 | `<vsil-timeline>` | The timeline of the scenario run, in the `<vehicle-sil-timeline>` that you put inside it (it adds one when there is none). Its attributes (`compact`, `hide`, `lang`) are yours. The page loads the element's script: `<script src="/timeline/vehicle-sil-timeline.js">`. | none |
 
 A variable is written `<participant>.<variable>`, cut at the first dot (`Engine.engine.throttle` is the participant `Engine` and the variable `engine.throttle`). To find the names of your ECUs, see "Step 2: Find the name of the variable to show" in the guide. If a name is wrong, the part says that the variable is not in this run. The complete list of the parts and what they promise (the connection, the markup and the `data-*` attributes to style) is "Parts" in [gui/client/README.md](../../gui/client/README.md#parts-custom-elements).

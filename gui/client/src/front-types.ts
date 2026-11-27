@@ -5,10 +5,12 @@ import type { RunTarget } from './session';
 import type {
   AfterScenario,
   CheckResult,
+  CheckScenarioParam,
   ConfigList,
   ConfigText,
   SavedConfig,
   Finding,
+  Open,
   OutsideState,
   Recording,
   RunAck,
@@ -120,6 +122,10 @@ export type OperationName = keyof FrontControls;
 export interface FrontScenario {
   file: string;
   name: string | null;
+  /** Selected case name, if any. */
+  case?: string | null;
+  /** Resolved parameters of the scenario, if any. */
+  params?: readonly CheckScenarioParam[];
   status: ScenarioStatus | null;
   handed_over: boolean;
   over_at_ms: number | null;
@@ -162,6 +168,8 @@ export interface Intent {
    * the path the request file needs, which is relative to the configuration file's directory). Do not compose it.
    */
   scenario?: string;
+  /** The named case of the scenario (`cases:`). Requires `scenario`. */
+  case?: string;
   /** What to do once the scenario passes (`stop`, or `pause` to hand over to manual control). */
   after_scenario?: AfterScenario;
   variant?: string;
@@ -180,7 +188,7 @@ export interface Intent {
    */
   connect?: Record<string, string>;
   /** A run connected outside keeps real time (`realtime`, the launcher's default) unless `free` is chosen. */
-  time_policy?: 'realtime' | 'free';
+  time_policy?: Open<'realtime' | 'free'>;
 }
 
 /** A place where a network can be connected, as the bridge of one backend listed it. */

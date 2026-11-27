@@ -6,9 +6,37 @@ export function checkVanillaNegative(): void {
   // @ts-expect-error noUnit requires boolean
   val.noUnit = 'yes';
 
+  const slider = document.createElement('vsil-slider');
+  slider.addEventListener('vsil-write-queued', (e) => {
+    // @ts-expect-error seq is number, not string
+    const bad: string = e.detail.seq;
+    void bad;
+  });
+  slider.addEventListener('vsil-write-result', (e) => {
+    if (e.detail.ok) {
+      // @ts-expect-error appliedAtMs is number | null, not string
+      const bad: string = e.detail.appliedAtMs;
+      void bad;
+    } else {
+      // @ts-expect-error error.code is string, not number
+      const bad: number = e.detail.error.code;
+      void bad;
+    }
+  });
+
   const write = document.createElement('vsil-write');
   // @ts-expect-error value rejects objects
   write.value = { bad: true };
+  write.addEventListener('vsil-write-queued', (e) => {
+    // @ts-expect-error session is string, not number
+    const bad: number = e.detail.session;
+    void bad;
+  });
+  write.addEventListener('vsil-write-result', (e) => {
+    // @ts-expect-error appliedAtMs does not exist before narrowing ok === true
+    const bad: number | null = e.detail.appliedAtMs;
+    void bad;
+  });
 
   const time = document.createElement('vsil-time-controls');
   // @ts-expect-error stepMs rejects boolean

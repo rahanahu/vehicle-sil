@@ -583,10 +583,18 @@ class RunManager:
         timeline: Path | None,
         request: Path,
     ) -> tuple[Run, _RunSink]:
+        session_intent: dict = {}
+        for k, v in r.intent.items():
+            if k == "scenario":
+                continue
+            session_intent[k] = list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v
+        if r.scenario is not None:
+            session_intent["scenario"] = r.scenario
         session = Session(
             f"{self.instance}-{self._next_session_id}", r.config.relative, r.disable, r.intent.get("speed"),
             r.intent.get("start_paused", False), limits=self._limits, launcher_pid=handle.pid,
             launcher_mode=handle.mode, scenario=r.scenario, manual=r.manual, staged=handle.waits_for_check,
+            intent=session_intent,
         )
         session.next_stream_seq = self.next_stream_seq
         variables = Variables(

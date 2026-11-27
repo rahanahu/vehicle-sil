@@ -1,7 +1,7 @@
 // Single source of truth for the attributes, JS properties and custom events of all `vsil-*` custom elements.
 // Framework adapters (`@vehicle-sil/gui-client/react`, `/vue`, `/svelte`) derive their types from this map and
 // `VehicleSilTimelineContract` without duplicating element tables or pulling framework packages into core types.
-import type { Front, Intent } from '../index';
+import type { ActionError, Front, Intent, WriteResult } from '../index';
 import type { VsilConnectElement, VsilOutsideElement } from './outside-parts';
 import type {
   VsilRunControlsElement,
@@ -9,6 +9,7 @@ import type {
   VsilTimeControlsElement,
 } from './run-parts';
 import type {
+  VsilCaseSelectElement,
   VsilScenarioResultElement,
   VsilScenarioSelectElement,
   VsilTimelineElement,
@@ -36,7 +37,40 @@ export interface VsilPartProps {
   client?: Front | null;
 }
 
-/** Contracts of all 11 `vsil-*` custom elements defined by `@vehicle-sil/gui-client/elements`. */
+/** Detail of the `vsil-write-queued` event: the write reached the ECU queue (`seq` assigned). */
+export interface WriteQueuedInfo {
+  readonly session: string;
+  readonly seq: number;
+  readonly peer: string;
+  readonly name: string;
+  readonly value: number | boolean | string;
+}
+
+/** Detail of the `vsil-write-result` event when the ECU applied the write. */
+export interface WriteSuccess extends WriteResult {
+  readonly ok: true;
+}
+
+/** Detail of the `vsil-write-result` event when the write did not apply. */
+export interface WriteFailure {
+  readonly ok: false;
+  readonly peer: string;
+  readonly name: string;
+  readonly value: number | boolean | string;
+  readonly error: ActionError;
+  readonly seq?: number;
+}
+
+/** Detail of the `vsil-write-result` event: either applied (`ok: true`) or failed (`ok: false`). */
+export type WriteOutcome = WriteSuccess | WriteFailure;
+
+/** Custom DOM events dispatched by `<vsil-slider>` and `<vsil-write>`. */
+export interface VsilWriteEventMap {
+  'vsil-write-queued': CustomEvent<WriteQueuedInfo>;
+  'vsil-write-result': CustomEvent<WriteOutcome>;
+}
+
+/** Contracts of all 12 `vsil-*` custom elements defined by `@vehicle-sil/gui-client/elements`. */
 export interface VsilElementContracts {
   'vsil-status': ElementContract<VsilStatusElement, Record<never, never>, VsilPartProps>;
   'vsil-run-controls': ElementContract<
@@ -94,7 +128,8 @@ export interface VsilElementContracts {
     },
     VsilPartProps & {
       variable?: string | null;
-    }
+    },
+    VsilWriteEventMap
   >;
   'vsil-write': ElementContract<
     VsilWriteElement,
@@ -107,13 +142,15 @@ export interface VsilElementContracts {
       variable?: string | null;
       value?: string | number | boolean | null;
       label?: string | null;
-    }
+    },
+    VsilWriteEventMap
   >;
   'vsil-scenario-select': ElementContract<
     VsilScenarioSelectElement,
     Record<never, never>,
     VsilPartProps
   >;
+  'vsil-case-select': ElementContract<VsilCaseSelectElement, Record<never, never>, VsilPartProps>;
   'vsil-scenario-result': ElementContract<
     VsilScenarioResultElement,
     Record<never, never>,

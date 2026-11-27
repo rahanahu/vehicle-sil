@@ -1,6 +1,12 @@
 import '@vehicle-sil/gui-client/elements';
 import '@vehicle-sil/gui-client/timeline';
-import { SAMPLE_TIMELINE, createSmokeFront, initSmokeState } from './runtime-helpers';
+import {
+  SAMPLE_TIMELINE,
+  createSmokeFront,
+  initSmokeState,
+  recordQueued,
+  recordResult,
+} from './runtime-helpers';
 
 const smoke = initSmokeState();
 const front = createSmokeFront(smoke);
@@ -12,12 +18,32 @@ writeFalse.client = front;
 writeFalse.variable = 'E.e.flag';
 writeFalse.value = false;
 writeFalse.label = 'Cut';
+writeFalse.addEventListener('vsil-write-queued', (e) => recordQueued(smoke, 'w-false', e.detail));
+writeFalse.addEventListener('vsil-write-result', (e) => recordResult(smoke, 'w-false', e.detail));
 
 const writeZero = document.createElement('vsil-write');
 writeZero.id = 'w-zero';
 writeZero.client = front;
 writeZero.variable = 'E.e.throttle';
 writeZero.value = 0;
+writeZero.addEventListener('vsil-write-queued', (e) => recordQueued(smoke, 'w-zero', e.detail));
+writeZero.addEventListener('vsil-write-result', (e) => recordResult(smoke, 'w-zero', e.detail));
+
+const writeFail = document.createElement('vsil-write');
+writeFail.id = 'w-fail';
+writeFail.client = front;
+writeFail.variable = 'E.e.fault';
+writeFail.value = true;
+writeFail.label = 'Fault';
+writeFail.addEventListener('vsil-write-queued', (e) => recordQueued(smoke, 'w-fail', e.detail));
+writeFail.addEventListener('vsil-write-result', (e) => recordResult(smoke, 'w-fail', e.detail));
+
+const slider = document.createElement('vsil-slider');
+slider.id = 'sl';
+slider.client = front;
+slider.variable = 'E.e.throttle';
+slider.addEventListener('vsil-write-queued', (e) => recordQueued(smoke, 'sl', e.detail));
+slider.addEventListener('vsil-write-result', (e) => recordResult(smoke, 'sl', e.detail));
 
 const val = document.createElement('vsil-value');
 val.id = 'val';
@@ -67,5 +93,5 @@ tl.addEventListener('cursorchange', (e) => {
   smoke.cursors.push(e.detail.cursor);
 });
 
-app.append(writeFalse, writeZero, val, toggle, rc, clearClient, tc, tl);
+app.append(writeFalse, writeZero, writeFail, slider, val, toggle, rc, clearClient, tc, tl);
 smoke.ready = true;
