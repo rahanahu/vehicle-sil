@@ -124,18 +124,18 @@ test('timeline: the Scenario card shows the timeline on the screen itself, with 
     { timeout: RUN_TIMEOUT },
   );
   await expect(card.getByTestId('scenario-outcome')).toHaveText(/シナリオは失敗しました/);
-  // The link stays; the toggle beside it puts the element <vehicle-sil-timeline> into the card
+  // The link stays; on a failed scenario the element <vehicle-sil-timeline> auto-expands focused on the failed step
   await expect(card.getByTestId('scenario-timeline')).toBeVisible();
   const toggle = card.getByTestId('timeline-toggle');
-  await expect(toggle).toHaveText('時間の軸をここに表示');
-  await toggle.click();
+  await expect(toggle).toHaveText('時間の軸を閉じる');
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   const timeline = card.getByTestId('timeline-element');
-  // [src], [lang] and [token] from the screen's signals: the run's file, in the GUI's language, with its token
+  // [src], [lang], [token] and [step] from the screen's signals: the run's file, in the GUI's language, focused on step 2
   await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     /^手順 2 が [\d.]+ ms で失敗しました$/,
     { timeout: RUN_TIMEOUT },
   );
+  await expect(card.getByTestId('timeline-readout')).toContainText('選んだ手順: 2');
   await expect(timeline).toHaveAttribute('lang', 'ja');
   await expect(timeline).toHaveAttribute('compact', '');
   await expect(timeline.locator('#help')).toBeHidden();
@@ -152,6 +152,10 @@ test('timeline: the Scenario card shows the timeline on the screen itself, with 
   }
   await toggle.click();
   await expect(timeline).toHaveCount(0);
+  // Clicking "タイムラインで表示" on step 2 re-opens the timeline and focuses step 2
+  await card.getByTestId('scenario-step-jump-2').click();
+  await expect(timeline).toBeVisible();
+  await expect(card.getByTestId('timeline-readout')).toContainText('選んだ手順: 2');
 });
 
 test('timeline: in an English GUI the link says Timeline and the page is in English', async ({

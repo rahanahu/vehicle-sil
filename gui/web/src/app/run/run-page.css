@@ -111,6 +111,21 @@ mat-card-content {
   inline-size: 100%;
 }
 
+.picker-gap {
+  margin-block-start: var(--app-space-2);
+}
+
+.case-tag {
+  margin-inline-start: var(--app-space-1);
+  font: var(--mat-sys-label-medium);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.case-reason {
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-on-surface-variant);
+}
+
 .file {
   margin: 0;
   font: var(--mat-sys-title-medium);

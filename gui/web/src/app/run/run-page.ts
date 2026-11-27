@@ -21,6 +21,8 @@ import {
   AfterScenario,
   CheckResult,
   Intent,
+  ScenarioParamValue,
+  SessionView,
   Speed,
   errorMessage,
   isLauncherFinishing,
@@ -43,6 +45,13 @@ import { RecordingPanel } from './recording-panel';
 import { ResultPanel } from './result-panel';
 import { RunSession } from './run-session';
 import { RunStatus } from './run-status';
+import {
+  CaseOption,
+  caseOptionsFor,
+  checkSelectionGuidance,
+  isParamRecord,
+} from './scenario-param-model';
+import { ScenarioParamsPanel } from './scenario-params';
 import { ScenarioPanel } from './scenario-panel';
 import { SpeedPicker } from './speed-picker';
 import { TimeButtons } from './time-buttons';
@@ -80,8 +89,14 @@ interface RunChoices {
   stopAt?: string;
   stopAtEdited?: boolean;
   stopSession?: string | null;
+  /** 選んだバリアント（古い持ち越しにはない）。 */
+  variant?: string | null;
   /** 選んだシナリオ（古い持ち越しにはない）。 */
   scenario?: string | null;
+  /** 選んだケース（古い持ち越しにはない）。 */
+  case?: string | null;
+  /** パラメータ上書き（古い持ち越しにはない）。 */
+  params?: Record<string, ScenarioParamValue>;
   /** シナリオ終了後の動作（古い持ち越しにはない）。 */
   afterScenario?: AfterScenario;
   /** 止めた状態で始めるか（古い持ち越しにはない）。 */
@@ -104,7 +119,10 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !v['disable'].every(isText) ||
     !(v['manual'] === undefined || (Array.isArray(v['manual']) && v['manual'].every(isText))) ||
     !speedOk ||
+    !(v['variant'] === undefined || v['variant'] === null || isText(v['variant'])) ||
     !(v['scenario'] === undefined || v['scenario'] === null || isText(v['scenario'])) ||
+    !(v['case'] === undefined || v['case'] === null || isText(v['case'])) ||
+    !(v['params'] === undefined || isParamRecord(v['params'])) ||
     !(
       v['afterScenario'] === undefined ||
       v['afterScenario'] === 'stop' ||
@@ -170,6 +188,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     ResultPanel,
     RunStatus,
     ScenarioPanel,
+    ScenarioParamsPanel,
     SpeedPicker,
     TimeButtons,
     TimePanel,
@@ -449,6 +468,32 @@ export class RunPage {
     loader: ({ params }) => this.info.scenarios(params.file),
   });
   /**
+   * 選んだバリアント。ファイルか実行が替わったら、その実行のもの（同じファイルのとき）か未選択に戻す。
+   */
+  private readonly variantSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const carried = this.carriedFor(session?.id ?? null);
+      return {
+        file,
+        id: session?.id ?? null,
+        variant:
+          carried && carried.file === file && carried.variant !== undefined
+            ? carried.variant
+            : session && session.file === file
+              ? (session.intent?.variant ?? session.check?.variant ?? null)
+              : null,
+      };
+    },
+    { equal: (a, b) => a.file === b.file && a.id === b.id },
+  );
+  protected readonly variantChoice = linkedSignal<{ variant: string | null }, string | null>({
+    source: () => this.variantSource(),
+    computation: ({ variant }) => variant,
+  });
+
+  /**
    * 選んだシナリオ。ファイルか実行が替わったら、その実行のもの（同じファイルのとき）か、なしに戻す（実行の知らせの
    * たびには戻さない）。
    */
@@ -464,7 +509,7 @@ export class RunPage {
           carried && carried.file === file && carried.scenario !== undefined
             ? carried.scenario
             : session && session.file === file
-              ? (session.scenario?.file ?? null)
+              ? (session.intent?.scenario ?? session.scenario?.file ?? null)
               : null,
       };
     },
@@ -480,6 +525,105 @@ export class RunPage {
     if (choice === null || !this.scenarios.hasValue()) return null;
     return this.scenarios.value().scenarios.some((s) => s.path === choice) ? choice : null;
   });
+
+  /** 選んだシナリオのケース。ファイル・セッション・シナリオ切替時にセッションの intent から復元する。 */
+  private readonly caseSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const id = session?.id ?? null;
+      const scenario = this.scenarioChoice();
+      const carried = this.carriedFor(id);
+      const sessionScenario =
+        session && session.file === file
+          ? (session.intent?.scenario ?? session.scenario?.file ?? null)
+          : null;
+      return {
+        file,
+        id,
+        scenario,
+        value:
+          scenario !== null &&
+          carried &&
+          carried.file === file &&
+          carried.scenario === scenario &&
+          carried.case !== undefined
+            ? carried.case
+            : scenario !== null && scenario === sessionScenario
+              ? (session?.intent?.case ?? session?.scenario?.case ?? null)
+              : null,
+      };
+    },
+    {
+      equal: (a, b) =>
+        a.file === b.file && a.id === b.id && a.scenario === b.scenario && a.value === b.value,
+    },
+  );
+  protected readonly caseChoice = linkedSignal<
+    { file: string | null; id: string | null; scenario: string | null; value: string | null },
+    string | null
+  >({
+    source: this.caseSource,
+    computation: ({ value }) => value,
+  });
+
+  /** パラメータ上書き。ファイル・セッション・シナリオ・ケース切替時に一致するセッションの intent から復元する。 */
+  private readonly paramOverridesSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const id = session?.id ?? null;
+      const scenario = this.scenarioChoice();
+      const scenarioCase = this.caseChoice();
+      const carried = this.carriedFor(id);
+      const sessionScenario =
+        session && session.file === file
+          ? (session.intent?.scenario ?? session.scenario?.file ?? null)
+          : null;
+      const sessionCase =
+        session && session.file === file
+          ? (session.intent?.case ?? session.scenario?.case ?? null)
+          : null;
+      const value: Readonly<Record<string, ScenarioParamValue>> =
+        scenario !== null &&
+        carried &&
+        carried.file === file &&
+        carried.scenario === scenario &&
+        (carried.case ?? null) === scenarioCase &&
+        carried.params !== undefined
+          ? { ...carried.params }
+          : scenario !== null &&
+              scenario === sessionScenario &&
+              scenarioCase === sessionCase &&
+              session?.intent?.params
+            ? { ...session.intent.params }
+            : {};
+      return { file, id, scenario, scenarioCase, value };
+    },
+    {
+      equal: (a, b) =>
+        a.file === b.file &&
+        a.id === b.id &&
+        a.scenario === b.scenario &&
+        a.scenarioCase === b.scenarioCase &&
+        JSON.stringify(a.value) === JSON.stringify(b.value),
+    },
+  );
+  protected readonly paramOverrides = linkedSignal<
+    {
+      file: string | null;
+      id: string | null;
+      scenario: string | null;
+      scenarioCase: string | null;
+      value: Readonly<Record<string, ScenarioParamValue>>;
+    },
+    Readonly<Record<string, ScenarioParamValue>>
+  >({
+    source: this.paramOverridesSource,
+    computation: ({ value }) => value,
+  });
+  protected readonly paramInvalid = signal(false);
+
   /** ランチャーがシナリオ終了後の手動操作への引き継ぎに対応しているか。 */
   protected readonly handoverSupported = computed(
     () => this.app.hasValue() && this.app.value().launcher.features.includes('scenario-handover'),
@@ -491,6 +635,14 @@ export class RunPage {
       const id = session?.id ?? null;
       const scenario = this.scenarioChoice();
       const carried = this.carriedFor(id);
+      const sessionScenario =
+        session && session.file === file
+          ? (session.intent?.scenario ?? session.scenario?.file ?? null)
+          : null;
+      const sessionAfter =
+        scenario !== null && scenario === sessionScenario
+          ? session?.intent?.after_scenario
+          : undefined;
       return {
         file,
         id,
@@ -501,7 +653,9 @@ export class RunPage {
           carried.file === file &&
           (carried.afterScenario === 'stop' || carried.afterScenario === 'pause')
             ? carried.afterScenario
-            : ('stop' as AfterScenario),
+            : sessionAfter === 'stop' || sessionAfter === 'pause'
+              ? sessionAfter
+              : ('stop' as AfterScenario),
       };
     },
     {
@@ -553,7 +707,13 @@ export class RunPage {
    */
   private readonly intent = computed<Intent>(
     () => {
+      const variant = this.variantChoice();
       const scenario = this.chosenScenario();
+      const scenarioCase = scenario !== null ? this.caseChoice() : null;
+      const overrides = this.paramOverrides();
+      const paramKeys = scenario !== null ? Object.keys(overrides).sort() : [];
+      const params: Record<string, ScenarioParamValue> | null =
+        paramKeys.length > 0 ? Object.fromEntries(paramKeys.map((k) => [k, overrides[k]!])) : null;
       const pauseAfter =
         scenario !== null && this.handoverSupported() && this.afterScenario() === 'pause';
       const speed = this.speed();
@@ -563,7 +723,10 @@ export class RunPage {
       return {
         disable: [...this.disabled()].sort(),
         manual: this.manualToSend(),
+        ...(variant !== null ? { variant } : {}),
         ...(scenario !== null ? { scenario } : {}),
+        ...(scenarioCase !== null ? { case: scenarioCase } : {}),
+        ...(params !== null ? { params } : {}),
         ...(pauseAfter ? { after_scenario: 'pause' as const } : {}),
         ...(speed !== null ? { speed } : {}),
         ...(!pauseAfter && !this.stopAtInvalid() && stopAt !== ''
@@ -636,6 +799,35 @@ export class RunPage {
     return this.selectedCheck();
   });
 
+  /** 選択中の構成ファイルが持つバリアント一覧。 */
+  protected readonly availableVariants = computed<readonly string[]>(
+    () => this.selectedCheck()?.variants ?? [],
+  );
+  /** 実行中のセッションのバリアント（なければ null）。 */
+  protected readonly sessionVariant = computed<string | null>(() => {
+    const session = this.session();
+    return session?.intent?.variant ?? session?.check?.variant ?? null;
+  });
+  /** 選択中シナリオのケース一覧（バリアント制限 `only` の判定つき）。 */
+  protected readonly caseOptions = computed<readonly CaseOption[]>(() =>
+    caseOptionsFor(
+      this.selectedCheck()?.scenario,
+      this.variantChoice() ?? this.selectedCheck()?.variant ?? null,
+    ),
+  );
+  /** 選択中シナリオの照合情報（パラメータ編集欄の入力）。 */
+  protected readonly editableScenario = computed(() =>
+    this.chosenScenario() !== null ? (this.selectedCheck()?.scenario ?? null) : null,
+  );
+  /** シナリオ終了後の「同じ条件で再実行」ボタンが押せるか。 */
+  protected readonly rerunAllowed = computed(
+    () =>
+      !this.running() &&
+      !this.run.starting() &&
+      this.run.controls().start.ok &&
+      this.session()?.scenario != null,
+  );
+
   /** 始められない理由（なければ空）。ランチャーやサーバーが断る理由は、帯が正面の口の `controls.start` から出す。 */
   protected readonly blockedBy = computed<string[]>(() => {
     if (this.selected() === null) return [$localize`構成ファイルを選んでください。`];
@@ -644,6 +836,9 @@ export class RunPage {
     }
     if (!this.pauseAfterScenario() && this.stopAtInvalid())
       return [$localize`停止時刻は 1 から 1000000000000 までの整数にしてください。`];
+    if (this.chosenScenario() !== null && this.paramInvalid()) {
+      return [$localize`パラメータの入力値を確認してください。`];
+    }
     // 選んだシナリオを送れないうちは始めない（シナリオなしの実行が始まらないように）
     const scenario = this.scenarioChoice();
     if (scenario !== null && this.chosenScenario() === null) {
@@ -660,7 +855,16 @@ export class RunPage {
     if (error) return [$localize`照合できませんでした: ${errorMessage(error)}:reason:`];
     const check = this.shownCheck();
     if (!check) return [$localize`照合の結果を待っています。`];
+    const guidance = checkSelectionGuidance(check);
+    if (guidance === 'variant') return [$localize`バリアントを選んでください。`];
+    if (guidance === 'case') return [$localize`シナリオのケースを選んでください。`];
     if (check.result !== 'passed') {
+      const missing = check.scenario?.missing_params;
+      if (missing && missing.length > 0) {
+        return [
+          $localize`未指定の必須パラメータ（${missing.join(', ')}:names:）を入力してください。`,
+        ];
+      }
       return [
         $localize`照合で誤りが見つかりました（誤り ${check.errors}:count: 件）。直してから始めてください。`,
       ];
@@ -783,7 +987,12 @@ export class RunPage {
         stopAt: this.stopAt(),
         stopAtEdited: this.stopAtEdited(),
         stopSession: this.session()?.file === this.selected() ? (this.session()?.id ?? null) : null,
+        variant: this.variantChoice(),
         scenario: this.scenarioChoice(),
+        case: this.caseChoice(),
+        ...(Object.keys(this.paramOverrides()).length > 0
+          ? { params: { ...this.paramOverrides() } }
+          : {}),
         afterScenario: this.afterScenario(),
         startPaused: this.startPaused(),
         logSource: this.logSource(),
@@ -795,9 +1004,30 @@ export class RunPage {
     // 戻り、それを書く
     const own = computed(
       () => {
-        const { disable, manual, scenario, after_scenario, speed, start_paused, stop_at_ms } =
-          this.intent();
-        return { disable, manual, scenario, after_scenario, speed, start_paused, stop_at_ms };
+        const {
+          disable,
+          manual,
+          variant,
+          scenario,
+          case: scenarioCase,
+          params,
+          after_scenario,
+          speed,
+          start_paused,
+          stop_at_ms,
+        } = this.intent();
+        return {
+          disable,
+          manual,
+          variant,
+          scenario,
+          case: scenarioCase,
+          params,
+          after_scenario,
+          speed,
+          start_paused,
+          stop_at_ms,
+        };
       },
       { equal: sameIntent },
     );
@@ -808,7 +1038,10 @@ export class RunPage {
       pageIntent.update({
         disable: undefined,
         manual: undefined,
+        variant: undefined,
         scenario: undefined,
+        case: undefined,
+        params: undefined,
         after_scenario: undefined,
         speed: undefined,
         start_paused: undefined,
@@ -831,6 +1064,9 @@ export class RunPage {
   }
 
   protected selectFile(file: string): void {
+    if (file !== this.selected()) {
+      this.paramInvalid.set(false);
+    }
     this.chosen.set(file);
   }
 
@@ -841,13 +1077,70 @@ export class RunPage {
     this.run.start(this.intent(), file);
   }
 
+  protected selectVariant(variant: string | null): void {
+    this.variantChoice.set(variant);
+    const currentCase = this.caseChoice();
+    if (currentCase !== null) {
+      const options = caseOptionsFor(this.selectedCheck()?.scenario, variant);
+      if (options.some((opt) => opt.name === currentCase && opt.disabled)) {
+        this.caseChoice.set(null);
+        this.paramOverrides.set({});
+        this.paramInvalid.set(false);
+      }
+    }
+  }
+
   protected selectScenario(scenario: string | null): void {
     this.scenarioChoice.set(scenario);
+    this.caseChoice.set(null);
+    this.paramOverrides.set({});
+    this.paramInvalid.set(false);
     if (scenario === null) this.afterScenario.set('stop');
+  }
+
+  protected selectCase(scenarioCase: string | null): void {
+    this.caseChoice.set(scenarioCase);
+    this.paramOverrides.set({});
+    this.paramInvalid.set(false);
   }
 
   protected selectAfterScenario(value: AfterScenario): void {
     this.afterScenario.set(value);
+  }
+
+  protected caseDisabledReason(option: CaseOption): string | null {
+    if (!option.disabled || !option.only) return null;
+    return $localize`バリアント ${option.only.join(', ')}:variants: のみ対象`;
+  }
+
+  /**
+   * 終了したセッションと同じ条件で単独再実行する。
+   * サーバー側の `session.intent` をそのまま通常の `start(intent, file)`（`POST /api/run`）へ渡すことで、
+   * `1 POST /api/run = 1 Session = 1 Timeline`、外部接続の TOCTOU 検査、ホットスタンバイ再利用をそのまま保つ。
+   */
+  protected rerunSession(): void {
+    const session = this.session();
+    if (!session || !this.rerunAllowed()) return;
+    const intent: Intent = session.intent
+      ? { ...session.intent }
+      : this.fallbackSessionIntent(session);
+    this.document.querySelector('mat-sidenav-content')?.scrollTo(0, 0);
+    this.run.start(intent, session.file);
+  }
+
+  private fallbackSessionIntent(session: SessionView): Intent {
+    const variant = session.check?.variant ?? undefined;
+    const scenario = session.scenario?.file ?? undefined;
+    const scenarioCase = session.scenario?.case ?? undefined;
+    return {
+      disable: [...session.disable],
+      manual: [...session.manual],
+      ...(variant ? { variant } : {}),
+      ...(scenario ? { scenario } : {}),
+      ...(scenario && scenarioCase ? { case: scenarioCase } : {}),
+      ...(session.speed !== null ? { speed: session.speed } : {}),
+      ...(session.startPaused ? { start_paused: true } : {}),
+    };
   }
 
   /** この実行の操作をシナリオとして保存できるか（変数を読み書きできる実行で、シナリオの実行でない）。 */

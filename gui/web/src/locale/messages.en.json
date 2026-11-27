@@ -358,6 +358,14 @@
       "source": "所見",
       "target": "Findings"
     },
+    "5165684299422225791": {
+      "source": "バリアントを選んでください。",
+      "target": "Choose a variant."
+    },
+    "3050902763305267254": {
+      "source": "シナリオのケースを選んでください。",
+      "target": "Choose a scenario case."
+    },
     "6358845893914240906": {
       "source": "{$name} を使う",
       "target": "Enable {$name}"
@@ -529,6 +537,42 @@
     "5644006703414350153": {
       "source": "動かなかった",
       "target": "Not run"
+    },
+    "4264594946253376882": {
+      "source": "飛ばした",
+      "target": "Skipped"
+    },
+    "4562028231792155362": {
+      "source": "上書き",
+      "target": "override"
+    },
+    "2650606970852492592": {
+      "source": "未指定（必須）",
+      "target": "required"
+    },
+    "2617965929230353018": {
+      "source": "シナリオ",
+      "target": "Scenario"
+    },
+    "5381512517631090256": {
+      "source": "構成",
+      "target": "configuration"
+    },
+    "738805540888768203": {
+      "source": "バリアント",
+      "target": "Variant"
+    },
+    "7764598738280284408": {
+      "source": "ケース",
+      "target": "Case"
+    },
+    "5287038263827473734": {
+      "source": "既定値",
+      "target": "default"
+    },
+    "424789093328086644": {
+      "source": "テンプレート",
+      "target": "template"
     },
     "5178359797605568054": {
       "source": "シミュレーションを去った",
@@ -798,6 +842,10 @@
       "source": " 保存のためにブラウザへ渡しました: {$INTERPOLATION} ",
       "target": " Sent to the browser to save: {$INTERPOLATION} "
     },
+    "595259397746660222": {
+      "source": " 同じ条件で再実行 ",
+      "target": " Run again with same settings "
+    },
     "7021650277600365342": {
       "source": "終わり方",
       "target": "How it ended"
@@ -813,6 +861,18 @@
     "845801156829170127": {
       "source": " 誤り {$INTERPOLATION}、警告 {$INTERPOLATION_1}、注記 {$INTERPOLATION_2} ",
       "target": " errors: {$INTERPOLATION}, warnings: {$INTERPOLATION_1}, notes: {$INTERPOLATION_2} "
+    },
+    "9189018050426745060": {
+      "source": "ケース:",
+      "target": "Case:"
+    },
+    "5008073833181647344": {
+      "source": "失敗した手順:",
+      "target": "Failed step:"
+    },
+    "1896682457478934931": {
+      "source": "呼び出し元（{$INTERPOLATION} 段）",
+      "target": "Call stack ({$INTERPOLATION})"
     },
     "8177955834629607216": {
       "source": "速度",
@@ -918,6 +978,10 @@
       "source": "選べる範囲:",
       "target": "Folder:"
     },
+    "1890265959852141753": {
+      "source": "バリアント:",
+      "target": "Variant:"
+    },
     "5586305627400735839": {
       "source": "シナリオ:",
       "target": "Scenario:"
@@ -925,10 +989,6 @@
     "8762868499684338014": {
       "source": "なし",
       "target": "None"
-    },
-    "2617965929230353018": {
-      "source": "シナリオ",
-      "target": "Scenario"
     },
     "4650179018992621111": {
       "source": "なし（自分で操作する）",
@@ -986,9 +1046,13 @@
       "source": "止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）",
       "target": "Start paused (hold at virtual time 0 until you resume or step)"
     },
-    "3547482668738318262": {
-      "source": " シナリオ {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} も照合しました（{$INTERPOLATION_1} 手順）。 ",
-      "target": " The scenario {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} was checked too (steps: {$INTERPOLATION_1}). "
+    "804579770293364110": {
+      "source": "シナリオ {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE}（ケース {$START_TAG_CODE}{$INTERPOLATION_1}{$CLOSE_TAG_CODE}）も照合しました（{$INTERPOLATION_2} 手順）。",
+      "target": "The scenario {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} (case {$START_TAG_CODE}{$INTERPOLATION_1}{$CLOSE_TAG_CODE}) was checked too (steps: {$INTERPOLATION_2})."
+    },
+    "6751644102157707021": {
+      "source": "シナリオ {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} も照合しました（{$INTERPOLATION_1} 手順）。",
+      "target": "The scenario {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} was checked too (steps: {$INTERPOLATION_1})."
     },
     "5988127550695008293": {
       "source": "この実行の照合の結果はありません。",
@@ -1138,6 +1202,10 @@
       "source": "停止時刻は 1 から 1000000000000 までの整数にしてください。",
       "target": "Enter a whole number from 1 to 1000000000000 for the stop time."
     },
+    "868052471759353497": {
+      "source": "パラメータの入力値を確認してください。",
+      "target": "Check the parameter input values."
+    },
     "5040638888676210622": {
       "source": "シナリオの一覧を読めないので、選んだシナリオで始められません。",
       "target": "Cannot start with the selected scenario: the scenario list could not be read."
@@ -1157,6 +1225,10 @@
     "8622944444543432409": {
       "source": "照合の結果を待っています。",
       "target": "Waiting for the check result…"
+    },
+    "7383918844170423816": {
+      "source": "未指定の必須パラメータ（{$names}）を入力してください。",
+      "target": "Enter required parameters ({$names})."
     },
     "4245265438145013993": {
       "source": "照合で誤りが見つかりました（誤り {$count} 件）。直してから始めてください。",
@@ -1181,6 +1253,10 @@
     "478554458320405936": {
       "source": "選べる範囲のパスをコピー",
       "target": "Copy the folder path"
+    },
+    "7536858805348951330": {
+      "source": "バリアント {$variants} のみ対象",
+      "target": "Only for variant {$variants}"
     },
     "2236669895312382111": {
       "source": " 待たずに止める… ",
@@ -1322,6 +1398,14 @@
       "source": "状態",
       "target": "Status"
     },
+    "3426857070569930858": {
+      "source": "表示",
+      "target": "View"
+    },
+    "8955503171281061388": {
+      "source": " タイムラインで表示 ",
+      "target": " Show in timeline "
+    },
     "3762578014232077049": {
       "source": "{VAR_PLURAL, plural, other {ほかに {INTERPOLATION} 個の手順があります（まだ始まっていません）。}}",
       "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} more step (not started yet).} other {{INTERPOLATION} more steps (not started yet).}}"
@@ -1361,6 +1445,38 @@
     "6980809203121972625": {
       "source": "{$ms} ms から",
       "target": "from {$ms} ms"
+    },
+    "7013754026909952174": {
+      "source": "パラメータ",
+      "target": "Parameters"
+    },
+    "3449176275982312016": {
+      "source": " すべてリセット ",
+      "target": " Reset all "
+    },
+    "2832714177837035594": {
+      "source": " 必須パラメータが {$INTERPOLATION} 件未指定です。値を入力してください。 ",
+      "target": " Missing required parameters: {$INTERPOLATION}. Enter values before starting. "
+    },
+    "532197344646607067": {
+      "source": "シナリオのパラメータ",
+      "target": "Scenario parameters"
+    },
+    "5722720732427397531": {
+      "source": " 戻す ",
+      "target": " Reset "
+    },
+    "7827807451749430996": {
+      "source": "選択してください",
+      "target": "Select a value"
+    },
+    "5462475053882733060": {
+      "source": "整数を入力してください。",
+      "target": "Enter an integer."
+    },
+    "8486463869055671960": {
+      "source": "数値を入力してください。",
+      "target": "Enter a number."
     },
     "1254075052970929264": {
       "source": "倍率",
@@ -1609,10 +1725,6 @@
     "708845366436870643": {
       "source": "照合できない",
       "target": "Could not check"
-    },
-    "4264594946253376882": {
-      "source": "飛ばした",
-      "target": "Skipped"
     },
     "7150011854091514567": {
       "source": "誤りがある",

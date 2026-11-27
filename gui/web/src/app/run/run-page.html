@@ -163,16 +163,42 @@
             <p class="hint" data-testid="runtime-note">{{ note }}</p>
           }
           @if (running()) {
+            @if (sessionVariant(); as variant) {
+              <p class="file" data-testid="session-variant">
+                <ng-container i18n>バリアント:</ng-container>
+                <code lang="en">{{ variant }}</code>
+              </p>
+            }
+          } @else if (availableVariants().length > 0) {
+            <mat-form-field class="picker picker-gap" subscriptSizing="dynamic">
+              <mat-label i18n>バリアント</mat-label>
+              <mat-select
+                [value]="variantChoice()"
+                (valueChange)="selectVariant($event)"
+                data-testid="variant-select"
+              >
+                @for (variant of availableVariants(); track variant) {
+                  <mat-option [value]="variant">{{ variant }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+          }
+          @if (running()) {
             <p class="file" data-testid="session-scenario">
               <ng-container i18n>シナリオ:</ng-container>
               @if (session()?.scenario; as scenario) {
                 <code>{{ scenario.file }}</code>
+                @if (scenario.case) {
+                  <span class="case-tag" lang="en" data-testid="session-case"
+                    >[{{ scenario.case }}]</span
+                  >
+                }
               } @else {
                 <ng-container i18n>なし</ng-container>
               }
             </p>
           } @else if (scenarios.hasValue()) {
-            <mat-form-field class="picker" subscriptSizing="dynamic">
+            <mat-form-field class="picker picker-gap" subscriptSizing="dynamic">
               <mat-label i18n>シナリオ</mat-label>
               <mat-select
                 [value]="scenarioChoice()"
@@ -191,6 +217,35 @@
                 <code>{{ scenarios.value().directory }}</code> に .yaml を置くと選べます。
               </p>
             } @else if (chosenScenario() !== null) {
+              @if (caseOptions().length > 0) {
+                <mat-form-field class="picker picker-gap" subscriptSizing="dynamic">
+                  <mat-label i18n>ケース</mat-label>
+                  <mat-select
+                    [value]="caseChoice()"
+                    (valueChange)="selectCase($event)"
+                    data-testid="case-select"
+                  >
+                    @for (option of caseOptions(); track option.name) {
+                      <mat-option
+                        [value]="option.name"
+                        [disabled]="option.disabled"
+                        [attr.title]="caseDisabledReason(option)"
+                      >
+                        {{ option.name }}
+                        @if (caseDisabledReason(option); as reason) {
+                          <span class="case-reason">（{{ reason }}）</span>
+                        }
+                      </mat-option>
+                    }
+                  </mat-select>
+                </mat-form-field>
+              }
+              <app-scenario-params
+                [scenario]="editableScenario()"
+                [(overrides)]="paramOverrides"
+                [locked]="running()"
+                (invalidChange)="paramInvalid.set($event)"
+              />
               <div class="after-scenario">
                 <span id="after-scenario-label" class="after-scenario-label" i18n
                   >シナリオ終了後</span
@@ -294,9 +349,23 @@
         <mat-card-content>
           @if (shownCheck(); as check) {
             @if (check.scenario; as scenario) {
-              <p class="hint" data-testid="check-scenario" i18n>
-                シナリオ <code>{{ scenario.file }}</code> も照合しました（{{ scenario.steps }}
-                手順）。
+              <p class="hint" data-testid="check-scenario">
+                @if (scenario.case) {
+                  <ng-container i18n
+                    >シナリオ <code>{{ scenario.file }}</code>（ケース
+                    <code>{{ scenario.case }}</code>）も照合しました（{{
+                      scenario.steps
+                    }}
+                    手順）。</ng-container
+                  >
+                } @else {
+                  <ng-container i18n
+                    >シナリオ <code>{{ scenario.file }}</code> も照合しました（{{
+                      scenario.steps
+                    }}
+                    手順）。</ng-container
+                  >
+                }
               </p>
             }
             <app-check-panel
@@ -347,7 +416,12 @@
                   結果は出ましたが、ランチャーはまだ終わっていません。終わらないときは、上の「停止」で止めてください。
                 </p>
               }
-              <app-result-panel [result]="session.result" [outcome]="status.result" />
+              <app-result-panel
+                [result]="session.result"
+                [outcome]="status.result"
+                [rerunAllowed]="!running() && session.scenario ? rerunAllowed() : null"
+                (rerun)="rerunSession()"
+              />
             </mat-card-content>
           </mat-card>
         } @else if (status.run === 'crashed') {
@@ -414,6 +488,8 @@
                 [running]="runActive(session) && !session.result"
                 [paused]="status.run === 'paused'"
                 [crashed]="status.run === 'crashed'"
+                [rerunAllowed]="!running() ? rerunAllowed() : null"
+                (rerun)="rerunSession()"
               />
             </mat-card-content>
           </mat-card>

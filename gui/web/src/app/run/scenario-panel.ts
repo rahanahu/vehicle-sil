@@ -1,7 +1,14 @@
-import { Component, computed, inject, input } from '@angular/core';
-import { ScenarioStep, ScenarioView } from '@vehicle-sil/gui-client';
+import { Component, computed, inject, input, output, viewChild } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
+import {
+  CheckScenarioParam,
+  ScenarioCallFrame,
+  ScenarioStep,
+  ScenarioView,
+} from '@vehicle-sil/gui-client';
 import { LanguageChoice } from '../core/i18n/language-choice';
-import { scenarioOutcomeLabel, stepStateLabel } from './labels';
+import { paramProvenanceLabel, scenarioOutcomeLabel, stepStateLabel } from './labels';
+import { formatParamValue, normalizeProvenance } from './scenario-param-model';
 import { TimelineView } from './timeline-view';
 
 /**
@@ -12,26 +19,53 @@ import { TimelineView } from './timeline-view';
 export const timelinePageUrl = (timelineUrl: string, language: string): string =>
   `timeline/?src=${encodeURIComponent(`/${timelineUrl}`)}&lang=${encodeURIComponent(language)}`;
 
+/** テンプレート呼び出しフレーム 1 段分の表示テキスト。 */
+export function formatCallFrame(frame: ScenarioCallFrame): string {
+  const loc =
+    frame.file && frame.line !== null
+      ? `${frame.file}:${frame.line}`
+      : (frame.file ?? (frame.line !== null ? String(frame.line) : '?'));
+  const head = frame.name ? `${loc} (${frame.name})` : loc;
+  const entries = Object.entries(frame.params);
+  if (!entries.length) return head;
+  return `${head} [${entries.map(([k, v]) => `${k}=${formatParamValue(v)}`).join(', ')}]`;
+}
+
 /**
  * シナリオの経過: 全体の合否と、手順の表（行、何をするか、状態、仮想時刻、失敗の理由）。手順は、ランチャーの
  * `scenario_step` の事象で進み、結果が出たら結果の手順（動かなかった手順を含む）になる。手順の文と理由は、
  * ランチャーの英語のまま出す。実行が時間の軸のファイルを残したら（終わった後）、それを開くリンクと、この画面の中に
- * 出す部品（TimelineView）を出す。
+ * 出す部品（TimelineView）を出す。失敗終了時はタイムラインを自動展開し、失敗手順へフォーカスする。
  */
 @Component({
   selector: 'app-scenario-panel',
-  imports: [TimelineView],
+  imports: [MatButtonModule, TimelineView],
   template: `
     @let s = scenario();
-    <p
-      class="outcome"
-      [attr.data-tone]="tone()"
-      data-testid="scenario-outcome"
-      [title]="s.status ?? ''"
-    >
-      <span class="mark" aria-hidden="true">{{ mark() }}</span>
-      {{ outcome() }}
-    </p>
+    <div class="top-row">
+      <p
+        class="outcome"
+        [attr.data-tone]="tone()"
+        data-testid="scenario-outcome"
+        [title]="s.status ?? ''"
+      >
+        <span class="mark" aria-hidden="true">{{ mark() }}</span>
+        {{ outcome() }}
+      </p>
+      @if (rerunAllowed() !== null && !running() && s.status !== null) {
+        <button
+          matButton="tonal"
+          type="button"
+          class="rerun"
+          data-testid="scenario-rerun"
+          [disabled]="!rerunAllowed()"
+          (click)="rerun.emit()"
+          i18n
+        >
+          同じ条件で再実行
+        </button>
+      }
+    </div>
     @if (handoverBadge(); as notice) {
       <p class="handover" role="status" data-testid="scenario-handover">
         <span class="mark" aria-hidden="true">‖</span>
@@ -53,7 +87,12 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
       </p>
     }
     @if (s.timelineUrl) {
-      <app-timeline-view [timelineUrl]="s.timelineUrl" />
+      <app-timeline-view
+        #timeline
+        [timelineUrl]="s.timelineUrl"
+        [autoExpand]="s.status === 'failed'"
+        [initialStep]="failedStepIndex()"
+      />
     }
     <p class="file">
       <code data-testid="scenario-file">{{ s.file }}</code>
@@ -64,6 +103,19 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
         <span class="case" lang="en" data-testid="scenario-case">[{{ s.case }}]</span>
       }
     </p>
+    @if (s.params && s.params.length > 0) {
+      <dl class="applied-params" data-testid="scenario-params">
+        @for (param of s.params; track param.name) {
+          <div class="param-chip">
+            <dt lang="en">{{ param.name }}</dt>
+            <dd lang="en">
+              {{ formatValue(param) }}
+              <span class="param-from">{{ paramSource(param) }}</span>
+            </dd>
+          </div>
+        }
+      </dl>
+    }
     <div class="table" role="region" [attr.aria-label]="tableLabel" tabindex="0">
       <table data-testid="scenario-steps">
         <thead>
@@ -72,6 +124,9 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
             <th scope="col" i18n>手順</th>
             <th scope="col" i18n>状態</th>
             <th scope="col" i18n>仮想時刻</th>
+            @if (s.timelineUrl) {
+              <th scope="col" i18n>表示</th>
+            }
           </tr>
         </thead>
         <tbody>
@@ -85,17 +140,22 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
                   }}</span>
                 }
                 <span lang="en">{{ step.text }}</span>
-                @if (stepCallStack(step); as stack) {
-                  <span
+                @if (step.call_stack && step.call_stack.length > 0) {
+                  <details
                     class="call-stack"
-                    lang="en"
                     data-testid="scenario-step-call-stack"
-                    [title]="stack"
-                    >{{ stack }}</span
+                    [open]="step.status === 'failed'"
                   >
+                    <summary i18n>呼び出し元（{{ step.call_stack.length }} 段）</summary>
+                    <ol class="call-frames" lang="en">
+                      @for (frame of step.call_stack; track $index) {
+                        <li>{{ formatFrame(frame) }}</li>
+                      }
+                    </ol>
+                  </details>
                 }
                 @if (step.message) {
-                  <span class="reason">
+                  <span class="reason" data-testid="scenario-step-message">
                     <span class="code">{{ step.code }}</span>
                     <span lang="en">{{ step.message }}</span>
                   </span>
@@ -106,6 +166,20 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
                 {{ stepState(step) }}
               </td>
               <td class="time">{{ timeText(step) }}</td>
+              @if (s.timelineUrl) {
+                <td class="action">
+                  <button
+                    matButton
+                    type="button"
+                    class="jump"
+                    [attr.data-testid]="'scenario-step-jump-' + step.index"
+                    (click)="jumpToStep(step.index)"
+                    i18n
+                  >
+                    タイムラインで表示
+                  </button>
+                </td>
+              }
             </tr>
           }
         </tbody>
@@ -130,8 +204,16 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
     :host {
       display: block;
     }
+    .top-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--app-space-2);
+      margin-block-end: var(--app-space-1);
+    }
     .outcome {
-      margin: 0 0 var(--app-space-1);
+      margin: 0;
       font: var(--mat-sys-title-medium);
     }
     .outcome[data-tone='bad'],
@@ -164,6 +246,39 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
       font: var(--mat-sys-label-medium);
       color: var(--mat-sys-on-surface-variant);
     }
+    .applied-params {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--app-space-1) var(--app-space-2);
+      margin: 0 0 var(--app-space-2);
+    }
+    .param-chip {
+      display: inline-flex;
+      align-items: baseline;
+      gap: var(--app-space-1);
+      padding: 2px 8px;
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--mat-sys-surface-container-low);
+      font: var(--mat-sys-body-small);
+    }
+    .param-chip dt {
+      font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .param-chip dt::after {
+      content: '=';
+      margin-inline-start: 2px;
+    }
+    .param-chip dd {
+      margin: 0;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+    .param-from {
+      font: var(--mat-sys-label-small);
+      color: var(--mat-sys-on-surface-variant);
+    }
     .table {
       overflow-x: auto;
     }
@@ -192,10 +307,16 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
       color: var(--mat-sys-on-surface-variant);
     }
     .call-stack {
-      display: block;
       margin-block-start: var(--app-space-1);
       font: var(--mat-sys-body-small);
       color: var(--mat-sys-on-surface-variant);
+    }
+    .call-stack summary {
+      cursor: pointer;
+    }
+    .call-frames {
+      margin: var(--app-space-1) 0 0;
+      padding-inline-start: 1.25em;
     }
     .reason {
       display: block;
@@ -208,7 +329,8 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
     }
     .line,
     .time,
-    .state {
+    .state,
+    .action {
       white-space: nowrap;
     }
     tr[data-status='running'] {
@@ -222,6 +344,8 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
 })
 export class ScenarioPanel {
   private readonly language = inject(LanguageChoice).current;
+  private readonly timeline = viewChild<TimelineView>('timeline');
+
   readonly scenario = input.required<ScenarioView>();
   /** シナリオがまだ動いているか（ランチャーが動いていて、結果がまだ）。 */
   readonly running = input(false);
@@ -229,6 +353,10 @@ export class ScenarioPanel {
   readonly paused = input(false);
   /** ランチャーが異常終了したか。 */
   readonly crashed = input(false);
+  /** 同条件での再実行ボタンの可否（null のときはボタンを出さない）。 */
+  readonly rerunAllowed = input<boolean | null>(null);
+  /** 「同じ条件で再実行」が押された。 */
+  readonly rerun = output();
 
   protected readonly handoverBadge = computed(() => {
     const s = this.scenario();
@@ -252,6 +380,13 @@ export class ScenarioPanel {
   protected readonly timelineHref = computed(() => {
     const url = this.scenario().timelineUrl;
     return url ? timelinePageUrl(url, this.language) : null;
+  });
+
+  /** 失敗した最初の手順番号（1 始まり）。失敗していなければ null。 */
+  protected readonly failedStepIndex = computed(() => {
+    const s = this.scenario();
+    if (s.status !== 'failed') return null;
+    return s.steps.find((step) => step.status === 'failed')?.index ?? null;
   });
 
   protected readonly tone = computed(() => {
@@ -281,27 +416,27 @@ export class ScenarioPanel {
     return Math.max(0, s.stepCount - s.steps.length);
   });
 
+  protected jumpToStep(index: number): void {
+    this.timeline()?.showStep(index);
+  }
+
+  protected formatFrame(frame: ScenarioCallFrame): string {
+    return formatCallFrame(frame);
+  }
+
+  protected formatValue(param: CheckScenarioParam): string {
+    return formatParamValue(param.value);
+  }
+
+  protected paramSource(param: CheckScenarioParam): string {
+    return paramProvenanceLabel(normalizeProvenance(param.from, false, false), param.from);
+  }
+
   protected stepLocation(step: ScenarioStep, rootFile: string): string {
     if (step.file && step.file !== rootFile) {
       return step.line !== null ? `${step.file}:${step.line}` : step.file;
     }
     return step.line !== null ? String(step.line) : '—';
-  }
-
-  protected stepCallStack(step: ScenarioStep): string | null {
-    if (!step.call_stack?.length) return null;
-    return step.call_stack
-      .map((frame) => {
-        const loc =
-          frame.file && frame.line !== null
-            ? `${frame.file}:${frame.line}`
-            : (frame.file ?? (frame.line !== null ? String(frame.line) : '?'));
-        const head = frame.name ? `${loc} (${frame.name})` : loc;
-        const entries = Object.entries(frame.params);
-        if (!entries.length) return head;
-        return `${head} [${entries.map(([k, v]) => `${k}=${String(v)}`).join(', ')}]`;
-      })
-      .join(' → ');
   }
 
   protected stepState(step: ScenarioStep): string {

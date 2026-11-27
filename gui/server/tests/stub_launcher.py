@@ -229,13 +229,15 @@ def inspect_config(
                 }, fault
 
     # Variants validation
-    if (name == "variants.yaml" or "variants:" in text) and not variant_only:
-        valid_variants = ("small", "big", "quiet")
+    has_variants = name == "variants.yaml" or "variants:" in text
+    valid_variants = ("small", "big", "quiet")
+    if has_variants and not variant_only:
         if variant is None or variant not in valid_variants:
             if not file_only or variant is not None:
                 return 2, {
                     "vehicle_sil_check": 1, "vehicle_sil": _version(), "file": cfg_path,
-                    "result": "usage", "strict": False, "errors": 1, "warnings": 0, "notes": 0,
+                    "result": "usage", "variant": None, "variants": list(valid_variants),
+                    "strict": False, "errors": 1, "warnings": 0, "notes": 0,
                     "participants": [], "networks": [], "findings": [{
                         "severity": "error", "code": "usage", "file": cfg_path, "line": 1,
                         "participant": None, "network": None,
@@ -434,6 +436,7 @@ def inspect_config(
         "vehicle_sil": _version(),
         "file": cfg_path,
         "result": result,
+        **({"variant": variant, "variants": list(valid_variants)} if has_variants else {}),
         "strict": bool(req.get("strict", False)),
         "errors": sum(1 for f in findings if f["severity"] == "error"),
         "warnings": sum(1 for f in findings if f["severity"] == "warning"),
@@ -497,7 +500,10 @@ def inspect_config(
                         if isinstance(pdef.get("type"), str):
                             meta_entry["type"] = pdef["type"]
                         if isinstance(pdef.get("values"), list):
-                            meta_entry["values"] = list(pdef["values"])
+                            meta_entry["values"] = [
+                                ("true" if v else "false") if isinstance(v, bool) else str(v)
+                                for v in pdef["values"]
+                            ]
                         if isinstance(pdef.get("description"), str):
                             meta_entry["description"] = pdef["description"]
                         if "default" in pdef:

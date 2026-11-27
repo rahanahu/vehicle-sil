@@ -1,6 +1,19 @@
-import { CUSTOM_ELEMENTS_SCHEMA, Component, computed, inject, input, signal } from '@angular/core';
+import {
+  CUSTOM_ELEMENTS_SCHEMA,
+  Component,
+  ElementRef,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import type { VehicleSilTimelineEventMap } from '@vehicle-sil/gui-client/timeline';
+import type {
+  VehicleSilTimelineElement,
+  VehicleSilTimelineEventMap,
+} from '@vehicle-sil/gui-client/timeline';
 import { AuthToken } from '../core/auth/auth-token';
 import { LanguageChoice } from '../core/i18n/language-choice';
 
@@ -12,7 +25,8 @@ const defineTimeline = (): Promise<unknown> =>
 /**
  * 実行の時間の軸を、この画面の中に要素 <vehicle-sil-timeline> で出す（開閉できる）。利用者の画面に要素を置く手本:
  * CUSTOM_ELEMENTS_SCHEMA、プロパティは signal を [prop] で、事象は (event) で受ける（docs/gui.md の
- * 「自分の画面にタイムラインを置く」）。カーソルは、要素の事象で signal に入れ、[cursor] で要素に戻す。
+ * 「自分の画面にタイムラインを置く」）。カーソルと選んだ手順は、要素の事象で signal に入れ、[cursor]・[step] で
+ * 要素に戻す。
  */
 @Component({
   selector: 'app-timeline-view',
@@ -34,6 +48,7 @@ const defineTimeline = (): Promise<unknown> =>
     </button>
     @if (open() && defined()) {
       <vehicle-sil-timeline
+        #timelineEl
         data-testid="timeline-element"
         [src]="src()"
         [lang]="language"
@@ -41,6 +56,7 @@ const defineTimeline = (): Promise<unknown> =>
         [compact]="true"
         [hide]="hidden"
         [cursor]="cursor()"
+        [step]="step()"
         (cursorchange)="onCursor($event)"
         (stepselect)="onStep($event)"
       />
@@ -79,19 +95,65 @@ export class TimelineView {
 
   /** サーバーの、実行の時間の軸のファイル（`api/timeline/<id>`。サーバーの根からの相対）。 */
   readonly timelineUrl = input.required<string>();
+  /** 失敗したシナリオなど、初めてこの timelineUrl を開くときに自動展開するか。 */
+  readonly autoExpand = input(false);
+  /** 自動展開時にフォーカスする 1 始まりの手順番号（なければ null）。 */
+  readonly initialStep = input<number | null>(null);
+
+  private readonly timelineEl = viewChild<ElementRef<VehicleSilTimelineElement>>('timelineEl');
+  private lastUrl: string | null = null;
+  private autoExpandedUrl: string | null = null;
 
   /** 要素の中で出さない部分（カードの中は狭いので、操作の説明を省く）。 */
   protected readonly hidden = 'help';
   protected readonly src = computed(() => `/${this.timelineUrl()}`);
   protected readonly open = signal(false);
   protected readonly defined = signal(false);
-  /** 要素のカーソル（仮想時刻の ms）と選んだ手順。要素の事象で入り、[cursor] で要素に戻る。 */
+  /** 要素のカーソル（仮想時刻の ms）と選んだ手順。要素の事象で入り、[cursor]・[step] で要素に戻る。 */
   protected readonly cursor = signal<number | null>(null);
   protected readonly step = signal<number | null>(null);
 
+  constructor() {
+    effect(() => {
+      const url = this.timelineUrl();
+      const shouldExpand = this.autoExpand();
+      const targetStep = this.initialStep();
+      if (url !== this.lastUrl) {
+        this.lastUrl = url;
+        this.autoExpandedUrl = null;
+        this.cursor.set(null);
+        this.step.set(shouldExpand ? targetStep : null);
+        this.open.set(shouldExpand);
+        if (shouldExpand) {
+          this.autoExpandedUrl = url;
+          this.ensureDefined();
+        }
+        return;
+      }
+      if (shouldExpand && this.autoExpandedUrl !== url) {
+        this.autoExpandedUrl = url;
+        this.step.set(targetStep);
+        this.open.set(true);
+        this.ensureDefined();
+      }
+    });
+  }
+
+  /** タイムラインを展開し、指定した 1 始まりの手順へフォーカスする。 */
+  showStep(index: number): void {
+    this.open.set(true);
+    this.ensureDefined();
+    this.step.set(index);
+    const el = this.timelineEl()?.nativeElement;
+    if (el) {
+      el.step = index;
+      el.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
   protected toggle(): void {
     this.open.update((open) => !open);
-    if (this.open() && !this.defined()) void defineTimeline().then(() => this.defined.set(true));
+    if (this.open()) this.ensureDefined();
   }
 
   protected onCursor(event: Event): void {
@@ -100,5 +162,11 @@ export class TimelineView {
 
   protected onStep(event: Event): void {
     this.step.set((event as VehicleSilTimelineEventMap['stepselect']).detail.step);
+  }
+
+  private ensureDefined(): void {
+    if (!this.defined()) {
+      void defineTimeline().then(() => this.defined.set(true));
+    }
   }
 }

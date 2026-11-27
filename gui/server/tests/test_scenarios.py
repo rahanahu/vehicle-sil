@@ -640,3 +640,64 @@ def test_templates_subdir_is_excluded_and_multicase_returns_clean_error(tmp_path
             st, sess = await c.get("api/session")
             assert st == 200 and sess["session"] is None
         run_async(talk, gui)
+
+
+def test_stub_launcher_stringifies_param_values_for_check_contract(tmp_path: Path) -> None:
+    import json
+    import subprocess
+    import sys
+
+    from vehicle_sil_gui.contracts import CheckObject
+
+    root = tmp_path / "root"
+    (root / "scenarios").mkdir(parents=True)
+    shutil.copy(REPOSITORY / "gui/server/tests/configs/simulation.yaml", root / "simulation.yaml")
+    (root / "scenarios" / "typed_values.yaml").write_text(
+        "vehicle_sil_scenario: 1\n"
+        "name: typed values\n"
+        "parameters:\n"
+        "  step_val:\n"
+        "    type: integer\n"
+        "    values: [0, 10, 20]\n"
+        "    default: 10\n"
+        "  gain:\n"
+        "    type: number\n"
+        "    values: [0.0, 1.0, 2.5]\n"
+        "    default: 1.0\n"
+        "  enabled:\n"
+        "    type: boolean\n"
+        "    values: [true, false]\n"
+        "    default: true\n"
+        "cases:\n"
+        "  c1:\n"
+        "    params:\n"
+        "      step_val: 10\n"
+        "steps:\n"
+        "  - at_ms: 0\n"
+        "    set: { Engine.engine.demand: 50 }\n",
+        encoding="utf-8",
+    )
+    stub = REPOSITORY / "gui/server/tests/stub_launcher.py"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(stub),
+            "check",
+            "--json",
+            "--scenario",
+            "scenarios/typed_values.yaml",
+            "--case",
+            "c1",
+            str(root / "simulation.yaml"),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    data = json.loads(proc.stdout)
+    validated = CheckObject.model_validate(data)
+    assert validated.scenario is not None
+    by_name = {m.name: m.values for m in (validated.scenario.param_meta or [])}
+    assert by_name["step_val"] == ["0", "10", "20"]
+    assert by_name["gain"] == ["0.0", "1.0", "2.5"]
+    assert by_name["enabled"] == ["true", "false"]

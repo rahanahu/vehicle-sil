@@ -7,6 +7,10 @@
   color: var(--mat-sys-error);
 }
 
+.outcome.guidance {
+  color: var(--mat-sys-on-surface-variant);
+}
+
 .heading {
   font: var(--mat-sys-title-small);
   margin: var(--app-space-3) 0 var(--app-space-2);

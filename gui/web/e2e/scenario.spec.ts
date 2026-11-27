@@ -2,7 +2,10 @@
 // 持たせる（シナリオの実行中も変数を読める）ので、この試験だけの GUI サーバーを起動する。
 // VEHICLE_SIL_GUI_SHOTS にディレクトリを書くと、シナリオが失敗で終わった実行の画面（幅 1280）も撮る。
 import { expect, test } from '@playwright/test';
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
 import { RUN_TIMEOUT, inSync, press, stopButton } from './support/run-page';
 import {
@@ -16,7 +19,7 @@ import {
 
 const FEATURES =
   'events,stdin-commands,request,stdin-run-until,state,check-variables,speed,start-paused,manual-participants,time-commands,control-links,scenario,' +
-  'control-server,scenario-control,scenario-end-ms,scenario-handover';
+  'control-server,scenario-control,scenario-end-ms,scenario-handover,scenario-cases,scenario-templates';
 const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
 
 let server: GuiServer;
@@ -306,4 +309,147 @@ test('failed and interrupted scenarios with handover selected never count as han
     timeout: RUN_TIMEOUT,
   });
   await expect(page.getByTestId('scenario-handover')).toHaveCount(0);
+});
+
+test('selects variant, case (with only disabled), typed parameters, and reruns with same session intent', async ({
+  page,
+}) => {
+  const root = mkdtempSync(join(tmpdir(), 'vehicle-sil-stub-cases-'));
+  cpSync(CONFIGS, root, { recursive: true });
+  writeFileSync(
+    join(root, 'scenarios', 'cases_typed.yaml'),
+    [
+      'vehicle_sil_scenario: 1',
+      'name: typed cases',
+      'parameters:',
+      '  code:',
+      '    type: string',
+      '    description: leading zero tag',
+      '  throttle:',
+      '    type: integer',
+      '    default: 40',
+      '  mode:',
+      '    type: string',
+      '    values: [eco, sport]',
+      '    default: eco',
+      '  flag:',
+      '    type: boolean',
+      '    default: true',
+      'cases:',
+      '  normal:',
+      '    params:',
+      '      throttle: 50',
+      '      code: "0001"',
+      '  big_only:',
+      '    only: [big]',
+      '    params:',
+      '      throttle: 90',
+      '      code: "0900"',
+      'steps:',
+      '  - at_ms: 0',
+      '    set: { Engine.engine.demand: 50 }',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  const isolated = await launchGuiServer({
+    launcher: REPLAY_LAUNCHER,
+    root,
+    env: { REPLAY_TICK_MS: '25', REPLAY_FEATURES: FEATURES },
+    port: 0,
+  });
+  try {
+    await page.goto(`${new URL('/', isolated.url).href}#token=${isolated.token}`);
+    await inSync(page);
+    await page.getByRole('combobox', { name: '構成ファイル' }).click();
+    await page.getByRole('option', { name: 'variants.yaml', exact: true }).click();
+
+    // Variant usage shows calm guidance, not red error count
+    await expect(page.getByTestId('check-outcome')).toContainText('バリアントを選んでください。');
+    await expect(page.getByTestId('check-outcome')).not.toHaveClass(/failed/);
+    await expect(page.getByTestId('blocked')).toContainText('バリアントを選んでください。');
+
+    // Choose variant small
+    await page.getByTestId('variant-select').click();
+    await page.getByRole('option', { name: 'small', exact: true }).click();
+    await expect(page.getByTestId('check-outcome')).toContainText('通った');
+
+    // Choose multi-case scenario -> calm case guidance
+    await page.getByTestId('scenario-select').click();
+    await page.getByRole('option', { name: 'cases_typed.yaml', exact: true }).click();
+    await expect(page.getByTestId('check-outcome')).toContainText(
+      'シナリオのケースを選んでください。',
+    );
+    await expect(page.getByTestId('blocked')).toContainText('シナリオのケースを選んでください。');
+
+    // Open case select -> big_only is disabled with variant reason; choose normal
+    await page.getByTestId('case-select').click();
+    const bigOption = page.getByRole('option', { name: /big_only/ });
+    await expect(bigOption).toHaveAttribute('aria-disabled', 'true');
+    await expect(bigOption).toContainText('バリアント big のみ対象');
+    await page.getByRole('option', { name: 'normal', exact: true }).click();
+    await expect(page.getByTestId('check-outcome')).toContainText('通った');
+    await expect(page.getByTestId('check-scenario')).toContainText('normal');
+
+    // Edit typed parameters: string "0123" stays string, integer 75 becomes number, boolean false
+    await page.getByTestId('param-input-code').fill('0123');
+    await page.getByTestId('param-input-throttle').fill('75');
+    await page.getByTestId('param-input-flag').click();
+    await page.getByRole('option', { name: 'false', exact: true }).click();
+    await expect(page.getByTestId('param-badge-throttle')).toHaveText('上書き');
+    await expect(page.getByTestId('check-outcome')).toContainText('通った');
+
+    // Start run and check POST /api/run JSON payload types
+    const firstReq = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const firstRes = page.waitForResponse(
+      (r) => r.url().endsWith('/api/run') && r.request().method() === 'POST',
+    );
+    const startBtn = page.getByTestId('start');
+    await expect(startBtn).toHaveAttribute('data-armed', 'true');
+    await startBtn.click();
+    const body = (await firstReq).postDataJSON() as Record<string, unknown>;
+    expect(body['variant']).toBe('small');
+    expect(body['scenario']).toBe('scenarios/cases_typed.yaml');
+    expect(body['case']).toBe('normal');
+    expect(body['params']).toEqual({ code: '0123', flag: false, throttle: 75 });
+    expect(typeof (body['params'] as Record<string, unknown>)['code']).toBe('string');
+    expect(typeof (body['params'] as Record<string, unknown>)['throttle']).toBe('number');
+    expect(typeof (body['params'] as Record<string, unknown>)['flag']).toBe('boolean');
+    const firstId = ((await (await firstRes).json()) as { run_id: string }).run_id;
+
+    await expect(page.getByTestId('scenario-card').getByTestId('scenario-outcome')).toHaveText(
+      /シナリオは通りました/,
+      { timeout: RUN_TIMEOUT },
+    );
+    await expect(page.getByTestId('scenario-case')).toContainText('normal');
+    await expect(page.getByTestId('scenario-params')).toContainText('0123');
+    await expect(page.getByTestId('result-scenario-case')).toHaveText('normal');
+
+    // Click "同じ条件で再実行" and verify identical intent goes to POST /api/run and gets a new run_id
+    const rerunReq = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const rerunRes = page.waitForResponse(
+      (r) => r.url().endsWith('/api/run') && r.request().method() === 'POST',
+    );
+    await page.getByTestId('scenario-rerun').click();
+    const rerunBody = (await rerunReq).postDataJSON() as Record<string, unknown>;
+    expect(rerunBody).toMatchObject({
+      file: 'variants.yaml',
+      variant: 'small',
+      scenario: 'scenarios/cases_typed.yaml',
+      case: 'normal',
+      params: { code: '0123', flag: false, throttle: 75 },
+    });
+    const secondId = ((await (await rerunRes).json()) as { run_id: string }).run_id;
+    expect(secondId).not.toBe(firstId);
+    await expect(page.getByTestId('result-card')).toHaveAttribute('data-session', secondId, {
+      timeout: RUN_TIMEOUT,
+    });
+  } finally {
+    await isolated.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

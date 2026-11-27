@@ -420,3 +420,25 @@ app-io-row .signal:focus-within {
 .late {
   color: #82510e;
 }
+.wb-params {
+  margin-bottom: 10px;
+}
+.param-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.param-badge[data-source='override'] {
+  background: #e5ecff;
+  color: var(--blue);
+}
+.param-badge[data-source='missing'] {
+  background: #fff0f0;
+  color: #a32939;
+}
+.param-missing td {
+  background: #fff8f8;
+}
