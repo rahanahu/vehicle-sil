@@ -35,7 +35,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -413,7 +413,7 @@ def _resolve_path_in_dir(base_dir: Path | None, path_str: str, *, windows: bool)
         rel = path_str.replace("\\", "/") if os.name != "nt" else path_str
         return base_dir / rel
     p = Path(path_str)
-    if p.is_absolute():
+    if PurePosixPath(path_str).is_absolute() or p.is_absolute():
         return p
     if not _is_existing_dir(base_dir):
         return None
@@ -433,7 +433,7 @@ def _validate_entry_dir(raw_dir: Any, *, windows: bool) -> Path | None:
             return Path(raw_dir)
         return None
     p = Path(raw_dir)
-    if not p.is_absolute():
+    if not (PurePosixPath(raw_dir).is_absolute() or p.is_absolute()):
         return None
     return p
 
@@ -615,14 +615,27 @@ def _resolve_compiler_path(
     *,
     windows: bool,
 ) -> str | None:
+    if not compiler_path or "\x00" in compiler_path:
+        return None
     has_sep = "/" in compiler_path or (windows and "\\" in compiler_path)
     has_win_drive = windows and bool(PureWindowsPath(compiler_path).drive)
     if not has_sep and not has_win_drive:
+        return compiler_path
+    if windows:
+        if PureWindowsPath(compiler_path).is_absolute():
+            return compiler_path
+    elif PurePosixPath(compiler_path).is_absolute() or Path(compiler_path).is_absolute():
         return compiler_path
     resolved = _resolve_path_in_dir(effective_dir, compiler_path, windows=windows)
     if resolved is None:
         return None
     return str(resolved)
+
+
+def _compiler_identity_key(compiler_path: str, *, windows: bool) -> PurePosixPath | PureWindowsPath:
+    if windows:
+        return PureWindowsPath(compiler_path)
+    return PurePosixPath(compiler_path)
 
 
 def _parse_env_args(tokens: list[str], i: int) -> tuple[int, str | None] | None:
@@ -1022,7 +1035,7 @@ def extract_build_provenance(
             extra_warnings.append("unreadable or invalid compile_commands.json")
             block_cache_fallback = True
         else:
-            matched_entries: dict[str, list[tuple[str | None, dict[str, Any]]]] = {
+            matched_entries: dict[str, list[tuple[PurePosixPath | PureWindowsPath, dict[str, Any]]]] = {
                 name: [] for name in TARGET_TU_SUFFIXES
             }
             unreadable_rsps_by_target: dict[str, list[str]] = {
@@ -1089,7 +1102,9 @@ def extract_build_provenance(
                             "compiler_banner": _compiler_banner(compiler_path, banner_cache),
                             **parsed,
                         }
-                        matched_entries[target_name].append((compiler_path, entry_flags))
+                        matched_entries[target_name].append(
+                            (_compiler_identity_key(compiler_path, windows=windows), entry_flags)
+                        )
             if has_invalid_file_entry:
                 extra_warnings.append("malformed entry in compile_commands.json (missing or non-string file)")
                 block_cache_fallback = True
