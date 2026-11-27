@@ -675,6 +675,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `variant` | 文字列 | `--variant` |
 | `params` | パラメーターの名前から値（数、`true`・`false`、文字列）への対応。シナリオを実行するときだけ使います。 | `--param` |
 | `scenario` | シナリオのファイルのパス。相対パスは、設定ファイルのディレクトリから読みます。 | `--scenario` |
+| `case` | 照合・実行するシナリオの名前付きケース（`cases:` の名前）。`scenario` が必須です。 | `--case` |
 | `disable` | participant の名前の一覧 | `--disable` |
 | `enable` | participant の名前の一覧 | `--enable` |
 | `manual` | participant の名前の一覧 | `--manual` |
@@ -693,7 +694,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 
 | キー | 同じものを引数でも指定したとき |
 |---|---|
-| `variant`、`scenario`、`speed`、`time_policy` | 引数が、ファイルの値を置き換えます。 |
+| `variant`、`scenario`、`case`、`speed`、`time_policy` | 引数が、ファイルの値を置き換えます。 |
 | `start_paused`、`strict` | ファイルか引数のどちらかが指定すれば有効です。無効にする引数はありません。 |
 | `connect` | ネットワークごとです。`--connect <network>=<target>` はそのネットワークのファイルの先を置き換え、`--connect <network>=none` はこの実行だけ外します。ファイルのほかのネットワークは残ります。 |
 | `params` | 名前ごとです。`--param <name>=<value>` は、そのパラメーターのファイルの値を置き換えます。ほかは残り、照合の JSON の `from` は `request_file` です。 |

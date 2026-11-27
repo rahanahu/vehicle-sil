@@ -1637,6 +1637,17 @@ TEST_CASE(each_result_has_its_exit_code_its_ok_and_a_message)
     usage.check.findings.push_back(Finding{Severity::Error, "usage", "unknown option --x", 0, "", ""});
     check_meaning(usage, {RunResult::Usage, 4, false, "null"}, "usage");
     check_text(usage.message(), "Nothing was started, because the command line is wrong: unknown option --x");
+    // Multi-case usage keeps config/scenario for JSON, while human-readable run text stays concise.
+    usage.check.file = "sim.yaml";
+    usage.check.config.emplace();
+    usage.check.config->participants.push_back(ParticipantConfig{"Engine", {"engine"}});
+    usage.check.scenario.emplace();
+    usage.check.scenario->file = "cases.yaml";
+    usage.check.scenario->cases = {"low", "high"};
+    const std::string usageText = format_run_text(usage);
+    CHECK(usageText.find("participant  step") == std::string::npos);
+    CHECK(usageText.find("scenario cases.yaml") == std::string::npos);
+    CHECK(usageText.find("cannot read sim.yaml: 1 error, 0 warnings, 0 notes") != std::string::npos);
 }
 
 TEST_CASE(a_participant_ended_by_force_after_a_stop_request_is_no_error_but_is_said)

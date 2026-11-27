@@ -161,7 +161,7 @@ const char* status_name(config::ParticipantStatus status)
 std::string detail::check_text_body(const config::CheckReport& report, const scenario::ScenarioCheck* scenario)
 {
     std::string out;
-    if (report.config)
+    if (!report.usage && report.config)
     {
         const config::SimulationConfig& config = *report.config;
         const auto disabled = static_cast<std::size_t>(std::count_if(
@@ -234,7 +234,7 @@ std::string detail::check_text_body(const config::CheckReport& report, const sce
             out += table(rows) + "\n";
         }
     }
-    if (scenario != nullptr && report.config)
+    if (!report.usage && scenario != nullptr && report.config)
     {
         std::string meta;
         if (!scenario->name.empty())
@@ -418,7 +418,7 @@ std::string text_of(const config::CheckReport& report, const scenario::ScenarioC
     const std::string counts = count_text(report.errors(), "error", "errors") + ", " +
                                count_text(report.warnings(), "warning", "warnings") + ", " +
                                count_text(report.notes(), "note", "notes");
-    if (!report.config)
+    if (report.usage || !report.config)
     {
         out += "cannot read " + report.file + ": " + counts + "\n";
     }
@@ -966,6 +966,10 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         {
             w.string("case", scenario->case_name);
         }
+        else if (!scenario->cases.empty())
+        {
+            w.null("case");
+        }
         if (!scenario->cases.empty())
         {
             w.begin_array("cases");
@@ -1013,6 +1017,34 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         if (!scenario->params.empty())
         {
             write_params_json(w, "params", scenario->params, &scenario->param_meta);
+        }
+        if (!scenario->param_meta.empty())
+        {
+            w.begin_array("param_meta");
+            for (const scenario::ScenarioParamMeta& m : scenario->param_meta)
+            {
+                w.begin_object();
+                w.string("name", m.name);
+                if (!m.type.empty())
+                {
+                    w.string("type", m.type);
+                }
+                if (!m.values.empty())
+                {
+                    w.begin_array("values");
+                    for (const std::string& v : m.values)
+                    {
+                        w.string({}, v);
+                    }
+                    w.end_array();
+                }
+                if (!m.description.empty())
+                {
+                    w.string("description", m.description);
+                }
+                w.end_object();
+            }
+            w.end_array();
         }
         if (!scenario->missing_params.empty())
         {

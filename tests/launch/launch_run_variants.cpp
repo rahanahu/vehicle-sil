@@ -644,6 +644,18 @@ void test_command(const Options& o)
                 contains(lf(singleCase.standard_output), "\"from\": \"case\""),
             "single case JSON:\n" + lf(singleCase.standard_output));
 
+    // Same named case via `serve --once` stdin intent (`case` + `cli_params`), verifying Events v4 parity.
+    const Captured serveOnceCase = launch(o,
+                                          {"serve", "--once", "sim.yaml", "--variant", "small", "--scenario",
+                                           "scn_cases/load_cases.yaml", "--case", "-10C", "--param", "expected_fill=0x4"},
+                                          dir);
+    expect_code(serveOnceCase, 0, "serve --once single case -10C with hex cli_params");
+    const std::vector<std::string> serveLines = check_events(serveOnceCase.standard_output);
+    require(contains(serveLines.back(), "\"case\":\"-10C\"") &&
+                contains(serveLines.back(), "\"from\":\"command_line\"") &&
+                contains(serveLines.back(), "\"value\":4"),
+            "serve --once case result:\n" + serveLines.back());
+
     // Batch test --scenarios <dir> --case -10C where -10C fails (target 4 != expected_fill 5) and prints run_alone() with --case -10C.
     const Captured caseTest = launch(o, {"test", "sim.yaml", "--variant", "small", "--scenarios", "scn_cases", "--case", "-10C"}, dir);
     expect_code(caseTest, 1, "test --scenarios dir --case -10C");

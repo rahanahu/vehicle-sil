@@ -40,6 +40,12 @@
       "description": "The scenario file to check and run (--scenario). A relative path is from the directory of the configuration file (unlike --scenario, which is from the working directory).",
       "examples": ["scenarios/brake.yaml"]
     },
+    "case": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The named case of the scenario (its cases:) to check or run (--case). Requires scenario.",
+      "examples": ["nominal"]
+    },
     "disable": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },

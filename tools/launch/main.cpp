@@ -249,8 +249,8 @@ constexpr const char* kUsage =
     "                              connected there sees the simulation pause or run ahead. No effect on other\n"
     "                              runs\n"
     "  --request <file>            check, run, connections: what to run, from the request file <file> (JSON:\n"
-    "                              variant, params, scenario, disable, enable, manual, connect, time_policy, speed,\n"
-    "                              start_paused, strict, stop_at_ms, late_tolerance_ms; schema/run-request.schema.json). An argument wins over the\n"
+    "                              variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed,\n"
+    "                              start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario; schema/run-request.schema.json). An argument wins over the\n"
     "                              file, field by field: --connect and --param by name, --connect <network>=none\n"
     "                              takes the file's target away; the lists add up. scenario in <file> is from the\n"
     "                              directory of the configuration file. Only this file is read: none is looked for.\n"
@@ -1394,7 +1394,6 @@ int run(const cli::Args& args, std::string& active_control_metrics, std::optiona
     const RequestArgument asked = read_request_argument(args);
     launch::RunRequest request = read_request(args, launch::RequestCommand::Run, asked);
     launch::RunHost& host = request.host;
-    const std::string& file = host.config;
     if (args.has("log-dir") && args.str("log-dir", "").empty())
     {
         throw cli::UsageError("--log-dir needs a directory");
@@ -1530,7 +1529,8 @@ int run(const cli::Args& args, std::string& active_control_metrics, std::optiona
     write_stdin_notes(true); // before the result
     if (report.check.usage)
     {
-        return usage_error(report.check.findings, args.flag("json"), launch::CommandKind::Run, file, nullptr, report.check.variants);
+        write_usage_stderr(report.check.findings);
+        return args.flag("json") ? write_or_fail(launch::format_run_json(report), cli::kExitUsage) : cli::kExitUsage;
     }
     int code = write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
                              report.exit_code());

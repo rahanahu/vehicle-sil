@@ -702,7 +702,9 @@ participant の `log` の終わりの側には、保証がありません。part
     "serve-prepare",
     "control-metrics",
     "scenario-end-ms",
-    "scenario-handover"
+    "scenario-handover",
+    "scenario-cases",
+    "scenario-templates"
   ]
 }
 ```
@@ -773,6 +775,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | `control-metrics` | `run --control-metrics <file>`: Control Hub の SIL Kit トランスポートの累計カウンターを JSON ファイルに書く（`vehicle_sil_control_metrics: 1`、[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」） |
 | `scenario-end-ms` | シナリオのトップレベル `end_ms` キーとシナリオ JSON 出力の `end_ms`（[scenario.md](scenario.md)） |
 | `scenario-handover` | 実行要求の `after_scenario: "pause"`：シナリオ成功時に一時停止して手動制御へ引き継ぎ、書き込みを動的に許可する（`state` の `handed_over` と `scenario_over_at_ms`） |
+| `scenario-cases` | シナリオの名前付き `cases:`、`--case`・要求ファイルの `"case"`、`case_details` と複数ケース `check --json` の `usage` メタデータ保持、`serve` インライン `intent.cli_params` |
+| `scenario-templates` | 再利用可能なシナリオテンプレート（`vehicle_sil_scenario_template: 1`）、`call_stack` 出典情報、テンプレート由来のパラメーターメタデータ（`param_meta` と `missing_params`） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |
@@ -803,6 +807,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 | `scenario-end-ms` | シナリオファイルの最上位 `end_ms`、および `check --json`・`run --json`・`--timeline` の `end_ms` |
 | `scenario-handover` | 実行要求の `after_scenario`（`"stop"` \| `"pause"`）、`state` イベントの `handed_over` と `scenario_over_at_ms`、引き継ぎ時の動的な書き込み解放 |
+| `scenario-cases` | シナリオの `cases:`、`--case` および要求ファイル・`serve` `intent` の `"case"`、`scenario.case`（未選択・不明時は `null`）、`cases`、`case_details`、インライン `intent.cli_params` |
+| `scenario-templates` | シナリオテンプレート（`- template:`）、`steps[].file`・`call_stack`、`scenario.param_meta`、`scenario.missing_params`、`scenario.params[]` のテンプレート由来 `type`・`values`・`description` |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは書けません。書く呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します。`scenario-time` のあるビルドでは、時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）を、シナリオの実行中も、標準入力の同じコマンドと同じように受け付けます。シナリオの結果は変わりません。`scenario-control` だけのビルドは、これらも同じ理由で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。
 
@@ -843,7 +849,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 - `prepare`: 束縛中の `<file>` を `--file-only` 相当で検証し（任意の `"variant"`、`"disable"`、`"enable"`、`"manual"` 配列を指定可能。`"config"` は拒否）、`status`、`metadata`、`file_sha256`、`findings` を含む `prepare` イベントを返します。実行中や終了処理中は `"busy"`、`"launcher-ending"`、`"contaminated"` で拒否（`accepted: false`）します。
 - `status`: 現在のランチャーおよび実行中 Run の状態（待機中の `run_state` は `null`）を `status` イベントで返します。
-- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）と `"intent"`（64 KiB の行上限以内のインライン実行要求 JSON オブジェクト。`"vehicle_sil_run_request"` は任意で、`"after_scenario"` などを含む各フィールドを指定可能）は排他です。`"timeline"`（タイムライン JSON の出力先パス）と `"id"` は任意です。実行中または検証中は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
+- `run`: 待機中なら実行を開始します。`"request"`（要求 JSON ファイルのパス）と `"intent"`（64 KiB の行上限以内のインライン実行要求 JSON オブジェクト。`"vehicle_sil_run_request"` は任意で、`"case"` や `"after_scenario"`、さらに `--param` 相当の解釈・優先順位で読まれるインライン専用の `"cli_params": { "<name>": "<value>" }` など各フィールドを指定可能）は排他です。`"timeline"`（タイムライン JSON の出力先パス）と `"id"` は任意です。実行中または検証中は `"busy"`、終了処理中は `"launcher-ending"` で拒否します。
 - `stop`、`pause`、`resume`、`step`、`run_until`、`speed`: 複数回実行の `serve` では `"run": "<Run ID>"` が必須です（欄がなければ `"run-required"`、現在の実行と異なれば `"run-changed"` と `"asked_run"` で拒否）。`serve --once` では `"run"` を省略できます。`stop` では任意の真偽値 `"force"` で冪等な通常停止（`false`、停止要求 1 回）か即時強制停止（`true`、2 回へ引き上げ）を指定します。ランチャー直下のコマンド（`run`、`prepare`、`status`）は `"run"` を省略するか妥当な文字列であれば無視します。
 - 標準入力の閉鎖（EOF）はランチャー終了を意味します（待機中なら終了コード 0、実行中ならその実行を止めて終了コード 130）。
 

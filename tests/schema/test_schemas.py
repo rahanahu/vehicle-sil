@@ -1278,7 +1278,8 @@ R = '"vehicle_sil_run_request": 1'
 REQUEST_SAMPLES = [
     ("the least", "{" + R + "}", "valid"),
     ("every key", "{" + R + ', "$schema": "../schema/run-request.schema.json", "variant": "left_hand", '
-     '"params": {"target_speed": "80", "gear": 3, "lamp": true}, "scenario": "scenarios/brake.yaml", "disable": ["B"], '
+     '"params": {"target_speed": "80", "gear": 3, "lamp": true}, "scenario": "scenarios/brake.yaml", '
+     '"case": "nominal", "disable": ["B"], '
      '"enable": ["C"], "manual": ["A"], "connect": {"ETH_EXT": "enp3s0", "CAN1": "physical:1", "LIN1": "none"}, '
      '"time_policy": "free", "speed": 2.5, "start_paused": false, "strict": true}', "valid"),
     ("a paused start (not with a scenario: that is a rule of the request, not of the file)",
@@ -1325,6 +1326,11 @@ REQUEST_SAMPLES = [
     ("after_scenario pause", "{" + R + ', "scenario": "scenarios/brake.yaml", "after_scenario": "pause"}', "valid"),
     ("after_scenario invalid", "{" + R + ', "after_scenario": "continue"}', "invalid"),
     ("after_scenario null", "{" + R + ', "after_scenario": null}', "invalid"),
+    ("case valid", "{" + R + ', "scenario": "scenarios/brake.yaml", "case": "-10C"}', "valid"),
+    ("case empty", "{" + R + ', "case": ""}', "invalid"),
+    ("case null", "{" + R + ', "case": null}', "invalid"),
+    ("case number", "{" + R + ', "case": 1}', "invalid"),
+    ("cli_params is serve intent only", "{" + R + ', "cli_params": {"x": "1"}}', "invalid"),
 ]
 
 

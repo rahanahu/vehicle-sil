@@ -279,6 +279,10 @@ namespace {
         context.read_file = files_beside(path);
         context.read_template = files_beside(path, "the template file");
         context.case_name = intent.scenario_case;
+        if (origin.has("case"))
+        {
+            context.case_request_file = origin.file;
+        }
         scenario::ScenarioRead read = scenario::read_scenario(text, scenario::scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.case_name = std::move(read.case_name);
@@ -296,6 +300,10 @@ namespace {
         check.not_for_variant = read.not_for_variant;
         if (!read.usage_errors.empty())
         {
+            if (!check.cases.empty() && check.case_name.empty())
+            {
+                report.scenario = std::move(check);
+            }
             return std::move(read.usage_errors);
         }
         if (!read.unused_request_params.empty())
@@ -701,6 +709,19 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         }
         if (auto wrong = check_scenario_file(report, intent, named, options.params_for_many, request.origin); !wrong.empty())
         {
+            if (report.scenario)
+            {
+                // Multi-case scenario with unselected or unknown case: evaluate hot_eligibility
+                // before marking usage=true and preserve the checked configuration, participants,
+                // networks, and scenario metadata (cases, case_details, params, param_meta,
+                // missing_params).
+                report.hot_eligibility =
+                    evaluate_hot_eligibility(report, options.trace_enabled, /*refuse_fixed_registry=*/true);
+                report.usage = true;
+                report.findings = std::move(wrong);
+                finalize(report);
+                return report;
+            }
             // As for the other usage errors: the findings alone, and no configuration.
             Checked usage;
             usage.file = std::move(report.file);
