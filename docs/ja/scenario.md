@@ -143,6 +143,7 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 | `samples` | いいえ | シナリオが値を読む ECU が、値を送る頻度です。`every_step`（既定）か `as_sent`。[ECU が値を送る頻度](#ecu-が値を送る頻度samples)にあります。 |
 | `only` | いいえ | このシナリオを実行する機種の名前の並びです（`only: [small, medium]`。書かなければ、どの機種でも実行します。[機種を限定する](#機種を限定するonly)）。 |
 | `params` | いいえ | パラメーターの既定の値（名前 → 値）です（手順の値の位置に `${name}` と書いて使います。[パラメーター](#パラメーターparamsname)）。 |
+| `cases` | いいえ | 名前付きの実行ケース（`<名前>: { params?, only? }`）です。ケースごとにパラメーターを上書きし、必要に応じて `only` を絞り込みます（[名前付きケース](#名前付きケースcases--case)）。 |
 | `inputs` | いいえ | 入力ごとの宣言（変数 → `{ dither: <波形> }`）です。シナリオの始めから、その入力に細かい揺れを重ねます（[細かい揺れを重ねる](#細かい揺れを重ねるdither)）。 |
 | `end_ms` | いいえ | シナリオが終わる仮想時刻（ミリ秒、`0` ～ `10^12`、省略可）。すべての手順が成功したとき、`end_ms` まで進んでから終了します。手順の静的な終了時刻より前にはできません。 |
 | `steps` | はい | 手順の並び（1 つ以上）で、上から順に進みます。 |
@@ -702,7 +703,9 @@ steps:
 | 1 | シナリオの `params` |
 | 2 | 設定ファイルの `params` |
 | 3 | 選んだ機種の `params` |
-| 4 | 引数の `--param <名前>=<値>` |
+| 4 | 選んだケースの `params`（`cases.<名前>.params`） |
+| 5 | 要求ファイル（`--request`）の `params` |
+| 6 | 引数の `--param <名前>=<値>` |
 
 | エラーになるもの | 結果 |
 |---|---|
@@ -710,6 +713,32 @@ steps:
 | シナリオが使っても宣言してもいない名前の `--param` | 引数のエラーです（終了コード 4。シナリオのパラメーターの名前を表示します）。 |
 
 パラメーターにエラーがある間は、手順の中身を照合しません（まずパラメーターを直します）。
+
+### 名前付きケース（`cases`、`--case`）
+
+シナリオ最上位に `cases` を書くと、シナリオファイルを複製せずに、1 つの手順やテンプレート呼び出しを `無負荷`・`定格`・`上限直前`・`-10C` のような名前付き条件で繰り返し実行できます。
+
+```yaml
+vehicle_sil_scenario: 1
+name: throttle load cases
+params: { target_throttle: 50, timeout_ms: 500 }
+cases:
+  無負荷: { params: { target_throttle: 0, timeout_ms: 300 } }
+  定格: { only: [medium], params: { target_throttle: 50, timeout_ms: 500 } }
+  上限直前: { params: { target_throttle: 95, timeout_ms: 650 } }
+steps:
+  - set: { Engine.engine.throttle: "${target_throttle}" }
+  - wait_until: { Engine.engine.speed: { ge: 750 } }
+    timeout_ms: "${timeout_ms}"
+```
+
+`cases` のルール:
+
+- `cases` は空でないマッピングで、各要素は `{ params?, only? }` です。値は `null` にできません（上書きがない場合は `{}` と書きます）。
+- ケース名には UTF-8 文字列（`無負荷`、`定格`、`上限直前` など）や先頭 1 本のハイフン（`-10C`、`a--b`）を使えます。空文字列、`--` で始まる名前、制御文字（`U+0020` 未満・`U+007F`、改行を含む）、不正な UTF-8 は禁止です。
+- `cases.<名前>.params` に書いたすべてのパラメーターは、最上位 `params` で宣言されているか、`steps` で使われている必要があります（そうでなければ `scenario-param`）。
+- 最上位 `only` と `cases.<名前>.only` の両方があるときは、まず両方の生の variant 名を検証し、その積集合を実行対象とします。積集合が空になるときはスキップせず `scenario-variant` エラーで失敗します。
+- `check --scenario` と `run --scenario` では、`cases` を持つシナリオには `--case <名前>` が必須です（省略すると使用できるケース一覧を出して終了コード `4`）。`cases` のないシナリオに `--case` を渡した場合も終了コード `4` です。`test --scenarios` では、`--case` を省略するとファイル順で `(variant, scenario, case)` に展開し、`--case <名前>`（複数指定可）を付けると一致するケースだけを実行してケースなしシナリオをスキップします。
 
 ### 手順テンプレート（`template`、`vehicle_sil_scenario_template`）
 
@@ -988,7 +1017,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario-value` | エラー | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外。`dither` を bool か enum の変数に書いている。 |
 | `scenario-param` | エラー | `${name}` に値がない、テンプレート呼び出し引数が `type`・`values`・必須指定に違反している、または `${...}` がキー・変数名・`template` パス・許可されない部分文字列にある（シナリオにない名前の `--param` は、引数のエラー `usage`）。 |
 | `scenario-template-file`、`scenario-template-cycle`、`scenario-template-depth`、`scenario-template-steps` | エラー | テンプレートファイルが読めないかシナリオディレクトリ外へ出る（`scenario-template-file`）、循環呼び出しになる（`scenario-template-cycle`）、入れ子深さ 16 を超える（`scenario-template-depth`）、または展開後の手順数が 10,000 を超える（`scenario-template-steps`）。 |
-| `scenario-variant` | エラー | シナリオの `only` に、選んだ機種がない。`only` の名前が設定ファイルの機種にない。 |
+| `scenario-variant` | エラー | シナリオの `only`（または `cases.<名前>.only` との積集合）に選んだ機種がない、`cases.<名前>.only` との積集合が空、または `only` の名前が設定ファイルの機種にない。 |
 | `scenario-time` | エラー | `at_ms` が前の手順の終わりより前、待つ手順より後ろに `at_ms` がある、`end_ms` が手順の終わりうる最も早い時刻より前、または手順の時間を合計すると時刻の上限（1000000000000 ms）を超える。 |
 | `scenario-wave-undersampled`、`scenario-wave-duty` | 警告 | `wave` か `dither` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)）。integer の入力に、振幅が 0.5 より小さい `dither` も `scenario-wave-undersampled` です（下）。 |
 | `scenario-wave-coarse`、`scenario-wave-not-checked` | 注記 | 同じ節にあります。 |
@@ -1035,7 +1064,7 @@ JSON や timeline ファイルを読む側は、次の値で合否を決めま�
 
 | 部分 | 内容 |
 |---|---|
-| 照合 | `scenario <ファイル> (<name>): <n> steps` の行。 |
+| 照合 | `scenario <ファイル> (<name>): <n> steps` の行（ケースを選んだときは `, case <case>` が付きます）。 |
 | 照合（パラメーターがあるとき） | `parameters: <名前> = <値> (<どこから>), ...` の行。 |
 | 実行 | 合否の 1 行と、手順の表（行（別ファイルの手順があるときは `<file>:<line>` の `where` 列）、いずれかの手順に名前があれば `name` 列、手順、結果、結果が決まった仮想時間）。 |
 | 実行（スキップした手順ごと） | `line <行> skipped: <理由>`。 |
@@ -1064,6 +1093,8 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario` のキー | あるとき | 意味 |
 |---|---|---|
 | `file`、`name` | いつも | シナリオのファイルと名前 |
+| `case` | 選択されたときだけ | 選択されたケース名（`--case`） |
+| `cases` | 定義されたときだけ | ファイル順のケース名一覧 |
 | `steps` | いつも | 手順の数 |
 | `only` | あるときだけ | 機種の名前の配列 |
 | `params` | あるときだけ | シナリオが宣言したか使ったパラメーターごとに、`name`、`value`、`from` |
@@ -1072,7 +1103,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `inputs`、`lines` | いつも（`dither` のないシナリオでは空の配列。シナリオを読めなかったときは `null`） | 次の表。`run --json` の `scenario` にも同じものがあります |
 | `end_ms` | いつも | シナリオの `end_ms`（省略時は `null`） |
 
-`params` の `value` は有効な値（`true`・`false`、数、文字列）で、`from` は `scenario`、`configuration`、`variant`、`command_line`、`request_file`（`--request` のファイルの `params`）のどれかです。
+`params` の `value` は有効な値（`true`・`false`、数、文字列）で、`from` は `scenario`、`configuration`、`variant`、`case`、`command_line`、`request_file`（`--request` のファイルの `params`）のどれかです。
 
 `dither` についてのキー:
 
@@ -1097,6 +1128,8 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `timeline` | `--timeline` のファイルの名前（引数のとおり）。`--timeline` がなければ `null` です。 |
 | `end_ms` | シナリオ最上位の `end_ms`（仮想ミリ秒、省略時は `null`）。 |
 | `steps[]` | 手順ごとの結果です（次の表）。 |
+| `case` | 名前付きケースを実行したときだけ `steps` の後ろに入ります。 |
+| `params[]` | シナリオがパラメーターを宣言または使用したときだけ `steps` の後ろに入ります（`name`、`value`、`from`）。 |
 
 `unchecked_expects` に数えた手順は、動いたので `skipped_steps` には入りません。
 

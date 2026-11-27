@@ -630,3 +630,221 @@ TEST_CASE(a_test_that_left_runs_out_or_ran_nothing_does_not_just_pass)
           none.remarks()[0].message.find("nothing was run: the 1 run was skipped, because no scenario is for the variants small and "
                                          "large (the only of each scenario). Run a variant") == 0);
 }
+
+TEST_CASE(batch_named_cases_expansion_filtering_rerun_and_formatting)
+{
+    const auto dir = fresh_dir("batch-cases");
+    std::filesystem::create_directories(dir / "templates");
+    write(dir / "sim.yaml", kConfig);
+    write(dir / "templates" / "inner.yaml",
+          "vehicle_sil_scenario_template: 1\nparameters:\n  x: { type: integer }\nsteps:\n  - set: { Engine.level: \"${x}\" }\n");
+    write(dir / "a_cases.yaml",
+          "vehicle_sil_scenario: 1\nparams: { x: 1 }\n"
+          "cases:\n  無負荷: { params: { x: 0 } }\n  定格: { only: [medium], params: { x: 50 } }\n  \"-10C\": { params: { x: 20 } }\n"
+          "steps:\n  - template: templates/inner.yaml\n    params: { x: \"${x}\" }\n");
+    write(dir / "b_caseless.yaml", kPlain);
+    write(dir / "c_only_b.yaml",
+          "vehicle_sil_scenario: 1\nparams: { z: 1 }\n"
+          "cases:\n  extra_only: { params: { z: 2 } }\n"
+          "steps:\n  - set: { Engine.level: \"${z}\" }\n");
+
+    // 1. Omitting --case expands (variant, scenario, case) in file order.
+    TestOptions allOpts;
+    allOpts.scenarios = {{"a_cases.yaml"}, {"b_caseless.yaml"}};
+    const TestReport allReport = test_in(dir, "sim.yaml", allOpts);
+    // 2 variants * (3 cases + 1 caseless) = 8 runs.
+    CHECK_EQ(allReport.runs.size(), std::size_t{8});
+    CHECK(allReport.runs[0].variant == "small" && allReport.runs[0].scenario == "a_cases.yaml" && allReport.runs[0].case_name == "無負荷");
+    CHECK(allReport.runs[1].variant == "small" && allReport.runs[1].scenario == "a_cases.yaml" && allReport.runs[1].case_name == "定格");
+    CHECK(allReport.runs[1].run && allReport.runs[1].run->check.scenario && allReport.runs[1].run->check.scenario->not_for_variant);
+    CHECK(allReport.runs[2].variant == "small" && allReport.runs[2].scenario == "a_cases.yaml" && allReport.runs[2].case_name == "-10C");
+    CHECK(allReport.runs[3].variant == "small" && allReport.runs[3].scenario == "b_caseless.yaml" && allReport.runs[3].case_name.empty());
+
+    // Text table includes case column with "-" for caseless rows, and run_alone appends --case.
+    const std::string text = format_test_text(allReport);
+    CHECK(text.find("variant  scenario         case") != std::string::npos);
+    CHECK(text.find("b_caseless.yaml  -") != std::string::npos);
+    CHECK(text.find("--scenario a_cases.yaml --case '無負荷'") != std::string::npos);
+
+    // JSON emits "case" after "run" only when non-empty.
+    const std::string json = format_test_json(allReport);
+    CHECK(json.find("\"case\": \"定格\"") != std::string::npos);
+    CHECK(json.find("\"scenario\": \"b_caseless.yaml\",\n      \"result\": \"failed\"") != std::string::npos);
+
+    // 2. Passing --case filters in file order and skips caseless scenarios.
+    TestOptions filterOpts;
+    filterOpts.scenarios = {{"a_cases.yaml"}, {"b_caseless.yaml"}};
+    filterOpts.cases = {"-10C", "無負荷"};
+    const TestReport filtered = test_in(dir, "sim.yaml", filterOpts);
+    CHECK_EQ(filtered.runs.size(), std::size_t{4});
+    CHECK(filtered.runs[0].case_name == "無負荷");
+    CHECK(filtered.runs[1].case_name == "-10C");
+    CHECK(filtered.runs[2].case_name == "無負荷");
+    CHECK(filtered.runs[3].case_name == "-10C");
+
+    // 3. Unknown --case returns Usage (exit 4) with singular/plural grammar + "did you mean", and --case on all-caseless returns Usage (exit 4).
+    TestOptions unknownCaseOpts;
+    unknownCaseOpts.scenarios = {{"a_cases.yaml"}};
+    unknownCaseOpts.cases = {"定格X"};
+    const TestReport unknownCase = test_in(dir, "sim.yaml", unknownCaseOpts);
+    CHECK(unknownCase.result() == TestResult::Usage && unknownCase.exit_code() == 4);
+    CHECK(unknownCase.findings.front().message.find("the scenario has no case with this name") != std::string::npos);
+    CHECK(unknownCase.findings.front().message.find("did you mean '定格'?") != std::string::npos);
+
+    TestOptions unknownPluralOpts;
+    unknownPluralOpts.scenarios = {{"a_cases.yaml"}, {"c_only_b.yaml"}};
+    unknownPluralOpts.cases = {"nonexistent"};
+    const TestReport unknownPlural = test_in(dir, "sim.yaml", unknownPluralOpts);
+    CHECK(unknownPlural.result() == TestResult::Usage && unknownPlural.exit_code() == 4);
+    CHECK(unknownPlural.findings.front().message.find("none of the 2 scenarios has a case with this name") != std::string::npos);
+
+    TestOptions caselessOnlyOpts;
+    caselessOnlyOpts.scenarios = {{"b_caseless.yaml"}};
+    caselessOnlyOpts.cases = {"無負荷"};
+    const TestReport caselessOnly = test_in(dir, "sim.yaml", caselessOnlyOpts);
+    CHECK(caselessOnly.result() == TestResult::Usage && caselessOnly.exit_code() == 4);
+
+    // 4. unused_params() respects --case filtering (rejects --param used only by skipped scenario/case).
+    TestOptions unusedOpts;
+    unusedOpts.scenarios = {{"a_cases.yaml"}, {"c_only_b.yaml"}};
+    unusedOpts.cases = {"無負荷"};
+    unusedOpts.request.intent.params = {ParamValue{"z", "2", false, ParamSource::CommandLine, 0, true}};
+    const TestReport unusedReport = test_in(dir, "sim.yaml", unusedOpts);
+    CHECK(unusedReport.result() == TestResult::Usage && unusedReport.exit_code() == 4);
+
+    // 4b. Broken cases: ({}, 123, "--bad") never silently pass (exit 0); they always fail (exit 1).
+    write(dir / "empty_cases.yaml", "vehicle_sil_scenario: 1\ncases: {}\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "int_cases.yaml", "vehicle_sil_scenario: 1\ncases: 123\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "dashdash_cases.yaml", "vehicle_sil_scenario: 1\ncases: { \"--bad\": {} }\nsteps:\n  - set: { Engine.level: 1 }\n");
+    for (const auto& [badFile, expectMsg] : std::vector<std::pair<std::string, std::string>>{
+             {"empty_cases.yaml", "cases must be a non-empty mapping"},
+             {"int_cases.yaml", "cases must be a non-empty mapping"},
+             {"dashdash_cases.yaml", "does not start with '--'"}})
+    {
+        for (const std::vector<TestScenario>& scList :
+             std::vector<std::vector<TestScenario>>{{{badFile}}, {{"a_cases.yaml"}, {badFile}}})
+        {
+            for (const std::vector<std::string>& caseFilter :
+                 std::vector<std::vector<std::string>>{{}, {"無負荷"}, {"nonexistent"}})
+            {
+                TestOptions opts;
+                opts.scenarios = scList;
+                opts.cases = caseFilter;
+                if (!caseFilter.empty() && caseFilter.front() == "無負荷")
+                {
+                    opts.request.intent.params = {ParamValue{"bogus", "1", false, ParamSource::CommandLine, 0, true}};
+                }
+                const TestReport rep = test_in(dir, "sim.yaml", opts);
+                CHECK(rep.result() == TestResult::Failed);
+                CHECK_EQ(rep.exit_code(), 1);
+                CHECK(!rep.usage);
+                CHECK(std::any_of(rep.runs.begin(), rep.runs.end(), [&](const TestRun& r) {
+                    return r.scenario == badFile && r.result == TestRunResult::Failed && r.run &&
+                           std::any_of(r.run->check.findings.begin(), r.run->check.findings.end(), [&](const Finding& f) {
+                               return f.severity == Severity::Error && f.message.find(expectMsg) != std::string::npos;
+                           });
+                }));
+            }
+        }
+    }
+
+    // 4c. Non-allowlisted broken scenarios (unknown-key, scenario-variant, value, duplicate-key) are surfaced, not skipped under --case + --param.
+    write(dir / "typo_cases.yaml",
+          "vehicle_sil_scenario: 1\ncase: { a: { params: { bogus: 1 } } }\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "bad_only.yaml",
+          "vehicle_sil_scenario: 1\nonly: [nonexistent]\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "bad_name.yaml",
+          "vehicle_sil_scenario: 1\nname: [1, 2]\nsteps:\n  - set: { Engine.level: 1 }\n");
+    write(dir / "dup_top.yaml",
+          "vehicle_sil_scenario: 1\nname: a\nname: b\nsteps:\n  - set: { Engine.level: 1 }\n");
+    for (const auto& [badFile, expectMsg] : std::vector<std::pair<std::string, std::string>>{
+             {"typo_cases.yaml", "unknown key 'case'"},
+             {"bad_only.yaml", "does not define"},
+             {"bad_name.yaml", "name must be a text"},
+             {"dup_top.yaml", "'name' appears twice"}})
+    {
+        TestOptions opts;
+        opts.scenarios = {{"a_cases.yaml"}, {badFile}};
+        opts.cases = {"無負荷"};
+        opts.request.intent.params = {ParamValue{"bogus", "1", false, ParamSource::CommandLine, 0, true}};
+        const TestReport rep = test_in(dir, "sim.yaml", opts);
+        CHECK(rep.result() == TestResult::Failed);
+        CHECK_EQ(rep.exit_code(), 1);
+        CHECK(!rep.usage);
+        CHECK(std::any_of(rep.runs.begin(), rep.runs.end(), [&](const TestRun& r) {
+            return r.scenario == badFile && r.result == TestRunResult::Failed && r.run &&
+                   std::any_of(r.run->check.findings.begin(), r.run->check.findings.end(), [&](const Finding& f) {
+                       return f.severity == Severity::Error && f.message.find(expectMsg) != std::string::npos;
+                   }) &&
+                   std::none_of(r.run->check.findings.begin(), r.run->check.findings.end(), [&](const Finding& f) {
+                       return f.message.find("has no cases") != std::string::npos;
+                   });
+        }));
+    }
+
+    // 4d. Healthy caseless scenarios with only: or declared params are skipped cleanly under --case and never trigger false skips.
+    write(dir / "only_medium.yaml", "vehicle_sil_scenario: 1\nonly: [medium]\nsteps:\n  - set: { Engine.level: 1 }\n");
+    {
+        TestOptions opts;
+        opts.scenarios = {{"a_cases.yaml"}, {"only_medium.yaml"}};
+        opts.cases = {"無負荷"};
+        opts.request.intent.params = {ParamValue{"bogus", "1", false, ParamSource::CommandLine, 0, true}};
+        const TestReport rep = test_in(dir, "sim.yaml", opts);
+        CHECK(rep.result() == TestResult::Usage);
+        CHECK_EQ(rep.exit_code(), 4);
+    }
+    write(dir / "caseless_param.yaml",
+          "vehicle_sil_scenario: 1\nparams: { fill: 1 }\nsteps:\n  - set: { Engine.level: \"${fill}\" }\n");
+    {
+        TestOptions opts;
+        opts.scenarios = {{"a_cases.yaml"}, {"caseless_param.yaml"}};
+        opts.cases = {"無負荷"};
+        opts.request.intent.params = {ParamValue{"fill", "2", false, ParamSource::CommandLine, 0, true}};
+        const TestReport rep = test_in(dir, "sim.yaml", opts);
+        CHECK(rep.result() == TestResult::Usage);
+        CHECK_EQ(rep.exit_code(), 4);
+    }
+
+    // 5. failure_reason() prefixes template file:line when first->file != run.scenario, including post-pass fail_grid.
+    RunReport tplFail;
+    tplFail.check.scenario.emplace();
+    tplFail.check.scenario->file = "a_cases.yaml";
+    tplFail.findings.push_back(Finding{Severity::Error, "scenario-failed", "check failed", 24, "", "", "",
+                                       "templates/inner.yaml"});
+    TestReport reasonReport;
+    reasonReport.file = "sim.yaml";
+    reasonReport.scenarios = {"a_cases.yaml"};
+    TestRun tr;
+    tr.variant = "small";
+    tr.scenario = "a_cases.yaml";
+    tr.case_name = "-10C";
+    tr.result = TestRunResult::Failed;
+    tr.reason = "templates/inner.yaml:24: check failed";
+    tr.run = tplFail;
+    reasonReport.runs.push_back(tr);
+    const std::string reasonText = format_test_text(reasonReport);
+    CHECK(reasonText.find("templates/inner.yaml:24: check failed") != std::string::npos);
+    CHECK(reasonText.find("--variant small --scenario a_cases.yaml --case -10C") != std::string::npos);
+
+    RunReport gridRep;
+    gridRep.check.scenario.emplace();
+    gridRep.check.scenario->file = "a_cases.yaml";
+    gridRep.findings.push_back(Finding{Severity::Error, "scenario-write",
+                                       "'inject dither': the dither of Engine.level (templates/inner.yaml:5) wrote 102 at 40 ms",
+                                       5, "", "", "called from: a_cases.yaml:10 (step 'run inner')\ncase: 無負荷",
+                                       "templates/inner.yaml"});
+    TestReport gridReport;
+    gridReport.file = "sim.yaml";
+    gridReport.scenarios = {"a_cases.yaml"};
+    TestRun gridTr;
+    gridTr.variant = "small";
+    gridTr.scenario = "a_cases.yaml";
+    gridTr.case_name = "無負荷";
+    gridTr.result = TestRunResult::Failed;
+    gridTr.reason = "templates/inner.yaml:5: 'inject dither': the dither of Engine.level (templates/inner.yaml:5) wrote 102 at 40 ms";
+    gridTr.run = gridRep;
+    gridReport.runs.push_back(gridTr);
+    const std::string gridText = format_test_text(gridReport);
+    CHECK(gridText.find("templates/inner.yaml:5: 'inject dither': the dither of Engine.level") != std::string::npos);
+    CHECK(gridText.find("--variant small --scenario a_cases.yaml --case '無負荷'") != std::string::npos);
+}

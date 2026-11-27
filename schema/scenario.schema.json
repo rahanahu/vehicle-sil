@@ -43,6 +43,38 @@
       },
       "examples": [{ "idle_rpm": 800, "settle_ms": 500 }]
     },
+    "cases": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Named execution cases for this scenario. Each case overrides parameters and optionally restricts variants via only.",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!--)[^\\x00-\\x1f\\x7f]+$(?!\\n)",
+        "description": "A case name (shown in test/run output and passed to --case; cannot start with '--' or contain control characters)."
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "One named execution case with parameter overrides and optional variant filter.",
+        "properties": {
+          "params": {
+            "$ref": "#/properties/params",
+            "description": "Parameter values for this case. Override scenario, configuration, and variant params; overridden by --request and --param."
+          },
+          "only": {
+            "$ref": "#/properties/only",
+            "description": "The configuration variants this case applies to (intersected with top-level only)."
+          }
+        }
+      },
+      "examples": [
+        {
+          "nominal": { "params": { "throttle": 50 } },
+          "high_load": { "only": ["large"], "params": { "throttle": 95 } }
+        }
+      ]
+    },
     "inputs": {
       "type": "object",
       "propertyNames": { "$ref": "#/definitions/variable_name" },

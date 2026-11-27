@@ -87,7 +87,7 @@ TEST_CASE(scenario_file_errors_say_the_line_what_is_wrong_and_how_to_fix_it)
                "E 1 format-version: vehicle_sil_scenario is 2, but this vehicle_sil_launch reads format 1 only: use the "
                "vehicle-sil that the file was written for\n");
     check_text(errors("steps:\n  - set: { Body.level: 1 }\nstep: 1\n"),
-               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, samples, only, params, inputs, end_ms, steps)\n"
+               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, samples, only, params, cases, inputs, end_ms, steps)\n"
                "E 0 missing-key: the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: 1\n");
     check_text(errors(kHead + "  - sets: { Body.level: 1 }\n"),
                "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: name, at_ms, after_ms, set, ramp, wave, dither, "
@@ -3245,6 +3245,10 @@ TEST_CASE(scenario_end_ms_validation_and_runtime_settlement)
         CHECK(run.code == "scenario-write");
         CHECK(run.message.find("wrote 102 at 40 ms") != std::string::npos);
         CHECK(run.failed_at == std::optional<SimTime>(at(40ms)));
+        CHECK(run.failed_file.empty());
+        CHECK_EQ(run.failed_line, std::size_t{4});
+        CHECK(run.failed_name.empty());
+        CHECK(run.failed_call_stack.empty());
         CHECK(run.over_at == std::optional<SimTime>(at(30ms)));
         CHECK_EQ(run.steps.size(), std::size_t{2});
         CHECK(run.steps[0].status == StepStatus::Passed);
@@ -3285,6 +3289,52 @@ TEST_CASE(scenario_end_ms_validation_and_runtime_settlement)
         CHECK(run.steps[0].status == StepStatus::Passed);
         CHECK(run.steps[1].status == StepStatus::Passed);
         CHECK(!std::any_of(events.begin(), events.end(), [](const auto& ev) { return ev.second == StepStatus::Failed; }));
+    }
+    {
+        // 7c. Post-pass fail_grid from a named dither: step inside a template preserves failed_file,
+        // failed_line, failed_name, and failed_call_stack.
+        std::map<std::string, std::string> files;
+        files["templates/dither_step.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n"
+            "  amp: { type: integer }\n"
+            "steps:\n"
+            "  - name: \"dither inject ${amp}\"\n"
+            "    at_ms: 0\n"
+            "    dither: { Body.level: { square: { amplitude: \"${amp}\", period_ms: 80, phase_deg: 180 } } }\n";
+        const std::string rootText =
+            kDitherHead +
+            "end_ms: 80\n"
+            "steps:\n"
+            "  - name: call dither\n"
+            "    template: templates/dither_step.yaml\n"
+            "    params: { amp: 5 }\n"
+            "  - at_ms: 0\n"
+            "    set: { Body.level: 97 }\n"
+            "  - at_ms: 0\n"
+            "    expect: { Body.level: 92 }\n";
+        ScenarioContext ctx;
+        ctx.read_template = [&](const std::string& p, std::string& prob) -> std::optional<std::string> {
+            const auto it = files.find(p);
+            if (it != files.end()) return it->second;
+            prob = "missing";
+            return std::nullopt;
+        };
+        const ScenarioRead r = read_scenario(rootText, catalog(), ctx);
+        CHECK(r.scenario.has_value());
+        World world;
+        world.tick = 10ms;
+        const ScenarioRun run = world.run(*r.scenario);
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.code == "scenario-write");
+        CHECK(run.failed_at == std::optional<SimTime>(at(40ms)));
+        CHECK(run.failed_file == "templates/dither_step.yaml");
+        CHECK_EQ(run.failed_line, std::size_t{5});
+        CHECK(run.failed_name == "dither inject 5");
+        CHECK_EQ(run.failed_call_stack.size(), std::size_t{1});
+        CHECK(run.failed_call_stack[0].file.empty());
+        CHECK_EQ(run.failed_call_stack[0].line, std::size_t{4});
+        CHECK(run.failed_call_stack[0].name == "call dither");
     }
 }
 
@@ -3904,5 +3954,284 @@ TEST_CASE(scenario_template_scoping_type_checks_and_errors)
             badDesc + " }\nsteps:\n  - set: { Body.level: 1 }\n";
         const std::string errs = lines(run_check(kHead + "  - template: templates/desc_bad.yaml\n").findings);
         CHECK(errs.find("description of parameter 'a' must be a text") != std::string::npos);
+    }
+}
+
+TEST_CASE(scenario_cases_parsing_precedence_only_intersection_and_inspect)
+{
+    CHECK(std::string(param_source_name(ParamSource::Case)) == "case");
+    CHECK(std::string(param_source_text(ParamSource::Case)) == "the case's params");
+
+    // 1. Parsing valid cases (Unicode, -10C, a--b, empty {}, JSON), preserving file order.
+    const std::string multi =
+        "vehicle_sil_scenario: 1\n"
+        "params: { lvl: 10, ms: 50 }\n"
+        "cases:\n"
+        "  無負荷: { params: { lvl: 0 } }\n"
+        "  定格: {}\n"
+        "  \"-10C\": { params: { lvl: 20, ms: 80 } }\n"
+        "  \"a--b\": { params: { lvl: 30 } }\n"
+        "steps:\n"
+        "  - after_ms: ${ms}\n"
+        "    set: { Body.level: \"${lvl}\" }\n";
+    {
+        ScenarioContext ctx;
+        ctx.case_name = "無負荷";
+        const ScenarioRead r = read_scenario(multi, catalog(), ctx);
+        CHECK(r.scenario.has_value());
+        CHECK(r.case_name == "無負荷");
+        CHECK(r.cases == std::vector<std::string>({"無負荷", "定格", "-10C", "a--b"}));
+        CHECK(r.scenario->case_name == "無負荷");
+        CHECK(r.scenario->cases == r.cases);
+        CHECK(r.params.size() == 2);
+        CHECK(r.params[0].text == "0");
+        CHECK(r.params[0].source == ParamSource::Case);
+        CHECK(r.params[1].text == "50");
+        CHECK(r.params[1].source == ParamSource::Scenario);
+        CHECK(r.scenario->params == r.params);
+
+        const ScenarioRun notRun = scenario_not_run(*r.scenario);
+        CHECK(notRun.case_name == "無負荷");
+        CHECK(notRun.params == r.params);
+    }
+    {
+        ScenarioContext ctx;
+        ctx.case_name = "-10C";
+        const ScenarioRead r = read_scenario(multi, catalog(), ctx);
+        CHECK(r.scenario.has_value());
+        CHECK(r.case_name == "-10C");
+        CHECK(r.params[0].text == "20");
+        CHECK(r.params[1].text == "80");
+    }
+    {
+        const std::string json =
+            R"({"vehicle_sil_scenario": 1, "params": {"lvl": 1}, "cases": {"first": {}, "second": {"params": {"lvl": 2}}}, "steps": [{"set": {"Body.level": "${lvl}"}}]})";
+        ScenarioContext ctx;
+        ctx.case_name = "second";
+        const ScenarioRead r = read_scenario(json, catalog(), ctx);
+        CHECK(r.scenario.has_value());
+        CHECK(r.cases == std::vector<std::string>({"first", "second"}));
+        CHECK(r.params[0].text == "2");
+        CHECK(r.params[0].source == ParamSource::Case);
+    }
+
+    // 2. Rejecting malformed cases: empty, non-map, duplicate, ^--, control chars (incl. trailing \n), invalid UTF-8, null CaseDef, unknown key, ${...}.
+    const auto err = [](const std::string& text, const std::optional<std::string>& c = std::nullopt) {
+        ScenarioContext ctx;
+        ctx.case_name = c;
+        return lines(read_scenario(text, catalog(), ctx).findings);
+    };
+    CHECK(err("vehicle_sil_scenario: 1\ncases: {}\nsteps:\n  - set: { Body.level: 1 }\n").find("non-empty mapping") !=
+          std::string::npos);
+    CHECK(err("vehicle_sil_scenario: 1\ncases: 1\nsteps:\n  - set: { Body.level: 1 }\n").find("non-empty mapping") !=
+          std::string::npos);
+    CHECK(err("vehicle_sil_scenario: 1\ncases:\n  a: {}\n  a: {}\nsteps:\n  - set: { Body.level: 1 }\n", "a").find("duplicate-key") !=
+          std::string::npos);
+    CHECK(err("vehicle_sil_scenario: 1\ncases:\n  \"--bad\": {}\nsteps:\n  - set: { Body.level: 1 }\n").find("does not start with '--'") !=
+          std::string::npos);
+    CHECK(err("vehicle_sil_scenario: 1\ncases:\n  \"\": {}\nsteps:\n  - set: { Body.level: 1 }\n").find("non-empty UTF-8") !=
+          std::string::npos);
+    CHECK(err("vehicle_sil_scenario: 1\ncases:\n  \"a\\n\": {}\nsteps:\n  - set: { Body.level: 1 }\n").find("on one line") !=
+          std::string::npos);
+    CHECK(err(std::string("vehicle_sil_scenario: 1\ncases:\n  \"\xFF\": {}\nsteps:\n  - set: { Body.level: 1 }\n"))
+              .find("non-empty UTF-8") != std::string::npos);
+    CHECK(err("vehicle_sil_scenario: 1\ncases:\n  a:\nsteps:\n  - set: { Body.level: 1 }\n", "a").find("must be a mapping") !=
+          std::string::npos);
+    CHECK(err("vehicle_sil_scenario: 1\ncases:\n  a: { steps: [] }\nsteps:\n  - set: { Body.level: 1 }\n", "a")
+              .find("unknown key 'steps'") != std::string::npos);
+    CHECK(err("vehicle_sil_scenario: 1\nparams: { y: 1 }\ncases:\n  a: { params: { x: \"${y}\" } }\nsteps:\n  - set: { Body.level: \"${y}\" }\n",
+              "a")
+              .find("cannot use another parameter") != std::string::npos);
+
+    // 3. Case selection usage errors.
+    {
+        const ScenarioRead missing = read_scenario(multi, catalog());
+        CHECK(!missing.scenario.has_value());
+        CHECK(missing.params_incomplete);
+        CHECK(!missing.usage_errors.empty());
+        CHECK(missing.usage_errors[0].message.find("give --case <name> with one of 無負荷, 定格, -10C, a--b") != std::string::npos);
+
+        ScenarioContext badCtx;
+        badCtx.case_name = "定格X";
+        const ScenarioRead typo = read_scenario(multi, catalog(), badCtx);
+        CHECK(typo.params_incomplete);
+        CHECK(!typo.usage_errors.empty());
+        CHECK(typo.usage_errors[0].message.find("did you mean '定格'?") != std::string::npos);
+
+        ScenarioContext caselessCtx;
+        caselessCtx.case_name = "any";
+        const ScenarioRead caseless = read_scenario(kHead + "  - set: { Body.level: 1 }\n", catalog(), caselessCtx);
+        CHECK(caseless.params_incomplete);
+        CHECK(!caseless.usage_errors.empty());
+        CHECK(caseless.usage_errors[0].message.find("the scenario has no cases") != std::string::npos);
+    }
+
+    // 4. Rank-merged 6-level outer precedence independent of context.params vector order.
+    {
+        const std::string text =
+            "vehicle_sil_scenario: 1\n"
+            "params: { p_scn: 1, p_cfg: 1, p_var: 1, p_case: 1, p_req: 1, p_cli: 1 }\n"
+            "cases:\n"
+            "  c1:\n"
+            "    params: { p_case: 4, p_req: 4, p_cli: 4 }\n"
+            "steps:\n"
+            "  - set: { Body.level: \"${p_scn}\" }\n"
+            "  - set: { Body.level: \"${p_cfg}\" }\n"
+            "  - set: { Body.level: \"${p_var}\" }\n"
+            "  - set: { Body.level: \"${p_case}\" }\n"
+            "  - set: { Body.level: \"${p_req}\" }\n"
+            "  - set: { Body.level: \"${p_cli}\" }\n";
+        ScenarioContext ctx;
+        ctx.case_name = "c1";
+        // Intentionally scramble order: CommandLine before RequestFile before Variant before Configuration.
+        ctx.params = {
+            ParamValue{"p_cli", "6", false, ParamSource::CommandLine, 0, true},
+            ParamValue{"p_req", "5", false, ParamSource::RequestFile, 2, false},
+            ParamValue{"p_var", "3", false, ParamSource::Variant, 3, false},
+            ParamValue{"p_cfg", "2", false, ParamSource::Configuration, 4, false},
+            ParamValue{"p_case", "2", false, ParamSource::Variant, 5, false},
+            ParamValue{"p_req", "3", false, ParamSource::Variant, 6, false},
+            ParamValue{"p_cli", "2", false, ParamSource::Configuration, 7, false},
+        };
+        const ScenarioRead r = read_scenario(text, catalog(), ctx);
+        CHECK(r.scenario.has_value());
+        const auto get = [&](const std::string& name) -> const ParamValue* {
+            const auto it = std::find_if(r.params.begin(), r.params.end(), [&](const ParamValue& p) { return p.name == name; });
+            return it == r.params.end() ? nullptr : &*it;
+        };
+        CHECK(get("p_scn")->text == "1" && get("p_scn")->source == ParamSource::Scenario);
+        CHECK(get("p_cfg")->text == "2" && get("p_cfg")->source == ParamSource::Configuration);
+        CHECK(get("p_var")->text == "3" && get("p_var")->source == ParamSource::Variant);
+        CHECK(get("p_case")->text == "4" && get("p_case")->source == ParamSource::Case);
+        CHECK(get("p_req")->text == "5" && get("p_req")->source == ParamSource::RequestFile);
+        CHECK(get("p_cli")->text == "6" && get("p_cli")->source == ParamSource::CommandLine);
+    }
+
+    // 5. Template lexical isolation with Case params, and cases.*.params undeclared/unused validation (even with params_for_many).
+    {
+        std::map<std::string, std::string> files;
+        files["templates/t.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "parameters:\n  x: { type: integer }\n"
+            "steps:\n  - set: { Body.level: \"${x}\" }\n";
+        const std::string badCaseParam =
+            "vehicle_sil_scenario: 1\n"
+            "params: { val: 1 }\n"
+            "cases:\n"
+            "  ok_case: { params: { val: 5 } }\n"
+            "  bad_case: { params: { vl: 9 } }\n"
+            "steps:\n"
+            "  - template: templates/t.yaml\n"
+            "    params: { x: \"${val}\" }\n";
+        ScenarioContext ctx;
+        ctx.case_name = "ok_case";
+        ctx.params_for_many = true;
+        ctx.read_template = [&](const std::string& p, std::string& prob) -> std::optional<std::string> {
+            const auto it = files.find(p);
+            if (it != files.end()) return it->second;
+            prob = "missing";
+            return std::nullopt;
+        };
+        const ScenarioRead r = read_scenario(badCaseParam, catalog(), ctx);
+        CHECK(!r.scenario.has_value());
+        CHECK(lines(r.findings).find("case 'bad_case': parameter 'vl' is not declared in params or used in steps (did you mean 'val'?)") !=
+              std::string::npos);
+
+        // Template lexical isolation: case param cannot leak into template without explicit params:.
+        files["templates/leak.yaml"] =
+            "vehicle_sil_scenario_template: 1\n"
+            "steps:\n  - set: { Body.level: \"${val}\" }\n";
+        const std::string leakText =
+            "vehicle_sil_scenario: 1\n"
+            "params: { val: 1 }\n"
+            "cases: { c: { params: { val: 7 } } }\n"
+            "steps:\n  - template: templates/leak.yaml\n";
+        ctx.case_name = "c";
+        const ScenarioRead leakRead = read_scenario(leakText, catalog(), ctx);
+        CHECK(lines(leakRead.findings).find("${val} has no value") != std::string::npos);
+    }
+
+    // 6. only: intersection (Reconciled Contract 4).
+    {
+        const std::string text =
+            "vehicle_sil_scenario: 1\n"
+            "only: [small, medium]\n"
+            "cases:\n"
+            "  c_med: { only: [medium, large], params: { unused_typo: 1 } }\n"
+            "  c_empty: { only: [large] }\n"
+            "steps:\n"
+            "  - set: { Body.level: 1 }\n";
+        ScenarioContext ctx;
+        ctx.variants = {"small", "medium", "large"};
+        ctx.variant = "small";
+        ctx.case_name = "c_med";
+        // effective_only = [medium]; variant is "small" -> skipped cleanly with errors() == 1, and cases.*.params NOT checked when not_for_variant!
+        const ScenarioRead skipped = read_scenario(text, catalog(), ctx);
+        CHECK(skipped.not_for_variant);
+        CHECK(skipped.only == std::vector<std::string>({"medium"}));
+        CHECK(skipped.findings.size() == 1);
+        CHECK(skipped.findings[0].code == "scenario-variant");
+
+        // Empty intersection when both non-empty -> not_for_variant == false (fails loudly).
+        ctx.case_name = "c_empty";
+        const ScenarioRead emptyInter = read_scenario(text, catalog(), ctx);
+        CHECK(!emptyInter.not_for_variant);
+        CHECK(emptyInter.only == std::vector<std::string>({}));
+        CHECK(lines(emptyInter.findings).find("have no variant in common") != std::string::npos);
+
+        // Raw variant typo in unselected case -> errors > 1 so test.cpp fails loudly instead of skipping.
+        const std::string typoText =
+            "vehicle_sil_scenario: 1\n"
+            "only: [small, medium]\n"
+            "cases:\n"
+            "  c_med: { only: [medium] }\n"
+            "  c_typo: { only: [medum] }\n"
+            "steps:\n  - set: { Body.level: 1 }\n";
+        ctx.case_name = "c_med";
+        ctx.variant = "small";
+        const ScenarioRead typoRead = read_scenario(typoText, catalog(), ctx);
+        CHECK(typoRead.not_for_variant);
+        CHECK(typoRead.findings.size() == 2);
+        CHECK(lines(typoRead.findings).find("did you mean 'medium'?") != std::string::npos);
+    }
+
+    // 7. inspect_scenario().
+    {
+        ScenarioContext inspectCtx;
+        inspectCtx.variants = {"small", "medium"};
+        const ScenarioInspection inspMulti = inspect_scenario(multi, inspectCtx);
+        CHECK(inspMulti.has_cases);
+        CHECK(inspMulti.cases == std::vector<std::string>({"無負荷", "定格", "-10C", "a--b"}));
+        CHECK(!inspMulti.params_incomplete);
+        CHECK(inspMulti.param_names == std::vector<std::string>({"lvl", "ms"}));
+        CHECK(std::none_of(inspMulti.findings.begin(), inspMulti.findings.end(),
+                           [](const Finding& f) { return f.severity == Severity::Error; }));
+
+        const ScenarioInspection inspCaseless =
+            inspect_scenario("vehicle_sil_scenario: 1\nparams: { p: 1 }\nsteps:\n  - set: { Body.level: \"${p}\" }\n", inspectCtx);
+        CHECK(!inspCaseless.has_cases);
+        CHECK(inspCaseless.cases.empty());
+        CHECK(!inspCaseless.params_incomplete);
+        CHECK(inspCaseless.param_names == std::vector<std::string>({"p"}));
+        CHECK(inspCaseless.findings.empty());
+
+        const ScenarioInspection inspOnlyOk =
+            inspect_scenario("vehicle_sil_scenario: 1\nonly: [medium]\nsteps:\n  - set: { Body.level: 1 }\n", inspectCtx);
+        CHECK(inspOnlyOk.findings.empty());
+
+        const ScenarioInspection inspOnlyBad =
+            inspect_scenario("vehicle_sil_scenario: 1\nonly: [bogus]\nsteps:\n  - set: { Body.level: 1 }\n", inspectCtx);
+        CHECK(std::any_of(inspOnlyBad.findings.begin(), inspOnlyBad.findings.end(),
+                          [](const Finding& f) { return f.severity == Severity::Error && f.code == "scenario-variant"; }));
+
+        const ScenarioInspection inspBrokenCases =
+            inspect_scenario("vehicle_sil_scenario: 1\ncases: {}\nsteps:\n  - set: { Body.level: 1 }\n", inspectCtx);
+        CHECK(inspBrokenCases.has_cases);
+        CHECK(inspBrokenCases.cases.empty());
+        CHECK(inspBrokenCases.params_incomplete);
+
+        const ScenarioInspection inspSyntax = inspect_scenario("vehicle_sil_scenario: 1\nsteps:\n  - set: [1\n", inspectCtx);
+        CHECK(!inspSyntax.has_cases);
+        CHECK(inspSyntax.params_incomplete);
     }
 }

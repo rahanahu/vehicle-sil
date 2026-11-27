@@ -24,6 +24,8 @@ configure_file(scenarios/throttle_dither.yaml scenarios/throttle_dither.yaml COP
 # Parameterized step template and scenario calling it (--scenario scenarios/throttle_template.yaml).
 configure_file(scenarios/templates/throttle_check.yaml scenarios/templates/throttle_check.yaml COPYONLY)
 configure_file(scenarios/throttle_template.yaml scenarios/throttle_template.yaml COPYONLY)
+# Named cases calling the same template (--scenarios scenarios/throttle_cases.yaml).
+configure_file(scenarios/throttle_cases.yaml scenarios/throttle_cases.yaml COPYONLY)
 # The browser GUI's dashboard of simulation.yaml and the panel it loads (docs/gui.md).
 configure_file(simulation.dashboard.yaml simulation.dashboard.yaml COPYONLY)
 # The same two at the speed of a clock and without an end, to watch in the GUI (scripts/run-gui.py).

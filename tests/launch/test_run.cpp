@@ -1991,3 +1991,77 @@ TEST_CASE(real_template_expansion_surfaces_call_stack_in_check_and_run_outputs)
     CHECK(j.find("\"file\": \"scenarios/templates/inner.yaml\"") != std::string::npos);
     CHECK(j.find("\"call_stack\": [") != std::string::npos);
 }
+
+TEST_CASE(run_report_surfaces_case_and_params_in_text_json_and_fail_grid_detail)
+{
+    RunOutcome o = passed_run();
+    scenario::ScenarioRun sr;
+    sr.file = "scenarios/load.yaml";
+    sr.name = "load";
+    sr.case_name = "上限直前";
+    sr.params = {config::ParamValue{"wait_timeout_ms", "400", false, config::ParamSource::CommandLine, 0, true},
+                 config::ParamValue{"throttle", "95", false, config::ParamSource::Case, 12, false}};
+    sr.status = scenario::ScenarioStatus::Failed;
+    sr.code = "scenario-write";
+    sr.message = "dither grid write failed";
+    sr.failed_at = SimTime{std::chrono::milliseconds(50)};
+    sr.over_at = SimTime{std::chrono::milliseconds(60)};
+    o.scenario.result = sr;
+
+    const RunReport rep = report_of(o);
+    const std::string txt = format_run_text(rep);
+    CHECK(txt.find("scenario scenarios/load.yaml (load, case 上限直前): FAILED") != std::string::npos);
+    CHECK(txt.find("case: 上限直前") != std::string::npos);
+    CHECK(txt.find("params: wait_timeout_ms = 400 (--param), throttle = 95 (the case's params)") != std::string::npos);
+
+    const std::string j = format_run_json(rep);
+    const std::size_t stepsPos = j.find("\"steps\": []");
+    const std::size_t casePos = j.find("\"case\": \"上限直前\"");
+    const std::size_t paramsPos = j.find("\"params\": [");
+    CHECK(stepsPos != std::string::npos);
+    CHECK(casePos != std::string::npos && casePos > stepsPos);
+    CHECK(paramsPos != std::string::npos && paramsPos > casePos);
+    CHECK(j.find("\"from\": \"case\"") != std::string::npos);
+}
+
+TEST_CASE(run_report_surfaces_post_pass_fail_grid_template_provenance)
+{
+    RunOutcome o = passed_run();
+    scenario::ScenarioRun sr;
+    sr.file = "scenarios/load.yaml";
+    sr.name = "load";
+    sr.case_name = "上限直前";
+    sr.params = {config::ParamValue{"amp", "5", false, config::ParamSource::Case, 12, false}};
+    sr.status = scenario::ScenarioStatus::Failed;
+    sr.code = "scenario-write";
+    sr.message = "the dither of Body.level (scenarios/templates/dither.yaml:9) wrote 102 at 50 ms";
+    sr.failed_at = SimTime{std::chrono::milliseconds(50)};
+    sr.failed_file = "scenarios/templates/dither.yaml";
+    sr.failed_line = 9;
+    sr.failed_name = "inject overload";
+    sr.failed_call_stack = {scenario::SourceFrame{"scenarios/load.yaml", 20, "call dither",
+                                                  {scenario::SourceParam{"amp", "5", false, config::ParamSource::TemplateCall}}}};
+    sr.over_at = SimTime{std::chrono::milliseconds(60)};
+    o.scenario.result = sr;
+
+    const RunReport rep = report_of(o);
+    CHECK_EQ(rep.findings.size(), std::size_t{1});
+    if (rep.findings.size() == 1)
+    {
+        CHECK(rep.findings[0].file == "scenarios/templates/dither.yaml");
+        CHECK_EQ(rep.findings[0].line, std::size_t{9});
+        CHECK(rep.findings[0].message.find("'inject overload': the dither of Body.level") == 0);
+        CHECK(rep.findings[0].detail.find("called from: scenarios/load.yaml:20 (step 'call dither', amp = 5)") != std::string::npos);
+        CHECK(rep.findings[0].detail.find("case: 上限直前") != std::string::npos);
+        CHECK(rep.findings[0].detail.find("params: amp = 5 (the case's params)") != std::string::npos);
+    }
+
+    const std::string txt = format_run_text(rep);
+    CHECK(txt.find("scenarios/templates/dither.yaml:9: 'inject overload':") != std::string::npos);
+    CHECK(txt.find("called from: scenarios/load.yaml:20 (step 'call dither', amp = 5)") != std::string::npos);
+
+    const std::string j = format_run_json(rep);
+    CHECK(j.find("\"file\": \"scenarios/templates/dither.yaml\"") != std::string::npos);
+    CHECK(j.find("\"line\": 9") != std::string::npos);
+    CHECK(j.find("called from: scenarios/load.yaml:20") != std::string::npos);
+}

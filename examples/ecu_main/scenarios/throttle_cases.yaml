@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# Named load cases calling a shared step template (無負荷, 定格, 上限直前).
+vehicle_sil_scenario: 1
+name: throttle load cases
+params:
+  target_throttle: 50
+  min_speed: 1700
+  wait_timeout_ms: 500
+  case_label: 定格
+cases:
+  無負荷:
+    params:
+      target_throttle: 0
+      min_speed: 750
+      wait_timeout_ms: 300
+      case_label: 無負荷
+  定格:
+    params:
+      target_throttle: 50
+      min_speed: 1700
+      wait_timeout_ms: 500
+      case_label: 定格
+  上限直前:
+    params:
+      target_throttle: 95
+      min_speed: 2600
+      wait_timeout_ms: 650
+      case_label: 上限直前
+steps:
+  - name: "run ${case_label} load check"
+    template: templates/throttle_check.yaml
+    params:
+      throttle: "${target_throttle}"
+      min_speed: "${min_speed}"
+      timeout_ms: "${wait_timeout_ms}"
+      label: "${case_label}"

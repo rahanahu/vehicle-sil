@@ -68,7 +68,7 @@
           },
           "from": {
             "type": "string",
-            "description": "Where the value comes from (the scenario, the configuration, the command line)."
+            "description": "Where the value comes from (the scenario, the configuration, a variant, a case, a request file, or the command line)."
           }
         }
       }

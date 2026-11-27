@@ -320,6 +320,8 @@ void Reader::read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
         {
             if (auto overlay = read_overlay(child, *v, quiet, true, step.line))
             {
+                overlay->name = step.name;
+                overlay->call_stack = step.call_stack;
                 step.overlays.push_back(std::move(*overlay));
             }
         }

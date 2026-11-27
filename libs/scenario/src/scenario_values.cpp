@@ -110,6 +110,10 @@ std::optional<std::size_t> Reader::variable(ryml::id_type node)
               "'" + text + "' is not a variable: write <participant>.<variable>, e.g. " + example_variable());
         return std::nullopt;
     }
+    if (!check_catalog_)
+    {
+        return std::nullopt;
+    }
     const std::string participant = text.substr(0, dot);
     const std::string name = text.substr(dot + 1);
     const auto p = std::find_if(catalog_.begin(), catalog_.end(),

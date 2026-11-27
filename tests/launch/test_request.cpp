@@ -618,3 +618,17 @@ TEST_CASE(validate_request_enforces_after_scenario_pause_rules)
     r.intent.stop_at_ms = 500;
     CHECK(!validate_request(r, RequestCommand::Run).empty());
 }
+
+TEST_CASE(validate_request_requires_scenario_when_case_is_given)
+{
+    RunRequest r;
+    r.intent.scenario_case = "nominal";
+    CHECK(!validate_request(r, RequestCommand::Check).empty());
+    CHECK(!validate_request(r, RequestCommand::Run).empty());
+    CHECK(validate_request(r, RequestCommand::Check).front().message.find("--case chooses a case of a scenario") !=
+          std::string::npos);
+
+    r.intent.scenario = "drive.yaml";
+    CHECK(validate_request(r, RequestCommand::Check).empty());
+    CHECK(validate_request(r, RequestCommand::Run).empty());
+}

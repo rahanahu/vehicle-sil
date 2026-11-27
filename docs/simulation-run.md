@@ -54,7 +54,7 @@ With `--scenario <file>`, `run` also checks the scenario. Once the simulation ha
 | Item | With `--scenario` |
 |---|---|
 | The controller's time step | The same as the default with a set speed (`time_step_ms`, or a time step such that every ECU step starts at a controller step). |
-| Values of parameters (`${name}`) | Can be overridden with `params` in the configuration file, `params` of the variant, and `--param <name>=<value>`. |
+| Values of parameters (`${name}`) | Can be overridden with `params` in the configuration file, `params` of the variant, `cases.<name>.params` via `--case <name>`, and `--param <name>=<value>`. |
 | Scenario steps that use a variable the variant does not have (`absent: true`) | Skipped and shown in the result. |
 | Scenario steps that use variables of a participant the variant disables | Also skipped and shown in the result. |
 | After the scenario passes (`after_scenario`) | Defaults to `"stop"` (including plain CLI `run --scenario`). Setting `"after_scenario": "pause"` in a `--request` file or `serve` inline `intent` pauses the simulation atomically at the end controller step instead of stopping. |
@@ -1998,10 +1998,11 @@ The runs are every variant × every scenario.
 
 | Item | Rule |
 |---|---|
-| Order | Variants in configuration file order; within each variant, scenarios in argument order. |
-| A configuration file without variants | Only the scenarios are listed. |
+| Order | Variants in configuration file order; within each variant, scenarios in argument order, and within each scenario with `cases:`, cases in file order. |
+| A configuration file without variants | Only the scenarios (and their cases, if defined) are listed. |
 | `--variant <name>` | Runs only that variant (repeatable; the order stays the configuration file order). |
-| One run | The same as `run <file> --variant <variant> --scenario <scenario> --speed max`. |
+| `--case <name>` | Runs only matching cases in file order (repeatable; skips scenarios without `cases`). Exit code `4` if no scenario defines `<name>`. |
+| One run | The same as `run <file> --variant <variant> --scenario <scenario> [--case <case>] --speed max`. |
 | Speed | As fast as possible unless locked to real time. |
 | Between runs | The registry, the controller and the participant processes are created anew (no state carries over from the previous run). |
 | Concurrent runs | None. |
@@ -2043,6 +2044,7 @@ Every run is `skipped`, for example, when the variants selected with `--variant`
 |---|---|
 | `--json`, `--strict`, `--describe-timeout-ms`, `--disable`, `--enable` | Accepted (applied the same way to every run). |
 | `--timeout-ms` | Accepted (the limit for each run). |
+| `--case <name>` | Runs only matching cases in file order (repeatable; skips caseless scenarios; usage error if no scenario defines `<name>`). |
 | `--param <name>=<value>` | Applied only to scenarios that declare or use that parameter. |
 | `--speed`, `--log-dir`, `--stdin-commands`, `--control`, `--manual` and other options only for `run` | Usage error. |
 | `--scenario` | Usage error. |
@@ -2104,8 +2106,9 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 - To see what the warnings of a `passed` run are, run it alone or read `runs[].run` in `--json`.
 - For a `FAILED` run that has only warnings under `--strict`, the right column shows the first warning.
 - A configuration file without variants gives no `variant` column.
+- When any run is for a named case, a `case` column appears after `scenario` (with `-` for caseless rows).
 
-The command to rerun one run alone (`to see a failed run in full, ...`) is for the first failed run. It lists the options given to `test` that apply to that run, so it reproduces the same run. The options listed are `--param` (only names that are in that run's scenario), `--disable`, `--enable`, `--strict`, `--timeout-ms` and `--describe-timeout-ms`. The command has `--speed max`, as `test` runs; it has none for a run that went at speed 1 because a `role: bridge` participant connects it outside (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)), and `--time-policy free` if `test` had it. Paths and values that contain white space or similar characters are enclosed in `'...'` so that you can paste them into a POSIX shell (sh, bash). In the Windows Command Prompt, `'` does not quote, so change them to `"..."`.
+The command to rerun one run alone (`to see a failed run in full, ...`) is for the first failed run. It lists the options given to `test` that apply to that run, so it reproduces the same run. The options listed are `--case` (when the run is for a named case), `--param` (only names that are in that run's scenario), `--disable`, `--enable`, `--strict`, `--timeout-ms` and `--describe-timeout-ms`. The command has `--speed max`, as `test` runs; it has none for a run that went at speed 1 because a `role: bridge` participant connects it outside (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)), and `--time-policy free` if `test` had it. Paths and values that contain white space or similar characters are enclosed in `'...'` so that you can paste them into a POSIX shell (sh, bash). In the Windows Command Prompt, `'` does not quote, so change them to `"..."`.
 
 The last line is `passed`, `FAILED` or `interrupted`, followed by the counts of runs. The counts of `interrupted` and `not run` appear only when there are such runs.
 
@@ -2171,6 +2174,7 @@ Keys of `runs[]`:
 | `result` | `"passed"`, `"failed"`, `"skipped"`, `"interrupted"`, `"not_run"` |
 | `reason` | The right column of the table (`null` if empty) |
 | `run` | The same object as `run --json` for that run (`null` for `skipped` and `not_run`) |
+| `case` | Present after `run` only when the run is for a named case (`cases:`) |
 
 `formats` of `version --json` has the version of this JSON as `test`; `features` has no entry for `test`.
 

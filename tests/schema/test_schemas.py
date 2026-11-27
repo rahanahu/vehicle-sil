@@ -204,6 +204,7 @@ def scenario_mappings() -> dict[str, dict]:
         step["properties"].update(kind["properties"])
     return {
         "top": SCENARIO,
+        "case": SCENARIO["properties"]["cases"]["additionalProperties"],
         "step": step,
         "comparison": comparison,
         "ramp": definitions["step_ramp"]["properties"]["ramp"]["additionalProperties"],
@@ -742,6 +743,24 @@ SCENARIO_SAMPLES = [
      S + SET + "    params: { ms: 20 }\n", "invalid"),
     ("a template file passed as scenario",
      "vehicle_sil_scenario_template: 1\nsteps:\n" + SET, "invalid"),
+    ("named cases with params and only",
+     "vehicle_sil_scenario: 1\nparams: { val: 10 }\ncases:\n"
+     "  無負荷: { params: { val: 20 } }\n"
+     "  定格: { only: [small], params: { val: 50 } }\n"
+     "  \"-10C\": { params: { val: 30 } }\n"
+     "steps:\n  - set: { Engine.engine.throttle: \"${val}\" }\n",
+     "valid"),
+    ("empty cases", S + SET + "cases: {}\n", "invalid"),
+    ("case starting with --", S + SET + "cases: { \"--bad\": {} }\n", "invalid"),
+    ("empty case name", S + SET + "cases: { \"\": {} }\n", "invalid"),
+    ("case name with trailing newline", S + SET + "cases: { \"a\\n\": {} }\n", "invalid"),
+    ("case name with control char", S + SET + "cases: { \"a\\nb\": {} }\n", "invalid"),
+    ("case value null", S + SET + "cases: { a: }\n", "invalid"),
+    ("unknown key in case", S + SET + "cases: { a: { steps: [] } }\n", "invalid"),
+    ("case param referencing another param", S + SET + "cases: { a: { params: { x: \"${y}\" } } }\n", "invalid"),
+    ("case only with variant not in config", S + SET + "cases: { a: { only: [large] } }\n", "check only"),
+    ("empty intersection of scenario only and case only",
+     S + SET + "only: [small]\ncases: { a: { only: [7] } }\n", "check only"),
 ]
 
 T = "vehicle_sil_scenario_template: 1\n"
@@ -851,7 +870,18 @@ class Launcher:
                 if errors_of(report):
                     raise AssertionError(f"the configuration the scenarios are checked with has errors: {errors_of(report)}")
             scenario_configuration = self.scenario_configuration
-        report = check(str(scenario_configuration), "--variant", "small", "--scenario", str(self.write(text)))
+        try:
+            data = load(text)
+        except yaml.YAMLError:
+            data = None
+        case_names = []
+        if isinstance(data, dict) and isinstance(data.get("cases"), dict):
+            case_names = [
+                k for k in data["cases"]
+                if isinstance(k, str) and k and not k.startswith("--") and not any(ord(c) < 0x20 or ord(c) == 0x7F for c in k)
+            ]
+        report = check(str(scenario_configuration), "--variant", "small", "--scenario", str(self.write(text)),
+                       *(["--case", case_names[0]] if case_names else []))
         return errors_of(report)
 
     def template(self, text: str) -> list[dict]:
@@ -1801,6 +1831,7 @@ class SchemaAndLauncher(unittest.TestCase):
     def test_the_keys_of_a_scenario_are_the_launchers(self):
         probes = {
             "top": S + SET + "zz_probe: 1\n",
+            "case": S + SET + "cases: { a: { zz_probe: 1 } }\n",
             "step": S + SET + "    zz_probe: 1\n",
             "comparison": S + "  - expect: { Engine.engine.speed: { ge: 0, zz_probe: 1 } }\n",
             "ramp": S + "  - ramp: { Engine.engine.throttle: { to: 5, over_ms: 10, zz_probe: 1 } }\n",

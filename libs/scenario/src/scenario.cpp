@@ -95,6 +95,22 @@ const char* compare_name(Compare op)
     return "eq";
 }
 
+int param_source_rank(config::ParamSource source) noexcept
+{
+    switch (source)
+    {
+    case config::ParamSource::Scenario: return 0;
+    case config::ParamSource::Configuration: return 1;
+    case config::ParamSource::Variant: return 2;
+    case config::ParamSource::Case: return 3;
+    case config::ParamSource::RequestFile: return 4;
+    case config::ParamSource::CommandLine: return 5;
+    case config::ParamSource::TemplateDefault: return 6;
+    case config::ParamSource::TemplateCall: return 7;
+    }
+    return 0;
+}
+
 } // namespace
 
 std::string number_text(double value)
@@ -173,6 +189,7 @@ void Reader::read()
     bool hasTemplateVersion = false;
     ryml::id_type paramsNode = ryml::NONE;
     ryml::id_type onlyNode = ryml::NONE;
+    ryml::id_type casesNode = ryml::NONE;
     ryml::id_type stepsNode = ryml::NONE;
     ryml::id_type inputsNode = ryml::NONE;
     ryml::id_type endMsNode = ryml::NONE;
@@ -191,6 +208,11 @@ void Reader::read()
         else if (key == "only")
         {
             onlyNode = child;
+        }
+        else if (key == "cases")
+        {
+            casesNode = child;
+            cases_written_ = true;
         }
         else if (key == "vehicle_sil_scenario_template")
         {
@@ -275,18 +297,40 @@ void Reader::read()
         out_.params_incomplete = true;
         return;
     }
-    // The steps last, wherever the file has them: they use the parameters, and are read only
-    // for a variant the scenario is for.
-    take_params(paramsNode);
-    if (onlyNode != ryml::NONE)
+    if (!hasVersion)
     {
-        read_only(onlyNode);
+        error("missing-key", 0,
+              "the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: " +
+                  std::to_string(kScenarioFormat));
     }
     const bool hasSteps = stepsNode != ryml::NONE;
+    if (!hasSteps)
+    {
+        error("missing-key", 0,
+              "the file has no steps: add steps, a list of what to do in order (set, ramp, wave, dither, wait_until, expect)");
+    }
+    if (casesNode != ryml::NONE)
+    {
+        read_cases(casesNode);
+        if (cases_incomplete_)
+        {
+            out_.params_incomplete = true;
+        }
+    }
+    const bool hasTopLevelErrors =
+        !hasVersion || !hasSteps ||
+        std::any_of(out_.findings.begin(), out_.findings.end(),
+                    [](const config::Finding& f) { return f.severity == config::Severity::Error; });
+    bool skipReading = false;
+    const CaseDef* chosenCase = resolve_case_selection(casesNode, hasTopLevelErrors, skipReading);
+    // The steps last, wherever the file has them: they use the parameters, and are read only
+    // for a variant the scenario is for.
+    take_params(paramsNode, chosenCase != nullptr ? &chosenCase->params : nullptr);
+    resolve_only_and_case(onlyNode, chosenCase);
     // The inputs before the steps, wherever the file has them: what they declare is there
     // from the start. (Both are looked through for parameters before either is read.)
-    const bool inputsOk = inputsNode == ryml::NONE || out_.not_for_variant || resolve_params(inputsNode);
-    if (hasSteps && !out_.not_for_variant && resolve_step_params(stepsNode) && inputsOk)
+    const bool inputsOk = inputsNode == ryml::NONE || out_.not_for_variant || skipReading || resolve_params(inputsNode);
+    if (hasSteps && !skipReading && !out_.not_for_variant && resolve_step_params(stepsNode) && inputsOk)
     {
         if (inputsNode != ryml::NONE)
         {
@@ -328,24 +372,15 @@ void Reader::read()
             out_.params.push_back(known.value);
         }
     }
-    if (!hasVersion)
+    if (!skipReading &&
+        std::none_of(out_.findings.begin(), out_.findings.end(), [](const config::Finding& f) { return f.severity == config::Severity::Error; }))
     {
-        error("missing-key", 0,
-              "the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: " +
-                  std::to_string(kScenarioFormat));
-    }
-    if (!hasSteps)
-    {
-        error("missing-key", 0,
-              "the file has no steps: add steps, a list of what to do in order (set, ramp, wave, dither, wait_until, expect)");
-    }
-    if (std::none_of(out_.findings.begin(), out_.findings.end(), [](const config::Finding& f) { return f.severity == config::Severity::Error; }))
-    {
+        scenario_.params = out_.params;
         out_.scenario = std::move(scenario_);
     }
 }
 
-void Reader::take_params(ryml::id_type node)
+void Reader::take_params(ryml::id_type node, const std::vector<config::ParamValue>* case_params)
 {
     if (node != ryml::NONE)
     {
@@ -354,17 +389,27 @@ void Reader::take_params(ryml::id_type node)
             scope().params.push_back(Known{std::move(param), true, false});
         }
     }
-    for (const config::ParamValue& param : context_.params)
-    {
+    const auto merge_param = [this](const config::ParamValue& param) {
         const auto same =
             std::find_if(scope().params.begin(), scope().params.end(), [&param](const Known& k) { return k.value.name == param.name; });
         if (same == scope().params.end())
         {
             scope().params.push_back(Known{param, false, false});
         }
-        else
+        else if (param_source_rank(param.source) >= param_source_rank(same->value.source))
         {
             same->value = param;
+        }
+    };
+    for (const config::ParamValue& param : context_.params)
+    {
+        merge_param(param);
+    }
+    if (case_params != nullptr)
+    {
+        for (const config::ParamValue& param : *case_params)
+        {
+            merge_param(param);
         }
     }
 }
@@ -594,7 +639,7 @@ bool Reader::resolve_interpolated_string(ryml::id_type node)
 
 void Reader::check_given_params()
 {
-    if (context_.params_for_many)
+    if (out_.not_for_variant)
     {
         return;
     }
@@ -605,6 +650,27 @@ void Reader::check_given_params()
         {
             names.push_back(k.value.name);
         }
+    }
+    for (const CaseDef& c : cases_)
+    {
+        for (const config::ParamValue& cp : c.params)
+        {
+            if (std::find(names.begin(), names.end(), cp.name) != names.end())
+            {
+                continue;
+            }
+            const std::string guess = config::detail::closest(cp.name, names);
+            error("scenario-param", cp.line,
+                  "case '" + c.name + "': parameter '" + cp.name + "' is not declared in params or used in steps" +
+                      (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + ": " +
+                      (names.empty() ? std::string("the scenario uses no parameters (a step uses one as ${name})")
+                                     : "its parameters are " + config::detail::join(names)) +
+                      "; remove it or declare it in params");
+        }
+    }
+    if (context_.params_for_many)
+    {
+        return;
     }
     for (const Known& k : scope().params)
     {
@@ -738,24 +804,159 @@ std::string Reader::shown_value(ryml::id_type node) const
            ", from " + config::param_source_text(param->source) + ")";
 }
 
-void Reader::read_only(ryml::id_type node)
+void Reader::read_cases(ryml::id_type node)
+{
+    const std::size_t line = doc().line(node);
+    if (!tree().is_map(node) || !tree().has_children(node))
+    {
+        error("value", line,
+              "cases must be a non-empty mapping of case names to { params, only }, not " +
+                  (tree().is_map(node) ? std::string("an empty mapping") : shown_value(node)));
+        cases_incomplete_ = true;
+        return;
+    }
+    std::map<std::string, std::size_t> seen;
+    for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
+    {
+        CaseDef def;
+        def.name = config::detail::to_string(tree().key(child));
+        def.line = doc().line(child);
+        if (!first_occurrence(seen, def.name, child, "cases: "))
+        {
+            cases_incomplete_ = true;
+            continue;
+        }
+        const auto control = std::find_if(def.name.begin(), def.name.end(), [](char c) {
+            return static_cast<unsigned char>(c) < 0x20 || c == 0x7F;
+        });
+        if (def.name.empty() || def.name.rfind("--", 0) == 0 || control != def.name.end() ||
+            !vehicle_sil::detail::is_utf8(def.name))
+        {
+            error("value", def.line,
+                  "cases: a case name must be non-empty UTF-8 text on one line that does not start with '--', not '" +
+                      def.name + "'");
+            cases_incomplete_ = true;
+            continue;
+        }
+        if (!tree().is_map(child))
+        {
+            error("value", def.line,
+                  "case '" + def.name + "' must be a mapping ({ params: ..., only: ... } or {}), not " + shown_value(child));
+            cases_incomplete_ = true;
+        }
+        else
+        {
+            std::map<std::string, std::size_t> caseSeen;
+            for (auto prop = tree().first_child(child); prop != ryml::NONE; prop = tree().next_sibling(prop))
+            {
+                const std::string propKey = config::detail::to_string(tree().key(prop));
+                const std::string prefix = "case '" + def.name + "': ";
+                if (!first_occurrence(caseSeen, propKey, prop, prefix))
+                {
+                    continue;
+                }
+                if (propKey == "params")
+                {
+                    const std::size_t beforeFindings = out_.findings.size();
+                    def.params = read_params(prop, prefix, config::ParamSource::Case);
+                    if (std::any_of(out_.findings.begin() + static_cast<std::ptrdiff_t>(beforeFindings),
+                                    out_.findings.end(),
+                                    [](const config::Finding& f) { return f.severity == config::Severity::Error; }))
+                    {
+                        cases_incomplete_ = true;
+                    }
+                }
+                else if (propKey == "only")
+                {
+                    def.only_line = doc().line(prop);
+                    def.only = read_only_list(prop, prefix);
+                }
+                else
+                {
+                    unknown_key(prop, propKey, prefix, kCaseKeys);
+                }
+            }
+        }
+        out_.cases.push_back(def.name);
+        scenario_.cases.push_back(def.name);
+        cases_.push_back(std::move(def));
+    }
+}
+
+const Reader::CaseDef* Reader::resolve_case_selection(ryml::id_type casesNode, bool hasTopLevelErrors, bool& skipReading)
+{
+    skipReading = false;
+    if (casesNode != ryml::NONE)
+    {
+        if (cases_.empty())
+        {
+            skipReading = true;
+            out_.params_incomplete = true;
+            return nullptr;
+        }
+        if (!context_.case_name)
+        {
+            out_.usage_errors.push_back(config::Finding{
+                config::Severity::Error, "usage",
+                "the scenario defines cases, and a check or a run is of one of them: give --case <name> with one of " +
+                    config::detail::join(out_.cases) + " (none of them is the default)",
+                0, "", ""});
+            skipReading = true;
+            out_.params_incomplete = true;
+            return nullptr;
+        }
+        const auto it = std::find_if(cases_.begin(), cases_.end(),
+                                     [this](const CaseDef& c) { return c.name == *context_.case_name; });
+        if (it == cases_.end())
+        {
+            const std::string guess = config::detail::closest(*context_.case_name, out_.cases);
+            out_.usage_errors.push_back(config::Finding{
+                config::Severity::Error, "usage",
+                "--case " + *context_.case_name + ": the scenario has no case with this name" +
+                    (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its cases are " +
+                    config::detail::join(out_.cases) +
+                    (hasTopLevelErrors ? "; the file has errors too, which a check with one of these cases reports" : ""),
+                0, "", ""});
+            skipReading = true;
+            out_.params_incomplete = true;
+            return nullptr;
+        }
+        out_.case_name = it->name;
+        scenario_.case_name = it->name;
+        return &*it;
+    }
+    if (context_.case_name && !hasTopLevelErrors)
+    {
+        out_.usage_errors.push_back(config::Finding{
+            config::Severity::Error, "usage",
+            "--case " + *context_.case_name + ": the scenario has no cases: leave --case out, or add cases to the scenario",
+            0, "", ""});
+        skipReading = true;
+        out_.params_incomplete = true;
+    }
+    return nullptr;
+}
+
+std::optional<std::vector<std::string>> Reader::read_only_list(ryml::id_type node, const std::string& prefix)
 {
     const std::size_t line = doc().line(node);
     if (!tree().is_seq(node) || !tree().has_children(node))
     {
         error("value", line,
-              "only must be a list of the variants the scenario is for (only: [small, medium]), not " +
+              prefix + "only must be a list of the variants " +
+                  (prefix.empty() ? "the scenario" : "the case") + " is for (only: [small, medium]), not " +
                   (tree().is_seq(node) ? std::string("an empty list") : shown_value(node)) +
-                  "; remove it for a scenario for every variant");
-        return;
+                  "; remove it for " + (prefix.empty() ? "a scenario for every variant" : "every variant"));
+        return std::nullopt;
     }
     std::vector<std::string> names;
     for (auto item = tree().first_child(node); item != ryml::NONE; item = tree().next_sibling(item))
     {
         if (!is_scalar(item) || is_null(item) || tree().val(item).empty())
         {
-            error("value", doc().line(item), "only must list variants by name (only: [small, medium]), not " + shown_value(item));
-            return;
+            error("value", doc().line(item),
+                  prefix + "only must list variants by name (only: [small, medium]), not " + shown_value(item));
+            return std::nullopt;
         }
         const std::string name = config::detail::to_string(tree().val(item));
         if (std::find(names.begin(), names.end(), name) == names.end())
@@ -763,36 +964,155 @@ void Reader::read_only(ryml::id_type node)
             names.push_back(name);
         }
     }
-    out_.only = names;
-    if (context_.variants.empty())
+    return names;
+}
+
+void Reader::resolve_only_and_case(ryml::id_type onlyNode, const CaseDef* chosenCase)
+{
+    std::optional<std::vector<std::string>> scenarioOnly;
+    const std::size_t scenarioOnlyLine = onlyNode != ryml::NONE ? doc().line(onlyNode) : 0;
+    if (onlyNode != ryml::NONE)
     {
-        error("scenario-variant", line,
-              "only names " + config::detail::join(names) + ", but the configuration defines no variants: remove only, or add variants "
-              "to the configuration (docs/simulation-config.md)");
-        return;
+        scenarioOnly = read_only_list(onlyNode, "");
     }
-    for (const std::string& name : names)
+    const bool hasCaseOnly = chosenCase != nullptr && chosenCase->only.has_value();
+    if (!scenarioOnly && !hasCaseOnly)
     {
-        if (std::find(context_.variants.begin(), context_.variants.end(), name) == context_.variants.end())
+        // Still validate other cases' raw `only` against `context_.variants` below if any case defines `only`.
+        bool anyOtherOnly = false;
+        for (const CaseDef& c : cases_)
         {
-            const std::string guess = config::detail::closest(name, context_.variants);
-            error("scenario-variant", line,
-                  "only names the variant '" + name + "', which the configuration does not define" +
-                      (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its variants are " +
-                      config::detail::join(context_.variants));
+            if (c.only)
+            {
+                anyOtherOnly = true;
+                break;
+            }
+        }
+        if (!anyOtherOnly)
+        {
+            return;
         }
     }
-    if (!context_.variant.empty() && std::find(names.begin(), names.end(), context_.variant) == names.end())
+    if (context_.variants.empty())
+    {
+        if (scenarioOnly)
+        {
+            out_.only = scenarioOnly;
+            error("scenario-variant", scenarioOnlyLine,
+                  "only names " + config::detail::join(*scenarioOnly) +
+                      ", but the configuration defines no variants: remove only, or add variants to the configuration "
+                      "(docs/simulation-config.md)");
+        }
+        for (const CaseDef& c : cases_)
+        {
+            if (c.only)
+            {
+                if (!out_.only && chosenCase == &c)
+                {
+                    out_.only = c.only;
+                }
+                error("scenario-variant", c.only_line,
+                      "case '" + c.name + "': only names " + config::detail::join(*c.only) +
+                          ", but the configuration defines no variants: remove only, or add variants to the configuration "
+                          "(docs/simulation-config.md)");
+            }
+        }
+        return;
+    }
+    if (scenarioOnly)
+    {
+        for (const std::string& name : *scenarioOnly)
+        {
+            if (std::find(context_.variants.begin(), context_.variants.end(), name) == context_.variants.end())
+            {
+                const std::string guess = config::detail::closest(name, context_.variants);
+                error("scenario-variant", scenarioOnlyLine,
+                      "only names the variant '" + name + "', which the configuration does not define" +
+                          (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its variants are " +
+                          config::detail::join(context_.variants));
+            }
+        }
+    }
+    for (const CaseDef& c : cases_)
+    {
+        if (c.only)
+        {
+            for (const std::string& name : *c.only)
+            {
+                if (std::find(context_.variants.begin(), context_.variants.end(), name) == context_.variants.end())
+                {
+                    const std::string guess = config::detail::closest(name, context_.variants);
+                    error("scenario-variant", c.only_line,
+                          "case '" + c.name + "': only names the variant '" + name + "', which the configuration does not define" +
+                              (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its variants are " +
+                              config::detail::join(context_.variants));
+                }
+            }
+        }
+    }
+    std::optional<std::vector<std::string>> effectiveOnly;
+    std::size_t effectiveLine = scenarioOnlyLine;
+    if (scenarioOnly && hasCaseOnly)
+    {
+        std::vector<std::string> inter;
+        for (const std::string& v : *scenarioOnly)
+        {
+            if (std::find(chosenCase->only->begin(), chosenCase->only->end(), v) != chosenCase->only->end())
+            {
+                inter.push_back(v);
+            }
+        }
+        if (inter.empty())
+        {
+            out_.only = std::vector<std::string>{};
+            error("scenario-variant", chosenCase->only_line,
+                  "case '" + chosenCase->name + "': its only (" + config::detail::join(*chosenCase->only) +
+                      ") and the scenario's only (" + config::detail::join(*scenarioOnly) +
+                      ") have no variant in common: add a shared variant or widen one of them");
+            // out_.not_for_variant remains false per Contract 4 so test.cpp fails loudly rather than skipping.
+            return;
+        }
+        effectiveOnly = std::move(inter);
+        effectiveLine = chosenCase->only_line;
+    }
+    else if (hasCaseOnly)
+    {
+        effectiveOnly = chosenCase->only;
+        effectiveLine = chosenCase->only_line;
+    }
+    else if (scenarioOnly)
+    {
+        effectiveOnly = scenarioOnly;
+        effectiveLine = scenarioOnlyLine;
+    }
+    if (!effectiveOnly)
+    {
+        return;
+    }
+    out_.only = effectiveOnly;
+    if (!context_.variant.empty() &&
+        std::find(effectiveOnly->begin(), effectiveOnly->end(), context_.variant) == effectiveOnly->end())
     {
         std::vector<std::string> options;
-        for (const std::string& name : names)
+        for (const std::string& name : *effectiveOnly)
         {
             options.push_back("--variant " + name);
         }
-        error("scenario-variant", line,
-              "the scenario is only for the variant" + std::string(names.size() == 1 ? " " : "s ") + config::detail::join(names) +
-                  " (its only), not for " + context_.variant + ": run it with " + config::detail::or_list(options) + ", or add " +
-                  context_.variant + " to only");
+        if (hasCaseOnly)
+        {
+            error("scenario-variant", effectiveLine,
+                  (scenarioOnly ? "case '" + chosenCase->name + "' with the scenario's only" : "case '" + chosenCase->name + "'") +
+                      " is only for the variant" + std::string(effectiveOnly->size() == 1 ? " " : "s ") +
+                      config::detail::join(*effectiveOnly) + " (its only), not for " + context_.variant + ": run it with " +
+                      config::detail::or_list(options) + ", or add " + context_.variant + " to only");
+        }
+        else
+        {
+            error("scenario-variant", effectiveLine,
+                  "the scenario is only for the variant" + std::string(effectiveOnly->size() == 1 ? " " : "s ") +
+                      config::detail::join(*effectiveOnly) + " (its only), not for " + context_.variant + ": run it with " +
+                      config::detail::or_list(options) + ", or add " + context_.variant + " to only");
+        }
         out_.not_for_variant = true;
     }
 }
@@ -1830,6 +2150,109 @@ ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog
                                        "syntax error: " + e.message() +
                                            (param ? ": inside { ... } or [ ... ], write a parameter in quotes (\"${name}\")" : ""),
                                        e.line(), "", "", e.context()});
+        out.params_incomplete = true;
+    }
+    return out;
+}
+
+ScenarioInspection inspect_scenario(std::string_view text, const ScenarioContext& context)
+{
+    ScenarioInspection out;
+    if (text.substr(0, 2) == "\xFF\xFE" || text.substr(0, 2) == "\xFE\xFF" || text.find('\0') != std::string_view::npos)
+    {
+        out.findings.push_back(config::Finding{config::Severity::Error, "encoding",
+                                               "the file is not UTF-8 text (it looks like UTF-16, or has NUL bytes): save it as UTF-8",
+                                               0, "", ""});
+        out.params_incomplete = true;
+        return out;
+    }
+    try
+    {
+        const config::detail::YamlDocument doc(text);
+        if (doc.empty())
+        {
+            out.findings.push_back(config::Finding{config::Severity::Error, "not-a-scenario",
+                                                   std::string("the file is empty: write vehicle_sil_scenario: 1 and steps (") + kDocs + ")",
+                                                   0, "", ""});
+            out.params_incomplete = true;
+            return out;
+        }
+        ScenarioContext baseCtx = context;
+        baseCtx.case_name.reset();
+        baseCtx.params_for_many = true;
+        ScenarioRead firstRead;
+        Reader firstReader(doc, {}, baseCtx, firstRead, false);
+        firstReader.read();
+        out.has_cases = firstReader.has_cases();
+        out.cases = firstRead.cases;
+        if (!out.has_cases)
+        {
+            out.params_incomplete = firstRead.params_incomplete;
+            for (const config::ParamValue& p : firstRead.params)
+            {
+                if (std::find(out.param_names.begin(), out.param_names.end(), p.name) == out.param_names.end())
+                {
+                    out.param_names.push_back(p.name);
+                }
+            }
+            out.findings = std::move(firstRead.findings);
+            return out;
+        }
+        if (out.cases.empty() || firstReader.cases_incomplete())
+        {
+            out.params_incomplete = true;
+            out.findings = std::move(firstRead.findings);
+            return out;
+        }
+        std::vector<std::string> targets;
+        if (context.case_name)
+        {
+            if (std::find(out.cases.begin(), out.cases.end(), *context.case_name) != out.cases.end())
+            {
+                targets.push_back(*context.case_name);
+            }
+        }
+        else
+        {
+            targets = out.cases;
+        }
+        for (const std::string& caseName : targets)
+        {
+            ScenarioContext caseCtx = context;
+            caseCtx.case_name = caseName;
+            caseCtx.params_for_many = true;
+            ScenarioRead caseRead;
+            Reader(doc, {}, caseCtx, caseRead, false).read();
+            out.params_incomplete = out.params_incomplete || caseRead.params_incomplete;
+            for (const config::ParamValue& p : caseRead.params)
+            {
+                if (std::find(out.param_names.begin(), out.param_names.end(), p.name) == out.param_names.end())
+                {
+                    out.param_names.push_back(p.name);
+                }
+            }
+            const auto has_err = [](const std::vector<config::Finding>& fs) {
+                return std::any_of(fs.begin(), fs.end(),
+                                   [](const config::Finding& f) { return f.severity == config::Severity::Error; });
+            };
+            if (out.findings.empty() || (!has_err(out.findings) && has_err(caseRead.findings)))
+            {
+                out.findings = std::move(caseRead.findings);
+            }
+        }
+        if (out.findings.empty())
+        {
+            out.findings = std::move(firstRead.findings);
+        }
+    }
+    catch (const config::detail::YamlSyntaxError& e)
+    {
+        out.findings.clear();
+        const bool param = e.context().find("${") != std::string::npos;
+        out.findings.push_back(config::Finding{config::Severity::Error, "syntax",
+                                               "syntax error: " + e.message() +
+                                                   (param ? ": inside { ... } or [ ... ], write a parameter in quotes (\"${name}\")" : ""),
+                                               e.line(), "", "", e.context()});
         out.params_incomplete = true;
     }
     return out;

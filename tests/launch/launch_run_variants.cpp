@@ -606,6 +606,74 @@ void test_command(const Options& o)
     expect_text(lf(unreadable.standard_output),
                 "error: nowhere.yaml: the file does not exist: check the path [file]\n\ncannot read nowhere.yaml: nothing was run\n",
                 "test with a file that is not there");
+
+    // Named cases with Unicode + single-dash (-10C), --case filtering, template failure provenance & single-case re-run.
+    fs::create_directories(dir / "scn_cases" / "templates");
+    write_file(dir / "scn_cases" / "templates" / "fill_check.yaml",
+               "vehicle_sil_scenario_template: 1\n"
+               "parameters:\n"
+               "  target: { type: integer }\n"
+               "  wait_ms: { type: integer, default: 20 }\n"
+               "  label: { type: string, default: check }\n"
+               "steps:\n"
+               "  - name: \"${label}: set fill\"\n"
+               "    set: { Body.body.fill: \"${target}\" }\n"
+               "  - name: \"${label}: check fill\"\n"
+               "    after_ms: \"${wait_ms}\"\n"
+               "    expect: { Body.body.fill: \"${target}\" }\n");
+    write_file(dir / "scn_cases" / "load_cases.yaml",
+               "vehicle_sil_scenario: 1\n"
+               "name: load cases\n"
+               "params: { target: 5, expected_fill: 5 }\n"
+               "cases:\n"
+               "  \"-10C\": { params: { target: 4 } }\n"
+               "  定格: { only: [medium], params: { target: 7 } }\n"
+               "steps:\n"
+               "  - template: templates/fill_check.yaml\n"
+               "    params: { target: \"${target}\", label: \"run\" }\n"
+               "  - name: verify target\n"
+               "    expect: { Body.body.fill: \"${expected_fill}\" }\n");
+
+    // Passing case alone via --case -10C + --param expected_fill=4 (single-dash case name works end-to-end).
+    const Captured singleCase = launch(o,
+                                       {"run", "sim.yaml", "--variant", "small", "--scenario", "scn_cases/load_cases.yaml",
+                                        "--case", "-10C", "--param", "expected_fill=4", "--json"},
+                                       dir);
+    expect_code(singleCase, 0, "run single case -10C");
+    require(contains(lf(singleCase.standard_output), "\"case\": \"-10C\",") &&
+                contains(lf(singleCase.standard_output), "\"from\": \"case\""),
+            "single case JSON:\n" + lf(singleCase.standard_output));
+
+    // Batch test --scenarios <dir> --case -10C where -10C fails (target 4 != expected_fill 5) and prints run_alone() with --case -10C.
+    const Captured caseTest = launch(o, {"test", "sim.yaml", "--variant", "small", "--scenarios", "scn_cases", "--case", "-10C"}, dir);
+    expect_code(caseTest, 1, "test --scenarios dir --case -10C");
+    require(contains(lf(caseTest.standard_output), "to see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml "
+                                                   "--speed max --variant small --scenario scn_cases/load_cases.yaml --case -10C"),
+            "run_alone with --case -10C:\n" + lf(caseTest.standard_output));
+
+    // Omitting --case runs -10C and skips 定格 (only: [medium]) on small, with "case": "定格" after "run": null in JSON.
+    const Captured caseAllSmall = launch(o, {"test", "sim.yaml", "--variant", "small", "--scenarios", "scn_cases", "--json"}, dir);
+    expect_code(caseAllSmall, 1, "test --scenarios dir --variant small --json");
+    require(contains(lf(caseAllSmall.standard_output), "\"result\": \"skipped\",\n      \"reason\": \"the case is only for medium (its only)\",\n      \"run\": null,\n      \"case\": \"定格\""),
+            "skipped case in JSON:\n" + lf(caseAllSmall.standard_output));
+
+    // Single-scenario unknown --case reports "the scenario has no case with this name" (exit 4).
+    const Captured unknownCaseCli = launch(
+        o, {"test", "sim.yaml", "--variant", "small", "--scenarios", "scn_cases/load_cases.yaml", "--case", "定格x"}, dir);
+    expect_code(unknownCaseCli, 4, "test single-scenario unknown --case");
+    require(contains(lf(unknownCaseCli.standard_error),
+                     "--case 定格x: the scenario has no case with this name (did you mean '定格'?)"),
+            "single-scenario unknown --case stderr:\n" + lf(unknownCaseCli.standard_error));
+
+    // Broken cases: {} fails test loudly (exit 1), never exits 0.
+    fs::create_directories(dir / "bad_cases");
+    write_file(dir / "bad_cases" / "empty.yaml", "vehicle_sil_scenario: 1\ncases: {}\nsteps:\n  - set: { Body.body.fill: 1 }\n");
+    const Captured emptyCasesCli = launch(
+        o, {"test", "sim.yaml", "--variant", "small", "--scenarios", "bad_cases/empty.yaml"}, dir);
+    expect_code(emptyCasesCli, 1, "test broken cases: {}");
+    require(contains(lf(emptyCasesCli.standard_output), "cases must be a non-empty mapping") &&
+                contains(lf(emptyCasesCli.standard_output), "FAILED: "),
+            "broken cases: {} stdout:\n" + lf(emptyCasesCli.standard_output));
     log("CHECK test: what ends it before its first run (usage, an unreadable file) -> ok");
 }
 

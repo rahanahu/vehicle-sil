@@ -137,6 +137,8 @@ ScenarioRun scenario_not_run(const Scenario& scenario)
 {
     ScenarioRun run;
     run.name = scenario.name;
+    run.case_name = scenario.case_name;
+    run.params = scenario.params;
     run.end_ms = scenario.end_ms;
     run.has_dither = scenario.has_dither;
     if (run.has_dither)
@@ -406,6 +408,10 @@ void ScenarioEngine::superseded()
     run_.code.clear();
     run_.message.clear();
     run_.failed_at.reset();
+    run_.failed_file.clear();
+    run_.failed_line = 0;
+    run_.failed_name.clear();
+    run_.failed_call_stack.clear();
     finish(ScenarioStatus::Incomplete);
     close_record();
 }
@@ -1247,6 +1253,32 @@ void ScenarioEngine::fail_grid(const Write& write, const control::OperationResul
     run_.code = "scenario-write";
     run_.message = std::move(message);
     run_.failed_at = write.at;
+    if (named != nullptr)
+    {
+        if (const ScenarioOverlay* dither = lines_->dither[named->variable]; dither != nullptr)
+        {
+            run_.failed_file = dither->file;
+            run_.failed_line = dither->line;
+            run_.failed_name = dither->name;
+            run_.failed_call_stack = dither->call_stack;
+        }
+    }
+    else if (!command.empty())
+    {
+        const ScenarioOverlay* firstDither = lines_->dither[command.front()->variable];
+        if (firstDither != nullptr &&
+            std::all_of(command.begin() + 1, command.end(), [&](const ScenarioWrite* w) {
+                const ScenarioOverlay* other = lines_->dither[w->variable];
+                return other != nullptr && other->file == firstDither->file && other->line == firstDither->line &&
+                       other->name == firstDither->name && other->call_stack == firstDither->call_stack;
+            }))
+        {
+            run_.failed_file = firstDither->file;
+            run_.failed_line = firstDither->line;
+            run_.failed_name = firstDither->name;
+            run_.failed_call_stack = firstDither->call_stack;
+        }
+    }
     finish(ScenarioStatus::Failed);
 }
 

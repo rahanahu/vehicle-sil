@@ -112,7 +112,14 @@ std::string failure_reason(const RunReport& report)
                    : "";
     }
     const char* kind = severity == config::Severity::Error ? "error" : "warning";
-    return (!first->file.empty() && first->line > 0 ? "line " + std::to_string(first->line) + ": " : std::string{}) + first->message +
+    const std::string scenarioFile = report.check.scenario ? report.check.scenario->file : std::string{};
+    std::string loc;
+    if (!first->file.empty() && first->line > 0)
+    {
+        loc = (!scenarioFile.empty() && first->file != scenarioFile ? first->file + ":" : std::string("line ")) +
+              std::to_string(first->line) + ": ";
+    }
+    return loc + first->message +
            (severity == config::Severity::Warning ? " (a warning, and --strict fails on it)" : "") +
            (count > 1 ? " (and " + std::to_string(count - 1) + " more " + kind + (count == 2 ? "" : "s") + ")" : std::string{});
 }
@@ -126,7 +133,8 @@ void judge(TestRun& run, RunReport report)
     if (scenario && scenario->not_for_variant && report.check.errors() == 1)
     {
         run.result = TestRunResult::Skipped;
-        run.reason = "the scenario is only for " + config::detail::and_list(scenario->only.value_or(std::vector<std::string>{})) + " (its only)";
+        run.reason = (scenario->case_name.empty() ? "the scenario is only for " : "the case is only for ") +
+                     config::detail::and_list(scenario->only.value_or(std::vector<std::string>{})) + " (its only)";
         return;
     }
     switch (report.result())
@@ -168,52 +176,158 @@ void judge(TestRun& run, RunReport report)
     run.run = std::move(report);
 }
 
+struct InspectedScenario
+{
+    bool read_ok = false;
+    bool broken = false;
+    std::string text{};
+    scenario::ScenarioInspection inspection{};
+};
+
+bool has_inspection_error(const InspectedScenario& item)
+{
+    return !item.read_ok || item.inspection.params_incomplete ||
+           std::any_of(item.inspection.findings.begin(), item.inspection.findings.end(),
+                       [](const config::Finding& f) { return f.severity == config::Severity::Error; });
+}
+
+std::vector<InspectedScenario> inspect_scenarios(const std::vector<TestScenario>& scenarios,
+                                                 const std::vector<std::string>& variants,
+                                                 const std::vector<config::ParamValue>& configured,
+                                                 const std::vector<config::ParamValue>& given)
+{
+    std::vector<InspectedScenario> out;
+    out.reserve(scenarios.size());
+    for (const TestScenario& scenario : scenarios)
+    {
+        InspectedScenario item;
+        const std::filesystem::path path = process::path_from_utf8(scenario.shown);
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) <= kMaxScenarioBytes)
+        {
+            std::ifstream in(path, std::ios::binary);
+            if (in)
+            {
+                item.read_ok = true;
+                item.text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+                scenario::ScenarioContext context;
+                context.variants = variants;
+                context.params = configured;
+                context.params.insert(context.params.end(), given.begin(), given.end());
+                context.params_for_many = true;
+                context.scenario_file = scenario.shown;
+                context.read_file = files_beside(path);
+                context.read_template = files_beside(path, "the template file");
+                item.inspection = scenario::inspect_scenario(item.text, context);
+            }
+        }
+        if (!item.read_ok)
+        {
+            item.inspection.params_incomplete = true;
+        }
+        item.broken = has_inspection_error(item);
+        out.push_back(std::move(item));
+    }
+    return out;
+}
+
 /// The parameters of the command line that no scenario declares or uses: a usage error each (a
 /// typing error would otherwise change nothing, silently). Nothing if a scenario cannot be read
 /// that far: its run says what is wrong with it, and the parameter may be in it. `configured`:
 /// the parameters the configuration gives a value (in any of the variants that run), so that a
 /// scenario's parameter without a default of its own is found too.
-std::vector<config::Finding> unused_params(const std::vector<TestScenario>& scenarios, const std::vector<config::ParamValue>& configured,
-                                   const std::vector<config::ParamValue>& given)
+std::vector<config::Finding> unused_params(const std::vector<TestScenario>& scenarios,
+                                           const std::vector<InspectedScenario>& inspected,
+                                           const std::vector<std::string>& variants,
+                                           const std::vector<std::string>& filterCases,
+                                           const std::vector<config::ParamValue>& configured,
+                                           const std::vector<config::ParamValue>& given)
 {
     if (given.empty())
     {
         return {};
     }
     std::vector<std::string> names;
-    for (const TestScenario& scenario : scenarios)
+    for (std::size_t i = 0; i < scenarios.size(); ++i)
     {
-        // By the name each run reads it by.
-        const std::filesystem::path path = process::path_from_utf8(scenario.shown);
-        std::error_code ec;
-        if (!std::filesystem::is_regular_file(path, ec) || std::filesystem::file_size(path, ec) > kMaxScenarioBytes)
+        const InspectedScenario& item = inspected[i];
+        if (!item.read_ok)
         {
             return {};
         }
-        std::ifstream in(path, std::ios::binary);
-        if (!in)
+        if (!item.inspection.has_cases)
         {
-            return {};
-        }
-        const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-        scenario::ScenarioContext context;
-        context.params = configured;
-        context.params.insert(context.params.end(), given.begin(), given.end());
-        context.params_for_many = true;
-        context.scenario_file = scenario.shown;
-        context.read_file = files_beside(path);
-        context.read_template = files_beside(path, "the template file");
-        // Without the participants: the errors about the variables are not looked at.
-        const scenario::ScenarioRead read = scenario::read_scenario(text, {}, context);
-        if (read.params_incomplete)
-        {
-            return {};
-        }
-        for (const config::ParamValue& param : read.params)
-        {
-            if (std::find(names.begin(), names.end(), param.name) == names.end())
+            if (!filterCases.empty())
             {
-                names.push_back(param.name);
+                if (!item.broken)
+                {
+                    continue; // healthy caseless scenario is skipped when --case filters
+                }
+                return {};
+            }
+            if (item.inspection.params_incomplete)
+            {
+                return {};
+            }
+            for (const std::string& p : item.inspection.param_names)
+            {
+                if (std::find(names.begin(), names.end(), p) == names.end())
+                {
+                    names.push_back(p);
+                }
+            }
+            continue;
+        }
+        if (item.inspection.cases.empty())
+        {
+            return {};
+        }
+        if (filterCases.empty())
+        {
+            if (item.inspection.params_incomplete)
+            {
+                return {};
+            }
+            for (const std::string& p : item.inspection.param_names)
+            {
+                if (std::find(names.begin(), names.end(), p) == names.end())
+                {
+                    names.push_back(p);
+                }
+            }
+            continue;
+        }
+        const std::filesystem::path path = process::path_from_utf8(scenarios[i].shown);
+        for (const std::string& caseName : item.inspection.cases)
+        {
+            if (std::find(filterCases.begin(), filterCases.end(), caseName) == filterCases.end())
+            {
+                continue;
+            }
+            scenario::ScenarioContext context;
+            context.variants = variants;
+            context.params = configured;
+            context.params.insert(context.params.end(), given.begin(), given.end());
+            context.params_for_many = true;
+            context.scenario_file = scenarios[i].shown;
+            context.read_file = files_beside(path);
+            context.read_template = files_beside(path, "the template file");
+            context.case_name = caseName;
+            const scenario::ScenarioInspection caseInsp = scenario::inspect_scenario(item.text, context);
+            const bool caseBroken =
+                caseInsp.params_incomplete ||
+                std::any_of(caseInsp.findings.begin(), caseInsp.findings.end(),
+                            [](const config::Finding& f) { return f.severity == config::Severity::Error; });
+            if (caseBroken)
+            {
+                return {};
+            }
+            for (const std::string& p : caseInsp.param_names)
+            {
+                if (std::find(names.begin(), names.end(), p) == names.end())
+                {
+                    names.push_back(p);
+                }
             }
         }
     }
@@ -304,7 +418,8 @@ std::string run_alone(const TestReport& report, const TestRun& run)
     std::string out = "vehicle_sil_launch run " + shell_word(report.file) + (locked ? "" : " --speed " + config::speed_text(speed)) +
                       (report.given.time_policy == config::TimePolicy::Free ? " --time-policy free" : "") +
                       (run.variant.empty() ? std::string{} : " --variant " + shell_word(run.variant)) + " --scenario " +
-                      shell_word(run.scenario);
+                      shell_word(run.scenario) +
+                      (run.case_name.empty() ? std::string{} : " --case " + shell_word(run.case_name));
     if (run.run && run.run->check.scenario)
     {
         const std::vector<config::ParamValue>& has = run.run->check.scenario->params;
@@ -460,6 +575,9 @@ std::vector<config::Finding> TestReport::remarks() const
         const auto first = std::find_if(runs.begin(), runs.end(), [](const TestRun& run) { return run.result == TestRunResult::NotRun; });
         const std::string after = first == runs.begin() ? std::string{}
                                                         : " after the run of scenario " + std::prev(first)->scenario +
+                                                              (std::prev(first)->case_name.empty()
+                                                                   ? std::string{}
+                                                                   : " (case " + std::prev(first)->case_name + ")") +
                                                               (std::prev(first)->variant.empty()
                                                                    ? std::string{}
                                                                    : " (variant " + std::prev(first)->variant + ")");
@@ -490,7 +608,9 @@ std::vector<config::Finding> TestReport::remarks() const
                               std::to_string(slowed) + " of " + std::to_string(runs.size()) + " runs" +
                                   " went at speed 1 (real time), not as fast as possible: each takes as long as its scenario "
                                   "does in real time (mind --timeout-ms and the time limit of what runs the test). The first "
-                                  "of them (scenario " + first->scenario + (first->variant.empty() ? "" : ", variant " + first->variant) +
+                                  "of them (scenario " + first->scenario +
+                                  (first->case_name.empty() ? "" : ", case " + first->case_name) +
+                                  (first->variant.empty() ? "" : ", variant " + first->variant) +
                                   ") says why: " + speed_set(*first)->message,
                               0, "", ""});
     }
@@ -540,6 +660,7 @@ TestReport test_file(const TestOptions& options)
     report.file = host.config;
     report.strict = intent.strict;
     report.given.variants = options.variants;
+    report.given.cases = options.cases;
     report.given.params = intent.params;
     report.given.disable = intent.disable;
     report.given.enable = intent.enable;
@@ -640,14 +761,65 @@ TestReport test_file(const TestOptions& options)
     {
         return refuse(std::move(manual));
     }
+    std::vector<config::ParamValue> configured;
+    for (const auto& [variant, config] : configs)
+    {
+        configured.insert(configured.end(), config->params.begin(), config->params.end());
+    }
+    const std::vector<InspectedScenario> inspected =
+        inspect_scenarios(options.scenarios, file.variants, configured, intent.params);
+    if (!options.cases.empty())
+    {
+        std::vector<std::string> allCases;
+        bool anyCasesUnreadable = false;
+        for (const InspectedScenario& item : inspected)
+        {
+            if (item.broken && item.inspection.cases.empty())
+            {
+                anyCasesUnreadable = true;
+            }
+            for (const std::string& c : item.inspection.cases)
+            {
+                if (std::find(allCases.begin(), allCases.end(), c) == allCases.end())
+                {
+                    allCases.push_back(c);
+                }
+            }
+        }
+        std::vector<config::Finding> caseErrors;
+        for (const std::string& c : options.cases)
+        {
+            if (std::find(allCases.begin(), allCases.end(), c) == allCases.end() && !anyCasesUnreadable)
+            {
+                if (allCases.empty())
+                {
+                    caseErrors.push_back(usage(
+                        "--case " + c + ": " +
+                        (options.scenarios.size() == 1 ? "the scenario has no cases"
+                                                       : "none of the " + std::to_string(options.scenarios.size()) + " scenarios has cases") +
+                        ": leave --case out, or add cases to a scenario"));
+                }
+                else
+                {
+                    const std::string guess = config::detail::closest(c, allCases);
+                    caseErrors.push_back(usage(
+                        "--case " + c + ": " +
+                        (options.scenarios.size() == 1 ? "the scenario has no case with this name"
+                                                       : "none of the " + std::to_string(options.scenarios.size()) +
+                                                             " scenarios has a case with this name") +
+                        (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; " +
+                        (options.scenarios.size() == 1 ? "its" : "their") + " cases are " + config::detail::join(allCases)));
+                }
+            }
+        }
+        if (!caseErrors.empty())
+        {
+            return refuse(std::move(caseErrors));
+        }
+    }
     if (!intent.params.empty())
     {
-        std::vector<config::ParamValue> configured;
-        for (const auto& [variant, config] : configs)
-        {
-            configured.insert(configured.end(), config->params.begin(), config->params.end());
-        }
-        if (auto unused = unused_params(options.scenarios, configured, intent.params); !unused.empty())
+        if (auto unused = unused_params(options.scenarios, inspected, file.variants, options.cases, configured, intent.params); !unused.empty())
         {
             return refuse(std::move(unused));
         }
@@ -655,9 +827,27 @@ TestReport test_file(const TestOptions& options)
 
     for (const std::string& variant : hasVariants ? report.variants : std::vector<std::string>{std::string{}})
     {
-        for (const TestScenario& scenario : options.scenarios)
+        for (std::size_t si = 0; si < options.scenarios.size(); ++si)
         {
-            report.runs.push_back(TestRun{variant, scenario.shown, TestRunResult::NotRun, "", {}});
+            const TestScenario& scenario = options.scenarios[si];
+            const InspectedScenario& item = inspected[si];
+            if (!item.inspection.cases.empty())
+            {
+                for (const std::string& caseName : item.inspection.cases)
+                {
+                    if (options.cases.empty() ||
+                        std::find(options.cases.begin(), options.cases.end(), caseName) != options.cases.end())
+                    {
+                        TestRun entry{variant, scenario.shown, TestRunResult::NotRun, "", {}};
+                        entry.case_name = caseName;
+                        report.runs.push_back(std::move(entry));
+                    }
+                }
+            }
+            else if (options.cases.empty() || item.inspection.has_cases || item.broken)
+            {
+                report.runs.push_back(TestRun{variant, scenario.shown, TestRunResult::NotRun, "", {}});
+            }
         }
     }
     const auto say = [&options](const std::string& text) {
@@ -677,11 +867,13 @@ TestReport test_file(const TestOptions& options)
             continue;
         }
         const std::string which = "test " + std::to_string(i + 1) + " of " + std::to_string(report.runs.size()) + ": " +
-                                  (run.variant.empty() ? "" : "variant " + run.variant + ", ") + "scenario " + run.scenario;
+                                  (run.variant.empty() ? "" : "variant " + run.variant + ", ") + "scenario " + run.scenario +
+                                  (run.case_name.empty() ? "" : ", case " + run.case_name);
         say(which);
         RunRequest one = options.request;
         one.intent.variant = run.variant.empty() ? std::optional<std::string>{} : run.variant;
         one.intent.scenario = run.scenario;
+        one.intent.scenario_case = run.case_name.empty() ? std::optional<std::string>{} : run.case_name;
         CheckOptions check;
         check.params_for_many = true;
         check.fastest_by_default = options.fastest_by_default;
@@ -721,14 +913,21 @@ std::string format_test_text(const TestReport& report)
                (result == TestResult::Usage ? "usage" : "cannot read " + report.file) + ": nothing was run\n";
     }
     const bool variants = !report.variants.empty();
+    const bool cases = std::any_of(report.runs.begin(), report.runs.end(),
+                                   [](const TestRun& r) { return !r.case_name.empty(); });
     std::vector<std::vector<std::string>> rows;
-    const auto row = [&](const std::string& variant, const std::string& scenario, const std::string& what, const std::string& why) {
+    const auto row = [&](const std::string& variant, const std::string& scenario, const std::string& caseName,
+                         const std::string& what, const std::string& why) {
         std::vector<std::string> cells;
         if (variants)
         {
             cells.push_back(variant);
         }
         cells.push_back(scenario);
+        if (cases)
+        {
+            cells.push_back(caseName);
+        }
         cells.push_back(what);
         if (!why.empty())
         {
@@ -736,11 +935,11 @@ std::string format_test_text(const TestReport& report)
         }
         rows.push_back(std::move(cells));
     };
-    row("variant", "scenario", "result", "");
+    row("variant", "scenario", "case", "result", "");
     const TestRun* failed = nullptr;
     for (const TestRun& run : report.runs)
     {
-        row(run.variant, run.scenario, result_text(run.result), run.reason);
+        row(run.variant, run.scenario, run.case_name.empty() ? "-" : run.case_name, result_text(run.result), run.reason);
         failed = failed == nullptr && run.result == TestRunResult::Failed ? &run : failed;
     }
     std::string out = detail::table_text(rows) + "\n";
@@ -832,6 +1031,10 @@ std::string format_test_json(const TestReport& report)
         else
         {
             w.null("run");
+        }
+        if (!run.case_name.empty())
+        {
+            w.string("case", run.case_name);
         }
         w.end_object();
     }

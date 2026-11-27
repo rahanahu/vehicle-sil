@@ -333,7 +333,16 @@ std::string detail::scenario_text(const scenario::ScenarioRun& scenario)
     case scenario::ScenarioStatus::Failed: state = "FAILED"; break;
     case scenario::ScenarioStatus::Incomplete: state = "incomplete"; break;
     }
-    std::string out = "scenario " + scenario.file + (scenario.name.empty() ? "" : " (" + scenario.name + ")") + ": " + state +
+    std::string headerMeta;
+    if (!scenario.name.empty())
+    {
+        headerMeta = scenario.name;
+    }
+    if (!scenario.case_name.empty())
+    {
+        headerMeta += (headerMeta.empty() ? "" : ", ") + std::string("case ") + scenario.case_name;
+    }
+    std::string out = "scenario " + scenario.file + (headerMeta.empty() ? "" : " (" + headerMeta + ")") + ": " + state +
                       ", " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) + " steps passed" +
                       (scenario.skipped() > 0 ? ", " + std::to_string(scenario.skipped()) + " skipped" : std::string{}) +
                       (scenario.unchecked_expects() > 0
@@ -827,6 +836,14 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
         w.end_object();
     }
     w.end_array();
+    if (!scenario.case_name.empty())
+    {
+        w.string("case", scenario.case_name);
+    }
+    if (!scenario.params.empty())
+    {
+        write_params_json(w, "params", scenario.params);
+    }
     // Empty for a scenario without a dither (ScenarioRun::has_dither).
     write_scenario_lines_json(w, scenario.inputs, scenario.lines);
     if (timeline.empty())

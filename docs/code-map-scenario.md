@@ -39,7 +39,7 @@ The comments at the top of the files are not in the guide's blocks. The line num
 
 For configuration or schema changes, see [configuration file or scenario keys](code-map-launcher.md#configuration-file-or-scenario-keys).
 
-`variants` and `params` of the configuration file, `--variant`, `--param`, and `params`, `${name}` and `only` of scenarios. This also covers skipping steps that use a variable with `absent: true` or a variable of a participant that the variant disabled.
+`variants` and `params` of the configuration file, `--variant`, `--param`, and `params`, `cases`, `${name}`, `--case` and `only` of scenarios. This also covers skipping steps that use a variable with `absent: true` or a variable of a participant that the variant disabled.
 
 Where to change (configuration file side, `libs/config/src/config.cpp`):
 
@@ -50,7 +50,7 @@ Where to change (configuration file side, `libs/config/src/config.cpp`):
 Where to change (scenario side and around it):
 
 - How `params` is read: `read_params()` in `libs/config/include/vehicle_sil/config/detail/yaml_reader.hpp`
-- `take_params()`, `resolve_params()`, `read_only()` and `skip()` in `scenario.cpp`
+- `take_params()`, `resolve_params()`, `read_cases()`, `resolve_case_selection()`, `resolve_only_and_case()`, `inspect_scenario()`, and `skip()` in `scenario.cpp`
 - The code that passes them on: `ScenarioContext` in `check.cpp`
 - The code that skips: `issue_step()` in `scenario_run.cpp` (`StepStatus::Skipped`)
 - Arguments: `common()` in `tools/launch/main.cpp`
@@ -115,6 +115,7 @@ Example files:
 - The `dither` example is `examples/ecu_main/scenarios/throttle_dither.yaml`, and `launch_run.scenario_dither` runs it.
 - The example of `points` from a CSV file is `examples/ecu_main/scenarios/throttle_trace.yaml` with `throttle_trace.csv`, and `launch_run.scenario_wave` runs it.
 - The step template example is `examples/ecu_main/scenarios/throttle_template.yaml` calling `examples/ecu_main/scenarios/templates/throttle_check.yaml`.
+- The named cases example is `examples/ecu_main/scenarios/throttle_cases.yaml` calling `examples/ecu_main/scenarios/templates/throttle_check.yaml` with `無負荷`, `定格`, and `上限直前`.
 - The guide howto/scenario-tests.md shows `throttle_step.yaml`, `engine_disconnect.yaml` and the files of `examples/scenario_tests` (see "[`examples/scenario_tests`](#examplesscenario_tests-example-for-the-guide-write-tests-with-scenarios)").
 - For the examples with errors and the failing examples, the files too are blocks in scenario.md. `launch_run.scenario` writes them out and compares the output of `check --scenario`, the output of `run --scenario` and `scenario` in `--json`.
 
@@ -221,8 +222,9 @@ Where to change (`libs/launch/include/vehicle_sil/launch/test.hpp` and `src/usec
 | Function or member | Details |
 |---|---|
 | `list_scenarios()` | How scenarios are collected from a directory, and their order |
-| `test_file()` | Calls `run_file()` for each run |
-| `format_test_text()` | The command that reruns a single run takes its arguments from `TestArguments` |
+| `inspect_scenarios()` / `scenario::inspect_scenario()` | Lightweight case discovery and parameter usage check for `unused_params()` and `(variant, scenario, case)` expansion |
+| `test_file()` | Calls `run_file()` for each run (`--case` filters cases in file order) |
+| `format_test_text()` | The command that reruns a single run takes its arguments from `TestArguments` and appends `--case` when present |
 | `format_test_json()` | `kTestFormat` |
 | `TestReport::remarks()` | The findings for `test` as a whole: `test-nothing-run`, `test-runs-left` and `test-speed-set` |
 | `TestReport::result()` | Result and exit code |

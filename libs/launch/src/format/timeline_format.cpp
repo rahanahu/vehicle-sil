@@ -528,6 +528,10 @@ std::string format_timeline_json(const TimelineInput& input)
     w.begin_object("scenario");
     w.string("file", run.file);
     write_text_or_null(w, "name", run.name);
+    if (!run.case_name.empty())
+    {
+        w.string("case", run.case_name);
+    }
     w.string("status", scenario::scenario_status_name(run.status));
     write_ms(w, "over_at_ms", run.over_at);
     write_ms(w, "recorded_to_ms", input.record != nullptr ? input.record->recorded_to() : std::nullopt);

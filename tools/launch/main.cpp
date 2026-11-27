@@ -101,7 +101,7 @@ namespace {
 using namespace vehicle_sil;
 
 constexpr const char* kUsage =
-    "usage: vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
+    "usage: vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]\n"
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                                [--time-policy realtime|free] [--request <file>] [--speed <speed>]\n"
     "                                [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
@@ -112,7 +112,7 @@ constexpr const char* kUsage =
     "       vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
-    "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]\n"
+    "                              [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]\n"
     "                              [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]\n"
     "                              [--timeout-ms <ms>] [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
     "                              [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
@@ -124,7 +124,7 @@ constexpr const char* kUsage =
     "                                [--events-stall-ms <ms>] [--control <address> [--control-credentials <file>]\n"
     "                                [--control-tls-cert <file> --control-tls-key <file>] [--control-audit-log <file>]]\n"
     "                                [--] <file>\n"
-    "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
+    "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--case <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]\n"
     "                               [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
     "                               [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]\n"
@@ -184,6 +184,9 @@ constexpr const char* kUsage =
     "                              virtual times, stop the simulation when the scenario is over, and fail if a\n"
     "                              step failed (docs/scenario.md; not with --start-paused; with --control the\n"
     "                              clients read, move the time and stop, and cannot write)\n"
+    "  --case <name>               check, run: the case of the scenario (its cases:) to check or run; a\n"
+    "                              scenario with cases needs it: none is the default. test: only this case\n"
+    "                              (repeatable, skipping scenarios without cases); without it, every case\n"
     "  --variant <name>            the variant of <file> to check or run (its variants: the common part with the\n"
     "                              variant's commands, variable maps, params and enabled laid over it); a file\n"
     "                              that defines variants needs it: none is the default. test: only this variant\n"
@@ -994,7 +997,8 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--stop-at-ms" || a == "--late-tolerance-ms" || a == "--participant-start-timeout-ms" ||
                  a == "--participant-stop-timeout-ms" ||
-                 a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
+                 a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" ||
+                 a == "--case" || a == "--control" ||
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
                  a == "--network" || a == "--time-policy" || a == "--request" || a == "--descriptions" ||
                  a == "--write-descriptions" || a == "--compare-commands" || a == "--control-credentials" ||
@@ -1208,6 +1212,10 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
     {
         intent.scenario = args.str("scenario", "");
     }
+    if (!isTest && args.has("case")) // test: each of its --case, in test()
+    {
+        intent.scenario_case = args.str("case", "");
+    }
     require_valid(request, command, asked);
     for (const std::string& given : args.all("connect"))
     {
@@ -1249,6 +1257,10 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
         {
             throw cli::UsageError("--scenario needs a scenario file");
         }
+    }
+    if (intent.scenario_case && intent.scenario_case->empty())
+    {
+        throw cli::UsageError("--case needs the name of a case of the scenario");
     }
     // What a check reads instead of the file and the executables (validate_request(): check only).
     host.config_from_stdin = args.flag("text-from-stdin");
@@ -1556,7 +1568,7 @@ int serve(const cli::Args& args, launch::EventStream* events, const std::string&
                                             ""}},
                            false, launch::CommandKind::Run, file, events);
     }
-    for (const char* perRun : {"scenario", "variant", "param", "speed", "strict", "start-paused", "stop-at-ms",
+    for (const char* perRun : {"scenario", "case", "variant", "param", "speed", "strict", "start-paused", "stop-at-ms",
                                "late-tolerance-ms", "disable", "enable", "manual", "connect", "time-policy", "request"})
     {
         if (args.has(perRun) || args.flag(perRun))
@@ -1802,6 +1814,14 @@ int test(const cli::Args& args)
             throw cli::UsageError("--variant needs the name of a variant of the file");
         }
     }
+    options.cases = args.all("case");
+    for (const std::string& scenarioCase : options.cases)
+    {
+        if (scenarioCase.empty())
+        {
+            throw cli::UsageError("--case needs the name of a case of a scenario");
+        }
+    }
     options.fail_fast = args.flag("fail-fast");
     if (args.has("timeout-ms"))
     {
@@ -1978,11 +1998,11 @@ int main(int argc, char** argv)
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
                                 "control-metrics", "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
                                {"json", "strict", "events", "once", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin", "file-only"},
-                               {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
+                               {"disable", "enable", "manual", "param", "variant", "case", "scenarios", "connect"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "stop-at-ms", "late-tolerance-ms",
                                 "participant-start-timeout-ms", "participant-stop-timeout-ms",
-                                "events-stall-ms", "speed", "scenario", "control",
+                                "events-stall-ms", "speed", "scenario", "case", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
                                 "timeline", "control-metrics", "time-policy", "request", "descriptions", "write-descriptions",
                                 "compare-commands"},

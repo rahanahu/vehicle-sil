@@ -74,6 +74,10 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
     {
         out.push_back(usage("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out"));
     }
+    if (command != RequestCommand::Test && intent.scenario_case && !intent.scenario)
+    {
+        out.push_back(usage("--case chooses a case of a scenario: give --scenario <file> too, or leave --case out"));
+    }
     if (!host.timeline.empty() && !intent.scenario)
     {
         out.push_back(usage("--timeline writes what a scenario did over the time: give --scenario <file> too, or leave "

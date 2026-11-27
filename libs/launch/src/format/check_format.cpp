@@ -236,9 +236,22 @@ std::string detail::check_text_body(const config::CheckReport& report, const sce
     }
     if (scenario != nullptr && report.config)
     {
-        out += "scenario " + scenario->file + (scenario->name.empty() ? "" : " (" + scenario->name + ")") +
+        std::string meta;
+        if (!scenario->name.empty())
+        {
+            meta = scenario->name;
+        }
+        if (!scenario->case_name.empty())
+        {
+            meta += (meta.empty() ? "" : ", ") + std::string("case ") + scenario->case_name;
+        }
+        out += "scenario " + scenario->file + (meta.empty() ? "" : " (" + meta + ")") +
                ": " + count_text(scenario->steps, "step", "steps") +
                scenario_counts_text(*scenario) + "\n";
+        if (scenario->case_name.empty() && !scenario->cases.empty())
+        {
+            out += "cases: " + config::detail::join(scenario->cases) + "\n";
+        }
         if (!scenario->params.empty())
         {
             std::string params;
@@ -884,6 +897,19 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         w.begin_object("scenario");
         w.string("file", scenario->file);
         optional_text("name", scenario->name);
+        if (!scenario->case_name.empty())
+        {
+            w.string("case", scenario->case_name);
+        }
+        if (!scenario->cases.empty())
+        {
+            w.begin_array("cases");
+            for (const std::string& c : scenario->cases)
+            {
+                w.string({}, c);
+            }
+            w.end_array();
+        }
         w.integer("steps", static_cast<std::int64_t>(scenario->steps));
         // Each only if the scenario has it.
         if (scenario->only)

@@ -267,14 +267,15 @@ enum class ParamSource
     Scenario,        ///< the scenario's "params" (its default)
     Configuration,   ///< the configuration's "params"
     Variant,         ///< the chosen variant's "params"
-    CommandLine,     ///< --param <name>=<value>
+    Case,            ///< the chosen case's "params"
     RequestFile,     ///< the "params" of the request file (--request); --param replaces it by name
+    CommandLine,     ///< --param <name>=<value>
     TemplateDefault, ///< a template's "parameters.<name>.default"
     TemplateCall,    ///< the arguments of a `- template:` call (params:)
 };
-/// "scenario", "configuration", "variant", "command_line", "request_file", "template_default", "template_call" (the outputs' "from").
+/// "scenario", "configuration", "variant", "case", "request_file", "command_line", "template_default", "template_call" (the outputs' "from").
 [[nodiscard]] const char* param_source_name(ParamSource source);
-/// For a message: "the scenario's params", "the configuration's params", "the variant's params", "--param",
+/// For a message: "the scenario's params", "the configuration's params", "the variant's params", "the case's params", "--param",
 /// "the request file's params", "the template's default", "the template call's params".
 [[nodiscard]] const char* param_source_text(ParamSource source);
 
