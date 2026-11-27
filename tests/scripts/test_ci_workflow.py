@@ -438,6 +438,24 @@ class WorkflowCachesAndSanitizers(unittest.TestCase):
             install = next(s for s in steps if s.get("name") == "Install the packages")
             self.assertEqual(install["if"], "steps.web-node-modules.outputs.cache-hit != 'true'", name)
 
+        gui_steps = JOBS["gui"]["steps"]
+        fixture_cache = next(s for s in gui_steps if s.get("id") == "consumer-fixture-modules")
+        self.assertEqual(
+            fixture_cache["with"]["key"],
+            "consumer-fixtures-${{ runner.os }}-${{ runner.arch }}-"
+            "${{ steps.setup-node.outputs.node-version }}-"
+            "${{ hashFiles('gui/client/fixtures/**/package-lock.json') }}",
+        )
+        for rel_nm in (
+            "gui/client/fixtures/react/v18/node_modules",
+            "gui/client/fixtures/react/v19/node_modules",
+            "gui/client/fixtures/vue/node_modules",
+            "gui/client/fixtures/svelte/node_modules",
+        ):
+            self.assertIn(rel_nm, fixture_cache["with"]["path"])
+        fixture_install = next(s for s in gui_steps if s.get("name") == "Install consumer fixture packages")
+        self.assertIn("steps.consumer-fixture-modules.outputs.cache-hit != 'true'", fixture_install["if"])
+
     def test_ci_sanitizers_use_o1_g1_and_tsan_warns_on_pr_failure(self):
         linux_run = next(s for s in JOBS["linux"]["steps"] if s.get("name") == "Configure, build and test")["run"]
         self.assertIn("linux-clang-asan)", linux_run)

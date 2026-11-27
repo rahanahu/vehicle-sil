@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": true,
+    "types": []
+  },
+  "angularCompilerOptions": {
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  },
+  "files": ["src/positive.ts"]
+}

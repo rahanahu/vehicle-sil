@@ -1,0 +1,8 @@
+{
+  "name": "vehicle-sil-consumer-react18",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/react": "18.3.32"
+  }
+}

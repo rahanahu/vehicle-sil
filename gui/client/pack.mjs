@@ -54,14 +54,146 @@ document.body.append(timeline);
 const ELEMENTS_EXAMPLE = `
 import '@vehicle-sil/gui-client/elements';
 import { pageIntent, setReasonText } from '@vehicle-sil/gui-client/elements';
-import type { VsilRunControlsElement } from '@vehicle-sil/gui-client/elements';
+import type { VsilElementContracts, VsilRunControlsElement } from '@vehicle-sil/gui-client/elements';
 setReasonText((reason) => (reason.code === 'busy' ? 'Wait a moment.' : null));
 pageIntent.update({ scenario: 'scenarios/a.yaml' });
 const controls: VsilRunControlsElement | null = document.querySelector('vsil-run-controls');
-if (controls) controls.intent = { speed: 'max' };
+if (controls) {
+  controls.intent = { speed: 'max' };
+  controls.labelStart = 'Run';
+}
 const write = document.createElement('vsil-write');
-write.setAttribute('variable', 'Engine.ecu.connected');
+write.variable = 'Engine.ecu.connected';
+write.value = false;
+const _contractCheck: keyof VsilElementContracts = 'vsil-write';
+void _contractCheck;
 document.body.append(write);
+`;
+
+const EMPTY_MODULE =
+  '// Runtime no-op module for type-only framework adapter entry points (./react, ./vue, ./svelte).\nexport {};\n';
+
+const ALL_CONTRACTS_DTS = `// Single source of truth combining all 11 vsil-* parts and <vehicle-sil-timeline>.
+import type { VsilElementContracts } from '../elements/contracts.js';
+import type { VehicleSilTimelineContract } from '../../timeline/vehicle-sil-timeline.js';
+
+/** Combined contract map for all 12 vehicle-sil custom elements. */
+export type AllElementContracts = VsilElementContracts & VehicleSilTimelineContract;
+
+/** Per-key union of HTML attributes and JS properties (avoids intersection collapse on union types). */
+export type MergeBindings<A, P> = {
+  [K in keyof A | keyof P]?:
+    | (K extends keyof A ? A[K] : never)
+    | (K extends keyof P ? P[K] : never);
+};
+
+/** Converts kebab-case event names (e.g. 'vsil-write-result') to camelCase ('vsilWriteResult'). */
+export type CamelCase<S extends string> = S extends \`\${infer Head}-\${infer Tail}\`
+  ? \`\${Head}\${Capitalize<CamelCase<Tail>>}\`
+  : S;
+`;
+
+const REACT_DTS = `// React 18 & 19 JSX intrinsic element types derived from AllElementContracts.
+// React 19 delegates lowercase \`on<event>\` props directly via addEventListener (use \`onload\`/\`onerror\`,
+// or \`ref\` + \`addEventListener\` across React 18 and 19).
+import type { DetailedHTMLProps, HTMLAttributes } from 'react';
+import type { AllElementContracts, MergeBindings } from './all-contracts.js';
+
+export type ReactEventProps<E> = {
+  [K in keyof E & string as \`on\${K}\`]?: (event: E[K]) => void;
+};
+
+// Omit React's PascalCase synthetic handlers (e.g. onLoad/onError) for custom events declared on the element:
+// React 19 intercepts PascalCase onLoad/onError as synthetic events that never fire for custom element CustomEvents.
+type ReactSyntheticConflicts<E> = {
+  [K in keyof E & string as \`on\${Capitalize<K>}\`]: never;
+};
+
+export type ReactElementProps<C extends AllElementContracts[keyof AllElementContracts]> = Omit<
+  DetailedHTMLProps<HTMLAttributes<C['element']>, C['element']>,
+  | keyof MergeBindings<C['attrs'], C['props']>
+  | keyof ReactEventProps<C['events']>
+  | keyof ReactSyntheticConflicts<C['events']>
+> &
+  MergeBindings<C['attrs'], C['props']> &
+  ReactEventProps<C['events']>;
+
+export type VehicleSilReactIntrinsicElements = {
+  [Tag in keyof AllElementContracts]: ReactElementProps<AllElementContracts[Tag]>;
+};
+
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements extends VehicleSilReactIntrinsicElements {}
+  }
+}
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements extends VehicleSilReactIntrinsicElements {}
+  }
+}
+`;
+
+const VUE_DTS = `// Vue 3 GlobalComponents types derived from AllElementContracts.
+import type {
+  AllowedComponentProps,
+  ComponentCustomProps,
+  HTMLAttributes,
+  VNodeProps,
+} from 'vue';
+import type { AllElementContracts, CamelCase, MergeBindings } from './all-contracts.js';
+
+export type VueEventProps<E> = {
+  [K in keyof E & string as \`on\${Capitalize<K>}\`]?: (event: E[K]) => void;
+} & {
+  [K in keyof E & string as \`on\${Capitalize<CamelCase<K>>}\`]?: (event: E[K]) => void;
+};
+
+export type VueElementProps<C extends AllElementContracts[keyof AllElementContracts]> = Omit<
+  HTMLAttributes,
+  keyof MergeBindings<C['attrs'], C['props']> | keyof VueEventProps<C['events']>
+> &
+  MergeBindings<C['attrs'], C['props']> &
+  VueEventProps<C['events']>;
+
+export type VehicleSilVueGlobalComponents = {
+  [Tag in keyof AllElementContracts]: new () => {
+    $el: AllElementContracts[Tag]['element'];
+    $props: AllowedComponentProps &
+      ComponentCustomProps &
+      VNodeProps &
+      VueElementProps<AllElementContracts[Tag]>;
+  };
+};
+
+declare module 'vue' {
+  export interface GlobalComponents extends VehicleSilVueGlobalComponents {}
+}
+`;
+
+const SVELTE_DTS = `// Svelte 5 HTML element types derived from AllElementContracts.
+import type { HTMLAttributes } from 'svelte/elements';
+import type { AllElementContracts, MergeBindings } from './all-contracts.js';
+
+export type SvelteEventProps<E> = {
+  [K in keyof E & string as \`on\${K}\`]?: (event: E[K]) => void;
+};
+
+export type SvelteElementProps<C extends AllElementContracts[keyof AllElementContracts]> = Omit<
+  HTMLAttributes<C['element']>,
+  keyof MergeBindings<C['attrs'], C['props']> | keyof SvelteEventProps<C['events']>
+> &
+  MergeBindings<C['attrs'], C['props']> &
+  SvelteEventProps<C['events']>;
+
+export type VehicleSilSvelteElements = {
+  [Tag in keyof AllElementContracts]: SvelteElementProps<AllElementContracts[Tag]>;
+};
+
+declare module 'svelte/elements' {
+  export interface SvelteHTMLElements extends VehicleSilSvelteElements {}
+}
 `;
 const fromWeb = createRequire(join(WEB, 'package.json'));
 
@@ -215,6 +347,8 @@ function check(packageDir, checkDir, tsc) {
     // Without a DOM the element's file defines only its functions that need none.
     `await import('${NAME}/timeline');` +
     "if (typeof globalThis.VehicleSilTimeline?.readTimeline !== 'function') throw new Error('timeline: no VehicleSilTimeline');" +
+    // Type-only framework adapter entries resolve to a no-op ES module in Node and bundlers.
+    `for (const sub of ['react', 'vue', 'svelte']) await import('${NAME}/' + sub);` +
     // The parts need a DOM, so Node does not load them: the main entry must not pull them in, and the parts must not
     // carry a copy of the main entry (two copies would make two connections).
     "const fs = await import('node:fs');" +
@@ -252,10 +386,17 @@ async function main() {
   });
   // The parts import the main entry (dist/index.js) instead of copying it: the page's connection is that one's state.
   await buildElements(join(packageDir, 'dist', 'elements.js'), './index.js');
+  writeFileSync(join(packageDir, 'dist', 'empty.js'), EMPTY_MODULE);
   const tsc = fromWeb.resolve('typescript/bin/tsc');
   const types = join(packageDir, 'types');
   node(tsc, ['-p', join(CLIENT, 'tsconfig.package.json'), '--declarationDir', types], CLIENT);
   addExtensions(types);
+  const frameworksDir = join(types, 'frameworks');
+  mkdirSync(frameworksDir, { recursive: true });
+  writeFileSync(join(frameworksDir, 'all-contracts.d.ts'), ALL_CONTRACTS_DTS);
+  writeFileSync(join(frameworksDir, 'react.d.ts'), REACT_DTS);
+  writeFileSync(join(frameworksDir, 'vue.d.ts'), VUE_DTS);
+  writeFileSync(join(frameworksDir, 'svelte.d.ts'), SVELTE_DTS);
   mkdirSync(join(packageDir, 'timeline'));
   for (const name of ['vehicle-sil-timeline.js', 'vehicle-sil-timeline.d.ts'])
     cpSync(join(TIMELINE, name), join(packageDir, 'timeline', name));
@@ -285,6 +426,9 @@ async function main() {
         types: './timeline/vehicle-sil-timeline.d.ts',
         default: './timeline/vehicle-sil-timeline.mjs',
       },
+      './react': { types: './types/frameworks/react.d.ts', default: './dist/empty.js' },
+      './vue': { types: './types/frameworks/vue.d.ts', default: './dist/empty.js' },
+      './svelte': { types: './types/frameworks/svelte.d.ts', default: './dist/empty.js' },
     },
     types: './types/index.d.ts',
     // Importing the timeline or the parts defines elements: a bundler must keep that import.
@@ -329,8 +473,14 @@ async function main() {
     'LICENSE',
     'dist/index.js',
     'dist/elements.js',
+    'dist/empty.js',
     'types/index.d.ts',
     'types/elements/index.d.ts',
+    'types/elements/contracts.d.ts',
+    'types/frameworks/all-contracts.d.ts',
+    'types/frameworks/react.d.ts',
+    'types/frameworks/vue.d.ts',
+    'types/frameworks/svelte.d.ts',
     'timeline/vehicle-sil-timeline.js',
     'timeline/vehicle-sil-timeline.mjs',
     'timeline/vehicle-sil-timeline.d.ts',

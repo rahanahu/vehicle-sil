@@ -15,4 +15,5 @@ __pycache__/
 /gui/web/blob-report/
 /gui/web/coverage/
 /gui/web/.vitest/
+/gui/client/fixtures/**/node_modules/
 .venv/

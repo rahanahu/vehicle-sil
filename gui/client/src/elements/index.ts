@@ -4,6 +4,12 @@
 import { pageIntent } from './page-intent';
 import { setReasonText } from './reasons';
 import type { ReasonText } from './reasons';
+import type {
+  BooleanAttr,
+  ElementContract,
+  VsilElementContracts,
+  VsilPartProps,
+} from './contracts';
 import { VsilConnectElement, VsilOutsideElement } from './outside-parts';
 import { VsilRunControlsElement, VsilStatusElement, VsilTimeControlsElement } from './run-parts';
 import {
@@ -14,7 +20,7 @@ import {
 import { VsilSliderElement, VsilValueElement, VsilWriteElement } from './variable-parts';
 
 export { pageIntent, setReasonText };
-export type { ReasonText };
+export type { BooleanAttr, ElementContract, ReasonText, VsilElementContracts, VsilPartProps };
 export {
   VsilConnectElement,
   VsilOutsideElement,

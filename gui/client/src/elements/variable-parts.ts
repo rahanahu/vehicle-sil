@@ -20,6 +20,18 @@ abstract class VariablePart extends Part {
   /** Whether the part writes (so that it says why it cannot). */
   protected readonly writes: boolean = false;
 
+  get variable(): string {
+    return this.getAttribute('variable') ?? '';
+  }
+  set variable(value: string | null) {
+    this.reflectNonEmpty('variable', value);
+  }
+
+  constructor() {
+    super();
+    this.upgrade('variable');
+  }
+
   /** Builds the controls once; returns what to do with each new view. */
   protected abstract build(
     variable: FrontVariable,
@@ -55,6 +67,33 @@ abstract class VariablePart extends Part {
 export class VsilValueElement extends VariablePart {
   static override observedAttributes = ['variable', 'on', 'off', 'no-unit'];
 
+  get on(): string {
+    return this.getAttribute('on') ?? '';
+  }
+  set on(value: string | null) {
+    this.reflectString('on', value);
+  }
+
+  get off(): string {
+    return this.getAttribute('off') ?? '';
+  }
+  set off(value: string | null) {
+    this.reflectString('off', value);
+  }
+
+  get noUnit(): boolean {
+    const raw = this.getAttribute('no-unit');
+    return raw !== null && raw.toLowerCase() !== 'false';
+  }
+  set noUnit(value: boolean) {
+    this.toggleAttribute('no-unit', Boolean(value));
+  }
+
+  constructor() {
+    super();
+    this.upgrade('on', 'off', 'noUnit');
+  }
+
   protected build(_variable: FrontVariable, root: HTMLElement, note: HTMLElement) {
     const output = root.appendChild(h('output'));
     return (v: VariableView) => {
@@ -63,7 +102,7 @@ export class VsilValueElement extends VariablePart {
         output.textContent = v.value ? this.text('on', 'on') : this.text('off', 'off');
       } else {
         setData(this, 'on', null);
-        const unit = this.hasAttribute('no-unit') || !v.unit ? '' : ` ${v.unit}`;
+        const unit = this.noUnit || !v.unit ? '' : ` ${v.unit}`;
         output.textContent = v.value === null ? '-' : `${v.text}${unit}`;
       }
       note.textContent = v.note ?? '';
@@ -131,6 +170,27 @@ const target = (text: string | null): number | boolean | string => {
 export class VsilWriteElement extends VariablePart {
   static override observedAttributes = ['variable', 'value', 'label'];
   protected override readonly writes = true;
+
+  get value(): string | number | boolean | null {
+    const raw = this.getAttribute('value');
+    return raw === null ? null : target(raw);
+  }
+  set value(value: string | number | boolean | null) {
+    if (value === null || value === undefined) this.removeAttribute('value');
+    else this.setAttribute('value', String(value));
+  }
+
+  get label(): string {
+    return this.getAttribute('label') ?? '';
+  }
+  set label(value: string | null) {
+    this.reflectString('label', value);
+  }
+
+  constructor() {
+    super();
+    this.upgrade('value', 'label');
+  }
 
   protected build(variable: FrontVariable, root: HTMLElement, note: HTMLElement) {
     const value = target(this.getAttribute('value'));

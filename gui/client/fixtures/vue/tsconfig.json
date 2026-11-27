@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": []
+  },
+  "include": ["src/Positive.vue"]
+}

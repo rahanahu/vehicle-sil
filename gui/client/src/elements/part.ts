@@ -85,6 +85,7 @@ export abstract class Part extends HTMLElement {
   #stops: (() => void)[] = [];
   #client: Front | null = null;
   #bindings = 0;
+  #bindScheduled = false;
   #root: HTMLElement | null = null;
   #sentence: string | null = null;
 
@@ -93,9 +94,10 @@ export abstract class Part extends HTMLElement {
     return this.#client;
   }
   set client(value: Front | null) {
-    if (value === this.#client) return;
-    this.#client = value;
-    if (this.isConnected) void this.#bind();
+    const next = value ?? null;
+    if (next === this.#client) return;
+    this.#client = next;
+    if (this.isConnected) this.#scheduleBind();
   }
 
   constructor() {
@@ -107,11 +109,25 @@ export abstract class Part extends HTMLElement {
    * A property that the page set before this class was defined sits on the object itself and hides the accessor:
    * take it off and set it again.
    */
-  protected upgrade(name: string): void {
-    if (!Object.hasOwn(this, name)) return;
-    const value: unknown = Reflect.get(this, name);
-    Reflect.deleteProperty(this, name);
-    Reflect.set(this, name, value);
+  protected upgrade(...names: string[]): void {
+    for (const name of names) {
+      if (!Object.hasOwn(this, name)) continue;
+      const value: unknown = Reflect.get(this, name);
+      Reflect.deleteProperty(this, name);
+      Reflect.set(this, name, value);
+    }
+  }
+
+  /** Reflects a string attribute; `null` or `undefined` removes it while empty string is kept. */
+  protected reflectString(name: string, value: string | null | undefined): void {
+    if (value === null || value === undefined) this.removeAttribute(name);
+    else this.setAttribute(name, String(value));
+  }
+
+  /** Reflects a non-empty string attribute; `null`, `undefined` or `""` removes it. */
+  protected reflectNonEmpty(name: string, value: string | null | undefined): void {
+    if (value === null || value === undefined || value === '') this.removeAttribute(name);
+    else this.setAttribute(name, String(value));
   }
 
   /** Draws and subscribes. `alive()` turns false when the part has left the document or was bound again. */
@@ -132,16 +148,29 @@ export abstract class Part extends HTMLElement {
   }
 
   connectedCallback(): void {
-    void this.#bind();
+    this.#scheduleBind();
   }
 
   disconnectedCallback(): void {
     this.#bindings++;
+    this.#bindScheduled = false;
     this.#clear();
   }
 
   attributeChangedCallback(_name: string, before: string | null, after: string | null): void {
-    if (before !== after && this.isConnected) void this.#bind();
+    if (before !== after && this.isConnected) this.#scheduleBind();
+  }
+
+  #scheduleBind(): void {
+    if (this.#bindScheduled || !this.isConnected) return;
+    this.#bindScheduled = true;
+    const generation = this.#bindings;
+    queueMicrotask(() => {
+      if (this.#bindings !== generation) return;
+      this.#bindScheduled = false;
+      if (!this.isConnected) return;
+      void this.#bind();
+    });
   }
 
   /** Shows the sentence of the failed connection (`speaking`) or not; the mark `data-error` stays either way. */
