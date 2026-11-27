@@ -29,18 +29,26 @@ inline std::string hex_code(int code)
 
 
 /// An exit code as the outputs show it. A Windows NTSTATUS (0xC0000005 an access violation) reads
-/// better in hex; 0xC000013A (STATUS_CONTROL_C_EXIT) says nothing to a user, so it says what ended
-/// the process: Windows, on a Ctrl+C, a Ctrl+Break or a closed console, which the process did not
-/// handle itself (it had not set up its handler yet, or the handler returned).
+/// better in hex; 0xC000013A (STATUS_CONTROL_C_EXIT), 0xC0000135 (STATUS_DLL_NOT_FOUND) and
+/// 0xC0000139 (STATUS_ENTRYPOINT_NOT_FOUND) say nothing to a user on their own, so each carries a
+/// parenthesized explanation that fits after both "exit code " and "exited with code ".
 inline std::string exit_code_text(int code)
 {
     if (code >= 0)
     {
         return std::to_string(code);
     }
-    return hex_code(code) + (static_cast<unsigned>(code) == 0xC000013Au
-                                 ? " (Windows ended it on a Ctrl+C, a Ctrl+Break or a closed console)"
-                                 : "");
+    switch (static_cast<std::uint32_t>(code))
+    {
+    case 0xC000013Au:
+        return hex_code(code) + " (Windows ended it on a Ctrl+C, a Ctrl+Break or a closed console)";
+    case config::detail::kStatusDllNotFound:
+        return hex_code(code) + " (Windows did not find a DLL that it needs)";
+    case config::detail::kStatusEntryPointNotFound:
+        return hex_code(code) + " (a DLL that it needs is of another version: a function in it is missing)";
+    default:
+        return hex_code(code);
+    }
 }
 
 /// "exited with code 7", "was ended by signal SIGSEGV".

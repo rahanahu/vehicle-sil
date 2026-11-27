@@ -572,7 +572,7 @@ export VEHICLE_SIL_CONTROL_STUBS="$python_dir/vehicle_sil_control/_generated"
 export PYTHONPATH="$python_dir"
 if command -v uv >/dev/null 2>&1; then
   exec uv run --quiet --no-project --no-build $uv_python --python '@PYTHON@' \
-    --with-requirements "$python_dir/requirements.txt" python -P -m vehicle_sil_gui "$@"
+    --with-requirements "$python_dir/requirements.txt" python -X utf8 -P -m vehicle_sil_gui "$@"
 fi
 if [ -n "$uv_python" ]; then
   echo "vehicle-sil-gui: uv is not installed in this MSYS2 shell. Install it with  pacman -S mingw-w64-ucrt-x86_64-uv" \
@@ -580,14 +580,14 @@ if [ -n "$uv_python" ]; then
   exit 2
 fi
 python=${VEHICLE_SIL_PYTHON:-python3}
-if ! "$python" -P -c 'import aiohttp, pydantic, yaml' 2>/dev/null; then
+if ! "$python" -X utf8 -P -c 'import aiohttp, pydantic, yaml' 2>/dev/null; then
   echo "vehicle-sil-gui: uv is not installed, and $python (VEHICLE_SIL_PYTHON) is not a Python 3.11+ that has the" \
        "GUI server's packages. Install uv (https://docs.astral.sh/uv/), or install the packages into a virtual" \
        "environment with  python3 -m venv <dir> && <dir>/bin/python -m pip install --require-hashes -r" \
        "'$python_dir/requirements.txt'  and set VEHICLE_SIL_PYTHON=<dir>/bin/python" >&2
   exit 2
 fi
-exec "$python" -P -m vehicle_sil_gui "$@"
+exec "$python" -X utf8 -P -m vehicle_sil_gui "$@"
 """
 
 CMD_WRAPPER = r"""@echo off
@@ -595,17 +595,18 @@ rem vehicle-sil-gui: the browser GUI's server (docs/gui.md of vehicle-sil) with 
 rem tools. Its Python packages are pinned in python\requirements.txt: with uv, "uv run" installs them (once, in its
 rem cache); without uv, install them into a Python 3.11+ yourself and name it with VEHICLE_SIL_PYTHON.
 setlocal
+set "ERRORLEVEL="
 set "VSIL_TOOLS=%~dp0.."
 set "VEHICLE_SIL_LAUNCH=%VSIL_TOOLS%\bin\vehicle_sil_launch.exe"
 set "VEHICLE_SIL_CONTROL_STUBS=%VSIL_TOOLS%\python\vehicle_sil_control\_generated"
 set "PYTHONPATH=%VSIL_TOOLS%\python"
 where uv >nul 2>nul || goto no_uv
-uv run --quiet --no-project --no-build --managed-python --python "@PYTHON@" --with-requirements "%VSIL_TOOLS%\python\requirements.txt" python -P -m vehicle_sil_gui %*
+uv run --quiet --no-project --no-build --managed-python --python "@PYTHON@" --with-requirements "%VSIL_TOOLS%\python\requirements.txt" python -X utf8 -P -m vehicle_sil_gui %*
 exit /b %ERRORLEVEL%
 :no_uv
 if not defined VEHICLE_SIL_PYTHON set "VEHICLE_SIL_PYTHON=python"
-"%VEHICLE_SIL_PYTHON%" -P -c "import aiohttp, pydantic, yaml" 2>nul || goto no_packages
-"%VEHICLE_SIL_PYTHON%" -P -m vehicle_sil_gui %*
+"%VEHICLE_SIL_PYTHON%" -X utf8 -P -c "import aiohttp, pydantic, yaml" 2>nul || goto no_packages
+"%VEHICLE_SIL_PYTHON%" -X utf8 -P -m vehicle_sil_gui %*
 exit /b %ERRORLEVEL%
 :no_packages
 echo vehicle-sil-gui: uv is not installed, and %VEHICLE_SIL_PYTHON% (VEHICLE_SIL_PYTHON) is not a Python 3.11+ that has the GUI server's packages. Install uv (https://docs.astral.sh/uv/), or, with a Windows Python (python.org, not MSYS2's), install the packages into a virtual environment with  python -m venv DIR  and  DIR\Scripts\python -m pip install --require-hashes -r "%VSIL_TOOLS%\python\requirements.txt"  and set VEHICLE_SIL_PYTHON=DIR\Scripts\python.exe 1>&2

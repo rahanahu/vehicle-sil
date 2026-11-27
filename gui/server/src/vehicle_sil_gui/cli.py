@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import html
 import json
 import logging
@@ -30,6 +31,7 @@ from .session import SILENT_AFTER_S
 from .static import check_web_dir, find_web_dir
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
+WSAEACCES, WSAEADDRINUSE, WSAEADDRNOTAVAIL = 10013, 10048, 10049
 DEV_ORIGIN = re.compile(r"http://127\.0\.0\.1:\d{1,5}")
 BROWSER_PAGE_S = 30  # how long the page that hands the URL to the browser is kept
 
@@ -115,6 +117,24 @@ def usage_error(message: str) -> int:
     return EXIT_USAGE
 
 
+def _bind_error_reason(exc: OSError) -> str:
+    """Locale-independent ASCII reason for a failed bind() on 127.0.0.1."""
+    winerror = getattr(exc, "winerror", None)
+    if exc.errno == errno.EADDRINUSE or winerror == WSAEADDRINUSE:
+        return "address already in use"
+    if exc.errno == errno.EACCES or winerror == WSAEACCES:
+        return "permission denied or port already in use"
+    if exc.errno == errno.EADDRNOTAVAIL or winerror == WSAEADDRNOTAVAIL:
+        return "address not available"
+    if exc.strerror and exc.strerror.isascii():
+        return exc.strerror
+    if winerror is not None:
+        return f"WinError {winerror}"
+    if exc.errno is not None:
+        return errno.errorcode.get(exc.errno, f"errno {exc.errno}")
+    return "bind failed"
+
+
 def bind(port: int) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     if sys.platform == "win32":  # no other program may bind the same port and take the connections
@@ -191,7 +211,7 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
     try:
         sock = bind(args.port)
     except OSError as e:
-        return usage_error(f"cannot listen on 127.0.0.1:{args.port} ({e.strerror}): choose another --port, "
+        return usage_error(f"cannot listen on 127.0.0.1:{args.port} ({_bind_error_reason(e)}): choose another --port, "
                            "or 0 for a free one")
     port = sock.getsockname()[1]
     token = "" if args.no_auth else secrets.token_urlsafe(32)

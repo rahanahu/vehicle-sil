@@ -752,6 +752,27 @@ class ControlOnlyRequirementsTest(unittest.TestCase):
         self.assertIn("from vehicle_sil_control import Serve, RunHandle, ServeError, Launch, LaunchError, control_address", source)
         self.assertIn('for gui_only in ("aiohttp", "pydantic", "pyyaml"):', source)
 
+    def test_gui_wrappers_enable_utf8_mode_and_clear_cmd_errorlevel(self) -> None:
+        self.assertTrue(package_mod.SH_WRAPPER.isascii())
+        self.assertTrue(package_mod.CMD_WRAPPER.isascii())
+        self.assertIn('python -X utf8 -P -m vehicle_sil_gui "$@"', package_mod.SH_WRAPPER)
+        self.assertIn('"$python" -X utf8 -P -c \'import aiohttp, pydantic, yaml\'', package_mod.SH_WRAPPER)
+        self.assertIn('exec "$python" -X utf8 -P -m vehicle_sil_gui "$@"', package_mod.SH_WRAPPER)
+
+        cmd_lines = package_mod.CMD_WRAPPER.splitlines()
+        setlocal_idx = cmd_lines.index("setlocal")
+        self.assertEqual(cmd_lines[setlocal_idx + 1], 'set "ERRORLEVEL="')
+        self.assertIn("python -X utf8 -P -m vehicle_sil_gui %*", package_mod.CMD_WRAPPER)
+        self.assertIn('"%VEHICLE_SIL_PYTHON%" -X utf8 -P -c "import aiohttp, pydantic, yaml"', package_mod.CMD_WRAPPER)
+        self.assertIn('"%VEHICLE_SIL_PYTHON%" -X utf8 -P -m vehicle_sil_gui %*', package_mod.CMD_WRAPPER)
+
+        stage_win, _ = self._run_prebuilt_tools(windows=True)
+        staged_cmd = (stage_win / "bin" / "vehicle-sil-gui.cmd").read_bytes()
+        self.assertIn(b'set "ERRORLEVEL="\r\n', staged_cmd)
+        self.assertIn(b"python -X utf8 -P -m vehicle_sil_gui %*\r\n", staged_cmd)
+        staged_sh = (stage_win / "bin" / "vehicle-sil-gui").read_text(encoding="ascii")
+        self.assertIn('python -X utf8 -P -m vehicle_sil_gui "$@"', staged_sh)
+
 
 if __name__ == "__main__":
     unittest.main()

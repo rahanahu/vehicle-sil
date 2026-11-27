@@ -172,11 +172,19 @@ TEST_CASE(a_participant_that_exits_with_another_code_is_an_error_or_for_an_optio
     o.participants[2] = exited(participant("Logger", 9, false), static_cast<int>(0xC0000005u));
     check_text(lines(assess_run(o)), "W 9 exit-code: participant 'Logger': its process exited with code 0xC0000005; the "
                                      "lines [Logger] above show what it wrote\n");
-    // 0xC000013A (STATUS_CONTROL_C_EXIT) says what ended the process: a code alone means nothing to a user.
+    // 0xC000013A (STATUS_CONTROL_C_EXIT), 0xC0000135 (STATUS_DLL_NOT_FOUND) and 0xC0000139
+    // (STATUS_ENTRYPOINT_NOT_FOUND) say what ended the process: a code alone means nothing to a user.
     o.participants[2] = exited(participant("Logger", 9, false), static_cast<int>(0xC000013Au));
     check_text(lines(assess_run(o)), "W 9 exit-code: participant 'Logger': its process exited with code 0xC000013A (Windows "
                                      "ended it on a Ctrl+C, a Ctrl+Break or a closed console); the lines [Logger] above show "
                                      "what it wrote\n");
+    o.participants[2] = exited(participant("Logger", 9, false), static_cast<int>(0xC0000135u));
+    check_text(lines(assess_run(o)), "W 9 exit-code: participant 'Logger': its process exited with code 0xC0000135 (Windows "
+                                     "did not find a DLL that it needs); the lines [Logger] above show what it wrote\n");
+    o.participants[2] = exited(participant("Logger", 9, false), static_cast<int>(0xC0000139u));
+    check_text(lines(assess_run(o)), "W 9 exit-code: participant 'Logger': its process exited with code 0xC0000139 (a DLL "
+                                     "that it needs is of another version: a function in it is missing); the lines [Logger] "
+                                     "above show what it wrote\n");
 }
 
 TEST_CASE(a_required_participant_that_ends_before_the_start_or_does_not_join_is_an_error)

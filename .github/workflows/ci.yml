@@ -893,6 +893,15 @@ jobs:
             extra+=(--cmake-arg=-DVEHICLE_SIL_BATCH_UNIT_TESTS=ON)
           fi
           python scripts/verify.py windows-mingw-release --tag ci "${extra[@]}"
+      - name: Standalone MinGW runtime DLL proof (verbose log)
+        if: needs.changes.outputs.ctest_filter == ''
+        run: |
+          listed=$(ctest --test-dir build/windows-mingw-release -N -R '^launch\.mingw_runtime_dlls_standalone$' | tr -d '\r')
+          if ! grep -qE 'Test +#[0-9]+: launch\.mingw_runtime_dlls_standalone$' <<<"$listed"; then
+            echo "::error::launch.mingw_runtime_dlls_standalone is not registered in build/windows-mingw-release"
+            exit 1
+          fi
+          ctest --test-dir build/windows-mingw-release -R '^launch\.mingw_runtime_dlls_standalone$' --output-on-failure -V
       - name: Compiler cache statistics and cleanup
         if: ${{ !cancelled() }}
         run: |

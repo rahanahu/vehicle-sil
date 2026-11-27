@@ -953,18 +953,24 @@ TEST_CASE(a_run_that_windows_could_not_start_for_a_dll_says_so)
     const auto engine = participant("Engine", 6);
     check_text(error(engine, 0xC0000135u),
                "participant 'Engine': engine/engine_ecu --describe --name Engine could not start (exit status "
-               "0xC0000135): Windows did not find a DLL that it needs; put that DLL, of the version the executable was "
-               "built with, next to the executable or in a folder on PATH");
+               "0xC0000135): Windows did not find a DLL that it needs; check DLLs next to the executable first and "
+               "match the build toolchain (call vehicle_sil_copy_runtime_dlls(<target>) in CMake or do a clean "
+               "rebuild), or put the matching DLL next to the executable or on PATH (inspect imports with ldd in "
+               "MSYS2; where.exe <dll> only lists PATH candidates)");
     check_text(error(engine, 0xC0000139u),
                "participant 'Engine': engine/engine_ecu --describe --name Engine could not start (exit status "
-               "0xC0000139): a DLL that it needs is of another version (a function in it is missing); put that DLL, of "
-               "the version the executable was built with, next to the executable or in a folder on PATH");
+               "0xC0000139): a DLL that it needs is of another version (a function in it is missing); check DLLs next "
+               "to the executable first and match the build toolchain (call vehicle_sil_copy_runtime_dlls(<target>) "
+               "in CMake or do a clean rebuild), or put the matching DLL next to the executable or on PATH (inspect "
+               "imports with ldd in MSYS2; where.exe <dll> only lists PATH candidates)");
     const auto bridge = with_role(participant("XlBridge", 6), ParticipantRole::Bridge);
     check_text(error(bridge, 0xC0000135u),
                "participant 'XlBridge': engine/engine_ecu --describe --name Engine could not start (exit status "
-               "0xC0000135): Windows did not find a DLL that it needs; put that DLL, of the version the executable was "
-               "built with, next to the executable or in a folder on PATH; if this computer does not use the bridge, "
-               "leave it out with vehicle_sil_launch --disable XlBridge");
+               "0xC0000135): Windows did not find a DLL that it needs; check DLLs next to the executable first and "
+               "match the build toolchain (call vehicle_sil_copy_runtime_dlls(<target>) in CMake or do a clean "
+               "rebuild), or put the matching DLL next to the executable or on PATH (inspect imports with ldd in "
+               "MSYS2; where.exe <dll> only lists PATH candidates); if this computer does not use the bridge, leave it "
+               "out with vehicle_sil_launch --disable XlBridge");
     const auto finding = *interpret_describe(bridge, run(static_cast<int>(0xC0000139u))).error;
     CHECK(finding.code == "describe-failed");
     CHECK(finding.message.find("--disable XlBridge") != std::string::npos);
@@ -2383,17 +2389,21 @@ TEST_CASE(check_connections_says_when_windows_does_not_start_a_bridge_for_a_dll)
                "E 5 connect-tool-failed: network 'CAN1': vehicle_sil_vector_xl_bridge ... could not start (exit status "
                "0xC0000135): Windows did not find a DLL that it needs: vehicle_sil_vector_xl_bridge needs vxlapi64.dll of "
                "the Vector XL Driver Library: install the library, or put vxlapi64.dll next to the bridge; for another "
-               "DLL, put that DLL, of the version the executable was built with, next to the executable or in a folder on "
-               "PATH; to check without the real bus on this computer, leave --connect CAN1 out\n");
+               "DLL, check DLLs next to the executable first and match the build toolchain (call "
+               "vehicle_sil_copy_runtime_dlls(<target>) in CMake or do a clean rebuild), or put the matching DLL next "
+               "to the executable or on PATH (inspect imports with ldd in MSYS2; where.exe <dll> only lists PATH "
+               "candidates); to check without the real bus on this computer, leave --connect CAN1 out\n");
     DescribeRun old;
     old.command_text = "vehicle_sil_ethernet_bridge ...";
     old.exit_code = static_cast<int>(0xC0000139u);
     fake.answer = old;
     check_text(connect_lines(s, {{"ETH", "eth0"}}, fake),
                "E 3 connect-tool-failed: network 'ETH': vehicle_sil_ethernet_bridge ... could not start (exit status "
-               "0xC0000139): a DLL that it needs is of another version (a function in it is missing): put that DLL, of "
-               "the version the executable was built with, next to the executable or in a folder on PATH; to check "
-               "without the real bus on this computer, leave --connect ETH out\n");
+               "0xC0000139): a DLL that it needs is of another version (a function in it is missing): check DLLs next "
+               "to the executable first and match the build toolchain (call vehicle_sil_copy_runtime_dlls(<target>) "
+               "in CMake or do a clean rebuild), or put the matching DLL next to the executable or on PATH (inspect "
+               "imports with ldd in MSYS2; where.exe <dll> only lists PATH candidates); to check without the real bus "
+               "on this computer, leave --connect ETH out\n");
 }
 
 TEST_CASE(check_connections_gives_no_command_for_a_network_with_an_error)

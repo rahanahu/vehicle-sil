@@ -157,6 +157,15 @@ add_test(NAME launch.config_files_check_rejects_a_scenario_include
 set_tests_properties(launch.config_files_check_rejects_a_scenario_include PROPERTIES LABELS "unit;launch" TIMEOUT 60
                      PASS_REGULAR_EXPRESSION "config\\.cpp: vehicle_sil/scenario/scenario_x\\.hpp")
 
+# Host-runnable test of cmake/VehicleSilCopyDlls.cmake (argument handling, deduplication,
+# empty/static no-op, process lock contention) and MinGW runtime DLL fallback resolution.
+add_test(NAME launch.copy_dlls_script
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/copy_dlls_script
+                 "-DPYTHON=${VEHICLE_SIL_J1939_CODEGEN_PYTHON}"
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/test_copy_dlls.cmake)
+set_tests_properties(launch.copy_dlls_script PROPERTIES LABELS "unit;launch" TIMEOUT 60)
+
 # vehicle_sil_launch check as a process: the examples of docs/simulation-*.md with the ECU
 # executables of examples/ecu_main, executables that fail --describe (the helper of
 # tests/process), --strict, files that cannot be read, the command line.
@@ -174,11 +183,20 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   set(_connect_copies vehicle_sil_launch vehicle_sil_ethernet_bridge_on_fake_pcap vehicle_sil_vector_xl_bridge_on_fake)
   set(_connect_dlls)
   if(WIN32)
+    set(_connect_mingw_dlls "")
+    if(MINGW AND NOT VEHICLE_SIL_STATIC)
+      _vehicle_sil_resolve_mingw_runtime_dlls(_connect_mingw_dlls)
+    endif()
+    set(_connect_runtime_dlls)
     foreach(_copy IN LISTS _connect_copies)
-      list(APPEND _connect_dlls
-           COMMAND ${CMAKE_COMMAND} -E $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:${_copy}>>,copy_if_different,true>
-                   $<TARGET_RUNTIME_DLLS:${_copy}> ${_connect_tools})
+      list(APPEND _connect_runtime_dlls $<TARGET_RUNTIME_DLLS:${_copy}>)
     endforeach()
+    list(APPEND _connect_dlls
+         COMMAND ${CMAKE_COMMAND}
+                 "-DDEST_DIR=${_connect_tools}"
+                 "-DLOCK_DIR=${CMAKE_BINARY_DIR}/CMakeFiles"
+                 -P "${PROJECT_SOURCE_DIR}/cmake/VehicleSilCopyDlls.cmake"
+                 -- ${_connect_runtime_dlls} ${_connect_mingw_dlls})
   endif()
   add_custom_target(vehicle_sil_launch_connect_tools
     COMMAND ${CMAKE_COMMAND} -E make_directory ${_connect_tools}
@@ -424,6 +442,25 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
                    -DPYTHON=${VEHICLE_SIL_J1939_CODEGEN_PYTHON}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/trace_files.cmake)
   set_tests_properties(launch_run.trace_files PROPERTIES LABELS "integration;launch" TIMEOUT ${_launch_script_timeout})
+  if(WIN32 AND MINGW AND NOT VEHICLE_SIL_STATIC)
+    # Proves that DLLs copied beside a built ECU by vehicle_sil_copy_runtime_dlls() suffice to
+    # start the ECU outside an MSYS2 UCRT64 shell (with MSYS2/compiler bin removed from PATH).
+    set(_standalone_uses_libstdcxx OFF)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+       OR (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND "stdc++" IN_LIST CMAKE_CXX_IMPLICIT_LINK_LIBRARIES))
+      set(_standalone_uses_libstdcxx ON)
+    endif()
+    add_test(NAME launch.mingw_runtime_dlls_standalone
+             COMMAND ${CMAKE_COMMAND}
+                     -DECU=$<TARGET_FILE:vehicle_sil_engine_ecu>
+                     -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
+                     -DSILKIT_DLL=$<TARGET_FILE_NAME:SilKit::SilKit>
+                     -DCOMPILER_ID=${CMAKE_CXX_COMPILER_ID}
+                     -DUSES_LIBSTDCXX=${_standalone_uses_libstdcxx}
+                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/mingw_runtime_dlls_standalone
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/mingw_runtime_dlls_standalone.cmake)
+    set_tests_properties(launch.mingw_runtime_dlls_standalone PROPERTIES LABELS "integration;launch" TIMEOUT ${_launch_script_timeout})
+  endif()
   # The example of the docs with a participant started by hand: its registry is at 8500, the port
   # of such a run, which the docs show. Builds in other working trees on this machine take turns.
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
