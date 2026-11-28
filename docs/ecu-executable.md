@@ -630,3 +630,4 @@ In `--required`, list the name of each ECU (`name` in `--describe`).
 | Keys of the configuration file and arguments of `vehicle_sil_launch` | [simulation-config.md](simulation-config.md) |
 | The check order and the finding codes | [simulation-check.md](simulation-check.md) |
 | Running, stopping and results | [simulation-run.md](simulation-run.md) |
+| Observing runs in Vector SIL Kit Dashboard (without the launcher) | [Observe a simulation in Vector SIL Kit Dashboard](howto/vector-dashboard.md) |
