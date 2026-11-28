@@ -18,6 +18,7 @@
 | 故障を入れて、通信を観測してテストする | [fault_injection](fault_injection) | `vehicle_sil_fault_injection` |
 | 複数の ECU、複数のネットワーク、LIN を 1 つのシミュレーションにする | [vehicle](vehicle) | `vehicle_sil_vehicle` |
 | ECU ごとに実行ファイルを作り、設定ファイルで 1 つのシミュレーションにする | [ecu_main](ecu_main) | `vehicle_sil_engine_ecu`、`vehicle_sil_dashboard_ecu` |
+| 標準の Vector SIL Kit C++ participant を独立してつなぐ（vehicle-sil のヘッダー・ライブラリ不要） | [standard_silkit_participant](standard_silkit_participant) | `standard_silkit_participant`、`simulation.yaml` |
 | 別々に作った ECU の不整合を見つけて直す | [integrate_ecus](integrate_ecus) | `vehicle_sil_dashboard_v1_ecu` |
 | ECU のプロジェクトのテンプレートに ECU を 1 つ追加する | [first_ecu](first_ecu) | `cooler_ecu`、`read_cooler.py` |
 | シナリオのテストを書く | [scenario_tests](scenario_tests) | `my_tests/*.yaml`、`simulation.variants.yaml` |
@@ -153,6 +154,10 @@ CMake には入っていません（`scripts/verify-gui.py` が、流し直す�
 ### low_level
 
 新しいバックエンドやテストの土台を作るときに読みます。通常は `Simulation` を使います。
+
+### standard_silkit_participant
+
+vehicle-sil のヘッダーやライブラリを一切使わず、標準の Vector SIL Kit C++ API だけで書いた独立した participant を `vehicle_sil_launch` のシミュレーションにつなぐときに読みます。`CMakeLists.txt` は公式 Vector SIL Kit SDK に対する独立した `find_package(SilKit REQUIRED)` ビルドと、リポジトリ内ビルドの両方に対応しています。設定方法、`time_step_ms` の明示、同時刻タイムスタンプの決定論的処理、Run ごとの再起動については [標準の SIL Kit participant をつなぐ](../docs/ja/howto/standard-silkit-participant.md) にあります。
 
 ## 結合テストが起動する実行ファイル
 

@@ -18,6 +18,7 @@ The further down the list, the lower the layer an example uses.
 | Inject faults, observe the communication and test it | [fault_injection](fault_injection) | `vehicle_sil_fault_injection` |
 | Combine several ECUs, several networks and LIN into one simulation | [vehicle](vehicle) | `vehicle_sil_vehicle` |
 | Build one executable per ECU and combine them into one simulation with a configuration file | [ecu_main](ecu_main) | `vehicle_sil_engine_ecu`, `vehicle_sil_dashboard_ecu` |
+| Connect a standalone standard Vector SIL Kit C++ participant (no vehicle-sil headers or libs) | [standard_silkit_participant](standard_silkit_participant) | `standard_silkit_participant`, `simulation.yaml` |
 | Find and fix mismatches between ECUs built separately | [integrate_ecus](integrate_ecus) | `vehicle_sil_dashboard_v1_ecu` |
 | Add an ECU to the ECU project template | [first_ecu](first_ecu) | `cooler_ecu`, `read_cooler.py` |
 | Write scenario tests | [scenario_tests](scenario_tests) | `my_tests/*.yaml`, `simulation.variants.yaml` |
@@ -153,6 +154,10 @@ It is not part of the CMake build (`scripts/verify-gui.py` serves it with `--web
 ### low_level
 
 Read this to build a new backend or a test harness. Normally, use `Simulation`.
+
+### standard_silkit_participant
+
+Read this to connect a standalone C++ participant built only with the standard Vector SIL Kit C++ API (zero vehicle-sil headers or libraries) to a `vehicle_sil_launch` simulation. Its `CMakeLists.txt` supports standalone `find_package(SilKit REQUIRED)` builds against the official Vector SIL Kit SDK as well as repository builds. For configuration, explicit `time_step_ms`, deterministic simultaneous-timestamp handling, and cross-run restart rules, see [Connect a standard SIL Kit participant](../docs/howto/standard-silkit-participant.md).
 
 ## Executables started by integration tests
 
