@@ -875,13 +875,17 @@ test('the types (vehicle-sil-timeline.d.ts) name every option of the element, an
     types.indexOf('  addEventListener<'),
   );
   const typed = [...element.matchAll(/^ {2}(\w+)(?:\(\))?: /gm)].map((m) => m[1]);
-  assert.deepEqual(typed.sort(), [...options, ...properties, 'reload'].sort());
+  assert.deepEqual(
+    typed.sort(),
+    [...options, ...properties, 'reload', 'resetView', 'zoomOut', 'unpinCursor'].sort(),
+  );
   // Additive methods and events are declared on VehicleSilTimelineElement / VehicleSilTimelineEventMap
   assert.match(types, /^ {2}jumpToFailure\(options\?: VehicleSilTimelineFocusOptions\): boolean;/m);
   assert.match(
     types,
     /^ {2}focusStep\(index: number, options\?: VehicleSilTimelineFocusOptions\): boolean;/m,
   );
+  assert.match(types, /^ {2}pan\(fraction: number\): void;/m);
   assert.match(types, /^ {2}variablehide: CustomEvent<\{ variable: string \}>;/m);
   // The parts of hide: the type, the element's check and the CSS name the same words
   const union = /export type VehicleSilTimelinePart =([^;]+);/.exec(types)[1];
@@ -3155,4 +3159,195 @@ test('logic analyzer: pre-failure framing, zoom-preserving jump/focus, pan clamp
   assert.equal(varNames.length, 0, 'explicit empty variables array hides all variable lanes');
   assert.equal(el.cursor, 640);
   assert.equal(el.step, 2);
+});
+
+test('logic analyzer: niceTicks terminates at extreme zoom and >= 2^53 timestamps', () => {
+  // Extreme zoom where step falls below float64 ULP around t0 must never infinite-loop.
+  const huge = 2 ** 53;
+  const ticksHuge = T.niceTicks(huge, huge + 1, 5);
+  assert.ok(ticksHuge.length >= 1 && ticksHuge.length <= 200);
+  const tinySpan = T.niceTicks(100, 100 + 1e-15, 5);
+  assert.ok(tinySpan.length >= 1 && tinySpan.length <= 200);
+});
+
+test('logic analyzer: short-run leadMs, non-sticky navigation, quiet restoration, participants hiding, and single edge label', async () => {
+  const shortTl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Brake.pressure',
+        participant: 'Brake',
+        type: 'real',
+        causality: 'output',
+        unit: 'bar',
+        min: 0,
+        max: 180,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Brake.fault_latch',
+        participant: 'Brake',
+        type: 'bool',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'ADAS.override',
+        participant: 'ADAS',
+        type: 'bool',
+        causality: 'input',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: true,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 5,
+        kind: 'set',
+        text: 'set ADAS.override = true',
+        status: 'passed',
+        start_ms: 200,
+        at_ms: 200,
+        end_ms: 200,
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+      {
+        index: 2,
+        line: 8,
+        kind: 'expect',
+        text: 'expect Brake.fault_latch eq false',
+        status: 'failed',
+        start_ms: 200,
+        at_ms: 250,
+        end_ms: 300,
+        code: 'scenario-failed',
+        message: 'fault latched',
+        lines: [],
+        watch: {
+          mode: 'during',
+          from_ms: 200,
+          to_ms: 300,
+          conditions: [
+            {
+              variable: 'Brake.fault_latch',
+              compare: [{ op: 'eq', value: false, tolerance: null }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 250,
+          code: 'scenario-failed',
+          conditions: [{ condition: 0, value: true, sample_ms: 250 }],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries('Brake.pressure', 'sampled', [[0, 100]], { last_ms: 250 }),
+      makeSeries(
+        'Brake.fault_latch',
+        'sampled',
+        [
+          [0, false],
+          [250, true],
+        ],
+        { last_ms: 250 },
+      ),
+      makeSeries(
+        'ADAS.override',
+        'written',
+        [
+          [0, false],
+          [200, true],
+        ],
+        { encoding: 'all', last_ms: 250 },
+      ),
+    ],
+  });
+  shortTl.scenario.status = 'failed';
+  shortTl.scenario.recorded_to_ms = 250;
+  shortTl.scenario.over_at_ms = 260;
+
+  const m = model(shortTl);
+  // Short run: -300 ms covers the full domain and is NEVER narrower than -150 ms.
+  const [f150, t150] = T.failureJumpView(m, m.domain, { leadMs: 150 });
+  const [f300, t300] = T.failureJumpView(m, m.domain, { leadMs: 300 });
+  assert.ok(
+    t300 - f300 >= t150 - f150,
+    `-300 ms (${f300}..${t300}) must not be narrower than -150 ms (${f150}..${t150})`,
+  );
+  assert.equal(f300, m.domain[0]);
+  assert.equal(t300, m.domain[1]);
+
+  // Simultaneous-start written signal (ADAS.override written at 200 ms == failed step start_ms) is relatedToFailure.
+  const meta = T.modelMetadata(m, 'short.timeline.json');
+  const adasVar = meta.variables.find((v) => v.name === 'ADAS.override');
+  assert.equal(adasVar.relatedToFailure, true);
+
+  // stepFocusView preserves whole-run view when step is already visible inside it.
+  assert.deepEqual(T.stepFocusView(m, m.steps[0], m.domain, true), m.domain);
+
+  // Calling jumpToFailure inside a `data` load listener still emits cursorchange/stepselect (c.quiet cleared/restored).
+  const { Element } = makeMockDom();
+  const el = new Element();
+  const emitted = [];
+  el.addEventListener('cursorchange', (e) => emitted.push(['cursorchange', e.detail]));
+  el.addEventListener('stepselect', (e) => emitted.push(['stepselect', e.detail]));
+  el.addEventListener('viewchange', (e) => emitted.push(['viewchange', e.detail]));
+  el.addEventListener('load', () => {
+    el.jumpToFailure({ leadMs: 150 });
+  });
+  el.data = shortTl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  assert.ok(emitted.some(([type]) => type === 'cursorchange'));
+  assert.ok(emitted.some(([type]) => type === 'stepselect'));
+  assert.equal(el.cursor, 250);
+  assert.equal(el.step, 2);
+
+  // Failed end-edge bool transition has ONLY ONE → true label (no duplicate colliding black & red labels).
+  const edgeLabels = el._shadow
+    .querySelectorAll('.state-edge-label')
+    .filter((n) => n.textContent.includes('→ true'));
+  assert.equal(edgeLabels.length, 1, 'exactly one non-colliding → true label on failing bool lane');
+
+  // Non-sticky resetView / pan / zoomOut / unpinCursor work without leaking sticky options across reload.
+  el.resetView();
+  assert.equal(el.from, m.domain[0]);
+  assert.equal(el.to, m.domain[1]);
+  el.jumpToFailure({ leadMs: 150 });
+  const beforePan = el.from;
+  el.pan(-0.25);
+  assert.ok(el.from < beforePan);
+  el.zoomOut();
+  el.unpinCursor();
+
+  // Built-in #participants hides automatically when `variables` is host-managed.
+  assert.equal(el._shadow.getElementById('participants').hidden, false);
+  el.variables = ['Brake.fault_latch'];
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el._shadow.getElementById('participants').hidden, true);
+  el.variables = null;
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el._shadow.getElementById('participants').hidden, false);
 });

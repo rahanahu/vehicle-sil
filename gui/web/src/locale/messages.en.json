@@ -2145,6 +2145,26 @@
     "8286365889773298504": {
       "source": "失敗前の表示範囲",
       "target": "Pre-failure time window"
+    },
+    "1608510753308118889": {
+      "source": " 縮小 ",
+      "target": " Zoom out "
+    },
+    "9046027156478552906": {
+      "source": " ピン解除 ",
+      "target": " Unpin "
+    },
+    "6542778169597298929": {
+      "source": "時間軸の操作",
+      "target": "Timeline navigation"
+    },
+    "2370019744646040278": {
+      "source": "左へ移動",
+      "target": "Pan left"
+    },
+    "150968626374394471": {
+      "source": "右へ移動",
+      "target": "Pan right"
     }
   }
 }

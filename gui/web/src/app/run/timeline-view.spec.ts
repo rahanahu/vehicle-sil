@@ -215,9 +215,36 @@ describe('TimelineView', () => {
       '選んだ手順: 8',
     );
 
-    // Jump to failure button preserves zoom
+    // Jump to failure button preserves zoom; pre-failure window presets and nav buttons use non-sticky methods
+    const resetSpy = vi.spyOn(el, 'resetView').mockImplementation(() => undefined);
+    const panSpy = vi.spyOn(el, 'pan').mockImplementation(() => undefined);
+    const zoomOutSpy = vi.spyOn(el, 'zoomOut').mockImplementation(() => undefined);
+    const unpinSpy = vi.spyOn(el, 'unpinCursor').mockImplementation(() => undefined);
+
     root().querySelector<HTMLButtonElement>('[data-testid="timeline-jump-failure"]')!.click();
     expect(jumpSpy).toHaveBeenLastCalledWith({ preserveZoom: true });
+
+    root().querySelector<HTMLButtonElement>('[data-testid="timeline-window-150"]')!.click();
+    expect(jumpSpy).toHaveBeenLastCalledWith({ leadMs: 150 });
+
+    root().querySelector<HTMLButtonElement>('[data-testid="timeline-window-300"]')!.click();
+    expect(jumpSpy).toHaveBeenLastCalledWith({ leadMs: 300 });
+
+    root().querySelector<HTMLButtonElement>('[data-testid="timeline-window-all"]')!.click();
+    expect(resetSpy).toHaveBeenCalledTimes(1);
+
+    el.dispatchEvent(
+      new CustomEvent('viewchange', { detail: { from: 490, to: 670 }, bubbles: true }),
+    );
+    fixture.detectChanges();
+    root().querySelector<HTMLButtonElement>('[data-testid="timeline-pan-left"]')!.click();
+    expect(panSpy).toHaveBeenCalledWith(-0.25);
+    root().querySelector<HTMLButtonElement>('[data-testid="timeline-pan-right"]')!.click();
+    expect(panSpy).toHaveBeenCalledWith(0.25);
+    root().querySelector<HTMLButtonElement>('[data-testid="timeline-zoom-out"]')!.click();
+    expect(zoomOutSpy).toHaveBeenCalledTimes(1);
+    root().querySelector<HTMLButtonElement>('[data-testid="timeline-unpin"]')!.click();
+    expect(unpinSpy).toHaveBeenCalledTimes(1);
 
     // showStep preserves zoom once loaded
     const comp = fixture.debugElement.children[0]!.componentInstance as TimelineView;
@@ -225,7 +252,7 @@ describe('TimelineView', () => {
     expect(focusSpy).toHaveBeenLastCalledWith(3, { preserveZoom: true });
   });
 
-  it('keeps the element mounted across collapse/reopen and strictly resets all state on Run switch', async () => {
+  it('keeps the element mounted across collapse/reopen, guards in-flight Run switches, and resets all state', async () => {
     const el = timelineEl()!;
     vi.spyOn(el, 'jumpToFailure').mockReturnValue(true);
     emitLoad(makeLoadDetail());
@@ -265,18 +292,31 @@ describe('TimelineView', () => {
 
     // Run switch (timelineUrl changes): clears cursor, step, search, preset, hidden signals, and meta
     fixture.componentInstance.autoExpand.set(true);
-    fixture.componentInstance.initialStep.set(null);
+    fixture.componentInstance.initialStep.set(10);
     fixture.componentInstance.url.set('api/timeline/2');
     await fixture.whenStable();
     fixture.detectChanges();
 
-    expect(root().querySelector('[data-testid="timeline-failure-strip"]')).toBeNull();
+    // In-flight stale events from Run 1 while Run 2 has not loaded yet must be ignored
+    el.dispatchEvent(
+      new CustomEvent('variablehide', {
+        detail: { variable: 'ADAS.aeb.active' },
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    el.dispatchEvent(new CustomEvent('cursorchange', { detail: { cursor: 123 }, bubbles: true }));
+    fixture.detectChanges();
     expect(root().querySelector('[data-testid="timeline-hidden-strip"]')).toBeNull();
-    expect(root().querySelector('[data-testid="timeline-readout"]')?.textContent?.trim()).toBe('');
+    expect(root().querySelector('[data-testid="timeline-readout"]')?.textContent).not.toContain(
+      '123.0 ms',
+    );
 
-    // When Run 2 loads, search and preset are cleanly back to defaults
+    // When Run 2 loads as an eventless timeline, stale initialStep (10) is synced away to null
     emitLoad(makeLoadDetail({ failure: null, status: 'passed', stepCount: 0 }));
     await fixture.whenStable();
+    expect(root().querySelector('[data-testid="timeline-readout"]')?.textContent?.trim()).toBe('');
+    expect(root().querySelector('[data-testid="timeline-hidden-strip"]')).toBeNull();
     expect(
       root().querySelector<HTMLInputElement>('[data-testid="timeline-signal-search"]')?.value,
     ).toBe('');

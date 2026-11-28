@@ -481,16 +481,49 @@ test('logic analyzer: zoom-preserving failure jump, signal search/hide/restore p
   expect(laneOrder[0]).toBe('axis');
   expect(laneOrder.at(-1)).toBe('steps');
 
-  // End-edge bool transition at recorded_to_ms (640 ms) draws crisp → true badge.
-  await expect(timeline.locator('.state-edge-label')).toContainText('→ true');
+  // End-edge bool transition at recorded_to_ms (640 ms) draws ONE crisp → true label (no colliding duplicate).
+  const edgeLabels = timeline.locator('.state-edge-label');
+  await expect(edgeLabels).toHaveCount(1);
+  await expect(edgeLabels).toContainText('→ true');
 
-  // 1. Zoom into [150, 300] (150 ms span), then click "失敗時刻へ移動" -> preserves exact 150 ms span!
-  await timeline.evaluate((el) => {
+  // Built-in #toolbar is hidden so there are zero duplicate toolbar/Participants controls.
+  await expect(timeline.locator('#toolbar')).toBeHidden();
+
+  // 1. Brush-drag zoom from whole-run into ~[150, 300] ms, Shift+drag pan, then click "失敗時刻へ移動" -> preserves exact zoomed span!
+  await card.getByTestId('timeline-whole-run').click();
+  await expect(card.getByTestId('timeline-range')).toContainText('0–977.6 ms');
+
+  const plotBox = (await timeline.locator('.lane-plot').nth(1).boundingBox())!;
+  const midY = plotBox.y + plotBox.height * 0.5;
+  await page.mouse.move(plotBox.x + plotBox.width * 0.15, midY);
+  await page.mouse.down();
+  await page.mouse.move(plotBox.x + plotBox.width * 0.3, midY, { steps: 5 });
+  await page.mouse.up();
+
+  const afterZoom = await timeline.evaluate((el) => {
     const t = el as HTMLElement & { from: number; to: number };
-    t.from = 150;
-    t.to = 300;
+    return { from: t.from, to: t.to };
   });
-  await expect(timeline.locator('#range')).toContainText('150 ms から 300 ms');
+  const zoomedSpan = afterZoom.to - afterZoom.from;
+  expect(zoomedSpan).toBeGreaterThan(100);
+  expect(zoomedSpan).toBeLessThan(200);
+  expect(afterZoom.to).toBeLessThan(400);
+  await expect(card.getByTestId('timeline-range')).not.toContainText('0–977.6 ms');
+
+  // Continuous Shift+drag panning shifts the viewport smoothly by > 50 px without breaking mid-drag!
+  const startX = plotBox.x + plotBox.width * 0.6;
+  await page.keyboard.down('Shift');
+  await page.mouse.move(startX, midY);
+  await page.mouse.down();
+  await page.mouse.move(startX - 120, midY, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  const afterPan = await timeline.evaluate((el) => {
+    const t = el as HTMLElement & { from: number; to: number };
+    return { from: t.from, to: t.to };
+  });
+  expect(afterPan.from).toBeGreaterThan(afterZoom.from + 15);
+  expect(afterPan.to - afterPan.from).toBeCloseTo(zoomedSpan, 1);
 
   await card.getByTestId('timeline-jump-failure').click();
   const afterJump = await timeline.evaluate((el) => {
@@ -502,9 +535,9 @@ test('logic analyzer: zoom-preserving failure jump, signal search/hide/restore p
     };
     return { from: t.from, to: t.to, cursor: t.cursor, step: t.step };
   });
-  expect(afterJump.to - afterJump.from).toBeCloseTo(150, 1);
-  expect(afterJump.from).toBeCloseTo(520, 1);
-  expect(afterJump.to).toBeCloseTo(670, 1);
+  expect(afterJump.to - afterJump.from).toBeCloseTo(zoomedSpan, 1);
+  expect(afterJump.from).toBeCloseTo(640 - zoomedSpan * 0.8, 1);
+  expect(afterJump.to).toBeCloseTo(640 + zoomedSpan * 0.2, 1);
   expect(afterJump.cursor).toBe(640);
   expect(afterJump.step).toBe(10);
   await expect(card.getByTestId('timeline-readout')).toContainText('カーソル: 640.0 ms');
@@ -561,7 +594,7 @@ test('logic analyzer: zoom-preserving failure jump, signal search/hide/restore p
   expect(afterFilters.cursor).toBe(640);
   expect(afterFilters.step).toBe(10);
 
-  // 3. Simultaneous events at 540 ms (×3) show cluster badge and list ALL 3 siblings with non-causal wording.
+  // 3. Simultaneous events at 540 ms (×3): clicking/activating pins cursor at 540.0 ms (NOT 640 ms!) and lists all 3 siblings.
   const cluster = timeline.locator('.sim-cluster');
   await expect(cluster).toHaveCount(1);
   await expect(cluster).toContainText('×3');
@@ -569,6 +602,7 @@ test('logic analyzer: zoom-preserving failure jump, signal search/hide/restore p
   await expect(cluster).toHaveAttribute('role', 'button');
   await cluster.focus();
   await page.keyboard.press('Enter');
+  await expect(card.getByTestId('timeline-readout')).toContainText('カーソル: 540.0 ms');
   const details = timeline.locator('#step-details');
   await expect(details.getByTestId('simultaneous-banner')).toContainText(
     '表示順は因果関係を示しません',
@@ -577,6 +611,21 @@ test('logic analyzer: zoom-preserving failure jump, signal search/hide/restore p
   await expect(details).toContainText('手順 8');
   await expect(details).toContainText('手順 9');
   await expect(details).toContainText('手順 10');
+
+  // Whole-run view + clicking an already-visible event bar preserves whole-run viewport!
+  await card.getByTestId('timeline-whole-run').click();
+  const wholeBefore = await timeline.evaluate((el) => {
+    const t = el as HTMLElement & { from: number; to: number };
+    return { from: t.from, to: t.to };
+  });
+  await timeline.locator('g.step[data-step="2"]').click();
+  const wholeAfter = await timeline.evaluate((el) => {
+    const t = el as HTMLElement & { from: number; to: number; step: number | null };
+    return { from: t.from, to: t.to, step: t.step };
+  });
+  expect(wholeAfter.step).toBe(2);
+  expect(wholeAfter.from).toBeCloseTo(wholeBefore.from, 1);
+  expect(wholeAfter.to).toBeCloseTo(wholeBefore.to, 1);
 
   // Layout check in light & dark modes at desktop width
   expect(await findLayoutProblems(page)).toEqual([]);
@@ -619,52 +668,201 @@ test('logic analyzer: eventless timeline (steps: []) omits event lane cleanly wi
   await expect(card).not.toContainText('0 個の手順');
 });
 
-test('logic analyzer: switching to a new Run clears previous event selection, cursor, and signal filter state', async ({
+test('logic analyzer: switching to a new Run clears cursor, step, viewport, and filters, and ignores in-flight clicks', async ({
   page,
 }) => {
-  const fixtureJson = JSON.stringify(makeRepresentativeTimeline());
-  await page.route('**/api/timeline/*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: fixtureJson,
-    });
+  const warnings: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'warning' || m.type() === 'error') warnings.push(m.text());
   });
 
-  const run1 = await startFailingRun(page);
+  const run1Json = JSON.stringify(makeRepresentativeTimeline());
+  const run2Data = makeEventlessTimeline();
+  run2Data.scenario.recorded_to_ms = 3000;
+  run2Data.scenario.over_at_ms = 3010;
+  run2Data.scenario.end_ms = 3000;
+  run2Data.series[0]!.last_ms = 3000;
+  run2Data.series[0]!.points = [
+    [0, 50],
+    [1500, 90],
+    [3000, 100],
+  ];
+  run2Data.series[1]!.last_ms = 3000;
+  const run2Json = JSON.stringify(run2Data);
+
+  let run1Id = '';
+  let releaseRun2: (() => void) | null = null;
+  let markRun2Requested: (() => void) | null = null;
+  const run2Requested = new Promise<void>((resolve) => {
+    markRun2Requested = resolve;
+  });
+  const run2Gate = new Promise<void>((resolve) => {
+    releaseRun2 = resolve;
+  });
+
+  await page.route('**/api/timeline/*', async (route) => {
+    const url = route.request().url();
+    if (run1Id && url.endsWith(`/api/timeline/${run1Id}`)) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: run1Json });
+      return;
+    }
+    markRun2Requested?.();
+    await run2Gate;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: run2Json });
+  });
+
+  run1Id = await startFailingRun(page);
   await page.goto(`${base}#token=${server.token}`);
   await inSync(page);
 
   const card = page.getByTestId('scenario-card');
   await expect(card.getByTestId('scenario-timeline')).toHaveAttribute(
     'href',
-    new RegExp(`%2Fapi%2Ftimeline%2F${run1}&`),
+    new RegExp(`%2Fapi%2Ftimeline%2F${run1Id}&`),
     { timeout: RUN_TIMEOUT },
   );
 
   const timeline = card.getByTestId('timeline-element');
   await expect(card.getByTestId('timeline-failure-strip')).toBeVisible();
 
-  // Dirty every piece of state on Run 1: select step #8, search "Brake", hide a signal, switch preset
+  // Dirty EVERY piece of state on Run 1: select step #8, pin cursor, click -150 ms, search "Brake", hide a signal, switch preset
+  await card.getByTestId('timeline-window-150').click();
+  await timeline.locator('g.step[data-step="8"]').click();
+  await expect(card.getByTestId('timeline-readout')).toContainText('選んだ手順: 8');
+  await expect(card.getByTestId('timeline-readout')).toContainText('カーソル: 540.0 ms');
   await card.getByTestId('timeline-signal-search').fill('Brake');
   await expect(card.getByTestId('timeline-visible-count')).toHaveText('3 / 6');
   await timeline.locator('button.lane-hide').first().click();
   await expect(card.getByTestId('timeline-hidden-strip')).toBeVisible();
   await card.getByTestId('timeline-preset-inputs').click();
 
-  // Start Run 2 (new session & timeline URL)
-  const run2 = await startFailingRun(page);
-  expect(run2).not.toBe(run1);
+  // Start Run 2 (distinct 0..3000 ms eventless timeline) and verify in-flight click cannot leak hiddenVariables
+  const run2Id = await startFailingRun(page);
+  expect(run2Id).not.toBe(run1Id);
+  await run2Requested;
+  // While Run 2 fetch is in-flight, dispatching a stale variablehide from Run 1 must be ignored.
+  await timeline.evaluate((el) => {
+    el.dispatchEvent(
+      new CustomEvent('variablehide', {
+        detail: { variable: 'Chassis.veh.speed' },
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  releaseRun2!();
+
   await expect(card.getByTestId('scenario-timeline')).toHaveAttribute(
     'href',
-    new RegExp(`%2Fapi%2Ftimeline%2F${run2}&`),
+    new RegExp(`%2Fapi%2Ftimeline%2F${run2Id}&`),
     { timeout: RUN_TIMEOUT },
   );
-  await expect(card.getByTestId('timeline-failure-strip')).toBeVisible();
+  await expect(timeline.locator('.var-name')).toHaveText([
+    'Chassis.veh.speed',
+    'Brake.hyd.pressure',
+  ]);
 
-  // Verify ALL Run 1 filter/hidden state was strictly wiped on Run switch
+  // Verify ALL Run 1 state was strictly wiped on Run switch: cursor, step, viewport, search, preset, hidden chips
   await expect(card.getByTestId('timeline-signal-search')).toHaveValue('');
   await expect(card.getByTestId('timeline-hidden-strip')).toHaveCount(0);
   await expect(card.getByTestId('timeline-preset-all')).toHaveAttribute('aria-pressed', 'true');
-  await expect(card.getByTestId('timeline-visible-count')).toHaveText('6 / 6');
+  await expect(card.getByTestId('timeline-visible-count')).toHaveText('2 / 2');
+  await expect(card.getByTestId('timeline-readout')).not.toContainText('選んだ手順: 8');
+  await expect(card.getByTestId('timeline-readout')).not.toContainText('540.0 ms');
+
+  // Viewport shows Run 2's full 0..3000+ ms range (NOT Run 1's -150 ms window!)
+  const run2View = await timeline.evaluate((el) => {
+    const t = el as HTMLElement & { from: number; to: number };
+    return { from: t.from, to: t.to };
+  });
+  expect(run2View.from).toBe(0);
+  expect(run2View.to).toBeGreaterThanOrEqual(3000);
+  expect(warnings).toEqual([]);
+});
+
+test('logic analyzer: pre-failure -300 ms preset on a short run never shrinks narrower than -150 ms or warns', async ({
+  page,
+}) => {
+  const warnings: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'warning' || m.type() === 'error') warnings.push(m.text());
+  });
+
+  const shortTl = makeRepresentativeTimeline();
+  shortTl.scenario.recorded_to_ms = 250;
+  shortTl.scenario.over_at_ms = 260;
+  shortTl.steps = [
+    {
+      index: 1,
+      line: 5,
+      kind: 'set',
+      name: 'init',
+      text: 'set ADAS.aeb.active = true',
+      status: 'passed',
+      start_ms: 0,
+      at_ms: 0,
+      end_ms: 0,
+      code: null,
+      message: null,
+      lines: [],
+      watch: null,
+      failed: null,
+    },
+    {
+      ...shortTl.steps[4]!,
+      index: 2,
+      start_ms: 200,
+      at_ms: 250,
+      end_ms: 300,
+      watch: {
+        ...shortTl.steps[4]!.watch!,
+        from_ms: 200,
+        to_ms: 300,
+      },
+      failed: {
+        ...shortTl.steps[4]!.failed!,
+        at_ms: 250,
+      },
+    },
+  ];
+  shortTl.series.forEach((s) => {
+    s.last_ms = 250;
+    s.points = s.points.filter((p) => (p[0] as number) <= 250);
+  });
+
+  await page.route('**/api/timeline/*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(shortTl),
+    });
+  });
+
+  const runId = await startFailingRun(page);
+  await page.goto(`${base}#token=${server.token}`);
+  await inSync(page);
+
+  const card = page.getByTestId('scenario-card');
+  await expect(card.getByTestId('scenario-timeline')).toHaveAttribute(
+    'href',
+    new RegExp(`%2Fapi%2Ftimeline%2F${runId}&`),
+    { timeout: RUN_TIMEOUT },
+  );
+  const timeline = card.getByTestId('timeline-element');
+  await expect(card.getByTestId('timeline-failure-strip')).toBeVisible();
+
+  await card.getByTestId('timeline-window-150').click();
+  const v150 = await timeline.evaluate((el) => {
+    const t = el as HTMLElement & { from: number; to: number };
+    return { from: t.from, to: t.to };
+  });
+  await card.getByTestId('timeline-window-300').click();
+  const v300 = await timeline.evaluate((el) => {
+    const t = el as HTMLElement & { from: number; to: number };
+    return { from: t.from, to: t.to };
+  });
+  expect(v300.to - v300.from).toBeGreaterThanOrEqual(v150.to - v150.from);
+  expect(v300.from).toBe(0);
+  expect(v300.to).toBeGreaterThanOrEqual(300);
+  expect(warnings).toEqual([]);
 });

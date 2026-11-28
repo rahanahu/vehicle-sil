@@ -29,8 +29,8 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
 
 /**
  * 実行の時間の軸を、この画面の中に要素 <vehicle-sil-timeline> で出す（開閉できる）。
- * 失敗要約ストリップ、信号検索・プリセット・participant 絞り込み、非表示信号のインライン復元チップを備え、
- * 信号の表示切り替えでズーム範囲・カーソル位置・選択イベントをリセットしない。
+ * 失敗要約ストリップ、単一ナビゲーションバー、信号検索・プリセット・participant 絞り込み、
+ * 非表示信号のインライン復元チップを備え、信号の表示切り替えでズーム・カーソル・選択イベントをリセットしない。
  */
 @Component({
   selector: 'app-timeline-view',
@@ -40,10 +40,11 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
     '(keydown)': 'onHostKeydown($event)',
   },
   template: `
-    <div class="toggle-row">
+    <div class="controls-row">
       <button
         mat-stroked-button
         type="button"
+        class="compact-btn"
         data-testid="timeline-toggle"
         [attr.aria-expanded]="open()"
         (click)="toggle()"
@@ -54,6 +55,65 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
           <ng-container i18n>時間の軸をここに表示</ng-container>
         }
       </button>
+
+      @if (open() && meta()) {
+        <div class="nav-controls" role="group" [attr.aria-label]="navLabel">
+          @if (rangeText(); as range) {
+            <span class="range-text" data-testid="timeline-range">{{ range }}</span>
+          }
+          <button
+            type="button"
+            class="nav-btn"
+            data-testid="timeline-pan-left"
+            [attr.aria-label]="panLeftLabel"
+            [title]="panLeftLabel"
+            [disabled]="atLeftEdge()"
+            (click)="pan(-0.25)"
+          >
+            {{ '◀' }}
+          </button>
+          <button
+            type="button"
+            class="nav-btn"
+            data-testid="timeline-pan-right"
+            [attr.aria-label]="panRightLabel"
+            [title]="panRightLabel"
+            [disabled]="atRightEdge()"
+            (click)="pan(0.25)"
+          >
+            {{ '▶' }}
+          </button>
+          <button
+            type="button"
+            class="nav-btn"
+            data-testid="timeline-zoom-out"
+            (click)="zoomOut()"
+            i18n
+          >
+            縮小
+          </button>
+          <button
+            type="button"
+            class="nav-btn"
+            data-testid="timeline-whole-run"
+            (click)="showWholeRun()"
+            i18n
+          >
+            全体
+          </button>
+          @if (cursor() !== null) {
+            <button
+              type="button"
+              class="nav-btn"
+              data-testid="timeline-unpin"
+              (click)="unpinCursor()"
+              i18n
+            >
+              ピン解除
+            </button>
+          }
+        </div>
+      }
     </div>
 
     @if (mounted() && defined()) {
@@ -71,7 +131,7 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
               <button
                 mat-flat-button
                 type="button"
-                class="jump-failure-btn"
+                class="compact-btn"
                 data-testid="timeline-jump-failure"
                 (click)="jumpToFailure()"
                 i18n
@@ -82,27 +142,24 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
                 <div class="window-group" role="group" [attr.aria-label]="preFailureLabel">
                   <span class="group-label" i18n>失敗前:</span>
                   <button
-                    mat-stroked-button
                     type="button"
-                    class="compact-btn"
+                    class="nav-btn"
                     data-testid="timeline-window-150"
                     (click)="showPreFailureWindow(150)"
                   >
                     {{ '-150 ms' }}
                   </button>
                   <button
-                    mat-stroked-button
                     type="button"
-                    class="compact-btn"
+                    class="nav-btn"
                     data-testid="timeline-window-300"
                     (click)="showPreFailureWindow(300)"
                   >
                     {{ '-300 ms' }}
                   </button>
                   <button
-                    mat-stroked-button
                     type="button"
-                    class="compact-btn"
+                    class="nav-btn"
                     data-testid="timeline-window-all"
                     (click)="showWholeRun()"
                     i18n
@@ -279,6 +336,7 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
           (load)="onLoad($event)"
           (cursorchange)="onCursor($event)"
           (stepselect)="onStep($event)"
+          (viewchange)="onViewChange($event)"
           (variablehide)="onVariableHide($event)"
         />
 
@@ -298,7 +356,8 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
       display: block;
       margin: 0 0 var(--app-space-2);
     }
-    .toggle-row,
+    .controls-row,
+    .nav-controls,
     .failure-actions,
     .window-group,
     .filter-group,
@@ -306,17 +365,16 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 4px var(--app-space-2);
-    }
-    .window-group,
-    .filter-group {
-      gap: 4px;
+      gap: 4px 6px;
       min-inline-size: 0;
     }
+    .nav-controls {
+      margin-inline-start: auto;
+    }
     .analyzer-body {
-      margin-block-start: var(--app-space-2);
+      margin-block-start: var(--app-space-1);
       display: grid;
-      gap: var(--app-space-2);
+      gap: 6px;
       min-inline-size: 0;
     }
     .analyzer-body[hidden] {
@@ -329,8 +387,8 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 6px 8px;
-      padding: 6px 10px;
+      gap: 4px 8px;
+      padding: 4px 8px;
       border: 1px solid var(--mat-sys-outline-variant);
       border-radius: var(--mat-sys-corner-small);
       background: var(--mat-sys-surface-container-low);
@@ -338,7 +396,6 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
     }
     .failure-strip {
       justify-content: space-between;
-      padding: var(--app-space-2) var(--app-space-3);
       border-color: var(--mat-sys-error);
       border-inline-start-width: 4px;
       background: var(--mat-sys-error-container);
@@ -348,9 +405,9 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
       display: flex;
       flex-wrap: wrap;
       align-items: baseline;
-      gap: 4px var(--app-space-2);
+      gap: 2px 8px;
       min-inline-size: 0;
-      flex: 1 1 260px;
+      flex: 1 1 240px;
     }
     .failure-badge {
       font-weight: 700;
@@ -362,34 +419,41 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
     }
     .failure-detail {
       font:
-        12px/1.4 ui-monospace,
+        12px/1.35 ui-monospace,
         'Cascadia Mono',
         Menlo,
         Consolas,
         monospace;
       overflow-wrap: anywhere;
     }
-    .group-label {
+    .group-label,
+    .range-text,
+    .visible-count {
       font: var(--mat-sys-label-medium);
+      font-variant-numeric: tabular-nums;
       color: var(--mat-sys-on-surface-variant);
       white-space: nowrap;
     }
     .failure-strip .group-label {
       color: inherit;
     }
+    .visible-count {
+      margin-inline-start: auto;
+    }
     .compact-btn {
       min-inline-size: 0;
       padding-inline: 10px;
+      block-size: 32px;
     }
     .search-group {
       position: relative;
-      flex: 1 1 180px;
-      max-inline-size: 280px;
+      flex: 1 1 160px;
+      max-inline-size: 260px;
     }
     .search-input {
       box-sizing: border-box;
       inline-size: 100%;
-      padding: 4px 26px 4px 8px;
+      padding: 3px 24px 3px 8px;
       border: 1px solid var(--mat-sys-outline);
       border-radius: var(--mat-sys-corner-small);
       background: var(--mat-sys-surface);
@@ -411,21 +475,27 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
     }
     .divider {
       inline-size: 1px;
-      block-size: 20px;
+      block-size: 18px;
       background: var(--mat-sys-outline-variant);
     }
+    .nav-btn,
     .chip-btn,
     .restore-chip {
       border: 1px solid var(--mat-sys-outline-variant);
       border-radius: 14px;
-      padding: 3px 10px;
+      padding: 2px 9px;
       background: var(--mat-sys-surface);
       color: var(--mat-sys-on-surface);
       font: var(--mat-sys-label-medium);
       cursor: pointer;
-    }
-    .chip-btn {
       white-space: nowrap;
+    }
+    .nav-btn {
+      border-radius: 6px;
+    }
+    .nav-btn:disabled {
+      opacity: 0.45;
+      cursor: default;
     }
     .chip-btn[aria-pressed='true'] {
       background: var(--mat-sys-secondary-container);
@@ -434,26 +504,20 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
       font-weight: 600;
     }
     .search-input:focus-visible,
+    .nav-btn:focus-visible,
     .chip-btn:focus-visible,
     .restore-chip:focus-visible,
     .restore-all-btn:focus-visible {
       outline: 2px solid var(--mat-sys-primary);
       outline-offset: 2px;
     }
-    .visible-count {
-      margin-inline-start: auto;
-      font: var(--mat-sys-label-medium);
-      font-variant-numeric: tabular-nums;
-      color: var(--mat-sys-on-surface-variant);
-      white-space: nowrap;
-    }
     .hidden-strip {
       border-style: dashed;
       background: var(--mat-sys-surface-container-lowest);
     }
     .restore-chip {
-      padding: 2px 8px;
       font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+      white-space: normal;
       overflow-wrap: anywhere;
     }
     .restore-all-btn {
@@ -498,8 +562,8 @@ export class TimelineView {
   private pendingStep: number | null = null;
   private pendingAutoFailure = false;
 
-  /** 標準 GUI では重複する見出し・要約・操作説明・表を要素側で隠す。 */
-  protected readonly hidden = 'header summary help tables';
+  /** 標準 GUI では重複する見出し・要約・操作説明・表・ツールバーを要素側で隠す。 */
+  protected readonly hidden = 'header summary help tables toolbar';
   protected readonly src = computed(() => `/${this.timelineUrl()}`);
   protected readonly open = signal(false);
   protected readonly mounted = signal(false);
@@ -509,6 +573,7 @@ export class TimelineView {
   protected readonly cursor = signal<number | null>(null);
   protected readonly step = signal<number | null>(null);
   protected readonly meta = signal<VehicleSilTimelineLoadDetail | null>(null);
+  protected readonly viewRange = signal<{ from: number; to: number } | null>(null);
 
   /** 信号フィルタ状態（表示専用。ズーム・カーソル・選択イベントを変えない）。 */
   protected readonly searchQuery = signal('');
@@ -522,6 +587,9 @@ export class TimelineView {
   protected readonly presetLabel = $localize`信号の絞り込み`;
   protected readonly participantLabel = $localize`participant で絞り込み`;
   protected readonly preFailureLabel = $localize`失敗前の表示範囲`;
+  protected readonly navLabel = $localize`時間軸の操作`;
+  protected readonly panLeftLabel = $localize`左へ移動`;
+  protected readonly panRightLabel = $localize`右へ移動`;
 
   protected readonly allVariables = computed<VehicleSilTimelineLoadVariable[]>(
     () => this.meta()?.variables ?? [],
@@ -537,6 +605,25 @@ export class TimelineView {
   protected readonly noMatchingVariables = computed(
     () => this.allVariables().length > 0 && this.visibleVariables().length === 0,
   );
+
+  protected readonly rangeText = computed<string | null>(() => {
+    const r = this.viewRange();
+    if (!r) return null;
+    const fmt = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(1))));
+    return `${fmt(r.from)}–${fmt(r.to)} ms`;
+  });
+
+  protected readonly atLeftEdge = computed(() => {
+    const m = this.meta();
+    const r = this.viewRange();
+    return !m || !r || r.from <= m.start + 1e-6;
+  });
+
+  protected readonly atRightEdge = computed(() => {
+    const m = this.meta();
+    const r = this.viewRange();
+    return !m || !r || r.to >= m.end - 1e-6;
+  });
 
   protected readonly visibleVariables = computed<VehicleSilTimelineLoadVariable[]>(() => {
     const vars = this.allVariables();
@@ -593,12 +680,18 @@ export class TimelineView {
         this.cursor.set(null);
         this.step.set(shouldExpand ? targetStep : null);
         this.meta.set(null);
+        this.viewRange.set(null);
         this.searchQuery.set('');
         this.preset.set('all');
         this.hiddenVariables.set(new Set());
         this.hiddenParticipants.set(new Set());
         this.open.set(shouldExpand);
         this.mounted.set(shouldExpand);
+        const el = this.timelineEl()?.nativeElement;
+        if (el) {
+          el.from = null;
+          el.to = null;
+        }
         if (shouldExpand) {
           this.autoExpandedUrl = url;
           this.ensureDefined();
@@ -634,7 +727,7 @@ export class TimelineView {
   /** 失敗時刻へ移動する（拡大中はズーム幅を維持して失敗時刻を右寄りに配置）。 */
   protected jumpToFailure(): void {
     const el = this.timelineEl()?.nativeElement;
-    if (!el) return;
+    if (!el || !this.meta()) return;
     el.jumpToFailure({ preserveZoom: true });
     el.scrollIntoView({ block: 'nearest' });
   }
@@ -642,23 +735,32 @@ export class TimelineView {
   /** 失敗前の明示的な時間窓（-150 ms / -300 ms など）に切り替え、カーソルを失敗時刻に固定する。 */
   protected showPreFailureWindow(leadMs: number): void {
     const el = this.timelineEl()?.nativeElement;
-    const m = this.meta();
-    const f = m?.failure;
-    if (!el || !m || !f || f.at === null) return;
-    const tail = leadMs * 0.25;
-    const from = Math.max(m.start, f.at - leadMs);
-    const to = Math.min(m.end, f.at + tail);
-    el.from = from;
-    el.to = Math.max(to, from + 1);
-    el.jumpToFailure({ preserveZoom: true });
+    if (!el || !this.meta()?.failure) return;
+    el.jumpToFailure({ leadMs });
   }
 
   protected showWholeRun(): void {
     const el = this.timelineEl()?.nativeElement;
-    const m = this.meta();
-    if (!el || !m) return;
-    el.from = m.start;
-    el.to = m.end;
+    if (!el || !this.meta()) return;
+    el.resetView();
+  }
+
+  protected pan(fraction: number): void {
+    const el = this.timelineEl()?.nativeElement;
+    if (!el || !this.meta()) return;
+    el.pan(fraction);
+  }
+
+  protected zoomOut(): void {
+    const el = this.timelineEl()?.nativeElement;
+    if (!el || !this.meta()) return;
+    el.zoomOut();
+  }
+
+  protected unpinCursor(): void {
+    const el = this.timelineEl()?.nativeElement;
+    if (!el || !this.meta()) return;
+    el.unpinCursor();
   }
 
   protected failureHeading(f: VehicleSilTimelineLoadFailure): string {
@@ -741,9 +843,7 @@ export class TimelineView {
       this.pendingStep = null;
       this.pendingAutoFailure = false;
       el.focusStep(idx, { preserveZoom: false });
-      return;
-    }
-    if (this.pendingAutoFailure) {
+    } else if (this.pendingAutoFailure) {
       this.pendingAutoFailure = false;
       if (detail.failure) {
         el.jumpToFailure({ preserveZoom: false });
@@ -752,18 +852,34 @@ export class TimelineView {
         if (target !== null) el.focusStep(target, { preserveZoom: false });
       }
     }
+    this.step.set(el.step);
+    this.cursor.set(el.cursor);
+    this.viewRange.set(
+      el.from !== null && el.to !== null
+        ? { from: el.from, to: el.to }
+        : { from: detail.start, to: detail.end },
+    );
   }
 
   protected onCursor(event: Event): void {
+    if (!this.meta()) return;
     this.cursor.set((event as VehicleSilTimelineEventMap['cursorchange']).detail.cursor);
   }
 
   protected onStep(event: Event): void {
+    if (!this.meta()) return;
     this.step.set((event as VehicleSilTimelineEventMap['stepselect']).detail.step);
+  }
+
+  protected onViewChange(event: Event): void {
+    if (!this.meta()) return;
+    const { from, to } = (event as VehicleSilTimelineEventMap['viewchange']).detail;
+    this.viewRange.set({ from, to });
   }
 
   protected onVariableHide(event: Event): void {
     event.preventDefault();
+    if (!this.meta()) return;
     const name = (event as VehicleSilTimelineEventMap['variablehide']).detail.variable;
     this.hiddenVariables.update((prev) => {
       const next = new Set(prev);
@@ -774,7 +890,7 @@ export class TimelineView {
 
   protected onHostKeydown(event: KeyboardEvent): void {
     if (!this.open() || event.ctrlKey || event.metaKey || event.altKey) return;
-    const target = event.target as HTMLElement | null;
+    const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
     const inField =
       target !== null &&
       (target.tagName === 'INPUT' ||

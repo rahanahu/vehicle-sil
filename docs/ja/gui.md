@@ -561,7 +561,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 
 - ファイルは、最後の 4 つの実行より前のものと、サーバーが止まった後には残りません。残したいときは、それまでにトークンを付けて `api/timeline/<run_id>` を取るか、自分で `vehicle_sil_launch run --scenario <シナリオ> --timeline <ファイル>` で実行します。
 - サーバーの API は、要約の `scenario.timeline_url` と `GET api/timeline/<run_id>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオの実行の時間の軸apitimeline) の「シナリオの実行の時間の軸（`api/timeline`）」）、ライブラリでは、セッションのコピーの `scenario` の `timelineUrl` です。
-- 「シナリオ」のカードには「時間の軸をここに表示」もあり、時間の軸が利用可能になるとコンテンツ全幅で展開し、`<vehicle-sil-timeline>` 要素（`hide="header summary help tables"`。「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）を表示します。シナリオが失敗終了したときは自動で展開し、波形上のコンパクトな失敗要約ストリップ、ズーム維持の「失敗時刻へ移動」ボタン、明示的な失敗前プリセット（`-150 ms`、`-300 ms`、「全体」）、および信号フィルタバー（検索、「すべて」・「失敗に関係」・「失敗直前に変化」・「入力」・「出力」プリセット、participant チップ、レーンの `×` 非表示とインライン復元チップ）を備えます。信号の検索・非表示・復元は表示のみを変え、ズーム・カーソル・選択イベントを維持します。別の実行へ切り替えると、選択・カーソル・フィルタ状態はすべて初期化されます。各手順行の「タイムラインで表示」を押すと展開して該当手順へジャンプします（拡大中はズーム幅を維持）。
+- 「シナリオ」のカードには「時間の軸をここに表示」もあり、時間の軸が利用可能になるとコンテンツ全幅で展開し、`<vehicle-sil-timeline>` 要素（`hide="header summary help tables toolbar"`。「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）を表示します。シナリオが失敗終了したときは自動で展開し、単一のコンパクトな操作バー、波形上の失敗要約ストリップ、ズーム維持の「失敗時刻へ移動」ボタン、明示的な失敗前プリセット（`-150 ms`、`-300 ms`、「全体」）、および信号フィルタバー（検索、「すべて」・「失敗に関係」・「失敗直前に変化」・「入力」・「出力」プリセット、participant チップ、レーンの `×` 非表示とインライン復元チップ）を備えます。信号の検索・非表示・復元は表示のみを変え、ズーム・カーソル・選択イベントを維持します。別の実行へ切り替えると、選択・カーソル・表示範囲・フィルタ状態はすべて初期化されます。各手順行の「タイムラインで表示」を押すと展開して該当手順へジャンプします（拡大中はズーム幅を維持）。
 
 ### 操作をシナリオとして保存する
 
@@ -1318,15 +1318,15 @@ panel.addEventListener('vsil-write-result', (event) => {
 | `compact` | `compact` | 真偽（属性があれば真） | 偽 | 狭い所向け: レーンの見出しを狭く、数のレーンを低く、文字を小さく |
 | `theme` | `theme` | `light`、`dark`、`auto` | `auto` | 色。`auto` は、要素を置いたページの `color-scheme` に従います。`light dark`（サンプルの画面と時間の軸のページの宣言）ならブラウザーの明るい・暗いの設定に、ページが宣言していなければ明るい色になります |
 
-`cursor`、`step`、`from`、`to` のゲッターは、いま出しているもの（利用者が動かした後も）を返します。メソッドは `reload()`（`src` を読み直す）、`jumpToFailure(options?)`（失敗時刻へ移動し、カーソルを固定して失敗手順を選択。拡大中は既定でズーム幅を維持）、および `focusStep(index, options?)`（1 始まりの手順番号にフォーカスしてカーソルを固定。`{ preserveZoom: true }` で拡大中のズーム幅を維持）です。
+`cursor`、`step`、`from`、`to` のゲッターは、いま出しているもの（利用者が動かした後も）を返します。メソッドは `reload()`（`src` を読み直す）、`jumpToFailure(options?)`（失敗時刻へ移動してカーソルを固定・失敗手順を選択。拡大中は既定でズーム幅を維持、`leadMs` 指定時は `from`/`to` を固定せず失敗前ウィンドウを表示）、`focusStep(index, options?)`（1 始まりの手順番号にフォーカスしてカーソルを固定。`{ preserveZoom: true }` で表示範囲を維持）、`resetView()`（実行の全体を表示）、`pan(fraction)`（現在の表示幅の割合で横移動）、`zoomOut()`（中央基準で縮小）、`unpinCursor()`（カーソル固定と `Δt` 基準を解除）です。`variables` を設定している間、要素内の participant チェックボックスは自動で隠れ、呼び出し側のフィルタと競合しません。
 
 | 事象 | いつ | `detail` |
 |---|---|---|
 | `load` | ファイルを出した | `{ file, scenario, status, start, end, recordedTo, stepCount, failure, variables }`（`status` はファイルのとおり。`start` と `end` は実行の全体、ms。`variables` は `relatedToFailure`・`changedNearFailure` を含む変数メタデータ） |
 | `error` | ファイルを出せない。理由は要素の中にも出します | `{ message, status }`（`status` は HTTP の状態、または `null`） |
 | `cursorchange` | 利用者がカーソルを動かした・固定した（ポインター、矢印のキー、ジャンプメソッド） | `{ cursor }` |
-| `stepselect` | 利用者が手順を選んだ（図の上、または表の番号） | `{ step }` |
-| `viewchange` | 利用者が拡大・縮小した、出す範囲を動かした | `{ from, to }` |
+| `stepselect` | 利用者が手順を選んだ（図の上、表の番号、または `jumpToFailure()` / `focusStep()`） | `{ step }` |
+| `viewchange` | 利用者が拡大・縮小した、出す範囲を動かした（`jumpToFailure()`・`focusStep()`・`resetView()`・`pan()`・`zoomOut()` を含む） | `{ from, to }` |
 | `variablehide` | 利用者が変数レーンの非表示（`×`）ボタンを押した（バブルしキャンセル可能。呼び出し側が `variables` を管理する場合は `preventDefault()` を呼ぶ） | `{ variable }` |
 
 - 事象は `CustomEvent` です。`load` と `error` は親へ伝わりません（bubbles が偽）。ほかは伝わります。

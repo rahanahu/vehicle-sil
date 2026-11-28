@@ -100,6 +100,11 @@ export interface VehicleSilTimelineLoadFailure {
 export interface VehicleSilTimelineFocusOptions {
   /** Keep the current zoom width when already zoomed in (defaults to true). */
   preserveZoom?: boolean;
+  /**
+   * Explicit pre-failure lead window in virtual ms (for `jumpToFailure()`).
+   * Frames `[failure.at - leadMs, failure.at + leadMs * 0.25]` clamped to the run domain without writing sticky `from`/`to`.
+   */
+  leadMs?: number;
 }
 
 export interface VehicleSilTimelineLoadDetail {
@@ -177,6 +182,14 @@ export interface VehicleSilTimelineElement extends HTMLElement {
   jumpToFailure(options?: VehicleSilTimelineFocusOptions): boolean;
   /** Focuses a step by its 1-based index, pinning the cursor to its timestamp (preserves zoom when requested). */
   focusStep(index: number, options?: VehicleSilTimelineFocusOptions): boolean;
+  /** Resets the horizontal view to the whole run without modifying sticky `from`/`to` options. */
+  resetView(): void;
+  /** Pans the current horizontal view by `fraction` of the current span (e.g. -0.25 left, +0.25 right), clamped to the run domain. */
+  pan(fraction: number): void;
+  /** Widens the current horizontal view around its midpoint, clamped to the run domain. */
+  zoomOut(): void;
+  /** Clears a pinned cursor and any Δt reference marker without changing zoom or step selection. */
+  unpinCursor(): void;
 
   addEventListener<K extends keyof VehicleSilTimelineEventMap>(
     type: K,

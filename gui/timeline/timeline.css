@@ -66,9 +66,10 @@
 :host([compact]) {
   font-size: 12px;
 }
-/* while src loads, the file shown before is dimmed */
+/* while src loads, the file shown before is dimmed and non-interactive */
 :host([aria-busy='true']) #view {
   opacity: 0.6;
+  pointer-events: none;
 }
 /* hide="<parts>": the parts a screen does without */
 :host([hide~='header']) #head,
@@ -82,11 +83,29 @@
   display: none !important;
 }
 :host([compact]) :is(.lane, .cursor-line, .hover-line, .ref-line) {
-  --lane-head-width: 180px;
+  --lane-head-width: 196px;
+}
+:host([compact]) .lane-head {
+  padding: 2px 6px;
+  line-height: 1.25;
+}
+:host([compact]) .lane-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+:host([compact]) .legend {
+  gap: 1px 8px;
+  font-size: 11px;
+}
+:host([compact]) .readout {
+  min-height: 1.25em;
+  font-size: 11.5px;
 }
 @container (max-width: 719px) {
   :host([compact]) :is(.lane, .cursor-line, .hover-line, .ref-line) {
-    --lane-head-width: 120px;
+    --lane-head-width: 132px;
   }
 }
 @container (max-width: 479px) {
@@ -340,7 +359,16 @@ summary {
 }
 .lane-title {
   min-width: 0;
-  overflow-wrap: anywhere;
+  flex: 1 1 auto;
+}
+.var-name {
+  font-weight: 600;
+}
+:host([compact]) .var-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 button.lane-hide {
   flex: none;
@@ -368,7 +396,8 @@ button.lane-hide:focus-visible {
   touch-action: none;
   cursor: crosshair;
 }
-.lane-plot.panning {
+.lane-plot.panning,
+#chart[data-panning] .lane-plot {
   cursor: grabbing;
 }
 .lane.axis {

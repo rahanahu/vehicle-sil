@@ -979,6 +979,7 @@
       overAt: isNum(sc.over_at_ms) ? sc.over_at_ms : null,
       timeStep,
       steps: tl.steps,
+      simGroups: sameStartGroups(tl.steps),
       lines,
       vars,
       byName,
@@ -1059,11 +1060,20 @@
     return [Math.max(model.domain[0], from - pad), Math.min(model.domain[1], to + pad)];
   }
 
-  /** View for jumping to the failure: preserves zoom span (placing failure at ~80%) when zoomed in. */
-  function failureJumpView(model, currentView, preserveZoom = true) {
+  /** View for jumping to the failure: honors explicit leadMs, or preserves zoom span (~80% pre-failure) when zoomed in. */
+  function failureJumpView(model, currentView, optionsOrPreserve = true) {
     const f = model.failure;
     if (!f || !isNum(f.at)) return currentView ?? model.domain;
     const [d0, d1] = model.domain;
+    const opts = isObject(optionsOrPreserve)
+      ? optionsOrPreserve
+      : { preserveZoom: optionsOrPreserve !== false };
+    if (isNum(opts.leadMs) && opts.leadMs > 0) {
+      const t0 = Math.max(d0, f.at - opts.leadMs);
+      const t1 = Math.min(d1, f.at + opts.leadMs * 0.25);
+      return [t0, Math.max(t1, t0 + 1e-9)];
+    }
+    const preserveZoom = opts.preserveZoom !== false;
     const domainSpan = d1 - d0;
     const curSpan = currentView ? currentView[1] - currentView[0] : domainSpan;
     if (preserveZoom && currentView && curSpan > 0 && curSpan < domainSpan * 0.98) {
@@ -1081,21 +1091,30 @@
     return initialView(model);
   }
 
-  /** View for focusing a step: preserves zoom span when zoomed in if preserveZoom is true. */
+  /** View for focusing a step: preserves viewport when already visible (including whole-run zoom) if preserveZoom is true. */
   function stepFocusView(model, st, currentView, preserveZoom = false) {
     if (!st || !isNum(st.start_ms)) return currentView ?? model.domain;
-    if (st.status === 'failed' && model.failure && model.failure.step.index === st.index) {
-      return failureJumpView(model, currentView, preserveZoom);
-    }
     const [d0, d1] = model.domain;
     const domainSpan = d1 - d0;
     const curSpan = currentView ? currentView[1] - currentView[0] : domainSpan;
-    if (preserveZoom && currentView && curSpan > 0 && curSpan < domainSpan * 0.98) {
-      const target = st.start_ms;
-      const margin = curSpan * 0.08;
+    const target =
+      st.status === 'failed'
+        ? isObject(st.failed) && isNum(st.failed.at_ms)
+          ? st.failed.at_ms
+          : isNum(st.at_ms)
+            ? st.at_ms
+            : st.start_ms
+        : st.start_ms;
+    if (preserveZoom && currentView && curSpan > 0) {
+      const margin = curSpan * 0.02;
       if (target >= currentView[0] + margin && target <= currentView[1] - margin) {
         return [currentView[0], currentView[1]];
       }
+    }
+    if (st.status === 'failed' && model.failure && model.failure.step.index === st.index) {
+      return failureJumpView(model, currentView, preserveZoom);
+    }
+    if (preserveZoom && currentView && curSpan > 0 && curSpan < domainSpan * 0.98) {
       let t0 = target - curSpan * 0.5;
       let t1 = t0 + curSpan;
       if (t0 < d0) {
@@ -1294,6 +1313,19 @@
       for (const l of model.lines) {
         if (l.step === f.step.index && typeof l.variable === 'string') related.add(l.variable);
       }
+      // Include signals written at the exact same virtual start timestamp as the failed step.
+      if (isNum(f.step.start_ms)) {
+        const simAt = f.step.start_ms;
+        const simStepIndices = new Set(
+          model.steps.filter((st) => st.start_ms === simAt).map((st) => st.index),
+        );
+        for (const l of model.lines) {
+          if (simStepIndices.has(l.step) && typeof l.variable === 'string') related.add(l.variable);
+        }
+        for (const v of model.vars) {
+          if (v.written && v.written.t.includes(simAt)) related.add(v.name);
+        }
+      }
     }
     const nearWindow = Math.max(150, (model.timeStep ?? 10) * 15);
     return {
@@ -1351,13 +1383,18 @@
   /** Round tick values for an axis, about `count` of them. */
   function niceTicks(t0, t1, count) {
     const span = t1 - t0;
-    if (!(span > 0)) return [t0];
+    if (!(span > 0) || !Number.isFinite(span)) return [t0];
     const raw = span / Math.max(1, count);
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
+    if (!(step > 0) || !Number.isFinite(step)) return [t0];
     const out = [];
-    for (let t = Math.ceil(t0 / step) * step; t <= t1 + step * 1e-9; t += step)
+    for (let t = Math.ceil(t0 / step) * step; t <= t1 + step * 1e-9;) {
       out.push(Number(t.toPrecision(12)));
+      const next = t + step;
+      if (!(next > t) || out.length >= 200) break;
+      t = next;
+    }
     return out;
   }
 
@@ -2189,10 +2226,12 @@
   function renderParticipants(m) {
     const names = [...new Set(m.vars.map((v) => v.participant))];
     const box = $('participants');
-    if (names.length < 2) {
+    if (names.length < 2 || current.options.variables !== null) {
+      box.hidden = true;
       box.replaceChildren();
       return;
     }
+    box.hidden = false;
     box.replaceChildren(
       h('span', { class: 'muted', text: `${t('participants.label')} ` }),
       ...names.map((p) =>
@@ -2407,8 +2446,7 @@
     const m = state.model;
     const f = m?.failure;
     if (!f) return false;
-    const preserve = options?.preserveZoom !== false;
-    const next = failureJumpView(m, state.view, preserve);
+    const next = failureJumpView(m, state.view, options ?? { preserveZoom: true });
     const stepChanged = f.step.index !== state.step;
     const targetAt = isNum(f.at) ? f.at : isNum(f.step.start_ms) ? f.step.start_ms : null;
     const cursorChanged = targetAt !== null && targetAt !== state.cursor;
@@ -2431,10 +2469,18 @@
     const st = stepOf(index);
     if (!m || !st) return false;
     const preserve = Boolean(options?.preserveZoom);
-    if (st.status === 'failed' && m.failure && m.failure.step.index === st.index) {
-      return jumpToFailureImpl({ preserveZoom: preserve });
-    }
-    const targetAt = isNum(st.start_ms) ? st.start_ms : isNum(st.at_ms) ? st.at_ms : null;
+    const targetAt =
+      st.status === 'failed'
+        ? isObject(st.failed) && isNum(st.failed.at_ms)
+          ? st.failed.at_ms
+          : isNum(st.at_ms)
+            ? st.at_ms
+            : st.start_ms
+        : isNum(st.start_ms)
+          ? st.start_ms
+          : isNum(st.at_ms)
+            ? st.at_ms
+            : null;
     const stepChanged = st.index !== state.step;
     const cursorChanged = targetAt !== null && targetAt !== state.cursor;
     state.step = st.index;
@@ -2446,6 +2492,41 @@
     syncStepSelection();
     if (isNum(st.start_ms)) setView(stepFocusView(m, st, state.view, preserve));
     else renderChart();
+    if (cursorChanged) emit('cursorchange', { cursor: state.cursor });
+    if (stepChanged) emit('stepselect', { step: state.step });
+    return true;
+  }
+
+  /** Focuses a simultaneous-timestamp cluster: pins cursor at the exact cluster virtual timestamp and lists all siblings. */
+  function focusClusterImpl(clusterAt, stepIndex) {
+    const m = state.model;
+    const st = stepOf(stepIndex);
+    if (!m || !st || !isNum(clusterAt)) return false;
+    const stepChanged = st.index !== state.step;
+    const cursorChanged = clusterAt !== state.cursor;
+    state.step = st.index;
+    state.cursor = clusterAt;
+    state.pinned = true;
+    state.pinnedCursor = clusterAt;
+    syncStepSelection();
+    const [v0, v1] = state.view;
+    const span = v1 - v0;
+    const inView = clusterAt >= v0 + span * 0.02 && clusterAt <= v1 - span * 0.02;
+    if (inView) {
+      renderChart();
+    } else {
+      const [d0, d1] = m.domain;
+      let t0 = clusterAt - span * 0.5;
+      let t1 = t0 + span;
+      if (t0 < d0) {
+        t0 = d0;
+        t1 = Math.min(d1, d0 + span);
+      } else if (t1 > d1) {
+        t1 = d1;
+        t0 = Math.max(d0, d1 - span);
+      }
+      setView([t0, Math.max(t1, t0 + 1e-9)]);
+    }
     if (cursorChanged) emit('cursorchange', { cursor: state.cursor });
     if (stepChanged) emit('stepselect', { step: state.step });
     return true;
@@ -2482,9 +2563,9 @@
     const compact = current.options.compact;
     const head = compact
       ? chart.clientWidth >= 720
-        ? 180
+        ? 196
         : chart.clientWidth >= 480
-          ? 120
+          ? 132
           : 0
       : chart.clientWidth >= 720
         ? 220
@@ -2570,6 +2651,7 @@
     const chart = $('chart');
     chart.removeAttribute('data-hover');
     chart.removeAttribute('data-pinned-hover');
+    renderParticipants(m);
     renderHiddenVars();
     const children = [axisLane(scale)];
     const { inputs, others, groups, missing } = lanesToDraw(m);
@@ -2632,7 +2714,6 @@
       h('div', { class: 'lane-head' }, head),
       h('div', { class: 'lane-plot' }, svg),
     );
-    attachPointer(svg, scale, height);
     return { lane, svg };
   }
 
@@ -2670,12 +2751,28 @@
     commonBack(svg, m, scale, height);
     const ticks = niceTicks(scale.t0, scale.t1, Math.max(2, Math.floor(scale.width / 90)));
     const tickBoxes = [];
+    let lastTickRight = -Infinity;
     for (const tk of ticks) {
       const x = scale.x(tk);
       const label = fmtMs(tk);
-      tickBoxes.push([x, x + estimateTextWidth(label) + 6]);
+      const lw = estimateTextWidth(label);
       s('line', { class: 'tick', x1: x, x2: x, y1: height - 6, y2: height }, svg);
-      s('text', { class: 'tick-label', x: x + 3, y: height - 8, text: label }, svg);
+      if (x + 3 + lw <= scale.width - 2) {
+        if (x + 3 >= lastTickRight + 4) {
+          tickBoxes.push([x + 3, x + 3 + lw]);
+          lastTickRight = x + 3 + lw;
+          s('text', { class: 'tick-label', x: x + 3, y: height - 8, text: label }, svg);
+        }
+      } else if (x - 4 - lw >= Math.max(2, lastTickRight + 4)) {
+        // Flip near-right-edge tick labels inward so ticks like 700 ms / 1000 ms never clip mid-character.
+        tickBoxes.push([x - 4 - lw, x - 4]);
+        lastTickRight = x - 4;
+        s(
+          'text',
+          { class: 'tick-label', x: x - 4, y: height - 8, 'text-anchor': 'end', text: label },
+          svg,
+        );
+      }
     }
     // Label the shaded unrecorded tail without colliding with axis tick labels.
     if (m.recordedTo !== null && m.recordedTo < scale.t1) {
@@ -2708,12 +2805,25 @@
 
   function stepLane(m, scale) {
     const { items, rows, count } = layoutStepItems(m.steps, scale, m.domain[1]);
-    const simGroups = sameStartGroups(m.steps);
+    const simGroups = m.simGroups ?? sameStartGroups(m.steps);
     const visibleClusters = [];
     for (const [at, list] of simGroups) {
       if (at >= scale.t0 && at <= scale.t1) visibleClusters.push({ at, steps: list });
     }
-    const clusterH = visibleClusters.length ? 20 : 0;
+    visibleClusters.sort((a, b) => a.at - b.at);
+    // Horizontally de-conflict adjacent ×N cluster badges across sub-rows when clusters sit close in pixels.
+    const clusterBadgeBoxes = visibleClusters.map((cl) => {
+      const x = scale.x(cl.at);
+      const badge = t('step.simultaneousBadge', { count: cl.steps.length });
+      const bw = Math.max(22, estimateTextWidth(badge) + 8);
+      const bx = Math.min(Math.max(2, x - bw / 2), Math.max(2, scale.width - bw - 2));
+      return { cl, x, badge, bw, bx, x0: bx, x1: bx + bw };
+    });
+    const packedClusters = clusterBadgeBoxes.length
+      ? packRows(clusterBadgeBoxes, 4)
+      : { rows: [], count: 0 };
+    const clusterRowH = 18;
+    const clusterH = clusterBadgeBoxes.length ? packedClusters.count * clusterRowH + 2 : 0;
     const height = clusterH + count * STEP_ROW + 6;
     const head = h(
       'div',
@@ -2725,12 +2835,9 @@
     commonBack(svg, m, scale, height);
 
     // Draw simultaneous-timestamp tie lines and clickable/focusable ×N badges.
-    for (const cl of visibleClusters) {
-      const x = scale.x(cl.at);
-      s('line', { class: 'sim-tie', x1: x, x2: x, y1: 16, y2: height }, svg);
-      const badge = t('step.simultaneousBadge', { count: cl.steps.length });
-      const bw = Math.max(22, estimateTextWidth(badge) + 8);
-      const bx = Math.min(Math.max(2, x - bw / 2), Math.max(2, scale.width - bw - 2));
+    clusterBadgeBoxes.forEach(({ cl, x, badge, bw, bx }, ci) => {
+      const cy = packedClusters.rows[ci] * clusterRowH + 2;
+      s('line', { class: 'sim-tie', x1: x, x2: x, y1: cy + 15, y2: height }, svg);
       const targetStep = cl.steps.find((st) => st.status === 'failed') ?? cl.steps[0];
       const cg = s(
         'g',
@@ -2744,8 +2851,8 @@
         },
         svg,
       );
-      s('rect', { x: bx, y: 2, width: bw, height: 15, rx: 7 }, cg);
-      s('text', { x: bx + bw / 2, y: 13, 'text-anchor': 'middle', text: badge }, cg);
+      s('rect', { x: bx, y: cy, width: bw, height: 15, rx: 7 }, cg);
+      s('text', { x: bx + bw / 2, y: cy + 11, 'text-anchor': 'middle', text: badge }, cg);
       tooltip(
         cg,
         [
@@ -2757,10 +2864,10 @@
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           e.stopPropagation();
-          focusStepImpl(targetStep.index, { preserveZoom: true });
+          focusClusterImpl(cl.at, targetStep.index);
         }
       });
-    }
+    });
 
     items.forEach((it, i) => {
       const y = clusterH + rows[i] * STEP_ROW + 4;
@@ -2848,7 +2955,7 @@
           ? Math.max(x0, 0) + 8
           : it.inside
             ? Math.max(x0, 0) + 5
-            : Math.min(scale.width, x1) + 5;
+            : Math.min(scale.width, scale.x(it.limit ?? it.end)) + 5;
         s(
           'text',
           {
@@ -2934,7 +3041,11 @@
           'div',
           { class: 'lane-title' },
           label ? h('span', { class: 'var-label', text: label }) : null,
-          h('code', { class: `var-name${v.failing ? ' failing' : ''}`, text: v.name }),
+          h('code', {
+            class: `var-name${v.failing ? ' failing' : ''}`,
+            title: v.name,
+            text: v.name,
+          }),
         ),
         h('button', {
           type: 'button',
@@ -2956,7 +3067,7 @@
           text: '×',
         }),
       ),
-      h('div', { class: 'muted small', text: meta }),
+      h('div', { class: 'lane-meta muted small', title: meta, text: meta }),
       h(
         'div',
         { class: 'legend small' },
@@ -3073,6 +3184,11 @@
       if (v.sampled) bands.push(['seen', v.sampled, sampledEnd, v.gaps.sampled]);
       // A write of the failed step has its mark with its words; its band does not say them again.
       const marked = new Set(v.marks.filter((mk) => mk.kind === 'write').map((mk) => mk.at));
+      const condMarked = new Set(
+        v.marks
+          .filter((mk) => mk.kind === 'condition' || mk.kind === 'compared')
+          .map((mk) => mk.at),
+      );
       bands.forEach(([cls, series, end, gap], i) => {
         const y0 = area.y0 + i * BAND_HEIGHT;
         drawStateBand(
@@ -3085,10 +3201,11 @@
           kind,
           info,
           cls === 'sent' ? marked : new Set(),
+          condMarked,
         );
       });
       drawBandsState(svg, v, scale, area, info);
-      drawMarks(svg, v, scale, () => area.y0 + (BAND_HEIGHT - 4) / 2, area);
+      drawMarks(svg, v, scale, () => area.y0 + (BAND_HEIGHT - 4) / 2, area, m);
     }
     if (!v.written && !v.sampled && !v.notes.length) {
       s('text', { class: 'empty-label', x: 6, y: height / 2 + 4, text: t('lane.noValues') }, svg);
@@ -3200,7 +3317,7 @@
     if (d) s('path', { class: 'series base', d }, svg);
   }
 
-  function drawStateBand(svg, segs, scale, y0, height, cls, kind, info, marked) {
+  function drawStateBand(svg, segs, scale, y0, height, cls, kind, info, marked, condMarked) {
     let before = null; // the last rect of the row: { from, y, x1 }
     for (const { seg, y, height: rh } of stateBandLayout(decimate(segs, scale), y0, height)) {
       // A value that is not of the variable's type is not drawn (the lane's note names it).
@@ -3267,22 +3384,25 @@
         x0 >= 0 &&
         x0 <= scale.width
       ) {
-        // End-edge transition (e.g. bool/enum flips at recorded_to_ms): draw a crisp marker and → value badge.
+        // End-edge transition (e.g. bool/enum flips at recorded_to_ms): draw a crisp marker;
+        // suppress the duplicate black label if a failure condition mark already labels this timestamp.
         s('line', { class: 'state-edge-tick', x1: x0, x2: x0, y1: y, y2: y + rh }, svg);
-        const edgeText = `→ ${name}`;
-        const edgeW = estimateTextWidth(edgeText) + 6;
-        const placeLeft = x0 + edgeW + 4 > scale.width;
-        s(
-          'text',
-          {
-            class: 'state-edge-label',
-            x: placeLeft ? x0 - 4 : x0 + 4,
-            y: y + rh - 5,
-            'text-anchor': placeLeft ? 'end' : 'start',
-            text: edgeText,
-          },
-          svg,
-        );
+        if (!condMarked || !condMarked.has(seg.from)) {
+          const edgeText = `→ ${name}`;
+          const edgeW = estimateTextWidth(edgeText) + 6;
+          const placeLeft = x0 + edgeW + 4 > scale.width;
+          s(
+            'text',
+            {
+              class: 'state-edge-label',
+              x: placeLeft ? x0 - 4 : x0 + 4,
+              y: y + rh - 5,
+              'text-anchor': placeLeft ? 'end' : 'start',
+              text: edgeText,
+            },
+            svg,
+          );
+        }
       }
     }
   }
@@ -3457,7 +3577,8 @@
     }
   }
 
-  function drawMarks(svg, v, scale, yOf, area) {
+  function drawMarks(svg, v, scale, yOf, area, m) {
+    const discrete = laneKind(v) !== 'number';
     for (const mk of v.marks) {
       if (!isNum(mk.at) || mk.at < scale.t0 || mk.at > scale.t1) continue;
       const x = scale.x(mk.at);
@@ -3470,11 +3591,20 @@
             : t('mark.was', { value: mk.text, at: fmtMs(mk.at) }),
         );
         s('circle', { cx: x, cy, r: 5 }, g);
-        const label = mk.text === null ? t('mark.noValue') : mk.text;
-        const left = x + label.length * 6.5 + 10 > scale.width;
+        const endEdgeFlip =
+          discrete &&
+          m &&
+          m.recordedTo === mk.at &&
+          v.sampled &&
+          v.sampled.t.length > 0 &&
+          v.sampled.t[v.sampled.t.length - 1] === mk.at;
+        const baseLabel = mk.text === null ? t('mark.noValue') : mk.text;
+        const label = endEdgeFlip && mk.text !== null ? `→ ${baseLabel}` : baseLabel;
+        const left = x + estimateTextWidth(label) + 12 > scale.width;
         s(
           'text',
           {
+            class: endEdgeFlip ? 'state-edge-label' : null,
             x: left ? x - 8 : x + 8,
             y: Math.max(area.y0 + 10, cy - 4),
             'text-anchor': left ? 'end' : 'start',
@@ -3571,42 +3701,105 @@
     if (changed) emit('cursorchange', { cursor: at });
   }
 
-  function attachPointer(svg, scale, height) {
-    const plot = svg.parentElement;
+  /**
+   * Persistent pointer handler attached once to `#chart` (which renderChart never detaches),
+   * so Shift+drag panning keeps pointer capture smoothly across full redraws.
+   */
+  function attachChartPointer() {
+    const chart = $('chart');
     let down = null;
+    let downClientX = 0;
+    let downPlotLeft = 0;
     let downStep = null;
+    let downClusterAt = null;
     let downShift = false;
     let panOrigin = null;
     let sel = null;
-    const xOf = (e) => {
-      const r = svg.getBoundingClientRect();
-      return Math.min(scale.width, Math.max(0, e.clientX - r.left));
+    let activeSvg = null;
+    let activeHeight = 0;
+    let capturedId = null;
+
+    const plotOf = (target) => (target && target.closest ? target.closest('.lane-plot') : null);
+    const xFromClient = (clientX, plotLeft) =>
+      Math.min(state.width, Math.max(0, clientX - plotLeft));
+    const clearDrag = () => {
+      chart.removeAttribute('data-panning');
+      if (capturedId !== null) {
+        try {
+          chart.releasePointerCapture(capturedId);
+        } catch {
+          // ignore if capture was already released
+        }
+      }
+      capturedId = null;
+      down = null;
+      downStep = null;
+      downClusterAt = null;
+      downShift = false;
+      panOrigin = null;
+      activeSvg = null;
+      activeHeight = 0;
+      if (sel) sel.remove();
+      sel = null;
     };
-    listen(plot, 'pointerdown', (e) => {
-      if (e.button !== 0) return;
-      $('chart').removeAttribute('data-hover');
-      $('chart').removeAttribute('data-pinned-hover');
-      down = xOf(e);
+
+    listen(chart, 'pointerdown', (e) => {
+      if (e.button !== 0 || !state.model || !state.view) return;
+      const plot = plotOf(e.target);
+      if (!plot) return;
+      const svg = typeof plot.querySelector === 'function' ? plot.querySelector('svg') : null;
+      if (!svg) return;
+      chart.removeAttribute('data-hover');
+      chart.removeAttribute('data-pinned-hover');
+      const r = svg.getBoundingClientRect();
+      downPlotLeft = r.left;
+      downClientX = e.clientX;
+      down = xFromClient(e.clientX, downPlotLeft);
       downShift = Boolean(e.shiftKey);
       panOrigin = downShift ? [...state.view] : null;
-      if (downShift && plot.classList) plot.classList.add('panning');
-      // A click on a step or cluster chooses it (the pointer is captured, so the click itself goes to the lane).
-      const step = e.target.closest ? e.target.closest('[data-step]') : null;
-      downStep = step ? stepOf(Number(step.dataset.step)) : null;
-      plot.setPointerCapture(e.pointerId);
+      activeSvg = svg;
+      activeHeight = Number(svg.getAttribute('height')) || r.height || 0;
+      if (downShift) chart.setAttribute('data-panning', '');
+      const clusterEl = e.target.closest ? e.target.closest('[data-cluster-at]') : null;
+      downClusterAt = clusterEl ? number(clusterEl.dataset.clusterAt) : null;
+      const stepEl = e.target.closest ? e.target.closest('[data-step]') : null;
+      downStep = stepEl ? stepOf(Number(stepEl.dataset.step)) : null;
+      if (typeof chart.setPointerCapture === 'function') {
+        chart.setPointerCapture(e.pointerId);
+        capturedId = e.pointerId;
+      }
     });
-    listen(plot, 'pointermove', (e) => {
-      const x = xOf(e);
-      const chart = $('chart');
+
+    listen(chart, 'pointermove', (e) => {
+      if (!state.model || !state.view) return;
       if (down !== null && downShift && panOrigin) {
-        if (Math.abs(x - down) > 2) {
+        const dx = e.clientX - downClientX;
+        if (Math.abs(dx) > 2) {
           const span = panOrigin[1] - panOrigin[0];
-          const delta = -((x - down) / Math.max(1, scale.width)) * span;
+          const delta = -(dx / Math.max(1, state.width)) * span;
           setView(panView(state.model.domain, panOrigin, delta));
         }
         return;
       }
-      if (e.pointerType === 'mouse' && down === null) {
+      if (down !== null) {
+        const x = xFromClient(e.clientX, downPlotLeft);
+        if (!downShift && Math.abs(x - down) > 4 && activeSvg) {
+          if (!sel) sel = s('rect', { class: 'selection', y: 0, height: activeHeight }, activeSvg);
+          sel.setAttribute('x', Math.min(x, down));
+          sel.setAttribute('width', Math.abs(x - down));
+        }
+        return;
+      }
+      const plot = plotOf(e.target);
+      if (!plot) {
+        chart.removeAttribute('data-hover');
+        chart.removeAttribute('data-pinned-hover');
+        return;
+      }
+      const svg = typeof plot.querySelector === 'function' ? plot.querySelector('svg') : null;
+      if (!svg) return;
+      const x = xFromClient(e.clientX, svg.getBoundingClientRect().left);
+      if (e.pointerType === 'mouse') {
         if (state.pinned) {
           chart.setAttribute('data-pinned-hover', '');
           chart.style.setProperty('--hover-x', `${x}px`);
@@ -3614,78 +3807,77 @@
         }
         chart.setAttribute('data-hover', '');
       }
-      if (!state.pinned || down !== null) {
-        const step = e.target.closest ? e.target.closest('[data-step]') : null;
-        if (!state.pinned) {
-          moveCursor(scale.t(x), step ? stepOf(Number(step.dataset.step)) : null);
-        }
-      }
-      if (down !== null && !downShift && Math.abs(x - down) > 4) {
-        if (!sel) sel = s('rect', { class: 'selection', y: 0, height }, svg);
-        sel.setAttribute('x', Math.min(x, down));
-        sel.setAttribute('width', Math.abs(x - down));
+      if (!state.pinned) {
+        const scale = makeScale(state.view[0], state.view[1], state.width);
+        const stepEl = e.target.closest ? e.target.closest('[data-step]') : null;
+        moveCursor(scale.t(x), stepEl ? stepOf(Number(stepEl.dataset.step)) : null);
       }
     });
-    listen(plot, 'pointerleave', () => {
-      const chart = $('chart');
+
+    listen(chart, 'pointerleave', () => {
       chart.removeAttribute('data-hover');
       chart.removeAttribute('data-pinned-hover');
     });
-    listen(plot, 'pointerup', (e) => {
-      const x = xOf(e);
-      const dragged = down !== null && Math.abs(x - down) > 4;
-      if (plot.classList) plot.classList.remove('panning');
-      if (dragged) {
-        if (downShift && panOrigin) {
-          const span = panOrigin[1] - panOrigin[0];
-          const delta = -((x - down) / Math.max(1, scale.width)) * span;
-          setView(panView(state.model.domain, panOrigin, delta));
-        } else {
-          setView([scale.t(Math.min(x, down)), scale.t(Math.max(x, down))]);
-        }
-      } else if (down !== null) {
-        const t = scale.t(x);
-        if (downShift) {
-          if (state.refCursor !== null && Math.abs(scale.x(state.refCursor) - x) <= 6) {
-            state.refCursor = null;
-          } else {
-            state.refCursor = t;
-          }
-          updateCursor();
-        } else if (downStep) {
-          const targetAt =
-            downStep.status === 'failed'
-              ? (downStep.failed?.at_ms ?? downStep.at_ms ?? downStep.start_ms)
-              : (downStep.start_ms ?? downStep.at_ms);
-          if (isNum(targetAt)) {
-            state.pinned = true;
-            state.pinnedCursor = targetAt;
-            moveCursor(targetAt, downStep);
-          }
-          showStep(downStep, false, { preserveZoom: true });
-        } else {
-          state.pinned = true;
-          state.pinnedCursor = t;
-          moveCursor(t);
-        }
+
+    listen(chart, 'pointerup', (e) => {
+      if (down === null || !state.model || !state.view) {
+        clearDrag();
+        return;
       }
-      down = null;
-      downStep = null;
-      downShift = false;
-      panOrigin = null;
-      if (sel) sel.remove();
-      sel = null;
+      const x = xFromClient(e.clientX, downPlotLeft);
+      const dx = e.clientX - downClientX;
+      const dragged = Math.abs(dx) > 4;
+      const savedDown = down;
+      const savedShift = downShift;
+      const savedOrigin = panOrigin;
+      const savedStep = downStep;
+      const savedClusterAt = downClusterAt;
+      clearDrag();
+
+      if (dragged) {
+        if (savedShift && savedOrigin) {
+          const span = savedOrigin[1] - savedOrigin[0];
+          const delta = -(dx / Math.max(1, state.width)) * span;
+          setView(panView(state.model.domain, savedOrigin, delta));
+        } else {
+          const scale = makeScale(state.view[0], state.view[1], state.width);
+          setView([scale.t(Math.min(x, savedDown)), scale.t(Math.max(x, savedDown))]);
+        }
+        return;
+      }
+      const scale = makeScale(state.view[0], state.view[1], state.width);
+      const t = scale.t(x);
+      if (savedShift) {
+        if (state.refCursor !== null && Math.abs(scale.x(state.refCursor) - x) <= 6) {
+          state.refCursor = null;
+        } else {
+          state.refCursor = t;
+        }
+        updateCursor();
+      } else if (savedClusterAt !== null && savedStep) {
+        focusClusterImpl(savedClusterAt, savedStep.index);
+      } else if (savedStep) {
+        const targetAt =
+          savedStep.status === 'failed'
+            ? (savedStep.failed?.at_ms ?? savedStep.at_ms ?? savedStep.start_ms)
+            : (savedStep.start_ms ?? savedStep.at_ms);
+        if (isNum(targetAt)) {
+          state.pinned = true;
+          state.pinnedCursor = targetAt;
+          moveCursor(targetAt, savedStep);
+        }
+        showStep(savedStep, false, { preserveZoom: true });
+      } else {
+        state.pinned = true;
+        state.pinnedCursor = t;
+        moveCursor(t);
+      }
     });
-    listen(plot, 'pointercancel', () => {
-      if (plot.classList) plot.classList.remove('panning');
-      down = null;
-      downStep = null;
-      downShift = false;
-      panOrigin = null;
-      if (sel) sel.remove();
-      sel = null;
+
+    listen(chart, 'pointercancel', clearDrag);
+    listen(chart, 'dblclick', (e) => {
+      if (state.model && plotOf(e.target)) setView(state.model.domain);
     });
-    listen(plot, 'dblclick', () => setView(state.model.domain));
   }
 
   /** Renders one step's details body (heading, call stack, watch conditions or text). */
@@ -3771,7 +3963,8 @@
       m?.steps[0];
     panel.hidden = !step;
     if (!step) return;
-    const siblings = isNum(step.start_ms) ? sameStartGroups(m.steps).get(step.start_ms) : null;
+    const simGroups = m.simGroups ?? sameStartGroups(m.steps);
+    const siblings = isNum(step.start_ms) ? simGroups.get(step.start_ms) : null;
     const sig = siblings
       ? `sim:${step.start_ms}:${step.index}:${siblings.map((x) => x.index).join(',')}`
       : String(step.index);
@@ -4121,6 +4314,7 @@
 
   /** The buttons and keys of the chart. */
   function attachControls() {
+    attachChartPointer();
     listen($('show-failure'), 'click', () => jumpToFailureImpl({ preserveZoom: true }));
     listen($('show-all'), 'click', () => setView(state.model.domain));
     listen($('zoom-out'), 'click', () => {
@@ -4478,36 +4672,90 @@
       this.#change('source');
     }
 
-    /** Jumps to the failure timestamp, pinning the cursor and selecting the failed step. */
-    jumpToFailure(options) {
+    /** Runs an imperative navigation method with events enabled regardless of whether called from a data or src load listener. */
+    #runImperative(fn) {
       const c = this.#c;
       enter(c);
       if (!state.model) return false;
-      if (c.changes.has('from') || c.changes.has('to')) {
-        const from =
-          c.changes.has('from') && c.options.from !== null ? c.options.from : state.view[0];
-        const to = c.changes.has('to') && c.options.to !== null ? c.options.to : state.view[1];
-        c.changes.delete('from');
-        c.changes.delete('to');
-        setView([from, to], true);
+      const prevQuiet = c.quiet;
+      c.quiet = false;
+      try {
+        return fn(c);
+      } finally {
+        c.quiet = prevQuiet;
       }
-      return jumpToFailureImpl(options);
+    }
+
+    /** Jumps to the failure timestamp, pinning the cursor and selecting the failed step. */
+    jumpToFailure(options) {
+      return this.#runImperative((c) => {
+        if (c.changes.has('from') || c.changes.has('to')) {
+          const from =
+            c.changes.has('from') && c.options.from !== null ? c.options.from : state.view[0];
+          const to = c.changes.has('to') && c.options.to !== null ? c.options.to : state.view[1];
+          c.changes.delete('from');
+          c.changes.delete('to');
+          setView([from, to], true);
+        }
+        return jumpToFailureImpl(options);
+      });
     }
 
     /** Focuses a step by its 1-based index, pinning the cursor to its timestamp. */
     focusStep(index, options) {
-      const c = this.#c;
-      enter(c);
-      if (!state.model) return false;
-      if (c.changes.has('from') || c.changes.has('to')) {
-        const from =
-          c.changes.has('from') && c.options.from !== null ? c.options.from : state.view[0];
-        const to = c.changes.has('to') && c.options.to !== null ? c.options.to : state.view[1];
-        c.changes.delete('from');
-        c.changes.delete('to');
-        setView([from, to], true);
-      }
-      return focusStepImpl(number(index), options);
+      return this.#runImperative((c) => {
+        if (c.changes.has('from') || c.changes.has('to')) {
+          const from =
+            c.changes.has('from') && c.options.from !== null ? c.options.from : state.view[0];
+          const to = c.changes.has('to') && c.options.to !== null ? c.options.to : state.view[1];
+          c.changes.delete('from');
+          c.changes.delete('to');
+          setView([from, to], true);
+        }
+        return focusStepImpl(number(index), options);
+      });
+    }
+
+    /** Resets the horizontal view to the whole run without modifying sticky from/to options. */
+    resetView() {
+      this.#runImperative(() => {
+        setView(state.model.domain);
+        return true;
+      });
+    }
+
+    /** Pans the current horizontal view by fraction of the current span, clamped to the run domain. */
+    pan(fraction) {
+      const f = number(fraction);
+      if (f === null) return;
+      this.#runImperative(() => {
+        if (!state.view) return false;
+        const span = state.view[1] - state.view[0];
+        setView(panView(state.model.domain, state.view, span * f));
+        return true;
+      });
+    }
+
+    /** Widens the current horizontal view around its midpoint, clamped to the run domain. */
+    zoomOut() {
+      this.#runImperative(() => {
+        if (!state.view) return false;
+        const [t0, t1] = state.view;
+        const half = t1 - t0;
+        setView([t0 - half / 2, t1 + half / 2]);
+        return true;
+      });
+    }
+
+    /** Clears a pinned cursor and any Δt reference marker without changing zoom or step selection. */
+    unpinCursor() {
+      this.#runImperative(() => {
+        state.pinned = false;
+        state.pinnedCursor = null;
+        state.refCursor = null;
+        updateCursor();
+        return true;
+      });
     }
 
     // --- the simple options

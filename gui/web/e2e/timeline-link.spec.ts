@@ -141,6 +141,7 @@ test('timeline: the Scenario card shows the timeline on the screen itself, with 
   await expect(timeline.locator('#summary')).toBeHidden();
   await expect(timeline.locator('#help')).toBeHidden();
   await expect(timeline.locator('#tables')).toBeHidden();
+  await expect(timeline.locator('#toolbar')).toBeHidden();
   // (cursorchange) and (stepselect) come back to the screen's signals
   await timeline.locator('#chart').focus();
   await page.keyboard.press('ArrowRight');
