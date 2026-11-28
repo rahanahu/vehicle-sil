@@ -2736,7 +2736,46 @@ describe('the front door', () => {
         (e: unknown) => e as ActionError,
       );
       await vi.advanceTimersByTimeAsync(500);
-      expect(await waiting).toMatchObject({ code: 'timeout', outcome: 'unknown' });
+      const timedOut = await waiting;
+      expect(timedOut).toMatchObject({ code: 'timeout', outcome: 'unknown' });
+      expect(timedOut.message).toContain('last observed:');
+      expect(timedOut.message).toContain('"run":"running"');
+
+      // Also verify primitive, updated, nullish, and circular values in timeout messages.
+      let listener: ((v: unknown) => void) | undefined;
+      let current: unknown = 10;
+      const customSource = {
+        get: () => current,
+        subscribe: (fn: (v: unknown) => void) => {
+          listener = fn;
+          return () => {
+            listener = undefined;
+          };
+        },
+      };
+      const numTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
+        (e: unknown) => e as ActionError,
+      );
+      current = 42;
+      listener?.(42);
+      await vi.advanceTimersByTimeAsync(100);
+      expect((await numTimeout).message).toContain('last observed: 42');
+
+      const circular: Record<string, unknown> = { name: 'loop' };
+      circular['self'] = circular;
+      current = circular;
+      const circTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
+        (e: unknown) => e as ActionError,
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      expect((await circTimeout).message).toContain('[Circular]');
+
+      current = undefined;
+      const undefTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
+        (e: unknown) => e as ActionError,
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      expect((await undefTimeout).message).toContain('last observed: undefined');
       const controller = new AbortController();
       const aborted = until(rig.front.status, (s) => s.run === 'ended', {
         signal: controller.signal,

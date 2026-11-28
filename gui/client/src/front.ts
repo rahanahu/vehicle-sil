@@ -451,6 +451,42 @@ export function watch(
 }
 
 /**
+ * Formats the most recently observed `until()` value concisely for timeout error messages.
+ */
+function describeObservedValue(value: unknown): string {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  if (typeof value === 'string') {
+    const shown = JSON.stringify(value);
+    return shown.length > 200 ? `${shown.slice(0, 197)}..."` : shown;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  if (value instanceof Error) {
+    return value.message || value.name;
+  }
+  try {
+    const seen = new WeakSet<object>();
+    const json = JSON.stringify(value, (_key, item: unknown) => {
+      if (typeof item === 'bigint') return item.toString();
+      if (typeof item === 'object' && item !== null) {
+        if (seen.has(item)) return '[Circular]';
+        seen.add(item);
+      }
+      return item;
+    });
+    if (json !== undefined) {
+      return json.length > 200 ? `${json.slice(0, 197)}...` : json;
+    }
+  } catch {
+    // Fall back to String(value) if a custom getter/toJSON throws.
+  }
+  const text = String(value);
+  return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+}
+
+/**
  * Resolves with the first value that satisfies `test` (the current one counts). Rejects with an ActionError `timeout`
  * after `timeoutMs`, or `aborted` when `signal` aborts (`unknown`: the thing waited for may still happen).
  */
@@ -506,7 +542,9 @@ export function until<T>(
       reject(new ActionError('aborted', 'the wait was aborted', 'unknown'));
       return;
     }
+    let last: T = source.get();
     const check = (value: T) => {
+      last = value;
       if (test(value)) finish(() => resolve(value));
     };
     cleanups.push(source.subscribe(check));
@@ -519,7 +557,7 @@ export function until<T>(
             reject(
               new ActionError(
                 'timeout',
-                `the condition did not hold within ${timeoutMs / 1000} s: look at the state before you wait again`,
+                `the condition did not hold within ${timeoutMs / 1000} s (last observed: ${describeObservedValue(last)}): look at the state before you wait again`,
                 'unknown',
               ),
             ),
@@ -528,6 +566,7 @@ export function until<T>(
       );
     }
     const first = source.get();
+    last = first;
     if (test(first)) finish(() => resolve(first));
   });
 }
