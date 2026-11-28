@@ -242,3 +242,23 @@ TEST_CASE(one_read_returns_after_a_bounded_amount)
     // Windows reads its pipes with PeekNamedPipe and has no descriptor that never runs empty;
     // its loop has the same bound (kReadsPerCall), not reachable from a test.
 }
+
+TEST_CASE(normalize_executable_path_collapses_relative_and_dot_segments)
+{
+    CHECK(vehicle_sil::process::normalize_executable_path({}).empty());
+    const fs::path base = scratch("normalize");
+    const fs::path sub = base / "sub";
+    fs::create_directories(sub);
+    const fs::path messy = sub / "." / ".." / kHelper.filename();
+    const fs::path normalized = vehicle_sil::process::normalize_executable_path(messy);
+    CHECK(normalized.is_absolute());
+    CHECK(normalized == (base / kHelper.filename()).lexically_normal().make_preferred());
+
+    // Starting a process through a relative/dot-dot path succeeds as well.
+    fs::path copy = base / ("helper_norm" + kHelper.extension().string());
+    fs::copy_file(kHelper, copy, fs::copy_options::overwrite_existing);
+    const fs::path dotdotCopy = sub / ".." / copy.filename();
+    const Captured run = run_captured(dotdotCopy, {"--out", "ok\n"}, CaptureOptions{30s});
+    CHECK(run.exit_code == 0);
+    check_text(run.standard_output, "ok\n", "stdout");
+}

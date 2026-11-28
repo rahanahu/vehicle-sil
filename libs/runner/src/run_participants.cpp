@@ -388,7 +388,13 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
                                               ctx_.plan.start_timeout_ms, ctx_.plan.stop_timeout_ms,
                                               ctx_.plan.ecu_start_margin.count());
         }
-        const std::filesystem::path executable = without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
+#ifdef _WIN32
+        const std::filesystem::path executable =
+            process::normalize_executable_path(ctx_.check.participants[i].executable);
+#else
+        const std::filesystem::path executable =
+            without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
+#endif
         if (p.manual)
         {
             show_manual(p, executable, arguments, workDir);

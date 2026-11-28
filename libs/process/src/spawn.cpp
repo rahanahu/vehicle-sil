@@ -54,11 +54,62 @@ std::string signal_name(int signal)
 
 } // namespace vehicle_sil::process
 
+#ifndef PROC_THREAD_ATTRIBUTE_JOB_LIST
+#define PROC_THREAD_ATTRIBUTE_JOB_LIST 0x0002000D
+#endif
+
 namespace vehicle_sil::process::detail {
 
 #ifdef _WIN32
 
 namespace {
+
+class AttributeList
+{
+public:
+    AttributeList() = default;
+    AttributeList(const AttributeList&) = delete;
+    AttributeList& operator=(const AttributeList&) = delete;
+    ~AttributeList() { reset(); }
+
+    void reset() noexcept
+    {
+        if (list_ != nullptr)
+        {
+            DeleteProcThreadAttributeList(list_);
+            list_ = nullptr;
+        }
+        storage_.clear();
+    }
+
+    bool initialize(DWORD count, std::string& error)
+    {
+        reset();
+        SIZE_T size = 0;
+        InitializeProcThreadAttributeList(nullptr, count, 0, &size);
+        if (size == 0)
+        {
+            error = last_error_message("InitializeProcThreadAttributeList");
+            return false;
+        }
+        storage_.resize(size / sizeof(std::uint64_t) + 1);
+        auto* candidate = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage_.data());
+        if (!InitializeProcThreadAttributeList(candidate, count, 0, &size))
+        {
+            error = last_error_message("InitializeProcThreadAttributeList");
+            storage_.clear();
+            return false;
+        }
+        list_ = candidate;
+        return true;
+    }
+
+    LPPROC_THREAD_ATTRIBUTE_LIST get() const noexcept { return list_; }
+
+private:
+    std::vector<std::uint64_t> storage_{};
+    LPPROC_THREAD_ATTRIBUTE_LIST list_ = nullptr;
+};
 
 // Quotes one argument following the rules of CommandLineToArgvW / the MSVC and MinGW CRTs.
 std::wstring quote_argument(const std::wstring& argument)
@@ -219,14 +270,18 @@ std::wstring environment_block(const std::vector<std::pair<std::string, std::str
 HANDLE start(const std::filesystem::path& executable, const std::vector<std::string>& arguments, HANDLE in, HANDLE out,
              HANDLE err, HANDLE job, const StartFlags& flags)
 {
-    std::wstring line = command_line(executable, arguments);
-    STARTUPINFOEXW startup{};
-    startup.StartupInfo.cb = sizeof(STARTUPINFOW);
-    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-    startup.StartupInfo.hStdInput = in;
-    startup.StartupInfo.hStdOutput = out;
-    startup.StartupInfo.hStdError = err;
-    PROCESS_INFORMATION info{};
+    // Normalize relative/mixed-separator paths before building both lpApplicationName and
+    // lpCommandLine (argv[0]), so child identification and process accounting see canonical native paths.
+    const std::filesystem::path program = normalize_executable_path(executable);
+    std::filesystem::path workingDirectory = flags.working_directory;
+    if (!workingDirectory.empty())
+    {
+        workingDirectory.make_preferred();
+    }
+    const std::wstring directory = workingDirectory.wstring();
+    const std::wstring programText = program.wstring();
+    const std::wstring baseLine = command_line(program, arguments);
+
     const std::string what = "cannot start " + shown_path(executable) + ": ";
     const std::string jobHint = kJobHint;
     if (job == nullptr)
@@ -245,55 +300,99 @@ HANDLE start(const std::filesystem::path& executable, const std::vector<std::str
             throw StartError(what + "cannot read the environment to pass on: " + e.what(), StartError::Cause::System);
         }
     }
-    DWORD creation = CREATE_SUSPENDED | (flags.new_group ? CREATE_NEW_PROCESS_GROUP : 0) |
-                     // Without a console of this process (a service, some CI), a console
-                     // program would open a window of its own: every child of every caller.
-                     (GetConsoleCP() == 0 ? CREATE_NO_WINDOW : 0);
-    // Only the three standard handles are inherited: another child started at the same time
-    // must not keep this child's pipes open.
-    std::vector<std::uint64_t> storage;
-    LPPROC_THREAD_ATTRIBUTE_LIST attributes = nullptr;
+    const DWORD baseCreation =
+        (flags.new_group ? CREATE_NEW_PROCESS_GROUP : 0) |
+        // Without a console of this process (a service, some CI), a console
+        // program would open a window of its own: every child of every caller.
+        (GetConsoleCP() == 0 ? CREATE_NO_WINDOW : 0) |
+        (!environment.empty() ? CREATE_UNICODE_ENVIRONMENT : 0);
+
     HANDLE inherited[3] = {in, out, err};
-    if (flags.only_std_handles)
-    {
-        SIZE_T size = 0;
-        InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
-        storage.resize(size / sizeof(std::uint64_t) + 1);
-        attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
-        if (!InitializeProcThreadAttributeList(attributes, 1, 0, &size))
+    HANDLE jobHandle = job;
+
+    auto init_startup = [&](STARTUPINFOEXW& startup, AttributeList& attributes, DWORD extraAttrCount) {
+        startup = STARTUPINFOEXW{};
+        startup.StartupInfo.cb = sizeof(STARTUPINFOW);
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = in;
+        startup.StartupInfo.hStdOutput = out;
+        startup.StartupInfo.hStdError = err;
+        const DWORD attrCount = (flags.only_std_handles ? DWORD{1} : DWORD{0}) + extraAttrCount;
+        if (attrCount == 0)
         {
-            throw StartError(what + last_error_message("InitializeProcThreadAttributeList"), StartError::Cause::System);
+            return;
         }
-        if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited),
-                                       nullptr, nullptr))
+        std::string initError;
+        if (!attributes.initialize(attrCount, initError))
         {
-            const std::string error = last_error_message("UpdateProcThreadAttribute");
-            DeleteProcThreadAttributeList(attributes);
-            throw StartError(what + error, StartError::Cause::System);
+            throw StartError(what + initError, StartError::Cause::System);
+        }
+        if (flags.only_std_handles &&
+            !UpdateProcThreadAttribute(attributes.get(), 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited,
+                                       sizeof(inherited), nullptr, nullptr))
+        {
+            throw StartError(what + last_error_message("UpdateProcThreadAttribute"), StartError::Cause::System);
         }
         startup.StartupInfo.cb = sizeof(startup);
-        startup.lpAttributeList = attributes;
-        creation |= EXTENDED_STARTUPINFO_PRESENT;
-    }
-    const std::wstring directory = flags.working_directory.wstring();
-    // A relative path is from the caller's directory, also when the child starts in another one.
-    std::error_code ec;
-    const std::filesystem::path program = executable.is_relative() ? std::filesystem::absolute(executable, ec) : executable;
-    if (!environment.empty())
+        startup.lpAttributeList = attributes.get();
+    };
+
+    // Primary path: assign the job object atomically inside CreateProcessW so a forced
+    // termination of the launcher mid-launch never leaves a suspended orphan outside the job.
     {
-        creation |= CREATE_UNICODE_ENVIRONMENT;
+        STARTUPINFOEXW startup{};
+        AttributeList attributes;
+        init_startup(startup, attributes, 1);
+        bool jobAttrUnsupported = false;
+        if (!UpdateProcThreadAttribute(attributes.get(), 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobHandle,
+                                       sizeof(jobHandle), nullptr, nullptr))
+        {
+            const DWORD code = GetLastError();
+            if (code == ERROR_NOT_SUPPORTED || code == ERROR_INVALID_PARAMETER)
+            {
+                jobAttrUnsupported = true;
+            }
+            else
+            {
+                throw StartError(what + last_error_message("UpdateProcThreadAttribute") + jobHint,
+                                 StartError::Cause::System);
+            }
+        }
+        if (!jobAttrUnsupported)
+        {
+            std::wstring line = baseLine;
+            PROCESS_INFORMATION info{};
+            const BOOL created = CreateProcessW(
+                programText.c_str(), line.data(), nullptr, nullptr, TRUE, baseCreation | EXTENDED_STARTUPINFO_PRESENT,
+                environment.empty() ? nullptr : environment.data(), directory.empty() ? nullptr : directory.c_str(),
+                &startup.StartupInfo, &info);
+            if (created)
+            {
+                CloseHandle(info.hThread);
+                return info.hProcess;
+            }
+            const DWORD code = GetLastError();
+            if (code != ERROR_NOT_SUPPORTED && code != ERROR_INVALID_PARAMETER)
+            {
+                throw StartError(what + last_error_message("CreateProcessW"), StartError::Cause::Executable);
+            }
+        }
     }
-    const BOOL created = CreateProcessW(program.wstring().c_str(), line.data(), nullptr, nullptr, TRUE, creation,
-                                        environment.empty() ? nullptr : environment.data(),
-                                        directory.empty() ? nullptr : directory.c_str(), &startup.StartupInfo, &info);
-    const std::string createError = created ? std::string{} : last_error_message("CreateProcessW");
-    if (attributes != nullptr)
+
+    // Fallback for environments that do not support PROC_THREAD_ATTRIBUTE_JOB_LIST (pre-Win10 1607 / Wine):
+    // start suspended, assign to the job object, then resume.
+    STARTUPINFOEXW startup{};
+    AttributeList attributes;
+    init_startup(startup, attributes, 0);
+    std::wstring line = baseLine;
+    PROCESS_INFORMATION info{};
+    const DWORD fallbackCreation =
+        baseCreation | CREATE_SUSPENDED | (flags.only_std_handles ? EXTENDED_STARTUPINFO_PRESENT : 0);
+    if (!CreateProcessW(programText.c_str(), line.data(), nullptr, nullptr, TRUE, fallbackCreation,
+                        environment.empty() ? nullptr : environment.data(),
+                        directory.empty() ? nullptr : directory.c_str(), &startup.StartupInfo, &info))
     {
-        DeleteProcThreadAttributeList(attributes);
-    }
-    if (!created)
-    {
-        throw StartError(what + createError, StartError::Cause::Executable);
+        throw StartError(what + last_error_message("CreateProcessW"), StartError::Cause::Executable);
     }
     const auto end_suspended = [&info] {
         TerminateProcess(info.hProcess, 1);
