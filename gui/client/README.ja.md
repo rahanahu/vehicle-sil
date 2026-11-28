@@ -70,6 +70,8 @@
 
 未知のキーや旧 snake_case キー（`base_url`、`timeout_ms` など）は実行時に `ActionError('unknown-field', ..., 'refused')` で即拒否されます。
 
+- **起動時のリトライ挙動の違い**: `connect()` は初回の `loadApp()` と WebSocket 同期を待って解決し、初期接続に失敗した場合は無限リトライせず**即座に reject** します（自動化スクリプトで失敗をすぐ検知できます）。これに対し `createFront()` は即座に `Front` を返し、オンライン復帰までのリトライやオフライン描画を `front.low.connect()` 側で扱えます。
+
 ## 正面の口（`connect()`）
 
 `connect()` は `Front` を返します。リアクティブな `Readable` 状態（`status`、`clock`、`controls`、`scenario`、`runtime`、`outside`）、Promise ベースの操作（`run`、`time`、`check`、`scenarios`、`connections`、`configs`、`recording`、`prepare`、`readConfig`、`describeAgain`、`saveConfig`）、および変数ハンドル（`variable(ref)`）を提供します。土台の低水準クライアントは常に `front.low` から参照できます。
@@ -112,7 +114,8 @@ try {
 - **`run.start(intent?, { file?, onStarted? }?)`**: 実行を開始します。`intent` は `schema/run-request.schema.json` のキー（`variant`、`params`、`scenario`、`case`、`after_scenario`、`disable`、`enable`、`manual`、`strict`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`connect`、`time_policy`）を取り、未指定キーは `null` ではなく省略します。直近のセッションと同じ条件で再実行するときは、`session.intent` をそのまま渡せます: `await front.run.start(session.intent, { file: session.file })`（`session.intent.scenario` はルート相対パスのまま保持されています）。サーバーが開始を受け付けた時点で解決するため、新しい実行状態を読む前に `until()` で `status.run !== 'starting'` を待ってください。
 - **`run.stop()` / `run.forceStop(target?)`**: 実行を停止します。`await connect()` 直後の `link === 'connecting'` 中に `run.stop()`、`run.forceStop()`、`time.*()`、`variable().enqueue()` / `write()` を呼んだ場合、初回 WebSocket 同期の完了（上限 `answerTimeoutMs`）を自動で待ってから送出します。
 - **`time.pause()` / `resume()` / `step(ms)` / `runUntil(ms)` / `setSpeed(value)`**: `step` と `runUntil` は目標時刻へ到達して再び一時停止したときに解決します。到達前に別クライアントや標準入力から別のコマンドが入ると `ActionError('interrupted', ..., 'unknown')` で reject します。
-- **`until(source, test, { timeoutMs?, signal? })`**: `test` を満たす最初の値で解決し（現在値も即検査）、タイムアウトや中断では `ActionError('timeout' | 'aborted', ..., 'unknown')` で reject します。オプションは camelCase（`timeoutMs`、`signal`）のみで、未知キーは `unknown-field` で拒否されます。
+- **`until(source, test, { timeoutMs?, signal? })`**: `test` を満たす最初の値で解決し（現在値も即検査）、タイムアウトや中断では `ActionError('timeout' | 'aborted', ..., 'unknown')` で reject します（タイムアウト時は `(last observed: ...)` で最後に観測した値を含みます）。オプションは camelCase（`timeoutMs`、`signal`）のみで、未知キーは `unknown-field` で拒否されます。
+- **`scenario`（`timeline_url`）— 完了済み・`--speed max` 実行の調査**: `client.scenario.get()?.timeline_url`（またはセッションの `scenario.timelineUrl`）が `GET api/timeline/<run_id>` を指します（`--no-auth` 以外は `Authorization: Bearer <token>` を付けて取得）。ライブ変数ポーリングでは取りこぼす完了後のシナリオ実行や `--speed max` の高速実行を全ステップ精度で調べるには、このタイムライン JSON を取得してください（サーバーは `--keep-runs N` 件、既定 4 件を保持し、過去の成功 run より失敗 run を優先して残します）。
 
 ### 変数 1 つを扱う（`client.variable(ref)`）
 
@@ -141,7 +144,7 @@ stop();
 
 - **`enqueue(value, options?): Promise<QueuedWrite>`**: 段階 1 + 2 を完了します。GUI サーバーが検証・FIFO `seq` 発番し、ランチャー Control Server の `WAIT_FOR_QUEUED` で ECU キュー到達（または即時確定）を確認してから解決します。拒否または即時終端失敗（`invalid`、`busy`、`late`、`rejected`、`cancelled` 等）はその場で `ActionError` で reject します。
 - **`queued.applied(waitOptions?): Promise<WriteResult>`**: 段階 3 + 4 を完了します。ECU がステップで反映すると `{ session, seq, peer, name, value, appliedAtMs, late }` で解決し、失敗時は `ActionError` で reject します。
-- **`write(value, options?): Promise<WriteResult>`**: `enqueue(value, options).then((q) => q.applied({ timeoutMs, signal }))` の糖衣です。
+- **`write(value, options?): Promise<WriteResult>`**: `enqueue(value, options).then((q) => q.applied({ timeoutMs, signal }))` の糖衣です。`applied()` が仮想時間ステップでの適用を待つため、`paused` 中に `await throttle.write(...)` を待つと仮想時間が進むまで完了しません。一時停止中は `enqueue()` → `step()` / `runUntil()` → `applied()` の順で使ってください（下のレシピ 3）。
 - **`FrontWriteOptions`**: `{ atMs?, late?: 'reject' | 'apply', timeoutMs?, keepalive?, signal? }`。未知のキーは即座に `ActionError('unknown-field', ..., 'refused')` で拒否されます。
 - **仮想時間連動ウォッチドッグ（`timeoutMs`）**: 既定 `WRITE_TIMEOUT_MS`（10,000 ms）。`0` より大きい有限の数値である必要があります（`Infinity` は `invalid-argument` で拒否されます）。接続が健全で対象 ECU が接続中かつ実行が `paused` または `holding` の間はウォッチドッグが**一時停止**するため、一時停止中の書き込みやマルチレート予約 `atMs` 書き込みが誤タイムアウトしません（一時停止中の実時間上限が必要なら `signal: AbortSignal.timeout(ms)` を渡します）。実行中は低速再生（`speed < 1`）に合わせて予算を拡大し `sim_ms` が進むたびにリセットされる一方、WS 切断・ECU 切断・仮想時間停止時は有限時間で確実に reject します。
 - **ポーリング周期と責務境界**: 最初の `subscribe()` で watch が始まり、最後の解除で止まります（`close()` はありません）。`{ periodMs }` を渡すと購読中のみ最短周期へ昇格し、解除で元の周期へ戻ります。`watchPeriodMs` / `periodMs` を `20` ms（`batchMs: 16` または `0`）にするとライブ UI の応答性が上がりますが、最新値ポーリングは 20 ms 未満のパルスの捕捉を保証**しません**。ステップ精度の決定論的記録には `--timeline` または `Spy` を使ってください（[docs/ja/gui.md](../../docs/ja/gui.md#ライブポーリングと決定論的記録の使い分け) の「ライブポーリングと決定論的記録の使い分け」）。

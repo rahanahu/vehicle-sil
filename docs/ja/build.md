@@ -146,7 +146,7 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-Windows のプリセットは次の 4 つです（いずれも MSYS2 UCRT64 の GCC と Ninja を使います）。
+Windows のプリセットは次の 4 つです（いずれも MinGW-w64 GCC と Ninja を使います）。
 
 | プリセット | ビルド種別 | オプション | 追加で必要なもの |
 |---|---|---|---|
@@ -154,6 +154,8 @@ Windows のプリセットは次の 4 つです（いずれも MSYS2 UCRT64 の 
 | `windows-mingw-release` | Release | 既定の共有 SIL Kit とランタイム DLL | MSYS2 UCRT64 ツールチェーン＋`python`＋`python-yaml` |
 | `windows-mingw-static` | Release | `VEHICLE_SIL_STATIC=ON`（ランタイム DLL は 0 個） | MSYS2 UCRT64 ツールチェーン＋`python`＋`python-yaml` |
 | `windows-mingw-control` | Debug | `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`、`VEHICLE_SIL_FAULT_INJECTION=ON` | `mingw-w64-ucrt-x86_64-grpc`（または CMake 3.28 以上＋最初の configure 時の Git とネットワークで FetchContent） |
+
+MSYS2 を入れずにスタンドアロン UCRT64 MinGW-w64 GCC・CMake・Ninja・Git と `uv run --no-project python get_tools.py` でテンプレート ECU をビルドする手順は [template/README.ja.md](../../template/README.ja.md) を参照してください。
 
 実行ファイルが読み込む DLL の扱いは次のとおりです。
 
@@ -238,6 +240,17 @@ vehicle_sil_copy_runtime_dlls(example)   # Windows: 非静的ビルドでは Sil
 | SIL Kit へのパッチ | ビルドツリーにコピーしたソースに `patches/sil-kit/` のパッチを適用したものを使います（[dependencies.md](dependencies.md)）。 |
 | Git | パッチの適用に使います。 |
 | リンクしないライブラリ | ビルドされません。 |
+
+主な公開 CMake ターゲット（`GIT_TAG` は `vehicle_sil_launch` / `vehicle-sil-gui` と同じリリースにそろえてください。全ターゲットと安定度の段階は [architecture.md](architecture.md#ターゲット) を参照）:
+
+| ターゲット | 用途 |
+|---|---|
+| `vehicle_sil::simulation` | `vehicle_sil::Ecu`、`vehicle_sil::ecu_main()`、`vehicle_sil::Simulation`（ECU 実行ファイルの標準ターゲット） |
+| `vehicle_sil::j1939_periodic_sender` | J1939 `PeriodicSender` ヘルパー（`<vehicle_sil/j1939/periodic_sender.hpp>`） |
+| `vehicle_sil::j1939_monitor` | J1939 `Monitor` や応答監視のヘルパー |
+| `vehicle_sil::spy` | 受信専用の `Spy` participant（`<vehicle_sil/spy/spy.hpp>`）。CAN/J1939 通信を変数として公開 |
+| `vehicle_sil::local`、`vehicle_sil::testkit` | プロセス内の `LocalBench`、J1939 の `FrameLog` / `J1939Events`、テスト向け故障注入 |
+| `vehicle_sil::core` | 低レベルの SIL Kit ライフサイクルおよびコントローラー実行基盤 |
 
 最小の `main.cpp` は次のとおりです。
 

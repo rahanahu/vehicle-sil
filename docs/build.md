@@ -146,7 +146,7 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-There are 4 Windows presets (all use MSYS2 UCRT64 GCC and Ninja):
+There are 4 Windows presets (all use MinGW-w64 GCC and Ninja):
 
 | Preset | Build type | Options | Additional requirements |
 |---|---|---|---|
@@ -154,6 +154,8 @@ There are 4 Windows presets (all use MSYS2 UCRT64 GCC and Ninja):
 | `windows-mingw-release` | Release | Default shared SIL Kit & runtime DLLs | MSYS2 UCRT64 toolchain + `python` + `python-yaml` |
 | `windows-mingw-static` | Release | `VEHICLE_SIL_STATIC=ON` (0 runtime DLLs) | MSYS2 UCRT64 toolchain + `python` + `python-yaml` |
 | `windows-mingw-control` | Debug | `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`, `VEHICLE_SIL_FAULT_INJECTION=ON` | `mingw-w64-ucrt-x86_64-grpc` (or CMake 3.28+ with Git and network to build gRPC with FetchContent) |
+
+To build ECUs with the project template without installing MSYS2 (using a standalone UCRT64 MinGW-w64 GCC, CMake, Ninja, Git, and `uv run --no-project python get_tools.py`), see [template/README.md](../template/README.md).
 
 Where executables find the DLLs they load:
 
@@ -238,6 +240,17 @@ To start a new project, the quickest way is to copy the template [template/](../
 | Patches to SIL Kit | The build uses a copy of the SIL Kit sources in the build tree, with the patches of `patches/sil-kit/` applied ([dependencies.md](dependencies.md)). |
 | Git | Used to apply the patches. |
 | Libraries you do not link | Not built. |
+
+Common public CMake targets you can link (keep the pinned `GIT_TAG` on the same release as `vehicle_sil_launch` / `vehicle-sil-gui`; see [architecture.md](architecture.md#targets) for the complete target table and stability tiers):
+
+| Target | Purpose |
+|---|---|
+| `vehicle_sil::simulation` | `vehicle_sil::Ecu`, `vehicle_sil::ecu_main()`, and `vehicle_sil::Simulation` (standard target for ECU executables) |
+| `vehicle_sil::j1939_periodic_sender` | J1939 `PeriodicSender` helper (`<vehicle_sil/j1939/periodic_sender.hpp>`) |
+| `vehicle_sil::j1939_monitor` | J1939 `Monitor`, request/response, and bus diagnostics helpers |
+| `vehicle_sil::spy` | Listen-only `Spy` participant (`<vehicle_sil/spy/spy.hpp>`) exposing CAN/J1939 traffic as variables |
+| `vehicle_sil::local`, `vehicle_sil::testkit` | In-process `LocalBench`, J1939 `FrameLog`/`J1939Events`, and fault injection for tests |
+| `vehicle_sil::core` | Low-level SIL Kit lifecycle and controller runtime only |
 
 A minimal `main.cpp`:
 
