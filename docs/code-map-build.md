@@ -99,7 +99,7 @@ Where to change:
 
 [CHANGELOG.md](../CHANGELOG.md) lists the places to update with it:
 
-- `pyproject.toml`, `python/pyproject.toml`, `gui/server/pyproject.toml` (`uv lock` then writes the PEP 440 form, `0.2.0rc1`, in `uv.lock`)
+- `python/pyproject.toml`, `gui/server/pyproject.toml` (`uv lock` then writes the PEP 440 form, `0.2.0rc1`, in `uv.lock`)
 - `__version__` in `python/vehicle_sil_control/__init__.py` and in `gui/server/src/vehicle_sil_gui/__init__.py`
 - `template/get_tools.py`
 - `GIT_TAG` in `template/CMakeLists.txt` and `VEHICLE_SIL_GIT_TAG` in `examples/fetchcontent_consumer/CMakeLists.txt`
@@ -107,6 +107,11 @@ Where to change:
 - The heading `## [<version>] - Unreleased` in `CHANGELOG.md`
 
 After updating the root `CMakeLists.txt`, `scripts/package.py version --sync` updates the files above (except `CHANGELOG.md`) and runs `uv lock --offline` when `uv.lock` needs updating (`--dry-run` previews without writing).
+
+Notes on Python packaging:
+
+- The root `pyproject.toml` (`vehicle-sil-dev`, `package = false`) is development-only and keeps a fixed placeholder version (`0.0.0`); it is excluded from `--sync` and version checks.
+- `__version__` in `python/vehicle_sil_control/__init__.py` and `gui/server/src/vehicle_sil_gui/__init__.py` stays a synced literal so direct source / tools-archive / `python -S` runs and RC SemVer checks (`0.7.0-rc.1` vs PEP 440 `0.7.0rc1`) work without installed metadata.
 
 At a release:
 

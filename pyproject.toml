@@ -12,7 +12,8 @@
 
 [project]
 name = "vehicle-sil-dev"
-version = "0.6.0"
+# Fixed development-only placeholder; not distributed and not synced with CMakeLists.txt.
+version = "0.0.0"
 description = "Python development environment of vehicle-sil (not distributed)"
 requires-python = ">=3.11"
 dependencies = []

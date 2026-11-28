@@ -55,8 +55,8 @@ Commands:
             package build/dist/vehicle-sil-gui-client-<version>.tgz (put there from build/gui-client), which the
             release carries on its own (npm install <its URL>).
   version   prints the version and checks that every place that names it agrees: CMakeLists.txt (the source:
-            project VERSION and VEHICLE_SIL_VERSION_PRERELEASE, x.y.z or x.y.z-rc.<n>), pyproject.toml,
-            gui/server/pyproject.toml, uv.lock (when present, PEP 440 form),
+            project VERSION and VEHICLE_SIL_VERSION_PRERELEASE, x.y.z or x.y.z-rc.<n>),
+            gui/server/pyproject.toml, python/pyproject.toml, uv.lock (when present, PEP 440 form),
             gui/server/src/vehicle_sil_gui/__init__.py (__version__), python/vehicle_sil_control/__init__.py
             (__version__), template/get_tools.py (VERSION), the versions that template/README*.md name,
             template/CMakeLists.txt (GIT_TAG v<version>), examples/fetchcontent_consumer/CMakeLists.txt
@@ -93,6 +93,7 @@ import tomllib
 import urllib.error
 import urllib.request
 import zipfile
+import zlib
 from datetime import date
 from pathlib import Path
 
@@ -284,23 +285,32 @@ def uv_lock_problems(version: str) -> list[str]:
     want = pep440_version(version)
     try:
         data = tomllib.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as e:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         return [f"uv.lock could not be parsed: {e}"]
-    packages = {pkg.get("name"): pkg.get("version") for pkg in data.get("package", []) if isinstance(pkg, dict)}
+    raw_packages = data.get("package", [])
+    if not isinstance(raw_packages, list):
+        return ["uv.lock has non-list 'package' section"]
+    packages = {
+        pkg.get("name"): pkg.get("version")
+        for pkg in raw_packages
+        if isinstance(pkg, dict) and isinstance(pkg.get("name"), str)
+    }
     problems = []
-    for name in ("vehicle-sil-dev", "vehicle-sil-gui", "vehicle-sil-control"):
+    for name in ("vehicle-sil-gui", "vehicle-sil-control"):
         got = packages.get(name)
         if got is None:
             problems.append(f"uv.lock has no package {name!r} (expected {want})")
         elif got != want:
-            problems.append(f"uv.lock says {name}=={got}, CMakeLists.txt says {version}: run `uv lock` (expected {want})")
+            problems.append(
+                f"uv.lock says {name}=={got}, CMakeLists.txt says {version}: "
+                f"run `scripts/package.py version --sync` (or `uv lock`) (expected {want})"
+            )
     return problems
 
 
 def version_problems(version: str, release: bool = False) -> list[str]:
     """Where the version disagrees with CMakeLists.txt, and what to change. `release`: for the tag being made."""
     checks = [
-        ("pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
         ("gui/server/pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
         ("python/pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
         ("python/vehicle_sil_control/__init__.py", r'(?m)^__version__ = "([^"]*)"', '{}'),
@@ -333,7 +343,6 @@ def version_problems(version: str, release: bool = False) -> list[str]:
 def sync_versions(version: str, dry_run: bool = False) -> int:
     """Sync derived version files and uv.lock from CMakeLists.txt; never modifies CHANGELOG.md."""
     targets = [
-        ("pyproject.toml", r'(?m)^(version = )"[^"]*"', '"{}"'),
         ("gui/server/pyproject.toml", r'(?m)^(version = )"[^"]*"', '"{}"'),
         ("python/pyproject.toml", r'(?m)^(version = )"[^"]*"', '"{}"'),
         ("python/vehicle_sil_control/__init__.py", r'(?m)^(__version__ = )"[^"]*"', '"{}"'),
@@ -377,7 +386,7 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
         return 1
 
     pyproject_changed = any(
-        rel in ("pyproject.toml", "gui/server/pyproject.toml", "python/pyproject.toml") for rel, _ in updates
+        rel in ("gui/server/pyproject.toml", "python/pyproject.toml") for rel, _ in updates
     )
     need_uv_lock = (ROOT / "uv.lock").is_file() and (bool(uv_lock_problems(version)) or pyproject_changed)
 
@@ -1298,6 +1307,7 @@ def verify_command(args: argparse.Namespace) -> int:
                 ["bin/vehicle-sil-gui.cmd"] if WINDOWS else [f"bin/{SOCKETCAN_BRIDGE}"]):
             if not (tools / path).is_file():
                 raise StepFailed(f"the archive has no {top}/{path}")
+        check_client_package_manifest(tools / "client" / client_package_path(version).name, version)
 
     def alone(s: Step) -> None:
         env = dict(os.environ, PATH=minimal_path())
@@ -1400,8 +1410,9 @@ def verify_command(args: argparse.Namespace) -> int:
                "want = pathlib.Path(sys.argv[1]).resolve(); "
                "got = pathlib.Path(c.__file__).resolve(); "
                "assert want in got.parents, f'imported {got}, not under {want}'; "
+               "assert c.__version__ == sys.argv[2], f'__version__ is {c.__version__!r}, expected {sys.argv[2]!r}'; "
                "print('stdlib-only ok', c.__version__)",
-               tools / "python"],
+               tools / "python", version],
               cwd=project, env=env, timeout=60)
         # Control-only requirements must not pull GUI-only packages.
         control_reqs = (tools / "python" / "requirements-control.txt").read_text(encoding="utf-8")
@@ -1419,12 +1430,13 @@ def verify_command(args: argparse.Namespace) -> int:
 
     def gui(s: Step) -> None:
         verify_gui(s, tools, project, [str(tools / "bin" / "vehicle-sil-gui.cmd")] if WINDOWS else
-                   ["/bin/sh", str(tools / "bin" / "vehicle-sil-gui")])
+                   ["/bin/sh", str(tools / "bin" / "vehicle-sil-gui")], version)
         # A screen of one's own: the archive's starter, served with --web.
         verify_gui(s, tools, project, [str(tools / "bin" / "vehicle-sil-gui.cmd")] if WINDOWS else
-                   ["/bin/sh", str(tools / "bin" / "vehicle-sil-gui")], web=tools / "gui_starter")
+                   ["/bin/sh", str(tools / "bin" / "vehicle-sil-gui")], version, web=tools / "gui_starter")
         if WINDOWS:  # the sh entry, as the MSYS2 UCRT64 shell starts it
-            verify_gui(s, tools, project, [need("bash", "the sh entry in MSYS2"), str(tools / "bin" / "vehicle-sil-gui")])
+            verify_gui(s, tools, project, [need("bash", "the sh entry in MSYS2"), str(tools / "bin" / "vehicle-sil-gui")],
+                       version)
 
     ok = run_steps(args.tag, [("unpack", unpack), ("alone", alone), ("build", build), ("simulate", simulate),
                               ("connect", connect), ("control", control), ("gui", gui)])
@@ -1436,7 +1448,29 @@ def verify_command(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
-def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], web: Path | None = None) -> None:
+def check_client_package_manifest(client_pkg: Path, version: str) -> None:
+    """Verify the staged npm client tarball's package/package.json name and version."""
+    try:
+        with tarfile.open(client_pkg, "r:gz") as tar:
+            member = tar.extractfile("package/package.json")
+            if member is None:
+                raise StepFailed(f"{client_pkg.name} has no package/package.json")
+            with member:
+                manifest = json.load(member)
+    except (OSError, tarfile.TarError, EOFError, zlib.error, KeyError, ValueError) as e:
+        raise StepFailed(f"{client_pkg.name} has no readable package/package.json: {e}") from None
+    if not isinstance(manifest, dict):
+        raise StepFailed(
+            f"{client_pkg.name} package/package.json must be a JSON object, got {type(manifest).__name__}"
+        )
+    if manifest.get("name") != "@vehicle-sil/gui-client" or manifest.get("version") != version:
+        raise StepFailed(
+            f"{client_pkg.name} package/package.json says {manifest.get('name')!r}@{manifest.get('version')!r}, "
+            f"expected '@vehicle-sil/gui-client'@{version!r}"
+        )
+
+
+def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], version: str, web: Path | None = None) -> None:
     """Starts the archive's vehicle-sil-gui (entry: how to start it) on the project and asks it what a screen would
     ask first. With web: started with --web web (a screen of one's own); asks for its page, its client library and
     api/app."""
@@ -1483,6 +1517,16 @@ def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], web: Path 
             except urllib.error.HTTPError as e:
                 raise StepFailed(f"{path}: HTTP {e.code} {e.read()[:300]!r}") from None
 
+        def get_json_object(path: str, body: dict | None = None) -> dict:
+            raw = get(path, body=body)
+            try:
+                parsed = json.loads(raw)
+            except ValueError as e:
+                raise StepFailed(f"{path} did not write valid JSON: {e}: {raw[:300]!r}") from None
+            if not isinstance(parsed, dict):
+                raise StepFailed(f"{path} must return a JSON object, got {type(parsed).__name__}: {raw[:300]!r}")
+            return parsed
+
         if web is not None:
             page = get("", token=False).decode("utf-8", "replace")
             if 'src="main.js"' not in page:
@@ -1493,13 +1537,19 @@ def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], web: Path 
             elements = get("vsil/vehicle-sil-gui-elements.mjs", token=False)
             if b"createClient" not in library or b"takeToken" not in library or b"vsil-run-controls" not in elements:
                 raise StepFailed(f"vehicle-sil-gui --web {web} does not serve the client library and the parts under vsil/")
-            app = json.loads(get("api/app"))
+            app = get_json_object("api/app")
+            if app.get("version") != version:
+                raise StepFailed(
+                    f"vehicle-sil-gui --web {web}: api/app says version {app.get('version')!r}, expected {version!r}"
+                )
             if not app.get("launcher", {}).get("usable"):
                 raise StepFailed(f"vehicle-sil-gui --web {web}: api/app says the launcher is not usable: {app}")
             s.notes.append(f"{Path(entry[-1]).name} --web gui_starter: page, library and parts served, api/app answered")
             return
-        app = json.loads(get("api/app"))
+        app = get_json_object("api/app")
         s.write(json.dumps(app, indent=1)[:3000])
+        if app.get("version") != version:
+            raise StepFailed(f"the GUI server says version {app.get('version')!r}, expected {version!r}: {app}")
         launcher = app.get("launcher", {})
         if not launcher.get("usable") or Path(launcher.get("path", "")).resolve() != (
                 tools / "bin" / f"vehicle_sil_launch{EXE}").resolve():
@@ -1522,7 +1572,7 @@ def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], web: Path 
         for name in CLIENT_BUNDLES:
             if get(f"vsil/{name}", token=False) != (tools / "python" / "vehicle_sil_gui" / "client" / name).read_bytes():
                 raise StepFailed(f"the GUI server does not serve the archive's vsil/{name}")
-        checked = json.loads(get("api/check", {"file": "simulation.yaml"}))
+        checked = get_json_object("api/check", {"file": "simulation.yaml"})
         if checked.get("exit_code") != 0:
             raise StepFailed(f"api/check of simulation.yaml ended with {checked.get('exit_code')}")
         s.notes.append(f"{Path(entry[-1]).name}: launcher usable, variables available, screen, timeline page "
@@ -1597,13 +1647,13 @@ def version_command(args: argparse.Namespace) -> int:
     expect = getattr(args, "expect", None)
     if dry_run and not sync:
         raise Usage("--dry-run requires --sync")
-    if sync and (expect or check):
+    if sync and (expect is not None or check):
         raise Usage("--sync cannot be combined with --expect or --check")
     version = project_version()
     if sync:
         return sync_versions(version, dry_run=dry_run)
-    problems = version_problems(version, release=bool(expect))
-    if expect and expect != f"v{version}":
+    problems = version_problems(version, release=expect is not None)
+    if expect is not None and expect != f"v{version}":
         problems.append(f"the tag is {expect}, the version {version}: tag v{version}, or change the version "
                         "(CMakeLists.txt and the places this command checks)")
     print(version)

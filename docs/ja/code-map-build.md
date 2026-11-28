@@ -99,7 +99,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 合わせて直す所は、[CHANGELOG.md](../../CHANGELOG.md) に書いてあります。
 
-- `pyproject.toml`、`python/pyproject.toml`、`gui/server/pyproject.toml`（`uv lock` は、`uv.lock` に PEP 440 の形 `0.2.0rc1` で書きます）
+- `python/pyproject.toml`、`gui/server/pyproject.toml`（`uv lock` は、`uv.lock` に PEP 440 の形 `0.2.0rc1` で書きます）
 - `python/vehicle_sil_control/__init__.py` と `gui/server/src/vehicle_sil_gui/__init__.py` の `__version__`
 - `template/get_tools.py`
 - `template/CMakeLists.txt` の `GIT_TAG` と `examples/fetchcontent_consumer/CMakeLists.txt` の `VEHICLE_SIL_GIT_TAG`
@@ -107,6 +107,11 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 - `CHANGELOG.md` の見出し `## [<version>] - Unreleased`
 
 ルートの `CMakeLists.txt` を更新した後、`scripts/package.py version --sync` は上のファイル（`CHANGELOG.md` を除く）を更新し、`uv.lock` の更新が必要なときは `uv lock --offline` を実行します（`--dry-run` は書き換えずに予定を表示します）。
+
+Python パッケージに関する補足:
+
+- ルートの `pyproject.toml`（`vehicle-sil-dev`、`package = false`）は開発専用で固定値（`0.0.0`）を保ち、`--sync` やバージョン照合の対象外です。
+- `python/vehicle_sil_control/__init__.py` と `gui/server/src/vehicle_sil_gui/__init__.py` の `__version__` は同期するリテラルのまま保ちます。ソース直実行・ツールアーカイブ・`python -S` 実行や、RC の SemVer 照合（`0.7.0-rc.1` と PEP 440 `0.7.0rc1` の違い）がインストール済みメタデータなしで動くためです。
 
 リリースのとき:
 

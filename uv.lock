@@ -1263,7 +1263,7 @@ provides-extras = ["grpc"]
 
 [[package]]
 name = "vehicle-sil-dev"
-version = "0.6.0"
+version = "0.0.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

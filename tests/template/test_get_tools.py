@@ -376,17 +376,23 @@ def test_prerelease(tmp: Path) -> None:
     finally:
         package.ROOT = root
     # Each place that names the version is checked: another version there is a problem that names the file.
-    places = ["pyproject.toml", "gui/server/pyproject.toml", "python/pyproject.toml",
+    # Root pyproject.toml (vehicle-sil-dev) is development-only and excluded from version checks.
+    places = ["gui/server/pyproject.toml", "python/pyproject.toml",
               "gui/server/src/vehicle_sil_gui/__init__.py",
               "python/vehicle_sil_control/__init__.py", "template/get_tools.py", "template/CMakeLists.txt",
               "examples/fetchcontent_consumer/CMakeLists.txt",
               "template/README.md", "template/README.ja.md"]
     copy = tmp / "copy"
-    for name in ["CMakeLists.txt", "CHANGELOG.md", *places]:
+    for name in ["CMakeLists.txt", "CHANGELOG.md", "pyproject.toml", *places]:
         (copy / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, copy / name)
     package.ROOT = copy
     try:
+        root_py_text = (copy / "pyproject.toml").read_text(encoding="utf-8")
+        (copy / "pyproject.toml").write_text(root_py_text.replace('version = "0.0.0"', 'version = "9.8.7"'), encoding="utf-8")
+        root_py_got = [x for x in package.version_problems(VERSION) if not x.startswith("CHANGELOG.md")]
+        (copy / "pyproject.toml").write_text(root_py_text, encoding="utf-8")
+        check(root_py_got == [], f"version_problems ignores root pyproject.toml ({root_py_got})")
         for name in places:
             text = (copy / name).read_text(encoding="utf-8")
             (copy / name).write_text(text.replace(VERSION, "9.8.7"), encoding="utf-8")
