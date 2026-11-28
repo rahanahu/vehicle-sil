@@ -130,20 +130,23 @@ test('timeline: the Scenario card shows the timeline on the screen itself, with 
   await expect(toggle).toHaveText('時間の軸を閉じる');
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   const timeline = card.getByTestId('timeline-element');
-  // [src], [lang], [token] and [step] from the screen's signals: the run's file, in the GUI's language, focused on step 2
-  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
-    /^手順 2 が [\d.]+ ms で失敗しました$/,
-    { timeout: RUN_TIMEOUT },
-  );
+  // Above-the-fold failure summary strip replaces redundant element chrome (#head, #summary, #help, #tables)
+  await expect(card.getByTestId('timeline-failure-strip')).toContainText('#2', {
+    timeout: RUN_TIMEOUT,
+  });
   await expect(card.getByTestId('timeline-readout')).toContainText('選んだ手順: 2');
   await expect(timeline).toHaveAttribute('lang', 'ja');
   await expect(timeline).toHaveAttribute('compact', '');
+  await expect(timeline.locator('#head')).toBeHidden();
+  await expect(timeline.locator('#summary')).toBeHidden();
   await expect(timeline.locator('#help')).toBeHidden();
+  await expect(timeline.locator('#tables')).toBeHidden();
+  await expect(timeline.locator('#toolbar')).toBeHidden();
   // (cursorchange) and (stepselect) come back to the screen's signals
   await timeline.locator('#chart').focus();
   await page.keyboard.press('ArrowRight');
   await expect(card.getByTestId('timeline-readout')).toContainText(/カーソル: [\d.]+ ms/);
-  await timeline.getByTestId('steps-table').getByRole('button', { name: '#1' }).click();
+  await card.getByTestId('scenario-step-jump-1').click();
   await expect(card.getByTestId('timeline-readout')).toContainText('選んだ手順: 1');
   if (shots) {
     await page.setViewportSize({ width: 1280, height: 1100 });
@@ -151,7 +154,7 @@ test('timeline: the Scenario card shows the timeline on the screen itself, with 
     await card.screenshot({ path: `${shots}/element-in-sample-ja.png` });
   }
   await toggle.click();
-  await expect(timeline).toHaveCount(0);
+  await expect(timeline).toBeHidden();
   // Clicking "タイムラインで表示" on step 2 re-opens the timeline and focuses step 2
   await card.getByTestId('scenario-step-jump-2').click();
   await expect(timeline).toBeVisible();

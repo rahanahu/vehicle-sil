@@ -21,6 +21,10 @@ app-run-status {
   margin-block-end: var(--app-space-3);
 }
 
+.wide-scenario-card {
+  margin-block-end: var(--app-space-3);
+}
+
 /*
  * 中身の領域が広ければ 2 列（左: 選ぶ、照合。右: 実行の様子）、狭ければ 1 列。
  * 1 列のとき、実行した後は実行の様子を先に並べる（列の箱を display: contents にして、order で並べ替える）。

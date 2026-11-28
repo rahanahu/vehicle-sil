@@ -553,7 +553,7 @@ When the launcher's `features` have `timeline`, the GUI server records the timel
 
 - The files are not kept beyond the last 4 runs or after the server stops. To keep one, fetch `api/timeline/<run_id>` with the token before then, or run the scenario with `vehicle_sil_launch run --scenario <scenario> --timeline <file>` yourself.
 - The server API is `scenario.timeline_url` of the summary and `GET api/timeline/<run_id>` (see "Timeline of a scenario run (`api/timeline`)" in [gui/protocol/README.md](../gui/protocol/README.md#timeline-of-a-scenario-run-apitimeline)); in the library, `timelineUrl` of the session copy's `scenario`.
-- The **Scenario** card also has **Show the timeline here**, which shows the same timeline inside the card with the `<vehicle-sil-timeline>` element (binding `[step]` as well as `[cursor]`; see "[Putting a timeline on your own screen](#putting-a-timeline-on-your-own-screen)"). When a scenario fails, the embedded timeline auto-expands focused on the failed step, and clicking **Show in timeline** on any step row opens and jumps to that step.
+- The **Scenario** card also has **Show the timeline here**, which spans the full content width once a timeline is available and renders `<vehicle-sil-timeline>` (`hide="header summary help tables toolbar"`; see "[Putting a timeline on your own screen](#putting-a-timeline-on-your-own-screen)"). When a scenario fails, it auto-expands with a single compact navigation bar, an above-the-fold failure summary strip, a zoom-preserving **Jump to failure** action, explicit pre-failure window presets (`-150 ms`, `-300 ms`, **Whole run**), and a signal filter bar (search, **All** / **Related to failure** / **Changed near failure** / **Inputs** / **Outputs** presets, participant chips, inline hide `×`, and inline restore chips). Filtering and hiding signals only change display and never reset zoom, cursor, or selected event; switching to another run resets all selection, cursor, viewport, and filter state. Clicking **Show in timeline** on any step row opens and jumps to that step (preserving zoom when zoomed in).
 
 ### Save your actions as a scenario
 
@@ -1284,9 +1284,9 @@ The element `<vehicle-sil-timeline>` draws a timeline file on a screen of your o
 - The element works even under a CSP that allows no inline style (`style-src 'self'`; the GUI server's is less strict): its CSS is a constructable style sheet, not a `<style>` element.
 - While it loads `src`, the element has `aria-busy="true"` and dims the file shown before.
 
-Hover over the chart to see each signal's value at the same virtual time. When both are recorded, `sent` is the write and `seen` is the sampled value. A dash means no value is available at that time.
+Hover over the chart to see each signal's value at the same virtual time, or click the plot to pin the cursor (with `Shift+click` for a `Δt` reference marker, `Shift+drag` or the toolbar buttons to pan, `Ctrl+wheel` / `Meta+wheel` to zoom around the pointer, and `Esc` to unpin). When both are recorded, `sent` is the write and `seen` is the sampled value. A dash means no value is available at that time.
 
-The step details above the chart show the expected values, the rule for when they must match, and the actual decision time. Hover over a step or click it to inspect it. The cursor line runs across the chart so you can compare signals at the same time.
+The event lane sits below the variable waveforms on the same virtual-time axis (and is omitted when the timeline has no steps). Events that share the exact same virtual timestamp are marked with a simultaneous-event tie line and `×N` badge; the step details tray below the chart lists all sibling events at that timestamp with an explicit note that display order does not imply causal order. Each variable lane head has an inline hide (`×`) button that emits a cancelable `variablehide` event (or hides the lane locally with an inline restore strip when `variables` is not externally controlled) without resetting zoom, cursor, or step selection.
 
 For variable-to-variable comparisons (`compare[].variable`), watch bands follow the right-hand variable's recorded `sampled` values as zero-order-hold slices on both numeric and `bool`/`enum` lanes. When one condition combines multiple comparisons, each slice draws their intersection and omits empty intervals; intervals where the right-hand variable has no sample yet, lost samples at the file's limits (`dropped`), or (in `during` mode) has only samples before `from_ms` are left unshaded. When a variable-to-variable comparison fails, the failure banner shows both sides' values and sample times, and failure markers appear on both the left-hand lane and the unmet right-hand lane. Because JavaScript numbers round 64-bit integers beyond `±9007199254740991`, the viewer notes rounded integer values and keeps the exact 64-bit numbers in the failure message.
 
@@ -1310,15 +1310,16 @@ Every option below can be changed after the element is on the page. The element 
 | `compact` | `compact` | boolean (the attribute is present) | off | Narrower lane heads, lower number lanes and smaller text, for a small box |
 | `theme` | `theme` | `light`, `dark`, `auto` | `auto` | The colours. `auto` takes the `color-scheme` of the page around the element: with `light dark` (as the sample screens and the timeline page declare), the browser's light or dark setting; where the page declares none, light |
 
-The getters of `cursor`, `step`, `from` and `to` return what the element shows now, also after the user has changed it. The method `reload()` loads `src` again.
+The getters of `cursor`, `step`, `from` and `to` return what the element shows now, also after the user has changed it. The methods are `reload()` (loads `src` again), `jumpToFailure(options?)` (jumps to the failure timestamp, pins the cursor, selects the failed step, preserves current zoom span by default when zoomed in, or frames an explicit pre-failure `leadMs` window without writing sticky `from`/`to`), `focusStep(index, options?)` (focuses a 1-based step index, pins the cursor to its virtual timestamp, and preserves the viewport when `{ preserveZoom: true }`), `resetView()` (shows the whole run), `pan(fraction)` (shifts the view horizontally by a fraction of its span), `zoomOut()` (widens the view around its midpoint), and `unpinCursor()` (clears a pinned cursor and any `Δt` reference). When `variables` is set, the element hides its built-in participant checkboxes so host-managed filters never conflict.
 
 | Event | When | `detail` |
 |---|---|---|
-| `load` | A file is shown | `{ file, scenario, status, start, end }` (`status` as the file writes it; `start` and `end`: the whole run, in ms) |
+| `load` | A file is shown | `{ file, scenario, status, start, end, recordedTo, stepCount, failure, variables }` (`status` as the file writes it; `start` and `end`: the whole run in ms; `variables`: metadata including `relatedToFailure` and `changedNearFailure`) |
 | `error` | A file cannot be shown. The element shows the reason too | `{ message, status }` (`status`: the HTTP status, or `null`) |
-| `cursorchange` | The user moves the cursor (the pointer, the arrow keys) | `{ cursor }` |
-| `stepselect` | The user chooses a step (on the chart, or its number in the table) | `{ step }` |
-| `viewchange` | The user zooms or moves the view | `{ from, to }` |
+| `cursorchange` | The user moves or pins the cursor (the pointer, the arrow keys, jump methods) | `{ cursor }` |
+| `stepselect` | The user chooses a step (on the chart, its number in the table, or `jumpToFailure()` / `focusStep()`) | `{ step }` |
+| `viewchange` | The user zooms or moves the view (including `jumpToFailure()`, `focusStep()`, `resetView()`, `pan()`, `zoomOut()`) | `{ from, to }` |
+| `variablehide` | The user clicks a variable lane's hide (`×`) button (bubbles, cancelable; call `preventDefault()` when the host manages `variables`) | `{ variable }` |
 
 - The events are `CustomEvent`. `load` and `error` do not bubble; the others do.
 - A change made through a property or an attribute raises no event. So a screen can keep two timelines, or a timeline and its own chart, in step without a loop: `a.addEventListener('viewchange', (e) => Object.assign(b, e.detail));`.

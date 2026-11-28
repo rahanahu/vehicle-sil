@@ -875,7 +875,18 @@ test('the types (vehicle-sil-timeline.d.ts) name every option of the element, an
     types.indexOf('  addEventListener<'),
   );
   const typed = [...element.matchAll(/^ {2}(\w+)(?:\(\))?: /gm)].map((m) => m[1]);
-  assert.deepEqual(typed.sort(), [...options, ...properties, 'reload'].sort());
+  assert.deepEqual(
+    typed.sort(),
+    [...options, ...properties, 'reload', 'resetView', 'zoomOut', 'unpinCursor'].sort(),
+  );
+  // Additive methods and events are declared on VehicleSilTimelineElement / VehicleSilTimelineEventMap
+  assert.match(types, /^ {2}jumpToFailure\(options\?: VehicleSilTimelineFocusOptions\): boolean;/m);
+  assert.match(
+    types,
+    /^ {2}focusStep\(index: number, options\?: VehicleSilTimelineFocusOptions\): boolean;/m,
+  );
+  assert.match(types, /^ {2}pan\(fraction: number\): void;/m);
+  assert.match(types, /^ {2}variablehide: CustomEvent<\{ variable: string \}>;/m);
   // The parts of hide: the type, the element's check and the CSS name the same words
   const union = /export type VehicleSilTimelinePart =([^;]+);/.exec(types)[1];
   const parts = [...union.matchAll(/'(\w+)'/g)].map((m) => m[1]);
@@ -1079,11 +1090,26 @@ const makeMockDom = () => {
       this._text = '';
       this.append(...nodes);
     }
-    addEventListener() {}
+    addEventListener(type, fn) {
+      if (!this._listeners) this._listeners = new Map();
+      let list = this._listeners.get(type);
+      if (!list) {
+        list = [];
+        this._listeners.set(type, list);
+      }
+      list.push(fn);
+    }
     getElementById(id) {
       return byTag(this, (n) => n.attrs.id === id)[0] || null;
     }
     querySelectorAll(sel) {
+      if (sel.startsWith('.')) {
+        const cls = sel.slice(1);
+        return byTag(this, (n) => {
+          const c = n.className || n.attrs.class || '';
+          return c.split(/\s+/).includes(cls);
+        });
+      }
       if (sel.startsWith('[') && sel.endsWith(']')) {
         const inner = sel.slice(1, -1);
         const eq = inner.indexOf('=');
@@ -1106,7 +1132,9 @@ const makeMockDom = () => {
     attachShadow() {
       return this._shadow;
     }
-    dispatchEvent() {
+    dispatchEvent(ev) {
+      const list = this._listeners?.get(ev.type) ?? [];
+      for (const fn of list) fn.call(this, ev);
       return true;
     }
   }
@@ -2780,4 +2808,644 @@ test('multi-ne integer intersection omits slices when every integer in [intLo, i
       .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi, s.excluded]),
     [[0, 20, 10, 11, [10]]],
   );
+});
+
+test('logic analyzer: event lane sits below variable lanes and is omitted cleanly when steps is empty', async () => {
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = reference('fails_beside');
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  const chart = el._shadow.getElementById('chart');
+  const laneClasses = chart.children
+    .filter((c) => typeof c.className === 'string' && c.className.split(' ').includes('lane'))
+    .map((c) => c.className);
+  assert.ok(laneClasses[0].includes('axis'), 'axis lane is first');
+  assert.ok(laneClasses.at(-1).includes('steps'), 'steps lane is at the bottom below waveforms');
+
+  // Eventless timeline omits the event lane completely and uses clean summary text.
+  const eventless = JSON.parse(JSON.stringify(reference('motions')));
+  eventless.steps = [];
+  eventless.lines = [];
+  const el2 = new Element();
+  el2.data = eventless;
+  el2.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const chart2 = el2._shadow.getElementById('chart');
+  const stepLanes2 = chart2.children.filter(
+    (c) => typeof c.className === 'string' && c.className.split(' ').includes('steps'),
+  );
+  assert.equal(stepLanes2.length, 0, 'eventless recording omits empty steps lane');
+  assert.equal(el2._shadow.getElementById('step-details').hidden, true);
+  const summaryText = el2._shadow.getElementById('summary').textContent;
+  assert.match(summaryText, /Passed \(no scenario steps\)/);
+  assert.doesNotMatch(summaryText, /0 steps/);
+});
+
+test('logic analyzer: pixel-width row packing prevents label overlap and labels narrow bars concisely', () => {
+  const scale = T.makeScale(0, 940, 1000);
+  const steps = [
+    {
+      index: 3,
+      kind: 'ramp',
+      name: 'prefill brake pressure',
+      status: 'passed',
+      start_ms: 100,
+      at_ms: 120,
+      end_ms: 120,
+    },
+    {
+      index: 4,
+      kind: 'set',
+      name: 'engage AEB and regen cut',
+      status: 'passed',
+      start_ms: 200,
+      at_ms: 200,
+      end_ms: 200,
+    },
+    {
+      index: 5,
+      kind: 'ramp',
+      name: 'short ramp',
+      status: 'passed',
+      start_ms: 200,
+      at_ms: 220,
+      end_ms: 220,
+    },
+    {
+      index: 6,
+      kind: 'ramp',
+      name: 'ramp deceleration to -7.5 m/s^2',
+      status: 'passed',
+      start_ms: 220,
+      at_ms: 520,
+      end_ms: 520,
+    },
+  ];
+  const { items, rows } = T.layoutStepItems(steps, scale, 940);
+  // Every pair of items on the same row must have non-overlapping pixel boxes.
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (rows[i] !== rows[j]) continue;
+      assert.ok(
+        items[i].x1 <= items[j].x0 || items[j].x1 <= items[i].x0,
+        `items #${items[i].st.index} and #${items[j].st.index} overlap on row ${rows[i]}`,
+      );
+    }
+  }
+  // Point event #4 and adjacent bar #6 cannot share the same row because #4's label extends past 220 ms.
+  const idx4 = items.findIndex((it) => it.st.index === 4);
+  const idx6 = items.findIndex((it) => it.st.index === 6);
+  assert.notEqual(rows[idx4], rows[idx6], '#4 label and #6 bar are placed on separate rows');
+  // Narrow bars (#3, #5 ~21px wide) get concise #N labels instead of being blank.
+  const it3 = items.find((it) => it.st.index === 3);
+  const it5 = items.find((it) => it.st.index === 5);
+  assert.equal(it3.displayLabel, '#3');
+  assert.equal(it5.displayLabel, '#5');
+});
+
+test('logic analyzer: simultaneous events render cluster badge and list all siblings with unordered wording', async () => {
+  const tl = JSON.parse(JSON.stringify(reference('fails_beside')));
+  tl.steps = [
+    {
+      index: 1,
+      line: 5,
+      kind: 'set',
+      name: 'override pulse',
+      text: 'set Body.level = 30',
+      status: 'passed',
+      start_ms: 50,
+      at_ms: 50,
+      end_ms: 50,
+      code: null,
+      message: null,
+      lines: [],
+      watch: null,
+      failed: null,
+    },
+    {
+      ...tl.steps[1],
+      index: 2,
+      start_ms: 50,
+      name: 'braking check',
+    },
+  ];
+  const groups = T.sameStartGroups(tl.steps);
+  assert.equal(groups.size, 1);
+  assert.deepEqual(
+    groups.get(50).map((s) => s.index),
+    [1, 2],
+  );
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  const clusters = el._shadow.querySelectorAll('.sim-cluster');
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].getAttribute('tabindex'), '0');
+  assert.equal(clusters[0].getAttribute('role'), 'button');
+  assert.match(clusters[0].textContent, /×2/);
+
+  const banner = el._shadow.querySelectorAll('[data-testid=simultaneous-banner]');
+  assert.equal(banner.length, 1);
+  assert.match(banner[0].textContent, /display order does not imply causal order/i);
+  const items = el._shadow.querySelectorAll('[data-sim-step]');
+  assert.equal(items.length, 2);
+
+  // Japanese wording explicitly states non-causal order.
+  el.setAttribute('lang', 'ja');
+  el.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  const bannerJa = el._shadow.querySelectorAll('[data-testid=simultaneous-banner]');
+  assert.equal(bannerJa.length, 1);
+  assert.match(bannerJa[0].textContent, /表示順は因果関係を示しません/);
+});
+
+test('logic analyzer: pre-failure framing, zoom-preserving jump/focus, pan clamping, and end-edge state marker', async () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Brake.pressure',
+        participant: 'Brake',
+        type: 'real',
+        causality: 'output',
+        unit: 'bar',
+        min: 0,
+        max: 200,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Brake.fault_latch',
+        participant: 'Brake',
+        type: 'bool',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'ADAS.aeb_state',
+        participant: 'ADAS',
+        type: 'enum',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [
+          { name: 'braking', value: 1 },
+          { name: 'degraded', value: 2 },
+        ],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 4,
+        kind: 'set',
+        text: 'set initial',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 0,
+        end_ms: 0,
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+      {
+        index: 2,
+        line: 8,
+        kind: 'ramp',
+        name: 'long braking ramp',
+        text: 'ramp Brake.pressure to 120 over 400 ms',
+        status: 'failed',
+        start_ms: 540,
+        at_ms: 640,
+        end_ms: 940,
+        code: 'scenario-failed',
+        message: 'pressure dropped',
+        lines: [],
+        watch: {
+          mode: 'during',
+          from_ms: 540,
+          to_ms: 940,
+          conditions: [
+            { variable: 'Brake.pressure', compare: [{ op: 'ge', value: 100, tolerance: null }] },
+          ],
+        },
+        failed: {
+          at_ms: 640,
+          code: 'scenario-failed',
+          conditions: [{ condition: 0, value: 88, sample_ms: 640 }],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries(
+        'Brake.pressure',
+        'sampled',
+        [
+          [0, 120],
+          [600, 110],
+          [640, 88],
+        ],
+        { last_ms: 640 },
+      ),
+      makeSeries(
+        'Brake.fault_latch',
+        'sampled',
+        [
+          [0, false],
+          [640, true],
+        ],
+        { last_ms: 640 },
+      ),
+      makeSeries(
+        'ADAS.aeb_state',
+        'sampled',
+        [
+          [0, 1],
+          [620, 2],
+        ],
+        { last_ms: 640 },
+      ),
+    ],
+  });
+  tl.scenario.status = 'failed';
+  tl.scenario.recorded_to_ms = 640;
+  tl.scenario.over_at_ms = 650;
+
+  const m = model(tl);
+  // Pre-failure framing respects recorded_to_ms = 640 instead of wasting 60% on 640..940 unrecorded tail.
+  const [i0, i1] = T.initialView(m);
+  assert.ok((640 - i0) / (i1 - i0) >= 0.75, `expected >=75% pre-failure, got [${i0}, ${i1}]`);
+  const [s0, s1] = T.stepViewFor(m, m.steps[1]);
+  assert.ok((640 - s0) / (s1 - s0) >= 0.75, `failed stepView respects recordedTo: [${s0}, ${s1}]`);
+
+  // Zoom-preserving jump keeps exact 150 ms zoom span and positions 640 ms at 80%.
+  const [j0, j1] = T.failureJumpView(m, [150, 300], true);
+  assert.ok(Math.abs(j1 - j0 - 150) < 1e-6);
+  assert.ok(Math.abs(j0 - 520) < 1e-6 && Math.abs(j1 - 670) < 1e-6);
+
+  // panView clamps cleanly without changing span.
+  assert.deepEqual(T.panView([0, 1000], [100, 250], -200), [0, 150]);
+  assert.deepEqual(T.panView([0, 1000], [800, 950], 200), [850, 1000]);
+
+  // modelMetadata computes relatedToFailure and changedNearFailure accurately.
+  const meta = T.modelMetadata(m, 'brake.timeline.json');
+  assert.equal(meta.recordedTo, 640);
+  assert.equal(meta.stepCount, 2);
+  assert.equal(meta.failure.step, 2);
+  assert.equal(meta.failure.at, 640);
+  const byVar = new Map(meta.variables.map((v) => [v.name, v]));
+  assert.equal(byVar.get('Brake.pressure').relatedToFailure, true);
+  assert.equal(byVar.get('ADAS.aeb_state').relatedToFailure, false);
+  assert.equal(byVar.get('ADAS.aeb_state').changedNearFailure, true);
+
+  // Element API: jumpToFailure preserves zoom, pins cursor, selects failed step, and survives variables filter.
+  const { Element } = makeMockDom();
+  const el = new Element();
+  let loaded = null;
+  el.addEventListener('load', (e) => {
+    loaded = e.detail;
+  });
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(loaded.failure.at, 640);
+
+  // End-edge bool transition at recorded_to_ms (640 ms) draws crisp → true badge.
+  const edgeLabels = el._shadow.querySelectorAll('.state-edge-label');
+  assert.ok(
+    edgeLabels.some((n) => n.textContent.includes('→ true')),
+    'end-edge transition marker renders → true',
+  );
+
+  el.from = 150;
+  el.to = 300;
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el.jumpToFailure({ preserveZoom: true }), true);
+  assert.ok(Math.abs(el.to - el.from - 150) < 1e-6);
+  assert.equal(el.cursor, 640);
+  assert.equal(el.step, 2);
+
+  // Filtering signals (including empty array) never resets zoom, cursor, or step.
+  el.variables = ['Brake.pressure'];
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.ok(Math.abs(el.to - el.from - 150) < 1e-6);
+  assert.equal(el.cursor, 640);
+  assert.equal(el.step, 2);
+
+  el.variables = [];
+  await new Promise((r) => Promise.resolve().then(r));
+  const varNames = el._shadow.querySelectorAll('.var-name');
+  assert.equal(varNames.length, 0, 'explicit empty variables array hides all variable lanes');
+  assert.equal(el.cursor, 640);
+  assert.equal(el.step, 2);
+});
+
+test('logic analyzer: niceTicks terminates at extreme zoom and >= 2^53 timestamps', () => {
+  // Extreme zoom where step falls below float64 ULP around t0 must never infinite-loop.
+  const huge = 2 ** 53;
+  const ticksHuge = T.niceTicks(huge, huge + 1, 5);
+  assert.ok(ticksHuge.length >= 1 && ticksHuge.length <= 200);
+  const tinySpan = T.niceTicks(100, 100 + 1e-15, 5);
+  assert.ok(tinySpan.length >= 1 && tinySpan.length <= 200);
+});
+
+test('logic analyzer: short-run leadMs, non-sticky navigation, quiet restoration, participants hiding, and single edge label', async () => {
+  const shortTl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Brake.pressure',
+        participant: 'Brake',
+        type: 'real',
+        causality: 'output',
+        unit: 'bar',
+        min: 0,
+        max: 180,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Brake.fault_latch',
+        participant: 'Brake',
+        type: 'bool',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'ADAS.override',
+        participant: 'ADAS',
+        type: 'bool',
+        causality: 'input',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: true,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 5,
+        kind: 'set',
+        text: 'set ADAS.override = true',
+        status: 'passed',
+        start_ms: 200,
+        at_ms: 200,
+        end_ms: 200,
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+      {
+        index: 2,
+        line: 8,
+        kind: 'expect',
+        text: 'expect Brake.fault_latch eq false',
+        status: 'failed',
+        start_ms: 200,
+        at_ms: 250,
+        end_ms: 300,
+        code: 'scenario-failed',
+        message: 'fault latched',
+        lines: [],
+        watch: {
+          mode: 'during',
+          from_ms: 200,
+          to_ms: 300,
+          conditions: [
+            {
+              variable: 'Brake.fault_latch',
+              compare: [{ op: 'eq', value: false, tolerance: null }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 250,
+          code: 'scenario-failed',
+          conditions: [{ condition: 0, value: true, sample_ms: 250 }],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries('Brake.pressure', 'sampled', [[0, 100]], { last_ms: 250 }),
+      makeSeries(
+        'Brake.fault_latch',
+        'sampled',
+        [
+          [0, false],
+          [250, true],
+        ],
+        { last_ms: 250 },
+      ),
+      makeSeries(
+        'ADAS.override',
+        'written',
+        [
+          [0, false],
+          [200, true],
+        ],
+        { encoding: 'all', last_ms: 250 },
+      ),
+    ],
+  });
+  shortTl.scenario.status = 'failed';
+  shortTl.scenario.recorded_to_ms = 250;
+  shortTl.scenario.over_at_ms = 260;
+
+  const m = model(shortTl);
+  // Short run: -300 ms covers the full domain and is NEVER narrower than -150 ms.
+  const [f150, t150] = T.failureJumpView(m, m.domain, { leadMs: 150 });
+  const [f300, t300] = T.failureJumpView(m, m.domain, { leadMs: 300 });
+  assert.ok(
+    t300 - f300 >= t150 - f150,
+    `-300 ms (${f300}..${t300}) must not be narrower than -150 ms (${f150}..${t150})`,
+  );
+  assert.equal(f300, m.domain[0]);
+  assert.equal(t300, m.domain[1]);
+
+  // Simultaneous-start written signal (ADAS.override written at 200 ms == failed step start_ms) is relatedToFailure.
+  const meta = T.modelMetadata(m, 'short.timeline.json');
+  const adasVar = meta.variables.find((v) => v.name === 'ADAS.override');
+  assert.equal(adasVar.relatedToFailure, true);
+
+  // stepFocusView preserves whole-run view when step is already visible inside it.
+  assert.deepEqual(T.stepFocusView(m, m.steps[0], m.domain, true), m.domain);
+
+  // Calling jumpToFailure inside a `data` load listener still emits cursorchange/stepselect (c.quiet cleared/restored).
+  const { Element } = makeMockDom();
+  const el = new Element();
+  const emitted = [];
+  el.addEventListener('cursorchange', (e) => emitted.push(['cursorchange', e.detail]));
+  el.addEventListener('stepselect', (e) => emitted.push(['stepselect', e.detail]));
+  el.addEventListener('viewchange', (e) => emitted.push(['viewchange', e.detail]));
+  el.addEventListener('load', () => {
+    el.jumpToFailure({ leadMs: 150 });
+  });
+  el.data = shortTl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  assert.ok(emitted.some(([type]) => type === 'cursorchange'));
+  assert.ok(emitted.some(([type]) => type === 'stepselect'));
+  assert.equal(el.cursor, 250);
+  assert.equal(el.step, 2);
+
+  // Failed end-edge bool transition has ONLY ONE → true label (no duplicate colliding black & red labels).
+  const edgeLabels = el._shadow
+    .querySelectorAll('.state-edge-label')
+    .filter((n) => n.textContent.includes('→ true'));
+  assert.equal(edgeLabels.length, 1, 'exactly one non-colliding → true label on failing bool lane');
+
+  // Non-sticky resetView / pan / zoomOut / unpinCursor work without leaking sticky options across reload.
+  el.resetView();
+  assert.equal(el.from, m.domain[0]);
+  assert.equal(el.to, m.domain[1]);
+  el.jumpToFailure({ leadMs: 150 });
+  const beforePan = el.from;
+  el.pan(-0.25);
+  assert.ok(el.from < beforePan);
+  el.zoomOut();
+  el.unpinCursor();
+
+  // Built-in #participants hides automatically when `variables` is host-managed.
+  assert.equal(el._shadow.getElementById('participants').hidden, false);
+  el.variables = ['Brake.fault_latch'];
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el._shadow.getElementById('participants').hidden, true);
+  el.variables = null;
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el._shadow.getElementById('participants').hidden, false);
+});
+
+test('stepFocusView preserves whole-run view when selecting steps at domain edges d0 and d1', () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Brake.pressure',
+        participant: 'Brake',
+        type: 'real',
+        causality: 'output',
+        unit: 'bar',
+        min: 0,
+        max: 180,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 1,
+        kind: 'set',
+        name: 'init',
+        text: 'x = 0',
+        start_ms: 0,
+        at_ms: 0,
+        end_ms: 0,
+        status: 'passed',
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+      {
+        index: 2,
+        line: 2,
+        kind: 'wait',
+        name: 'mid',
+        text: 'wait 940 ms',
+        start_ms: 0,
+        at_ms: 940,
+        end_ms: 940,
+        status: 'passed',
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+      {
+        index: 3,
+        line: 3,
+        kind: 'check',
+        name: 'end',
+        text: 'x == 1',
+        start_ms: 940,
+        at_ms: 940,
+        end_ms: 940,
+        status: 'passed',
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+    ],
+    series: [
+      makeSeries(
+        'Brake.pressure',
+        'sampled',
+        [
+          [0, 0],
+          [940, 1],
+        ],
+        { last_ms: 940 },
+      ),
+    ],
+  });
+  tl.scenario.recorded_to_ms = 940;
+  tl.scenario.over_at_ms = 940;
+  const m = model(tl);
+  assert.equal(m.domain[0], 0);
+  assert.ok(m.domain[1] > 940);
+
+  // Step at start_ms = d0 (0 ms) keeps the whole-run view instead of collapsing to stepViewFor().
+  assert.deepEqual(T.stepFocusView(m, m.steps[0], m.domain, true), m.domain);
+  // Step at start_ms = d1 also keeps the whole-run view.
+  const endEdgeStep = { ...m.steps[2], start_ms: m.domain[1], end_ms: m.domain[1] };
+  assert.deepEqual(T.stepFocusView(m, endEdgeStep, m.domain, true), m.domain);
+  // Step at start_ms = 0 when zoomed to [0, 200] (flush with d0) also keeps [0, 200].
+  assert.deepEqual(T.stepFocusView(m, m.steps[0], [0, 200], true), [0, 200]);
+  // Step at 199 when zoomed to [0, 200] (NOT flush with d1) still pans to keep margin from the cropped right edge.
+  const nearCroppedRight = { ...m.steps[2], start_ms: 199, end_ms: 199 };
+  const panned = T.stepFocusView(m, nearCroppedRight, [0, 200], true);
+  assert.ok(panned[1] > 200 && panned[1] - panned[0] === 200);
 });

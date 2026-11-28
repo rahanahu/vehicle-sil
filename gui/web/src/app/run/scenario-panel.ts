@@ -52,38 +52,39 @@ export function formatCallFrame(frame: ScenarioCallFrame): string {
         <span class="mark" aria-hidden="true">{{ mark() }}</span>
         {{ outcome() }}
       </p>
-      @if (rerunAllowed() !== null && !running() && s.status !== null) {
-        <button
-          matButton="tonal"
-          type="button"
-          class="rerun"
-          data-testid="scenario-rerun"
-          [disabled]="!rerunAllowed()"
-          (click)="rerun.emit()"
-          i18n
-        >
-          同じ条件で再実行
-        </button>
-      }
+      <div class="top-actions">
+        @if (timelineHref(); as href) {
+          <a
+            class="timeline-link"
+            [href]="href"
+            target="_blank"
+            rel="opener"
+            data-testid="scenario-timeline"
+            i18n-title
+            title="手順と値を時間の軸の図で見る（新しいタブ）"
+            i18n
+            >時間の軸</a
+          >
+        }
+        @if (rerunAllowed() !== null && !running() && s.status !== null) {
+          <button
+            matButton="tonal"
+            type="button"
+            class="rerun"
+            data-testid="scenario-rerun"
+            [disabled]="!rerunAllowed()"
+            (click)="rerun.emit()"
+            i18n
+          >
+            同じ条件で再実行
+          </button>
+        }
+      </div>
     </div>
     @if (handoverBadge(); as notice) {
       <p class="handover" role="status" data-testid="scenario-handover">
         <span class="mark" aria-hidden="true">‖</span>
         {{ notice }}
-      </p>
-    }
-    @if (timelineHref(); as href) {
-      <p class="timeline">
-        <a
-          [href]="href"
-          target="_blank"
-          rel="opener"
-          data-testid="scenario-timeline"
-          i18n-title
-          title="手順と値を時間の軸の図で見る（新しいタブ）"
-          i18n
-          >時間の軸</a
-        >
       </p>
     }
     @if (s.timelineUrl) {
@@ -209,8 +210,17 @@ export function formatCallFrame(frame: ScenarioCallFrame): string {
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      gap: var(--app-space-2);
+      gap: var(--app-space-1) var(--app-space-2);
       margin-block-end: var(--app-space-1);
+    }
+    .top-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--app-space-2);
+    }
+    .timeline-link {
+      white-space: nowrap;
     }
     .outcome {
       margin: 0;

@@ -2073,6 +2073,98 @@
     "7912602377845951306": {
       "source": "未使用",
       "target": "Not in use"
+    },
+    "5154664877024693468": {
+      "source": " 失敗時刻へ移動 ",
+      "target": " Jump to failure "
+    },
+    "6681208731780724550": {
+      "source": "失敗前:",
+      "target": "Pre-failure:"
+    },
+    "8794060275065177624": {
+      "source": " 全体 ",
+      "target": " Whole run "
+    },
+    "8634432685597510939": {
+      "source": " すべて ",
+      "target": " All "
+    },
+    "1265424349923129709": {
+      "source": " 失敗に関係 ",
+      "target": " Related to failure "
+    },
+    "3398475876780553630": {
+      "source": " 失敗直前に変化 ",
+      "target": " Changed near failure "
+    },
+    "2408987094291824742": {
+      "source": " 入力 ",
+      "target": " Inputs "
+    },
+    "5764766181671432621": {
+      "source": " 出力 ",
+      "target": " Outputs "
+    },
+    "3840284391502524323": {
+      "source": "非表示（{$INTERPOLATION}）:",
+      "target": "Hidden ({$INTERPOLATION}):"
+    },
+    "6904382587019461391": {
+      "source": " すべて戻す ",
+      "target": " Restore all "
+    },
+    "1268332698985856493": {
+      "source": "条件に合う信号がありません。",
+      "target": "No signals match the current filter."
+    },
+    "4212637555021996514": {
+      "source": " 絞り込みを解除 ",
+      "target": " Reset filters "
+    },
+    "8699606184262443891": {
+      "source": "信号を検索",
+      "target": "Search signals"
+    },
+    "5968935914356447817": {
+      "source": "信号名で絞り込み… (/)",
+      "target": "Filter signals… (/)"
+    },
+    "3484688032091254986": {
+      "source": "検索を消す",
+      "target": "Clear search"
+    },
+    "1590728947429208341": {
+      "source": "信号の絞り込み",
+      "target": "Signal filter presets"
+    },
+    "1480745443463980321": {
+      "source": "participant で絞り込み",
+      "target": "Filter by participant"
+    },
+    "8286365889773298504": {
+      "source": "失敗前の表示範囲",
+      "target": "Pre-failure time window"
+    },
+    "1608510753308118889": {
+      "source": " 縮小 ",
+      "target": " Zoom out "
+    },
+    "9046027156478552906": {
+      "source": " ピン解除 ",
+      "target": " Unpin "
+    },
+    "6542778169597298929": {
+      "source": "時間軸の操作",
+      "target": "Timeline navigation"
+    },
+    "2370019744646040278": {
+      "source": "左へ移動",
+      "target": "Pan left"
+    },
+    "150968626374394471": {
+      "source": "右へ移動",
+      "target": "Pan right"
     }
   }
 }

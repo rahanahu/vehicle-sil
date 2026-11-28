@@ -172,24 +172,37 @@ test('timeline element: two on one page keep their own file, language, cursor an
     [
       'a',
       'load',
-      {
+      expect.objectContaining({
         file: 'fails_beside.timeline.json',
         scenario: 'the expect beside a ramp fails at a sample',
         status: 'failed',
         start: 0,
         end: expect.any(Number),
-      },
+        recordedTo: 140,
+        stepCount: 3,
+        failure: expect.objectContaining({ step: 2, at: 140 }),
+        variables: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'Body.body.speed',
+            failing: true,
+            relatedToFailure: true,
+          }),
+        ]),
+      }),
     ],
     [
       'b',
       'load',
-      {
+      expect.objectContaining({
         file: 'motions.timeline.json',
         scenario: 'set, ramp and waves, with an expect beside',
         status: 'passed',
         start: 0,
         end: expect.any(Number),
-      },
+        stepCount: 6,
+        failure: null,
+        variables: expect.any(Array),
+      }),
     ],
   ]);
 
