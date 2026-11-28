@@ -608,27 +608,36 @@ void timeline(const Options& o)
                         !contains(lf(manualRun.standard_output), "\n  \"scenario\":"),
                     "manual run --json has top-level timeline and no scenario:\n" + lf(manualRun.standard_output));
 
+            const auto checkManualTimeline = [&](const std::string& tl, const std::string& label) {
+                require(contains(tl, "{\n  \"vehicle_sil_timeline\": 1,\n") &&
+                            contains(tl, "  \"stage\": \"run\",\n") &&
+                            contains(tl, "  \"params\": [],\n") &&
+                            contains(tl, "  \"scenario\": null,\n  \"recorded_to_ms\": 200,\n") &&
+                            contains(tl, "  \"steps\": [],\n") &&
+                            contains(tl, "  \"lines\": [],\n") &&
+                            contains(tl, "\"name\": \"Engine.engine.speed\"") &&
+                            contains(tl, "\"name\": \"Dashboard.dashboard.engine_speed\"") &&
+                            contains(tl, "\"written\": false,\n      \"watched\": false,\n      \"recorded\": true"),
+                        label + " structure and variables:\n" + tl);
+                // Steps strictly < stop_at_ms (200 ms) are guaranteed; the step at t == 200 ms depends
+                // on shutdown scheduling (docs/simulation-run.md).
+                const std::string eng = series_of(tl, "Engine.engine.speed", "sampled");
+                const std::string dash = series_of(tl, "Dashboard.dashboard.engine_speed", "sampled");
+                const bool engOk = (contains(eng, "\"samples\": 20,") &&
+                                    contains(eng, "\"first_ms\": 0,\n      \"last_ms\": 190,")) ||
+                                   (contains(eng, "\"samples\": 21,") &&
+                                    contains(eng, "\"first_ms\": 0,\n      \"last_ms\": 200,"));
+                const bool dashOk = (contains(dash, "\"samples\": 40,") &&
+                                     contains(dash, "\"first_ms\": 0,\n      \"last_ms\": 195,")) ||
+                                    (contains(dash, "\"samples\": 41,") &&
+                                     contains(dash, "\"first_ms\": 0,\n      \"last_ms\": 200,"));
+                require(engOk && contains(eng, "\"points\": [\n        [0, 50],") &&
+                            contains(eng, "[190, 1000]") && dashOk &&
+                            contains(dash, "\"points\": [\n        [0, 0],\n        [5, 50],\n        [105, 550]\n      ]"),
+                        label + " captured samples for both recorded signals:\n" + tl);
+            };
             const std::string manualTl = read_text(exDir / "manual.json");
-            require(contains(manualTl, "{\n  \"vehicle_sil_timeline\": 1,\n") &&
-                        contains(manualTl, "  \"stage\": \"run\",\n") &&
-                        contains(manualTl, "  \"params\": [],\n") &&
-                        contains(manualTl, "  \"scenario\": null,\n  \"recorded_to_ms\": 200,\n") &&
-                        contains(manualTl, "  \"steps\": [],\n") &&
-                        contains(manualTl, "  \"lines\": [],\n") &&
-                        contains(manualTl, "\"name\": \"Engine.engine.speed\"") &&
-                        contains(manualTl, "\"name\": \"Dashboard.dashboard.engine_speed\"") &&
-                        contains(manualTl, "\"written\": false,\n      \"watched\": false,\n      \"recorded\": true"),
-                    "manual timeline structure and variables:\n" + manualTl);
-            const std::string manualEng = series_of(manualTl, "Engine.engine.speed", "sampled");
-            const std::string manualDash = series_of(manualTl, "Dashboard.dashboard.engine_speed", "sampled");
-            require(contains(manualEng, "\"samples\": 21,") &&
-                        contains(manualEng, "\"first_ms\": 0,\n      \"last_ms\": 200,") &&
-                        contains(manualEng, "\"points\": [\n        [0, 50],") &&
-                        contains(manualEng, "[200, 1050]") &&
-                        contains(manualDash, "\"samples\": 41,") &&
-                        contains(manualDash, "\"first_ms\": 0,\n      \"last_ms\": 200,") &&
-                        contains(manualDash, "\"points\": [\n        [0, 0],\n        [5, 50],\n        [105, 550]\n      ]"),
-                    "manual timeline captured samples for both recorded signals:\n" + manualTl);
+            checkManualTimeline(manualTl, "manual timeline");
 
             // Without --timeline, manual run --json omits top-level "timeline".
             const Captured manualNoTl = launch(
@@ -650,7 +659,7 @@ void timeline(const Options& o)
             require(contains(lf(manualServe.standard_output), "\"line\":\"timeline: manual_serve.json\"") &&
                         contains(lf(manualServe.standard_output), "\"timeline\":\"manual_serve.json\""),
                     "serve --once events name manual timeline:\n" + lf(manualServe.standard_output));
-            expect_text(read_text(exDir / "manual_serve.json"), manualTl, "serve --once manual timeline matches run");
+            checkManualTimeline(read_text(exDir / "manual_serve.json"), "serve --once manual timeline");
 
             // Manual run with --stdin-commands: --speed 1 + stdin stop after Dashboard reaches t=500 ms.
             {
