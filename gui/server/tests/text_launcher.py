@@ -136,6 +136,9 @@ def main(argv: list[str]) -> int:
     if (request or {}).get("variant") == "only-in-text" and not from_stdin:
         print(fabricated("usage"))
         return 4
+    if (request or {}).get("case") == "missing-case" and not from_stdin:
+        print(fabricated("usage"))
+        return 4
     config = Path(argv[end + 1]) if end + 1 < len(argv) else None
     marks = set(config.read_text(encoding="utf-8").splitlines()) if config is not None and config.is_file() else set()
     if from_stdin and ("--compare-commands" in options or config is None or not config.is_file()):

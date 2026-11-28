@@ -1141,3 +1141,56 @@ def test_open_operations_that_had_to_be_forgotten_still_get_their_end() -> None:
                                                                       (2, "unknown", True)]
         assert ends[-1]["peers"] == {}
     asyncio.run(main())
+
+
+def test_ready_waits_for_expected_peers_and_flushes_on_run_active(monkeypatch: pytest.MonkeyPatch) -> None:
+    import vehicle_sil_gui.variables as variables_mod
+
+    monkeypatch.setattr(variables_mod, "TOLD_TOGETHER_S", 0.01)
+    monkeypatch.setattr(variables_mod, "INITIAL_PEERS_GRACE_S", 0.03)
+
+    async def make_empty(expected: int = 2) -> tuple[Variables, Scripted, list[dict]]:
+        sent: list[dict] = []
+        v = Variables(7, sent.extend)
+        v.expect()
+        v.set_expected_peers(expected)
+        src = Scripted()
+        v.connect(src)
+        return v, src, sent
+
+    async def main() -> None:
+        # 1. on_synced() with empty peers stays connecting until expected peers arrive, then transitions with all peers.
+        v, _source, sent = await make_empty(2)
+        v.on_synced()
+        assert v.state == "connecting" and sent == []
+        v.on_peers([PeerInfo("Engine", "e1", True, SCHEMA)], [])
+        assert v.state == "connecting"
+        v.on_peers([PeerInfo("Body", "b1", True, SCHEMA[:1])], [])
+        assert v.state == "ready"
+        assert [p["name"] for p in sent[-1]["variables"]["peers"]] == ["Engine", "Body"]
+        await v.close()
+
+        # 2. Partial peers still transition after TOLD_TOGETHER_S; on_run_active() flushes debounced schema early.
+        v2, _source2, sent2 = await make_empty(2)
+        v2.on_synced()
+        v2.on_peers([PeerInfo("Engine", "e1", True, SCHEMA)], [])
+        await asyncio.sleep(0.03)
+        assert v2.state == "ready"
+        assert [p["name"] for p in sent2[-1]["variables"]["peers"]] == ["Engine"]
+        v2.on_peers([PeerInfo("Body", "b1", True, SCHEMA[:1])], [])
+        before = len(sent2)
+        v2.on_run_active()
+        assert len(sent2) == before + 1
+        assert [p["name"] for p in sent2[-1]["variables"]["peers"]] == ["Engine", "Body"]
+        await v2.close()
+
+        # 3. Grace timer falls back to ready if an expected peer never connects after run becomes active.
+        v3, _source3, sent3 = await make_empty(2)
+        v3.on_synced()
+        assert v3.state == "connecting"
+        v3.on_run_active()
+        await asyncio.sleep(0.06)
+        assert v3.state == "ready" and sent3[-1]["variables"]["peers"] == []
+        await v3.close()
+
+    asyncio.run(main())

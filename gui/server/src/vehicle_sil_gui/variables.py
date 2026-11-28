@@ -64,6 +64,7 @@ FORGOTTEN_OPEN = 100_000  # numbers kept of open operations that were forgotten 
 STANDING_READ_S = 0.25  # while it stands still with every value read, the watched peers are read this often
 READ_FAILURES = 3  # reads in a row that gave nothing, before the summary says so (state ready, with a reason)
 TOLD_TOGETHER_S = 0.05  # the changes of the summary, and of the availability, of this long are told in one message
+INITIAL_PEERS_GRACE_S = 0.5  # fallback wait when synced arrives before any expected ECU joins the control server
 
 log = logging.getLogger("vehicle_sil_gui")
 
@@ -191,7 +192,8 @@ def _is_count(value: object) -> bool:
 
 class Variables:
     def __init__(self, run_id: str, emit: Callable[[list[dict]], object], *, limits: Limits | None = None,
-                 ending: Callable[[], bool] = lambda: False, secret: str | None = None):
+                 ending: Callable[[], bool] = lambda: False, secret: str | None = None,
+                 expected_peers: int = 0):
         """emit(messages) sends messages to every screen. ending() says whether the run is ending (then a lost
         connection is the end, not a failure). secret: never shown in a reason (the source's token)."""
         self.run_id = str(run_id)
@@ -199,6 +201,9 @@ class Variables:
         self._emit = emit
         self._ending = ending
         self._secret = secret
+        self._expected_peers = max(0, expected_peers)
+        self._synced = False
+        self._run_active = False
         self.state = OFF
         self.reason: str | None = None
         self.source: Source | None = None
@@ -217,6 +222,7 @@ class Variables:
         self._read_failures = 0  # reads in a row that gave nothing
         self.was_ready = False
         self._schema_timer: asyncio.TimerHandle | None = None
+        self._ready_timer: asyncio.TimerHandle | None = None
         self._availability_timer: asyncio.TimerHandle | None = None
         self._availability_changed: set[str] = set()  # peers whose availability is not told yet
         # The latest availability the source told of each peer, with its incarnation, also of an incarnation that
@@ -246,14 +252,47 @@ class Variables:
         comes as an event."""
         self._set_state(CONNECTING, None, tell=False)
 
+    def set_expected_peers(self, count: int) -> None:
+        """Number of described control-capable participants expected to join before ready is exposed."""
+        self._expected_peers = max(0, count)
+
+    def flush_schema(self) -> None:
+        """Immediately sends any debounced schema update if a schema timer is pending."""
+        if self._schema_timer is not None and not self._closed:
+            self._tell_schema()
+
+    def on_run_active(self) -> None:
+        """Called when the launcher transitions into active running/state so pending peer updates flush first."""
+        self._run_active = True
+        if self.state == READY:
+            self.flush_schema()
+        elif self.state == CONNECTING and self._synced:
+            if self.peers:
+                self._enter_ready()
+            elif self._ready_timer is None and not self._closed:
+                self._ready_timer = asyncio.get_running_loop().call_later(INITIAL_PEERS_GRACE_S, self._enter_ready)
+
+    def _cancel_ready_timer(self) -> None:
+        if self._ready_timer is not None:
+            self._ready_timer.cancel()
+            self._ready_timer = None
+
+    def _enter_ready(self) -> None:
+        self._cancel_ready_timer()
+        if self.state == CONNECTING and not self._closed:
+            self._set_state(READY, None)
+
     def connect(self, source: Source) -> None:
         self.source = source
         source.start(self)
 
     def fail(self, reason: str) -> None:
+        self._cancel_ready_timer()
         self._set_state(FAILED, reason)
 
     def _set_state(self, state: str, reason: str | None, tell: bool = True) -> None:
+        if state != CONNECTING:
+            self._cancel_ready_timer()
         reason = self._clean(reason) if reason is not None else None
         if (state, reason) == (self.state, self.reason):
             return
@@ -372,6 +411,11 @@ class Variables:
         self.schema_version += 1
         if self.state in (READY, ENDED):
             self._tell_schema(soon=True)
+        elif self.state == CONNECTING and self._synced and self.peers:
+            if len(self.peers) >= self._expected_peers:
+                self._enter_ready()
+            elif self._ready_timer is None and not self._closed:
+                self._ready_timer = asyncio.get_running_loop().call_later(TOLD_TOGETHER_S, self._enter_ready)
 
     def _count_omitted(self, peers: list[PeerInfo], removed: list[str]) -> None:
         for name in removed:
@@ -668,12 +712,18 @@ class Variables:
         """The source has sent what there is now: the peers, their values, the time."""
         if self._closed:
             return
+        self._synced = True
         again = self._since_lost is not None
         if again:  # connected again: a peer that was not told this time is gone
             gone = [name for name in self.peers if name not in self._since_lost]
             self._since_lost = None
             if gone:
                 self.on_peers([], gone)
+        if self.state == CONNECTING and not again and not self.peers and self._expected_peers > 0:
+            if self._run_active and self._ready_timer is None:
+                self._ready_timer = asyncio.get_running_loop().call_later(INITIAL_PEERS_GRACE_S, self._enter_ready)
+            return
+        self._cancel_ready_timer()
         self._set_state(READY, None)
         if again and any(not e["done"] for e in self.operations.values()):
             self._start_reconcile(peers=False)  # what became of the operations while it was not connected
@@ -712,6 +762,8 @@ class Variables:
         """The connection to the source ended. The source connects again by itself unless fatal."""
         if self._closed:
             return
+        self._cancel_ready_timer()
+        self._synced = False
         self._epoch += 1
         self._since_lost = set()
         for peer in self.peers.values():
@@ -755,6 +807,7 @@ class Variables:
         if self._schema_timer is not None:
             self._schema_timer.cancel()
             self._schema_timer = None
+        self._cancel_ready_timer()
         if self._availability_timer is not None:
             self._availability_timer.cancel()
             self._availability_timer = None

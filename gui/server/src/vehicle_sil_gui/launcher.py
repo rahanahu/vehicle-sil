@@ -59,6 +59,7 @@ FEATURE_TIMELINE = "timeline"
 FEATURE_RUN_STOP_AT = "run-stop-at"
 FEATURE_SCENARIO_HANDOVER = "scenario-handover"
 FEATURE_SCENARIO_CASES = "scenario-cases"
+FEATURE_CHECK_TEXT = "check-text"
 FEATURE_EXTERNAL_REGISTRY = "external-registry"
 
 
@@ -275,6 +276,12 @@ def save_check_command(launcher: Launcher, file: str, request: Path, description
     compare with (None)."""
     argv = text_check_command(launcher, file, request, descriptions)
     return argv[:-2] + ["--compare-commands", compare, "--", file] if compare is not None else argv
+
+
+def cached_check_command(launcher: Launcher, file: str, request: Path, descriptions: Path) -> list[str]:
+    """Checks the saved file while reusing saved --describe outputs for unchanged executables."""
+    return launcher.prefix + ["check", "--json", "--descriptions", str(descriptions),
+                              "--request", str(request), "--", file]
 
 
 def describe_command(launcher: Launcher, file: str, request: Path, descriptions: Path) -> list[str]:
