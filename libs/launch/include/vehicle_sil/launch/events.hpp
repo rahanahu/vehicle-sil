@@ -37,7 +37,7 @@ inline constexpr int kEventsFormat = 4;
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 37> kFeatures{"events",
+inline constexpr std::array<std::string_view, 39> kFeatures{"events",
                                                             "stdin-commands",
                                                             "check-variables",
                                                             "speed",
@@ -73,7 +73,9 @@ inline constexpr std::array<std::string_view, 37> kFeatures{"events",
                                                             "scenario-cases",
                                                             "scenario-templates",
                                                             "scenario-variable-compare",
-                                                            "external-registry"};
+                                                            "external-registry",
+                                                            "record-signals",
+                                                            "record-after-fail"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
@@ -250,8 +252,9 @@ public:
     void participant_started(const std::string& name, long pid, const std::vector<std::string>& command,
                              const std::string& log) override;
     void participant_ended(const std::string& name, const process::ExitStatus& status) override;
-    /// Manual: `command` the executable and its arguments, `working_directory` where to start it
-    /// (both as shown in the outputs), `command_line` the same as one line for this system's shell,
+    /// Manual: `command` the executable and its arguments (empty when `command` is omitted),
+    /// `working_directory` where to start it ("" -> JSON null when omitted or not found locally),
+    /// `command_line` the same as one line for this system's shell ("" -> JSON null when omitted),
     /// `environment` the variables to set for it (name, value; "environment" only if there are any).
     void participant_manual(const std::string& name, const std::vector<std::string>& command,
                             const std::string& working_directory, const std::string& command_line,

@@ -124,7 +124,7 @@
             "number",
             "null"
           ],
-          "description": "The right end of the series: no point is later. Failed: the at_ms of the failed step (or of the failed dither write when all steps had already passed; the time of the stop, if stop_at_ms ended the run). Passed: the latest at_ms of its steps (or up to min(end_ms, now) when end_ms is set). Incomplete: the time of the last sample that was looked at; or, if a write was refused and then a participant's failure became the result of the run, the time of that write. null if the scenario did not begin (the series are empty). In a failed run a step that passed may have an at_ms after it (it was decided before the failure was seen): its points are not in the series."
+          "description": "The right end of the series: no point is later. Failed: the at_ms of the failed step (extended up to at_ms + record_after_fail_ms when --record-after-fail-ms / \"record_after_fail_ms\" is set on a normal assertion or wait-timeout failure, or the actual early-stop time if cut short during the tail; or the failed dither write when all steps had already passed; the time of the stop, if stop_at_ms ended the run). Passed: the latest at_ms of its steps (or up to min(end_ms, now) when end_ms is set). Incomplete: the time of the last sample that was looked at; or, if a write was refused and then a participant's failure became the result of the run, the time of that write. null if the scenario did not begin (the series are empty). In a failed run a step that passed may have an at_ms after it (it was decided before the failure was seen): its points are not in the series."
         },
         "end_ms": {
           "type": [
@@ -226,6 +226,10 @@
           "watched": {
             "type": "boolean",
             "description": "A condition of the scenario reads it: it has a series with the source \"sampled\"."
+          },
+          "recorded": {
+            "type": "boolean",
+            "description": "Present and true only when the variable was explicitly requested via --record (or \"record\" in a request file / serve intent); omitted otherwise. Recorded variables always have a series with the source \"sampled\"."
           }
         }
       }

@@ -19,6 +19,8 @@ import threading
 import time
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
+from .protocol import validate_name_sequence, validate_record_after_fail_ms
+
 _MAX_FINDING_DETAIL_CHARS = 500
 
 
@@ -96,6 +98,8 @@ def _split_once_arguments(
     case: Optional[str] = None,
     params: Optional[Mapping[str, Union[bool, int, float, str]]] = None,
     after_scenario: Optional[str] = None,
+    record: Sequence[str] = (),
+    record_after_fail_ms: Optional[int] = None,
 ) -> Tuple[List[str], Dict[str, Any]]:
     """Splits legacy single-run CLI `arguments` into `serve --once` host CLI flags and the initial
     stdin `{"command": "run", ...}` payload."""
@@ -116,6 +120,12 @@ def _split_once_arguments(
         if not isinstance(after_scenario, str):
             raise TypeError("after_scenario must be a str")
         intent["after_scenario"] = after_scenario
+    if record:
+        record_list = list(dict.fromkeys(validate_name_sequence(record, "record", kind="signal names")))
+        if record_list:
+            intent["record"] = record_list
+    if record_after_fail_ms is not None:
+        intent["record_after_fail_ms"] = validate_record_after_fail_ms(record_after_fail_ms)
 
     i = 0
     n = len(arguments)
@@ -157,15 +167,28 @@ def _split_once_arguments(
                 )
             intent["after_scenario"] = val
             i += 2
+        elif arg == "--record-after-fail-ms" and i + 1 < n:
+            val = validate_record_after_fail_ms(int(arguments[i + 1]))
+            if "record_after_fail_ms" in intent:
+                raise ValueError(
+                    f"record_after_fail_ms is given more than once ({intent['record_after_fail_ms']!r} and {val!r})"
+                )
+            intent["record_after_fail_ms"] = val
+            i += 2
         elif arg == "--variant" and i + 1 < n:
             intent["variant"] = arguments[i + 1]
             i += 2
         elif arg == "--time-policy" and i + 1 < n:
             intent["time_policy"] = arguments[i + 1]
             i += 2
-        elif arg in ("--disable", "--enable", "--manual") and i + 1 < n:
+        elif arg in ("--disable", "--enable", "--manual", "--record") and i + 1 < n:
             key = arg[2:]
-            intent.setdefault(key, []).append(arguments[i + 1])
+            val = arguments[i + 1]
+            if key == "record" and not val:
+                raise ValueError("record elements must be non-empty strings")
+            entries = intent.setdefault(key, [])
+            if key != "record" or val not in entries:
+                entries.append(val)
             i += 2
         elif arg == "--param" and i + 1 < n:
             raw = arguments[i + 1]
@@ -217,6 +240,8 @@ class Launch:
         case: Optional[str] = None,
         params: Optional[Mapping[str, Union[bool, int, float, str]]] = None,
         after_scenario: Optional[str] = None,
+        record: Sequence[str] = (),
+        record_after_fail_ms: Optional[int] = None,
         arguments: Sequence[str] = (),
         cwd: Optional[str] = None,
         stderr=None,
@@ -228,6 +253,8 @@ class Launch:
             case=case,
             params=params,
             after_scenario=after_scenario,
+            record=record,
+            record_after_fail_ms=record_after_fail_ms,
         )
         command = [
             os.fspath(launcher),

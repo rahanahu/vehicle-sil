@@ -17,6 +17,8 @@ REQUEST_VERSION_KEY: str = "vehicle_sil_run_request"
 SPEED_MIN: float = 0.000001
 SPEED_MAX: float = 1000000.0
 STEP_MS_MAX: int = 10 ** 12
+RECORD_AFTER_FAIL_MS_MIN: int = 1
+RECORD_AFTER_FAIL_MS_MAX: int = 600_000
 TIME_COMMANDS: tuple[str, ...] = ("pause", "resume", "step", "run_until", "speed")
 MAX_COMMAND_ID: int = 1 << 53
 MAX_ID: int = MAX_COMMAND_ID
@@ -50,15 +52,25 @@ class InvalidRequest(ValueError):
         self.code = code
 
 
-def validate_name_sequence(seq: Sequence[str], name: str) -> list[str]:
+def validate_name_sequence(seq: Sequence[str], name: str, *, kind: str = "participant names") -> list[str]:
     if isinstance(seq, (str, bytes)):
-        raise TypeError(f"{name} must be a sequence of participant names, not {type(seq).__name__}")
+        raise TypeError(f"{name} must be a sequence of {kind}, not {type(seq).__name__}")
     out: list[str] = []
     for item in seq:
         if not isinstance(item, str) or not item:
             raise ValueError(f"{name} elements must be non-empty strings")
         out.append(item)
     return out
+
+
+def validate_record_after_fail_ms(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("record_after_fail_ms must be an int")
+    if value < RECORD_AFTER_FAIL_MS_MIN or value > RECORD_AFTER_FAIL_MS_MAX:
+        raise ValueError(
+            f"record_after_fail_ms must be between {RECORD_AFTER_FAIL_MS_MIN} and {RECORD_AFTER_FAIL_MS_MAX}, got {value}"
+        )
+    return value
 
 
 def speed_argument(speed: float | str) -> str:

@@ -69,7 +69,8 @@ Key points for the configuration (see [simulation-config.md](../simulation-confi
 
 | Setting | Why it is needed |
 |---|---|
-| `describe: false` | Standard SIL Kit participants do not implement `vehicle-sil`'s `--describe` flag. `vehicle_sil_launch check` verifies that the executable exists and skips `--describe`, emitting `not-checked` (and `single-participant` if only one `describe: true` ECU is on that network) as notes while exiting with code 0. |
+| `describe: false` | Standard SIL Kit participants do not implement `vehicle-sil`'s `--describe` flag. `vehicle_sil_launch check` verifies that the executable exists (unless `manual: true` is also set for a remote participant) and skips `--describe`, emitting `not-checked` (and `single-participant` if only one `describe: true` ECU is on that network) as notes while exiting with code 0. |
+| `manual: true` (for a remote participant) | When the standard participant runs on another computer (for example, Linux connecting to a Windows launcher), set both `describe: false` and `manual: true`. You can omit `command` (or write the remote command without needing a local executable on the launcher computer), set a non-loopback `registry_uri` (such as `silkit://0.0.0.0:8500`), and start the standard participant on the remote host against the launcher's network URI. |
 | `"{name}"` and `"{registry_uri}"` | For `describe: false` participants, the launcher does not append `--name` or `--registry-uri` automatically. Placeholders pass the configured participant name and the runtime registry URI; always quote them in YAML so YAML does not parse `{...}` as a mapping. |
 | `required: true` (default) | Coordinated participants must remain `required: true` so the SIL Kit system controller waits for them before starting virtual time. |
 

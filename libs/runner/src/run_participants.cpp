@@ -388,18 +388,24 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
                                               ctx_.plan.start_timeout_ms, ctx_.plan.stop_timeout_ms,
                                               ctx_.plan.ecu_start_margin.count());
         }
+        const std::filesystem::path& checked_executable = ctx_.check.participants[i].executable;
+        const auto normalize_participant_executable = [](const std::filesystem::path& path) {
 #ifdef _WIN32
-        const std::filesystem::path executable =
-            process::normalize_executable_path(ctx_.check.participants[i].executable);
+            return process::normalize_executable_path(path);
 #else
-        const std::filesystem::path executable =
-            without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
+            return without_dots(std::filesystem::absolute(path));
 #endif
+        };
         if (p.manual)
         {
-            show_manual(p, executable, arguments, workDir);
+            const std::filesystem::path executable =
+                checked_executable.empty() ? std::filesystem::path{} : normalize_participant_executable(checked_executable);
+            const std::string written =
+                p.command.empty() ? std::string{} : config::expand_placeholders({p.command.front()}, "", "").front();
+            show_manual(p, executable, written, arguments, workDir);
             continue;
         }
+        const std::filesystem::path executable = normalize_participant_executable(checked_executable);
 #ifndef _WIN32
         if (!config::registry_on_network(ctx_.config))
         {
@@ -447,13 +453,9 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
 }
 
 void RunParticipants::show_manual(const config::ParticipantConfig& p, const std::filesystem::path& executable,
-                                  const std::vector<std::string>& arguments, const std::filesystem::path& workDir)
+                                  const std::string& written_executable, const std::vector<std::string>& arguments,
+                                  const std::filesystem::path& workDir)
 {
-    std::filesystem::path native = executable;
-    native.make_preferred();
-    std::filesystem::path nativeDir = workDir;
-    nativeDir.make_preferred();
-    const std::string line = detail::shell_command_line(process::utf8_from_path(native), arguments);
     // As run gives the participants it starts; only if it is 1 (0 is what a participant does
     // without it), so that the command stays as it was for a simulation on this computer.
     std::vector<std::pair<std::string, std::string>> environment;
@@ -462,16 +464,43 @@ void RunParticipants::show_manual(const config::ParticipantConfig& p, const std:
         environment.emplace_back(kListenOnNetworkVariable, config::listen_variable_value(ctx_.config));
     }
     const auto held = out_.hold();
-    out_.event([&](RunEvents& e) {
-        std::vector<std::string> command{process::shown_path(executable)};
-        command.insert(command.end(), arguments.begin(), arguments.end());
-        e.participant_manual(p.name, command, process::shown_path(workDir), line, environment);
-    });
+    if (executable.empty() && written_executable.empty())
+    {
+        out_.event([&](RunEvents& e) { e.participant_manual(p.name, {}, {}, {}, environment); });
+        held.say("not starting " + p.name + ": start it yourself (manual: true, or --manual)" +
+                 (p.required ? std::string("; the simulation waits for it to join") : std::string{}) +
+                 ". No command is configured in the file; connect it to the simulation's registry as '" + p.name + "'");
+        return;
+    }
     std::string with;
     for (const auto& [name, value] : environment)
     {
         with += (with.empty() ? ", with " : " and ") + name + "=" + value;
     }
+    if (executable.empty())
+    {
+        const std::string line = detail::shell_command_line(written_executable, arguments);
+        out_.event([&](RunEvents& e) {
+            std::vector<std::string> command{written_executable};
+            command.insert(command.end(), arguments.begin(), arguments.end());
+            e.participant_manual(p.name, command, {}, line, environment);
+        });
+        held.say("not starting " + p.name + ": start it yourself (manual: true, or --manual)" +
+                 (p.required ? std::string("; the simulation waits for it to join") : std::string{}) +
+                 " (executable not found on this computer)" + with + (with.empty() ? "" : " in its environment") + ". Run:");
+        held.say("  " + line);
+        return;
+    }
+    std::filesystem::path native = executable;
+    native.make_preferred();
+    std::filesystem::path nativeDir = workDir;
+    nativeDir.make_preferred();
+    const std::string line = detail::shell_command_line(process::utf8_from_path(native), arguments);
+    out_.event([&](RunEvents& e) {
+        std::vector<std::string> command{process::shown_path(executable)};
+        command.insert(command.end(), arguments.begin(), arguments.end());
+        e.participant_manual(p.name, command, process::shown_path(workDir), line, environment);
+    });
     held.say("not starting " + p.name + ": start it yourself (manual: true, or --manual)" +
              (p.required ? std::string("; the simulation waits for it to join") : std::string{}) + ". In the directory " +
              process::utf8_from_path(nativeDir) + with + (with.empty() ? "" : " in its environment") + ", run:");

@@ -1029,3 +1029,190 @@ def test_real_gui_external_registry_consecutive_runs_and_stop(tmp_path: Path) ->
             except subprocess.TimeoutExpired:
                 reg_proc.kill()
                 reg_proc.wait()
+
+
+def test_real_gui_manual_external_participant_without_local_executable(tmp_path: Path) -> None:
+    """GUI server accepts manual: true + describe: false without a local executable through
+    Start -> external join -> Stop -> next Run (isolated cold runs) while still rejecting normal
+    missing local executables with 422 check-failed."""
+    assert LAUNCHER is not None and EXAMPLES is not None
+    engine, dashboard = executables(EXAMPLES)
+    configs = tmp_path / "configs"
+    configs.mkdir(parents=True, exist_ok=True)
+
+    (configs / "external_omit.yaml").write_text(
+        "vehicle_sil_simulation: 2\n"
+        "registry_uri: silkit://127.0.0.1:0\n"
+        "time_step_ms: 10\n"
+        "networks:\n"
+        "  - name: J1939_CAN\n"
+        "    kind: can\n"
+        "participants:\n"
+        "  - name: Engine\n"
+        f"    command: ['{engine}']\n"
+        "    step_ms: 10\n"
+        "  - name: Dashboard\n"
+        "    describe: false\n"
+        "    manual: true\n",
+        encoding="utf-8",
+    )
+    (configs / "external_remote_cmd.yaml").write_text(
+        "vehicle_sil_simulation: 2\n"
+        "registry_uri: silkit://127.0.0.1:0\n"
+        "time_step_ms: 10\n"
+        "networks:\n"
+        "  - name: J1939_CAN\n"
+        "    kind: can\n"
+        "participants:\n"
+        "  - name: Engine\n"
+        f"    command: ['{engine}']\n"
+        "    step_ms: 10\n"
+        "  - name: Dashboard\n"
+        "    command: [remote_only_dashboard, --name, '{name}', --registry-uri, '{registry_uri}']\n"
+        "    describe: false\n"
+        "    manual: true\n",
+        encoding="utf-8",
+    )
+    (configs / "missing_local.yaml").write_text(
+        "vehicle_sil_simulation: 2\n"
+        "networks:\n"
+        "  - name: J1939_CAN\n"
+        "    kind: can\n"
+        "participants:\n"
+        "  - name: Engine\n"
+        f"    command: ['{engine}']\n"
+        "    step_ms: 10\n"
+        "  - name: Missing\n"
+        "    command: [missing_local_executable]\n"
+        "    describe: false\n",
+        encoding="utf-8",
+    )
+
+    ext_procs: list[subprocess.Popen] = []
+
+    def spawn_dashboard(uri: str) -> subprocess.Popen:
+        proc = subprocess.Popen(
+            [str(dashboard), "--name", "Dashboard", "--registry-uri", uri, "--start-timeout-ms", "1000000000000"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        ext_procs.append(proc)
+        return proc
+
+    async def talk(c: Client) -> None:
+        st_list, listed = await c.get("api/configs")
+        assert st_list == 200, listed
+        rel_files = {entry["path"] for entry in listed["files"]}
+        assert {"external_omit.yaml", "external_remote_cmd.yaml", "missing_local.yaml"} <= rel_files
+
+        # Normal missing local executable must still fail with 422 check-failed.
+        st_bad, bad = await c.post("api/run", {"file": "missing_local.yaml"})
+        assert st_bad == 422 and bad["error"]["code"] == "check-failed", bad
+        assert any(f["code"] == "executable" for f in bad["error"]["detail"]["findings"]), bad
+
+        ws = await c.ws()
+        await ws.until(is_synced)
+
+        # Consecutive runs on omitted-command external manual participant:
+        # Run 1 -> join -> stop -> Run 2 -> join -> stop (distinct run_ids, fresh cold sessions, t starts at 0).
+        run_ids: list[str] = []
+        uris: list[str] = []
+        for _ in range(2):
+            st_run, started = await c.post("api/run", {"file": "external_omit.yaml", "speed": 1})
+            assert st_run == 200, started
+            run_id, instance = started["run_id"], started["instance"]
+            run_ids.append(run_id)
+
+            msgs_reg = await ws.until(
+                lambda m: m.get("type") == "event"
+                and m.get("run_id") == run_id
+                and m.get("event", {}).get("event") == "registry",
+                timeout=30,
+            )
+            reg_ev = msgs_reg[-1]
+            uri = reg_ev["event"]["uri"]
+            assert isinstance(uri, str) and uri.startswith("silkit://127.0.0.1:"), reg_ev
+            uris.append(uri)
+
+            msgs_man = await ws.until(
+                lambda m: m.get("type") == "event"
+                and m.get("run_id") == run_id
+                and m.get("event", {}).get("event") == "participant"
+                and m["event"].get("name") == "Dashboard"
+                and m["event"].get("state") == "manual",
+                timeout=30,
+            )
+            man_ev = msgs_man[-1]
+            assert man_ev["event"]["command"] == [], man_ev
+            assert man_ev["event"]["command_line"] is None, man_ev
+            assert man_ev["event"]["working_directory"] is None, man_ev
+
+            ext = spawn_dashboard(uri)
+            msgs_time = await ws.until(
+                lambda m: m.get("type") == "event"
+                and m.get("run_id") == run_id
+                and m.get("event", {}).get("event") == "time"
+                and m["event"].get("sim_ms", -1) >= 20,
+                timeout=30,
+            )
+            time_ev = msgs_time[-1]
+            # Each fresh run starts cleanly near virtual time 0 (not continuing from a previous long run).
+            assert time_ev["event"]["sim_ms"] < 5000, time_ev
+
+            st_stop, _ = await c.post("api/stop-session", {"run_id": run_id, "instance": instance, "force": False})
+            assert st_stop == 200
+            await ws.until(is_ended, timeout=30)
+            assert ext.wait(timeout=scaled(20)) == 0
+            _, sess = await c.get("api/session")
+            summary = sess["session"]
+            assert summary["id"] == run_id
+            assert summary["launcher"]["mode"] == "cold"
+            assert summary["result"]["result"] == "stopped" and summary["result"]["ok"] is True, summary
+
+        assert run_ids[0] != run_ids[1], run_ids
+        assert uris[0] != uris[1], uris
+
+        # Unresolved remote command also succeeds without a bogus local working_directory.
+        st_rem, rem = await c.post("api/run", {"file": "external_remote_cmd.yaml", "speed": 1})
+        assert st_rem == 200, rem
+        rem_id, rem_inst = rem["run_id"], rem["instance"]
+        msgs_reg = await ws.until(
+            lambda m: m.get("type") == "event"
+            and m.get("run_id") == rem_id
+            and m.get("event", {}).get("event") == "registry",
+            timeout=30,
+        )
+        uri = msgs_reg[-1]["event"]["uri"]
+        msgs_man = await ws.until(
+            lambda m: m.get("type") == "event"
+            and m.get("run_id") == rem_id
+            and m.get("event", {}).get("event") == "participant"
+            and m["event"].get("name") == "Dashboard"
+            and m["event"].get("state") == "manual",
+            timeout=30,
+        )
+        man_ev = msgs_man[-1]
+        assert man_ev["event"]["working_directory"] is None, man_ev
+        assert man_ev["event"]["command_line"] == f"remote_only_dashboard --name Dashboard --registry-uri {uri}", man_ev
+        ext = spawn_dashboard(uri)
+        await ws.until(
+            lambda m: m.get("type") == "event"
+            and m.get("run_id") == rem_id
+            and m.get("event", {}).get("event") == "time",
+            timeout=30,
+        )
+        st_stop, _ = await c.post("api/stop-session", {"run_id": rem_id, "instance": rem_inst, "force": False})
+        assert st_stop == 200
+        await ws.until(is_ended, timeout=30)
+        assert ext.wait(timeout=scaled(20)) == 0
+        await ws.close()
+
+    try:
+        with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+            run_async(talk, gui)
+    finally:
+        for proc in ext_procs:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()

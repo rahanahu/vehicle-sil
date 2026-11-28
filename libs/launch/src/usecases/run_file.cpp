@@ -80,6 +80,10 @@ runner::RunChoices run_choices(const RunRequest& request)
     choices.collect_control_metrics = !request.host.control_metrics.empty();
     choices.external_registry_uri = request.host.external_registry_uri;
     choices.after_scenario = request.intent.after_scenario;
+    if (request.intent.record_after_fail_ms)
+    {
+        choices.record_after_fail = std::chrono::milliseconds(*request.intent.record_after_fail_ms);
+    }
     return choices;
 }
 
@@ -354,7 +358,9 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
     // control server stay here).
     // The run tells through the interface it knows (RunEvents), which RunEventSink extends; the
     // sink's own members (check(), phase(), state()) are called here only.
-    runner::detail::Runner runner(runner::plan_run(report.check, detail::scenario_of(report.check), base, run_choices(request), limits,
+    runner::RunChoices choices = run_choices(request);
+    choices.recorded_variables = report.check.recorded_variables;
+    runner::detail::Runner runner(runner::plan_run(report.check, detail::scenario_of(report.check), base, choices, limits,
                            server_of_run != nullptr),
                   observers, lent.events, controls);
     // The control server between the Runner's two stages: after the run's files are open, before
@@ -391,6 +397,7 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
         input.run = &*report.run->scenario.result;
         input.catalog = &catalog;
         input.record = report.run->scenario.timeline_record.get();
+        input.recorded_variables = runner.plan().recorded_variables;
         input.findings = report.check.findings;
         input.findings.insert(input.findings.end(), report.findings.begin(), report.findings.end());
         if (const std::string error = runner.write_timeline(format_timeline_json(input)); !error.empty())

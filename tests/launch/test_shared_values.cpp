@@ -28,6 +28,7 @@ static_assert(cli::kExitOk == ecu_executable::kExitOk && cli::kExitFailed == ecu
 static_assert(launch::kExitInterrupted == ecu_executable::kExitInterrupted);
 static_assert(cli::Args::kMaxMillis == static_cast<std::uint64_t>(config::kMaxMillis));
 static_assert(config::kMaxMillis == ecu_executable::kMaxMillis);
+static_assert(launch::kMaxRecordAfterFailMs == config::kMaxRecordAfterFailMs);
 
 namespace {
 
@@ -135,6 +136,9 @@ TEST_CASE(the_gui_takes_the_launchers_limits)
          control_protocol + " SPEED_MAX", "launch::kMaxSpeed");
     same(value_in(control_protocol, "\nSTEP_MS_MAX: int =", "\n#"), max_millis,
          control_protocol + " STEP_MS_MAX", "launch::kMaxMillis");
+    const auto max_record_after_fail = static_cast<double>(config::kMaxRecordAfterFailMs);
+    same(value_in(control_protocol, "\nRECORD_AFTER_FAIL_MS_MAX: int =", "\n#"), max_record_after_fail,
+         control_protocol + " RECORD_AFTER_FAIL_MS_MAX", "config::kMaxRecordAfterFailMs");
     const std::string variables = "gui/server/src/vehicle_sil_gui/variables.py";
     same(value_in(variables, "\nAT_MS_MAX =", "\n#"), max_millis, variables + " AT_MS_MAX", "launch::kMaxMillis");
     // The client's values before the server's answer, and those it takes from an older server.
@@ -153,6 +157,9 @@ TEST_CASE(the_gui_takes_the_launchers_limits)
     const std::string picker = "gui/web/src/app/run/speed-picker.ts";
     same(value_in(picker, "readonly min = input(", ")"), config::kMinSpeed, picker + " min", "launch::kMinSpeed");
     same(value_in(picker, "readonly max = input(", ")"), config::kMaxSpeed, picker + " max", "launch::kMaxSpeed");
+    const std::string run_page = "gui/web/src/app/run/run-page.ts";
+    same(value_in(run_page, "\nconst RECORD_AFTER_FAIL_MS_MAX =", ";\n"), max_record_after_fail,
+         run_page + " RECORD_AFTER_FAIL_MS_MAX", "config::kMaxRecordAfterFailMs");
 }
 
 TEST_CASE(the_gui_reads_the_launchers_manual_stays_line)

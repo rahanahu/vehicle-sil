@@ -688,6 +688,8 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `late_tolerance_ms` | Wall-clock lateness tolerance (an integer from 0 to 10^12 ms). Defaults to 10 ms. | `--late-tolerance-ms` |
 | `strict` | `true` or `false` | `--strict` |
 | `after_scenario` | `"stop"` (default: end when scenario finishes) or `"pause"` (pause at scenario pass for manual handover; requires `scenario`, cannot be combined with `stop_at_ms`, and `run` needs `--stdin-commands` or `--control`) | |
+| `record` | A list of `"<participant>.<variable>"` names to sample and record into the `--timeline` file without affecting scenario verdicts | `--record` |
+| `record_after_fail_ms` | Virtual-time post-failure tail duration (an integer from 1 to 600000 ms) to continue passive sample recording into `--timeline` after a normal assertion or wait-timeout failure. Requires `scenario`. | `--record-after-fail-ms` |
 
 ### Arguments together with a request file
 
@@ -695,11 +697,12 @@ An argument wins over the file, field by field.
 
 | Key | With an argument for the same thing |
 |---|---|
-| `variant`, `scenario`, `case`, `speed`, `time_policy` | The argument replaces the file's value. |
+| `variant`, `scenario`, `case`, `speed`, `time_policy`, `record_after_fail_ms` | The argument replaces the file's value. |
 | `start_paused`, `strict` | On if the file or the argument says so. No argument switches them off. |
 | `connect` | By network: `--connect <network>=<target>` replaces the file's target of that network, and `--connect <network>=none` takes it away for this run. The other networks of the file stay. |
 | `params` | By name: `--param <name>=<value>` replaces the file's value of that parameter. The others stay; their `from` in the check JSON is `request_file`. |
 | `disable`, `enable`, `manual` | The names of the file and of the arguments add up. Where they disagree about a name (the file's `disable` and `--enable`, the file's `enable` or `manual` and `--disable`, the file's `disable` and `--manual`), the argument wins. |
+| `record` | The variable names of the file come first, followed by `--record` arguments, deduplicated while preserving first-seen order. |
 
 No argument takes away the file's `scenario` or one of its `params` (`--scenario` and `--param` only replace them): for a run without them, use a request file that does not have them. There is no command-line flag for `after_scenario`: plain `run --scenario` defaults `after_scenario` to `"stop"`, while `"after_scenario": "pause"` in a `--request` file (or inline `intent` in `serve`) requests manual handover unless `"after_scenario": "stop"` is written instead.
 
@@ -1648,7 +1651,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `file`, `variant`, `params` | The configuration file (as given in the arguments), the variant (`null` if none), and the scenario parameters with the values in effect (the same form as `scenario.params` of `check --json`) |
 | `time_step_ms` | The controller's time step (the same as `timing.time_step_ms` of `run --json`) |
 | `scenario` | `file`, `name`, optional `case`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
-| `variables[]` | The variables that the scenario uses, in order of first use: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it) |
+| `variables[]` | The variables that the scenario uses (in order of first use), followed by any extra variables requested with `--record` / `"record"`: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it), and optional `recorded` (`true` when requested via `--record` / `"record"`, omitted otherwise) |
 | `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json` (including optional `file`, `name`, `call_stack`), plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
 | `lines[]` | The line of each input: the values and motions that steps placed (see "Input lines" below) |
@@ -1657,7 +1660,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 
 A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version. A step's `status` is not one of them: see [Values that carry the result](scenario.md#values-that-carry-the-result).
 
-Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
+Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: `recorded` on a variable, `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
 
 The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write.
 
@@ -1759,7 +1762,7 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
 | `source` | Contents | `encoding` |
 |---|---|---|
 | `written` | Every write that the scenario sent. A point is `[time, value]`, where the time is when the write takes effect. **These are the values sent; they did not necessarily reach the ECU** (see `not_applied_from` below) | `all` |
-| `sampled` | The sample values that the scenario saw, only for the variables that conditions read | `changes`: only samples whose value changed become points. `samples` (the number of samples seen), `first_ms` and `last_ms` (the times of the first and the last sample) are kept beside the points. They are `null` in a `written` series |
+| `sampled` | The sample values seen during the run, for variables that conditions read or that were requested with `--record` / `"record"` | `changes`: only samples whose value changed become points. `samples` (the number of samples seen), `first_ms` and `last_ms` (the times of the first and the last sample) are kept beside the points. They are `null` in a `written` series |
 
 - `columns` names the columns of a point: `["at_ms", "value"]`. **The `written` series of an input on which the scenario places a `dither` has 3 columns**: `["at_ms", "value", "base"]`. The third column, `base`, is the value before the dither is added and the type rounding is applied: the value of a `set`, or the value of a `ramp` or `wave` at that time (see "Overlaying a dither" in [scenario.md](scenario.md#overlaying-a-dither-dither)). A series has 3 columns when the text of the scenario places a dither on that input (a declaration in `inputs`, or a `dither` step with a waveform that runs in the variant). Then every point has 3 columns, also before the dither is placed and after it is removed, whether or not the run reached that step (the number of columns does not change with the controller's time step). A reader takes the columns by the names in `columns`.
 
@@ -1781,7 +1784,7 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
   }
   ```
 
-- Only the variables that the scenario uses are recorded. A variable that the scenario writes has a `written` series, and a variable that a condition reads has a `sampled` series (a variable that is both has 2). The series follow the order of `variables[]`, with `written` first for each variable.
+- Only the variables that the scenario uses and any extra variables requested with `--record` (or `"record"` in a request file / `serve` `intent`) are recorded. A variable that the scenario writes has a `written` series, and a variable that a condition reads or that is requested with `--record` has a `sampled` series (a variable that is both has 2). Extra `--record` variables do not affect scenario verdicts or trigger scenario sampling warnings. The series follow the order of `variables[]`, with `written` first for each variable.
 - Each point is on a line of its own. Times never go back. Several points can share a time (the end of a `ramp` and the next `set`); they are in the order sent.
 - Values: a bool is `true` or `false`, an enum is the item's value (the names are in `variables[].items`), and a real that is not a number is `null`.
 - A sample is the value at the end of an ECU step, with the time of the start of that step (see "Values that conditions see" in [scenario.md](scenario.md#values-that-conditions-see)). Read a `sampled` value as lasting from its point to the next point (the last point lasts until `last_ms`).
@@ -1853,12 +1856,12 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 
 | Scenario | `recorded_to_ms` |
 |---|---|
-| Failed (`failed`) | The `at_ms` of the failed step (or of the failed dither write when all steps had already passed; in a run that ended at `stop_at_ms`, the time it stopped) |
+| Failed (`failed`) | The `at_ms` of the failed step (or of the failed dither write when all steps had already passed; in a run that ended at `stop_at_ms`, the time it stopped). With `--record-after-fail-ms <ms>` (or `record_after_fail_ms`), a normal assertion or wait-timeout failure extends recording passively up to `at_ms + <ms>` (or the actual stop time if stopped earlier by the user, `stop_at_ms`, `--timeout-ms`, or a participant failure during the tail), with no new scenario steps, writes, motions, or dithers issued after failure detection (`over_at_ms`). |
 | Passed (`passed`) | The latest `at_ms` of the steps (extended up to `min(end_ms, now)` when `end_ms` is set; with `after_scenario: "pause"`, the timeline closes at handover and does not record post-handover manual steps) |
 | Ended partway (`incomplete`) | The latest time among observed samples and writes sent through the last controller time (0 if there were none). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
 
-- The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Only in a run that failed on a write that the ECU's Agent refused at once is `over_at_ms` (the time step of the refusal) at or before `recorded_to_ms` (the time of that write).
+- The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Two exceptions can place `over_at_ms` at or before `recorded_to_ms`: a run that failed on a write that the ECU's Agent refused at once (`over_at_ms` is the time step of the refusal while `recorded_to_ms` is the time of that write), and a run with `--record-after-fail-ms` (where `over_at_ms` stays at the failure detection tick while `recorded_to_ms` extends through the passive post-failure tail). Post-failure tail recording applies only to normal assertion or wait-timeout failures (`scenario-failed` / `scenario-timeout`) when `--timeline` is active; write errors (`scenario-write`), unusable-variable failures, passes, and early stops before failure do not enter the tail. No new scenario steps, writes, motions, or dithers are issued after failure detection (`over_at_ms`), while writes already pipelined for `(at_ms, over_at_ms]` before detection (when `time_step_ms >= ecu_step_ms`) may already have been applied by the ECU and remain visible in the timeline.
 - **The same run gives the same file.** The file holds only what virtual time decides (no real time, process IDs or lateness counts), so a different speed (`--speed`) gives the same file. This holds for runs that passed and for runs that failed on a sample or a wait. If an ECU itself depends on real time or random numbers, its value series change too.
 - For runs that passed and runs that failed on a sample or a wait, a different controller time step (`time_step_ms`) gives the same file, except `over_at_ms` and `time_step_ms`. The following do depend on the time step, in the same places as the scenario result does (see "Timing" in [scenario.md](scenario.md#timing) and "Results" in [scenario.md](scenario.md#results)):
   - The `end_ms` of a wait step that succeeded (`wait_until`, `expect` with `within_ms`), and the times of the steps after it.

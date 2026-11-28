@@ -98,6 +98,7 @@ struct ModelEcu
 {
     std::string name;
     SimDuration step{10ms};
+    SimDuration sample_period{10ms};
     std::int64_t level = 0, gain = 0, mode = 0, changed_at = -1, gain_at_0 = -1;
     bool lamp = false, pulse = false;
     double ratio = 0.0, speed = 0.0;
@@ -131,6 +132,8 @@ public:
     Policy policy = [](std::size_t, SimTime) { return 0; };
     bool reverse = false; ///< the ECUs step in the reverse order
     std::optional<SimTime> stop_at;
+    /// Optional post-failure tail recording window passed to ScenarioEngine.
+    std::optional<std::chrono::milliseconds> record_after_fail{};
     /// A participant failed and ended the run: the engine is told so when the run is over.
     bool superseded = false;
     /// timeline_of(): the simulation ends here for another reason (none: after 5 s).
@@ -279,7 +282,7 @@ public:
     ScenarioRun run(const Scenario& s, SimDuration limit = 5s)
     {
         scenario = &s;
-        ScenarioEngine e(s, tick, *this, on_step, record, stop_at);
+        ScenarioEngine e(s, tick, *this, on_step, record, stop_at, record_after_fail);
         engine = &e;
         std::vector<EnginePeer> peers;
         for (const auto& p : s.participants)
@@ -288,6 +291,19 @@ public:
             peer.connected = std::any_of(ecus.begin(), ecus.end(), [&p](const ModelEcu& m) { return m.name == p.name; });
             peer.schema = model_variables();
             peers.push_back(std::move(peer));
+        }
+        if (!e.extra_participants().empty())
+        {
+            std::vector<EnginePeer> extraPeers;
+            extraPeers.reserve(e.extra_participants().size());
+            for (const std::string& pName : e.extra_participants())
+            {
+                EnginePeer peer;
+                peer.connected = std::any_of(ecus.begin(), ecus.end(), [&pName](const ModelEcu& m) { return m.name == pName; });
+                peer.schema = model_variables();
+                extraPeers.push_back(std::move(peer));
+            }
+            e.begin_extra(extraPeers);
         }
         e.begin(peers);
         for (SimTime p{}; p <= at(limit); p += tick)
@@ -451,7 +467,7 @@ private:
         m.pulse = now == at(200ms);
         const double target = 10.0 * static_cast<double>(m.level);
         m.speed += std::clamp(target - m.speed, -50.0, 50.0);
-        if (to_ns(now) % SimDuration(10ms).count() == 0)
+        if (to_ns(now) % m.sample_period.count() == 0)
         {
             control::Snapshot sample;
             sample.time = now;
@@ -480,6 +496,14 @@ private:
                 if (scenario->participants[i].name == ecus[it->ecu].name && it->sample)
                 {
                     engine->sample(i, it->sample);
+                }
+            }
+            const auto& extras = engine->extra_participants();
+            for (std::size_t i = 0; i < extras.size(); ++i)
+            {
+                if (extras[i] == ecus[it->ecu].name && it->sample)
+                {
+                    engine->extra_sample(i, it->sample);
                 }
             }
             for (const auto& [ticket, result] : it->results)

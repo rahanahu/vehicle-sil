@@ -66,7 +66,17 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "command"],
+        "required": ["name"],
+        "if": {
+          "properties": {
+            "manual": { "const": true },
+            "describe": { "const": false }
+          },
+          "required": ["manual", "describe"]
+        },
+        "else": {
+          "required": ["command"]
+        },
         "properties": {
           "name": {
             "$ref": "#/definitions/name",
@@ -75,7 +85,7 @@
           },
           "command": {
             "$ref": "#/definitions/command",
-            "description": "The executable and its arguments. A relative path counts from this file's directory; a name without / is also looked up on PATH. On Windows, .exe may be left out."
+            "description": "The executable and its arguments. A relative path counts from this file's directory; a name without / is also looked up on PATH. On Windows, .exe may be left out. May be omitted only when manual is true and describe is false (for example, a participant started on another computer)."
           },
           "step_ms": {
             "$ref": "#/definitions/millis",
@@ -99,7 +109,7 @@
           },
           "manual": {
             "type": "boolean",
-            "description": "true: you start this participant yourself (from a debugger, for example); run prints the command and waits for it. --manual does the same for one run.",
+            "description": "true: you start this participant yourself (from a debugger or another computer, for example); run prints the command (if configured) and waits for it. With describe: false, command may be omitted and check does not require the executable to exist locally. --manual does the same for one run.",
             "default": false
           },
           "role": {

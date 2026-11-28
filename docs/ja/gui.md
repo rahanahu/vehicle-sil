@@ -541,6 +541,8 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | 結果と再実行 | 実行が終わると、「シナリオ」および「結果」のカードに、全体の合否、ケース名、適用パラメータ、失敗手順の `file:line`、展開可能なテンプレート `call_stack`、失敗メッセージ（信号間比較の両辺値とサンプル時刻を含む）、および手順の表（`<file>:<line>`、任意の `name`、`skipped` を含む状態、仮想時刻、「タイムラインで表示」ボタン）が表示されます。「同じ条件で再実行」は `session.intent` をそのまま通常の `POST api/run` へ渡して仮想時刻 0 から新しい単独実行を開始し、外部接続 `connect` の検査や Hot 起動の再利用をそのまま維持します。 |
 | 変数 | シナリオの実行中は、変数に書き込めません（シナリオの結果を変えないため。サーバーも `scenario-running` で拒否します）。引き継ぎが成立した後は、同じ実行のまま通常の書き込みと時間操作（「ステップ送り」「再開」「速度」）が使えるようになります。 |
 | 時間の軸 | 実行が終わったら、「シナリオ」のカードのリンク「時間の軸」で新しいタブに図を開け、シナリオ失敗時はカード内の `<vehicle-sil-timeline>` が自動展開して失敗手順へフォーカスします（「[シナリオの実行の時間の軸](#シナリオの実行の時間の軸)」）。 |
+| 追加で記録する信号 | シナリオを選んでいてランチャーが `record-signals` に対応している場合、「構成ファイル」カード内の「追加で記録する信号」折りたたみ欄から、申告済み participant の `<participant>.<variable>` 信号を追加で選んでタイムラインに記録できます（既定は空で、全信号を自動記録しません）。追加信号はシナリオの合否判定に影響せず、実行前に照合され（`api/check`・`api/run` の `record`）、再実行用に `session.intent` へ保持されます。 |
+| 失敗後の追加記録 | シナリオを選んでいてランチャーが `record-after-fail` に対応している場合、「構成ファイル」カード内の「失敗後の追加記録 (ms)」欄で、通常のシナリオ条件失敗または待機タイムアウト後にサンプリング記録を継続する仮想時間（`1`〜`600000` ms、空欄で無効）を指定できます（`api/check`・`api/run`・`session.intent` の `record_after_fail_ms`）。 |
 
 - ほかの場所のシナリオのファイルは選べません（「[セキュリティ](#セキュリティ)」）。
 - 手順の表は、ランチャーのイベント `scenario_step` で進み、結果が出たら、実行されなかった手順を含む全部の手順になります。途中から開いた画面も同じ表を表示します。
@@ -548,7 +550,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送ります。Control Server のクライアントの時間の呼び出しも、同じ答えになります。
 - 引き継ぎが起きるのは、シナリオが `passed` で完了したときだけです。シナリオの失敗、途中での「停止」、`stop_at_ms` 到達、未完了や異常終了では決して引き継がれず、書き込み制限が維持され、引き継ぎ表示も出ません。
 - ランチャーに Control Server があれば（`features` に `control-server`）、「変数」の画面で値を見られます（再生中は書き込むコンポーネントが押せず「シナリオの実行中は書けません（見るだけです）」と表示され、引き継ぎ成立後に書けるようになります）。Control Server のないランチャーでは、シナリオの実行を含めてどの実行にも変数はなく、「変数」の画面はほかの実行と同じく理由を表示します。
-- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`・`api/run` の `variant`・`scenario`・`case`・`params`・`after_scenario`、セッション要約の `session.intent`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオ) の「シナリオ」）、ライブラリでは `front.scenarios({ file })`（その下の 1 回の呼び出しが `client.low.scenarios(file)`）、`Intent` の `variant`・`scenario`・`case`・`params`・`after_scenario`、正面の口の `scenario`（`case`・`params`・`handed_over`・`over_at_ms` を持つ `FrontScenario`）、`session.intent`、`isScenarioHandedOver` / `isScenarioRunning` です。
+- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`・`api/run` の `variant`・`scenario`・`case`・`params`・`after_scenario`・`record`・`record_after_fail_ms`、セッション要約の `session.intent`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオ) の「シナリオ」）、ライブラリでは `front.scenarios({ file })`（その下の 1 回の呼び出しが `client.low.scenarios(file)`）、`Intent` の `variant`・`scenario`・`case`・`params`・`after_scenario`・`record`・`record_after_fail_ms`、正面の口の `scenario`（`case`・`params`・`handed_over`・`over_at_ms` を持つ `FrontScenario`）、`session.intent`、`isScenarioHandedOver` / `isScenarioRunning` です。
 
 ### シナリオの実行の時間の軸
 
@@ -564,7 +566,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - **完了済み・`--speed max` 実行の詳細調査**: ライブポーリング（`variables` / `watch`）は実時間間隔でサンプリングするため、完了後の実行や `--speed max` での実行は `scenario.timeline_url` / `GET api/timeline/<run_id>`（全ステップのサンプルを保持）で調査してください。
 - ファイルは `--keep-runs`（既定 4、失敗 run を優先保持）の件数まで保持され、サーバー停止時に削除されます。残したいときは、押し出される前にトークンを付けて `api/timeline/<run_id>` を取得するか、`vehicle_sil_launch run --scenario <シナリオ> --timeline <ファイル>` で直接実行してください。
 - サーバーの API は、要約の `scenario.timeline_url` と `GET api/timeline/<run_id>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオの実行の時間の軸apitimeline) の「シナリオの実行の時間の軸（`api/timeline`）」）、ライブラリでは、セッションのコピーの `scenario` の `timelineUrl` です。
-- 「シナリオ」のカードには「時間の軸をここに表示」もあり、同じ時間の軸を `<vehicle-sil-timeline>` 要素（`[cursor]` に加え `[step]` も結線）でカード内に出します（「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）。シナリオが失敗終了したときは自動で展開して失敗手順にフォーカスし、各手順行の「タイムラインで表示」を押すと展開して該当手順へジャンプします。
+- 「シナリオ」のカードには「時間の軸をここに表示」もあり、時間の軸が利用可能になるとコンテンツ全幅で展開し、`<vehicle-sil-timeline>` 要素（`hide="header summary help tables toolbar"`。「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）を表示します。シナリオが失敗終了したときは自動で展開し、単一のコンパクトな操作バー、波形上の失敗要約ストリップ、ズーム維持の「失敗時刻へ移動」ボタン、明示的な失敗前プリセット（`-150 ms`、`-300 ms`、失敗後の追加記録があるときは「失敗前後」、「全体」）、および信号フィルタバー（検索、「すべて」・「失敗に関係」・「失敗直前に変化」・「入力」・「出力」プリセット、participant チップ、レーンの `×` 非表示とインライン復元チップ）を備えます。信号の検索・非表示・復元は表示のみを変え、ズーム・カーソル・選択イベントを維持します。別の実行へ切り替えると、選択・カーソル・表示範囲・フィルタ状態はすべて初期化されます。各手順行の「タイムラインで表示」を押すと展開して該当手順へジャンプします（拡大中はズーム幅を維持）。
 
 ### 操作をシナリオとして保存する
 
@@ -1295,9 +1297,9 @@ panel.addEventListener('vsil-write-result', (event) => {
 - 要素は、インラインのスタイルを許さない CSP（`style-src 'self'`。GUI サーバーのものはこれより緩い）の下でも動きます。CSS は `<style>` の要素ではなく、組み立てたスタイルシート（constructable stylesheet）で入れます。
 - `src` を読んでいる間、要素は `aria-busy="true"` を持ち、前に出していたファイルを薄く出します。
 
-グラフにマウスを重ねると、同じ仮想時刻での各信号の値が波形の横に出ます。書き込みとサンプルの両方が記録されていれば、「送った値」と「見た値」を表示します。その時刻の値がなければ「—」を表示します。
+グラフにマウスを重ねると、同じ仮想時刻での各信号の値が波形の横に出ます。プロットをクリックするとカーソルを固定でき、`Shift+クリック` で `Δt` 基準線、`Shift+ドラッグ` やツールバーのボタンで横移動、`Ctrl+ホイール` / `Meta+ホイール` でポインター位置中心の拡大縮小、`Esc` で固定解除ができます。書き込みとサンプルの両方が記録されていれば、「送った値」と「見た値」を表示します。その時刻の値がなければ「—」を表示します。
 
-グラフの上の手順の詳細には、期待値、いつ条件を満たす必要があるか、実際に判定した時刻が出ます。手順にマウスを重ねるか、クリックすると切り替わります。カーソル線はグラフ全体を縦に通るので、各信号を同じ時刻で比べられます。
+手順（イベント）レーンは同じ仮想時刻軸のまま波形レーンの下に配置されます（手順がない記録では省略されます）。同一仮想時刻に開始する複数イベントは縦のタイ線と `×N` バッジで示され、グラフ下の手順の詳細トレイに同時刻のすべてのイベントを並べ、表示順は因果関係を示さないことを明記します。各変数レーンの見出しにある `×` ボタンは、キャンセル可能な `variablehide` 事象を出します（`variables` を外部制御していない場合は要素内でレーンを隠し、インライン復元チップを出します）。いずれもズーム・カーソル・手順の選択を維持します。
 
 変数同士の比較（`compare[].variable`）では、数値レーンでも `bool` / `enum` レーンでも、右辺変数の記録された `sampled` 値をゼロ次ホールドのスライスとして追従する動的許容帯を描きます。1 つの条件に複数の比較がある場合はスライスごとに積集合を描き、空集合となる区間は塗りません。右辺変数のサンプルが未着の区間、ファイルの上限でサンプルが欠落した区間（`dropped`）、および `during` モードで `from_ms` より前のサンプルしかない区間も帯として塗りません。変数間比較が失敗すると、失敗バナーに両辺の値とサンプル時刻が表示され、左辺レーンと未達右辺レーンの双方に失敗マーカーが付きます。JavaScript の数値は `±9007199254740991` を超える 64 ビット整数を丸めるため、丸めが生じた場合は注記を出し、失敗メッセージ上で正確な 64 ビット整数を確認できます。
 
@@ -1321,15 +1323,16 @@ panel.addEventListener('vsil-write-result', (event) => {
 | `compact` | `compact` | 真偽（属性があれば真） | 偽 | 狭い所向け: レーンの見出しを狭く、数のレーンを低く、文字を小さく |
 | `theme` | `theme` | `light`、`dark`、`auto` | `auto` | 色。`auto` は、要素を置いたページの `color-scheme` に従います。`light dark`（サンプルの画面と時間の軸のページの宣言）ならブラウザーの明るい・暗いの設定に、ページが宣言していなければ明るい色になります |
 
-`cursor`、`step`、`from`、`to` のゲッターは、いま出しているもの（利用者が動かした後も）を返します。メソッドの `reload()` は、`src` を読み直します。
+`cursor`、`step`、`from`、`to` のゲッターは、いま出しているもの（利用者が動かした後も）を返します。メソッドは `reload()`（`src` を読み直す）、`jumpToFailure(options?)`（失敗時刻へ移動してカーソルを固定・失敗手順を選択。拡大中は既定でズーム幅を維持、`leadMs` / `trailMs` 指定時は `from`/`to` を固定せず失敗前後のウィンドウを表示）、`focusStep(index, options?)`（1 始まりの手順番号にフォーカスしてカーソルを固定。`{ preserveZoom: true }` で表示範囲を維持）、`resetView()`（実行の全体を表示）、`pan(fraction)`（現在の表示幅の割合で横移動）、`zoomOut()`（中央基準で縮小）、`unpinCursor()`（カーソル固定と `Δt` 基準を解除）です。`variables` を設定している間、要素内の participant チェックボックスは自動で隠れ、呼び出し側のフィルタと競合しません。
 
 | 事象 | いつ | `detail` |
 |---|---|---|
-| `load` | ファイルを出した | `{ file, scenario, status, start, end }`（`status` はファイルのとおり。`start` と `end` は実行の全体、ms） |
+| `load` | ファイルを出した | `{ file, scenario, status, start, end, recordedTo, stepCount, failure, variables }`（`status` はファイルのとおり。`start` と `end` は実行の全体、ms。`variables` は `relatedToFailure`・`changedNearFailure` を含む変数メタデータ） |
 | `error` | ファイルを出せない。理由は要素の中にも出します | `{ message, status }`（`status` は HTTP の状態、または `null`） |
-| `cursorchange` | 利用者がカーソルを動かした（ポインター、矢印のキー） | `{ cursor }` |
-| `stepselect` | 利用者が手順を選んだ（図の上、または表の番号） | `{ step }` |
-| `viewchange` | 利用者が拡大・縮小した、出す範囲を動かした | `{ from, to }` |
+| `cursorchange` | 利用者がカーソルを動かした・固定した（ポインター、矢印のキー、ジャンプメソッド） | `{ cursor }` |
+| `stepselect` | 利用者が手順を選んだ（図の上、表の番号、または `jumpToFailure()` / `focusStep()`） | `{ step }` |
+| `viewchange` | 利用者が拡大・縮小した、出す範囲を動かした（`jumpToFailure()`・`focusStep()`・`resetView()`・`pan()`・`zoomOut()` を含む） | `{ from, to }` |
+| `variablehide` | 利用者が変数レーンの非表示（`×`）ボタンを押した（バブルしキャンセル可能。呼び出し側が `variables` を管理する場合は `preventDefault()` を呼ぶ） | `{ variable }` |
 
 - 事象は `CustomEvent` です。`load` と `error` は親へ伝わりません（bubbles が偽）。ほかは伝わります。
 - プロパティや属性で変えたことでは、事象は出ません。なので、2 つの時間の軸、または時間の軸と自分の図を、繰り返しにならずに揃えられます: `a.addEventListener('viewchange', (e) => Object.assign(b, e.detail));`。

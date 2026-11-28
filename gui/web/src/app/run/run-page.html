@@ -103,6 +103,29 @@
     }
   </p>
 
+  @if (session(); as session) {
+    @if (session.scenario; as scenario) {
+      @if (scenario.timelineUrl) {
+        @let status = run.status();
+        <mat-card appearance="outlined" class="wide-scenario-card" data-testid="scenario-card">
+          <mat-card-header>
+            <mat-card-title><h2 id="run-scenario" tabindex="-1" i18n>シナリオ</h2></mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <app-scenario-panel
+              [scenario]="scenario"
+              [running]="runActive(session) && !session.result"
+              [paused]="status.run === 'paused'"
+              [crashed]="status.run === 'crashed'"
+              [rerunAllowed]="!running() ? rerunAllowed() : null"
+              (rerun)="rerunSession()"
+            />
+          </mat-card-content>
+        </mat-card>
+      }
+    }
+  }
+
   <!--
     1 列のときは、実行した後は「結果、状態、ログ」を「構成ファイルと照合」より先に並べる（CSS の order）。
     別のファイルを選んだら、選ぶ、照合を先に戻す。
@@ -197,6 +220,18 @@
                 <ng-container i18n>なし</ng-container>
               }
             </p>
+            @if (sessionRecordSignals().length > 0) {
+              <p class="file record-session" data-testid="session-record">
+                <ng-container i18n>追加で記録する信号:</ng-container>
+                <code lang="en">{{ sessionRecordSignals().join(', ') }}</code>
+              </p>
+            }
+            @if (sessionRecordAfterFailMs(); as tailMs) {
+              <p class="file record-session" data-testid="session-record-after-fail">
+                <ng-container i18n>失敗後の追加記録 (ms):</ng-container>
+                <code lang="en">{{ tailMs }}</code>
+              </p>
+            }
           } @else if (scenarios.hasValue()) {
             <mat-form-field class="picker picker-gap" subscriptSizing="dynamic">
               <mat-label i18n>シナリオ</mat-label>
@@ -339,6 +374,42 @@
             i18n
             >止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）</mat-checkbox
           >
+          @if (!running() && recordAfterFailSupported() && chosenScenario() !== null) {
+            <mat-form-field class="picker picker-gap" subscriptSizing="dynamic">
+              <mat-label i18n>失敗後の追加記録 (ms)</mat-label>
+              <input
+                matInput
+                type="text"
+                inputmode="numeric"
+                data-testid="record-after-fail-ms"
+                [value]="recordAfterFailMs()"
+                [disabled]="running() || !run.ready()"
+                [attr.aria-invalid]="recordAfterFailTouched() && recordAfterFailInvalid()"
+                [aria-describedby]="
+                  recordAfterFailTouched() && recordAfterFailInvalid()
+                    ? 'record-after-fail-error'
+                    : ''
+                "
+                #recordAfterFailInput
+                (input)="recordAfterFailMs.set(recordAfterFailInput.value)"
+                (blur)="recordAfterFailTouched.set(true)"
+              />
+              <mat-hint i18n>空欄なら失敗時点で記録を終了します。1〜600000 ms。</mat-hint>
+            </mat-form-field>
+            @if (recordAfterFailTouched() && recordAfterFailInvalid()) {
+              <p id="record-after-fail-error" class="error" role="status" i18n>
+                失敗後の追加記録は 1 から 600000 までの整数にしてください。
+              </p>
+            }
+          }
+          @if (!running() && recordSignalsSupported() && chosenScenario() !== null) {
+            <app-record-signals
+              [file]="selected()"
+              [check]="selectedCheck()"
+              [disabled]="disabled()"
+              [(selected)]="recordedSignals"
+            />
+          }
         </mat-card-content>
       </mat-card>
 
@@ -476,23 +547,25 @@
           </mat-card>
         }
         @if (session.scenario; as scenario) {
-          <mat-card appearance="outlined" data-testid="scenario-card">
-            <mat-card-header>
-              <mat-card-title
-                ><h2 id="run-scenario" tabindex="-1" i18n>シナリオ</h2></mat-card-title
-              >
-            </mat-card-header>
-            <mat-card-content>
-              <app-scenario-panel
-                [scenario]="scenario"
-                [running]="runActive(session) && !session.result"
-                [paused]="status.run === 'paused'"
-                [crashed]="status.run === 'crashed'"
-                [rerunAllowed]="!running() ? rerunAllowed() : null"
-                (rerun)="rerunSession()"
-              />
-            </mat-card-content>
-          </mat-card>
+          @if (!scenario.timelineUrl) {
+            <mat-card appearance="outlined" data-testid="scenario-card">
+              <mat-card-header>
+                <mat-card-title
+                  ><h2 id="run-scenario" tabindex="-1" i18n>シナリオ</h2></mat-card-title
+                >
+              </mat-card-header>
+              <mat-card-content>
+                <app-scenario-panel
+                  [scenario]="scenario"
+                  [running]="runActive(session) && !session.result"
+                  [paused]="status.run === 'paused'"
+                  [crashed]="status.run === 'crashed'"
+                  [rerunAllowed]="!running() ? rerunAllowed() : null"
+                  (rerun)="rerunSession()"
+                />
+              </mat-card-content>
+            </mat-card>
+          }
         } @else if (recordable()) {
           <mat-card appearance="outlined" data-testid="recording-card">
             <mat-card-header>

@@ -95,8 +95,9 @@ public:
     virtual void participant_started(const std::string& name, long pid, const std::vector<std::string>& command,
                                      const std::string& log) = 0;
     virtual void participant_ended(const std::string& name, const process::ExitStatus& status) = 0;
-    /// Manual: `command` the executable and its arguments, `working_directory` where to start it
-    /// (both as shown in the outputs), `command_line` the same as one line for this system's shell,
+    /// Manual: `command` the executable and its arguments (empty when `command` is omitted),
+    /// `working_directory` where to start it (empty when omitted or not found locally),
+    /// `command_line` the same as one line for this system's shell (empty when `command` is omitted),
     /// `environment` the variables to set for it (name, value).
     virtual void participant_manual(const std::string& name, const std::vector<std::string>& command,
                                     const std::string& working_directory, const std::string& command_line,

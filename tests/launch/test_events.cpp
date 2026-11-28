@@ -1767,13 +1767,15 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "scenario-cases",
     "scenario-templates",
     "scenario-variable-compare",
-    "external-registry"
+    "external-registry",
+    "record-signals",
+    "record-after-fail"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature, kScenarioTimeFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-metrics\",\n    \"scenario-end-ms\",\n    \"scenario-handover\",\n    \"scenario-cases\",\n    \"scenario-templates\",\n    \"scenario-variable-compare\",\n    \"external-registry\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"stdin-run-until\",\n    \"request\",\n    \"scenario-samples\",\n    \"run-stop-at\",\n    \"serve\",\n    \"check-file-only\",\n    \"serve-prepare\",\n    \"control-metrics\",\n    \"scenario-end-ms\",\n    \"scenario-handover\",\n    \"scenario-cases\",\n    \"scenario-templates\",\n    \"scenario-variable-compare\",\n    \"external-registry\",\n    \"record-signals\",\n    \"record-after-fail\",\n    \"control-server\",\n    \"scenario-control\",\n    \"scenario-time\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(event_stream_formats_prepare_and_status_replies)
@@ -1945,4 +1947,25 @@ TEST_CASE(events_v4_scenario_step_and_result_preserve_optional_step_name)
     CHECK(out[1].find(R"("name":)") == std::string::npos);
     CHECK(out[2].find(R"("event":"result")") != std::string::npos);
     CHECK(out[2].find(R"("name":"apply throttle")") != std::string::npos);
+}
+
+TEST_CASE(events_participant_manual_emits_null_for_omitted_command_or_directory)
+{
+    Sink sink;
+    EventStream& stream = sink.start();
+    stream.participant_manual("Omitted", {}, "", "", {});
+    stream.participant_manual("Remote", {"remote_peer", "--uri", "silkit://127.0.0.1:8500"}, "",
+                              "remote_peer --uri silkit://127.0.0.1:8500", {});
+    stream.participant_manual("Local", {"/dir/ecu", "--name", "Local"}, "/dir", "/dir/ecu --name Local",
+                              {{"VEHICLE_SIL_LISTEN_ON_NETWORK", "1"}});
+    RunReport report;
+    CHECK(stream.result(format_result_event(report, true)));
+    const auto out = sink.lines();
+    CHECK_EQ(out.size(), std::size_t{4});
+    CHECK(out[0].find(R"("name":"Omitted","state":"manual","command":[],"working_directory":null,"command_line":null)") !=
+          std::string::npos);
+    CHECK(out[1].find(R"("name":"Remote","state":"manual","command":["remote_peer","--uri","silkit://127.0.0.1:8500"],"working_directory":null,"command_line":"remote_peer --uri silkit://127.0.0.1:8500")") !=
+          std::string::npos);
+    CHECK(out[2].find(R"("name":"Local","state":"manual","command":["/dir/ecu","--name","Local"],"working_directory":"/dir","command_line":"/dir/ecu --name Local","environment":{"VEHICLE_SIL_LISTEN_ON_NETWORK":"1"})") !=
+          std::string::npos);
 }

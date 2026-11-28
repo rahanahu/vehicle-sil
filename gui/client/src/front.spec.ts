@@ -2979,7 +2979,12 @@ describe('the front door', () => {
       );
 
       const checkPromise = rig.front.check(
-        { scenario: 'scenarios/a.yaml', after_scenario: 'pause' },
+        {
+          scenario: 'scenarios/a.yaml',
+          after_scenario: 'pause',
+          record: ['Dashboard.dashboard.engine_speed'],
+          record_after_fail_ms: 300,
+        },
         { file: 'sim.yaml' },
       );
       const checkReq = rig.http.expectOne('api/check');
@@ -2988,6 +2993,8 @@ describe('the front door', () => {
         disable: [],
         scenario: 'scenarios/a.yaml',
         after_scenario: 'pause',
+        record: ['Dashboard.dashboard.engine_speed'],
+        record_after_fail_ms: 300,
       });
       checkReq.flush({
         check: {
@@ -3007,7 +3014,13 @@ describe('the front door', () => {
       await checkPromise;
 
       const startPromise = rig.front.run.start(
-        { scenario: 'scenarios/a.yaml', after_scenario: 'pause', speed: 'max' },
+        {
+          scenario: 'scenarios/a.yaml',
+          after_scenario: 'pause',
+          record: ['Dashboard.dashboard.engine_speed'],
+          record_after_fail_ms: 300,
+          speed: 'max',
+        },
         { file: 'sim.yaml' },
       );
       const runReq = rig.http.expectOne('api/run');
@@ -3016,6 +3029,8 @@ describe('the front door', () => {
         disable: [],
         scenario: 'scenarios/a.yaml',
         after_scenario: 'pause',
+        record: ['Dashboard.dashboard.engine_speed'],
+        record_after_fail_ms: 300,
         speed: 'max',
       });
       runReq.flush({ instance: 'x', run_id: '1' });

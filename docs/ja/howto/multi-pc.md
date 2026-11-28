@@ -105,7 +105,7 @@ participants:
 
 `registry_uri` には、`silkit://192.0.2.10:8500` のように、この PC のアドレスを 1 つ書いてもかまいません。`manual: true` は、設定ファイルに書く代わりに、`run --manual Dashboard` でも指定できます。
 
-`Dashboard` の実行ファイルは、ランチャーを動かす PC にも置いておきます。`check` と `run` が、その実行ファイルを `--describe` を付けて実行し、設定ファイルと照合するためです。
+`Dashboard` の実行ファイルは、ランチャーを動かす PC にも置いておきます。`check` と `run` が、その実行ファイルを `--describe` を付けて実行し、設定ファイルと照合するためです（別の PC 上だけで動かす `ecu_main` 以外の外部 participant では、`describe: false` と `manual: true` を両方指定すると `command` を省略でき、ランチャー側の PC にローカル実行ファイルは不要です）。
 
 設定ファイルを照合します。
 

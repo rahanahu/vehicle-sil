@@ -281,6 +281,10 @@ export interface CheckRequest {
   case?: string;
   /** What to do after the scenario passes (`stop`, or `pause` to hand over to manual control). */
   after_scenario?: AfterScenario;
+  /** Extra signals (`<participant>.<variable>`) to record on the timeline independent of scenario assertions. */
+  record?: string[];
+  /** Virtual milliseconds to keep recording sampled signals after a scenario assertion/timeout failure (1..600000). */
+  record_after_fail_ms?: number;
   /** The variant of the configuration file. */
   variant?: string;
   /** Values of the scenario's parameters (name to value); used only when a scenario runs. */
@@ -678,6 +682,8 @@ export interface SessionIntent {
   scenario?: string;
   case?: string;
   after_scenario?: AfterScenario;
+  record?: string[];
+  record_after_fail_ms?: number;
   variant?: string;
   params?: Record<string, ScenarioParamValue>;
   speed?: number | 'max';
@@ -702,7 +708,7 @@ const readIntentSpeed: Reader<number | 'max'> = (value, path) => {
 const readSessionIntent = (value: unknown, path: string, u: Unreadable): SessionIntent => {
   const f = object(value, path);
   const out: SessionIntent = {};
-  const listField = (key: 'disable' | 'enable' | 'manual') => {
+  const listField = (key: 'disable' | 'enable' | 'manual' | 'record') => {
     if (f[key] !== undefined) {
       const read = field(f, path, key, soft(items(string, u), undefined, u));
       if (read !== undefined) out[key] = read;
@@ -711,6 +717,7 @@ const readSessionIntent = (value: unknown, path: string, u: Unreadable): Session
   listField('disable');
   listField('enable');
   listField('manual');
+  listField('record');
   const strField = (key: 'scenario' | 'case' | 'variant' | 'time_policy') => {
     if (f[key] !== undefined) {
       const read = field(f, path, key, soft(nonEmptyString, undefined, u));
@@ -752,6 +759,10 @@ const readSessionIntent = (value: unknown, path: string, u: Unreadable): Session
   if (f['late_tolerance_ms'] !== undefined) {
     const read = field(f, path, 'late_tolerance_ms', soft(integer, undefined, u));
     if (read !== undefined) out.late_tolerance_ms = read;
+  }
+  if (f['record_after_fail_ms'] !== undefined) {
+    const read = field(f, path, 'record_after_fail_ms', soft(integer, undefined, u));
+    if (read !== undefined) out.record_after_fail_ms = read;
   }
   return out;
 };

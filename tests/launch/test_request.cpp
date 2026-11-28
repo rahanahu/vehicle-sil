@@ -688,3 +688,75 @@ TEST_CASE(external_registry_validation_and_config_conflict)
     CHECK(!ok_check.usage);
     CHECK(ok_check.hot_eligibility.eligible);
 }
+
+TEST_CASE(record_intent_is_allowed_and_validated_pre_run_even_without_scenario)
+{
+    RunRequest r;
+    r.intent.record = {"A.level"};
+    CHECK(messages(r, RequestCommand::Check).empty());
+    CHECK(messages(r, RequestCommand::Run).empty());
+    // --timeline without --scenario is still refused even when --record is set.
+    r.host.timeline = "out.json";
+    CHECK(messages(r, RequestCommand::Run) == list(kTimelineNeedsScenario));
+    r.intent.scenario = "drive.yaml";
+    CHECK(messages(r, RequestCommand::Run).empty());
+
+    // Pre-run validation runs in check_file() without --scenario and reports invalid entries.
+    const std::filesystem::path dir = request_files("record-check");
+    const vehicle_sil::config::test::InDirectory there(dir);
+    RunRequest checkReq = of_file("sim.yaml");
+    checkReq.intent.record = {"badformat", "NoSuch.x", "B.level", "A.level"};
+    const Checked rep = check_file(checkReq);
+    CHECK(rep.recorded_variables.empty());
+    CHECK(codes(rep, "record-") == "record-variable-format record-unknown-participant record-participant-unusable record-participant-unusable ");
+}
+
+TEST_CASE(record_after_fail_ms_validation_and_plan_propagation)
+{
+    // Out-of-range values are rejected by validate_timing(), validate_request(), check_file(), and run_file().
+    for (const std::int64_t bad : {std::int64_t{0}, std::int64_t{-1}, kMaxRecordAfterFailMs + 1})
+    {
+        RunRequest r;
+        r.host.config = "not-a-file.yaml";
+        r.intent.scenario = "drive.yaml";
+        r.intent.record_after_fail_ms = bad;
+        CHECK(!validate_timing(r).empty());
+        CHECK(!messages(r, RequestCommand::Check).empty());
+        CHECK(!messages(r, RequestCommand::Run).empty());
+        CHECK(check_file(r).usage);
+        CHECK(run_file(r).check.usage);
+    }
+
+    // Setting record_after_fail_ms without scenario is a usage error.
+    RunRequest r;
+    r.intent.record_after_fail_ms = 300;
+    CHECK(messages(r, RequestCommand::Check) ==
+          list("--record-after-fail-ms needs a scenario: give --scenario <file> too, or leave --record-after-fail-ms out"));
+    CHECK(messages(r, RequestCommand::Run) ==
+          list("--record-after-fail-ms needs a scenario: give --scenario <file> too, or leave --record-after-fail-ms out"));
+    CHECK(!messages(r, RequestCommand::Test).empty());
+
+    // Allowed with scenario even without --timeline (both check and run), and refused on test.
+    r.intent.scenario = "drive.yaml";
+    CHECK(messages(r, RequestCommand::Check).empty());
+    CHECK(messages(r, RequestCommand::Run).empty());
+    CHECK(!messages(r, RequestCommand::Test).empty());
+
+    // Boundary values 1 and kMaxRecordAfterFailMs are accepted.
+    r.intent.record_after_fail_ms = 1;
+    CHECK(messages(r, RequestCommand::Run).empty());
+    r.intent.record_after_fail_ms = kMaxRecordAfterFailMs;
+    CHECK(messages(r, RequestCommand::Run).empty());
+
+    // run_choices() and plan_run() propagate record_after_fail into RunPlan.
+    r.intent.record_after_fail_ms = 300;
+    const RunChoices choices = run_choices(r);
+    CHECK(choices.record_after_fail == std::optional<std::chrono::milliseconds>(300ms));
+
+    Checked check;
+    check.config.emplace();
+    vehicle_sil::scenario::ScenarioCheck sc;
+    sc.scenario.emplace();
+    const RunPlan plan = plan_run(check, &sc, "dir", choices);
+    CHECK(plan.record_after_fail == std::optional<std::chrono::milliseconds>(300ms));
+}

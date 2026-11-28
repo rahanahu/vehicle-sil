@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -342,4 +343,181 @@ TEST_CASE(rhs_variable_comparison_registers_participant_as_read_for_every_step_s
     const std::vector<Finding> warned =
         scenario_samples_findings(oldDoor, read(oldDoor, kHead + "  - expect: { Body.speed: { variable: Door.speed } }\n"), "0.2.0");
     CHECK(warned.size() == 1 && warned[0].code == "scenario-samples-unsupported" && warned[0].participant == "Door");
+}
+
+TEST_CASE(check_recorded_variables_validates_every_case_and_deduplicates)
+{
+    Checked check = checked(kTakes, kTakes);
+    // Add mapped variable and absent variable on Body via Checked's variable map (or catalog).
+    const auto add_case = [&check](const std::string& name, const std::function<void(ParticipantConfig&, ParticipantResult&)>& fn) {
+        ParticipantConfig p;
+        p.name = name;
+        p.command = {"bin/" + name};
+        ParticipantResult r;
+        r.status = ParticipantStatus::Described;
+        r.ecu.emplace();
+        r.ecu->vehicle_sil_version = "0.1.0";
+        r.ecu->description.name = name;
+        r.ecu->description.step = 10ms;
+        r.ecu->description.variables = variables();
+        r.ecu->description.control = ControlOffer{"silkit", 2, 1};
+        r.ecu->description.features = kTakes;
+        r.ecu->variables_reported = true;
+        fn(p, r);
+        check.config->participants.push_back(std::move(p));
+        check.participants.push_back(std::move(r));
+    };
+
+    // Mapped variable & absent variable on Body, and built-in ecu.connected on Door.
+    {
+        control::VariableMapping mapped;
+        mapped.name = "mapped.temp";
+        mapped.from = "speed";
+        check.config->participants[0].variables.push_back(mapped);
+        control::VariableMapping absentVar;
+        absentVar.name = "legacy.absent";
+        absentVar.absent = true;
+        check.config->participants[0].variables.push_back(absentVar);
+
+        control::VariableInfo connected;
+        connected.name = "ecu.connected";
+        connected.type = control::ValueType::Bool;
+        connected.causality = control::Causality::Output;
+        check.participants[1].ecu->description.variables.push_back(connected);
+    }
+
+    add_case("Disabled", [](ParticipantConfig& p, ParticipantResult& r) {
+        p.enabled = false;
+        r.status = ParticipantStatus::Disabled;
+    });
+    add_case("OtherVariant", [](ParticipantConfig& p, ParticipantResult& r) {
+        p.enabled = false;
+        p.left_out_by_variant = true;
+        r.status = ParticipantStatus::Disabled;
+    });
+    add_case("NoDescribe", [](ParticipantConfig& p, ParticipantResult& r) {
+        p.describe = false;
+        r.status = ParticipantStatus::NotChecked;
+        r.ecu.reset();
+    });
+    add_case("FailedDescribe", [](ParticipantConfig&, ParticipantResult& r) {
+        r.status = ParticipantStatus::Failed;
+        r.ecu.reset();
+    });
+    add_case("NoControl", [](ParticipantConfig&, ParticipantResult& r) {
+        r.ecu->description.control.reset();
+    });
+    add_case("OldWire", [](ParticipantConfig&, ParticipantResult& r) {
+        r.ecu->description.control = ControlOffer{"silkit", 1, 1};
+    });
+    add_case("OtherTransport", [](ParticipantConfig&, ParticipantResult& r) {
+        r.ecu->description.control = ControlOffer{"other", 2, 1};
+    });
+    add_case("Realtime", [](ParticipantConfig&, ParticipantResult& r) {
+        r.ecu->description.step.reset();
+    });
+
+    const ScenarioCatalog cat = scenario_catalog(check);
+
+    // Valid: regular, mapped, ecu.connected, and duplicates deduplicated preserving order.
+    const std::vector<std::string> validInput = {
+        "Body.mapped.temp",
+        "Door.ecu.connected",
+        "Body.level",
+        "Body.mapped.temp",
+        "Door.ecu.connected",
+    };
+    const RecordedVariablesCheck ok = check_recorded_variables(validInput, cat);
+    CHECK(ok.findings.empty());
+    CHECK(ok.variables.size() == 3);
+    CHECK(ok.variables[0].participant == "Body" && ok.variables[0].name == "mapped.temp" && ok.variables[0].text == "Body.mapped.temp" &&
+          ok.variables[0].type == control::ValueType::Real);
+    CHECK(ok.variables[1].participant == "Door" && ok.variables[1].name == "ecu.connected" &&
+          ok.variables[1].type == control::ValueType::Bool);
+    CHECK(ok.variables[2].participant == "Body" && ok.variables[2].name == "level" &&
+          ok.variables[2].type == control::ValueType::Integer);
+
+    // Format errors.
+    for (const std::string& bad : std::vector<std::string>{"", "Body", ".level", "Body."})
+    {
+        const RecordedVariablesCheck r = check_recorded_variables(std::vector<std::string>{bad}, cat);
+        CHECK(r.variables.empty() && r.findings.size() == 1 && r.findings[0].code == "record-variable-format");
+    }
+
+    // Unknown participant with closest() suggestion.
+    {
+        const RecordedVariablesCheck r = check_recorded_variables(std::vector<std::string>{"Boby.level"}, cat);
+        CHECK(r.variables.empty() && r.findings.size() == 1 && r.findings[0].code == "record-unknown-participant");
+        CHECK(r.findings[0].message.find("did you mean 'Body.level'") != std::string::npos);
+    }
+
+    // Every unusable participant case.
+    for (const std::string& pName : std::vector<std::string>{
+             "Disabled", "OtherVariant", "NoDescribe", "FailedDescribe", "NoControl", "OldWire", "OtherTransport", "Realtime"})
+    {
+        const RecordedVariablesCheck r = check_recorded_variables(std::vector<std::string>{pName + ".level"}, cat);
+        CHECK(r.variables.empty() && r.findings.size() == 1 && r.findings[0].code == "record-participant-unusable");
+        CHECK(r.findings[0].participant == pName);
+    }
+
+    // Absent variable.
+    {
+        const RecordedVariablesCheck r = check_recorded_variables(std::vector<std::string>{"Body.legacy.absent"}, cat);
+        CHECK(r.variables.empty() && r.findings.size() == 1 && r.findings[0].code == "record-variable-absent");
+    }
+
+    // Unknown variable with closest() suggestion (and unmapped raw name rejected when renamed).
+    {
+        const RecordedVariablesCheck r = check_recorded_variables(std::vector<std::string>{"Door.spead"}, cat);
+        CHECK(r.variables.empty() && r.findings.size() == 1 && r.findings[0].code == "record-unknown-variable");
+        CHECK(r.findings[0].message.find("did you mean 'Door.speed'") != std::string::npos);
+
+        const RecordedVariablesCheck raw = check_recorded_variables(std::vector<std::string>{"Body.speed"}, cat);
+        CHECK(raw.variables.empty() && raw.findings.size() == 1 && raw.findings[0].code == "record-unknown-variable");
+    }
+}
+
+TEST_CASE(extra_recorded_participants_use_best_effort_sampling_without_triggering_scenario_warnings)
+{
+    // Scenario only reads Body; Door is recorded extra.
+    const std::string bodyOnly = kHead + "  - set: { Body.level: 1 }\n  - expect: { Body.speed: 0 }\n";
+    RecordedVariable doorExtra;
+    doorExtra.participant = "Door";
+    doorExtra.name = "speed";
+    doorExtra.text = "Door.speed";
+    const std::vector<RecordedVariable> extra{doorExtra};
+
+    // When Door supports sample-every-step and scenario.samples == EveryStep, Door gets --sample-every-step too.
+    {
+        const Checked both = checked(kTakes, kTakes);
+        const Scenario s = read(both, bodyOnly);
+        check_text(readers(s), "Body"); // participants_read() is unchanged!
+        CHECK(flags(sample_every_step_participants(both, s, extra)) == "11");
+        // In plan_run(), extra-recorded participants only get --sample-every-step when --timeline is set.
+        Checked withScenario = both;
+        withScenario.scenario.emplace();
+        withScenario.scenario->file = "s.yaml";
+        withScenario.scenario->scenario = s;
+        RunChoices noTimeline;
+        noTimeline.recorded_variables = extra;
+        const RunPlan planNoTl = plan_run(withScenario, launch::detail::scenario_of(withScenario), "dir", noTimeline);
+        CHECK(planNoTl.members.at(0).sample_every_step);
+        CHECK(!planNoTl.members.at(1).sample_every_step);
+        RunChoices withTimeline = noTimeline;
+        withTimeline.timeline = "out.json";
+        const RunPlan planWithTl = plan_run(withScenario, launch::detail::scenario_of(withScenario), "dir", withTimeline);
+        CHECK(planWithTl.members.at(0).sample_every_step);
+        CHECK(planWithTl.members.at(1).sample_every_step);
+        // Under samples: as_sent, Door does NOT get --sample-every-step.
+        const Scenario asSent = read(both, "vehicle_sil_scenario: 1\nsamples: as_sent\nsteps:\n  - expect: { Body.speed: 0 }\n");
+        CHECK(flags(sample_every_step_participants(both, asSent, extra)) == "00");
+    }
+
+    // When Door does NOT support sample-every-step, NO scenario-samples-unsupported warning is emitted!
+    {
+        const Checked oldDoor = checked(kTakes, kOld);
+        const Scenario s = read(oldDoor, bodyOnly);
+        CHECK(flags(sample_every_step_participants(oldDoor, s, extra)) == "10");
+        check_text(lines(scenario_samples_findings(oldDoor, s, "0.2.0")), "");
+    }
 }

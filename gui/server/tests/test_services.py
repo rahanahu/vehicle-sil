@@ -299,6 +299,139 @@ def test_config_service_validates_and_forwards_after_scenario(tmp_path: Path) ->
     asyncio.run(main())
 
 
+def test_config_service_validates_and_forwards_record(tmp_path: Path) -> None:
+    from vehicle_sil_control.protocol import request_text
+
+    root = _simple_root(tmp_path)
+
+    async def main() -> None:
+        cfg_file = ConfigService(root, FakeLauncher()).resolve("simple.yaml")
+
+        # 1. Valid record list is deduplicated preserving order and serialized by request_text()
+        svc = ConfigService(root, FakeLauncher())
+        intent, _, _ = await svc.build_intent(
+            cfg_file,
+            RunRequest(
+                file="simple.yaml",
+                record=["Dashboard.dashboard.speed", "Engine.engine.mode", "Dashboard.dashboard.speed"],
+            ),
+            None,
+        )
+        assert intent["record"] == ["Dashboard.dashboard.speed", "Engine.engine.mode"]
+        serialized = json.loads(request_text(intent))
+        assert serialized["record"] == ["Dashboard.dashboard.speed", "Engine.engine.mode"]
+
+        # 2. Omitted or empty record stays omitted from intent
+        intent_omitted, _, _ = await svc.build_intent(cfg_file, RunRequest(file="simple.yaml"), None)
+        assert "record" not in intent_omitted
+        intent_empty, _, _ = await svc.build_intent(cfg_file, RunRequest(file="simple.yaml", record=[]), None)
+        assert "record" not in intent_empty
+
+        # 3. Launcher without record-signals -> 409 launcher-unsupported for non-empty record, ok for empty
+        no_rec_features = [f for f in FakeLauncher().features if f != "record-signals"]
+        svc_old = ConfigService(root, FakeLauncher(features=no_rec_features))
+        with pytest.raises(Refused) as exc_unsup:
+            await svc_old.build_intent(
+                cfg_file,
+                RunRequest(file="simple.yaml", record=["Engine.engine.mode"]),
+                None,
+            )
+        assert (exc_unsup.value.status, exc_unsup.value.code) == (409, "launcher-unsupported")
+
+        old_empty, _, _ = await svc_old.build_intent(cfg_file, RunRequest(file="simple.yaml", record=[]), None)
+        assert "record" not in old_empty
+
+    asyncio.run(main())
+
+
+def test_session_intent_preserves_record_in_summary(tmp_path: Path) -> None:
+    from fake_runtime import in_process_gui
+
+    root = _simple_root(tmp_path)
+
+    async def main() -> None:
+        async with in_process_gui(root=root) as gui:
+            status, body = await gui.client.post(
+                "api/run",
+                {"file": "simple.yaml", "disable": [], "record": ["Dashboard.dashboard.speed"]},
+            )
+            assert status == 200, body
+            s_status, s_body = await gui.client.get("api/session")
+            assert s_status == 200
+            assert s_body["session"]["intent"]["record"] == ["Dashboard.dashboard.speed"]
+            await gui.runtime.runs[0].finish(returncode=0)
+
+    asyncio.run(main())
+
+
+def test_config_service_validates_and_forwards_record_after_fail_ms(tmp_path: Path) -> None:
+    from vehicle_sil_control.protocol import request_text
+
+    root = _simple_root(tmp_path)
+    sc_dir = root / "scenarios"
+    sc_dir.mkdir()
+    (sc_dir / "fails.yaml").write_text("vehicle_sil_scenario: 1\nsteps: []\n", encoding="utf-8")
+
+    async def main() -> None:
+        cfg_file = ConfigService(root, FakeLauncher()).resolve("simple.yaml")
+
+        # 1. Valid record_after_fail_ms is forwarded and serialized by request_text()
+        svc = ConfigService(root, FakeLauncher())
+        intent, _, _ = await svc.build_intent(
+            cfg_file,
+            RunRequest(file="simple.yaml", scenario="scenarios/fails.yaml", record_after_fail_ms=300),
+            "scenarios/fails.yaml",
+        )
+        assert intent["record_after_fail_ms"] == 300
+        serialized = json.loads(request_text(intent))
+        assert serialized["record_after_fail_ms"] == 300
+
+        # 2. Omitted stays omitted from intent
+        intent_omitted, _, _ = await svc.build_intent(cfg_file, RunRequest(file="simple.yaml"), None)
+        assert "record_after_fail_ms" not in intent_omitted
+
+        # 3. Launcher without record-after-fail -> 409 launcher-unsupported
+        no_tail_features = [f for f in FakeLauncher().features if f != "record-after-fail"]
+        svc_old = ConfigService(root, FakeLauncher(features=no_tail_features))
+        with pytest.raises(Refused) as exc_unsup:
+            await svc_old.build_intent(
+                cfg_file,
+                RunRequest(file="simple.yaml", scenario="scenarios/fails.yaml", record_after_fail_ms=300),
+                "scenarios/fails.yaml",
+            )
+        assert (exc_unsup.value.status, exc_unsup.value.code) == (409, "launcher-unsupported")
+
+    asyncio.run(main())
+
+
+def test_session_intent_preserves_record_after_fail_ms_in_summary(tmp_path: Path) -> None:
+    from fake_runtime import in_process_gui
+
+    root = _simple_root(tmp_path)
+    sc_dir = root / "scenarios"
+    sc_dir.mkdir()
+    (sc_dir / "fails.yaml").write_text("vehicle_sil_scenario: 1\nsteps: []\n", encoding="utf-8")
+
+    async def main() -> None:
+        async with in_process_gui(root=root) as gui:
+            status, body = await gui.client.post(
+                "api/run",
+                {
+                    "file": "simple.yaml",
+                    "disable": [],
+                    "scenario": "scenarios/fails.yaml",
+                    "record_after_fail_ms": 300,
+                },
+            )
+            assert status == 200, body
+            s_status, s_body = await gui.client.get("api/session")
+            assert s_status == 200
+            assert s_body["session"]["intent"]["record_after_fail_ms"] == 300
+            await gui.runtime.runs[0].finish(returncode=0)
+
+    asyncio.run(main())
+
+
 def test_run_manager_write_variables_honors_handover_and_prestate_refusals(tmp_path: Path) -> None:
     from vehicle_sil_gui.session import Limits as SessionLimits
     from vehicle_sil_gui.source import PeerInfo

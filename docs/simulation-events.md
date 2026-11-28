@@ -310,9 +310,9 @@ The `code` of `caution` in `allowed` of `state`. Codes can be added; the meaning
 | `started` | `pid` | ID of the process |
 | `started` | `command` | Array of the executable that was started and its arguments |
 | `started` | `log` | The `--log-dir` file (`null` if none) |
-| `manual` | `command` | Array of the executable to start and its arguments |
-| `manual` | `working_directory` | The directory to start it in |
-| `manual` | `command_line` | The same command as one line that you can paste into this OS's shell (the same line that is written to stderr) |
+| `manual` | `command` | Array of the executable to start and its arguments (`[]` if `command` was omitted) |
+| `manual` | `working_directory` | The directory to start it in (`null` if `command` was omitted or the executable was not found locally) |
+| `manual` | `command_line` | The same command as one line that you can paste into this OS's shell (the same line that is written to stderr; `null` if `command` was omitted) |
 | `manual` | `environment` | Object of the names and values of the environment variables to set when you start it |
 | `failed` | `reason` | `left_simulation`, `process_ended`, `ended_before_start` (see the table below) |
 | `failed` | `message` | The same text as the `message` of the `finding` for this failure |
@@ -706,7 +706,9 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "scenario-cases",
     "scenario-templates",
     "scenario-variable-compare",
-    "external-registry"
+    "external-registry",
+    "record-signals",
+    "record-after-fail"
   ]
 }
 ```
@@ -781,6 +783,8 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `scenario-templates` | Reusable scenario templates (`vehicle_sil_scenario_template: 1`), `call_stack` provenance, and template parameter metadata (`param_meta` and `missing_params`) |
 | `scenario-variable-compare` | Runtime variable-to-variable comparisons (`{ variable: <participant>.<variable> }`) in scenario conditions (see [scenario.md](scenario.md#conditions)) |
 | `external-registry` | `--external-registry <uri>` on `run`, `serve`, and `test`: connects to a running loopback `sil-kit-registry` using a fresh per-run `/vsil-<16hex>` simulation path (see "Observing runs in Vector SIL Kit Dashboard (`--external-registry`)" in [simulation-run.md](simulation-run.md#observing-runs-in-vector-sil-kit-dashboard---external-registry)) |
+| `record-signals` | `--record <participant>.<variable>` on `check` and `run`, `"record"` in request files and `serve` inline `intent`, and optional `"recorded": true` on `--timeline` `variables[]` to sample extra ECU signals without affecting scenario verdicts |
+| `record-after-fail` | `--record-after-fail-ms <ms>` on `check` and `run` and `"record_after_fail_ms"` in request files and `serve` inline `intent`: continues passive sample recording into `--timeline` for a short virtual-time tail after a normal assertion or wait-timeout failure |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 | `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |
@@ -814,6 +818,8 @@ Each name indicates that the following are present:
 | `scenario-cases` | `cases:` in scenarios, `--case` and `"case"` in request files / `serve` `intent`, `scenario.case` (`null` when unselected/unknown), `cases`, `case_details`, and inline `intent.cli_params` |
 | `scenario-templates` | Scenario templates (`- template:`), `steps[].file` / `call_stack`, `scenario.param_meta`, `scenario.missing_params`, and template-derived `type` / `values` / `description` on `scenario.params[]` |
 | `scenario-variable-compare` | `{ variable: ... }` in `expect` and `wait_until`, `variable` in `watch.conditions[].compare[]` and `compared` in `failed.conditions[]` of `--timeline`, and two-variable failure messages |
+| `record-signals` | `--record <participant>.<variable>`, `"record"` in request files and `serve` `intent`, the check findings `record-*`, and optional `"recorded": true` on `variables[]` in `--timeline` |
+| `record-after-fail` | `--record-after-fail-ms <ms>`, `"record_after_fail_ms"` in request files and `serve` `intent`, and post-failure passive tail extension of `recorded_to_ms` in `--timeline` |
 
 In a build with `scenario-control`, clients cannot write while a scenario runs: calls that write are rejected with `FAILED_PRECONDITION` (reason `scenario-running`). In a build with `scenario-time`, calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) are accepted during a scenario, as the same commands from stdin are, and do not change the result of the scenario; a build with `scenario-control` alone rejects them with the same reason (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
 

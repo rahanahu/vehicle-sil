@@ -104,7 +104,7 @@ participants:
 | キー | 必須 | 値 | 既定 |
 |---|---|---|---|
 | `participants[].name` | はい | participant 名 | |
-| `participants[].command` | はい | 実行ファイルと、その引数の配列 | |
+| `participants[].command` | はい（`manual: true` かつ `describe: false` のときは省略可） | 実行ファイルと、その引数の配列 | |
 | `participants[].step_ms` | | 実行ファイルが `--describe` に出力するステップ幅（ミリ秒、1 以上 10^12 以下の整数） | 照合しません |
 | `participants[].describe` | | `true` は ecu_main の実行ファイル（照合します）、`false` はそれ以外の実行ファイル（照合しません） | `true` |
 | `participants[].required` | | シミュレーションがその participant を待つか（`true` か `false`） | `true` |
@@ -135,7 +135,7 @@ participants:
 
 **`participants[].name`**: 空でなく、1 行で（制御文字なし）、`-` で始まらない名前にします。`SimulationController`（vehicle-sil の controller の participant 名）は使えません。照合では、ecu_main の実行ファイルに `--name` で渡します。
 
-**`participants[].command`**: 引数がなければ、文字列 1 つでもかまいません（空白で分けません）。
+**`participants[].command`**: 引数がなければ、文字列 1 つでもかまいません（空白で分けません）。`manual: true` かつ `describe: false` のときだけ `command` を省略できます（ほかの PC で起動する外部 SIL Kit participant など）。空の `command: []` や `command: ""` は引き続きエラーです。
 
 **`participants[].step_ms`**: 書いたときだけ照合します。
 
@@ -321,7 +321,7 @@ passed: 0 errors, 1 warning, 1 note
 
 ECU をデバッガーから動かすときなど、ある participant を `run` ではなく自分で起動するときは、その participant に `manual: true` を書きます。ファイルを書き換えずに、その実行だけ自分で起動するときは、`check` と `run` に `--manual <participant 名>` を付けます（繰り返せます）。`run` はその participant を起動せず、起動するコマンドを表示して、参加するのを待ちます。
 
-照合は、ほかの participant と同じです（`describe: true` なら `--describe` を動かします）。manual の participant ごとに、注記 `participant-manual` を表示します。
+照合は、ほかの participant と同じです（`describe: true` なら実行ファイルがローカルに必要で、`--describe` を動かします）。設定ファイルに `manual: true` と `describe: false` を両方書いたときは、`command` を省略でき、`check` は実行ファイルがランチャー側の PC に存在することを求めません。`describe: false` の participant にコマンドラインから `--manual` を指定した場合は、ファイル側の `command` は引き続き必須ですが、書いた `command` のローカル実行ファイル確認は省きます（`command` がローカルに存在する場合は通常どおり解決します）。manual の participant ごとに、注記 `participant-manual` を表示します。
 
 引数の組み合わせのルールは次のとおりです。
 
@@ -334,7 +334,7 @@ ECU をデバッガーから動かすときなど、ある participant を `run`
 
 #### `run` が表示するコマンド
 
-`run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を表示します（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`。`network_names` があれば `--map-network`、`j1939_nodes` があれば `--j1939-node` も）。そのコマンドを、表示されたディレクトリで実行します。デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します。`serve [--once]` では、イベント `participant` の `state` が `manual` の行に、同じ内容があります。
+`run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を表示します（下の例）。`manual: true` かつ `describe: false` で `command` を省略した場合は、コマンドを表示せず設定した `name` での参加を待ちます。`command` を書いたがローカルに存在しない場合は、プレースホルダーを展開したコマンドをローカルの作業ディレクトリなしで表示します。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`。`network_names` があれば `--map-network`、`j1939_nodes` があれば `--j1939-node` も）。そのコマンドを、表示されたディレクトリで実行します。デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します。`serve [--once]` では、イベント `participant` の `state` が `manual` の行に、同じ内容があります。
 
 引数の引用は、貼り付けるシェルに合わせてあります。
 
@@ -882,6 +882,7 @@ variants:
 
 ```text
 vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
+                         [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -893,6 +894,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
+                       [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
                        [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -937,6 +939,8 @@ vehicle_sil_launch version [--json]
 | `--variant <name>` | | 設定ファイルの機種を選びます（[機種](#機種variants--variant)）。 |
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
 | `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ | シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
+| `--record <participant>.<variable>` | `check` と `run` | シナリオの判定に影響せず追加の ECU 変数を `--timeline` にサンプリング記録します（繰り返せます。participant の起動前に検証されます）。 |
+| `--record-after-fail-ms <ms>` | `check` と `run`、`--scenario` と一緒にだけ | 通常のシナリオの判定失敗または待ち時間切れの後に、仮想時刻を最大 `<ms>` ms（1 から 600000）受動的に進め、後続の手順・書き込み・揺れを一切行わずに失敗後のサンプルを `--timeline` へ記録します（`--timeline` がない実行では何もしません）。 |
 | `--control-metrics <file>` | `run` だけ | 実行の終わりに、Control Hub の SIL Kit トランスポートの累計カウンター（`HubTransport::stats()`）を JSON のファイルに書きます。`--control` は要りません（[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」）。 |
 | `--external-registry <uri>` | `run`、`serve`、`test` | プロセス内の registry を立てる代わりに、起動済みのループバック SIL Kit registry（`silkit://<loopback-host>:<port>`。ポートは 1 から 65535、パスなし）へ接続し、実行ごとに分離された `/vsil-<id>` のシミュレーションパスを使います（[simulation-run.md](simulation-run.md#vector-sil-kit-dashboard-で実行を観測する--external-registry) の「Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）」）。 |
 | `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |

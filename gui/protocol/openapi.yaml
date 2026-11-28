@@ -2945,6 +2945,17 @@ components:
           - pause
           type: string
           title: After Scenario
+        record:
+          items:
+            minLength: 1
+            type: string
+          type: array
+          title: Record
+        record_after_fail_ms:
+          maximum: 600000
+          minimum: 1
+          type: integer
+          title: Record After Fail Ms
         params:
           additionalProperties:
             anyOf:
@@ -3453,6 +3464,17 @@ components:
           - pause
           type: string
           title: After Scenario
+        record:
+          items:
+            minLength: 1
+            type: string
+          type: array
+          title: Record
+        record_after_fail_ms:
+          maximum: 600000
+          minimum: 1
+          type: integer
+          title: Record After Fail Ms
         params:
           additionalProperties:
             anyOf:

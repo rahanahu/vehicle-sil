@@ -401,6 +401,25 @@ CONFIG_SAMPLES = [
     ("an empty participants", CONFIG_HEAD + "participants: []\n", "invalid"),
     ("a participant without a name", CONFIG_HEAD + "participants:\n  - command: ['@EXE@']\n    describe: false\n", "invalid"),
     ("a participant without a command", CONFIG_HEAD + "participants:\n  - name: Tool\n    describe: false\n", "invalid"),
+    ("a manual describe: false participant without a command",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    describe: false\n    manual: true\n", "valid"),
+    ("a manual describe: false participant with a non-existent remote command",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    command: [remote_only_peer, --uri, \"{registry_uri}\"]\n"
+     "    describe: false\n    manual: true\n", "valid"),
+    ("a manual describe: false participant with an empty command list",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    command: []\n    describe: false\n    manual: true\n", "invalid"),
+    ("a manual describe: false participant with an empty command string",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    command: \"\"\n    describe: false\n    manual: true\n", "invalid"),
+    ("a manual describe: true participant without a command",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    describe: true\n    manual: true\n", "invalid"),
+    ("a manual participant (default describe) without a command",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    manual: true\n", "invalid"),
+    ("a manual: false describe: false participant without a command",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    describe: false\n    manual: false\n", "invalid"),
+    ("a manual participant with invalid manual and describe: false without a command",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    describe: false\n    manual: \"true\"\n", "invalid"),
+    ("a manual: true participant with invalid describe without a command",
+     CONFIG_HEAD + "participants:\n  - name: RemotePeer\n    describe: \"false\"\n    manual: true\n", "invalid"),
     ("a network without a kind", "vehicle_sil_simulation: 2\nnetworks:\n  - name: Body\n" + P, "invalid"),
     ("a kind there is not", CONFIG_HEAD.replace("can", "flexray") + P, "invalid"),
     ("a kind in capitals", CONFIG_HEAD.replace("can", "CAN") + P, "invalid"),
@@ -1383,6 +1402,21 @@ REQUEST_SAMPLES = [
     ("case null", "{" + R + ', "case": null}', "invalid"),
     ("case number", "{" + R + ', "case": 1}', "invalid"),
     ("cli_params is serve intent only", "{" + R + ', "cli_params": {"x": "1"}}', "invalid"),
+    ("record valid", "{" + R + ', "record": ["Engine.engine.speed", "Dashboard.ecu.connected"]}', "valid"),
+    ("record empty", "{" + R + ', "record": []}', "valid"),
+    ("record string", "{" + R + ', "record": "Engine.engine.speed"}', "invalid"),
+    ("record empty item", "{" + R + ', "record": [""]}', "invalid"),
+    ("record non-string item", "{" + R + ', "record": [1]}', "invalid"),
+    ("record null", "{" + R + ', "record": null}', "invalid"),
+    ("record_after_fail_ms valid", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 300}', "valid"),
+    ("record_after_fail_ms min", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 1}', "valid"),
+    ("record_after_fail_ms max", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 600000}', "valid"),
+    ("record_after_fail_ms zero", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 0}', "invalid"),
+    ("record_after_fail_ms negative", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": -5}', "invalid"),
+    ("record_after_fail_ms above max", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 600001}', "invalid"),
+    ("record_after_fail_ms float", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 1.5}', "invalid"),
+    ("record_after_fail_ms string", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": "300"}', "invalid"),
+    ("record_after_fail_ms null", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": null}', "invalid"),
 ]
 
 
@@ -1560,6 +1594,7 @@ class TimelineSchema(unittest.TestCase):
         # provenance/conditional fields so existing timeline records stay valid unchanged.
         may_be_left_out = {
             ("scenario.", "case"),
+            ("variables.", "recorded"),
             ("steps.", "file"),
             ("steps.", "name"),
             ("steps.", "expect_skipped"),
@@ -1656,12 +1691,14 @@ class TimelineSchema(unittest.TestCase):
                 compared=[{"variable": "Body.other", "value": 1}]),
             "a failed compared entry whose variable is a number": lambda d: failed_step(d)["failed"]["conditions"][0].update(
                 compared=[{"variable": 0, "value": 1, "sample_ms": 10}]),
+            "a variable recorded flag that is a text": lambda d: d["variables"][0].update(recorded="yes"),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
         # What a later version may add is no mistake: keys, and values of the open lists.
         additions = {
             "a key it does not know": lambda d: d.update(notes=[]),
+            "an extra recorded flag on a variable": lambda d: d["variables"][0].update(recorded=True),
             "scenario case and step/line provenance": lambda d: (
                 d["scenario"].update(case="nominal"),
                 d["steps"][0].update(

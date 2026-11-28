@@ -632,3 +632,175 @@ void manual(const Options& o)
         require(ended && ended->code == 0 && !ended->signal, "Engine, started by hand, ends by itself with 0");
     }
 }
+
+void manual_external(const Options& o)
+{
+    // A manual participant with describe: false and no local executable (either omitted command or
+    // a remote-only command path): check, run, and serve --once succeed without a bogus cwd path,
+    // while normal local missing-executable checks still fail strictly.
+    const std::string autoPart =
+        "  - name: Auto\n"
+        "    command: [" + ecu(o) + "]\n";
+    const auto join_cmd = [&o](const std::string& name, const std::string& uri) {
+        return "\"" + shown_path(o.test_ecu) + "\" --name " + name + " --registry-uri " + uri +
+               " --start-timeout-ms 1000000000000";
+    };
+    const auto registry_uri_from_err = [](const std::string& err) -> std::string {
+        const std::string marker = "[vehicle_sil_launch] registry at ";
+        const auto pos = err.find(marker);
+        if (pos == std::string::npos)
+        {
+            return {};
+        }
+        const auto start = pos + marker.size();
+        const auto end = err.find('\n', start);
+        std::string uri = end == std::string::npos ? err.substr(start) : err.substr(start, end - start);
+        if (!uri.empty() && uri.back() == '\r')
+        {
+            uri.pop_back();
+        }
+        return uri;
+    };
+
+    // 1. Omitted command (manual: true, describe: false) under serve --once.
+    {
+        const std::string cfg =
+            "vehicle_sil_simulation: 2\n"
+            "# run-option --stop-at-ms 200\n"
+            "registry_uri: silkit://127.0.0.1:0\n"
+            "networks: []\n"
+            "participants:\n" +
+            autoPart +
+            "  - name: ExternalPeer\n"
+            "    describe: false\n"
+            "    manual: true\n";
+        const fs::path dir = hand_dir(o, "ext_omit_serve", cfg, {{"Auto", ""}, {"ExternalPeer", ""}});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
+        const std::string reg = live.wait_for({"\"event\":\"registry\""});
+        const std::string ev = live.wait_for({"\"name\":\"ExternalPeer\"", "\"state\":\"manual\""});
+        require(contains(ev, "\"command\":[],\"working_directory\":null,\"command_line\":null"),
+                "omitted command manual event has null working_directory and command_line (no bogus cwd):\n" + ev);
+        const std::string uri = json_text(reg, "uri");
+        require(!uri.empty(), "registry uri present:\n" + reg);
+        ByHand peer(join_cmd("ExternalPeer", uri), shown_path(dir));
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 0, "serve --once with omitted command passes:\n" + out_of(lines));
+        require(events_with(lines, {"\"name\":\"ExternalPeer\"", "\"state\":\"joined\""}).size() == 1,
+                "ExternalPeer joined event");
+        const auto ended = peer.wait(30s);
+        require(ended && ended->code == 0, "ExternalPeer ended cleanly");
+    }
+
+    // 2. Omitted command under CLI run (verify stderr has no bogus cwd path and no "with the command above").
+    {
+        const std::string cfg =
+            "vehicle_sil_simulation: 2\n"
+            "# run-option --stop-at-ms 200\n"
+            "registry_uri: silkit://127.0.0.1:0\n"
+            "networks: []\n"
+            "participants:\n" +
+            autoPart +
+            "  - name: ExternalPeer\n"
+            "    describe: false\n"
+            "    manual: true\n";
+        const fs::path dir = hand_dir(o, "ext_omit_run", cfg, {{"Auto", ""}, {"ExternalPeer", ""}});
+        Live live(o, dir, {"run", "sim.yaml"});
+        const std::string err = live.wait_for_error([](const std::string& text) {
+            return contains(text, "[vehicle_sil_launch] waiting for ExternalPeer to join (manual):");
+        });
+        require(contains(err, "No command is configured in the file; connect it to the simulation's registry as 'ExternalPeer'"),
+                "omitted command stderr text:\n" + err);
+        require(contains(err, "waiting for ExternalPeer to join (manual): start it; Ctrl+C stops the run"),
+                "waiting line omits 'with the command above':\n" + err);
+        require(!contains(err, "In the directory "), "no bogus local directory printed for omitted command:\n" + err);
+        const std::string uri = registry_uri_from_err(err);
+        require(!uri.empty(), "registry uri in stderr:\n" + err);
+        ByHand peer(join_cmd("ExternalPeer", uri), shown_path(dir));
+        const auto [status, out] = live.finish_unchecked();
+        require(status && status->code == 0, "CLI run with omitted command passes:\n" + out_of(out));
+        require(peer.wait(30s).has_value(), "ExternalPeer ended");
+    }
+
+    // 3. Non-existent remote command (manual: true, describe: false) under serve --once.
+    {
+        const std::string cfg =
+            "vehicle_sil_simulation: 2\n"
+            "# run-option --stop-at-ms 200\n"
+            "registry_uri: silkit://127.0.0.1:0\n"
+            "networks: []\n"
+            "participants:\n" +
+            autoPart +
+            "  - name: RemotePeer\n"
+            "    command: [remote_only_peer_bin, --name, \"{name}\", --registry-uri, \"{registry_uri}\"]\n"
+            "    describe: false\n"
+            "    manual: true\n";
+        const fs::path dir = hand_dir(o, "ext_remote_serve", cfg, {{"Auto", ""}, {"RemotePeer", ""}});
+        Live live(o, dir, {"serve", "--once", "sim.yaml"});
+        const std::string reg = live.wait_for({"\"event\":\"registry\""});
+        const std::string ev = live.wait_for({"\"name\":\"RemotePeer\"", "\"state\":\"manual\""});
+        const std::string uri = json_text(reg, "uri");
+        require(contains(ev, "\"working_directory\":null"), "remote command has null working_directory:\n" + ev);
+        require(contains(ev, "\"command\":[\"remote_only_peer_bin\",\"--name\",\"RemotePeer\",\"--registry-uri\",\"" + uri + "\"]"),
+                "remote command keeps verbatim executable and expanded placeholders:\n" + ev);
+        require(contains(ev, "\"command_line\":\"remote_only_peer_bin --name RemotePeer --registry-uri " + uri + "\""),
+                "remote command_line has no bogus cwd prefix:\n" + ev);
+        ByHand peer(join_cmd("RemotePeer", uri), shown_path(dir));
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 0, "serve --once with remote command passes:\n" + out_of(lines));
+        require(peer.wait(30s).has_value(), "RemotePeer ended");
+    }
+
+    // 4. --manual override on describe: false with non-existent remote command passes run,
+    //    while without --manual it fails strictly with [executable].
+    {
+        const std::string cfg =
+            "vehicle_sil_simulation: 2\n"
+            "# run-option --stop-at-ms 200\n"
+            "registry_uri: silkit://127.0.0.1:0\n"
+            "networks: []\n"
+            "participants:\n" +
+            autoPart +
+            "  - name: RemotePeer\n"
+            "    command: [remote_only_peer_bin, --name, \"{name}\", --registry-uri, \"{registry_uri}\"]\n"
+            "    describe: false\n";
+        const fs::path dir = hand_dir(o, "ext_override", cfg, {{"Auto", ""}, {"RemotePeer", ""}});
+        const Captured failedCheck = launch(o, {"check", "sim.yaml"}, dir);
+        expect_code(failedCheck, 1, "describe: false without manual fails on missing executable");
+        require(contains(failedCheck.standard_output, "[executable]"), failedCheck.standard_output);
+        const Captured failedRun = launch(o, {"run", "sim.yaml"}, dir);
+        expect_code(failedRun, 1, "run without manual fails on missing executable");
+        require(contains(failedRun.standard_output, "[executable]"), failedRun.standard_output);
+
+        const Captured passedCheck = launch(o, {"check", "--manual", "RemotePeer", "sim.yaml"}, dir);
+        expect_code(passedCheck, 0, "check --manual passes for describe: false with remote command");
+
+        Live live(o, dir, {"run", "--manual", "RemotePeer", "sim.yaml"});
+        const std::string err = live.wait_for_error([](const std::string& text) {
+            return contains(text, "[vehicle_sil_launch] waiting for RemotePeer to join (manual):");
+        });
+        require(contains(err, "(executable not found on this computer)"), "stderr explains remote executable:\n" + err);
+        require(!contains(err, "In the directory "), "no local working directory for unresolved remote command:\n" + err);
+        const std::string uri = registry_uri_from_err(err);
+        ByHand peer(join_cmd("RemotePeer", uri), shown_path(dir));
+        const auto [status, out] = live.finish_unchecked();
+        require(status && status->code == 0, "run --manual with remote command passes:\n" + out_of(out));
+        require(peer.wait(30s).has_value(), "RemotePeer ended");
+    }
+
+    // 5. manual: true + describe: true with missing executable still fails strictly.
+    {
+        const std::string cfg =
+            "vehicle_sil_simulation: 2\n"
+            "networks: []\n"
+            "participants:\n" +
+            autoPart +
+            "  - name: MissingEcu\n"
+            "    command: [missing_ecu_bin]\n"
+            "    describe: true\n"
+            "    manual: true\n";
+        const fs::path dir = scenario_dir(o, cfg);
+        const Captured failed = launch(o, {"check", "sim.yaml"}, dir);
+        expect_code(failed, 1, "manual: true with describe: true still fails on missing executable");
+        require(contains(failed.standard_output, "[executable]"), failed.standard_output);
+    }
+}

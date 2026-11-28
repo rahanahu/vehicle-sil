@@ -104,7 +104,7 @@ Keys of each element of `participants`:
 | Key | Required | Value | Default |
 |---|---|---|---|
 | `participants[].name` | Yes | Participant name | |
-| `participants[].command` | Yes | Array of the executable and its arguments | |
+| `participants[].command` | Yes (optional when `manual: true` and `describe: false`) | Array of the executable and its arguments | |
 | `participants[].step_ms` | | Step size that the executable reports in its `--describe` output (ms, an integer from 1 to 10^12) | Not checked |
 | `participants[].describe` | | `true`: an ecu_main executable (checked); `false`: any other executable (not checked) | `true` |
 | `participants[].required` | | Whether the simulation waits for this participant (`true` or `false`) | `true` |
@@ -135,7 +135,7 @@ To migrate from format 1, set `vehicle_sil_simulation: 2` and move `stop_at_ms`,
 
 **`participants[].name`**: The name must not be empty, must fit on one line (no control characters) and must not start with `-`. `SimulationController` (the participant name of vehicle-sil's controller) is not allowed. For the check, the name is passed to ecu_main executables with `--name`.
 
-**`participants[].command`**: If there are no arguments, a single string is enough. The string is not split at spaces.
+**`participants[].command`**: If there are no arguments, a single string is enough. The string is not split at spaces. `command` may be omitted only when `manual: true` and `describe: false` (for example, an external SIL Kit participant started on another computer); an empty `command: []` or `command: ""` is still an error.
 
 **`participants[].step_ms`**: Checked only if written.
 
@@ -323,7 +323,7 @@ passed: 0 errors, 1 warning, 1 note
 
 To start a participant yourself instead of through `run`, for example to run an ECU from a debugger, write `manual: true` for that participant. To start it yourself for one run only, without editing the file, pass `--manual <participant name>` to `check` and `run` (it can be repeated). `run` does not start that participant. It prints the command to start it and waits for it to join. Below, such a participant is called a manual participant.
 
-The check is the same as for the other participants (with `describe: true`, it runs `--describe`). For each manual participant, the check reports the note `participant-manual`.
+The check is the same as for the other participants (with `describe: true`, it runs `--describe` and requires the executable locally). When `manual: true` is written in the configuration file together with `describe: false`, `command` may be omitted and `check` does not require the executable to exist on the launcher computer; with `--manual` on the command line for a `describe: false` participant, `command` is still required in the file, and `check` skips the local executable check for it. If `command` is written and exists locally, `check` still resolves it as usual. For each manual participant, the check reports the note `participant-manual`.
 
 Rules for combining the options:
 
@@ -336,7 +336,7 @@ Rules for combining the options:
 
 #### The command `run` prints
 
-When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, `--map-network` if it has `network_names`, and `--j1939-node` if it has `j1939_nodes`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. Under `serve [--once]`, the `participant` event whose `state` is `manual` carries the same information.
+When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). If `command` was omitted (`manual: true` with `describe: false`), `run` prints no command and simply waits for the participant to join under its configured `name`; if `command` was written but does not exist locally, `run` prints the written command with placeholders expanded and without a local working directory. The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, `--map-network` if it has `network_names`, and `--j1939-node` if it has `j1939_nodes`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. Under `serve [--once]`, the `participant` event whose `state` is `manual` carries the same information.
 
 The arguments are quoted for the shell you paste them into:
 
@@ -884,6 +884,7 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 
 ```text
 vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
+                         [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -895,6 +896,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
+                       [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
                        [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -939,6 +941,8 @@ The usage above shows which commands accept each option. The Condition column of
 | `--variant <name>` | | Selects a variant of the configuration file (see [Variants](#variants-variants---variant)). |
 | `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
 | `--timeline <file>` | `run` only, and only with `--scenario` | Writes the values that the scenario wrote and saw to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
+| `--record <participant>.<variable>` | `check` and `run` | Samples and records an extra ECU variable into the `--timeline` file without affecting scenario verdicts (can be repeated; also validated before starting participants). |
+| `--record-after-fail-ms <ms>` | `check` and `run`, only with `--scenario` | Continues advancing virtual time passively for up to `<ms>` ms (1 to 600000) after a normal scenario assertion or wait-timeout failure to record post-failure samples into `--timeline` without executing further scenario steps, writes, or dithers (harmless no-op when `--timeline` is omitted). |
 | `--control-metrics <file>` | `run` only | Writes the cumulative Control Hub SIL Kit transport counters (`HubTransport::stats()`) to a JSON file at the end of the run; does not require `--control` (see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](simulation-run.md#recording-control-hub-transport-metrics---control-metrics)). |
 | `--external-registry <uri>` | `run`, `serve`, `test` | Connects each run to a user-started loopback SIL Kit registry at `silkit://<loopback-host>:<port>` (port 1 to 65535, no path) instead of starting an in-process registry, giving each run an isolated `/vsil-<id>` simulation path (see "Observing runs in Vector SIL Kit Dashboard (`--external-registry`)" in [simulation-run.md](simulation-run.md#observing-runs-in-vector-sil-kit-dashboard---external-registry)). |
 | `--scenarios <dir or files>` | `test` only | The scenarios to run. |

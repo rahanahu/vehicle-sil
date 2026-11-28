@@ -147,7 +147,7 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
 {
     check_text(errors_of("{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}"),
                "bench.json, line 3: unknown key 'conect': did you mean 'connect'? (the keys here: vehicle_sil_run_request, "
-               "variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario)\n");
+               "variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record, record_after_fail_ms)\n");
     // What the caller decides is not in the file.
     CHECK(errors_of(with("\"timeline\": \"t.json\"")).find("unknown key 'timeline'") != std::string::npos);
     CHECK(errors_of(with("\"file\": \"sim.yaml\"")).find("unknown key 'file'") != std::string::npos);
@@ -902,4 +902,72 @@ TEST_CASE(read_request_intent_cli_params_preserves_strings_hex_and_precedence)
     CHECK(json.find("\"value\": \"50\"") != std::string::npos);
     CHECK(json.find("\"value\": 16") != std::string::npos);
     CHECK(json.find("\"value\": 7") != std::string::npos);
+}
+
+TEST_CASE(record_variables_are_read_and_merged_preserving_order_and_deduplicating)
+{
+    const RequestFile file = file_of(with("\"record\": [\"Body.level\", \"Door.speed\", \"Body.level\"]"));
+    CHECK(file.fields == list("record"));
+    CHECK(file.intent.record == list("Body.level", "Door.speed", "Body.level"));
+
+    // Invalid record forms in request files and inline serve intent are refused.
+    CHECK(!errors_of(with("\"record\": \"Body.level\"")).empty());
+    CHECK(!errors_of(with("\"record\": [1]")).empty());
+    CHECK(!errors_of(with("\"record\": [\"\"]")).empty());
+    CHECK(!errors_of(with("\"record\": null")).empty());
+    CHECK(!read_request_intent(R"({"record": "Body.level"})", "intent").file.has_value());
+    const RequestFileRead inlineRead = read_request_intent(R"({"record": ["Body.level", "Door.speed"]})", "intent");
+    CHECK(inlineRead.findings.empty() && inlineRead.file.has_value());
+    CHECK(inlineRead.file && inlineRead.file->intent.record == list("Body.level", "Door.speed"));
+
+    // Merge puts file entries first, then CLI entries, deduplicating preserving first-seen order.
+    RunRequest cli;
+    cli.intent.record = {"Door.speed", "Engine.rpm", "Engine.rpm"};
+    const RunRequest merged = with_request_file(cli, file, false);
+    CHECK(merged.intent.record == list("Body.level", "Door.speed", "Engine.rpm"));
+    CHECK(merged.origin.has("record"));
+
+    // When CLI already lists every entry from the file, origin does not record "record".
+    RunRequest allCli;
+    allCli.intent.record = {"Body.level", "Door.speed"};
+    const RunRequest same = with_request_file(allCli, file, false);
+    CHECK(same.intent.record == list("Body.level", "Door.speed"));
+    CHECK(!same.origin.has("record"));
+}
+
+TEST_CASE(record_after_fail_ms_is_read_validated_and_overridden_by_cli)
+{
+    const RequestFile file = file_of(with("\"record_after_fail_ms\": 300"));
+    CHECK(file.fields == list("record_after_fail_ms"));
+    CHECK(file.intent.record_after_fail_ms == std::optional<std::int64_t>(300));
+    CHECK(file_of(with("\"record_after_fail_ms\": 1")).intent.record_after_fail_ms == std::optional<std::int64_t>(1));
+    CHECK(file_of(with("\"record_after_fail_ms\": 600000")).intent.record_after_fail_ms == std::optional<std::int64_t>(600000));
+
+    // Invalid values are refused in request files and serve inline intent.
+    for (const char* bad : {"\"record_after_fail_ms\": 0", "\"record_after_fail_ms\": -10",
+                            "\"record_after_fail_ms\": 600001", "\"record_after_fail_ms\": 1.5",
+                            "\"record_after_fail_ms\": \"300\"", "\"record_after_fail_ms\": null"})
+    {
+        CHECK(!errors_of(with(bad)).empty());
+        CHECK(!read_request_intent(std::string("{") + bad + "}", "intent").file.has_value());
+    }
+    const RequestFileRead inlineRead = read_request_intent(R"({"scenario":"s.yaml","record_after_fail_ms":250})", "intent");
+    CHECK(inlineRead.findings.empty() && inlineRead.file.has_value());
+    CHECK(inlineRead.file && inlineRead.file->intent.record_after_fail_ms == std::optional<std::int64_t>(250));
+
+    // File value is inherited when CLI omits it, and attributes missing scenario to the file.
+    const RunRequest fromFile = with_request_file(RunRequest{}, file, false);
+    CHECK(fromFile.intent.record_after_fail_ms == std::optional<std::int64_t>(300));
+    CHECK(fromFile.origin.has("record_after_fail_ms"));
+    CHECK(messages(fromFile) ==
+          list("record_after_fail_ms in bench.json needs a scenario: give --scenario <file> or \"scenario\" in bench.json, or leave record_after_fail_ms in bench.json out"));
+
+    // CLI value overrides the request file and drops origin attribution.
+    RunRequest cli;
+    cli.intent.scenario = "s.yaml";
+    cli.intent.record_after_fail_ms = 500;
+    const RunRequest merged = with_request_file(cli, file, false);
+    CHECK(merged.intent.record_after_fail_ms == std::optional<std::int64_t>(500));
+    CHECK(!merged.origin.has("record_after_fail_ms"));
+    CHECK(messages(merged).empty());
 }

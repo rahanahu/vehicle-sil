@@ -105,7 +105,7 @@ It differs from `simulation.yaml`, which runs on one computer, in 2 keys:
 
 You can also write a single address of this computer in `registry_uri`, as in `silkit://192.0.2.10:8500`. Instead of writing `manual: true` in the configuration file, you can pass `run --manual Dashboard`.
 
-Put the `Dashboard` executable on the launcher computer too: `check` and `run` run it with `--describe` to check the configuration file against it.
+Put the `Dashboard` executable on the launcher computer too: `check` and `run` run it with `--describe` to check the configuration file against it. (For an external non-`ecu_main` participant that runs only on another computer, set both `describe: false` and `manual: true`; `command` may then be omitted and no local executable is needed on the launcher computer.)
 
 Check the configuration file:
 

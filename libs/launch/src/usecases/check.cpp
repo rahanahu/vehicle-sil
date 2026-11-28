@@ -608,6 +608,29 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         {
             continue;
         }
+        if (p.manual && !p.describe)
+        {
+            if (!p.command.empty())
+            {
+                // "{{word}}" in the path is the literal "{word}" (a valid entry has no other "{word}").
+                const std::string written = config::expand_placeholders({p.command.front()}, "", "").front();
+                const FoundExecutable found = find_executable(written, base);
+                if (!config::executable_finding(p, found.path, executable_status(found.path)))
+                {
+                    entry.result.executable = found.path;
+                    if (found.on_path)
+                    {
+                        entry.finding = config::Finding{config::Severity::Note, "found-on-path",
+                                                        "participant '" + p.name + "': " + written +
+                                                            " is not in the directory of the configuration file; it runs " +
+                                                            process::shown_path(found.path) + " (found on PATH)",
+                                                        p.command_line, p.name, ""};
+                    }
+                }
+            }
+            entry.result.status = config::ParticipantStatus::NotChecked;
+            continue;
+        }
         // "{{word}}" in the path is the literal "{word}" (a valid entry has no other "{word}").
         const std::string written = config::expand_placeholders({p.command.front()}, "", "").front();
         const FoundExecutable found = find_executable(written, base);
@@ -778,6 +801,16 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         if (!unused.empty())
         {
             report.findings.push_back(unused_request_params(request.origin.file, unused, "this run has no scenario"));
+        }
+    }
+    if (!intent.record.empty())
+    {
+        scenario::RecordedVariablesCheck recorded =
+            scenario::check_recorded_variables(intent.record, scenario::scenario_catalog(report));
+        report.recorded_variables = std::move(recorded.variables);
+        for (config::Finding& finding : recorded.findings)
+        {
+            report.findings.push_back(std::move(finding));
         }
     }
     finalize(report);

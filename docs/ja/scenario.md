@@ -1385,6 +1385,7 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `scenario-cases` | 名前付きケース（`cases:`）、`--case`・要求ファイルの `"case"`、`case_details`、`serve` インライン `intent.cli_params` | `cases` と要求ファイルの `"case"` は知らないキーのエラーです。 |
 | `scenario-templates` | 再利用可能なシナリオテンプレート（`- template:`）、`call_stack` 出典情報、`param_meta`・`missing_params` | `template` は知らないキーのエラーです。 |
 | `scenario-variable-compare` | `expect` と `wait_until` での実行時の変数間比較（`{ variable: <participant>.<変数> }`） | 条件の中の `variable` は知らないキーまたは型のエラーです。 |
+| `record-after-fail` | `--record-after-fail-ms <ms>` / `"record_after_fail_ms"` による `--timeline` への失敗後受動テール記録 | `--record-after-fail-ms` は引数のエラー、`"record_after_fail_ms"` は知らないキーのエラーです。 |
 
 `features` の名前の全部は、[simulation-events.md](simulation-events.md) にあります。
 

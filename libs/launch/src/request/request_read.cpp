@@ -19,7 +19,8 @@ namespace {
 const std::vector<std::string> kKeys{"vehicle_sil_run_request", "variant",      "params",      "scenario",
                                      "case",                    "disable",      "enable",      "manual",
                                      "connect",                 "time_policy",  "speed",       "start_paused",
-                                     "strict",                  "stop_at_ms",   "late_tolerance_ms", "after_scenario"};
+                                     "strict",                  "stop_at_ms",   "late_tolerance_ms", "after_scenario",
+                                     "record",                  "record_after_fail_ms"};
 
 class Reader : private config::detail::YamlReader
 {
@@ -186,6 +187,24 @@ public:
                               shown_value(child));
                 }
             }
+            else if (key == "record")
+            {
+                intent.record = record_variables(child);
+            }
+            else if (key == "record_after_fail_ms")
+            {
+                std::int64_t value = 0;
+                if (!plain_integer(child, value) || value < 1 || value > kMaxRecordAfterFailMs)
+                {
+                    error("value", doc().line(child),
+                          "record_after_fail_ms must be an integer from 1 to " +
+                              std::to_string(kMaxRecordAfterFailMs) + ", not " + shown_value(child));
+                }
+                else
+                {
+                    intent.record_after_fail_ms = value;
+                }
+            }
             if (findings_.size() == before)
             {
                 out.fields.push_back(key);
@@ -296,6 +315,29 @@ private:
             {
                 error("value", doc().line(child),
                       key + " must be a list of participant names, each a text; one of them is " + shown_value(child));
+                continue;
+            }
+            out.push_back(config::detail::to_string(tree().val(child)));
+        }
+        return out;
+    }
+
+    /// A list of "<participant>.<variable>" names to record.
+    std::vector<std::string> record_variables(ryml::id_type node)
+    {
+        std::vector<std::string> out;
+        if (!tree().is_seq(node))
+        {
+            error("value", doc().line(node),
+                  "record must be a list of variables (record: [\"Engine.engine.speed\"]), not " + shown_value(node));
+            return out;
+        }
+        for (auto child = tree().first_child(node); child != ryml::NONE; child = tree().next_sibling(child))
+        {
+            if (!quoted(child) || tree().val(child).empty())
+            {
+                error("value", doc().line(child),
+                      "record must be a list of variables, each a non-empty text; one of them is " + shown_value(child));
                 continue;
             }
             out.push_back(config::detail::to_string(tree().val(child)));

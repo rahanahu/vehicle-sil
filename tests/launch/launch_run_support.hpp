@@ -738,6 +738,7 @@ void manual_timeout(const Options& o);
 void busy_port(const Options& o);
 void manual_stranger(const Options& o);
 void manual(const Options& o);
+void manual_external(const Options& o);
 
 // launch_run_networks.cpp
 void traffic(const Options& o);

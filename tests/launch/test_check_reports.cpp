@@ -1848,3 +1848,112 @@ TEST_CASE(check_template_static_error_and_same_line_attribution)
     CHECK(json.find("\"file\": \"templates/same_line.yaml\"") != std::string::npos);
     CHECK(json.find("called from: main.yaml:4") != std::string::npos);
 }
+
+TEST_CASE(check_file_allows_remote_manual_describe_false_without_loosening_local_checks)
+{
+    const auto dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "check-remote-manual";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto localTool = dir / "local_tool";
+    {
+        std::ofstream out(localTool, std::ios::binary);
+        out << "#!/bin/sh\n";
+    }
+#ifndef _WIN32
+    std::filesystem::permissions(localTool, std::filesystem::perms::owner_all);
+#endif
+    const auto write_cfg = [&](const std::string& name, const std::string& yaml) {
+        std::ofstream out(dir / name, std::ios::binary);
+        out << yaml;
+    };
+    const vehicle_sil::config::test::InDirectory there(dir);
+
+    // 1. manual: true + describe: false with omitted command passes cleanly.
+    write_cfg("omit.yaml",
+              "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+              "  - name: RemotePeer\n    describe: false\n    manual: true\n");
+    {
+        RunRequest req;
+        req.host.config = "omit.yaml";
+        const Checked r = check_file(req);
+        CHECK(r.passed() && r.errors() == 0);
+        CHECK(r.participants.size() == 1);
+        CHECK(r.participants[0].status == ParticipantStatus::NotChecked);
+        CHECK(r.participants[0].executable.empty());
+        const auto manualNote = std::find_if(r.findings.begin(), r.findings.end(),
+                                             [](const Finding& f) { return f.code == "participant-manual"; });
+        CHECK(manualNote != r.findings.end());
+        CHECK(manualNote->message.find("prints the command") == std::string::npos);
+        const std::string json = format_json(r);
+        CHECK(json.find("\"command\": []") != std::string::npos);
+        CHECK(json.find("\"manual\": true") != std::string::npos);
+    }
+
+    // 2. manual: true + describe: false with non-existent remote command passes cleanly.
+    write_cfg("remote_cmd.yaml",
+              "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+              "  - name: RemotePeer\n    command: [remote_only_peer, --uri, \"{registry_uri}\"]\n"
+              "    describe: false\n    manual: true\n");
+    {
+        RunRequest req;
+        req.host.config = "remote_cmd.yaml";
+        const Checked r = check_file(req);
+        CHECK(r.passed() && r.errors() == 0);
+        CHECK(r.participants[0].status == ParticipantStatus::NotChecked);
+        CHECK(r.participants[0].executable.empty());
+    }
+
+    // 3. --manual override on describe: false with non-existent remote command passes cleanly.
+    write_cfg("override.yaml",
+              "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+              "  - name: RemotePeer\n    command: [remote_only_peer, --uri, \"{registry_uri}\"]\n"
+              "    describe: false\n");
+    {
+        RunRequest req;
+        req.host.config = "override.yaml";
+        req.intent.manual = {"RemotePeer"};
+        const Checked r = check_file(req);
+        CHECK(r.passed() && r.errors() == 0);
+        CHECK(r.participants[0].status == ParticipantStatus::NotChecked);
+        CHECK(r.participants[0].executable.empty());
+    }
+
+    // 4. manual: true + describe: false WITH an existing local executable still resolves it.
+    write_cfg("local_manual.yaml",
+              "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+              "  - name: LocalManual\n    command: [./local_tool, --uri, \"{registry_uri}\"]\n"
+              "    describe: false\n    manual: true\n");
+    {
+        RunRequest req;
+        req.host.config = "local_manual.yaml";
+        const Checked r = check_file(req);
+        CHECK(r.passed() && r.errors() == 0);
+        CHECK(r.participants[0].status == ParticipantStatus::NotChecked);
+        CHECK(!r.participants[0].executable.empty());
+    }
+
+    // 5. Strict negative checks: manual: false + describe: false still fails with [executable].
+    {
+        RunRequest req;
+        req.host.config = "override.yaml"; // manual: false, describe: false, missing executable
+        const Checked r = check_file(req);
+        CHECK(!r.passed() && r.errors() == 1);
+        CHECK(r.participants[0].status == ParticipantStatus::Failed);
+        CHECK(std::any_of(r.findings.begin(), r.findings.end(),
+                          [](const Finding& f) { return f.severity == Severity::Error && f.code == "executable"; }));
+    }
+
+    // 6. Strict negative checks: manual: true + describe: true still fails with [executable].
+    write_cfg("manual_describe_true.yaml",
+              "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+              "  - name: LocalEcu\n    command: [remote_only_ecu]\n    describe: true\n    manual: true\n");
+    {
+        RunRequest req;
+        req.host.config = "manual_describe_true.yaml";
+        const Checked r = check_file(req);
+        CHECK(!r.passed() && r.errors() == 1);
+        CHECK(r.participants[0].status == ParticipantStatus::Failed);
+        CHECK(std::any_of(r.findings.begin(), r.findings.end(),
+                          [](const Finding& f) { return f.severity == Severity::Error && f.code == "executable"; }));
+    }
+}

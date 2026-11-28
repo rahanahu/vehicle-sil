@@ -66,9 +66,10 @@
 :host([compact]) {
   font-size: 12px;
 }
-/* while src loads, the file shown before is dimmed */
+/* while src loads, the file shown before is dimmed and non-interactive */
 :host([aria-busy='true']) #view {
   opacity: 0.6;
+  pointer-events: none;
 }
 /* hide="<parts>": the parts a screen does without */
 :host([hide~='header']) #head,
@@ -81,11 +82,34 @@
 :host([hide~='legend']) .legend .key {
   display: none !important;
 }
-:host([compact]) :is(.lane, .cursor-line) {
-  --lane-head-width: 120px;
+:host([compact]) :is(.lane, .cursor-line, .hover-line, .ref-line) {
+  --lane-head-width: 196px;
+}
+:host([compact]) .lane-head {
+  padding: 2px 6px;
+  line-height: 1.25;
+}
+:host([compact]) .lane-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+:host([compact]) .legend {
+  gap: 1px 8px;
+  font-size: 11px;
+}
+:host([compact]) .readout {
+  min-height: 1.25em;
+  font-size: 11.5px;
+}
+@container (max-width: 719px) {
+  :host([compact]) :is(.lane, .cursor-line, .hover-line, .ref-line) {
+    --lane-head-width: 132px;
+  }
 }
 @container (max-width: 479px) {
-  :host([compact]) .cursor-line {
+  :host([compact]) :is(.cursor-line, .hover-line, .ref-line) {
     --lane-head-width: 0px;
   }
   :host([compact]) .lane {
@@ -121,7 +145,7 @@ h4 {
   color: var(--_muted);
 }
 .small {
-  font-size: 0.85rem;
+  font-size: max(12px, 0.85rem);
 }
 #head {
   display: flex;
@@ -307,19 +331,60 @@ summary {
   background: var(--_panel);
 }
 .lane,
-.cursor-line {
-  --lane-head-width: 200px;
+.cursor-line,
+.hover-line,
+.ref-line {
+  --lane-head-width: 220px;
 }
 .lane {
   display: grid;
   grid-template-columns: var(--lane-head-width) 1fr;
   border-bottom: 1px solid var(--_grid);
 }
+.lane.steps {
+  border-top: 2px solid var(--_border);
+  border-bottom: none;
+}
 .lane-head {
   padding: 4px 8px;
   border-right: 1px solid var(--_grid);
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.lane-head-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+}
+.lane-title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.var-name {
+  font-weight: 600;
+}
+:host([compact]) .var-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.lane-hide {
+  flex: none;
+  padding: 0 5px;
+  min-width: 22px;
+  line-height: 1.3;
+  font-size: 13px;
+  color: var(--_muted);
+  background: transparent;
+  border-color: transparent;
+}
+button.lane-hide:hover,
+button.lane-hide:focus-visible {
+  color: var(--_fg);
+  background: var(--_bg);
+  border-color: var(--_border);
 }
 .lane.failing .lane-head {
   box-shadow: inset 4px 0 0 var(--_bad);
@@ -331,22 +396,26 @@ summary {
   touch-action: none;
   cursor: crosshair;
 }
+.lane-plot.panning,
+#chart[data-panning] .lane-plot {
+  cursor: grabbing;
+}
 .lane.axis {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   background: var(--_panel);
 }
 .group {
   padding: 4px 8px;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: max(12px, 0.85rem);
   color: var(--_muted);
   background: var(--_bg);
   border-bottom: 1px solid var(--_grid);
 }
 @container (max-width: 719px) {
-  :host(:not([compact])) .cursor-line {
+  :host(:not([compact])) :is(.cursor-line, .hover-line, .ref-line) {
     --lane-head-width: 0px;
   }
   :host(:not([compact])) .lane {
@@ -356,16 +425,67 @@ summary {
     border-right: none;
   }
 }
-#step-details {
-  height: 6.25em;
-  margin-bottom: 8px;
+#hidden-vars {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--_panel);
+}
+button.restore-chip {
   padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+#step-details {
+  min-height: 4.5em;
+  max-height: 14em;
+  margin-top: 8px;
+  padding: 6px 10px;
   border: 1px solid var(--_border);
   border-radius: 6px;
   background: var(--_panel);
   overflow: auto;
   overflow-wrap: anywhere;
   scrollbar-gutter: stable;
+}
+.sim-banner {
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  border-left: 3px solid var(--_warn);
+  background: var(--_warn-bg);
+  color: var(--_fg);
+  font-weight: 600;
+  font-size: max(12px, 0.85rem);
+}
+.sim-list {
+  display: grid;
+  gap: 6px;
+}
+.sim-item {
+  padding: 4px 8px;
+  border: 1px solid var(--_grid);
+  border-radius: 4px;
+}
+.sim-item.selected {
+  border-color: var(--_sent);
+  background: var(--_selection);
+}
+.sim-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+#chart-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--_muted);
 }
 .detail-heading > span {
   margin-inline-start: 10px;
@@ -497,6 +617,14 @@ svg text {
 .unrecorded {
   fill: var(--_unrecorded);
 }
+.unrecorded-label {
+  fill: var(--_muted);
+  font-size: 10px;
+  paint-order: stroke;
+  stroke: var(--_panel);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
 .dropped {
   fill: var(--_warn-fill);
   stroke: var(--_warn);
@@ -513,7 +641,49 @@ svg text {
   background: var(--_cursor);
   pointer-events: none;
 }
+.cursor-line.pinned {
+  width: 1.5px;
+  background: var(--_sent);
+}
+.cursor-line.pinned::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 9px;
+  height: 7px;
+  background: var(--_sent);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
 #chart[data-cursor-side] > .cursor-line {
+  display: block;
+}
+.hover-line {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--lane-head-width) + var(--hover-x));
+  z-index: 2;
+  width: 1px;
+  border-left: 1px dashed var(--_muted);
+  pointer-events: none;
+}
+#chart[data-pinned-hover] > .hover-line {
+  display: block;
+}
+.ref-line {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--lane-head-width) + var(--ref-x));
+  z-index: 2;
+  width: 1px;
+  border-left: 1.5px dashed var(--_base);
+  pointer-events: none;
+}
+#chart[data-ref] > .ref-line {
   display: block;
 }
 .selection {
@@ -524,6 +694,33 @@ svg text {
   stroke-width: 1.5;
   stroke-dasharray: 5 3;
   pointer-events: none;
+}
+.sim-tie {
+  stroke: var(--_warn);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  pointer-events: none;
+}
+.sim-cluster {
+  cursor: pointer;
+}
+.sim-cluster rect {
+  fill: var(--_warn-bg);
+  stroke: var(--_warn);
+  stroke-width: 1;
+}
+.sim-cluster text {
+  fill: var(--_warn);
+  font-size: 10px;
+  font-weight: 700;
+}
+.sim-cluster:focus-visible,
+.step:focus-visible {
+  outline: 2px solid var(--_sent);
+  outline-offset: 1px;
+}
+.step {
+  cursor: pointer;
 }
 .step .bar {
   fill: var(--_neutral-fill);
@@ -616,46 +813,60 @@ svg text {
   stroke: var(--_warn);
   stroke-width: 1.5;
 }
-.state {
+rect.state {
   stroke: var(--_panel);
   stroke-width: 0.5;
 }
-.state.v-true {
+rect.state.v-true {
   fill: var(--_true);
   opacity: 0.75;
 }
-.state.v-false {
+rect.state.v-false {
   fill: var(--_grid);
 }
-.state.v-null,
-.state.v-mixed {
+rect.state.v-null,
+rect.state.v-mixed {
   fill: var(--_neutral-fill);
 }
-.state.v-e0 {
+rect.state.v-e0 {
   fill: var(--_e0);
 }
-.state.v-e1 {
+rect.state.v-e1 {
   fill: var(--_e1);
 }
-.state.v-e2 {
+rect.state.v-e2 {
   fill: var(--_e2);
 }
-.state.not-applied {
+rect.state.not-applied {
   fill: var(--_bad-fill);
   stroke: var(--_bad);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
 }
-.state.not-known {
+rect.state.not-known {
   fill: var(--_warn-fill);
   stroke: var(--_warn);
   stroke-width: 1.5;
   stroke-dasharray: 1.5 2.5;
 }
-.state.held {
+rect.state.held {
   fill: var(--_neutral);
   opacity: 0.6;
   stroke: none;
+}
+.state-edge-tick {
+  stroke: var(--_true);
+  stroke-width: 2.5;
+}
+.state-edge-label {
+  fill: var(--_fg);
+  font-size: 10px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--_panel);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 .state-label {
   pointer-events: none;

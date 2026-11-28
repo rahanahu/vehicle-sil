@@ -947,8 +947,8 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
     if (p.manual && !p.name.empty())
     {
         rules.add(Severity::Note, "participant-manual", p.line,
-            prefix + "you start it yourself (manual: true, or --manual): run does not start it, but prints the command "
-                     "to start it with" +
+            prefix + "you start it yourself (manual: true, or --manual): run does not start it" +
+                (p.command.empty() ? std::string{} : std::string(", but prints the command to start it with")) +
                 (p.required ? std::string(", and waits for it to join without a time limit (with --timeout-ms, at most that long)")
                             : std::string(", and does not wait for it (required: false)")) +
                 (registry_on_network(rules.config)

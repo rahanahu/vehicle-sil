@@ -89,6 +89,7 @@ int main(int argc, char** argv)
             {"live", live},
             {"manual", manual},
             {"manual_again", manual_again},
+            {"manual_external", manual_external},
             {"manual_fails", manual_fails},
             {"manual_frozen", manual_frozen},
             {"manual_late", manual_late},

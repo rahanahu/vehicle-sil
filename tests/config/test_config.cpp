@@ -2079,3 +2079,59 @@ TEST_CASE(j1939_nodes_have_ascii_names_where_the_arguments_come_in_the_code_page
                "[--j1939-node][\xE8\xBB\x8A\xE4\xB8\xA1""CAN=address:0x01]");
 #endif
 }
+
+TEST_CASE(manual_describe_false_participant_may_omit_command_only_when_both_are_valid)
+{
+    // manual: true + describe: false with omitted command is valid.
+    {
+        const ConfigRead r = read_config(with_participants("  - name: RemotePeer\n    describe: false\n    manual: true\n"));
+        check_text(lines(r.findings), "");
+        CHECK(r.config.has_value());
+        CHECK(r.config->participants.size() == 1);
+        const auto& p = r.config->participants[0];
+        CHECK(p.valid && p.manual && !p.describe && p.command.empty());
+        CHECK(waits_for_manual(*r.config));
+        // executable_finding() must handle empty command safely without UB.
+        CHECK(!executable_finding(p, {}, std::filesystem::file_status{}).has_value());
+    }
+    // Positive also works with capitalized YAML booleans (True / False).
+    {
+        const ConfigRead r = read_config(with_participants("  - name: RemotePeer\n    describe: False\n    manual: TRUE\n"));
+        check_text(lines(r.findings), "");
+        CHECK(r.config->participants[0].valid && r.config->participants[0].command.empty());
+    }
+    // Explicitly empty command ([] or "") is still rejected even with manual: true and describe: false.
+    for (const char* badCmd : {"[]", "\"\""})
+    {
+        const ConfigRead r = read_config(with_participants(
+            std::string("  - name: RemotePeer\n    command: ") + badCmd + "\n    describe: false\n    manual: true\n"));
+        CHECK(!r.config->participants[0].valid);
+        CHECK(!r.findings.empty() && r.findings[0].code == "value");
+    }
+    // Omitting command fails whenever !manual || describe or when manual/describe is invalid.
+    const std::vector<std::string> mustFail = {
+        "  - name: A\n    manual: true\n",
+        "  - name: A\n    manual: true\n    describe: true\n",
+        "  - name: A\n    manual: false\n    describe: false\n",
+        "  - name: A\n    describe: false\n",
+        "  - name: A\n    manual: 1\n    describe: false\n",
+        "  - name: A\n    manual: \"true\"\n    describe: false\n",
+        "  - name: A\n    manual: true\n    describe: 0\n",
+        "  - name: A\n    manual: true\n    describe: \"false\"\n",
+    };
+    for (const std::string& entry : mustFail)
+    {
+        const ConfigRead r = read_config(with_participants(entry));
+        CHECK(!r.config->participants[0].valid);
+        const bool hasMissing = std::any_of(r.findings.begin(), r.findings.end(), [](const Finding& f) {
+            return f.severity == Severity::Error && f.code == "missing-key";
+        });
+        CHECK(hasMissing);
+    }
+    // compare_commands handles omitted commands cleanly.
+    const std::string omitA = with_participants("  - name: RemotePeer\n    describe: false\n    manual: true\n");
+    const std::string withCmd = with_participants(
+        "  - name: RemotePeer\n    command: [remote_peer, --uri, \"{registry_uri}\"]\n    describe: false\n    manual: true\n");
+    CHECK(compare_commands(omitA, omitA, "other.yaml").result == CommandsCompared::Same);
+    CHECK(compare_commands(omitA, withCmd, "other.yaml").result == CommandsCompared::Changed);
+}

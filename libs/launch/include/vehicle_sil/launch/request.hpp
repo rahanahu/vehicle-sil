@@ -26,6 +26,8 @@ namespace vehicle_sil::launch {
 
 /// How long one --describe may take unless the request says otherwise (RunHost::describe_timeout).
 inline constexpr std::chrono::milliseconds kDescribeTimeout{10000};
+/// Maximum virtual-time post-failure tail recording duration in milliseconds (10 minutes).
+using config::kMaxRecordAfterFailMs;
 
 /// What the user wants of the run: the same for every way to ask (the command line, and others).
 struct RunIntent
@@ -57,6 +59,12 @@ struct RunIntent
     std::optional<std::int64_t> late_tolerance_ms{};
     /// What to do after the scenario passes: stop (default) or pause for manual handover.
     config::AfterScenario after_scenario = config::AfterScenario::Stop;
+    /// Extra ECU variables to record in the timeline ("<participant>.<variable>"), independent of
+    /// scenario assertions. Empty by default (never records all signals by default).
+    std::vector<std::string> record{};
+    /// Virtual milliseconds to keep recording after a normal scenario assertion or wait-timeout
+    /// failure (1..kMaxRecordAfterFailMs); omitted = off (stop immediately at failure).
+    std::optional<std::int64_t> record_after_fail_ms{};
 };
 
 /// run --control: where the run's control server listens and the files it reads, as the caller
@@ -184,7 +192,8 @@ struct RequestFileRead
 
 /// Reads the text of a request file named `shown`: a JSON object with "vehicle_sil_run_request": 1
 /// and any of variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed,
-/// start_paused, strict, stop_at_ms, late_tolerance_ms and after_scenario. An unknown key, a key written twice, a value of the wrong type (null
+/// start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record and
+/// record_after_fail_ms. An unknown key, a key written twice, a value of the wrong type (null
 /// too: a key that is not meant is left out) and another version are errors. The format is JSON;
 /// the reader may take more than JSON (it is the YAML reader), which is no promise. Only the form is read: whether the file has the variant, the
 /// participants and the networks is the check's to say. No file system access.
@@ -208,14 +217,17 @@ struct RequestFileRead
 
 /// `arguments` (the request as the command line gave it) with what `file` adds: an argument wins,
 /// field by field.
-/// - variant, scenario, speed, stop_at_ms, late_tolerance_ms: the file's if the command line gave none. time_policy: the file's
-///   unless `time_policy_given` (the command line named one, also realtime).
+/// - variant, scenario, speed, stop_at_ms, late_tolerance_ms, record_after_fail_ms: the file's if
+///   the command line gave none. time_policy: the file's unless `time_policy_given` (the command
+///   line named one, also realtime).
 /// - start_paused, strict: true if either is (no argument says false).
 /// - params: by name, the argument's value wins.
 /// - connect: merge_connect().
 /// - disable, enable, manual: both lists; a name that the command line gives the other way
 ///   (--enable X and the file's disable: [X]; --disable X and the file's enable or manual; --manual
 ///   X and the file's disable) is as the command line says.
+/// - record: the file's entries followed by the command line's entries, deduplicated preserving
+///   first-seen order.
 /// RunRequest::origin of the result says what came from the file. RunHost is `arguments`'.
 [[nodiscard]] RunRequest with_request_file(const RunRequest& arguments, const RequestFile& file, bool time_policy_given);
 
