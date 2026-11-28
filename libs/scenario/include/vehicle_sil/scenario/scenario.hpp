@@ -86,6 +86,7 @@ struct ScenarioCondition
     std::vector<ScenarioComparison> all;
     /// As in the messages: "Engine.engine.speed ge 1700, le 1900".
     std::string text;
+    std::size_t line = 0; ///< 1-based line of this condition clause (0 if unset)
 };
 
 struct ScenarioWrite
@@ -94,6 +95,7 @@ struct ScenarioWrite
     control::Value value{};
     /// Of a set, as in the step's text: "Body.level = 20".
     std::string text{};
+    std::size_t line = 0; ///< 1-based line of this write entry (0 if unset)
 };
 
 /// A value over the time of a step, as a function of the virtual time since the step began and of
@@ -147,6 +149,7 @@ struct ScenarioMotion
     /// As in the step's text: "Body.level from 10 to 20 over 100 ms".
     std::string text;
     ScenarioShapeText described{};
+    std::size_t line = 0; ///< 1-based line of this motion entry (0 if unset)
 };
 
 /// One parameter value captured on a template call frame (call_stack).
@@ -174,6 +177,9 @@ struct SourceFrame
 /// Formats `stack` as human-readable "called from: ..." lines (innermost caller first), joined by
 /// '\n' with no trailing newline. Each line starts with `line_prefix`. Empty string when `stack` is empty.
 [[nodiscard]] std::string format_call_stack_text(const std::vector<SourceFrame>& stack, std::string_view line_prefix = {});
+
+/// Formats `stack` concisely for a 1-line error ("called from a:1, b:2", innermost caller first).
+[[nodiscard]] std::string format_call_site_inline(const std::vector<SourceFrame>& stack);
 
 /// Optional metadata derived from called templates' `parameters:` definitions for a scenario parameter.
 struct ScenarioParamMeta

@@ -49,6 +49,26 @@ std::string format_call_stack_text(const std::vector<SourceFrame>& stack, std::s
     return detail;
 }
 
+std::string format_call_site_inline(const std::vector<SourceFrame>& stack)
+{
+    if (stack.empty())
+    {
+        return {};
+    }
+    std::string out = "called from ";
+    bool first = true;
+    for (auto it = stack.rbegin(); it != stack.rend(); ++it)
+    {
+        if (!first)
+        {
+            out += ", ";
+        }
+        first = false;
+        out += it->file.empty() ? "line " + std::to_string(it->line) : it->file + ":" + std::to_string(it->line);
+    }
+    return out;
+}
+
 } // namespace vehicle_sil::scenario
 
 namespace vehicle_sil::scenario::reader {

@@ -623,6 +623,15 @@ TEST_CASE(suggests_close_names_only)
     CHECK(vehicle_sil::config::detail::closest("bitrate", keys).empty());
     CHECK(vehicle_sil::config::detail::closest("x", keys).empty());
     CHECK_EQ(vehicle_sil::config::detail::edit_distance("kitten", "sitting"), std::size_t{3});
+
+    const std::vector<std::string> dotted{
+        "engine.speed", "wheel.speed", "engine.throttle", "body.brake_pressure", "door.lamp",
+    };
+    CHECK((vehicle_sil::config::detail::closest_matches("speed", dotted) ==
+           std::vector<std::string>{"engine.speed", "wheel.speed"}));
+    CHECK((vehicle_sil::config::detail::closest_matches("brake", dotted) ==
+           std::vector<std::string>{"body.brake_pressure"}));
+    CHECK(vehicle_sil::config::detail::closest_matches("unrelated_xyz", dotted).empty());
 }
 
 TEST_CASE(expands_escaped_braces)

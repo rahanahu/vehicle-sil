@@ -182,16 +182,59 @@ std::optional<std::size_t> Reader::variable_by_name(std::string_view raw_name, s
     if (v == p->variables.end())
     {
         std::vector<std::string> names;
+        names.reserve(p->variables.size());
         for (const auto& i : p->variables)
         {
             names.push_back(i.name);
         }
         const std::string guess = config::detail::closest(name, names);
+        std::string hint;
+        if (!guess.empty())
+        {
+            hint = "did you mean '" + participant + "." + guess + "'?";
+        }
+        else
+        {
+            const std::vector<std::string> matches = config::detail::closest_matches(name, names, 3);
+            if (matches.size() == 1)
+            {
+                hint = "did you mean '" + participant + "." + matches.front() + "'?";
+            }
+            else if (!matches.empty())
+            {
+                std::string list;
+                for (std::size_t i = 0; i < matches.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        list += i + 1 == matches.size() ? " or " : ", ";
+                    }
+                    list += "'" + participant + "." + matches[i] + "'";
+                }
+                hint = "did you mean one of " + list + "?";
+            }
+            else if (names.empty())
+            {
+                hint = "it declares none";
+            }
+            else
+            {
+                std::sort(names.begin(), names.end());
+                constexpr std::size_t kMaxShownVariables = 8;
+                if (names.size() <= kMaxShownVariables)
+                {
+                    hint = "its variables are " + config::detail::join(names);
+                }
+                else
+                {
+                    const std::vector<std::string> head(names.begin(), names.begin() + kMaxShownVariables);
+                    hint = "its variables include " + config::detail::join(head) + " (and " +
+                           std::to_string(names.size() - kMaxShownVariables) + " more)";
+                }
+            }
+        }
         error("scenario-variable", line,
-              "'" + text + "': participant '" + participant + "' has no variable '" + name + "': " +
-                  (guess.empty() ? (names.empty() ? std::string("it declares none")
-                                                  : "its variables are " + config::detail::join(names))
-                                 : "did you mean '" + participant + "." + guess + "'?") +
+              "'" + text + "': participant '" + participant + "' has no variable '" + name + "': " + hint +
                   " (vehicle_sil_launch check --json lists the variables)",
               participant);
         return std::nullopt;

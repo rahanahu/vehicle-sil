@@ -82,6 +82,32 @@ std::vector<std::size_t> failed_rhs_variables(const ScenarioCondition& condition
     return out;
 }
 
+template <class Item>
+bool has_distinct_lines(const std::vector<Item>& items) noexcept
+{
+    if (items.size() < 2)
+    {
+        return false;
+    }
+    std::size_t first = 0;
+    for (const auto& item : items)
+    {
+        if (item.line == 0)
+        {
+            continue;
+        }
+        if (first == 0)
+        {
+            first = item.line;
+        }
+        else if (item.line != first)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 bool ScenarioEngine::is_unmet(const ScenarioCondition& condition, std::optional<SimTime> since, bool& judged) const
@@ -183,6 +209,7 @@ TimelineFailure ScenarioEngine::unmet_values(const ScenarioStep& step, std::opti
 std::string ScenarioEngine::unmet(const ScenarioStep& step, std::optional<SimTime> since) const
 {
     std::string out;
+    const bool distinctClauseLines = has_distinct_lines(step.conditions);
     for (const ScenarioCondition& condition : step.conditions)
     {
         const Variable& lhs = variables_[condition.variable];
@@ -193,8 +220,10 @@ std::string ScenarioEngine::unmet(const ScenarioStep& step, std::optional<SimTim
             continue;
         }
         const bool hasLhs = has_sample_since(lhs, since);
+        const std::string clauseLoc =
+            distinctClauseLines && condition.line > 0 ? " (line " + std::to_string(condition.line) + ")" : std::string{};
         std::string entry =
-            condition.text + ", but " +
+            condition.text + clauseLoc + ", but " +
             (hasLhs ? "it was " + value_text(*lhs.value, &v) + " (its sample of " + ms_text(*lhs.value_time) + " ms)"
                     : since ? "it had no sample from " + ms_text(*since) + " ms yet"
                             : std::string("it had no value yet (no sample of its ECU had arrived)"));
@@ -344,6 +373,32 @@ std::string ScenarioEngine::applied_text(const TimelineFailure& failure, const s
     }
     return "; the ECU had already applied the write" + std::string(count > 1 ? "s" : "") + " before it in that command (" + applied +
            "), and " + (count > 1 ? "they stay" : "it stays") + " applied";
+}
+
+template <class Item>
+bool has_distinct_lines(const std::vector<Item>& items) noexcept
+{
+    if (items.size() < 2)
+    {
+        return false;
+    }
+    std::size_t first = 0;
+    for (const auto& item : items)
+    {
+        if (item.line == 0)
+        {
+            continue;
+        }
+        if (first == 0)
+        {
+            first = item.line;
+        }
+        else if (item.line != first)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace vehicle_sil::scenario

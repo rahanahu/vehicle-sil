@@ -2276,6 +2276,153 @@ std::string closest(std::string_view word, const std::vector<std::string>& candi
     return best;
 }
 
+namespace {
+
+std::string_view leaf_segment(std::string_view text)
+{
+    const std::size_t dot = text.rfind('.');
+    return dot == std::string_view::npos ? text : text.substr(dot + 1);
+}
+
+std::vector<std::string_view> identifier_tokens(std::string_view text)
+{
+    std::vector<std::string_view> tokens;
+    std::size_t start = 0;
+    while (start < text.size())
+    {
+        while (start < text.size() && (text[start] == '.' || text[start] == '_'))
+        {
+            ++start;
+        }
+        std::size_t end = start;
+        while (end < text.size() && text[end] != '.' && text[end] != '_')
+        {
+            ++end;
+        }
+        if (end - start >= 3)
+        {
+            tokens.push_back(text.substr(start, end - start));
+        }
+        start = end;
+    }
+    return tokens;
+}
+
+} // namespace
+
+std::vector<std::string> closest_matches(std::string_view word, const std::vector<std::string>& candidates,
+                                         std::size_t max_results)
+{
+    if (word.empty() || candidates.empty() || max_results == 0)
+    {
+        return {};
+    }
+    const std::string low = lower(word);
+    const std::string_view wordLeaf = leaf_segment(low);
+    const std::vector<std::string_view> wordTokens = identifier_tokens(low);
+
+    struct Ranked
+    {
+        int tier;
+        std::size_t distance;
+        std::string candidate;
+    };
+    std::vector<Ranked> ranked;
+    for (const auto& candidate : candidates)
+    {
+        const std::string other = lower(candidate);
+        const std::string_view candLeaf = leaf_segment(other);
+        const std::size_t fullDist = edit_distance(low, other);
+
+        int tier = -1;
+        std::size_t score = fullDist;
+
+        if (wordLeaf.size() >= 2 && candLeaf == wordLeaf)
+        {
+            tier = 0;
+            score = 0;
+        }
+        else
+        {
+            const bool fullPrefix =
+                std::min(low.size(), other.size()) >= 3 && (other.rfind(low, 0) == 0 || low.rfind(other, 0) == 0);
+            const std::size_t fullLimit = other.size() <= 3 ? 1 : 2;
+            const bool leafPrefix = std::min(wordLeaf.size(), candLeaf.size()) >= 3 &&
+                                    (candLeaf.rfind(wordLeaf, 0) == 0 || wordLeaf.rfind(candLeaf, 0) == 0);
+            const std::size_t leafDist = edit_distance(wordLeaf, candLeaf);
+            const std::size_t leafLimit = candLeaf.size() <= 3 ? 1 : 2;
+            if (fullPrefix || fullDist <= fullLimit || leafPrefix || leafDist <= leafLimit)
+            {
+                tier = 1;
+                score = (fullPrefix || leafPrefix) ? 0 : std::min(fullDist, leafDist);
+            }
+            else
+            {
+                const bool substrMatch =
+                    low.size() >= 3 && (other.find(low) != std::string::npos || low.find(other) != std::string::npos);
+                bool sharedToken = false;
+                if (!wordTokens.empty())
+                {
+                    const std::vector<std::string_view> candTokens = identifier_tokens(other);
+                    for (std::string_view wt : wordTokens)
+                    {
+                        if (std::find(candTokens.begin(), candTokens.end(), wt) != candTokens.end())
+                        {
+                            sharedToken = true;
+                            break;
+                        }
+                    }
+                }
+                if (substrMatch || sharedToken)
+                {
+                    tier = 2;
+                    score = std::min(fullDist, leafDist);
+                }
+                else
+                {
+                    const std::size_t minLen = std::min(low.size(), other.size());
+                    const std::size_t broadLimit = std::max<std::size_t>(2, minLen / 3);
+                    if (minLen >= 4 && fullDist <= broadLimit)
+                    {
+                        tier = 3;
+                        score = fullDist;
+                    }
+                }
+            }
+        }
+        if (tier >= 0)
+        {
+            ranked.push_back(Ranked{tier, score, candidate});
+        }
+    }
+
+    std::sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) {
+        if (a.tier != b.tier)
+        {
+            return a.tier < b.tier;
+        }
+        if (a.distance != b.distance)
+        {
+            return a.distance < b.distance;
+        }
+        return a.candidate < b.candidate;
+    });
+
+    std::vector<std::string> out;
+    for (const Ranked& r : ranked)
+    {
+        if (std::find(out.begin(), out.end(), r.candidate) == out.end())
+        {
+            out.push_back(r.candidate);
+            if (out.size() >= max_results)
+            {
+                break;
+            }
+        }
+    }
+    return out;
+}
+
 } // namespace detail
 
 namespace {

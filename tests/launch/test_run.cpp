@@ -2003,6 +2003,7 @@ TEST_CASE(real_template_expansion_surfaces_call_stack_in_check_and_run_outputs)
     const RunReport rep = report_of(o);
     const std::string txt = format_run_text(rep);
     CHECK(txt.find("scenarios/templates/inner.yaml:5") != std::string::npos);
+    CHECK(txt.find("[scenario-failed] (called from scenarios/templates/outer.yaml:5, scenarios/load.yaml:5)") != std::string::npos);
     CHECK(txt.find("    called from: scenarios/templates/outer.yaml:5 (step 'invoke inner', expected = 99)") != std::string::npos);
     CHECK(txt.find("    called from: scenarios/load.yaml:5 (step 'call outer', target = 99)") != std::string::npos);
 

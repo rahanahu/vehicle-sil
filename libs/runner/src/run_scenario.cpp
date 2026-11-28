@@ -25,7 +25,13 @@ std::string scenario_step_text(const scenario::ScenarioStepRun& step)
 {
     // The time as the result's table of the steps says it (check_words.hpp: millis_text(), as
     // scenario_text() writes it).
-    const std::string where = step.file.empty() ? "line " + std::to_string(step.line) : step.file + ":" + std::to_string(step.line);
+    const std::size_t line =
+        step.status == scenario::StepStatus::Failed && step.failed_line > 0 ? step.failed_line : step.line;
+    std::string where = step.file.empty() ? "line " + std::to_string(line) : step.file + ":" + std::to_string(line);
+    if (step.status == scenario::StepStatus::Failed && !step.call_stack.empty())
+    {
+        where += " (" + scenario::format_call_site_inline(step.call_stack) + ")";
+    }
     const std::string what = step.name.empty() ? step.text : "'" + step.name + "' (" + step.text + ")";
     return where + ": " + what + ": " + scenario::step_result_text(step.status) +
            (step.at ? " at " + config::detail::millis_text(to_ns(*step.at)) + " ms" : std::string{}) +

@@ -67,6 +67,7 @@ struct ScenarioStepRun
     std::string expect_skipped{};
     std::string name{};
     std::vector<SourceFrame> call_stack{};
+    std::size_t failed_line = 0; ///< 1-based line of the specific failing clause/write if different from `line`
 };
 
 enum class ScenarioStatus
