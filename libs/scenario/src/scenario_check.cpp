@@ -97,6 +97,122 @@ ScenarioCatalog scenario_catalog(const config::CheckReport& check)
     return out;
 }
 
+RecordedVariablesCheck check_recorded_variables(std::span<const std::string> requested, const ScenarioCatalog& catalog)
+{
+    RecordedVariablesCheck out;
+    if (requested.empty())
+    {
+        return out;
+    }
+    std::string example = "Engine.engine.speed";
+    for (const CatalogParticipant& c : catalog)
+    {
+        if (!c.not_in_variant && c.unusable.empty() && !c.variables.empty())
+        {
+            example = c.name + "." + c.variables.front().name;
+            break;
+        }
+    }
+    std::vector<std::string> participant_names;
+    participant_names.reserve(catalog.size());
+    for (const CatalogParticipant& c : catalog)
+    {
+        participant_names.push_back(c.name);
+    }
+    std::vector<std::string> seen;
+    for (const std::string& text : requested)
+    {
+        if (std::find(seen.begin(), seen.end(), text) != seen.end())
+        {
+            continue;
+        }
+        seen.push_back(text);
+        const auto dot = text.find('.');
+        if (dot == std::string::npos || dot == 0 || dot + 1 == text.size())
+        {
+            out.findings.push_back(config::Finding{
+                config::Severity::Error, "record-variable-format",
+                "record '" + text + "' is not a variable: write <participant>.<variable>, e.g. " + example,
+                0, "", ""});
+            continue;
+        }
+        const std::string participant = text.substr(0, dot);
+        const std::string name = text.substr(dot + 1);
+        const auto p = std::find_if(catalog.begin(), catalog.end(),
+                                    [&participant](const CatalogParticipant& c) { return c.name == participant; });
+        if (p == catalog.end())
+        {
+            const std::string guess = config::detail::closest(participant, participant_names);
+            out.findings.push_back(config::Finding{
+                config::Severity::Error, "record-unknown-participant",
+                "record '" + text + "': the configuration has no participant '" + participant +
+                    "' (the name ends at the first '.'): " +
+                    (guess.empty() ? "its participants are " +
+                                         (participant_names.empty() ? std::string("none")
+                                                                    : config::detail::join(participant_names))
+                                   : "did you mean '" + guess + "." + name + "'?"),
+                0, "", ""});
+            continue;
+        }
+        if (p->not_in_variant)
+        {
+            out.findings.push_back(config::Finding{
+                config::Severity::Error, "record-participant-unusable",
+                "record '" + text + "': participant '" + participant +
+                    "' is left out by the chosen variant: its variables cannot be recorded in this run",
+                0, participant, ""});
+            continue;
+        }
+        if (!p->unusable.empty())
+        {
+            out.findings.push_back(config::Finding{
+                config::Severity::Error, "record-participant-unusable",
+                "record '" + text + "': participant '" + participant + "' " + p->unusable,
+                0, participant, ""});
+            continue;
+        }
+        const auto v = std::find_if(p->variables.begin(), p->variables.end(),
+                                    [&name](const control::VariableInfo& info) { return info.name == name; });
+        if (v == p->variables.end() && std::find(p->absent.begin(), p->absent.end(), name) != p->absent.end())
+        {
+            out.findings.push_back(config::Finding{
+                config::Severity::Error, "record-variable-absent",
+                "record '" + text + "': variable '" + name + "' of participant '" + participant +
+                    "' is marked absent in the configuration and cannot be recorded",
+                0, participant, ""});
+            continue;
+        }
+        if (v == p->variables.end())
+        {
+            std::vector<std::string> var_names;
+            var_names.reserve(p->variables.size());
+            for (const control::VariableInfo& info : p->variables)
+            {
+                var_names.push_back(info.name);
+            }
+            const std::string guess = config::detail::closest(name, var_names);
+            out.findings.push_back(config::Finding{
+                config::Severity::Error, "record-unknown-variable",
+                "record '" + text + "': participant '" + participant + "' has no variable '" + name + "': " +
+                    (guess.empty() ? (var_names.empty() ? std::string("it declares none")
+                                                        : "its variables are " + config::detail::join(var_names))
+                                   : "did you mean '" + participant + "." + guess + "'?") +
+                    " (vehicle_sil_launch check --json lists the variables)",
+                0, participant, ""});
+            continue;
+        }
+        RecordedVariable rv;
+        rv.participant = participant;
+        rv.name = name;
+        rv.text = text;
+        rv.type = v->type;
+        rv.items = v->items;
+        rv.step = p->step;
+        out.variables.push_back(std::move(rv));
+    }
+    return out;
+}
+
 namespace {
 
 /// What the samples of a scenario's participants depend on, per participant of the configuration.
@@ -133,13 +249,17 @@ std::vector<SampleSource> sample_sources(const config::CheckReport& check, const
 
 } // namespace
 
-std::vector<bool> sample_every_step_participants(const config::CheckReport& check, const Scenario& scenario)
+std::vector<bool> sample_every_step_participants(const config::CheckReport& check, const Scenario& scenario,
+                                                 std::span<const RecordedVariable> recorded)
 {
     const std::vector<SampleSource> sources = sample_sources(check, scenario);
     std::vector<bool> out(sources.size(), false);
     for (std::size_t i = 0; i < sources.size(); ++i)
     {
-        out[i] = scenario.samples == ScenarioSamples::EveryStep && sources[i].read && sources[i].takes;
+        const std::string& name = check.config->participants[i].name;
+        const bool is_recorded = std::any_of(recorded.begin(), recorded.end(),
+                                             [&name](const RecordedVariable& r) { return r.participant == name; });
+        out[i] = scenario.samples == ScenarioSamples::EveryStep && (sources[i].read || is_recorded) && sources[i].takes;
     }
     return out;
 }

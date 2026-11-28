@@ -322,6 +322,7 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
     std::vector<std::string> disable;
     std::vector<std::string> enable;
     std::vector<std::string> manual;
+    std::vector<std::string> record;
     std::vector<std::pair<std::string, std::string>> params;
     std::vector<std::pair<std::string, std::string>> connect;
     std::vector<std::string> positionals;
@@ -508,6 +509,16 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
             manual.push_back(std::move(val));
             continue;
         }
+        if (a == "--record")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            record.push_back(std::move(val));
+            continue;
+        }
         if (a == "--param")
         {
             std::string val;
@@ -596,6 +607,10 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
     if (!manual.empty())
     {
         intent_fields.push_back("\"manual\":" + json_string_array(manual));
+    }
+    if (!record.empty())
+    {
+        intent_fields.push_back("\"record\":" + json_string_array(record));
     }
     if (!connect.empty())
     {

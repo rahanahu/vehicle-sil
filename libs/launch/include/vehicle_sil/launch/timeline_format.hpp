@@ -38,6 +38,8 @@ struct TimelineInput
     const scenario::ScenarioCatalog* catalog = nullptr;
     /// Null if the scenario never began: no series.
     const scenario::TimelineRecord* record = nullptr;
+    /// Extra variables requested via RunIntent::record (used when `record` is null, e.g. not_run).
+    std::vector<scenario::RecordedVariable> recorded_variables{};
     /// The findings of the check and of the run; the file takes those of the scenario
     /// (timeline_takes_finding()).
     std::vector<config::Finding> findings{};

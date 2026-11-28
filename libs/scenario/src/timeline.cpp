@@ -44,7 +44,9 @@ const char* watch_mode_name(WatchMode mode)
     return "at";
 }
 
-TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) : limits_(limits)
+TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits,
+                               std::span<const RecordedVariable> extra_recorded) :
+  limits_(limits)
 {
     const std::size_t count = scenario.variables.size();
     std::vector<bool> writes(count, false);
@@ -84,21 +86,51 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
             dithered[overlay.variable] = dithered[overlay.variable] || overlay.shape != nullptr;
         }
     }
-    written_.resize(count);
-    sampled_.resize(count);
+    std::vector<bool> recorded_scenario(count, false);
+    for (const RecordedVariable& rv : extra_recorded)
+    {
+        const auto existing = std::find_if(scenario.variables.begin(), scenario.variables.end(),
+                                           [&rv](const ScenarioVariable& v) { return v.text == rv.text; });
+        if (existing != scenario.variables.end())
+        {
+            recorded_scenario[static_cast<std::size_t>(existing - scenario.variables.begin())] = true;
+            continue;
+        }
+        const bool already_extra = std::any_of(extra_variables_.begin(), extra_variables_.end(),
+                                               [&rv](const RecordedVariable& e) { return e.text == rv.text; });
+        if (!already_extra)
+        {
+            extra_variables_.push_back(rv);
+        }
+    }
+    const std::size_t total = count + extra_variables_.size();
+    written_.resize(total);
+    sampled_.resize(total);
+    watched_.assign(total, false);
+    recorded_.assign(total, false);
     for (std::size_t v = 0; v < count; ++v)
     {
+        watched_[v] = reads[v];
+        recorded_[v] = recorded_scenario[v];
         if (writes[v])
         {
             written_[v] = series_.size();
             series_.push_back(Series{v, false});
             series_.back().dithered = dithered[v];
         }
-        if (reads[v])
+        if (watched_[v] || recorded_[v])
         {
             sampled_[v] = series_.size();
             series_.push_back(Series{v, true});
         }
+    }
+    for (std::size_t k = 0; k < extra_variables_.size(); ++k)
+    {
+        const std::size_t v = count + k;
+        watched_[v] = false;
+        recorded_[v] = true;
+        sampled_[v] = series_.size();
+        series_.push_back(Series{v, true});
     }
     watches_.resize(scenario.steps.size());
     failures_.resize(scenario.steps.size());

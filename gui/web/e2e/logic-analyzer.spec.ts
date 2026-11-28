@@ -7,7 +7,7 @@
 import { Page, expect, test } from '@playwright/test';
 import { CONFIGS, GuiServer, REPLAY_LAUNCHER, launchGuiServer } from './support/gui-server';
 import { findLayoutProblems } from './support/layout';
-import { RUN_TIMEOUT, inSync } from './support/run-page';
+import { RUN_TIMEOUT, inSync, start } from './support/run-page';
 
 const FAILS = 'scenarios/fails.yaml';
 
@@ -865,4 +865,75 @@ test('logic analyzer: pre-failure -300 ms preset on a short run never shrinks na
   expect(v300.from).toBe(0);
   expect(v300.to).toBeGreaterThanOrEqual(300);
   expect(warnings).toEqual([]);
+});
+
+test('logic analyzer: selecting an extra recorded signal in Run setup records and displays it for search, hide, and restore', async ({
+  page,
+}) => {
+  await page.goto(`${base}#token=${server.token}`);
+  await inSync(page);
+
+  // Select simulation.yaml and a passing scenario (throttle.yaml)
+  const cfgSelect = page.getByTestId('config-select');
+  await cfgSelect.click();
+  await page.getByRole('option', { name: 'simulation.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-outcome')).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  await page.getByTestId('scenario-select').click();
+  await page.getByRole('option', { name: 'throttle.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-scenario')).toContainText('throttle.yaml', {
+    timeout: RUN_TIMEOUT,
+  });
+
+  // Open Recorded signals disclosure and select Dashboard.dashboard.speed (not used by scenario)
+  const disclosure = page.getByTestId('record-signals');
+  await expect(disclosure).toBeVisible();
+  await disclosure.locator('summary').click();
+  const extraCheck = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/check') &&
+      Array.isArray((r.request().postDataJSON() as Record<string, unknown>)['record']) &&
+      ((r.request().postDataJSON() as Record<string, unknown>)['record'] as string[]).includes(
+        'Dashboard.dashboard.speed',
+      ),
+  );
+  await page
+    .getByTestId('record-signal-option-Dashboard.dashboard.speed')
+    .getByRole('checkbox')
+    .check();
+  await extraCheck;
+  await expect(page.getByTestId('record-signals-count')).toContainText('1');
+
+  const runReqPromise = page.waitForRequest(
+    (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+  );
+  const runId = await start(page);
+  const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+  expect(runBody['record']).toEqual(['Dashboard.dashboard.speed']);
+
+  const card = page.getByTestId('scenario-card');
+  await expect(card.getByTestId('scenario-timeline')).toHaveAttribute(
+    'href',
+    new RegExp(`%2Fapi%2Ftimeline%2F${runId}&`),
+    { timeout: RUN_TIMEOUT },
+  );
+  await card.getByTestId('timeline-toggle').click();
+  const timeline = card.getByTestId('timeline-element');
+  await expect(timeline).toBeVisible();
+  await expect(card.getByTestId('timeline-visible-count')).toContainText('3 / 3', {
+    timeout: RUN_TIMEOUT,
+  });
+
+  // Search for the extra recorded signal, hide it via inline ×, and restore it via chip
+  await card.getByTestId('timeline-signal-search').fill('dashboard.speed');
+  await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 3');
+  await expect(timeline.locator('button.lane-hide')).toHaveCount(1);
+  await timeline.locator('button.lane-hide').first().click();
+  await expect(card.getByTestId('timeline-visible-count')).toContainText('0 / 3');
+  const restoreChip = card.locator(
+    '[data-testid="timeline-restore-var"][data-variable="Dashboard.dashboard.speed"]',
+  );
+  await expect(restoreChip).toBeVisible();
+  await restoreChip.click();
+  await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 3');
 });

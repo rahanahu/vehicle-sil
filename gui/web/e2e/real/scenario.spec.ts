@@ -532,3 +532,142 @@ test('real multi-case scenario: variant/case selection, typed parameter override
     await stopRun(page, target, RUN_TIMEOUT);
   }
 });
+
+test('real extra recorded signal: select unused ECU signal in Run setup, run scenario, and search/display/hide/restore it in logic analyzer', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const target: Target = { base: `http://127.0.0.1:${GUI_PORT}/`, token: guiToken() };
+  const headers = { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin };
+  const app = (await (
+    await page.request.get(new URL('api/app', target.base).href, { headers })
+  ).json()) as {
+    launcher?: { version?: { features?: string[] } };
+  };
+  const features = app.launcher?.version?.features ?? [];
+  test.skip(
+    !features.includes('record-signals') || !features.includes('timeline'),
+    'launcher does not advertise record-signals / timeline',
+  );
+
+  const rootDir = process.env['VEHICLE_SIL_GUI_E2E_ROOT'];
+  if (!rootDir) throw new Error('VEHICLE_SIL_GUI_E2E_ROOT is not set');
+  const scenarioPath = join(rootDir, 'scenarios', 'engine_only_record_e2e.yaml');
+  writeFileSync(
+    scenarioPath,
+    [
+      'vehicle_sil_scenario: 1',
+      'name: engine only throttle response',
+      'steps:',
+      '  - name: apply throttle',
+      '    at_ms: 0',
+      '    set:',
+      '      Engine.engine.throttle: 60',
+      '  - name: engine reaches speed',
+      '    wait_until:',
+      '      Engine.engine.speed: { ge: 1800 }',
+      '    timeout_ms: 800',
+      '  - name: ramp down',
+      '    ramp:',
+      '      Engine.engine.throttle: { to: 10, over_ms: 200 }',
+      '  - name: engine slows down',
+      '    expect:',
+      '      Engine.engine.speed: { le: 1400 }',
+      '    within_ms: 300',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  await openRun(page);
+  await stopIfRunning(page);
+  try {
+    await choose(page, 'simulation.yaml');
+    await page.getByTestId('scenario-select').click();
+    await page.getByRole('option', { name: 'engine_only_record_e2e.yaml', exact: true }).click();
+    await expect(page.getByTestId('check-scenario')).toContainText('engine_only_record_e2e.yaml', {
+      timeout: RUN_TIMEOUT,
+    });
+
+    // Open Recorded signals disclosure and select Dashboard.dashboard.engine_speed (unused by scenario)
+    const disclosure = page.getByTestId('record-signals');
+    await expect(disclosure).toBeVisible();
+    await disclosure.locator('summary').click();
+    const recordCheck = page.waitForResponse(
+      (r) =>
+        r.url().endsWith('/api/check') &&
+        Array.isArray((r.request().postDataJSON() as Record<string, unknown>)['record']) &&
+        ((r.request().postDataJSON() as Record<string, unknown>)['record'] as string[]).includes(
+          'Dashboard.dashboard.engine_speed',
+        ),
+    );
+    await page
+      .getByTestId('record-signal-option-Dashboard.dashboard.engine_speed')
+      .getByRole('checkbox')
+      .check();
+    await recordCheck;
+    await expect(page.getByTestId('record-signals-count')).toContainText('1');
+    await expect(page.getByTestId('check-outcome')).toContainText('通った', {
+      timeout: RUN_TIMEOUT,
+    });
+
+    await page.getByTestId('config-card').getByRole('radio', { name: '最速', exact: true }).click();
+    const runReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const runId = await start(page);
+    const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(runBody['record']).toEqual(['Dashboard.dashboard.engine_speed']);
+
+    await expect(result(page, runId)).toContainText('成功', { timeout: RUN_TIMEOUT });
+
+    // Verify timeline JSON marks Dashboard.dashboard.engine_speed as recorded-only (watched: false, recorded: true)
+    const tlResp = await page.request.get(new URL(`api/timeline/${runId}`, target.base).href, {
+      headers,
+    });
+    expect(tlResp.status()).toBe(200);
+    const tlJson = (await tlResp.json()) as {
+      variables: { name: string; written: boolean; watched: boolean; recorded?: boolean }[];
+      series: { variable: string; source: string; points: [number, number][] }[];
+    };
+    const extraVar = tlJson.variables.find((v) => v.name === 'Dashboard.dashboard.engine_speed');
+    expect(extraVar).toMatchObject({ written: false, watched: false, recorded: true });
+    const extraSeries = tlJson.series.find(
+      (s) => s.variable === 'Dashboard.dashboard.engine_speed' && s.source === 'sampled',
+    );
+    expect(extraSeries).toBeDefined();
+    expect(Math.max(...extraSeries!.points.map((p) => p[1]))).toBeGreaterThanOrEqual(1500);
+
+    // Open the recording in the standard GUI logic analyzer
+    const scenarioCard = page.getByTestId('scenario-card');
+    await expect(scenarioCard.getByTestId('timeline-toggle')).toBeVisible({ timeout: RUN_TIMEOUT });
+    await scenarioCard.getByTestId('timeline-toggle').click();
+    const timeline = scenarioCard.getByTestId('timeline-element');
+    await expect(timeline).toBeVisible();
+    await expect(scenarioCard.getByTestId('timeline-visible-count')).toContainText('3 / 3', {
+      timeout: RUN_TIMEOUT,
+    });
+    await expect(timeline.locator('button.lane-hide')).toHaveCount(3);
+    await expect(timeline).toContainText('Dashboard.dashboard.engine_speed');
+
+    // Search, hide (×), and restore the extra recorded signal
+    await scenarioCard.getByTestId('timeline-signal-search').fill('dashboard.engine_speed');
+    await expect(scenarioCard.getByTestId('timeline-visible-count')).toContainText('1 / 3');
+    await expect(timeline.locator('button.lane-hide')).toHaveCount(1);
+    await timeline.locator('button.lane-hide').first().click();
+    await expect(scenarioCard.getByTestId('timeline-visible-count')).toContainText('0 / 3');
+    const restoreChip = scenarioCard.locator(
+      '[data-testid="timeline-restore-var"][data-variable="Dashboard.dashboard.engine_speed"]',
+    );
+    await expect(restoreChip).toBeVisible();
+    await restoreChip.click();
+    await expect(scenarioCard.getByTestId('timeline-visible-count')).toContainText('1 / 3');
+  } finally {
+    try {
+      unlinkSync(scenarioPath);
+    } catch {
+      // ignore
+    }
+    await stopRun(page, target, RUN_TIMEOUT);
+  }
+});

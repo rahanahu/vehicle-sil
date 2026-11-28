@@ -26,7 +26,7 @@ DEFAULT_FEATURES = [
     "manual-participants", "timeline", "run-stop-at", "scenario-end-ms", "scenario-handover",
     "scenario-cases", "scenario-templates",
     "connections", "connect", "check-text", "compare-commands", "serve", "check-file-only",
-    "serve-prepare", "control-metrics", "external-registry",
+    "serve-prepare", "control-metrics", "external-registry", "record-signals",
 ]
 
 def _peer_variables(name: str) -> list[dict]:
@@ -110,6 +110,7 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
     dis = list(req.get("disable", []))
     ena = list(req.get("enable", []))
     man = list(req.get("manual", []))
+    rec = list(req.get("record", []))
     variant = req.get("variant")
     scenario = req.get("scenario")
     scenario_case = req.get("case")
@@ -121,6 +122,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
             ena.append(argv[i + 1]); i += 2
         elif argv[i] == "--manual" and i + 1 < len(argv):
             man.append(argv[i + 1]); i += 2
+        elif argv[i] == "--record" and i + 1 < len(argv):
+            rec.append(argv[i + 1]); i += 2
         elif argv[i] == "--variant" and i + 1 < len(argv):
             variant = argv[i + 1]; i += 2
         elif argv[i] == "--scenario" and i + 1 < len(argv):
@@ -135,6 +138,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
         req["enable"] = ena
     if man:
         req["manual"] = man
+    if rec:
+        req["record"] = list(dict.fromkeys(rec))
     if variant is not None:
         req["variant"] = variant
     if scenario is not None:
@@ -415,6 +420,52 @@ def inspect_config(
                 "participant": None, "network": None,
                 "message": f"stop_at_ms ({stop_at_ms}) is not a multiple of the time step (10 ms)",
             })
+        record_list = req.get("record") or []
+        if record_list and not variant_only:
+            parts_by_name = {pt["name"]: pt for pt in participants}
+            for entry in dict.fromkeys(record_list):
+                if not isinstance(entry, str) or "." not in entry:
+                    result, exit_code = "failed", 1
+                    findings.append({
+                        "severity": "error", "code": "record-variable-format", "file": req_path or cfg_path,
+                        "line": None, "participant": None, "network": None,
+                        "message": f"record '{entry}': expected '<participant>.<variable>'",
+                    })
+                    continue
+                pname, vname = entry.split(".", 1)
+                if not pname or not vname:
+                    result, exit_code = "failed", 1
+                    findings.append({
+                        "severity": "error", "code": "record-variable-format", "file": req_path or cfg_path,
+                        "line": None, "participant": None, "network": None,
+                        "message": f"record '{entry}': expected '<participant>.<variable>'",
+                    })
+                    continue
+                pt = parts_by_name.get(pname)
+                if pt is None:
+                    result, exit_code = "failed", 1
+                    findings.append({
+                        "severity": "error", "code": "record-unknown-participant", "file": req_path or cfg_path,
+                        "line": None, "participant": None, "network": None,
+                        "message": f"record '{entry}': unknown participant '{pname}'",
+                    })
+                    continue
+                if not pt["enabled"] or pt.get("variables") is None:
+                    result, exit_code = "failed", 1
+                    findings.append({
+                        "severity": "error", "code": "record-participant-unusable", "file": req_path or cfg_path,
+                        "line": None, "participant": pname, "network": None,
+                        "message": f"record '{entry}': participant '{pname}' is not usable for recording",
+                    })
+                    continue
+                known_vars = {v["name"] for v in pt["variables"]}
+                if vname not in known_vars:
+                    result, exit_code = "failed", 1
+                    findings.append({
+                        "severity": "error", "code": "record-unknown-variable", "file": req_path or cfg_path,
+                        "line": None, "participant": pname, "network": None,
+                        "message": f"record '{entry}': participant '{pname}' has no variable '{vname}'",
+                    })
 
     # Hot eligibility
     if (
@@ -1568,6 +1619,50 @@ def _execute_run(
                 "findings": [],
                 "limits": {"points_per_series": 100000, "points_total": 1000000, "dropped": []},
             }
+            rec_to = tl_doc["scenario"]["recorded_to_ms"]
+            parts_by_name = {pt["name"]: pt for pt in chk_doc.get("participants", [])}
+            tl_vars_by_name = {v["name"]: v for v in tl_doc["variables"]}
+            sampled_names = {s["variable"] for s in tl_doc["series"] if s["source"] == "sampled"}
+            for entry in dict.fromkeys(req_dict.get("record") or ()):
+                if not isinstance(entry, str) or "." not in entry:
+                    continue
+                pname, vname = entry.split(".", 1)
+                existing = tl_vars_by_name.get(entry)
+                if existing is not None:
+                    existing["recorded"] = True
+                    vtype = existing["type"]
+                else:
+                    pt = parts_by_name.get(pname) or {}
+                    vmeta = next((v for v in (pt.get("variables") or ()) if v.get("name") == vname), None)
+                    vtype = vmeta["type"] if vmeta else "real"
+                    new_var = {
+                        "name": entry,
+                        "participant": pname,
+                        "type": vtype,
+                        "causality": vmeta["causality"] if vmeta else "output",
+                        "unit": vmeta["unit"] if vmeta else "",
+                        "min": vmeta["min"] if vmeta else None,
+                        "max": vmeta["max"] if vmeta else None,
+                        "items": vmeta["items"] if vmeta else [],
+                        "ecu_step_ms": pt.get("step_ms") or 10,
+                        "written": False,
+                        "watched": False,
+                        "recorded": True,
+                    }
+                    tl_doc["variables"].append(new_var)
+                    tl_vars_by_name[entry] = new_var
+                if entry not in sampled_names:
+                    pts = (
+                        [[0, False], [50, True]] if vtype == "bool"
+                        else [[0, 0], [50, 1]] if vtype == "enum"
+                        else [[0, 10], [50, 42], [100, 65]]
+                    )
+                    tl_doc["series"].append({
+                        "variable": entry, "source": "sampled", "encoding": "changes",
+                        "columns": ["at_ms", "value"], "samples": 11, "first_ms": 0, "last_ms": rec_to,
+                        "not_applied_from": None, "points": pts,
+                    })
+                    sampled_names.add(entry)
             Path(timeline_file).write_text(json.dumps(tl_doc) + "\n", encoding="utf-8")
         _emit(next_ev("scenario_step", run=run_id, index=1, status="running", at_ms=0, name="step 1"))
         _emit(next_ev("scenario_step", run=run_id, index=1, status="passed", at_ms=0, name="step 1"))

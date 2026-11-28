@@ -58,6 +58,7 @@ export interface VehicleSilTimelineLoadVariable {
   unit: string;
   written: boolean;
   watched: boolean;
+  recorded: boolean;
   failing: boolean;
   relatedToFailure: boolean;
   changedNearFailure: boolean;

@@ -570,6 +570,21 @@ def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
 
     with pytest.raises(ValidationError):
         C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "after_scenario": "pause"})
+    with pytest.raises(ValidationError):
+        C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record": ["Engine.engine.mode"]})
+
+    rec_req = C.RunRequest.model_validate({"file": "a.yaml", "record": ["Engine.engine.mode", "Dashboard.speed"]})
+    assert rec_req.record == ["Engine.engine.mode", "Dashboard.speed"]
+    assert C.CheckFileRequest.model_validate({"file": "a.yaml", "record": []}).record == []
+    assert C.SessionIntentSummary.model_validate({"record": ["Engine.engine.mode"]}).record == ["Engine.engine.mode"]
+    for bad_rec in (
+        {"file": "a.yaml", "record": None},
+        {"file": "a.yaml", "record": "Engine.engine.mode"},
+        {"file": "a.yaml", "record": [""]},
+        {"file": "a.yaml", "record": [123]},
+    ):
+        with pytest.raises(ValidationError):
+            C.RunRequest.model_validate(bad_rec)
 
     base_rec = {
         "run_id": "1",

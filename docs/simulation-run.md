@@ -688,6 +688,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `late_tolerance_ms` | Wall-clock lateness tolerance (an integer from 0 to 10^12 ms). Defaults to 10 ms. | `--late-tolerance-ms` |
 | `strict` | `true` or `false` | `--strict` |
 | `after_scenario` | `"stop"` (default: end when scenario finishes) or `"pause"` (pause at scenario pass for manual handover; requires `scenario`, cannot be combined with `stop_at_ms`, and `run` needs `--stdin-commands` or `--control`) | |
+| `record` | A list of `"<participant>.<variable>"` names to sample and record into the `--timeline` file without affecting scenario verdicts | `--record` |
 
 ### Arguments together with a request file
 
@@ -700,6 +701,7 @@ An argument wins over the file, field by field.
 | `connect` | By network: `--connect <network>=<target>` replaces the file's target of that network, and `--connect <network>=none` takes it away for this run. The other networks of the file stay. |
 | `params` | By name: `--param <name>=<value>` replaces the file's value of that parameter. The others stay; their `from` in the check JSON is `request_file`. |
 | `disable`, `enable`, `manual` | The names of the file and of the arguments add up. Where they disagree about a name (the file's `disable` and `--enable`, the file's `enable` or `manual` and `--disable`, the file's `disable` and `--manual`), the argument wins. |
+| `record` | The variable names of the file come first, followed by `--record` arguments, deduplicated while preserving first-seen order. |
 
 No argument takes away the file's `scenario` or one of its `params` (`--scenario` and `--param` only replace them): for a run without them, use a request file that does not have them. There is no command-line flag for `after_scenario`: plain `run --scenario` defaults `after_scenario` to `"stop"`, while `"after_scenario": "pause"` in a `--request` file (or inline `intent` in `serve`) requests manual handover unless `"after_scenario": "stop"` is written instead.
 
@@ -1648,7 +1650,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `file`, `variant`, `params` | The configuration file (as given in the arguments), the variant (`null` if none), and the scenario parameters with the values in effect (the same form as `scenario.params` of `check --json`) |
 | `time_step_ms` | The controller's time step (the same as `timing.time_step_ms` of `run --json`) |
 | `scenario` | `file`, `name`, optional `case`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
-| `variables[]` | The variables that the scenario uses, in order of first use: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it) |
+| `variables[]` | The variables that the scenario uses (in order of first use), followed by any extra variables requested with `--record` / `"record"`: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it), and optional `recorded` (`true` when requested via `--record` / `"record"`, omitted otherwise) |
 | `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json` (including optional `file`, `name`, `call_stack`), plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
 | `lines[]` | The line of each input: the values and motions that steps placed (see "Input lines" below) |
@@ -1657,7 +1659,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 
 A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version. A step's `status` is not one of them: see [Values that carry the result](scenario.md#values-that-carry-the-result).
 
-Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
+Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: `recorded` on a variable, `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
 
 The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write.
 
@@ -1759,7 +1761,7 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
 | `source` | Contents | `encoding` |
 |---|---|---|
 | `written` | Every write that the scenario sent. A point is `[time, value]`, where the time is when the write takes effect. **These are the values sent; they did not necessarily reach the ECU** (see `not_applied_from` below) | `all` |
-| `sampled` | The sample values that the scenario saw, only for the variables that conditions read | `changes`: only samples whose value changed become points. `samples` (the number of samples seen), `first_ms` and `last_ms` (the times of the first and the last sample) are kept beside the points. They are `null` in a `written` series |
+| `sampled` | The sample values seen during the run, for variables that conditions read or that were requested with `--record` / `"record"` | `changes`: only samples whose value changed become points. `samples` (the number of samples seen), `first_ms` and `last_ms` (the times of the first and the last sample) are kept beside the points. They are `null` in a `written` series |
 
 - `columns` names the columns of a point: `["at_ms", "value"]`. **The `written` series of an input on which the scenario places a `dither` has 3 columns**: `["at_ms", "value", "base"]`. The third column, `base`, is the value before the dither is added and the type rounding is applied: the value of a `set`, or the value of a `ramp` or `wave` at that time (see "Overlaying a dither" in [scenario.md](scenario.md#overlaying-a-dither-dither)). A series has 3 columns when the text of the scenario places a dither on that input (a declaration in `inputs`, or a `dither` step with a waveform that runs in the variant). Then every point has 3 columns, also before the dither is placed and after it is removed, whether or not the run reached that step (the number of columns does not change with the controller's time step). A reader takes the columns by the names in `columns`.
 
@@ -1781,7 +1783,7 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
   }
   ```
 
-- Only the variables that the scenario uses are recorded. A variable that the scenario writes has a `written` series, and a variable that a condition reads has a `sampled` series (a variable that is both has 2). The series follow the order of `variables[]`, with `written` first for each variable.
+- Only the variables that the scenario uses and any extra variables requested with `--record` (or `"record"` in a request file / `serve` `intent`) are recorded. A variable that the scenario writes has a `written` series, and a variable that a condition reads or that is requested with `--record` has a `sampled` series (a variable that is both has 2). Extra `--record` variables do not affect scenario verdicts or trigger scenario sampling warnings. The series follow the order of `variables[]`, with `written` first for each variable.
 - Each point is on a line of its own. Times never go back. Several points can share a time (the end of a `ramp` and the next `set`); they are in the order sent.
 - Values: a bool is `true` or `false`, an enum is the item's value (the names are in `variables[].items`), and a real that is not a number is `null`.
 - A sample is the value at the end of an ECU step, with the time of the start of that step (see "Values that conditions see" in [scenario.md](scenario.md#values-that-conditions-see)). Read a `sampled` value as lasting from its point to the next point (the last point lasts until `last_ms`).

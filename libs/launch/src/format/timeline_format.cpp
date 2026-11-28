@@ -59,69 +59,99 @@ void write_text_or_null(JsonWriter& w, std::string_view key, const std::string& 
     }
 }
 
-const control::VariableInfo* described(const scenario::ScenarioCatalog* catalog, const scenario::Scenario& scenario, const scenario::ScenarioVariable& variable)
+const control::VariableInfo* described(const scenario::ScenarioCatalog* catalog, const std::string& participant,
+                                       const std::string& variable_name)
 {
     if (catalog == nullptr)
     {
         return nullptr;
     }
-    const std::string& participant = scenario.participants[variable.participant].name;
     for (const scenario::CatalogParticipant& p : *catalog)
     {
         if (p.name == participant)
         {
             const auto it = std::find_if(p.variables.begin(), p.variables.end(),
-                                         [&variable](const control::VariableInfo& info) { return info.name == variable.name; });
+                                         [&variable_name](const control::VariableInfo& info) { return info.name == variable_name; });
             return it == p.variables.end() ? nullptr : &*it;
         }
     }
     return nullptr;
 }
 
+const std::string& variable_text(const TimelineInput& input, std::size_t index)
+{
+    if (index < input.scenario->variables.size())
+    {
+        return input.scenario->variables[index].text;
+    }
+    return input.record->extra_variables()[index - input.scenario->variables.size()].text;
+}
+
+void write_variable_object(JsonWriter& w, const scenario::ScenarioCatalog* catalog, const std::string& text,
+                           const std::string& participant, const std::string& name, control::ValueType type,
+                           const std::vector<control::EnumItem>& items, SimDuration step, bool written, bool watched,
+                           bool recorded)
+{
+    const control::VariableInfo* info = described(catalog, participant, name);
+    w.begin_object();
+    w.string("name", text);
+    w.string("participant", participant);
+    w.string("type", vehicle_sil::value_type_name(type));
+    if (info != nullptr)
+    {
+        w.string("causality", vehicle_sil::causality_name(info->causality));
+        w.string("unit", info->unit);
+        w.real("min", info->min);
+        w.real("max", info->max);
+    }
+    else
+    {
+        w.null("causality");
+        w.string("unit", "");
+        w.null("min");
+        w.null("max");
+    }
+    w.begin_array("items");
+    for (const control::EnumItem& item : items)
+    {
+        w.begin_object();
+        w.string("name", item.name);
+        w.integer("value", item.value);
+        w.end_object();
+    }
+    w.end_array();
+    w.real("ecu_step_ms", step > SimDuration::zero() ? std::optional<double>(static_cast<double>(step.count()) / kNanosPerMilli)
+                                                     : std::nullopt);
+    w.boolean("written", written);
+    w.boolean("watched", watched);
+    if (recorded)
+    {
+        w.boolean("recorded", true);
+    }
+    w.end_object();
+}
+
 void write_variables(JsonWriter& w, const TimelineInput& input)
 {
     const scenario::Scenario& scenario = *input.scenario;
     // Without a record (the scenario never began): from the steps, as the record does.
-    const scenario::TimelineRecord fromSteps(scenario);
+    const scenario::TimelineRecord fromSteps(scenario, {}, input.recorded_variables);
     const scenario::TimelineRecord& uses = input.record != nullptr ? *input.record : fromSteps;
     w.begin_array("variables");
     for (std::size_t i = 0; i < scenario.variables.size(); ++i)
     {
         const scenario::ScenarioVariable& v = scenario.variables[i];
-        const control::VariableInfo* info = described(input.catalog, scenario, v);
-        w.begin_object();
-        w.string("name", v.text);
-        w.string("participant", scenario.participants[v.participant].name);
-        w.string("type", vehicle_sil::value_type_name(v.type));
-        if (info != nullptr)
-        {
-            w.string("causality", vehicle_sil::causality_name(info->causality));
-            w.string("unit", info->unit);
-            w.real("min", info->min);
-            w.real("max", info->max);
-        }
-        else
-        {
-            w.null("causality");
-            w.string("unit", "");
-            w.null("min");
-            w.null("max");
-        }
-        w.begin_array("items");
-        for (const control::EnumItem& item : v.items)
-        {
-            w.begin_object();
-            w.string("name", item.name);
-            w.integer("value", item.value);
-            w.end_object();
-        }
-        w.end_array();
-        const SimDuration step = scenario.participants[v.participant].step;
-        w.real("ecu_step_ms", step > SimDuration::zero() ? std::optional<double>(static_cast<double>(step.count()) / kNanosPerMilli)
-                                                         : std::nullopt);
-        w.boolean("written", uses.is_written(i));
-        w.boolean("watched", uses.is_watched(i));
-        w.end_object();
+        const scenario::ScenarioParticipant& p = scenario.participants[v.participant];
+        write_variable_object(w, input.catalog, v.text, p.name, v.name, v.type, v.items, p.step, uses.is_written(i),
+                              uses.is_watched(i), uses.is_recorded(i));
+    }
+    const auto& extras = uses.extra_variables();
+    for (std::size_t k = 0; k < extras.size(); ++k)
+    {
+        const std::size_t idx = scenario.variables.size() + k;
+        const scenario::RecordedVariable& rv = extras[k];
+        write_variable_object(w, input.catalog, rv.text, rv.participant, rv.name, rv.type, rv.items, rv.step,
+                              uses.is_written(idx), uses.is_watched(idx), uses.is_recorded(idx));
     }
     w.end_array();
 }
@@ -279,7 +309,7 @@ void write_series(JsonWriter& w, const TimelineInput& input)
         for (const scenario::TimelineRecord::Series& series : input.record->series())
         {
             w.begin_object();
-            w.string("variable", input.scenario->variables[series.variable].text);
+            w.string("variable", variable_text(input, series.variable));
             w.string("source", series.sampled ? "sampled" : "written");
             w.string("encoding", series.sampled ? "changes" : "all");
             // Every key in every series: what does not apply to this one is null.
@@ -475,7 +505,7 @@ void write_limits(JsonWriter& w, const TimelineInput& input)
             if (series.dropped > 0)
             {
                 w.begin_object();
-                w.string("variable", input.scenario->variables[series.variable].text);
+                w.string("variable", variable_text(input, series.variable));
                 w.string("source", series.sampled ? "sampled" : "written");
                 w.integer("dropped", static_cast<std::int64_t>(series.dropped));
                 write_ms(w, "dropped_from_ms", series.dropped_from);

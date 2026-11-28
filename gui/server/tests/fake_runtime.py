@@ -29,6 +29,7 @@ DEFAULT_FEATURES = (
     "control-links",
     "control-server",
     "external-registry",
+    "record-signals",
 )
 
 

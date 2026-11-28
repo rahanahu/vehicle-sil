@@ -11,6 +11,7 @@
 #include "vehicle_sil/launch/timeline_format.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 #include "vehicle_sil/scenario/scenario.hpp"
+#include "vehicle_sil/scenario/scenario_check.hpp"
 #include "vehicle_sil/scenario/scenario_run.hpp"
 #include "vehicle_sil/scenario/timeline.hpp"
 
@@ -1841,4 +1842,230 @@ TEST_CASE(timeline_json_records_variable_to_variable_watches_and_failures)
     CHECK(tlNan.find("\"condition\": 0,\n            \"value\": 0.5,\n            \"sample_ms\": 0,\n            \"compared\": [\n"
                      "              {\n                \"variable\": \"Door.ratio\",\n                \"value\": null,\n"
                      "                \"sample_ms\": null\n              }\n            ]") != std::string::npos);
+}
+
+TEST_CASE(timeline_extra_recorded_signals_preserve_verdict_and_emit_recorded_flag_only_when_requested)
+{
+    // Scenario only uses Body (writes Body.level, watches Body.body.speed). Door is NOT in the scenario at all!
+    const std::string text =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - set: { Body.level: 10 }\n"
+        "  - at_ms: 20\n"
+        "    expect: { Body.body.speed: { ge: 100 } }\n"
+        "  - at_ms: 40\n"
+        "    set: { Body.level: 0 }\n";
+    const ScenarioCatalog desc = catalog();
+    const ScenarioRead readRes = read_scenario(text, desc);
+    CHECK(readRes.scenario.has_value());
+    const Scenario& s = *readRes.scenario;
+
+    const auto run_with = [&](const std::vector<RecordedVariable>& extra, SimDuration tick,
+                              const std::function<void(World&)>& setup = {}) -> std::pair<ScenarioRun, std::string> {
+        World w;
+        w.tick = tick;
+        if (setup)
+        {
+            setup(w);
+        }
+        TimelineRecord rec(s, {}, extra);
+        w.record = &rec;
+        ScenarioRun run = w.run(s);
+        run.file = "scenario.yaml";
+        TimelineInput in;
+        in.file = "simulation.yaml";
+        in.time_step_ms = ms_of(at(tick));
+        in.scenario = &s;
+        in.run = &run;
+        in.catalog = &desc;
+        in.record = &rec;
+        in.recorded_variables = extra;
+        return {std::move(run), format_timeline_json(in)};
+    };
+
+    // 1. Without extra recorded variables: zero occurrences of "recorded" (byte-for-byte unchanged).
+    const auto [baseRun, baseTimeline] = run_with({}, 10ms);
+    CHECK(baseRun.status == ScenarioStatus::Passed);
+    CHECK(baseTimeline.find("\"recorded\"") == std::string::npos);
+
+    // 2. With extra recorded variables covering all 4 cases:
+    //    - Body.level (written-only scenario var -> gains overlaid sampled series + recorded: true)
+    //    - Body.body.speed (already-watched scenario var -> single sampled series + recorded: true)
+    //    - Body.ratio (extra-only var on scenario participant -> written: false, watched: false, recorded: true)
+    //    - Door.body.speed & Door.pulse (extra-only vars on NON-scenario participant -> appended + sampled)
+    auto make_rec = [&](const char* p, const char* v) {
+        const RecordedVariablesCheck checked = check_recorded_variables(std::vector<std::string>{std::string(p) + "." + v}, desc);
+        CHECK(checked.findings.empty() && checked.variables.size() == 1);
+        return checked.variables.front();
+    };
+    const std::vector<RecordedVariable> extras = {
+        make_rec("Body", "level"),
+        make_rec("Body", "body.speed"),
+        make_rec("Body", "ratio"),
+        make_rec("Door", "body.speed"),
+        make_rec("Door", "pulse"),
+    };
+    const auto [recRun, recTimeline] = run_with(extras, 10ms);
+
+    // Verdict invariance: identical ScenarioRun text across statuses, timestamps, messages!
+    check_text(text_of(recRun), text_of(baseRun), "ScenarioRun invariant under extra recording");
+
+    // Check variables[] metadata flags.
+    const std::string varsPart = part(recTimeline, "  \"variables\": [", "  \"steps\": [");
+    CHECK(varsPart.find("\"name\": \"Body.level\"") != std::string::npos);
+    CHECK(varsPart.find("\"written\": true,\n      \"watched\": false,\n      \"recorded\": true") != std::string::npos);
+    CHECK(varsPart.find("\"written\": false,\n      \"watched\": true,\n      \"recorded\": true") != std::string::npos);
+    CHECK(varsPart.find("\"name\": \"Body.ratio\"") != std::string::npos);
+    CHECK(varsPart.find("\"name\": \"Door.body.speed\"") != std::string::npos);
+    CHECK(varsPart.find("\"name\": \"Door.pulse\"") != std::string::npos);
+    CHECK(varsPart.find("\"written\": false,\n      \"watched\": false,\n      \"recorded\": true") != std::string::npos);
+
+    // Check series[]: Body.level has both written and sampled; Body.body.speed has sampled exactly once;
+    // Body.ratio, Door.body.speed, Door.pulse each have sampled with points!
+    const std::string seriesPart = part(recTimeline, "  \"series\": [", "  \"lines\": [");
+    CHECK(seriesPart.find("\"variable\": \"Body.level\",\n      \"source\": \"written\"") != std::string::npos);
+    CHECK(seriesPart.find("\"variable\": \"Body.level\",\n      \"source\": \"sampled\"") != std::string::npos);
+    const std::size_t firstSpeed = seriesPart.find("\"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\"");
+    CHECK(firstSpeed != std::string::npos);
+    CHECK(seriesPart.find("\"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\"", firstSpeed + 1) == std::string::npos);
+    CHECK(seriesPart.find("\"variable\": \"Body.ratio\",\n      \"source\": \"sampled\"") != std::string::npos);
+    CHECK(seriesPart.find("\"variable\": \"Door.body.speed\",\n      \"source\": \"sampled\"") != std::string::npos);
+    CHECK(seriesPart.find("\"variable\": \"Door.pulse\",\n      \"source\": \"sampled\"") != std::string::npos);
+    CHECK(seriesPart.find("[0, false]") != std::string::npos);
+
+    // 3. Disconnected extra-only peer does NOT fail the scenario (verdict invariance)!
+    const auto [discRun, discTimeline] = run_with(
+        {make_rec("Door", "body.speed"), make_rec("Door", "pulse")}, 10ms, [](World& w) {
+            w.ecus.erase(w.ecus.begin() + 1); // remove Door
+        });
+    check_text(text_of(discRun), text_of(baseRun), "ScenarioRun invariant when extra-only peer is disconnected");
+    CHECK(discTimeline.find("\"name\": \"Door.body.speed\"") != std::string::npos);
+    CHECK(discTimeline.find("\"name\": \"Door.pulse\"") != std::string::npos);
+
+    // 4. Independent of controller tick and delivery policy.
+    const std::string recCompared = compared(recTimeline);
+    for (const SimDuration tick : {SimDuration{5ms}, SimDuration{20ms}, SimDuration{30ms}})
+    {
+        const auto [rTick, tTick] = run_with(extras, tick);
+        check_text(compared(tTick), recCompared, "extra recorded timeline invariant across controller ticks");
+    }
+    for (const auto& [name, policy] : policies())
+    {
+        const auto [rPol, tPol] = run_with(extras, 10ms, [&](World& w) { w.policy = policy; });
+        check_text(compared(tPol), recCompared, name.c_str());
+    }
+}
+
+TEST_CASE(written_only_participant_with_faster_step_does_not_shift_recorded_to_ms_on_incomplete_run)
+{
+    // Regression test: Door is written (not read) by the scenario, has step 1 ms < default sample_period 10 ms,
+    // while Body (step 10 ms) is watched by wait_until and cut short by stop_at = 50 ms.
+    // Adding --record Door.body.speed enables 1 ms sampling on Door; recorded_to_ms and step results must
+    // stay identical (recorded_to_ms == 40, not shifted to 49).
+    const std::string text =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - at_ms: 0\n"
+        "    set: { Door.level: 5, Body.level: 10 }\n"
+        "  - wait_until: { Body.body.speed: { ge: 99999 } }\n"
+        "    timeout_ms: 5000\n";
+    const ScenarioCatalog desc = catalog(10ms, 1ms);
+    const ScenarioRead readRes = read_scenario(text, desc);
+    CHECK(readRes.scenario.has_value());
+    const Scenario& s = *readRes.scenario;
+
+    const auto run_case = [&](const std::vector<RecordedVariable>& extra, SimDuration doorSamplePeriod) {
+        World w;
+        w.tick = 10ms;
+        w.stop_at = at(50ms);
+        w.ecus[1].step = 1ms;
+        w.ecus[1].sample_period = doorSamplePeriod;
+        TimelineRecord rec(s, {}, extra);
+        w.record = &rec;
+        ScenarioRun run = w.run(s);
+        run.file = "scenario.yaml";
+        TimelineInput in;
+        in.file = "simulation.yaml";
+        in.time_step_ms = 10.0;
+        in.scenario = &s;
+        in.run = &run;
+        in.catalog = &desc;
+        in.record = &rec;
+        in.recorded_variables = extra;
+        return std::pair{std::move(run), format_timeline_json(in)};
+    };
+
+    const auto [baseRun, baseTl] = run_case({}, 10ms);
+    const RecordedVariablesCheck checked = check_recorded_variables(std::vector<std::string>{"Door.body.speed"}, desc);
+    CHECK(checked.findings.empty() && checked.variables.size() == 1);
+    const auto [recRun, recTl] = run_case(checked.variables, 1ms);
+
+    CHECK(baseRun.status == ScenarioStatus::Incomplete);
+    check_text(text_of(recRun), text_of(baseRun), "incomplete ScenarioRun invariant under written-only --record");
+    check_text(part(recTl, "  \"scenario\": {", "  \"variables\""),
+               part(baseTl, "  \"scenario\": {", "  \"variables\""),
+               "scenario header including recorded_to_ms invariant");
+    CHECK(recTl.find("    \"recorded_to_ms\": 40,\n") != std::string::npos);
+    const std::string doorSeries = part(recTl, "\"variable\": \"Door.body.speed\",\n      \"source\": \"sampled\"", "  \"lines\": [");
+    CHECK(doorSeries.find("\"samples\": 41,\n      \"first_ms\": 0,\n      \"last_ms\": 40,") != std::string::npos);
+}
+
+TEST_CASE(write_only_incomplete_scenario_preserves_recorded_to_ms_and_extra_samples)
+{
+    // Regression test (Challenger B2): a write-only scenario (no conditions, no sample-based motions)
+    // cut short by stop_at = 50 ms must keep recorded_to_ms from observed samples (not drop to 0 ms)
+    // both without --record and with --record, preserving all recorded samples up to stop time.
+    const std::string text =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - at_ms: 0\n"
+        "    set: { Body.level: 10 }\n"
+        "  - at_ms: 200\n"
+        "    set: { Body.level: 0 }\n";
+    const ScenarioCatalog desc = catalog(10ms, 5ms);
+    const ScenarioRead readRes = read_scenario(text, desc);
+    CHECK(readRes.scenario.has_value());
+    const Scenario& s = *readRes.scenario;
+
+    const auto run_case = [&](const std::vector<RecordedVariable>& extra, SimDuration doorSamplePeriod) {
+        World w;
+        w.tick = 10ms;
+        w.stop_at = at(50ms);
+        w.ecus[1].step = 5ms;
+        w.ecus[1].sample_period = doorSamplePeriod;
+        TimelineRecord rec(s, {}, extra);
+        w.record = &rec;
+        ScenarioRun run = w.run(s);
+        run.file = "scenario.yaml";
+        TimelineInput in;
+        in.file = "simulation.yaml";
+        in.time_step_ms = 10.0;
+        in.scenario = &s;
+        in.run = &run;
+        in.catalog = &desc;
+        in.record = &rec;
+        in.recorded_variables = extra;
+        return std::pair{std::move(run), format_timeline_json(in)};
+    };
+
+    // 1. Without --record: recorded_to_ms preserves 40 ms (last Body sample before stop_at = 50 ms), not 0 ms.
+    const auto [baseRun, baseTl] = run_case({}, 10ms);
+    CHECK(baseRun.status == ScenarioStatus::Incomplete);
+    CHECK(baseTl.find("    \"recorded_to_ms\": 40,\n") != std::string::npos);
+
+    // 2. With --record on both scenario participant (Body, 10 ms) and extra-only participant (Door, 5 ms):
+    //    all samples up to stop_at are preserved (Body: 5 samples 0..40 ms, Door: 10 samples 0..45 ms).
+    const RecordedVariablesCheck checked =
+        check_recorded_variables(std::vector<std::string>{"Body.body.speed", "Door.body.speed"}, desc);
+    CHECK(checked.findings.empty() && checked.variables.size() == 2);
+    const auto [recRun, recTl] = run_case(checked.variables, 5ms);
+    CHECK(recRun.status == ScenarioStatus::Incomplete);
+    check_text(text_of(recRun), text_of(baseRun), "write-only incomplete ScenarioRun invariant under --record");
+    CHECK(recTl.find("    \"recorded_to_ms\": 45,\n") != std::string::npos);
+    const std::string bodySeries = part(recTl, "\"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\"",
+                                        "\"variable\": \"Door.body.speed\"");
+    CHECK(bodySeries.find("\"samples\": 5,\n      \"first_ms\": 0,\n      \"last_ms\": 40,") != std::string::npos);
+    const std::string doorSeries = part(recTl, "\"variable\": \"Door.body.speed\",\n      \"source\": \"sampled\"",
+                                        "  \"lines\": [");
+    CHECK(doorSeries.find("\"samples\": 10,\n      \"first_ms\": 0,\n      \"last_ms\": 45,") != std::string::npos);
 }

@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -187,7 +188,8 @@ public:
     /// The `step` of a write that is no step's (a dither alone moved the input).
     static constexpr std::size_t kNoStep = static_cast<std::size_t>(-1);
 
-    explicit TimelineRecord(const Scenario& scenario, TimelineLimits limits = {});
+    explicit TimelineRecord(const Scenario& scenario, TimelineLimits limits = {},
+                            std::span<const RecordedVariable> extra_recorded = {});
 
     // --- the engine's side ---
     /// A write that is sent, of `step` (index in Scenario::steps; kNoStep: of none): a point of the variable's
@@ -227,18 +229,28 @@ public:
     [[nodiscard]] const std::optional<SimTime>& recorded_to() const noexcept { return recorded_to_; }
     /// How many points went at a limit, of all series.
     [[nodiscard]] std::uint64_t dropped() const noexcept;
-    /// Whether a step of the scenario writes the variable, and whether a condition reads it.
-    [[nodiscard]] bool is_written(std::size_t variable) const { return written_[variable].has_value(); }
-    [[nodiscard]] bool is_watched(std::size_t variable) const { return sampled_[variable].has_value(); }
+    /// Whether a step of the scenario writes the variable, whether a condition reads it, and
+    /// whether it was explicitly requested via RunIntent::record.
+    [[nodiscard]] bool is_written(std::size_t variable) const { return variable < written_.size() && written_[variable].has_value(); }
+    [[nodiscard]] bool is_watched(std::size_t variable) const { return variable < watched_.size() && watched_[variable]; }
+    [[nodiscard]] bool is_recorded(std::size_t variable) const { return variable < recorded_.size() && recorded_[variable]; }
+    /// Extra recorded variables not already present in Scenario::variables, in first-seen order.
+    /// Their timeline variable indices are Scenario::variables.size() + k.
+    [[nodiscard]] const std::vector<RecordedVariable>& extra_variables() const noexcept { return extra_variables_; }
+    /// Total number of variables in the record (Scenario::variables.size() + extra_variables().size()).
+    [[nodiscard]] std::size_t variable_count() const noexcept { return sampled_.size(); }
 
 private:
     static void drop_oldest(Series& series, std::size_t keep);
     void enforce(bool final);
 
     TimelineLimits limits_;
+    std::vector<RecordedVariable> extra_variables_{};
     std::vector<Series> series_;
     std::vector<std::optional<std::size_t>> written_; ///< per variable: its written series
     std::vector<std::optional<std::size_t>> sampled_; ///< per variable: its sampled series
+    std::vector<bool> watched_;                       ///< per variable: read by a scenario condition
+    std::vector<bool> recorded_;                      ///< per variable: requested via RunIntent::record
     std::vector<std::optional<Watch>> watches_;
     std::vector<std::optional<TimelineFailure>> failures_;
     std::vector<Line> lines_;

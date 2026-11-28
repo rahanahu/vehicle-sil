@@ -57,6 +57,9 @@ struct RunIntent
     std::optional<std::int64_t> late_tolerance_ms{};
     /// What to do after the scenario passes: stop (default) or pause for manual handover.
     config::AfterScenario after_scenario = config::AfterScenario::Stop;
+    /// Extra ECU variables to record in the timeline ("<participant>.<variable>"), independent of
+    /// scenario assertions. Empty by default (never records all signals by default).
+    std::vector<std::string> record{};
 };
 
 /// run --control: where the run's control server listens and the files it reads, as the caller
@@ -184,7 +187,7 @@ struct RequestFileRead
 
 /// Reads the text of a request file named `shown`: a JSON object with "vehicle_sil_run_request": 1
 /// and any of variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed,
-/// start_paused, strict, stop_at_ms, late_tolerance_ms and after_scenario. An unknown key, a key written twice, a value of the wrong type (null
+/// start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario and record. An unknown key, a key written twice, a value of the wrong type (null
 /// too: a key that is not meant is left out) and another version are errors. The format is JSON;
 /// the reader may take more than JSON (it is the YAML reader), which is no promise. Only the form is read: whether the file has the variant, the
 /// participants and the networks is the check's to say. No file system access.
@@ -216,6 +219,8 @@ struct RequestFileRead
 /// - disable, enable, manual: both lists; a name that the command line gives the other way
 ///   (--enable X and the file's disable: [X]; --disable X and the file's enable or manual; --manual
 ///   X and the file's disable) is as the command line says.
+/// - record: the file's entries followed by the command line's entries, deduplicated preserving
+///   first-seen order.
 /// RunRequest::origin of the result says what came from the file. RunHost is `arguments`'.
 [[nodiscard]] RunRequest with_request_file(const RunRequest& arguments, const RequestFile& file, bool time_policy_given);
 

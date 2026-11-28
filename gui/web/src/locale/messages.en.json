@@ -990,6 +990,10 @@
       "source": "なし",
       "target": "None"
     },
+    "5198513651812711449": {
+      "source": "追加で記録する信号:",
+      "target": "Recorded signals:"
+    },
     "4650179018992621111": {
       "source": "なし（自分で操作する）",
       "target": "None (control the run yourself)"
@@ -1045,6 +1049,34 @@
     "6198959273292437434": {
       "source": "止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）",
       "target": "Start paused (hold at virtual time 0 until you resume or step)"
+    },
+    "6441958087714387078": {
+      "source": "追加で記録する信号",
+      "target": "Recorded signals"
+    },
+    "1374515519811019124": {
+      "source": "（{$INTERPOLATION} 件選択中）",
+      "target": "({$INTERPOLATION} selected)"
+    },
+    "3535642852673241830": {
+      "source": " シナリオで使わない信号もタイムラインに記録します（合否判定には影響しません）。 ",
+      "target": " Record extra signals on the timeline even when the scenario does not use them (does not affect pass/fail). "
+    },
+    "127858977070920848": {
+      "source": " すべて解除 ",
+      "target": " Clear all "
+    },
+    "4260945888639274016": {
+      "source": " 条件に合う信号がありません。 ",
+      "target": " No signals match the filter. "
+    },
+    "4595682181971915283": {
+      "source": " 照合すると、記録できる信号の一覧が表示されます。 ",
+      "target": " Available signals appear after the check finishes. "
+    },
+    "1290877040203441727": {
+      "source": " 追加 ",
+      "target": " Add "
     },
     "804579770293364110": {
       "source": "シナリオ {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE}（ケース {$START_TAG_CODE}{$INTERPOLATION_1}{$CLOSE_TAG_CODE}）も照合しました（{$INTERPOLATION_2} 手順）。",
@@ -1190,6 +1222,14 @@
       "source": "常駐ランチャーの準備に失敗したため、実行ごとの起動へ切り替えました。",
       "target": "Persistent launcher preparation failed; switched to launching per run."
     },
+    "6454800215232659642": {
+      "source": "信号名で絞り込み…",
+      "target": "Filter signals…"
+    },
+    "144620671015534684": {
+      "source": "<participant>.<variable>",
+      "target": "<participant>.<variable>"
+    },
     "4802514740729461545": {
       "source": "構成ファイルを選んでください。",
       "target": "Choose a configuration file."
@@ -1253,6 +1293,10 @@
     "478554458320405936": {
       "source": "選べる範囲のパスをコピー",
       "target": "Copy the folder path"
+    },
+    "1164290763455086919": {
+      "source": "{$signal} の追加記録を外す",
+      "target": "Remove {$signal} from recorded signals"
     },
     "7536858805348951330": {
       "source": "バリアント {$variants} のみ対象",
@@ -1554,6 +1598,62 @@
       "source": "時間の軸をここに表示",
       "target": "Show the timeline here"
     },
+    "1608510753308118889": {
+      "source": " 縮小 ",
+      "target": " Zoom out "
+    },
+    "8794060275065177624": {
+      "source": " 全体 ",
+      "target": " Whole run "
+    },
+    "9046027156478552906": {
+      "source": " ピン解除 ",
+      "target": " Unpin "
+    },
+    "5154664877024693468": {
+      "source": " 失敗時刻へ移動 ",
+      "target": " Jump to failure "
+    },
+    "6681208731780724550": {
+      "source": "失敗前:",
+      "target": "Pre-failure:"
+    },
+    "8634432685597510939": {
+      "source": " すべて ",
+      "target": " All "
+    },
+    "1265424349923129709": {
+      "source": " 失敗に関係 ",
+      "target": " Related to failure "
+    },
+    "3398475876780553630": {
+      "source": " 失敗直前に変化 ",
+      "target": " Changed near failure "
+    },
+    "2408987094291824742": {
+      "source": " 入力 ",
+      "target": " Inputs "
+    },
+    "5764766181671432621": {
+      "source": " 出力 ",
+      "target": " Outputs "
+    },
+    "3840284391502524323": {
+      "source": "非表示（{$INTERPOLATION}）:",
+      "target": "Hidden ({$INTERPOLATION}):"
+    },
+    "6904382587019461391": {
+      "source": " すべて戻す ",
+      "target": " Restore all "
+    },
+    "1268332698985856493": {
+      "source": "条件に合う信号がありません。",
+      "target": "No signals match the current filter."
+    },
+    "4212637555021996514": {
+      "source": " 絞り込みを解除 ",
+      "target": " Reset filters "
+    },
     "4368146401135756787": {
       "source": "カーソル: {$INTERPOLATION} ms",
       "target": "Cursor: {$INTERPOLATION} ms"
@@ -1561,6 +1661,42 @@
     "6090643727064733042": {
       "source": "選んだ手順: {$INTERPOLATION}",
       "target": "Chosen step: {$INTERPOLATION}"
+    },
+    "8699606184262443891": {
+      "source": "信号を検索",
+      "target": "Search signals"
+    },
+    "5968935914356447817": {
+      "source": "信号名で絞り込み… (/)",
+      "target": "Filter signals… (/)"
+    },
+    "3484688032091254986": {
+      "source": "検索を消す",
+      "target": "Clear search"
+    },
+    "1590728947429208341": {
+      "source": "信号の絞り込み",
+      "target": "Signal filter presets"
+    },
+    "1480745443463980321": {
+      "source": "participant で絞り込み",
+      "target": "Filter by participant"
+    },
+    "8286365889773298504": {
+      "source": "失敗前の表示範囲",
+      "target": "Pre-failure time window"
+    },
+    "6542778169597298929": {
+      "source": "時間軸の操作",
+      "target": "Timeline navigation"
+    },
+    "2370019744646040278": {
+      "source": "左へ移動",
+      "target": "Pan left"
+    },
+    "150968626374394471": {
+      "source": "右へ移動",
+      "target": "Pan right"
     },
     "6850339870794295920": {
       "source": "レイアウトの試験",
@@ -2073,98 +2209,6 @@
     "7912602377845951306": {
       "source": "未使用",
       "target": "Not in use"
-    },
-    "5154664877024693468": {
-      "source": " 失敗時刻へ移動 ",
-      "target": " Jump to failure "
-    },
-    "6681208731780724550": {
-      "source": "失敗前:",
-      "target": "Pre-failure:"
-    },
-    "8794060275065177624": {
-      "source": " 全体 ",
-      "target": " Whole run "
-    },
-    "8634432685597510939": {
-      "source": " すべて ",
-      "target": " All "
-    },
-    "1265424349923129709": {
-      "source": " 失敗に関係 ",
-      "target": " Related to failure "
-    },
-    "3398475876780553630": {
-      "source": " 失敗直前に変化 ",
-      "target": " Changed near failure "
-    },
-    "2408987094291824742": {
-      "source": " 入力 ",
-      "target": " Inputs "
-    },
-    "5764766181671432621": {
-      "source": " 出力 ",
-      "target": " Outputs "
-    },
-    "3840284391502524323": {
-      "source": "非表示（{$INTERPOLATION}）:",
-      "target": "Hidden ({$INTERPOLATION}):"
-    },
-    "6904382587019461391": {
-      "source": " すべて戻す ",
-      "target": " Restore all "
-    },
-    "1268332698985856493": {
-      "source": "条件に合う信号がありません。",
-      "target": "No signals match the current filter."
-    },
-    "4212637555021996514": {
-      "source": " 絞り込みを解除 ",
-      "target": " Reset filters "
-    },
-    "8699606184262443891": {
-      "source": "信号を検索",
-      "target": "Search signals"
-    },
-    "5968935914356447817": {
-      "source": "信号名で絞り込み… (/)",
-      "target": "Filter signals… (/)"
-    },
-    "3484688032091254986": {
-      "source": "検索を消す",
-      "target": "Clear search"
-    },
-    "1590728947429208341": {
-      "source": "信号の絞り込み",
-      "target": "Signal filter presets"
-    },
-    "1480745443463980321": {
-      "source": "participant で絞り込み",
-      "target": "Filter by participant"
-    },
-    "8286365889773298504": {
-      "source": "失敗前の表示範囲",
-      "target": "Pre-failure time window"
-    },
-    "1608510753308118889": {
-      "source": " 縮小 ",
-      "target": " Zoom out "
-    },
-    "9046027156478552906": {
-      "source": " ピン解除 ",
-      "target": " Unpin "
-    },
-    "6542778169597298929": {
-      "source": "時間軸の操作",
-      "target": "Timeline navigation"
-    },
-    "2370019744646040278": {
-      "source": "左へ移動",
-      "target": "Pan left"
-    },
-    "150968626374394471": {
-      "source": "右へ移動",
-      "target": "Pan right"
     }
   }
 }

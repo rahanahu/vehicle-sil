@@ -311,7 +311,16 @@ public:
 
     /// `peers` in the order of Scenario::participants.
     void begin(const std::vector<EnginePeer>& peers);
+    /// Extra-only participants referenced by TimelineRecord::extra_variables() that are not in
+    /// Scenario::participants, in first-seen order.
+    [[nodiscard]] const std::vector<std::string>& extra_participants() const noexcept { return extra_participants_; }
+    /// Provides control-agent schemas for extra_participants() (same order). Disconnected or
+    /// mismatched peers are skipped cleanly without affecting scenario steps or verdicts.
+    void begin_extra(const std::vector<EnginePeer>& peers);
     void sample(std::size_t participant, std::shared_ptr<const control::Snapshot> sample);
+    /// Queues a sample for an extra-only participant (index in extra_participants()). Recorded
+    /// only into TimelineRecord; never participates in scenario condition evaluation or verdicts.
+    void extra_sample(std::size_t extra_participant, std::shared_ptr<const control::Snapshot> sample);
     bool tick(SimTime p);
     void stopped_at(SimTime p);
     void cut_short();
@@ -405,6 +414,7 @@ private:
     void judge(SimTime p);
     void judge_write(const Write& write, const std::optional<control::OperationResult>& result, SimTime p);
     void observe(SimTime p, bool final_boundary = false);
+    void observe_extra(SimTime p);
     void evaluate(Watch& watch, SimTime t);
     void close(Watch& watch, SimTime t);
     void started(std::size_t step);
@@ -438,6 +448,17 @@ private:
     /// The time of the watch beside a ramp or a wave, for the messages: "from 40 ms to 120 ms, ...".
     [[nodiscard]] std::string during(std::size_t step, const Watch& watch) const;
 
+    struct ExtraVariable
+    {
+        std::size_t timeline_index = 0;                ///< index in TimelineRecord (>= scenario_.variables.size())
+        std::optional<std::size_t> scenario_participant{}; ///< set if participant is in scenario_.participants
+        std::optional<std::size_t> extra_participant{};    ///< set if participant is in extra_participants_
+        std::string name{};
+        control::ValueType type = control::ValueType::Real;
+        std::vector<control::EnumItem> items{};
+        std::optional<std::size_t> index{}; ///< index in participant's snapshot values
+    };
+
     const Scenario& scenario_;
     SimDuration tick_;
     std::optional<SimTime> stop_at_;
@@ -448,8 +469,13 @@ private:
     bool over_ = false;
     bool begun_ = false;
     SimTime now_{};                  ///< the tick being handled
+    std::vector<bool> participants_read_; ///< participants whose samples scenario conditions or motions read
+    bool any_read_ = false;          ///< true if any scenario participant is read by conditions or sample-based motions
     std::vector<Variable> variables_;
     std::vector<std::deque<std::shared_ptr<const control::Snapshot>>> samples_; ///< per participant, not looked at yet
+    std::vector<std::string> extra_participants_;
+    std::vector<ExtraVariable> extra_variables_;
+    std::vector<std::deque<std::shared_ptr<const control::Snapshot>>> extra_samples_;
     std::size_t next_ = 0;           ///< the next step to issue
     std::optional<SimTime> base_{SimTime{}}; ///< the end of the step before it; empty while that step waits
     std::deque<Watch> watches_;      ///< in step order
@@ -468,6 +494,7 @@ private:
     std::optional<SimTime> last_seen_{}; ///< the time of the last sample looked at
     /// With a record, once the scenario is over: the samples that were not looked at.
     std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> left_;
+    std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> extra_left_;
 };
 
 } // namespace vehicle_sil::scenario

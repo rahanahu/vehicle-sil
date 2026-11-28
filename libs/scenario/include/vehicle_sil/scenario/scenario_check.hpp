@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -47,14 +48,29 @@ struct ScenarioCheck
 /// each participant as a scenario can use it, from its entry and what its executable described.
 [[nodiscard]] ScenarioCatalog scenario_catalog(const config::CheckReport& check);
 
+/// Result of validating and resolving extra recorded variables (RunIntent::record) against a
+/// ScenarioCatalog.
+struct RecordedVariablesCheck
+{
+    std::vector<RecordedVariable> variables{};
+    std::vector<config::Finding> findings{};
+};
+
+/// Validates and resolves `requested` ("<participant>.<variable>" entries from RunIntent::record)
+/// against `catalog`. Deduplicates entries preserving first-seen order.
+[[nodiscard]] RecordedVariablesCheck check_recorded_variables(std::span<const std::string> requested,
+                                                              const ScenarioCatalog& catalog);
+
 /// Per participant of the checked configuration: whether the run gives its executable
 /// --sample-every-step (ecu_executable::kSampleEveryStepArgument). True where `scenario` asks for
 /// a sample in every step (its samples is every_step), reads a value of the participant
-/// (participants_read()) and the participant's --describe says that it takes the argument. An
-/// executable that does not say so is started without it (it would not know the argument); the
-/// check warns of it (scenario_samples_findings()) and the run refuses it if it sends its values
-/// less often than its step.
-[[nodiscard]] std::vector<bool> sample_every_step_participants(const config::CheckReport& check, const Scenario& scenario);
+/// (participants_read()) or `recorded` names one of its variables, and the participant's --describe
+/// says that it takes the argument. An executable that does not say so is started without it (it
+/// would not know the argument); for scenario-read participants the check warns of it
+/// (scenario_samples_findings()) and the run refuses it if it sends its values less often than its
+/// step (extra-recorded participants are best-effort and never trigger those checks).
+[[nodiscard]] std::vector<bool> sample_every_step_participants(const config::CheckReport& check, const Scenario& scenario,
+                                                               std::span<const RecordedVariable> recorded = {});
 
 /// What the check says about the samples `scenario` judges with (Finding::file is not set):
 /// - "scenario-samples-unsupported" (warning) for each participant whose values the scenario reads

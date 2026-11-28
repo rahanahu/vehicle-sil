@@ -5,6 +5,7 @@ import { authInterceptor } from '../core/auth/auth-interceptor';
 import { BATCH_MS } from '@vehicle-sil/gui-client';
 import { pageIntent } from '@vehicle-sil/gui-client/elements';
 import { FakeWebSockets, protocolExamples } from '@vehicle-sil/gui-client/testing';
+import { LanguageChoice, PAGE_RELOAD } from '../core/i18n/language-choice';
 import { SOCKET_FACTORY } from '../core/session/gui-client';
 import { CHECK_DELAY_MS, RunPage, readRunChoices } from './run-page';
 import { ACTION_GUARD } from './run-status';
@@ -1612,6 +1613,293 @@ describe('RunPage', () => {
     await settle();
     expect(thrInput().value).toBe('80');
   });
+
+  it('shows Recorded signals only with a scenario when record-signals is advertised, resets drafts on file switch, and preserves cleared record across language switch', async () => {
+    const appWithRecord = () => {
+      const base = response('app') as { launcher: { version: { features: string[] } } };
+      return {
+        ...base,
+        launcher: {
+          ...base.launcher,
+          version: {
+            ...base.launcher.version,
+            features: [...new Set([...base.launcher.version.features, 'record-signals'])],
+          },
+        },
+      };
+    };
+    const checkWithVars = () => {
+      const base = response('check-passed') as {
+        check: { participants: Record<string, unknown>[] };
+      };
+      return {
+        ...base,
+        check: {
+          ...base.check,
+          participants: [
+            {
+              name: 'Engine',
+              enabled: true,
+              manual: false,
+              required: true,
+              status: 'described',
+              step_ms: 10,
+              variables: [
+                {
+                  name: 'engine.demand',
+                  type: 'real',
+                  causality: 'input',
+                  unit: '%',
+                  min: 0,
+                  max: 100,
+                  builtin: false,
+                },
+                {
+                  name: 'engine.mode',
+                  type: 'enum',
+                  causality: 'parameter',
+                  unit: '',
+                  min: null,
+                  max: null,
+                  builtin: false,
+                },
+              ],
+            },
+            {
+              name: 'Dashboard',
+              enabled: true,
+              manual: false,
+              required: true,
+              status: 'described',
+              step_ms: 5,
+              variables: [
+                {
+                  name: 'dashboard.speed',
+                  type: 'integer',
+                  causality: 'output',
+                  unit: 'rpm',
+                  min: null,
+                  max: null,
+                  builtin: false,
+                },
+              ],
+            },
+          ],
+        },
+      };
+    };
+
+    const firstScenario = (response('scenarios') as { scenarios: { path: string }[] }).scenarios[0]
+      .path;
+    const secondFile = (response('configs') as { files: { path: string }[] }).files[1]?.path;
+
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithRecord());
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const initialCheck = await checkRequest();
+    expect((initialCheck.request.body as Record<string, unknown>)['record']).toBeUndefined();
+    initialCheck.flush(checkWithVars());
+    await settle();
+
+    const host = fixture.nativeElement as HTMLElement;
+    // Hidden for manual runs (no scenario selected)
+    expect(host.querySelector('[data-testid="record-signals"]')).toBeNull();
+
+    const page = fixture.componentInstance as unknown as {
+      selectFile(f: string): void;
+      selectScenario(s: string | null): void;
+    };
+    page.selectScenario(firstScenario);
+    TestBed.tick();
+    (await checkRequest()).flush(checkWithVars());
+    await settle();
+
+    const details = host.querySelector<HTMLDetailsElement>('[data-testid="record-signals"]');
+    expect(details).not.toBeNull();
+    expect(details!.open).toBe(false);
+    expect(host.querySelector('[data-testid="record-signals-count"]')).toBeNull();
+
+    // Open disclosure, type into filter & custom drafts, and pick Dashboard.dashboard.speed
+    details!.open = true;
+    TestBed.tick();
+    const filterInput = host.querySelector<HTMLInputElement>(
+      '[data-testid="record-signal-filter"]',
+    )!;
+    filterInput.value = 'dashboard';
+    filterInput.dispatchEvent(new Event('input'));
+    const customInput = host.querySelector<HTMLInputElement>(
+      '[data-testid="record-signal-custom"]',
+    )!;
+    customInput.value = 'Engine.draft';
+    customInput.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    const opt = host.querySelector<HTMLInputElement>(
+      '[data-testid="record-signal-option-Dashboard.dashboard.speed"] input[type="checkbox"]',
+    )!;
+    opt.click();
+    TestBed.tick();
+    expect(host.querySelector('[data-testid="record-signals-count"]')?.textContent).toContain('1');
+    expect(pageIntent.get().record).toEqual(['Dashboard.dashboard.speed']);
+
+    const recCheck = await checkRequest();
+    expect(recCheck.request.body).toMatchObject({
+      scenario: firstScenario,
+      record: ['Dashboard.dashboard.speed'],
+    });
+    recCheck.flush(checkWithVars());
+    await advance(1);
+    await settle();
+
+    button(fixture, 'start').click();
+    const runReq = http.expectOne('api/run');
+    expect(runReq.request.body).toMatchObject({
+      scenario: firstScenario,
+      record: ['Dashboard.dashboard.speed'],
+    });
+    runReq.flush(response('run'));
+
+    // Switching back to manual hides selector and omits record from check/pageIntent
+    page.selectScenario(null);
+    TestBed.tick();
+    expect(host.querySelector('[data-testid="record-signals"]')).toBeNull();
+    expect(pageIntent.get().record).toBeUndefined();
+    const manualCheck = await checkRequest();
+    expect((manualCheck.request.body as Record<string, unknown>)['record']).toBeUndefined();
+    manualCheck.flush(checkWithVars());
+    await settle();
+
+    // Switching config file resets filter and custom draft inputs inside RecordSignals
+    if (secondFile) {
+      page.selectScenario(firstScenario);
+      TestBed.tick();
+      (await checkRequest()).flush(checkWithVars());
+      await settle();
+      const d2 = host.querySelector<HTMLDetailsElement>('[data-testid="record-signals"]')!;
+      d2.open = true;
+      TestBed.tick();
+      const f2 = host.querySelector<HTMLInputElement>('[data-testid="record-signal-filter"]')!;
+      f2.value = 'speed';
+      f2.dispatchEvent(new Event('input'));
+      const c2 = host.querySelector<HTMLInputElement>('[data-testid="record-signal-custom"]')!;
+      c2.value = 'Engine.custom';
+      c2.dispatchEvent(new Event('input'));
+      TestBed.tick();
+      page.selectFile(secondFile);
+      TestBed.tick();
+      (await checkRequest()).flush(checkWithVars());
+      await settle();
+      page.selectScenario(firstScenario);
+      TestBed.tick();
+      (await checkRequest()).flush(checkWithVars());
+      await settle();
+      const d3 = host.querySelector<HTMLDetailsElement>('[data-testid="record-signals"]')!;
+      d3.open = true;
+      TestBed.tick();
+      expect(
+        host.querySelector<HTMLInputElement>('[data-testid="record-signal-filter"]')!.value,
+      ).toBe('');
+      expect(
+        host.querySelector<HTMLInputElement>('[data-testid="record-signal-custom"]')!.value,
+      ).toBe('');
+      page.selectFile('bad-lines.yaml');
+      TestBed.tick();
+      (await checkRequest()).flush(checkWithVars());
+      await settle();
+    }
+
+    // Ended session with intent.scenario + intent.record restores selected signals
+    const baseSession = (server('ws-pass')[3] as { session: Record<string, unknown> }).session;
+    const endedSessionMsg = {
+      type: 'session',
+      stream_seq: 40,
+      session: {
+        ...baseSession,
+        id: '77',
+        file: 'bad-lines.yaml',
+        state: 'ended',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        allowed: { start: { ok: true, reason: null, message: null } },
+        intent: {
+          disable: [],
+          manual: [],
+          scenario: firstScenario,
+          record: ['Engine.engine.mode'],
+          speed: 1,
+        },
+      },
+    };
+    fake.last().send(endedSessionMsg);
+    fake.last().send({ type: 'synced', stream_seq: 41, run_id: '77', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const restoredCheck = await checkRequest();
+    expect(restoredCheck.request.body).toMatchObject({
+      scenario: firstScenario,
+      record: ['Engine.engine.mode'],
+    });
+    restoredCheck.flush(checkWithVars());
+    await settle();
+
+    // Clear all omits record from intent and next check, and persists record: [] across language switch
+    const detailsRestored = host.querySelector<HTMLDetailsElement>(
+      '[data-testid="record-signals"]',
+    )!;
+    detailsRestored.open = true;
+    TestBed.tick();
+    host.querySelector<HTMLButtonElement>('[data-testid="record-signals-clear"]')!.click();
+    TestBed.tick();
+    expect(pageIntent.get().record).toBeUndefined();
+    const clearedCheck = await checkRequest();
+    expect((clearedCheck.request.body as Record<string, unknown>)['record']).toBeUndefined();
+    clearedCheck.flush(checkWithVars());
+    await settle();
+
+    // Simulate JA -> EN language switch carryover on the SAME ended session whose intent.record is non-empty
+    const lang = TestBed.inject(LanguageChoice);
+    (lang as unknown as { reload: () => void }).reload = vi.fn();
+    lang.choose('en');
+    fixture.destroy();
+    TestBed.resetTestingModule();
+    sessionStorage.setItem('vehicle-sil-gui-token', 'secret');
+    fake = new FakeWebSockets();
+    await TestBed.configureTestingModule({
+      imports: [RunPage],
+      providers: [
+        provideHttpClient(withInterceptors([authInterceptor])),
+        provideHttpClientTesting(),
+        { provide: SOCKET_FACTORY, useValue: fake.factory },
+        { provide: ACTION_GUARD, useValue: 0 },
+        { provide: PAGE_RELOAD, useValue: vi.fn() },
+      ],
+    }).compileComponents();
+    http = TestBed.inject(HttpTestingController);
+    const reloaded = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithRecord());
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send({
+      ...(server('ws-pass')[0] as Record<string, unknown>),
+      session: endedSessionMsg.session,
+    });
+    fake.last().send({ type: 'synced', stream_seq: 1, run_id: '77', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const afterLangCheck = await checkRequest();
+    expect((afterLangCheck.request.body as Record<string, unknown>)['record']).toBeUndefined();
+    afterLangCheck.flush(checkWithVars());
+    await settle();
+    expect(
+      (reloaded.nativeElement as HTMLElement).querySelector('[data-testid="record-signals-count"]'),
+    ).toBeNull();
+    localStorage.removeItem('vehicle-sil-gui-language');
+  });
 });
 
 describe('readRunChoices', () => {
@@ -1629,6 +1917,9 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, session: null, chosen: null, speed: 2.5 })).not.toBeNull();
     expect(readRunChoices({ ...choices, startPaused: true })?.startPaused).toBe(true);
     expect(readRunChoices({ ...choices, afterScenario: 'pause' })?.afterScenario).toBe('pause');
+    expect(readRunChoices({ ...choices, record: ['Engine.engine.mode'] })?.record).toEqual([
+      'Engine.engine.mode',
+    ]);
     expect(readRunChoices({ ...choices, scenario: 'scenarios/a.yaml' })?.scenario).toBe(
       'scenarios/a.yaml',
     );
@@ -1658,6 +1949,7 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, case: 123 })).toBeNull();
     expect(readRunChoices({ ...choices, params: { a: null } })).toBeNull();
     expect(readRunChoices({ ...choices, manual: ['A', 1] })).toBeNull();
+    expect(readRunChoices({ ...choices, record: ['A', 1] })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: true })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: 'yes' })).toBeNull();
   });

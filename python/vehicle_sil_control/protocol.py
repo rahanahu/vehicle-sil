@@ -50,9 +50,9 @@ class InvalidRequest(ValueError):
         self.code = code
 
 
-def validate_name_sequence(seq: Sequence[str], name: str) -> list[str]:
+def validate_name_sequence(seq: Sequence[str], name: str, *, kind: str = "participant names") -> list[str]:
     if isinstance(seq, (str, bytes)):
-        raise TypeError(f"{name} must be a sequence of participant names, not {type(seq).__name__}")
+        raise TypeError(f"{name} must be a sequence of {kind}, not {type(seq).__name__}")
     out: list[str] = []
     for item in seq:
         if not isinstance(item, str) or not item:

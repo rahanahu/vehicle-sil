@@ -726,6 +726,7 @@ class Serve:
         disable: Sequence[str] = (),
         enable: Sequence[str] = (),
         manual: Sequence[str] = (),
+        record: Sequence[str] = (),
         connect: Optional[Mapping[str, str]] = None,
         time_policy: Optional[str] = None,
         speed: Optional[Union[float, int, str]] = None,
@@ -743,6 +744,7 @@ class Serve:
         disable_list = validate_name_sequence(disable, "disable")
         enable_list = validate_name_sequence(enable, "enable")
         manual_list = validate_name_sequence(manual, "manual")
+        record_list = list(dict.fromkeys(validate_name_sequence(record, "record", kind="signal names")))
 
         has_request = request is not None
         has_intent = intent is not None
@@ -764,7 +766,7 @@ class Serve:
                     after_scenario,
                 )
             )
-            or bool(disable_list or enable_list or manual_list)
+            or bool(disable_list or enable_list or manual_list or record_list)
         )
         if int(has_request) + int(has_intent) + int(has_kwargs) > 1:
             raise ValueError("pass at most one of request, intent, or intent keyword arguments (variant, scenario, ...)")
@@ -794,6 +796,8 @@ class Serve:
                 intent_dict["enable"] = enable_list
             if manual_list:
                 intent_dict["manual"] = manual_list
+            if record_list:
+                intent_dict["record"] = record_list
             if connect is not None:
                 if not isinstance(connect, Mapping):
                     raise TypeError("connect must be a mapping")

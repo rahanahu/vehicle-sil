@@ -290,6 +290,31 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
     {
         origin.fields.emplace_back("manual");
     }
+    std::vector<std::string> merged_record;
+    bool record_from_file = false;
+    for (const std::string& entry : written.record)
+    {
+        if (!has(merged_record, entry))
+        {
+            merged_record.push_back(entry);
+            if (!has(given.record, entry))
+            {
+                record_from_file = true;
+            }
+        }
+    }
+    for (const std::string& entry : given.record)
+    {
+        if (!has(merged_record, entry))
+        {
+            merged_record.push_back(entry);
+        }
+    }
+    intent.record = std::move(merged_record);
+    if (record_from_file)
+    {
+        origin.fields.emplace_back("record");
+    }
     return out;
 }
 

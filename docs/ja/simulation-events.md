@@ -706,7 +706,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "scenario-cases",
     "scenario-templates",
     "scenario-variable-compare",
-    "external-registry"
+    "external-registry",
+    "record-signals"
   ]
 }
 ```
@@ -781,6 +782,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-templates` | 再利用可能なシナリオテンプレート（`vehicle_sil_scenario_template: 1`）、`call_stack` 出典情報、テンプレート由来のパラメーターメタデータ（`param_meta` と `missing_params`） |
 | `scenario-variable-compare` | シナリオ条件での実行時の変数間比較（`{ variable: <participant>.<変数> }`、[scenario.md](scenario.md#条件) の「条件」） |
 | `external-registry` | `run`、`serve`、`test` の `--external-registry <uri>`: 起動済みのループバック `sil-kit-registry` に実行ごとの `/vsil-<16hex>` シミュレーションパスで接続する（[simulation-run.md](simulation-run.md#vector-sil-kit-dashboard-で実行を観測する--external-registry) の「Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）」） |
+| `record-signals` | `check` と `run` の `--record <participant>.<variable>`、要求ファイル・`serve` インライン `intent` の `"record"`、および `--timeline` の `variables[]` の省略可能な `"recorded": true`（シナリオ判定に影響せず追加の ECU 信号を記録する） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |
@@ -814,6 +816,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-cases` | シナリオの `cases:`、`--case` および要求ファイル・`serve` `intent` の `"case"`、`scenario.case`（未選択・不明時は `null`）、`cases`、`case_details`、インライン `intent.cli_params` |
 | `scenario-templates` | シナリオテンプレート（`- template:`）、`steps[].file`・`call_stack`、`scenario.param_meta`、`scenario.missing_params`、`scenario.params[]` のテンプレート由来 `type`・`values`・`description` |
 | `scenario-variable-compare` | `expect` と `wait_until` の `{ variable: ... }`、`--timeline` の `watch.conditions[].compare[]` の `variable` と `failed.conditions[]` の `compared`、両辺の値と時刻を示す失敗メッセージ |
+| `record-signals` | `--record <participant>.<variable>`、要求ファイルと `serve` `intent` の `"record"`、照合の指摘 `record-*`、`--timeline` の `variables[]` の省略可能な `"recorded": true` |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは書けません。書く呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します。`scenario-time` のあるビルドでは、時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）を、シナリオの実行中も、標準入力の同じコマンドと同じように受け付けます。シナリオの結果は変わりません。`scenario-control` だけのビルドは、これらも同じ理由で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。
 

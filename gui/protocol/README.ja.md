@@ -81,11 +81,11 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
 | `GET api/config?file=<configuration file>` | ファイルの文と、そのバイト列の SHA-256: `{file, text, stamp}`（下の「構成ファイルの文」） | `config.json` |
-| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, record, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: 文をそのファイルとして保存する。既定では、実行されるコマンドを変えない編集だけ（下の「文を保存する（`POST api/config`）」） | `save-config.json`、`error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, record, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | 対象の `{instance, run_id}`、または 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
@@ -261,7 +261,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 409 | `starting` | `api/run`: 別の `api/run` が実行を始めている途中（ランチャーをまだ登録していない） |
 | 422 | `check-failed` | `api/run`: 実行を成す内容の照合が通らなかったので、実行を始めなかった（`detail` は `{result, findings}`。上の「照合と開始」）。例: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
-| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った、`scenario-handover` 機能のないランチャーに `after_scenario: "pause"` を送った、または `scenario-cases` 機能のないランチャーに `case` を送った |
+| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った、`scenario-handover` 機能のないランチャーに `after_scenario: "pause"` を送った、`scenario-cases` 機能のないランチャーに `case` を送った、または `record-signals` 機能のないランチャーに空でない `record` を送った |
 | 409 | `scenario-running` | `api/write`: 動いている実行が引き継ぎ前のシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
 | 409 | `session-changed` | `api/stop-session` と対象を指定した `api/time` では、サーバーの識別子か実行が変わった。`api/write` では、指定した実行 ID が動いている実行と違う。操作は送られていない。例 `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: ファイルの中身がもう `stamp` でない、または新しいファイル（`stamp` が `null`）がすでにある |
@@ -285,8 +285,8 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 504 | `check-timeout` | 照合（または `api/connections` の一覧）が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: `limits.write_timeout_s` 以内に Control Server の応答または全対象 ECU のキュー投入が完了しなかった（操作番号の確定後は `detail` に `{operation, state: "sent"}`）。反映される可能性がある（送り直さない） |
 
-- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`after_scenario`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
-- `invalid-field` の対象: `speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`after_scenario`（`scenario` なしの `"pause"` や `stop_at_ms` との併用も含む）、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`at_ms`、`value`、`id`、`run_id`、`instance`（`run_id` と `instance` の片方だけの指定を含む）、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
+- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`case`、`after_scenario`、`record`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `invalid-field` の対象: `speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`after_scenario`（`scenario` なしの `"pause"` や `stop_at_ms` との併用も含む）、`record`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`at_ms`、`value`、`id`、`run_id`、`instance`（`run_id` と `instance` の片方だけの指定を含む）、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
 - `unsupported` の対象: `control-server` を持たないのに `api/write` を送った。（サーバーは起動時に `time-commands`、`stdin-run-until`、`state`、`speed`、`start-paused`、`scenario`、`manual-participants` を必須として確かめるので、`api/time` にこの場合はありません。）
 
 例のファイルは次のとおりです。ほかのコードは、GUI サーバーのテストの中で確認します。
@@ -444,7 +444,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数 |
 | `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
 | `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
-| `intent` | この実行を開始したときの任意の条件（`variant`、`scenario`、`case`、`after_scenario`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms` など）。`scenario` は GUI API のルート相対パスで保持するため、`{"file": session.file, ...session.intent}` をそのまま `POST api/run` へ渡して再実行できる。旧サーバーでは省略または `null` |
+| `intent` | この実行を開始したときの任意の条件（`variant`、`scenario`、`case`、`after_scenario`、`record`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms` など）。`scenario` は GUI API のルート相対パスで保持するため、`{"file": session.file, ...session.intent}` をそのまま `POST api/run` へ渡して再実行できる。旧サーバーでは省略または `null` |
 
 フィールドごとの補足です。
 

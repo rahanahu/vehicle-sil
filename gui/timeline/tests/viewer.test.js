@@ -3449,3 +3449,108 @@ test('stepFocusView preserves whole-run view when selecting steps at domain edge
   const panned = T.stepFocusView(m, nearCroppedRight, [0, 200], true);
   assert.ok(panned[1] > 200 && panned[1] - panned[0] === 200);
 });
+
+test('modelMetadata keeps watched strictly from info.watched and exposes recorded for extra recorded signals', () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Engine.engine.throttle',
+        participant: 'Engine',
+        type: 'real',
+        causality: 'input',
+        unit: '%',
+        min: 0,
+        max: 100,
+        items: [],
+        ecu_step_ms: 10,
+        written: true,
+        watched: false,
+      },
+      {
+        name: 'Engine.engine.speed',
+        participant: 'Engine',
+        type: 'integer',
+        causality: 'output',
+        unit: 'rpm',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Dashboard.dashboard.engine_speed',
+        participant: 'Dashboard',
+        type: 'integer',
+        causality: 'output',
+        unit: 'rpm',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: false,
+        recorded: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 5,
+        kind: 'set',
+        text: 'set Engine.engine.throttle = 50',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 0,
+        end_ms: 0,
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+    ],
+    series: [
+      makeSeries('Engine.engine.throttle', 'written', [[0, 50]], { encoding: 'all' }),
+      makeSeries(
+        'Engine.engine.speed',
+        'sampled',
+        [
+          [0, 0],
+          [100, 1200],
+        ],
+        { last_ms: 100 },
+      ),
+      makeSeries(
+        'Dashboard.dashboard.engine_speed',
+        'sampled',
+        [
+          [0, 0],
+          [100, 1180],
+        ],
+        { last_ms: 100 },
+      ),
+    ],
+  });
+  tl.scenario.recorded_to_ms = 100;
+  tl.scenario.over_at_ms = 100;
+  const m = model(tl);
+  const meta = T.modelMetadata(m, 'extra.timeline.json');
+  const byName = new Map(meta.variables.map((v) => [v.name, v]));
+
+  assert.equal(byName.get('Engine.engine.throttle').written, true);
+  assert.equal(byName.get('Engine.engine.throttle').watched, false);
+  assert.equal(byName.get('Engine.engine.throttle').recorded, false);
+
+  assert.equal(byName.get('Engine.engine.speed').written, false);
+  assert.equal(byName.get('Engine.engine.speed').watched, true);
+  assert.equal(byName.get('Engine.engine.speed').recorded, false);
+
+  // Extra recorded signal has sampled points but watched MUST remain false and recorded true.
+  const extra = byName.get('Dashboard.dashboard.engine_speed');
+  assert.equal(extra.written, false);
+  assert.equal(extra.watched, false);
+  assert.equal(extra.recorded, true);
+  assert.equal(m.byName.get('Dashboard.dashboard.engine_speed').sampled.v[1], 1180);
+});

@@ -178,6 +178,11 @@ mat-card-content {
   max-inline-size: 100%;
 }
 
+.record-session {
+  margin-block-start: var(--app-space-1);
+  font: var(--mat-sys-body-medium);
+}
+
 .error {
   margin: var(--app-space-2) 0 0;
   color: var(--mat-sys-error);
