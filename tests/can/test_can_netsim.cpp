@@ -1428,3 +1428,162 @@ TEST_CASE(simulator_executable_gives_the_same_frame_times)
     }
     CHECK(silkit.traces == reference);
 }
+
+TEST_CASE(passive_observer_captures_exact_arbitration_times_without_interference)
+{
+    // A passive RX-only ICanController attached to SimulationController (the exact RunCanRecorder
+    // pattern: CreateCanController + AddFrameHandler(RX) + Start() in CommunicationReady, NEVER
+    // SetBaudRate() or SendFrame()) must NOT alter CanBusSimulator arbitration timing or trigger
+    // bitrate conflicts, and must observe every transmitted frame at its exact arbitration end time.
+    const auto peers = scenario();
+    const Traces reference = run_on_virtual_bus(peers, 1ms);
+
+    InProcessRegistry registry;
+    SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = registry.uri;
+    controllerOptions.stop_at = kEnd - SimTime{} + 20ms;
+    controllerOptions.required_participants.emplace_back("NetworkSimulator");
+    for (const PeerSpec& p : peers)
+    {
+        controllerOptions.required_participants.push_back(p.name);
+    }
+    SimulationController controller(controllerOptions);
+
+    struct ObservedFrame
+    {
+        SimTime at{};
+        std::uint32_t id = 0;
+        std::uint8_t first_byte = 0;
+    };
+    struct ObserverState
+    {
+        std::mutex mutex;
+        bool closed = false;
+        std::vector<ObservedFrame> frames;
+    };
+    auto obsState = std::make_shared<ObserverState>();
+    auto* passiveCan = controller.runtime().participant().CreateCanController("vehicle_sil_can_tap_" + std::string(kNetwork), kNetwork);
+    passiveCan->AddFrameHandler(
+        [obsState](sk::ICanController*, const sk::CanFrameEvent& event) {
+            const std::lock_guard lock(obsState->mutex);
+            if (obsState->closed)
+            {
+                return;
+            }
+            CHECK(event.timestamp.count() >= 0);
+            ObservedFrame f;
+            f.at = vehicle_sil::from_silkit_time(event.timestamp);
+            f.id = event.frame.canId;
+            f.first_byte = event.frame.dataField.empty() ? 0 : event.frame.dataField[0];
+            obsState->frames.push_back(f);
+        },
+        static_cast<SilKit::Services::DirectionMask>(SilKit::Services::TransmitDirection::RX));
+    controller.runtime().add_communication_ready_handler([passiveCan, obsState] {
+        {
+            const std::lock_guard lock(obsState->mutex);
+            if (obsState->closed)
+            {
+                return;
+            }
+        }
+        passiveCan->Start();
+    });
+
+    std::vector<ParticipantRuntime*> runtimes;
+    ParticipantRuntime simRuntime(
+        coordinated_options("NetworkSimulator", registry.uri, VirtualTimeOptions{1ms, std::nullopt, kEnd}));
+    CanBusSimulatorOptions simOpts;
+    simOpts.default_bitrate = 500'000; // intentionally differs from peer bitrate (250k) to verify no conflict
+    std::mutex warnMu;
+    std::vector<std::string> warnings;
+    CanBusSimulator simulator(simRuntime.participant(), std::vector<std::string>{kNetwork}, simOpts,
+                              [&warnMu, &warnings](CanBusSimulator::LogLevel level, std::string_view message) {
+                                  if (level == CanBusSimulator::LogLevel::Warning)
+                                  {
+                                      const std::lock_guard lock(warnMu);
+                                      warnings.emplace_back(message);
+                                  }
+                              });
+    simRuntime.set_step_handler([&simulator](SimTime now, SimDuration step) { simulator.step(now, step); });
+    runtimes.push_back(&simRuntime);
+
+    struct Node
+    {
+        std::unique_ptr<ParticipantRuntime> runtime;
+        std::unique_ptr<SilKitCanPort> port;
+        std::unique_ptr<Scripted> scripted;
+        std::unique_ptr<Host> host;
+    };
+    std::vector<Node> nodes(peers.size());
+    for (std::size_t i = 0; i < peers.size(); ++i)
+    {
+        auto& n = nodes[i];
+        n.runtime = std::make_unique<ParticipantRuntime>(
+            coordinated_options(peers[i].name, registry.uri, VirtualTimeOptions{peers[i].step, std::nullopt, kEnd}));
+        SilKitCanPortOptions portOpts;
+        portOpts.bitrate = kBitrate;
+        auto* can = n.runtime->participant().CreateCanController("CAN", kNetwork);
+        n.port = std::make_unique<SilKitCanPort>(*can, portOpts);
+        n.runtime->add_communication_ready_handler([p = n.port.get()] { p->start(); });
+        n.scripted = std::make_unique<Scripted>(peers[i].script);
+        n.host = std::make_unique<Host>();
+        n.host->add(*n.scripted, *n.port);
+        vehicle_sil::can::bind_host(*n.runtime, *n.host);
+        runtimes.push_back(n.runtime.get());
+    }
+
+    start_together(controller, runtimes, 60s);
+    for (auto* rt : runtimes)
+    {
+        const auto state = rt->wait_until_finished(scaled_timeout(60s));
+        CHECK(state && *state == orch::ParticipantState::Shutdown);
+    }
+    {
+        const std::lock_guard lock(obsState->mutex);
+        obsState->closed = true;
+    }
+    for (auto& n : nodes)
+    {
+        n.port->close();
+    }
+
+    // 1. Peer arbitration traces match the reference virtual bus identically!
+    Traces traces;
+    traces.reserve(peers.size());
+    for (std::size_t i = 0; i < peers.size(); ++i)
+    {
+        CHECK(!nodes[i].host->failed());
+        traces.push_back(nodes[i].scripted->trace());
+    }
+    if (traces != reference)
+    {
+        print_first_difference(reference, traces);
+    }
+    CHECK(traces == reference);
+
+    // 2. Zero bitrate conflicts; simulator learned 250k from the ECUs untouched by passive observer.
+    const auto stats = simulator.statistics(kNetwork);
+    CHECK_EQ(stats.bitrate, kBitrate);
+    CHECK_EQ(stats.bitrate_conflicts, std::uint64_t{0});
+    CHECK(warnings.empty());
+
+    // 3. Passive observer captured every transmitted frame at its exact arbitration timestamp (tx.end).
+    std::vector<ObservedFrame> observed;
+    {
+        const std::lock_guard lock(obsState->mutex);
+        observed = obsState->frames;
+    }
+    CHECK_EQ(observed.size(), stats.transmissions);
+    CHECK(observed.size() > 0);
+    // Cross-check every rx line recorded by listen-only peer "R1" (index 2 in scenario())
+    // against the passive observer's captured (timestamp, id, first_byte) sequence.
+    CHECK(peers.at(2).name == "R1");
+    const auto& listenerTrace = traces.at(2);
+    std::vector<std::string> observerLines;
+    for (const ObservedFrame& f : observed)
+    {
+        observerLines.push_back(std::to_string(to_ns(f.at)) + " rx " + std::to_string(f.id) + " " +
+                                std::to_string(f.first_byte));
+    }
+    CHECK(observerLines == listenerTrace);
+}

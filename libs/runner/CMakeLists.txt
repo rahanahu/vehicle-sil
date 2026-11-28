@@ -13,6 +13,7 @@ add_library(vehicle_sil_runner STATIC
   src/host_addresses.cpp
   src/run.cpp
   src/run_assess.cpp
+  src/run_can_recorder.cpp
   src/run_connect.cpp
   src/run_control.cpp
   src/run_controls.cpp

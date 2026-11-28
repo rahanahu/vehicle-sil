@@ -710,7 +710,8 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "record-signals",
     "record-after-fail",
     "manual-timeline",
-    "record-events"
+    "record-events",
+    "record-can"
   ]
 }
 ```
@@ -789,6 +790,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `record-after-fail` | `--record-after-fail-ms <ms>` on `check` and `run` and `"record_after_fail_ms"` in request files and `serve` inline `intent`: continues passive sample recording into `--timeline` for a short virtual-time tail after a normal assertion or wait-timeout failure |
 | `manual-timeline` | `run --record ... --timeline <file>` (and `serve` runs with `record` + `timeline`) without `--scenario`: passive manual-run timeline recording (`scenario: null`, top-level `recorded_to_ms`, and top-level `timeline` in `run --json`) |
 | `record-events` | `--record-events` on `check` and `run`, `"record_events"` in request files and `serve` inline `intent`, and bounded virtual-timestamped structured ECU events (`events[]` and `limits.events_*`) in `--timeline` |
+| `record-can` | `--record-can` on `check` and `run`, `"record_can"` in request files and `serve` inline `intent`, and bounded virtual-timestamped CAN frames (`can_frames[]` and `limits.can_*`) via passive SIL Kit CAN observers in `--timeline` |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 | `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |
@@ -826,6 +828,7 @@ Each name indicates that the following are present:
 | `record-after-fail` | `--record-after-fail-ms <ms>`, `"record_after_fail_ms"` in request files and `serve` `intent`, and post-failure passive tail extension of `recorded_to_ms` in `--timeline` |
 | `manual-timeline` | `--timeline` without `--scenario` when `--record` / `"record"` is non-empty, `scenario: null` with top-level `recorded_to_ms` in `--timeline`, and top-level `timeline` in `run --json` for manual runs |
 | `record-events` | `--record-events`, `"record_events"` in request files and `serve` `intent`, `--timeline` without `--scenario` when `record_events` is true, and optional `events[]`, `limits.events_per_participant`, `limits.events_total` and `limits.events_dropped[]` in `--timeline` |
+| `record-can` | `--record-can`, `"record_can"` in request files and `serve` `intent`, `--timeline` without `--scenario` when `record_can` is true, and optional `can_frames[]`, `limits.can_frames_per_network`, `limits.can_frames_total` and `limits.can_dropped[]` in `--timeline` |
 
 In a build with `scenario-control`, clients cannot write while a scenario runs: calls that write are rejected with `FAILED_PRECONDITION` (reason `scenario-running`). In a build with `scenario-time`, calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) are accepted during a scenario, as the same commands from stdin are, and do not change the result of the scenario; a build with `scenario-control` alone rejects them with the same reason (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
 

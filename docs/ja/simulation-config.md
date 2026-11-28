@@ -882,7 +882,7 @@ variants:
 
 ```text
 vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
-                         [--record <participant>.<variable>]... [--record-after-fail-ms <ms>] [--record-events]
+                         [--record <participant>.<variable>]... [--record-after-fail-ms <ms>] [--record-events] [--record-can]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -894,7 +894,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
-                       [--timeline <file>] [--record <participant>.<variable>]... [--record-after-fail-ms <ms>] [--record-events]
+                       [--timeline <file>] [--record <participant>.<variable>]... [--record-after-fail-ms <ms>] [--record-events] [--record-can]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
                        [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -938,10 +938,11 @@ vehicle_sil_launch version [--json]
 | `--case <name>` | `check`、`run`（`--scenario` と一緒に）、`test` | シナリオの `cases` から名前付きケースを選びます（[scenario.md](scenario.md#名前付きケースcases--case) の「名前付きケース」）。`test` では繰り返せます。 |
 | `--variant <name>` | | 設定ファイルの機種を選びます（[機種](#機種variants--variant)）。 |
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
-| `--timeline <file>` | `run` だけ、`--scenario`、`--record` または `--record-events` と一緒に | 実行が書いた値・見た値およびオプトインの仮想時刻付き ECU イベント（シナリオ実行、または `--record` か `--record-events` を付けた手動実行）を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
+| `--timeline <file>` | `run` だけ、`--scenario`、`--record`、`--record-events` または `--record-can` と一緒に | 実行が書いた値・見た値およびオプトインの仮想時刻付き ECU イベント・CAN フレーム（シナリオ実行、または `--record`・`--record-events`・`--record-can` を付けた手動実行）を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
 | `--record <participant>.<variable>` | `check` と `run` | シナリオの判定に影響せず追加の ECU 変数を `--timeline` にサンプリング記録します（繰り返せます。participant の起動前に検証されます）。 |
 | `--record-after-fail-ms <ms>` | `check` と `run`、`--scenario` と一緒にだけ | 通常のシナリオの判定失敗または待ち時間切れの後に、仮想時刻を最大 `<ms>` ms（1 から 600000）受動的に進め、後続の手順・書き込み・揺れを一切行わずに失敗後のサンプルを `--timeline` へ記録します（`--timeline` がない実行では何もしません）。 |
 | `--record-events` | `check` と `run` | 接続中のすべての制御エージェントから送られる仮想時刻付きの構造化 ECU イベント（`Ecu::log()` / `control::Agent::log()`）を上限付きで `--timeline`（`events[]`）へ記録します。子プロセスの生の `stdout`/`stderr` パイプは実時間のみで、仮想時刻軸には配置しません（`--timeline` がない実行では何もしません）。 |
+| `--record-can` | `check` と `run` | 受動的な受信専用の SIL Kit CAN オブザーバーを使って、仮想時刻付き CAN フレームを上限付きで `--timeline`（`can_frames[]`）へ記録します（`SetBaudRate()` や `SendFrame()` は一切呼びません）。根拠のある仮想時刻は時刻同期 participant の送信フレームに適用され、`timestamp < 0` で届くフレーム（例: コントローラーの初回ステップ前）は仮想時刻を捏造せず破棄して件数を記録します。一方、仮想時刻が動き始めた後（`t >= 0`）に非同期送信元や外部ブリッジが送るフレームには、ハンドラー実行前に SIL Kit の同期受信側がコントローラーの現在ステップ時刻を付与します（`--timeline` がない実行では何もしません）。 |
 | `--control-metrics <file>` | `run` だけ | 実行の終わりに、Control Hub の SIL Kit トランスポートの累計カウンター（`HubTransport::stats()`）を JSON のファイルに書きます。`--control` は要りません（[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」）。 |
 | `--external-registry <uri>` | `run`、`serve`、`test` | プロセス内の registry を立てる代わりに、起動済みのループバック SIL Kit registry（`silkit://<loopback-host>:<port>`。ポートは 1 から 65535、パスなし）へ接続し、実行ごとに分離された `/vsil-<id>` のシミュレーションパスを使います（[simulation-run.md](simulation-run.md#vector-sil-kit-dashboard-で実行を観測する--external-registry) の「Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）」）。 |
 | `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |

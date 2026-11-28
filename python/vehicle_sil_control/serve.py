@@ -730,6 +730,7 @@ class Serve:
         record: Sequence[str] = (),
         record_after_fail_ms: Optional[int] = None,
         record_events: Optional[bool] = None,
+        record_can: Optional[bool] = None,
         connect: Optional[Mapping[str, str]] = None,
         time_policy: Optional[str] = None,
         speed: Optional[Union[float, int, str]] = None,
@@ -769,6 +770,7 @@ class Serve:
                     after_scenario,
                     record_after_fail_ms,
                     record_events,
+                    record_can,
                 )
             )
             or bool(disable_list or enable_list or manual_list or record_list)
@@ -809,6 +811,10 @@ class Serve:
                 if not isinstance(record_events, bool):
                     raise TypeError("record_events must be a bool")
                 intent_dict["record_events"] = record_events
+            if record_can is not None:
+                if not isinstance(record_can, bool):
+                    raise TypeError("record_can must be a bool")
+                intent_dict["record_can"] = record_can
             if connect is not None:
                 if not isinstance(connect, Mapping):
                     raise TypeError("connect must be a mapping")

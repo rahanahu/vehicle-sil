@@ -321,6 +321,7 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
     bool strict = false;
     bool start_paused = false;
     bool record_events = false;
+    bool record_can = false;
     std::vector<std::string> disable;
     std::vector<std::string> enable;
     std::vector<std::string> manual;
@@ -360,6 +361,11 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
         if (a == "--record-events")
         {
             record_events = true;
+            continue;
+        }
+        if (a == "--record-can")
+        {
+            record_can = true;
             continue;
         }
         const auto take_val = [&](std::string& dst) -> bool {
@@ -681,6 +687,10 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
     if (record_events)
     {
         intent_fields.push_back("\"record_events\":true");
+    }
+    if (record_can)
+    {
+        intent_fields.push_back("\"record_can\":true");
     }
 
     std::string cmd = "{\"command\":\"run\"";

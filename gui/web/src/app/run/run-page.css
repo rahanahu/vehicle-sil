@@ -184,7 +184,8 @@ mat-card-content {
 }
 
 .start-paused,
-.record-events {
+.record-events,
+.record-can {
   display: block;
   margin-block-start: var(--app-space-2);
   max-inline-size: 100%;

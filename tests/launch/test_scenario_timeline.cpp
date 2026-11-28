@@ -2839,3 +2839,162 @@ TEST_CASE(timeline_record_events_bounded_eviction_truncation_and_json_format)
               std::string::npos);
     }
 }
+
+TEST_CASE(timeline_record_can_bounded_eviction_truncation_and_json_format)
+{
+    // 1. Default record has CAN disabled: can_frame() is a no-op and JSON omits can_* keys completely.
+    {
+        TimelineRecord off(std::span<const RecordedVariable>{});
+        CHECK(!off.can_enabled());
+        const std::array<std::uint8_t, 2> bytes{0xDE, 0xAD};
+        off.can_frame("CAN1", at(10ms), 0x123u, false, false, false, 2, bytes);
+        off.note_untimed_can_dropped("CAN1", 3);
+        off.close(at(100ms));
+        CHECK(off.can_frames().empty());
+        CHECK(off.can_dropped().empty());
+        CHECK_EQ(off.dropped_can(), std::uint64_t{0});
+        CHECK_EQ(off.untimed_can_dropped(), std::uint64_t{0});
+        CHECK(!off.dropped_any());
+
+        TimelineInput in;
+        in.file = "sim.yaml";
+        in.time_step_ms = 10;
+        in.record = &off;
+        const std::string json = format_timeline_json(in);
+        CHECK(json.find("\"can_frames\"") == std::string::npos);
+        CHECK(json.find("\"can_frames_per_network\"") == std::string::npos);
+        CHECK(json.find("\"can_frames_total\"") == std::string::npos);
+        CHECK(json.find("\"can_dropped\"") == std::string::npos);
+    }
+
+    // 2. Per-network cap, total cap water-filling eviction, cutoff truncation at close(to),
+    //    deterministic ordering by (at, network, seq), untimed_dropped accounting, and JSON formatting
+    //    (uppercase hex, extended, optional rtr/fd omitted when false and emitted when true).
+    {
+        TimelineLimits lim;
+        lim.can_frames_per_network = 3;
+        lim.can_frames_total = 4;
+        TimelineRecord rec(std::span<const RecordedVariable>{}, lim);
+        rec.enable_can();
+
+        const std::array<std::uint8_t, 8> b1{0x01, 0x0A, 0xFF, 0x00, 0x12, 0x34, 0x56, 0x78};
+        const std::array<std::uint8_t, 3> b2{0xAB, 0xCD, 0xEF};
+        // CAN_B gets 5 frames before cutoff + 1 after cutoff (100ms):
+        rec.can_frame("CAN_B", at(10ms), 0x101u, false, false, false, 8, b1);
+        rec.can_frame("CAN_B", at(20ms), 0x102u, false, false, false, 8, b1);
+        rec.can_frame("CAN_B", at(30ms), 0x103u, false, false, false, 8, b1);
+        rec.can_frame("CAN_B", at(40ms), 0x18F00400u, true, false, false, 8, b1);
+        rec.can_frame("CAN_B", at(50ms), 0x200u, false, false, true, 3, b2);
+        rec.can_frame("CAN_B", at(120ms), 0x199u, false, false, false, 8, b1);
+        // CAN_A gets 2 frames (including one at 40ms same timestamp as CAN_B) + 1 after cutoff:
+        rec.can_frame("CAN_A", at(40ms), 0x321u, false, true, false, 4, {});
+        rec.can_frame("CAN_A", at(60ms), 0x18FEF100u, true, false, false, 3, b2);
+        rec.can_frame("CAN_A", at(110ms), 0x399u, false, false, false, 3, b2);
+        rec.note_untimed_can_dropped("CAN_A", 2);
+
+        rec.close(at(100ms));
+        // Further frames after close() are ignored.
+        rec.can_frame("CAN_B", at(70ms), 0x777u, false, false, false, 3, b2);
+
+        // After truncation <= 100ms: CAN_B had 5 (capped to 3 -> drops 10ms, 20ms), CAN_A had 2.
+        // Total = 5 > can_frames_total (4) -> largest network (CAN_B, 3 > 2) drops 1 more (30ms) -> keeps 40ms, 50ms.
+        // Final kept (4): CAN_A@40 (rtr), CAN_B@40 (extended), CAN_B@50 (fd), CAN_A@60 (extended).
+        CHECK_EQ(rec.can_frames().size(), std::size_t{4});
+        CHECK(rec.can_frames()[0].network == "CAN_A" && rec.can_frames()[0].at == at(40ms) && rec.can_frames()[0].rtr);
+        CHECK(rec.can_frames()[1].network == "CAN_B" && rec.can_frames()[1].at == at(40ms) && rec.can_frames()[1].extended);
+        CHECK(rec.can_frames()[2].network == "CAN_B" && rec.can_frames()[2].at == at(50ms) && rec.can_frames()[2].fd);
+        CHECK(rec.can_frames()[3].network == "CAN_A" && rec.can_frames()[3].at == at(60ms) && rec.can_frames()[3].extended);
+
+        // Drops sorted by network: CAN_A (0 evicted, 2 untimed_dropped), CAN_B (3 evicted: [10ms, 40ms), 0 untimed_dropped).
+        CHECK_EQ(rec.can_dropped().size(), std::size_t{2});
+        CHECK(rec.can_dropped()[0].network == "CAN_A");
+        CHECK_EQ(rec.can_dropped()[0].dropped, std::uint64_t{0});
+        CHECK(!rec.can_dropped()[0].dropped_from.has_value());
+        CHECK(!rec.can_dropped()[0].dropped_before.has_value());
+        CHECK_EQ(rec.can_dropped()[0].untimed_dropped, std::uint64_t{2});
+        CHECK(rec.can_dropped()[1].network == "CAN_B");
+        CHECK_EQ(rec.can_dropped()[1].dropped, std::uint64_t{3});
+        CHECK(rec.can_dropped()[1].dropped_from == std::optional<SimTime>(at(10ms)));
+        CHECK(rec.can_dropped()[1].dropped_before == std::optional<SimTime>(at(40ms)));
+        CHECK_EQ(rec.can_dropped()[1].untimed_dropped, std::uint64_t{0});
+        CHECK_EQ(rec.dropped_can(), std::uint64_t{3});
+        CHECK_EQ(rec.untimed_can_dropped(), std::uint64_t{2});
+        CHECK(rec.dropped_any());
+
+        TimelineInput in;
+        in.file = "sim.yaml";
+        in.time_step_ms = 10;
+        in.record = &rec;
+        in.record_can = true;
+        const std::string json = format_timeline_json(in);
+        CHECK(json.find("  \"can_frames\": [\n"
+                        "    {\n"
+                        "      \"at_ms\": 40,\n"
+                        "      \"network\": \"CAN_A\",\n"
+                        "      \"id\": 801,\n"
+                        "      \"extended\": false,\n"
+                        "      \"dlc\": 4,\n"
+                        "      \"data\": \"\",\n"
+                        "      \"rtr\": true\n"
+                        "    },\n"
+                        "    {\n"
+                        "      \"at_ms\": 40,\n"
+                        "      \"network\": \"CAN_B\",\n"
+                        "      \"id\": 418382848,\n"
+                        "      \"extended\": true,\n"
+                        "      \"dlc\": 8,\n"
+                        "      \"data\": \"010AFF0012345678\"\n"
+                        "    },\n"
+                        "    {\n"
+                        "      \"at_ms\": 50,\n"
+                        "      \"network\": \"CAN_B\",\n"
+                        "      \"id\": 512,\n"
+                        "      \"extended\": false,\n"
+                        "      \"dlc\": 3,\n"
+                        "      \"data\": \"ABCDEF\",\n"
+                        "      \"fd\": true\n"
+                        "    },") != std::string::npos);
+        CHECK(json.find("    \"can_frames_per_network\": 3,\n"
+                        "    \"can_frames_total\": 4,\n"
+                        "    \"can_dropped\": [\n"
+                        "      {\n"
+                        "        \"network\": \"CAN_A\",\n"
+                        "        \"dropped\": 0,\n"
+                        "        \"dropped_from_ms\": null,\n"
+                        "        \"dropped_before_ms\": null,\n"
+                        "        \"untimed_dropped\": 2\n"
+                        "      },\n"
+                        "      {\n"
+                        "        \"network\": \"CAN_B\",\n"
+                        "        \"dropped\": 3,\n"
+                        "        \"dropped_from_ms\": 10,\n"
+                        "        \"dropped_before_ms\": 40,\n"
+                        "        \"untimed_dropped\": 0\n"
+                        "      }\n"
+                        "    ]") != std::string::npos);
+    }
+
+    // 3. close(std::nullopt) preserves untimed_dropped when zero timed frames arrived,
+    //    and record == nullptr with record_can == true emits empty can_frames & limits.can_*.
+    {
+        TimelineRecord untimedOnly(std::span<const RecordedVariable>{});
+        untimedOnly.enable_can();
+        untimedOnly.note_untimed_can_dropped("CAN1", 4);
+        untimedOnly.close(std::nullopt);
+        CHECK(untimedOnly.can_frames().empty());
+        CHECK_EQ(untimedOnly.can_dropped().size(), std::size_t{1});
+        CHECK_EQ(untimedOnly.can_dropped()[0].untimed_dropped, std::uint64_t{4});
+        CHECK_EQ(untimedOnly.untimed_can_dropped(), std::uint64_t{4});
+        CHECK(untimedOnly.dropped_any());
+
+        TimelineInput in;
+        in.file = "sim.yaml";
+        in.time_step_ms = 10;
+        in.record = nullptr;
+        in.record_can = true;
+        const std::string json = format_timeline_json(in);
+        CHECK(json.find("  \"can_frames\": [],\n") != std::string::npos);
+        CHECK(json.find("    \"can_frames_per_network\": 10000,\n    \"can_frames_total\": 20000,\n    \"can_dropped\": []\n") !=
+              std::string::npos);
+    }
+}

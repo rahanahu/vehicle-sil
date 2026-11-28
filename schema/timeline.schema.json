@@ -83,7 +83,7 @@
         "object",
         "null"
       ],
-      "description": "The scenario and its result, as in `run --json`, and up to when the series go; null for a manual run (--record without --scenario).",
+      "description": "The scenario and its result, as in `run --json`, and up to when the series go; null for a manual run (--record, --record-events or --record-can without --scenario).",
       "required": [
         "file",
         "name",
@@ -143,7 +143,7 @@
         "number",
         "null"
       ],
-      "description": "Manual runs only (when scenario is null): the right end of the recorded series in virtual time (ms) — stop_at_ms when the run ended at stop_at_ms, the latest sample time otherwise, or null if no samples were recorded. Omitted when scenario is an object (use scenario.recorded_to_ms)."
+      "description": "Manual runs only (when scenario is null): the right end of the recorded timeline in virtual time (ms) — stop_at_ms when the run ended at stop_at_ms, the latest recorded sample, event, or CAN frame time otherwise, or null if nothing was recorded. Omitted when scenario is an object (use scenario.recorded_to_ms)."
     },
     "variables": {
       "type": "array",
@@ -835,6 +835,60 @@
         }
       }
     },
+    "can_frames": {
+      "type": "array",
+      "description": "Opt-in virtual-timestamped CAN frames observed by passive SIL Kit CAN observers up to recorded_to_ms when --record-can (or \"record_can\": true) is set; omitted otherwise. Ordered by virtual time at_ms (then network and arrival order). Grounded virtual timestamps apply to time-synchronized virtual-time participants (sender step time or CanBusSimulator arbitration end time); frames arriving with SIL Kit event.timestamp < 0 (such as from unsynchronized senders before SimulationController's first step) are dropped and counted in limits.can_dropped[].untimed_dropped rather than stamped with a fabricated timestamp. Once virtual time is running (t >= 0), SIL Kit's synchronized receiver stamps frames from unsynchronized/real-time senders (e.g. external bridges in mixed runs) with the controller's current virtual step time before the frame handler runs.",
+      "items": {
+        "type": "object",
+        "required": [
+          "at_ms",
+          "network",
+          "id",
+          "extended",
+          "dlc",
+          "data"
+        ],
+        "properties": {
+          "at_ms": {
+            "type": "number",
+            "description": "Virtual timestamp of the CAN frame in milliseconds (SIL Kit CanFrameEvent::timestamp: sender step time or CanBusSimulator arbitration end time for time-synchronized participants, or the controller's current virtual step time stamped by SIL Kit for unsynchronized senders once t >= 0)."
+          },
+          "network": {
+            "type": "string",
+            "description": "The CAN network name from the simulation configuration."
+          },
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 536870911,
+            "description": "The CAN arbitration identifier (11-bit standard 0..2047 when extended is false; 29-bit extended 0..536870911 when extended is true)."
+          },
+          "extended": {
+            "type": "boolean",
+            "description": "true for a 29-bit extended CAN ID (IDE); false for an 11-bit standard CAN ID."
+          },
+          "dlc": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 15,
+            "description": "The CAN Data Length Code (0..15)."
+          },
+          "data": {
+            "type": "string",
+            "pattern": "^([0-9A-F]{2}){0,64}$",
+            "description": "The frame payload encoded as an uppercase hexadecimal byte string (empty string when zero payload bytes or RTR)."
+          },
+          "rtr": {
+            "type": "boolean",
+            "description": "Present and true only for Remote Transmission Request (RTR) frames; omitted otherwise."
+          },
+          "fd": {
+            "type": "boolean",
+            "description": "Present and true only for CAN FD frames (FDF); omitted otherwise."
+          }
+        }
+      }
+    },
     "findings": {
       "type": "array",
       "description": "The findings of the check and of the run that are about the scenario (code scenario-...), as in `run --json`; and control-link-late-values (an ECU's values came later than promised: what such a run recorded may differ from run to run) with its severity and code only, the rest null. No other finding: nothing of the run's pace in real time.",
@@ -1014,6 +1068,60 @@
                 "type": "integer",
                 "minimum": 0,
                 "description": "How many events the participant's control Agent dropped before they reached the Hub, when reported by the transport (SIL Kit wire v2 currently reports 0)."
+              }
+            }
+          }
+        },
+        "can_frames_per_network": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Present when --record-can is enabled: the most CAN frames kept per network; omitted otherwise."
+        },
+        "can_frames_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Present when --record-can is enabled: the most CAN frames kept across all CAN networks together; omitted otherwise."
+        },
+        "can_dropped": {
+          "type": "array",
+          "description": "Present when --record-can is enabled: CAN networks that lost frames at the timeline limits or dropped untimed frames (event.timestamp < 0); empty if none did; omitted otherwise.",
+          "items": {
+            "type": "object",
+            "required": [
+              "network",
+              "dropped",
+              "dropped_from_ms",
+              "dropped_before_ms",
+              "untimed_dropped"
+            ],
+            "properties": {
+              "network": {
+                "type": "string",
+                "description": "The CAN network whose frames were dropped."
+              },
+              "dropped": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many older frames were evicted by the timeline limits."
+              },
+              "dropped_from_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "The virtual time of the oldest frame evicted by the timeline limits; null if dropped is 0."
+              },
+              "dropped_before_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "The virtual time of the oldest frame that stayed for this network; null if dropped is 0 or none stayed."
+              },
+              "untimed_dropped": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many frames were rejected because SIL Kit delivered event.timestamp < 0 (for example from unsynchronized senders before SimulationController's first step) rather than fabricating a virtual timestamp."
               }
             }
           }

@@ -287,6 +287,8 @@ export interface CheckRequest {
   record_after_fail_ms?: number;
   /** true: record virtual-timestamped structured ECU events (`Ecu::log` / `Agent::log`) on the timeline. */
   record_events?: boolean;
+  /** true: record virtual-timestamped CAN frames passively observed on configured CAN networks on the timeline. */
+  record_can?: boolean;
   /** The variant of the configuration file. */
   variant?: string;
   /** Values of the scenario's parameters (name to value); used only when a scenario runs. */
@@ -687,6 +689,7 @@ export interface SessionIntent {
   record?: string[];
   record_after_fail_ms?: number;
   record_events?: boolean;
+  record_can?: boolean;
   variant?: string;
   params?: Record<string, ScenarioParamValue>;
   speed?: number | 'max';
@@ -770,6 +773,10 @@ const readSessionIntent = (value: unknown, path: string, u: Unreadable): Session
   if (f['record_events'] !== undefined) {
     const read = field(f, path, 'record_events', soft(boolean, undefined, u));
     if (read !== undefined) out.record_events = read;
+  }
+  if (f['record_can'] !== undefined) {
+    const read = field(f, path, 'record_can', soft(boolean, undefined, u));
+    if (read !== undefined) out.record_can = read;
   }
   return out;
 };

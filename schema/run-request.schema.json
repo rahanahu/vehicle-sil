@@ -127,6 +127,10 @@
     "record_events": {
       "type": "boolean",
       "description": "true: record virtual-timestamped structured ECU control events (control::Agent::log / Ecu::log) into the timeline (--record-events). Raw child stdout/stderr pipes carry wall-clock times only and are not included. false is as if the key was not written: --record-events still counts."
+    },
+    "record_can": {
+      "type": "boolean",
+      "description": "true: record virtual-timestamped CAN frames via passive SIL Kit CAN observers into the timeline (--record-can). Grounded virtual timestamps apply to time-synchronized virtual-time participants; frames arriving with timestamp < 0 (such as before SimulationController's first step) are dropped and counted instead of fabricating a timestamp. Once virtual time is running (t >= 0), SIL Kit's synchronized receiver stamps frames from unsynchronized/real-time senders (e.g. external bridges in mixed runs) with the controller's current virtual step time before the handler runs. false is as if the key was not written: --record-can still counts."
     }
   }
 }

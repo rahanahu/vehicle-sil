@@ -691,6 +691,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `record` | A list of `"<participant>.<variable>"` names to sample and record into the `--timeline` file without affecting scenario verdicts | `--record` |
 | `record_after_fail_ms` | Virtual-time post-failure tail duration (an integer from 1 to 600000 ms) to continue passive sample recording into `--timeline` after a normal assertion or wait-timeout failure. Requires `scenario`. | `--record-after-fail-ms` |
 | `record_events` | `true` or `false`. Opts in to bounded recording of virtual-timestamped structured ECU events (`Ecu::log()` / `control::Agent::log()`) into `--timeline` (`events[]`). Raw `stdout`/`stderr` pipes remain wall-clock only and are not included. | `--record-events` |
+| `record_can` | `true` or `false`. Opts in to bounded recording of virtual-timestamped CAN frames via passive RX-only SIL Kit CAN observers into `--timeline` (`can_frames[]`). Grounded virtual timestamps apply to time-synchronized participants; frames arriving with `timestamp < 0` (e.g. before the controller's first step) are dropped and counted instead of fabricating a timestamp, while once virtual time is running (`t >= 0`), SIL Kit stamps unsynchronized/bridge senders with the controller's current virtual step time. | `--record-can` |
 
 ### Arguments together with a request file
 
@@ -699,7 +700,7 @@ An argument wins over the file, field by field.
 | Key | With an argument for the same thing |
 |---|---|
 | `variant`, `scenario`, `case`, `speed`, `time_policy`, `record_after_fail_ms` | The argument replaces the file's value. |
-| `start_paused`, `strict`, `record_events` | On if the file or the argument says so. No argument switches them off. |
+| `start_paused`, `strict`, `record_events`, `record_can` | On if the file or the argument says so. No argument switches them off. |
 | `connect` | By network: `--connect <network>=<target>` replaces the file's target of that network, and `--connect <network>=none` takes it away for this run. The other networks of the file stay. |
 | `params` | By name: `--param <name>=<value>` replaces the file's value of that parameter. The others stay; their `from` in the check JSON is `request_file`. |
 | `disable`, `enable`, `manual` | The names of the file and of the arguments add up. Where they disagree about a name (the file's `disable` and `--enable`, the file's `enable` or `manual` and `--disable`, the file's `disable` and `--manual`), the argument wins. |
@@ -1615,7 +1616,7 @@ The CTest test `launch_run.docs` also compares the examples of this section with
 
 ## Recording a scenario run on a timeline (`--timeline`)
 
-With `--timeline <file>`, `run` writes the values (and, when `--record-events` is given, structured ECU events) recorded over virtual time to one JSON file — for a scenario run (`--scenario`), or for a manual run without `--scenario` when at least one variable is requested via `--record` (or `"record"` in a request file / `serve` `intent`) or `--record-events` / `"record_events"` is enabled. The file is for tools that draw graphs or compare 2 runs. The launcher supports scenario timelines if `features` of `vehicle_sil_launch version --json` contains `timeline`, manual-run timelines if `features` contains `manual-timeline`, and virtual-timestamped ECU events if `features` contains `record-events`.
+With `--timeline <file>`, `run` writes the values (and, when enabled, virtual-timestamped structured ECU events and CAN frames) recorded over virtual time to one JSON file — for a scenario run (`--scenario`), or for a manual run without `--scenario` when at least one variable is requested via `--record` (or `"record"` in a request file / `serve` `intent`), `--record-events` / `"record_events"` is enabled, or `--record-can` / `"record_can"` is enabled. The file is for tools that draw graphs or compare 2 runs. The launcher supports scenario timelines if `features` of `vehicle_sil_launch version --json` contains `timeline`, manual-run timelines if `features` contains `manual-timeline`, virtual-timestamped ECU events if `features` contains `record-events`, and virtual-timestamped CAN frames if `features` contains `record-can`.
 
 ```sh
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
@@ -1623,9 +1624,9 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 - The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event under `serve [--once]`). In the result of `run --json` and `serve [--once]`, `scenario.timeline` holds the file name for scenario runs (`null` without `--timeline`), and top-level `timeline` holds the file name for manual runs that wrote a timeline (omitted otherwise). **Without `--timeline`, nothing else in the output of a run changes.**
 - The file is opened before anything is started (missing directories are created). If it cannot be opened, the run ends with the error `setup` (exit code 3) and starts nothing. If the file cannot be written after the run (a full disk, for example), the error is `timeline-write`. The scenario result (`scenario.status`) does not change, but the finding is an error, so the run fails even when the scenario passed (exit code 1).
-- If points or ECU events were dropped at the limits, the `timeline:` line adds the dropped counts, and the run reports the note `timeline-limit` (see "Limits" below). The exit code does not change.
+- If points, ECU events, or CAN frames were dropped (at the limits or because a CAN frame had no virtual timestamp), the `timeline:` line adds the dropped counts, and the run reports the note `timeline-limit` (see "Limits" below). The exit code does not change.
 - The file is written whether the run passes, fails or ends partway. It is not written when a check error kept the run from starting anything.
-- `--timeline` on a `run` with none of `--scenario`, `--record`, or `--record-events` is a usage error (`check` and `test` do not take `--timeline`). Manual runs never default to recording all signals; for each recorded participant whose `--describe` advertises `sample-every-step`, the launcher enables `--sample-every-step` best-effort (with no error or warning if unsupported).
+- `--timeline` on a `run` with none of `--scenario`, `--record`, `--record-events`, or `--record-can` is a usage error (`check` and `test` do not take `--timeline`). Manual runs never default to recording all signals; for each recorded participant whose `--describe` advertises `sample-every-step`, the launcher enables `--sample-every-step` best-effort (with no error or warning if unsupported).
 - The format is in `schema/timeline.schema.json` (JSON Schema). Line ends are LF on every OS.
 
 ### Viewing a timeline file
@@ -1651,19 +1652,20 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `vehicle_sil`, `stage` | The vehicle-sil version; `"run"` (the record of an actual run) |
 | `file`, `variant`, `params` | The configuration file (as given in the arguments), the variant (`null` if none), and the scenario parameters with the values in effect (the same form as `scenario.params` of `check --json`) |
 | `time_step_ms` | The controller's time step (the same as `timing.time_step_ms` of `run --json`) |
-| `scenario` | `file`, `name`, optional `case`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below); `null` for a manual run (`--record` or `--record-events` without `--scenario`) |
-| `recorded_to_ms` | Manual runs only (emitted when `scenario` is `null`; omitted when `scenario` is an object): the right edge of the recorded timeline in virtual time (`stop_at_ms` when stopped by `stop_at_ms`, the latest sample or ECU event time otherwise, or `null` if neither samples nor ECU events were recorded) |
+| `scenario` | `file`, `name`, optional `case`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below); `null` for a manual run (`--record`, `--record-events` or `--record-can` without `--scenario`) |
+| `recorded_to_ms` | Manual runs only (emitted when `scenario` is `null`; omitted when `scenario` is an object): the right edge of the recorded timeline in virtual time (`stop_at_ms` when stopped by `stop_at_ms`, the latest sample, ECU event, or CAN frame time otherwise, or `null` if nothing was recorded) |
 | `variables[]` | The variables that the scenario uses (in order of first use), followed by any extra variables requested with `--record` / `"record"`: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it), and optional `recorded` (`true` when requested via `--record` / `"record"`, omitted otherwise) |
 | `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json` (including optional `file`, `name`, `call_stack`), plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
 | `lines[]` | The line of each input: the values and motions that steps placed (see "Input lines" below) |
 | `events[]` | Optional (emitted only when `--record-events` / `"record_events"` is enabled; omitted completely otherwise): virtual-timestamped structured ECU events (`at_ms`, `participant`, `level`, `text`; see "Virtual-time ECU events" below) |
+| `can_frames[]` | Optional (emitted only when `--record-can` / `"record_can"` is enabled; omitted completely otherwise): virtual-timestamped CAN frames (`at_ms`, `network`, `id`, `extended`, `dlc`, `data`, and optional `rtr` / `fd`; see "Virtual-time CAN frames" below) |
 | `findings[]` | The check and run findings whose `code` starts with `scenario-` (the same form as in `run --json`). The finding `control-link-late-values`, which says that ECU values arrived later than guaranteed, appears with its `severity` and `code` only, the other keys `null` (in a run with this finding, the record can differ from run to run). Other findings, such as the real-time speed finding `behind-real-time`, are left out |
-| `limits` | The limits on the number of points, the dropped points, and (when `--record-events` / `"record_events"` is enabled) the limits and drop records for ECU events (see "Limits" below) |
+| `limits` | The limits on the number of points, the dropped points, and (when enabled) the limits and drop records for ECU events and CAN frames (see "Limits" below) |
 
 A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version. A step's `status` is not one of them: see [Values that carry the result](scenario.md#values-that-carry-the-result).
 
-Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: top-level `recorded_to_ms` (manual runs only), top-level `events` and `limits.events_per_participant` / `limits.events_total` / `limits.events_dropped` (only when `--record-events` / `"record_events"` is enabled), `recorded` on a variable, `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
+Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: top-level `recorded_to_ms` (manual runs only), top-level `events` and `limits.events_per_participant` / `limits.events_total` / `limits.events_dropped` (only when `--record-events` / `"record_events"` is enabled), top-level `can_frames` (plus optional `rtr` / `fd` on frame items) and `limits.can_frames_per_network` / `limits.can_frames_total` / `limits.can_dropped` (only when `--record-can` / `"record_can"` is enabled), `recorded` on a variable, `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
 
 The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write.
 
@@ -1863,7 +1865,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 | Passed (`passed`) | The latest `at_ms` of the steps (extended up to `min(end_ms, now)` when `end_ms` is set; with `after_scenario: "pause"`, the timeline closes at handover and does not record post-handover manual steps) |
 | Ended partway (`incomplete`) | The latest time among observed samples and writes sent through the last controller time (0 if there were none). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
-| Manual run (`scenario` is `null`) | Top-level `recorded_to_ms`: `stop_at_ms` when the run reached `stop_at_ms`; otherwise the latest sample or ECU event time seen (`null` if zero samples and zero events were recorded or the simulation did not start) |
+| Manual run (`scenario` is `null`) | Top-level `recorded_to_ms`: `stop_at_ms` when the run reached `stop_at_ms`; otherwise the latest sample, ECU event, or CAN frame time seen (`null` if nothing was recorded or the simulation did not start) |
 
 - The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Two exceptions can place `over_at_ms` at or before `recorded_to_ms`: a run that failed on a write that the ECU's Agent refused at once (`over_at_ms` is the time step of the refusal while `recorded_to_ms` is the time of that write), and a run with `--record-after-fail-ms` (where `over_at_ms` stays at the failure detection tick while `recorded_to_ms` extends through the passive post-failure tail). Post-failure tail recording applies only to normal assertion or wait-timeout failures (`scenario-failed` / `scenario-timeout`) when `--timeline` is active; write errors (`scenario-write`), unusable-variable failures, passes, and early stops before failure do not enter the tail. No new scenario steps, writes, motions, or dithers are issued after failure detection (`over_at_ms`), while writes already pipelined for `(at_ms, over_at_ms]` before detection (when `time_step_ms >= ecu_step_ms`) may already have been applied by the ECU and remain visible in the timeline.
 - **The same run gives the same file.** The file holds only what virtual time decides (no real time, process IDs or lateness counts), so a different speed (`--speed`) gives the same file. This holds for runs that passed and for runs that failed on a sample or a wait. If an ECU itself depends on real time or random numbers, its value series change too.
@@ -1897,9 +1899,38 @@ When `--record-events` (or `"record_events": true` in a request file / `serve` `
 - **Virtual-time grounding only:** Only structured `control::Event` messages carried over the time-synchronized control link (`Ecu::log()` / `control::Agent::log()`) are recorded here. Raw child process `stdout` and `stderr` pipes carry wall-clock times only (`--log-dir` and `serve` `log` events) and are **never** placed on the virtual-time axis.
 - Events are ordered deterministically by `(at_ms, participant, emission order)` and truncated at `recorded_to_ms` (including any `--record-after-fail-ms` post-failure tail).
 
+### Virtual-time CAN frames (`can_frames[]`)
+
+When `--record-can` (or `"record_can": true` in a request file / `serve` `intent`) is set together with `--timeline`, the launcher attaches a passive RX-only SIL Kit CAN controller (`vehicle_sil_can_tap_<network>`) for each configured `can` network on `SimulationController`. The passive observer never calls `SetBaudRate()` or `SendFrame()`, so it does not affect `CanBusSimulator` bitrate conflict detection or CAN bus arbitration timing. When `record_can` is `false` (the default), no passive CAN controllers are created and `can_frames` and `limits.can_*` are omitted completely so existing timeline files remain byte-for-byte unchanged.
+
+```json
+{
+  "at_ms": 260,
+  "network": "J1939_CAN",
+  "id": 217056256,
+  "extended": true,
+  "dlc": 8,
+  "data": "FFFFFF201EFFFFFF"
+}
+```
+
+| Key | Value |
+|---|---|
+| `at_ms` | SIL Kit `CanFrameEvent::timestamp` in virtual ms (for time-synchronized virtual-time participants: sender step time on direct SIL Kit CAN or exact arbitration end time `tx.end` with `CanBusSimulator`; for unsynchronized senders once `t >= 0`, the controller's current virtual step time stamped by SIL Kit; truncated at `recorded_to_ms` on close) |
+| `network` | Name of the CAN network from `networks:` |
+| `id` | CAN arbitration ID as an integer (`0..2047` when `extended` is `false`; `0..536870911` when `extended` is `true`) |
+| `extended` | `true` for 29-bit extended ID (`IDE`), `false` for 11-bit standard ID |
+| `dlc` | CAN Data Length Code (`0..15`) |
+| `data` | Payload bytes as an uppercase hexadecimal string (`""` when empty or RTR) |
+| `rtr` | Optional: present and `true` only for Remote Transmission Request frames; omitted otherwise |
+| `fd` | Optional: present and `true` only for CAN FD frames; omitted otherwise |
+
+- **Virtual-time grounding and mixed-run honesty:** Grounded virtual timestamps (`event.timestamp` = sender step time on direct SIL Kit CAN, or `CanBusSimulator` arbitration end time `tx.end`) apply to time-synchronized virtual-time participants. Frames arriving with `event.timestamp < 0` (such as from unsynchronized senders before `SimulationController`'s first step) are dropped and counted per network in `limits.can_dropped[].untimed_dropped` instead of fabricating a timestamp. Once virtual time is running (`t >= 0`), however, SIL Kit's synchronized receiver (`SimulationController`) stamps frames from unsynchronized/real-time senders (for example, external bridges in mixed runs) with the controller's current virtual step time before `AddFrameHandler` runs (matching `docs/internals/can.md`); `--record-can` does not alter mixed runs and cannot distinguish those frames after step 0.
+- **Ordering and cutoff boundary:** Frames are ordered deterministically by `(at_ms, network, arrival order)` and truncated at `recorded_to_ms` (including any `--record-after-fail-ms` post-failure tail). Deterministic `< p` tick gating applies to scenario runs (including `end_ms` and `after_scenario: "pause"` handover, where recording stops at handover). Manual `--stop-at-ms` runs capture inclusively up to `stop_at_ms`, so concurrent output at `t == stop_at_ms` is best-effort (matching `--record` and `--record-events`). Without `CanBusSimulator`, frames transmitted by different ECUs at the exact same virtual timestamp may arrive in non-deterministic IPC order; with `CanBusSimulator`, arbitration serializes their timestamps deterministically.
+
 ### Limits
 
-When a series or the ECU event buffer has too many entries, **the older entries are dropped and the newer ones kept**. The end, where a failure is, is always kept in full.
+When a series, the ECU event buffer, or the CAN frame buffer has too many entries, **the older entries are dropped and the newer ones kept**. The end, where a failure is, is always kept in full.
 
 - The series limits are 100,000 points per series and 1,000,000 points for all series together (limits on the points kept). They count the points of `sampled` and the `ramp` and `wave` points of `written`. `set` points are not counted and never dropped.
 - When the total point limit is exceeded, older points are dropped from the series with the most points first, until those series have the same number of points.
@@ -1923,7 +1954,17 @@ When a series or the ECU event buffer has too many entries, **the older entries 
   | `dropped_before_ms` | Virtual time of the oldest kept event for that participant (`null` if none kept or `dropped` is 0) |
   | `agent_dropped` | Number of events dropped inside the ECU's `control::Agent` before reaching the launcher, when reported by the transport (SIL Kit wire v2 currently reports `0`) |
 
-- In a run that dropped points (and no events), the stderr line is `[vehicle_sil_launch] timeline: <file> (without <N> older points, dropped at its limits: limits.dropped in the file)`. When ECU events were also or exclusively dropped, the stderr line names `limits.events_dropped` and the dropped event count as well, and the result reports the note `timeline-limit`. You can tell that entries are missing without opening the file.
+- When `--record-can` / `"record_can"` is enabled, `limits` also holds `can_frames_per_network` (10,000), `can_frames_total` (20,000), and `can_dropped[]` (empty when no CAN frames were evicted or rejected as untimed). When the total CAN frame limit is exceeded, older frames are dropped from the network with the most kept frames first.
+
+  | Key of `can_dropped[]` | Value |
+  |---|---|
+  | `network` | CAN network whose frames were dropped |
+  | `dropped` | Number of older frames evicted by the timeline recorder |
+  | `dropped_from_ms` | Virtual time of the oldest evicted frame (`null` if `dropped` is 0) |
+  | `dropped_before_ms` | Virtual time of the oldest kept frame for that network (`null` if none kept or `dropped` is 0) |
+  | `untimed_dropped` | Number of frames rejected because SIL Kit delivered `event.timestamp < 0` (never stamped with fabricated virtual time) |
+
+- In a run that dropped points (and no events or CAN frames), the stderr line is `[vehicle_sil_launch] timeline: <file> (without <N> older points, dropped at its limits: limits.dropped in the file)`. When ECU events or CAN frames were also or exclusively dropped (or untimed CAN frames were rejected), the stderr line names the relevant `limits.*_dropped` keys and counts as well, and the result reports the note `timeline-limit`. You can tell that entries are missing without opening the file.
 
 ## Recording Control Hub transport metrics (`--control-metrics`)
 

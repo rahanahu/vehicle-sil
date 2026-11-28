@@ -14,7 +14,16 @@ export type VehicleSilTimelineMessages = Record<
 
 /** The parts of the element that `hide` can leave out. */
 export type VehicleSilTimelinePart =
-  'header' | 'summary' | 'toolbar' | 'help' | 'steps' | 'events' | 'readout' | 'legend' | 'tables';
+  | 'header'
+  | 'summary'
+  | 'toolbar'
+  | 'help'
+  | 'steps'
+  | 'events'
+  | 'can'
+  | 'readout'
+  | 'legend'
+  | 'tables';
 
 /** One comparison in a step's watch condition (constant value or right-hand variable). */
 export interface VehicleSilTimelineComparison {
@@ -131,6 +140,8 @@ export interface VehicleSilTimelineLoadDetail {
   stepCount: number;
   /** Number of recorded virtual-time ECU events in the loaded timeline. */
   eventCount: number;
+  /** Number of recorded virtual-time CAN frames in the loaded timeline. */
+  canFrameCount: number;
   /** Failure summary when the scenario failed, else null. */
   failure: VehicleSilTimelineLoadFailure | null;
   /** Variables present in the timeline with failure-relevance and activity flags. */

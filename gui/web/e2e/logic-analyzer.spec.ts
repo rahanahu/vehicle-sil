@@ -1174,3 +1174,74 @@ test('logic analyzer: Record virtual-time ECU events toggle renders severity tic
   await timeline.locator('[data-testid="ecu-events-search"]').fill('');
   await expect(rows).toHaveCount(4);
 });
+
+test('logic analyzer: Record virtual-time CAN frames toggle renders synchronized CAN Frames table with J1939 decode, filtering, and click-to-pin cursor correlation', async ({
+  page,
+}) => {
+  await page.goto(`${base}#token=${server.token}`);
+  await inSync(page);
+
+  const cfgSelect = page.getByTestId('config-select');
+  await cfgSelect.click();
+  await page.getByRole('option', { name: 'simulation.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-outcome')).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  // Select failing scenario and opt in to Record virtual-time CAN frames
+  await page.getByTestId('scenario-select').click();
+  await page.getByRole('option', { name: 'fails.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-outcome')).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  const recordCanCb = page.getByTestId('record-can').getByRole('checkbox');
+  await expect(recordCanCb).toBeVisible();
+  await expect(recordCanCb).not.toBeChecked();
+  const checkPromise = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/check') &&
+      (r.request().postDataJSON() as Record<string, unknown>)['record_can'] === true,
+  );
+  await recordCanCb.check();
+  await checkPromise;
+
+  const runReqPromise = page.waitForRequest(
+    (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+  );
+  await start(page);
+  const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+  expect(runBody['record_can']).toBe(true);
+
+  const card = page.getByTestId('scenario-card');
+  await expect(card).toBeVisible({ timeout: RUN_TIMEOUT });
+  const timeline = card.getByTestId('timeline-element');
+  await expect(timeline).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  // Embedded timeline shows synchronized CAN Frames drawer even though hide="tables"
+  const rows = timeline.locator('[data-testid="can-frame-row"]');
+  await expect(rows).toHaveCount(4, { timeout: RUN_TIMEOUT });
+  await expect(rows.nth(1)).toContainText('0x18EA1700');
+  await expect(rows.nth(1)).toContainText('P6 PGN 0xEA00 0x00→0x17');
+  await expect(rows.nth(2)).toContainText('0x0CF00400');
+  await expect(rows.nth(2)).toContainText('P3 PGN 0xF004 0x00→0xFF');
+
+  // "Visible range only" narrows rows to the zoomed failure window, and Whole run restores all 4
+  const visibleOnly = timeline.locator('[data-testid="can-frames-visible-only"]');
+  await visibleOnly.check();
+  await expect(rows).toHaveCount(1);
+  await card.getByTestId('timeline-whole-run').click();
+  await expect(rows).toHaveCount(4);
+  await visibleOnly.uncheck();
+
+  // Clicking the 50 ms EEC1 frame pins the cursor at 50.0 ms and updates Δt column
+  await rows.nth(2).click();
+  await expect(card.getByTestId('timeline-readout')).toContainText('50.0 ms');
+  await expect(rows.nth(2)).toHaveAttribute('aria-selected', 'true');
+  await expect(rows.nth(2).locator('.can-delta')).toHaveText('0 ms');
+  await expect(rows.nth(3).locator('.can-delta')).toHaveText('+50 ms');
+
+  // Network and PGN/ID search filters narrow the CAN Frames table cleanly
+  await timeline.locator('[data-testid="can-frames-network"]').selectOption('J1939_CAN');
+  await expect(rows).toHaveCount(4);
+  await timeline.locator('[data-testid="can-frames-search"]').fill('0xEA00');
+  await expect(rows).toHaveCount(1);
+  await timeline.locator('[data-testid="can-frames-search"]').fill('');
+  await expect(rows).toHaveCount(4);
+});

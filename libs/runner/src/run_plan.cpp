@@ -116,6 +116,14 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     plan.recorded_variables = choices.recorded_variables;
     plan.record_after_fail = choices.record_after_fail;
     plan.record_events = choices.record_events;
+    plan.record_can = choices.record_can;
+    for (const config::NetworkConfig& net : check.config->networks)
+    {
+        if (net.valid && net.kind == NetworkKind::Can)
+        {
+            plan.can_networks.push_back(net.name);
+        }
+    }
     if (const scenario::Scenario* read = plan.scenario(); read != nullptr)
     {
         const std::span<const scenario::RecordedVariable> recordedForSampling =

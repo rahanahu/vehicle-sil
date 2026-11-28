@@ -313,6 +313,98 @@ std::uint64_t TimelineRecord::dropped_events() const noexcept
     return out;
 }
 
+std::uint64_t TimelineRecord::dropped_can() const noexcept
+{
+    std::uint64_t out = 0;
+    if (closed_)
+    {
+        for (const CanDrop& d : can_dropped_)
+        {
+            out += d.dropped;
+        }
+        return out;
+    }
+    for (const NetworkCanFrames& nc : network_can_)
+    {
+        out += nc.dropped;
+    }
+    return out;
+}
+
+std::uint64_t TimelineRecord::untimed_can_dropped() const noexcept
+{
+    std::uint64_t out = 0;
+    if (closed_)
+    {
+        for (const CanDrop& d : can_dropped_)
+        {
+            out += d.untimed_dropped;
+        }
+        return out;
+    }
+    for (const NetworkCanFrames& nc : network_can_)
+    {
+        out += nc.untimed_dropped;
+    }
+    return out;
+}
+
+TimelineRecord::NetworkCanFrames& TimelineRecord::network_can_for(std::string_view network)
+{
+    for (NetworkCanFrames& nc : network_can_)
+    {
+        if (nc.network == network)
+        {
+            return nc;
+        }
+    }
+    NetworkCanFrames& added = network_can_.emplace_back();
+    added.network = std::string(network);
+    return added;
+}
+
+void TimelineRecord::can_frame(std::string_view network, SimTime at, std::uint32_t id, bool extended, bool rtr, bool fd,
+                               std::uint8_t dlc, std::span<const std::uint8_t> data)
+{
+    if (closed_ || !can_enabled_)
+    {
+        return;
+    }
+    NetworkCanFrames& nc = network_can_for(network);
+    StoredCanFrame f{};
+    f.at = at;
+    f.id = id & (extended ? 0x1FFFFFFFu : 0x7FFu);
+    f.extended = extended;
+    f.rtr = rtr;
+    f.fd = fd;
+    f.dlc = std::min<std::uint8_t>(dlc, 15u);
+    const std::size_t max_len = fd ? std::size_t{64} : std::size_t{8};
+    const std::size_t len = rtr ? std::size_t{0} : std::min<std::size_t>(data.size(), max_len);
+    f.data_len = static_cast<std::uint8_t>(len);
+    if (len > 0)
+    {
+        std::copy_n(data.data(), len, f.data.begin());
+    }
+    f.seq = next_can_seq_++;
+    nc.frames.push_back(f);
+    ++can_total_;
+    if (limits_.can_frames_per_network == 0 || limits_.can_frames_total == 0 ||
+        nc.frames.size() >= 2 * limits_.can_frames_per_network || can_total_ >= 2 * limits_.can_frames_total)
+    {
+        enforce_can(false);
+    }
+}
+
+void TimelineRecord::note_untimed_can_dropped(std::string_view network, std::uint64_t count)
+{
+    if (closed_ || !can_enabled_ || count == 0)
+    {
+        return;
+    }
+    NetworkCanFrames& nc = network_can_for(network);
+    nc.untimed_dropped += count;
+}
+
 TimelineRecord::ParticipantEvents& TimelineRecord::participant_events_for(std::string_view participant)
 {
     for (ParticipantEvents& pe : participant_events_)
@@ -410,6 +502,19 @@ void TimelineRecord::close(std::optional<SimTime> to)
                   [](const EventDrop& a, const EventDrop& b) { return a.participant < b.participant; });
         participant_events_.clear();
         events_total_ = 0;
+        can_frames_.clear();
+        can_dropped_.clear();
+        for (const NetworkCanFrames& nc : network_can_)
+        {
+            if (nc.untimed_dropped > 0)
+            {
+                can_dropped_.push_back(CanDrop{nc.network, 0, std::nullopt, std::nullopt, nc.untimed_dropped});
+            }
+        }
+        std::sort(can_dropped_.begin(), can_dropped_.end(),
+                  [](const CanDrop& a, const CanDrop& b) { return a.network < b.network; });
+        network_can_.clear();
+        can_total_ = 0;
         return;
     }
     const SimTime limit = *to;
@@ -515,6 +620,73 @@ void TimelineRecord::close(std::optional<SimTime> to)
         std::sort(events_dropped_.begin(), events_dropped_.end(),
                   [](const EventDrop& a, const EventDrop& b) { return a.participant < b.participant; });
         participant_events_.clear();
+    }
+    if (can_enabled_)
+    {
+        can_total_ = 0;
+        for (NetworkCanFrames& nc : network_can_)
+        {
+            std::stable_sort(nc.frames.begin(), nc.frames.end(), [](const StoredCanFrame& a, const StoredCanFrame& b) {
+                return a.at != b.at ? a.at < b.at : a.seq < b.seq;
+            });
+            while (!nc.frames.empty() && nc.frames.back().at > limit)
+            {
+                nc.frames.pop_back();
+            }
+            if (nc.dropped > 0)
+            {
+                if (nc.frames.empty())
+                {
+                    nc.dropped_before.reset();
+                }
+                else
+                {
+                    nc.dropped_before = nc.frames.front().at;
+                }
+            }
+            can_total_ += nc.frames.size();
+        }
+        enforce_can(true);
+        can_frames_.clear();
+        can_frames_.reserve(can_total_);
+        can_dropped_.clear();
+        for (const NetworkCanFrames& nc : network_can_)
+        {
+            for (const StoredCanFrame& f : nc.frames)
+            {
+                CanFrame out{};
+                out.at = f.at;
+                out.network = nc.network;
+                out.id = f.id;
+                out.extended = f.extended;
+                out.rtr = f.rtr;
+                out.fd = f.fd;
+                out.dlc = f.dlc;
+                out.data_len = f.data_len;
+                out.data = f.data;
+                out.seq = f.seq;
+                can_frames_.push_back(std::move(out));
+            }
+            if (nc.dropped > 0 || nc.untimed_dropped > 0)
+            {
+                can_dropped_.push_back(
+                    CanDrop{nc.network, nc.dropped, nc.dropped_from, nc.dropped_before, nc.untimed_dropped});
+            }
+        }
+        std::stable_sort(can_frames_.begin(), can_frames_.end(), [](const CanFrame& a, const CanFrame& b) {
+            if (a.at != b.at)
+            {
+                return a.at < b.at;
+            }
+            if (a.network != b.network)
+            {
+                return a.network < b.network;
+            }
+            return a.seq < b.seq;
+        });
+        std::sort(can_dropped_.begin(), can_dropped_.end(),
+                  [](const CanDrop& a, const CanDrop& b) { return a.network < b.network; });
+        network_can_.clear();
     }
 }
 
@@ -743,6 +915,129 @@ void TimelineRecord::enforce_events(bool final)
         }
     }
     events_total_ = total;
+}
+
+void TimelineRecord::drop_oldest_can(NetworkCanFrames& nc, std::size_t keep)
+{
+    if (nc.frames.size() <= keep)
+    {
+        return;
+    }
+    const std::size_t drop = nc.frames.size() - keep;
+    for (std::size_t i = 0; i < drop; ++i)
+    {
+        const SimTime t = nc.frames[i].at;
+        nc.dropped_from = nc.dropped_from ? std::min(*nc.dropped_from, t) : t;
+    }
+    nc.dropped += static_cast<std::uint64_t>(drop);
+    nc.frames.erase(nc.frames.begin(), nc.frames.begin() + static_cast<std::ptrdiff_t>(drop));
+    if (!nc.frames.empty())
+    {
+        nc.dropped_before = nc.frames.front().at;
+    }
+    else
+    {
+        nc.dropped_before.reset();
+    }
+}
+
+void TimelineRecord::enforce_can(bool final)
+{
+    const std::size_t perNet =
+        final ? limits_.can_frames_per_network : limits_.can_frames_per_network + limits_.can_frames_per_network / 2;
+    const std::size_t all = final ? limits_.can_frames_total : limits_.can_frames_total + limits_.can_frames_total / 2;
+    std::vector<std::size_t> counts(network_can_.size());
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < network_can_.size(); ++i)
+    {
+        drop_oldest_can(network_can_[i], perNet);
+        counts[i] = network_can_[i].frames.size();
+        total += counts[i];
+    }
+    if (total > all)
+    {
+        if (all == 0)
+        {
+            for (NetworkCanFrames& nc : network_can_)
+            {
+                drop_oldest_can(nc, 0);
+            }
+            can_total_ = 0;
+            return;
+        }
+        const auto fits = [&](std::size_t level) {
+            std::size_t sum = 0;
+            for (const std::size_t c : counts)
+            {
+                sum += std::min(c, level);
+            }
+            return sum <= all;
+        };
+        std::size_t low = 0;
+        std::size_t high = *std::max_element(counts.begin(), counts.end());
+        while (low < high)
+        {
+            const std::size_t middle = low + (high - low + 1) / 2;
+            if (fits(middle))
+            {
+                low = middle;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+        total = 0;
+        for (std::size_t i = 0; i < network_can_.size(); ++i)
+        {
+            drop_oldest_can(network_can_[i], low + 1);
+            total += network_can_[i].frames.size();
+        }
+        while (total > all)
+        {
+            std::size_t victim = 0;
+            bool found = false;
+            for (std::size_t i = 0; i < network_can_.size(); ++i)
+            {
+                const auto& nc = network_can_[i];
+                if (nc.frames.empty())
+                {
+                    continue;
+                }
+                if (!found)
+                {
+                    victim = i;
+                    found = true;
+                    continue;
+                }
+                const auto& cur = network_can_[victim];
+                if (nc.frames.size() != cur.frames.size())
+                {
+                    if (nc.frames.size() > cur.frames.size())
+                    {
+                        victim = i;
+                    }
+                }
+                else
+                {
+                    const auto key = [](const NetworkCanFrames& x) {
+                        return std::tuple{x.frames.front().at, std::string_view(x.network), x.frames.front().seq};
+                    };
+                    if (key(nc) < key(cur))
+                    {
+                        victim = i;
+                    }
+                }
+            }
+            if (!found)
+            {
+                break;
+            }
+            drop_oldest_can(network_can_[victim], network_can_[victim].frames.size() - 1);
+            --total;
+        }
+    }
+    can_total_ = total;
 }
 
 } // namespace vehicle_sil::scenario

@@ -81,11 +81,11 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
 | `GET api/config?file=<configuration file>` | ファイルの文と、そのバイト列の SHA-256: `{file, text, stamp}`（下の「構成ファイルの文」） | `config.json` |
-| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, record, record_after_fail_ms, record_events, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/check` `{file, vehicle_sil_run_request, disable, enable, manual, record, record_after_fail_ms, record_events, record_can, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/check` `{file, text, variant, strict}` | ファイルの保存していない文の照合。プロセスを起動しない。レスポンスは上と同じ | `check-text.json` |
 | `POST api/describe` `{file, variant}` | `{file, variant, exit_code, check}`: 保存したファイルを照合し、実行ファイルの説明を取り直す（文の照合のため） | `describe.json` |
 | `POST api/config` `{file, text, stamp}` | `{file, stamp}`: 文をそのファイルとして保存する。既定では、実行されるコマンドを変えない編集だけ（下の「文を保存する（`POST api/config`）」） | `save-config.json`、`error-commands-changed.json` |
-| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, record, record_after_fail_ms, record_events, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
+| `POST api/run` `{file, vehicle_sil_run_request, disable, enable, manual, record, record_after_fail_ms, record_events, record_can, scenario, case, after_scenario, variant, params, strict, connect, time_policy, speed, start_paused, stop_at_ms, late_tolerance_ms}` | `{instance, run_id}`（始めた実行の識別子。要約は WebSocket で届く）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`run-connect.json`、`error-check-failed.json` |
 | `POST api/connections` `{file, network}` | `{file, network, exit_code, connections}`: そのネットワークを、このコンピューターでどこにつなげるか（下の「ネットワークを外につなぐ」） | `connections.json` |
 | `POST api/stop-session` `{run_id, instance, force}` | 対象の `{instance, run_id}`、または 409 `session-changed` | `stop*.json` |
 | `POST api/time` `{command, ms, at_ms, value, id, run_id, instance}` | `{run_id, command}`（ランチャーに送ったコマンド。`id` があればそれも） | `time.json` |
@@ -261,7 +261,7 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 409 | `starting` | `api/run`: 別の `api/run` が実行を始めている途中（ランチャーをまだ登録していない） |
 | 422 | `check-failed` | `api/run`: 実行を成す内容の照合が通らなかったので、実行を始めなかった（`detail` は `{result, findings}`。上の「照合と開始」）。例: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
-| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った、`scenario-handover` 機能のないランチャーに `after_scenario: "pause"` を送った、`scenario-cases` 機能のないランチャーに `case` を送った、`record-signals` 機能のないランチャーに空でない `record` を送った、`record-after-fail` 機能のないランチャーに `record_after_fail_ms` を送った、または `record-events` 機能のないランチャーに `record_events: true` を送った |
+| 409 | `launcher-unsupported` | `api/check`、`api/run`: `run-stop-at` 機能のないランチャーに `stop_at_ms` または `late_tolerance_ms` を送った、`scenario-handover` 機能のないランチャーに `after_scenario: "pause"` を送った、`scenario-cases` 機能のないランチャーに `case` を送った、`record-signals` 機能のないランチャーに空でない `record` を送った、`record-after-fail` 機能のないランチャーに `record_after_fail_ms` を送った、`record-events` 機能のないランチャーに `record_events: true` を送った、または `record-can` 機能のないランチャーに `record_can: true` を送った |
 | 409 | `scenario-running` | `api/write`: 動いている実行が引き継ぎ前のシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
 | 409 | `session-changed` | `api/stop-session` と対象を指定した `api/time` では、サーバーの識別子か実行が変わった。`api/write` では、指定した実行 ID が動いている実行と違う。操作は送られていない。例 `error-session-changed.json` |
 | 409 | `config-changed` | `POST api/config`: ファイルの中身がもう `stamp` でない、または新しいファイル（`stamp` が `null`）がすでにある |
@@ -285,8 +285,8 @@ GUI Client は `api/session` と `api/run` の成功応答に `instance` を必�
 | 504 | `check-timeout` | 照合（または `api/connections` の一覧）が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: `limits.write_timeout_s` 以内に Control Server の応答または全対象 ECU のキュー投入が完了しなかった（操作番号の確定後は `detail` に `{operation, state: "sent"}`）。反映される可能性がある（送り直さない） |
 
-- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`case`、`after_scenario`、`record`、`record_after_fail_ms`、`record_events`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
-- `invalid-field` の対象: `speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`after_scenario`（`scenario` なしの `"pause"` や `stop_at_ms` との併用も含む）、`record`、`record_after_fail_ms`、`record_events`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`at_ms`、`value`、`id`、`run_id`、`instance`（`run_id` と `instance` の片方だけの指定を含む）、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
+- `api/check` と `api/run` は同じフィールドを受けます: `file`、`$schema`、`vehicle_sil_run_request`、`scenario`、`case`、`after_scenario`、`record`、`record_after_fail_ms`、`record_events`、`record_can`、`variant`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`。`text` があるとき、`api/check` が受けるのは `file`、`$schema`、`vehicle_sil_run_request`、`variant`、`strict`、`text` だけです。`api/describe` は `file` と `variant` を受けます。`POST api/config` は `file`、`text`、`stamp` を受けます（`stamp` は必須で、`null` でもよい）。`api/connections` は `file` と `network` を受けます。ほかのフィールド（打ち間違い、実行をする側のキー）と `null` は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `invalid-field` の対象: `speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms`、`after_scenario`（`scenario` なしの `"pause"` や `stop_at_ms` との併用も含む）、`record`、`record_after_fail_ms`、`record_events`、`record_can`、`variant`、`params`、`enable`、`strict`、`connect`、`time_policy`、`network`、`force`、`disable`、`manual`（同じ名前を 2 度も）、`api/time` の `command`、`ms`、`at_ms`、`value`、`id`、`run_id`、`instance`（`run_id` と `instance` の片方だけの指定を含む）、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
 - `unsupported` の対象: `control-server` を持たないのに `api/write` を送った。（サーバーは起動時に `time-commands`、`stdin-run-until`、`state`、`speed`、`start-paused`、`scenario`、`manual-participants` を必須として確かめるので、`api/time` にこの場合はありません。）
 
 例のファイルは次のとおりです。ほかのコードは、GUI サーバーのテストの中で確認します。
@@ -444,8 +444,8 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数 |
 | `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
 | `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
-| `timeline_url` | サーバーがその実行の時間の軸のファイルを配る先（`api/timeline/<run_id>`）の任意のトップレベルフィールド。時間の軸を記録して終わった実行で設定され、シナリオ実行（`scenario.timeline_url` と同じ値）と、`manual-timeline` を持つランチャーでの `record` または `record_events: true` つき手動実行の両方で使える。利用可能になる前や旧サーバーでは省略 |
-| `intent` | この実行を開始したときの任意の条件（`variant`、`scenario`、`case`、`after_scenario`、`record`、`record_after_fail_ms`、`record_events`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms` など）。`scenario` は GUI API のルート相対パスで保持するため、`{"file": session.file, ...session.intent}` をそのまま `POST api/run` へ渡して再実行できる。旧サーバーでは省略または `null` |
+| `timeline_url` | サーバーがその実行の時間の軸のファイルを配る先（`api/timeline/<run_id>`）の任意のトップレベルフィールド。時間の軸を記録して終わった実行で設定され、シナリオ実行（`scenario.timeline_url` と同じ値）と、`manual-timeline` を持つランチャーでの `record`・`record_events: true`・`record_can: true` つき手動実行の両方で使える。利用可能になる前や旧サーバーでは省略 |
+| `intent` | この実行を開始したときの任意の条件（`variant`、`scenario`、`case`、`after_scenario`、`record`、`record_after_fail_ms`、`record_events`、`record_can`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms` など）。`scenario` は GUI API のルート相対パスで保持するため、`{"file": session.file, ...session.intent}` をそのまま `POST api/run` へ渡して再実行できる。旧サーバーでは省略または `null` |
 
 フィールドごとの補足です。
 
@@ -703,6 +703,7 @@ participant ごとの `state` は次のとおりです。
 - 任意の `after_scenario`（`"stop"` または `"pause"`、省略時は `"stop"`）は、シナリオが `passed` で完了した後の挙動を選びます。`"pause"` には `scenario` の指定と `stop_at_ms` の省略が必要で（反する場合は 400 `invalid-field`）、ランチャーの `features` に `"scenario-handover"` が必要です（なければ 409 `launcher-unsupported`）。`"pause"` でシナリオが通ると、ランチャーは `handed_over: true` と `scenario_over_at_ms` を含む `state` イベントを出し、同じ実行のままその仮想時刻で一時停止して（`speed: "max"` でも `step` か `resume` まで進みません）、`scenario-running` 拒否を解除します（`launcher_state.allowed.write.ok: true`）。失敗・停止・`stop_at_ms` 到達・未完了の実行では決して引き継がれません（`handed_over` は `false` のままです）。
 - 任意の `record_after_fail_ms`（整数 `1`〜`600000`、省略時は無効）は、通常のシナリオ条件失敗または待機タイムアウトの後にシナリオからの追加書き込みを行わず、指定した仮想時間だけサンプリング記録を継続してタイムラインへ出力します。ランチャーの `features` に `"record-after-fail"` が必要です（なければ 409 `launcher-unsupported`）。
 - 任意の `record_events`（真偽値、省略または `false` で無効）は、`Ecu::log()` / `control::Agent::log()` による仮想時刻付き構造化 ECU イベントを上限付きでタイムラインファイルの `events` 配列に記録します。`true` にはランチャーの `features` に `"record-events"` が必要です（なければ 409 `launcher-unsupported`）。生の `stdout`/`stderr` パイプ出力は仮想時刻軸には載りません。
+- 任意の `record_can`（真偽値、省略または `false` で無効）は、構成された `can` ネットワーク上で受動観測した仮想時刻付き CAN フレームを上限付きでタイムラインファイルの `can_frames` 配列に記録します。`true` にはランチャーの `features` に `"record-can"` が必要です（なければ 409 `launcher-unsupported`）。実測の仮想時刻は仮想時間同期 participant に適用され、`timestamp < 0` で届いたフレーム（ステップ 0 より前など）は `limits.can_dropped[].untimed_dropped` に計上します。仮想時間の進行開始後（`t >= 0`）に非同期・外部ブリッジ送信元から届くフレームには、SIL Kit 自身がコントローラーのステップ時刻を付与します。
 
 シナリオを実行している間にできることは、次のとおりです。
 
@@ -741,10 +742,10 @@ participant ごとの `state` は次のとおりです。
 
 ### シナリオの実行の時間の軸（`api/timeline`）
 
-ランチャーの `features` に `timeline` があると、サーバーはシナリオつきの実行のすべてに `--timeline <ファイル>` を付け、さらに `manual-timeline` もある場合は、`record` に 1 つ以上の記録対象信号を指定したか `record_events: true` を指定した手動実行（`scenario` 省略）にも `--timeline <ファイル>` を付けます。ファイルはサーバーの一時ディレクトリに置きます。実行の結果の `result.scenario.timeline`（シナリオ実行）またはトップレベルの `result.timeline`（手動実行）と、ランチャーの `log` の行 `timeline: <ファイル>` が、そのファイルを指します（[docs/ja/simulation-run.md](../../docs/ja/simulation-run.md#シナリオの実行を時間の軸で記録する--timeline) の「シナリオの実行を時間の軸で記録する」）。`timeline` のないランチャー（または手動実行で `manual-timeline` のないランチャー）には `--timeline` を付けず、その実行には時間の軸がありません。
+ランチャーの `features` に `timeline` があると、サーバーはシナリオつきの実行のすべてに `--timeline <ファイル>` を付け、さらに `manual-timeline` もある場合は、`record` に 1 つ以上の記録対象信号を指定したか `record_events: true` または `record_can: true` を指定した手動実行（`scenario` 省略）にも `--timeline <ファイル>` を付けます。ファイルはサーバーの一時ディレクトリに置きます。実行の結果の `result.scenario.timeline`（シナリオ実行）またはトップレベルの `result.timeline`（手動実行）と、ランチャーの `log` の行 `timeline: <ファイル>` が、そのファイルを指します（[docs/ja/simulation-run.md](../../docs/ja/simulation-run.md#シナリオの実行を時間の軸で記録する--timeline) の「シナリオの実行を時間の軸で記録する」）。`timeline` のないランチャー（または手動実行で `manual-timeline` のないランチャー）には `--timeline` を付けず、その実行には時間の軸がありません。
 
 - 実行が終わったら、ランチャーがファイルを全部書けていれば、サーバーはファイルを残します。ファイルが空でなく、結果に指摘 `timeline-write` がないことです。このとき、要約のトップレベルの `timeline_url` が `api/timeline/<run_id>` になります（シナリオ実行では `scenario.timeline_url` も同じ値になります）。
-- `GET api/timeline/<run_id>` は、ファイルを `application/json` で、`Content-Disposition: inline; filename="<シナリオ名または構成ファイル名>.timeline.json"` を付けて返します。ほかの `api/` と同じく、トークンが要ります。残したファイルのない実行（`record` も `record_events` もない手動実行、`timeline` や `manual-timeline` のないランチャー、まだ動いている、ファイルを全部書けなかった、サーバーが出していない id、消えたファイル）は 404 `no-timeline` です。
+- `GET api/timeline/<run_id>` は、ファイルを `application/json` で、`Content-Disposition: inline; filename="<シナリオ名または構成ファイル名>.timeline.json"` を付けて返します。ほかの `api/` と同じく、トークンが要ります。残したファイルのない実行（`record`・`record_events`・`record_can` のいずれもない手動実行、`timeline` や `manual-timeline` のないランチャー、まだ動いている、ファイルを全部書けなかった、サーバーが出していない id、消えたファイル）は 404 `no-timeline` です。
 - サーバーは、ファイルを書いた直近 `--keep-runs` 件（既定 4 件）の実行のファイルを残します。上限を超えると終了直後の run 以外から過去の成功 run を失敗 run より先に削除し、サーバー停止時に全部を消します。
 - ファイルを図にするページは、トークンなしで `timeline/` に配ります（`timeline/`、`timeline/timeline.html`、`timeline/page.js`、`timeline/vehicle-sil-timeline.js`。最後のものは要素 `<vehicle-sil-timeline>` で、サーバーの画面も読めます）。`Host` の確かめとヘッダーは、画面のファイルと同じです。ページは、画面と同じ所からトークンを読み（URL の `#token=`、なければタブの sessionStorage の、`takeToken` と同じ鍵）、`Authorization: Bearer` で送ります。開くときは `timeline/?src=/api/timeline/<run_id>` です。
 

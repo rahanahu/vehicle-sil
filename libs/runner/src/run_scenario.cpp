@@ -136,8 +136,9 @@ private:
     std::vector<std::uint64_t> open_{};
 };
 
-RunScenario::RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control, RunSamples& samples) :
-  ctx_(ctx), out_(out), control_(control), samples_(samples)
+RunScenario::RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control, RunSamples& samples,
+                         RunCanRecorder& can_recorder) :
+  ctx_(ctx), out_(out), control_(control), samples_(samples), can_recorder_(can_recorder)
 {
     if (ctx_.scenario != nullptr)
     {
@@ -204,6 +205,51 @@ void RunScenario::drain_events(std::optional<SimTime> before)
     pending_events_ = std::move(remaining);
 }
 
+void RunScenario::drain_can(std::optional<SimTime> before)
+{
+    if (!record_ || !record_->can_enabled())
+    {
+        return;
+    }
+    RunCanRecorder::Taken taken = can_recorder_.take();
+    for (std::size_t i = 0; i < taken.untimed_dropped.size(); ++i)
+    {
+        if (taken.untimed_dropped[i] > 0)
+        {
+            record_->note_untimed_can_dropped(can_recorder_.network_name(static_cast<std::uint16_t>(i)),
+                                              taken.untimed_dropped[i]);
+        }
+    }
+    pending_can_.insert(pending_can_.end(), taken.frames.begin(), taken.frames.end());
+    const auto push_frame = [this](const CapturedCanFrame& f) {
+        const std::string_view net = can_recorder_.network_name(f.net_idx);
+        record_->can_frame(net, f.at, f.id, f.extended(), f.rtr(), f.fd(), f.dlc,
+                           std::span<const std::uint8_t>(f.data.data(), f.data_len));
+    };
+    if (!before)
+    {
+        for (const CapturedCanFrame& f : pending_can_)
+        {
+            push_frame(f);
+        }
+        pending_can_.clear();
+        return;
+    }
+    std::vector<CapturedCanFrame> remaining;
+    for (const CapturedCanFrame& f : pending_can_)
+    {
+        if (f.at < *before)
+        {
+            push_frame(f);
+        }
+        else
+        {
+            remaining.push_back(f);
+        }
+    }
+    pending_can_ = std::move(remaining);
+}
+
 void RunScenario::drain(std::optional<SimTime> before)
 {
     trace::Span traceDrain("scenario.drain");
@@ -222,6 +268,7 @@ void RunScenario::drain(std::optional<SimTime> before)
         }
     }
     drain_events(before);
+    drain_can(before);
 }
 
 void RunScenario::begin(control_silkit::HubTransport& transport, const std::function<bool()>& cancelled)
@@ -300,6 +347,10 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
         {
             record_->enable_events();
         }
+        if (ctx_.plan.record_can)
+        {
+            record_->enable_can();
+        }
     }
     engine_ = std::make_unique<scenario::ScenarioEngine>(*ctx_.scenario, step_,
                                                         *port_,
@@ -343,6 +394,10 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     if (record_ && record_->events_enabled())
     {
         samples_.events_begins();
+    }
+    if (record_ && record_->can_enabled())
+    {
+        can_recorder_.recording_begins();
     }
     engine_->begin(found);
     port_->give_up = [this] { return quit_.load(); };
@@ -391,6 +446,8 @@ void RunScenario::loop(SimulationController& controller)
             drain(p);
             if (engine_->tick(p))
             {
+                can_recorder_.recording_ends();
+                pending_can_.clear();
                 if (ctx_.plan.after_scenario == config::AfterScenario::Pause &&
                     engine_->run().status == scenario::ScenarioStatus::Passed &&
                     TimeCommandsAccess::handover_from_scenario(ctx_.commands, controller, ctx_.controls.stops(), p, quit_,
@@ -476,8 +533,13 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
     const struct Ends
     {
         RunSamples& samples;
-        ~Ends() { samples.scenario_ends(); }
-    } ends{samples_};
+        RunCanRecorder& can;
+        ~Ends()
+        {
+            samples.scenario_ends();
+            can.recording_ends();
+        }
+    } ends{samples_, can_recorder_};
     const bool was_in_failing_tail = engine_->in_failing_tail();
     const bool had_failing_tail = engine_->had_failing_tail();
     if (!engine_->over())
@@ -487,7 +549,7 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
                                controller.wall_time_to_stop_at().has_value();
         if (stoppedAt)
         {
-            // The controller's last step: the samples and events of the steps before it are all there.
+            // The controller's last step: the samples, events and CAN frames of the steps before it are all there.
             const SimTime now = controller.time_state().now;
             drain(now);
             engine_->stopped_at(now);
@@ -501,6 +563,7 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
             else
             {
                 drain_events(std::nullopt);
+                drain_can(std::nullopt);
             }
             engine_->cut_short();
         }
@@ -527,6 +590,7 @@ void RunScenario::end()
         thread_.join();
     }
     samples_.scenario_ends();
+    can_recorder_.recording_ends();
 }
 
 } // namespace vehicle_sil::runner::detail

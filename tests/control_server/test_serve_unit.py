@@ -1869,6 +1869,56 @@ class ServeUnitTest(unittest.TestCase):
         self.assertEqual(run_cmds[0]["intent"], {"record_events": True})
         self.assertEqual(run_cmds[1]["intent"], {"record_events": False})
 
+    def test_record_can_arguments_and_validation(self) -> None:
+        # _split_once_arguments accepts record_can kwarg and --record-can CLI flag.
+        host, cmd = _split_once_arguments(["--record-can"], start_paused=False)
+        self.assertEqual(host, [])
+        self.assertEqual(cmd, {"command": "run", "intent": {"record_can": True}})
+
+        host2, cmd2 = _split_once_arguments([], start_paused=False, record_can=True)
+        self.assertEqual(host2, [])
+        self.assertEqual(cmd2, {"command": "run", "intent": {"record_can": True}})
+
+        host3, cmd3 = _split_once_arguments([], start_paused=False, record_can=False)
+        self.assertEqual(host3, [])
+        self.assertEqual(cmd3, {"command": "run"})
+
+        for bad_type in (1, 0, "true", None):
+            with self.assertRaises(TypeError):
+                _split_once_arguments([], start_paused=False, record_can=bad_type)  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--request", "bench.json"], start_paused=False, record_can=True)
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--request", "bench.json", "--record-can"], start_paused=False)
+
+        # Serve.start(record_can=...) validates bool and forwards inline.
+        def handler(proc: _FakeProcess, c: dict) -> None:
+            if c.get("command") == "run":
+                proc.stdout.push_event({"event": "run_start", "seq": 2, "t_ms": 2, "run": "r-1", "id": c["id"]})
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": 3,
+                    "t_ms": 3,
+                    "run": "r-1",
+                    "launcher_ends": False,
+                    "status": {"instance": "0123456789abcdef", "status_rev": 1, "launcher_state": "ready"},
+                    "result": {"result": "passed", "ok": True},
+                })
+
+        fake_proc = _FakeProcess(["/fake/launch", "serve", "--", "sim.yaml"], handler=handler)
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", return_value=fake_proc):
+            with Serve("/fake/launch", "sim.yaml") as srv:
+                for bad_type in (1, 0, "true"):
+                    with self.assertRaises(TypeError):
+                        srv.start(record_can=bad_type)  # type: ignore[arg-type]
+                run1 = srv.start(record_can=True)
+                self.assertEqual(run1.wait()["result"], "passed")
+                run2 = srv.start(record_can=False)
+                self.assertEqual(run2.wait()["result"], "passed")
+        run_cmds = [c for c in fake_proc.stdin.commands if c.get("command") == "run"]
+        self.assertEqual(run_cmds[0]["intent"], {"record_can": True})
+        self.assertEqual(run_cmds[1]["intent"], {"record_can": False})
+
 
 if __name__ == "__main__":
     unittest.main()

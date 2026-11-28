@@ -231,11 +231,11 @@ void timeline(const Options& o)
 
     // The command line.
     const Captured alone = launch(o, {"run", "sim.yaml", "--timeline", "x.json"}, dir);
-    expect_code(alone, 4, "--timeline without --scenario, --record or --record-events");
+    expect_code(alone, 4, "--timeline without --scenario, --record, --record-events or --record-can");
     require(contains(lf(alone.standard_error),
-                     "error: --timeline needs --scenario, --record or --record-events: give --scenario <file>, at least "
-                     "one --record <participant>.<variable>, or --record-events, or leave --timeline out\n"),
-            "--timeline without --scenario, --record or --record-events:\n" + lf(alone.standard_error));
+                     "error: --timeline needs --scenario, --record, --record-events or --record-can: give --scenario <file>, at least "
+                     "one --record <participant>.<variable>, --record-events or --record-can, or leave --timeline out\n"),
+            "--timeline without --scenario, --record, --record-events or --record-can:\n" + lf(alone.standard_error));
     const Captured checked = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml", "--timeline", "x.json"}, dir);
     expect_code(checked, 4, "check --timeline");
     require(contains(lf(checked.standard_error), "error: --timeline is for run: check starts no participant\n"),
@@ -904,6 +904,235 @@ void timeline(const Options& o)
             {
                 const Captured bad = vehicle_sil::process::run_captured(o.launch, badArgs, rawOpts);
                 expect_code(bad, 4, "refuse --record-events on unsupported subcommand");
+            }
+        }
+
+        // Virtual-timestamped CAN frame recording (--record-can / request "record_can" / serve inline intent):
+        // 1. Direct SIL Kit CAN on examples/ecu_main (engine_disconnect.yaml):
+        //    - baseline without --record-can omits "can_frames" and "can_frames_per_network" completely.
+        //    - with --record-can: records real J1939 CAN frames on J1939_CAN (extended: true, dlc: 8, uppercase hex),
+        //      deterministic across --speed max vs --speed 1, and identical via --request and serve --once.
+        // 2. end_ms < p boundary determinism (end_ms: 250 across --speed max vs --speed 1: zero frames >= 250ms).
+        // 3. FailingTail + --record-can captures post-failure CAN frames emitted after t=100ms up to 400ms.
+        // 4. Manual --record-can alone (zero --scenario, zero --record, zero --record-events) with --stop-at-ms
+        //    and with --stdin-commands stop produces scenario: null, non-empty can_frames[], and non-null recorded_to_ms.
+        // 5. Absent optional required: false ECU invariance under --strict with --record-can.
+        // 6. --record-can refused on test, serve, connections, and duplicate --record-can refused (exit 4).
+        {
+            const std::string baseDiscText = read_text(exDir / "disc_base.json");
+            require(!contains(baseDiscText, "\"can_frames\"") && !contains(baseDiscText, "\"can_frames_per_network\"") &&
+                        !contains(baseDiscText, "\"can_frames_total\"") && !contains(baseDiscText, "\"can_dropped\""),
+                    "baseline timeline without --record-can omits can_* keys:\n" + baseDiscText);
+
+            const Captured canMax = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml",
+                 "--speed", "max", "--record-can", "--timeline", "disc_can_max.json"},
+                exDir);
+            expect_code(canMax, 0, "engine_disconnect --record-can --speed max");
+            const std::string canMaxText = read_text(exDir / "disc_can_max.json");
+            const auto canStart = canMaxText.find("  \"can_frames\": [");
+            const auto canEnd = canMaxText.find("  \"findings\": [", canStart);
+            require(canStart != std::string::npos && canEnd != std::string::npos, "missing can_frames section:\n" + canMaxText);
+            const std::string canSection = canMaxText.substr(canStart, canEnd - canStart);
+            require(contains(canSection, "\"network\": \"J1939_CAN\",") &&
+                        contains(canSection, "\"extended\": true,") &&
+                        contains(canSection, "\"dlc\": 8,") &&
+                        contains(canSection, "\"data\": \"") &&
+                        contains(canMaxText, "    \"can_frames_per_network\": 10000,\n"
+                                             "    \"can_frames_total\": 20000,\n"
+                                             "    \"can_dropped\": []\n"),
+                    "engine_disconnect --record-can timeline:\n" + canMaxText);
+
+            // Deterministic across --speed max vs --speed 1 (short end_ms scenario so --speed 1 completes in ~0.25s!).
+            const Captured canEndMax = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "end_at_claim.yaml",
+                 "--speed", "max", "--record-can", "--timeline", "end_can_max.json"},
+                exDir);
+            expect_code(canEndMax, 0, "end_ms: 250 --record-can --speed max");
+            const std::string canEndMaxText = read_text(exDir / "end_can_max.json");
+            require(contains(canEndMaxText, "    \"status\": \"passed\",\n") &&
+                        contains(canEndMaxText, "    \"recorded_to_ms\": 250,\n") &&
+                        contains(canEndMaxText, "\"network\": \"J1939_CAN\",") &&
+                        !contains(canEndMaxText, "\"at_ms\": 250,"),
+                    "end_ms: 250 --record-can observes only frames with t < 250ms:\n" + canEndMaxText);
+
+            const Captured canEndReal = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "end_at_claim.yaml",
+                 "--speed", "1", "--record-can", "--timeline", "end_can_s1.json"},
+                exDir);
+            expect_code(canEndReal, 0, "end_ms: 250 --record-can --speed 1");
+            expect_text(read_text(exDir / "end_can_s1.json"), canEndMaxText,
+                        "end_ms: 250 --record-can is deterministic across --speed max vs --speed 1");
+
+            // Request file "record_can": true and serve --once inline intent match byte for byte.
+            write_file(exDir / "req_can.json",
+                       "{\n"
+                       "  \"vehicle_sil_run_request\": 1,\n"
+                       "  \"scenario\": \"end_at_claim.yaml\",\n"
+                       "  \"record_can\": true\n"
+                       "}\n");
+            const Captured canReq = launch(
+                o, {"run", "simulation.yaml", "--request", "req_can.json", "--timeline", "end_can_req.json"}, exDir);
+            expect_code(canReq, 0, "run --request with record_can");
+            expect_text(read_text(exDir / "end_can_req.json"), canEndMaxText, "request file record_can timeline parity");
+
+            const Captured canServe = launch(
+                o,
+                {"serve", "--once", "simulation.yaml", "--scenario", "end_at_claim.yaml",
+                 "--record-can", "--timeline", "end_can_serve.json"},
+                exDir);
+            expect_code(canServe, 0, "serve --once with record_can");
+            expect_text(read_text(exDir / "end_can_serve.json"), canEndMaxText, "serve --once record_can timeline parity");
+
+            // FailingTail + --record-can captures post-failure CAN frames (Engine sends J1939 PGN 0xFF10,
+            // CAN ID 0x18FF1000 = 419368960, every 100 ms; with a 300 ms tail after the 100 ms failure,
+            // frames at 200, 300 and 400 ms are captured).
+            const Captured failCanNoTail = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "fail_before_claim.yaml",
+                 "--record-can", "--timeline", "fail_can_notail.json"},
+                exDir);
+            expect_code(failCanNoTail, 1, "failing scenario --record-can without tail");
+            const std::string failCanNoTailText = read_text(exDir / "fail_can_notail.json");
+            require(contains(failCanNoTailText, "    \"recorded_to_ms\": 100,\n") &&
+                        contains(failCanNoTailText, "\"id\": 419368960,") &&
+                        !contains(failCanNoTailText, "\"at_ms\": 200,") &&
+                        !contains(failCanNoTailText, "\"at_ms\": 300,") &&
+                        !contains(failCanNoTailText, "\"at_ms\": 400,"),
+                    "without tail, post-100ms CAN frames are not present:\n" + failCanNoTailText);
+
+            const Captured failCanTail = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "fail_before_claim.yaml",
+                 "--record-can", "--record-after-fail-ms", "300", "--timeline", "fail_can_tail.json"},
+                exDir);
+            expect_code(failCanTail, 1, "failing scenario --record-can with 300ms tail");
+            const std::string failCanTailText = read_text(exDir / "fail_can_tail.json");
+            require(contains(failCanTailText, "    \"status\": \"failed\",\n") &&
+                        contains(failCanTailText, "    \"recorded_to_ms\": 400,\n") &&
+                        contains(failCanTailText, "\"network\": \"J1939_CAN\",") &&
+                        contains(failCanTailText, "\"id\": 419368960,") &&
+                        contains(failCanTailText, "\"at_ms\": 200,") &&
+                        contains(failCanTailText, "\"at_ms\": 300,") &&
+                        contains(failCanTailText, "\"at_ms\": 400,"),
+                    "FailingTail captures post-failure J1939 CAN frames up to 400ms:\n" + failCanTailText);
+
+            // Manual run with --record-can alone (zero --scenario, zero --record, zero --record-events):
+            const Captured manualCan = launch(
+                o,
+                {"run", "simulation.yaml", "--stop-at-ms", "350", "--json",
+                 "--record-can", "--timeline", "manual_can.json"},
+                exDir);
+            expect_code(manualCan, 0, "manual run --record-can --timeline --stop-at-ms 350");
+            require(contains(lf(manualCan.standard_output), "\n  \"timeline\": \"manual_can.json\"\n}\n"),
+                    "manual --record-can run --json exposes top-level timeline:\n" + lf(manualCan.standard_output));
+            const std::string manualCanText = read_text(exDir / "manual_can.json");
+            require(contains(manualCanText, "  \"scenario\": null,\n  \"recorded_to_ms\": 350,\n") &&
+                        contains(manualCanText, "  \"variables\": [],\n") &&
+                        contains(manualCanText, "  \"series\": [],\n") &&
+                        contains(manualCanText, "  \"can_frames\": [\n") &&
+                        contains(manualCanText, "\"network\": \"J1939_CAN\",") &&
+                        contains(manualCanText, "\"id\": 419368960,") &&
+                        contains(manualCanText, "    \"can_frames_per_network\": 10000,\n"
+                                                "    \"can_frames_total\": 20000,\n"
+                                                "    \"can_dropped\": []\n"),
+                    "manual --record-can timeline:\n" + manualCanText);
+
+            // Manual run with --record-can alone + --stdin-commands stop (no --stop-at-ms):
+            // verifies RunRecorder advances last_seen_ from CAN frames so recorded_to_ms is non-null.
+            {
+                std::mutex mu;
+                std::condition_variable cv;
+                bool sawProgress = false;
+                std::string errLog;
+                std::string outLog;
+                vehicle_sil::process::ProcessOptions procOpts;
+                procOpts.working_directory = exDir;
+                procOpts.input = true;
+                procOpts.on_line = [&](vehicle_sil::process::Stream stream, std::string_view line) {
+                    const std::lock_guard lock(mu);
+                    if (stream == vehicle_sil::process::Stream::Error)
+                    {
+                        errLog += std::string(line) + "\n";
+                        if (line.find("[Dashboard] t=500 ms") != std::string_view::npos)
+                        {
+                            sawProgress = true;
+                            cv.notify_all();
+                        }
+                    }
+                    else
+                    {
+                        outLog += std::string(line) + "\n";
+                    }
+                };
+                vehicle_sil::process::Process proc(
+                    o.launch,
+                    {"run", "simulation.yaml", "--speed", "1", "--stdin-commands",
+                     "--record-can", "--timeline", "manual_can_stop.json"},
+                    std::move(procOpts));
+                {
+                    std::unique_lock lock(mu);
+                    require(cv.wait_for(lock, scaled_timeout(20s), [&] { return sawProgress; }),
+                            "did not observe Dashboard t=500 ms before stdin stop (CAN-only):\n" + errLog);
+                }
+                require(proc.write_input("{\"command\":\"stop\"}\n"), "failed to send stdin stop (CAN-only)");
+                const auto status = proc.wait_for(scaled_timeout(20s));
+                if (!status)
+                {
+                    proc.kill_tree();
+                }
+                proc.finish_output(10s);
+                require(status.has_value() && status->code == std::optional<int>(0),
+                        "manual CAN-only stdin stop must exit 0:\n" + outLog + "\n" + errLog);
+                const std::string stopCanTl = read_text(exDir / "manual_can_stop.json");
+                require(contains(stopCanTl, "  \"scenario\": null,\n  \"recorded_to_ms\": ") &&
+                            !contains(stopCanTl, "  \"recorded_to_ms\": null,\n") &&
+                            contains(stopCanTl, "  \"variables\": [],\n") &&
+                            contains(stopCanTl, "  \"series\": [],\n") &&
+                            contains(stopCanTl, "  \"can_frames\": [\n") &&
+                            contains(stopCanTl, "\"network\": \"J1939_CAN\","),
+                        "manual CAN-only stdin stop timeline has non-null recorded_to_ms and CAN frames:\n" + stopCanTl);
+            }
+
+            // Absent optional (required: false) ECU invariance under --strict with --record-can:
+            // RunControl::expected_agents() stays untouched, so an absent optional participant does not
+            // break --strict or emit control-link-no-hello.
+            {
+                std::string optSim = lf(read_text(exDir / "simulation.yaml"));
+                optSim += "  - name: OptionalEcu\n"
+                          "    command: [\"" +
+                          vehicle_sil::process::utf8_from_path(o.helper) +
+                          "\", \"--exit\", \"0\"]\n"
+                          "    describe: false\n"
+                          "    required: false\n";
+                write_file(exDir / "sim_optional_can.yaml", optSim);
+                const Captured optRun = launch(
+                    o,
+                    {"run", "sim_optional_can.yaml", "--strict", "--stop-at-ms", "300",
+                     "--record-can", "--timeline", "opt_can.json"},
+                    exDir);
+                expect_code(optRun, 0, "optional absent participant with --strict --record-can");
+                require(!contains(optRun.standard_output, "control-link-no-hello"),
+                        "optional participant must not emit control-link-no-hello:\n" + optRun.standard_output);
+                const std::string optTl = read_text(exDir / "opt_can.json");
+                require(contains(optTl, "\"network\": \"J1939_CAN\","), "optional run recorded CAN frames:\n" + optTl);
+            }
+
+            // --record-can refused on test, serve, connections, and duplicate --record-can refused (exit 4).
+            vehicle_sil::process::CaptureOptions rawOpts;
+            rawOpts.timeout = scaled_timeout(30s);
+            rawOpts.working_directory = exDir;
+            for (const std::vector<std::string>& badArgs : std::vector<std::vector<std::string>>{
+                     {"test", "simulation.yaml", "--record-can", "--scenarios", "scenarios/engine_disconnect.yaml"},
+                     {"serve", "simulation.yaml", "--record-can"},
+                     {"connections", "simulation.yaml", "--record-can"},
+                     {"run", "simulation.yaml", "--record-can", "--record-can"}})
+            {
+                const Captured bad = vehicle_sil::process::run_captured(o.launch, badArgs, rawOpts);
+                expect_code(bad, 4, "refuse --record-can on unsupported subcommand or duplicate");
             }
         }
     }

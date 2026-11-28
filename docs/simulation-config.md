@@ -884,7 +884,7 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 
 ```text
 vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
-                         [--record <participant>.<variable>]... [--record-after-fail-ms <ms>] [--record-events]
+                         [--record <participant>.<variable>]... [--record-after-fail-ms <ms>] [--record-events] [--record-can]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -896,7 +896,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
-                       [--timeline <file>] [--record <participant>.<variable>]... [--record-after-fail-ms <ms>] [--record-events]
+                       [--timeline <file>] [--record <participant>.<variable>]... [--record-after-fail-ms <ms>] [--record-events] [--record-can]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
                        [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -940,10 +940,11 @@ The usage above shows which commands accept each option. The Condition column of
 | `--case <name>` | `check`, `run` (with `--scenario`), and `test` | Selects a named case from the scenario's `cases` (see "Named cases (`cases`, `--case`)" in [scenario.md](scenario.md#named-cases-cases---case)). Repeatable in `test`. |
 | `--variant <name>` | | Selects a variant of the configuration file (see [Variants](#variants-variants---variant)). |
 | `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
-| `--timeline <file>` | `run` only, with `--scenario`, `--record` or `--record-events` | Writes the values and optional virtual-timestamped ECU events that the run wrote and saw (scenario runs, or manual runs with `--record` or `--record-events`) to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
+| `--timeline <file>` | `run` only, with `--scenario`, `--record`, `--record-events` or `--record-can` | Writes the values and optional virtual-timestamped ECU events / CAN frames that the run wrote and saw (scenario runs, or manual runs with `--record`, `--record-events` or `--record-can`) to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
 | `--record <participant>.<variable>` | `check` and `run` | Samples and records an extra ECU variable into the `--timeline` file without affecting scenario verdicts (can be repeated; also validated before starting participants). |
 | `--record-after-fail-ms <ms>` | `check` and `run`, only with `--scenario` | Continues advancing virtual time passively for up to `<ms>` ms (1 to 600000) after a normal scenario assertion or wait-timeout failure to record post-failure samples into `--timeline` without executing further scenario steps, writes, or dithers (harmless no-op when `--timeline` is omitted). |
 | `--record-events` | `check` and `run` | Opts in to bounded recording of virtual-timestamped structured ECU events (`Ecu::log()` / `control::Agent::log()`) from all connected control agents into `--timeline` (`events[]`). Raw child `stdout`/`stderr` pipes carry wall-clock times only and are never placed on the virtual-time axis (harmless no-op when `--timeline` is omitted). |
+| `--record-can` | `check` and `run` | Opts in to bounded recording of virtual-timestamped CAN frames via passive RX-only SIL Kit CAN observers into `--timeline` (`can_frames[]`), without calling `SetBaudRate()` or `SendFrame()`. Grounded virtual timestamps apply to time-synchronized participants; frames arriving with `timestamp < 0` (e.g. before the controller's first step) are dropped and counted rather than given fabricated timestamps, while once virtual time is running (`t >= 0`), SIL Kit's synchronized receiver stamps unsynchronized/bridge senders with the controller's current step time (harmless no-op when `--timeline` is omitted). |
 | `--control-metrics <file>` | `run` only | Writes the cumulative Control Hub SIL Kit transport counters (`HubTransport::stats()`) to a JSON file at the end of the run; does not require `--control` (see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](simulation-run.md#recording-control-hub-transport-metrics---control-metrics)). |
 | `--external-registry <uri>` | `run`, `serve`, `test` | Connects each run to a user-started loopback SIL Kit registry at `silkit://<loopback-host>:<port>` (port 1 to 65535, no path) instead of starting an in-process registry, giving each run an isolated `/vsil-<id>` simulation path (see "Observing runs in Vector SIL Kit Dashboard (`--external-registry`)" in [simulation-run.md](simulation-run.md#observing-runs-in-vector-sil-kit-dashboard---external-registry)). |
 | `--scenarios <dir or files>` | `test` only | The scenarios to run. |

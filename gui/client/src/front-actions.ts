@@ -130,6 +130,7 @@ const INTENT_FIELDS = new Set([
   'record',
   'record_after_fail_ms',
   'record_events',
+  'record_can',
   'variant',
   'params',
   'speed',
@@ -375,6 +376,7 @@ export class FrontActions {
         ? { record_after_fail_ms: intent.record_after_fail_ms }
         : {}),
       ...(intent.record_events ? { record_events: true } : {}),
+      ...(intent.record_can ? { record_can: true } : {}),
       ...(intent.variant !== undefined ? { variant: intent.variant } : {}),
       ...(intent.params ? { params: intent.params } : {}),
       ...(intent.speed !== undefined ? { speed: intent.speed } : {}),

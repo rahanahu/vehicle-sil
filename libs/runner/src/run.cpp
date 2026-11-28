@@ -245,8 +245,9 @@ RunnerImpl::RunnerImpl(RunPlan plan, RunObservers observers, RunEvents* events, 
   plan_(std::move(plan)), observers_(std::move(observers)),
   ctx_{plan_.config(), plan_.check, plan_, observers_, events, plan_.scenario(), controls, controls.time()},
   outcome_(planned_outcome(plan_)), out_(ctx_), control_(ctx_, out_),
-  samples_(participant_names(ctx_.config), detail::traffic_plan(ctx_.config, ctx_.check, ctx_.plan.members)), notes_(ctx_, participants_),
-  scenario_(ctx_, out_, control_, samples_), recorder_(ctx_, control_, samples_),
+  samples_(participant_names(ctx_.config), detail::traffic_plan(ctx_.config, ctx_.check, ctx_.plan.members)),
+  can_recorder_(), notes_(ctx_, participants_),
+  scenario_(ctx_, out_, control_, samples_, can_recorder_), recorder_(ctx_, control_, samples_, can_recorder_),
   start_(ctx_, out_, control_, notes_, scenario_, recorder_, participants_, outcome_),
   watch_(ctx_, out_, notes_, samples_, scenario_, recorder_, start_, participants_, outcome_),
   participants_(ctx_, out_, outcome_, plan_.base)
@@ -293,7 +294,11 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
     struct EndSamples
     {
         RunnerImpl& runner;
-        ~EndSamples() { runner.samples_.untap(); }
+        ~EndSamples()
+        {
+            runner.samples_.untap();
+            runner.can_recorder_.untap();
+        }
     } const endSamples{*this};
     struct EndScenario
     {
@@ -437,6 +442,10 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
         const bool tap_events = !ctx_.plan.timeline.empty() && ctx_.plan.record_events;
         samples_.tap(control_.hub(), std::chrono::milliseconds(ctx_.plan.timing.time_step_ms),
                      [c = connection->controller.get()] { return c->runtime().now(); }, tap_events);
+        if (!ctx_.plan.timeline.empty() && ctx_.plan.record_can && !ctx_.plan.can_networks.empty())
+        {
+            can_recorder_.tap(connection->controller->runtime(), ctx_.plan.can_networks);
+        }
         if (ctx_.scenario != nullptr)
         {
             // The scenario decides at every step of the controller, from the one at 0 on.
@@ -494,6 +503,7 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
     // word did not arrive within its wait) is settled here. No sample is taken any more: the
     // tap goes before the transport does (a run that did not get to its watch still has it).
     samples_.untap();
+    can_recorder_.untap();
     // From here on the connection is the closing thread's: nothing of it is named after this.
     close_connection(std::move(connection));
     return outcome_;
@@ -515,22 +525,66 @@ std::string RunnerImpl::write_timeline(const std::string& text)
     const std::uint64_t dropped = outcome_.scenario.timeline_record ? outcome_.scenario.timeline_record->dropped() : 0;
     const std::uint64_t dropped_events =
         outcome_.scenario.timeline_record ? outcome_.scenario.timeline_record->dropped_events() : 0;
+    const std::uint64_t dropped_can =
+        outcome_.scenario.timeline_record ? outcome_.scenario.timeline_record->dropped_can() : 0;
+    const std::uint64_t untimed_can =
+        outcome_.scenario.timeline_record ? outcome_.scenario.timeline_record->untimed_can_dropped() : 0;
     std::string note;
-    if (dropped > 0 && dropped_events > 0)
+    if (dropped_can == 0 && untimed_can == 0)
     {
-        note = " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") + " and " +
-               std::to_string(dropped_events) + (dropped_events == 1 ? " ECU event" : " ECU events") +
-               ", dropped at its limits: limits.dropped and limits.events_dropped in the file)";
+        if (dropped > 0 && dropped_events > 0)
+        {
+            note = " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") + " and " +
+                   std::to_string(dropped_events) + (dropped_events == 1 ? " ECU event" : " ECU events") +
+                   ", dropped at its limits: limits.dropped and limits.events_dropped in the file)";
+        }
+        else if (dropped > 0)
+        {
+            note = " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") +
+                   ", dropped at its limits: limits.dropped in the file)";
+        }
+        else if (dropped_events > 0)
+        {
+            note = " (without " + std::to_string(dropped_events) + (dropped_events == 1 ? " ECU event" : " ECU events") +
+                   ", dropped at its limits: limits.events_dropped in the file)";
+        }
     }
-    else if (dropped > 0)
+    else
     {
-        note = " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") +
-               ", dropped at its limits: limits.dropped in the file)";
-    }
-    else if (dropped_events > 0)
-    {
-        note = " (without " + std::to_string(dropped_events) + (dropped_events == 1 ? " ECU event" : " ECU events") +
-               ", dropped at its limits: limits.events_dropped in the file)";
+        const auto join_and = [](const std::vector<std::string>& items) {
+            std::string s;
+            for (std::size_t i = 0; i < items.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    s += (i + 1 == items.size()) ? " and " : ", ";
+                }
+                s += items[i];
+            }
+            return s;
+        };
+        std::vector<std::string> parts;
+        std::vector<std::string> keys;
+        if (dropped > 0)
+        {
+            parts.push_back(std::to_string(dropped) + (dropped == 1 ? " older point" : " older points"));
+            keys.emplace_back("limits.dropped");
+        }
+        if (dropped_events > 0)
+        {
+            parts.push_back(std::to_string(dropped_events) + (dropped_events == 1 ? " ECU event" : " ECU events"));
+            keys.emplace_back("limits.events_dropped");
+        }
+        if (dropped_can > 0)
+        {
+            parts.push_back(std::to_string(dropped_can) + (dropped_can == 1 ? " older CAN frame" : " older CAN frames"));
+        }
+        if (untimed_can > 0)
+        {
+            parts.push_back(std::to_string(untimed_can) + (untimed_can == 1 ? " untimed CAN frame" : " untimed CAN frames"));
+        }
+        keys.emplace_back("limits.can_dropped");
+        note = " (without " + join_and(parts) + ", dropped: " + join_and(keys) + " in the file)";
     }
     out_.say("timeline: " + outcome_.scenario.timeline + note);
     return {};
@@ -538,8 +592,8 @@ std::string RunnerImpl::write_timeline(const std::string& text)
 
 bool RunnerImpl::open_timeline()
 {
-    if (ctx_.plan.timeline.empty() ||
-        (ctx_.scenario == nullptr && ctx_.plan.recorded_variables.empty() && !ctx_.plan.record_events))
+    if (ctx_.plan.timeline.empty() || (ctx_.scenario == nullptr && ctx_.plan.recorded_variables.empty() &&
+                                       !ctx_.plan.record_events && !ctx_.plan.record_can))
     {
         return true;
     }
@@ -565,6 +619,7 @@ void RunnerImpl::close_connection(std::shared_ptr<RunConnection> connection)
     // The tap reads the controller's time and belongs to this Runner, which may be destroyed
     // while the closing thread still closes: it is off before the thread has the connection.
     assert(!samples_.tapped());
+    assert(!can_recorder_.tapped());
     const int interrupts = ctx_.interrupts();
     // Opt-in (--control-metrics): capture HubTransport::stats() inside the closing thread right
     // before close(), sharing the exact same close_limit_ / close_cut budget. The slot is owned

@@ -32,8 +32,8 @@ using namespace std::chrono_literals;
 constexpr const char* kParamNeedsScenario = "--param sets a parameter of a scenario: give --scenario <file> too, or leave "
                                             "--param out";
 constexpr const char* kTimelineNeedsScenarioOrRecord =
-    "--timeline needs --scenario, --record or --record-events: give --scenario <file>, at least one --record "
-    "<participant>.<variable>, or --record-events, or leave --timeline out";
+    "--timeline needs --scenario, --record, --record-events or --record-can: give --scenario <file>, at least one "
+    "--record <participant>.<variable>, --record-events or --record-can, or leave --timeline out";
 constexpr const char* kScenarioNotPaused = "--scenario cannot be used with --start-paused: the scenario writes its values for "
                                            "0 before the first step and runs by itself; pause and step it with "
                                            "--stdin-commands or from a Control Server client (--control) if needed";
@@ -151,6 +151,9 @@ TEST_CASE(a_timeline_needs_a_scenario_or_record)
     CHECK(messages(r).empty());
     r.intent.record.clear();
     r.intent.record_events = true;
+    CHECK(messages(r).empty());
+    r.intent.record_events = false;
+    r.intent.record_can = true;
     CHECK(messages(r).empty());
 }
 
@@ -789,4 +792,33 @@ TEST_CASE(record_events_validation_and_plan_propagation)
     check.config.emplace();
     const RunPlan plan = plan_run(check, nullptr, "dir", choices);
     CHECK(plan.record_events);
+}
+
+TEST_CASE(record_can_validation_and_plan_can_networks_propagation)
+{
+    RunRequest r;
+    r.intent.record_can = true;
+    // Allowed on check and run (with or without scenario / --timeline), refused on test.
+    CHECK(messages(r, RequestCommand::Check).empty());
+    CHECK(messages(r, RequestCommand::Run).empty());
+    CHECK(messages(r, RequestCommand::Test) ==
+          list("test does not accept --record-can: run one simulation with vehicle_sil_launch run --record-can"));
+    r.host.timeline = "out.json";
+    CHECK(messages(r, RequestCommand::Run).empty());
+
+    const RunChoices choices = run_choices(r);
+    CHECK(choices.record_can);
+
+    Checked check;
+    check.config.emplace();
+    check.config->networks = {
+        NetworkConfig{"CAN_A", vehicle_sil::NetworkKind::Can, 1, true, std::nullopt},
+        NetworkConfig{"ETH_1", vehicle_sil::NetworkKind::Ethernet, 2, true, std::nullopt},
+        NetworkConfig{"CAN_INVALID", vehicle_sil::NetworkKind::Can, 3, false, std::nullopt},
+        NetworkConfig{"LIN_1", vehicle_sil::NetworkKind::Lin, 4, true, std::nullopt},
+        NetworkConfig{"CAN_B", vehicle_sil::NetworkKind::Can, 5, true, std::nullopt},
+    };
+    const RunPlan plan = plan_run(check, nullptr, "dir", choices);
+    CHECK(plan.record_can);
+    CHECK(plan.can_networks == list("CAN_A", "CAN_B"));
 }

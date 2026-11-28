@@ -691,6 +691,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `record` | シナリオの判定に影響せず `--timeline` にサンプリング記録する `"<participant>.<variable>"` の一覧 | `--record` |
 | `record_after_fail_ms` | 通常の判定失敗または待ち時間切れの後に、受動的なサンプル記録を `--timeline` へ続ける仮想時間（1 から 600000 ms の整数）。`scenario` が必須です。 | `--record-after-fail-ms` |
 | `record_events` | `true` か `false`。仮想時刻付きの構造化 ECU イベント（`Ecu::log()` / `control::Agent::log()`）を上限付きで `--timeline`（`events[]`）へ記録します。生の `stdout`/`stderr` パイプは実時間のみで含みません。 | `--record-events` |
+| `record_can` | `true` か `false`。受動的な受信専用の SIL Kit CAN オブザーバーで、仮想時刻付き CAN フレームを上限付きで `--timeline`（`can_frames[]`）へ記録します。根拠のある仮想時刻は時刻同期 participant に適用され、`timestamp < 0` で届くフレーム（例: コントローラーの初回ステップ前）は仮想時刻を捏造せず破棄して件数を記録します。仮想時刻が動き始めた後（`t >= 0`）に非同期送信元や外部ブリッジが送るフレームには、SIL Kit がコントローラーの現在ステップ時刻を付与します。 | `--record-can` |
 
 ### 引数と要求ファイルを一緒に使う
 
@@ -699,7 +700,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | キー | 同じものを引数でも指定したとき |
 |---|---|
 | `variant`、`scenario`、`case`、`speed`、`time_policy`、`record_after_fail_ms` | 引数が、ファイルの値を置き換えます。 |
-| `start_paused`、`strict`、`record_events` | ファイルか引数のどちらかが指定すれば有効です。無効にする引数はありません。 |
+| `start_paused`、`strict`、`record_events`、`record_can` | ファイルか引数のどちらかが指定すれば有効です。無効にする引数はありません。 |
 | `connect` | ネットワークごとです。`--connect <network>=<target>` はそのネットワークのファイルの先を置き換え、`--connect <network>=none` はこの実行だけ外します。ファイルのほかのネットワークは残ります。 |
 | `params` | 名前ごとです。`--param <name>=<value>` は、そのパラメーターのファイルの値を置き換えます。ほかは残り、照合の JSON の `from` は `request_file` です。 |
 | `disable`、`enable`、`manual` | ファイルの名前と引数の名前を合わせます。同じ名前で食い違うとき（ファイルの `disable` と `--enable`、ファイルの `enable` や `manual` と `--disable`、ファイルの `disable` と `--manual`）は、引数が勝ちます。 |
@@ -1615,7 +1616,7 @@ passed: 0 errors, 1 warning, 1 note
 
 ## シナリオの実行を時間の軸で記録する（`--timeline`）
 
-`run` に `--timeline <file>` を付けると、シナリオ実行（`--scenario`）または `--record`（要求ファイル・`serve` `intent` の `"record"` を含む）を 1 つ以上指定した手動実行、もしくは `--record-events` / `"record_events"` を有効にした手動実行で仮想時刻に沿って記録した値（および `--record-events` 指定時は構造化 ECU イベント）を、1 つの JSON のファイルに書きます。グラフにする道具や、2 つの実行を比べる道具が読むためのファイルです。`vehicle_sil_launch version --json` の `features` に `timeline` があればシナリオのタイムライン、`manual-timeline` があれば手動実行のタイムライン、`record-events` があれば仮想時刻付き ECU イベント記録が使えます。
+`run` に `--timeline <file>` を付けると、シナリオ実行（`--scenario`）または `--record`（要求ファイル・`serve` `intent` の `"record"` を含む）を 1 つ以上指定した手動実行、もしくは `--record-events` / `"record_events"` や `--record-can` / `"record_can"` を有効にした手動実行で仮想時刻に沿って記録した値（および有効時は仮想時刻付きの構造化 ECU イベントや CAN フレーム）を、1 つの JSON のファイルに書きます。グラフにする道具や、2 つの実行を比べる道具が読むためのファイルです。`vehicle_sil_launch version --json` の `features` に `timeline` があればシナリオのタイムライン、`manual-timeline` があれば手動実行のタイムライン、`record-events` があれば仮想時刻付き ECU イベント記録、`record-can` があれば仮想時刻付き CAN フレーム記録が使えます。
 
 ```sh
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
@@ -1623,9 +1624,9 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 - ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`serve [--once]` では `log` のイベント）。`run --json` と `serve [--once]` の結果では、シナリオ実行の `scenario.timeline` にファイルの名前（引数のとおり、`--timeline` がなければ `null`）が入り、手動実行でタイムラインを書いたときは最上位の `timeline` にファイルの名前が入ります（それ以外は省略）。**`--timeline` を付けない実行の出力は、ほかに何も変わりません。**
 - ファイルは、何かを起動する前に開きます（ディレクトリがなければ作ります）。開けなければエラー `setup`（終了コード 3）で、何も起動しません。実行の後に書けなかったとき（ディスクがいっぱい、など）は、エラー `timeline-write` です。シナリオの結果（`scenario.status`）は変わりませんが、エラーの指摘なので、シナリオが通っていても実行は失敗です（終了コード 1）。
-- 上限で点や ECU イベントを捨てたときは、`timeline:` の行に捨てた件数を足し、注記 `timeline-limit` を出します（下の「上限」。終了コードは変わりません）。
+- 上限で点・ECU イベント・CAN フレームを捨てたとき（または仮想時刻のない CAN フレームを破棄したとき）は、`timeline:` の行に捨てた件数を足し、注記 `timeline-limit` を出します（下の「上限」。終了コードは変わりません）。
 - 実行が通っても、失敗しても、途中で終わっても書きます。照合のエラーで何も起動しなかったときは書きません。
-- `--scenario`、`--record`、`--record-events` のどれもない `run` に `--timeline` を付けると、引数のエラーです（`check` と `test` には付けられません）。手動実行が既定ですべての信号を記録することはありません。記録対象の participant の `--describe` に `sample-every-step` があるときは、ランチャーがベストエフォートで `--sample-every-step` を有効にします（非対応でもエラーや警告は出しません）。
+- `--scenario`、`--record`、`--record-events`、`--record-can` のどれもない `run` に `--timeline` を付けると、引数のエラーです（`check` と `test` には付けられません）。手動実行が既定ですべての信号を記録することはありません。記録対象の participant の `--describe` に `sample-every-step` があるときは、ランチャーがベストエフォートで `--sample-every-step` を有効にします（非対応でもエラーや警告は出しません）。
 - 形は `schema/timeline.schema.json`（JSON Schema）にあります。改行はどの OS でも LF です。
 
 ### 時間の軸のファイルを見る
@@ -1651,19 +1652,20 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `vehicle_sil`、`stage` | vehicle-sil のバージョン、`"run"`（実際の実行の記録） |
 | `file`、`variant`、`params` | 設定ファイル（引数のとおり）、機種（なければ `null`）、シナリオのパラメーターと効いた値（`check --json` の `scenario.params` と同じ形） |
 | `time_step_ms` | controller のタイムステップ（`run --json` の `timing.time_step_ms` と同じ） |
-| `scenario` | `file`、`name`、省略可能な `case`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」）。手動実行（`--scenario` なしの `--record` または `--record-events`）では `null` |
-| `recorded_to_ms` | 手動実行だけ（`scenario` が `null` のときに出力し、`scenario` がオブジェクトのときは省略）。記録したタイムラインの右端の仮想時刻（`stop_at_ms` で止まったときは `stop_at_ms`、それ以外は最後のサンプルまたは ECU イベントの時刻、どちらも 0 件なら `null`） |
+| `scenario` | `file`、`name`、省略可能な `case`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」）。手動実行（`--scenario` なしの `--record`、`--record-events` または `--record-can`）では `null` |
+| `recorded_to_ms` | 手動実行だけ（`scenario` が `null` のときに出力し、`scenario` がオブジェクトのときは省略）。記録したタイムラインの右端の仮想時刻（`stop_at_ms` で止まったときは `stop_at_ms`、それ以外は最後のサンプル・ECU イベント・CAN フレームの時刻、どれも 0 件なら `null`） |
 | `variables[]` | シナリオが使う変数（最初に出た順）と、続けて `--record` / `"record"` で追加指定された変数。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む）、省略可能な `recorded`（`--record` / `"record"` で指定されたときだけ `true`、それ以外は省略） |
 | `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキー（省略可能な `file`、`name`、`call_stack` を含む）に、`lines`、`watch`、`failed` を足したもの |
 | `series[]` | 値の列（下） |
 | `lines[]` | 入力ごとの線: 手順が置いた値と動き（下の「入力の線」） |
 | `events[]` | 省略可能（`--record-events` / `"record_events"` が有効なときだけ出力し、それ以外は完全に省略）: 仮想時刻付きの構造化 ECU イベント（`at_ms`、`participant`、`level`、`text`。下の「仮想時刻付き ECU イベント」） |
+| `can_frames[]` | 省略可能（`--record-can` / `"record_can"` が有効なときだけ出力し、それ以外は完全に省略）: 仮想時刻付き CAN フレーム（`at_ms`、`network`、`id`、`extended`、`dlc`、`data`、省略可能な `rtr` / `fd`。下の「仮想時刻付き CAN フレーム」） |
 | `findings[]` | 照合と実行の指摘のうち、`code` が `scenario-` で始まるもの（`run --json` と同じ形）。ECU の値が約束より遅れて届いたことを言う指摘 `control-link-late-values` は、`severity` と `code` だけで、ほかのキーは `null`（この指摘のある実行は、記録が実行ごとに違いえます）。実時間の速さの指摘（`behind-real-time`）など、ほかの指摘は入りません |
-| `limits` | 点の数の上限、捨てた点、および（`--record-events` / `"record_events"` が有効なとき）ECU イベントの上限と破棄記録（下の「上限」） |
+| `limits` | 点の数の上限、捨てた点、および（有効なとき）ECU イベントや CAN フレームの上限と破棄記録（下の「上限」） |
 
 読む側は、知らないキーを無視します。知らない値（系列の `source` と `encoding`、`watch` の `mode`、条件の `op`、手順の `kind`、線の `kind` と `base_source`、`shape` の `type`）は、その部分を描かずに名前と `text` を出します。形式のバージョンを上げずに、キーと値が増えることがあります。手順の `status` は、これに入りません。[結果を決める値](scenario.md#結果を決める値)を見てください。
 
-この節のキーは、どのファイルにも全部あります。当てはまらないキーの値は `null` です。例外は最上位の `recorded_to_ms`（手動実行だけ）、最上位の `events` と `limits.events_per_participant`・`limits.events_total`・`limits.events_dropped`（`--record-events` / `"record_events"` が有効なときだけ）、変数の `recorded`、手順の `expect_skipped`、`file`、`name`、`call_stack`、`watch.conditions[].compare[]` の `variable`、`failed.conditions[]` の `compared`、線の `file`、`scenario` の `case` で、該当するときだけ書きます。
+この節のキーは、どのファイルにも全部あります。当てはまらないキーの値は `null` です。例外は最上位の `recorded_to_ms`（手動実行だけ）、最上位の `events` と `limits.events_per_participant`・`limits.events_total`・`limits.events_dropped`（`--record-events` / `"record_events"` が有効なときだけ）、最上位の `can_frames`（およびフレーム要素の省略可能な `rtr` / `fd`）と `limits.can_frames_per_network`・`limits.can_frames_total`・`limits.can_dropped`（`--record-can` / `"record_can"` が有効なときだけ）、変数の `recorded`、手順の `expect_skipped`、`file`、`name`、`call_stack`、`watch.conditions[].compare[]` の `variable`、`failed.conditions[]` の `compared`、線の `file`、`scenario` の `case` で、該当するときだけ書きます。
 
 手順の `lines` は、その手順が置いた線の、いちばん上の `lines[]` の中の位置（0 から）の配列です（書かない手順、時刻が `recorded_to_ms` より後の手順、書き込みを 1 つも送らなかった手順では空）。
 
@@ -1863,7 +1865,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの（`end_ms` があるときは `min(end_ms, now)` まで延びます。`after_scenario: "pause"` では引き継ぎ時点で記録を閉じ、引き継ぎ後の手動操作は記録しません） |
 | 途中で終わった（`incomplete`） | 最後のコントローラー時刻までに観測したサンプルと送信した書き込みのうち、最も遅い時刻（どちらもなければ 0）。書き込みが断られた後で participant の失敗が実行の結果になったときは、その書き込みの時刻（`failed` はどの手順でも `null` ですが、`not_applied_from` は `null` ではありません） |
 | シナリオが始まらなかった（`not_run`。シミュレーションは始まったのにシナリオを始められなかったときは `incomplete`） | `null`（系列は空） |
-| 手動実行（`scenario` が `null`） | 最上位の `recorded_to_ms`: `stop_at_ms` に達したときは `stop_at_ms`、それ以外は観測した最後のサンプルまたは ECU イベントの時刻（サンプルもイベントも 0 件、またはシミュレーションが始まらなかったときは `null`） |
+| 手動実行（`scenario` が `null`） | 最上位の `recorded_to_ms`: `stop_at_ms` に達したときは `stop_at_ms`、それ以外は観測した最後のサンプル・ECU イベント・CAN フレームの時刻（何も記録されなかった、またはシミュレーションが始まらなかったときは `null`） |
 
 - controller はタイムステップごとにしかサンプルを見ないので、シナリオが終わったとわかる時刻（`over_at_ms`）は、ふつう `recorded_to_ms` より後です。その間のサンプルと書き込みは、ファイルに入れません。`over_at_ms` が `recorded_to_ms` 以前になるのは 2 つの場合だけです。1 つはエージェントがすぐ断った書き込みで失敗した実行（`over_at_ms` は断られた時点のタイムステップ、`recorded_to_ms` はその書き込みの時刻）、もう 1 つは `--record-after-fail-ms` を付けた実行（`over_at_ms` は失敗検知時のタイムステップのまま、`recorded_to_ms` が受動的な失敗後テールまで延びます）です。失敗後テールの記録は `--timeline` が有効なときの通常の判定失敗・待ち時間切れ（`scenario-failed` / `scenario-timeout`）にだけ適用され、書き込み失敗（`scenario-write`）、利用不可変数、成功、失敗前の中断ではテールに入りません。失敗検知時刻（`over_at_ms`）以降は新たな手順・書き込み・動き・揺れを発行しませんが、`time_step_ms >= ecu_step_ms` の構成で検知前に `(at_ms, over_at_ms]` 向けに先読み送信済みだった書き込みは ECU に適用済みの場合があり、その場合はタイムラインにそのまま残ります。
 - **同じ実行からは、同じファイルができます。** 入っているのは仮想時刻で決まるものだけです（実時間、プロセス ID、遅れの数は入りません）。速さ（`--speed`）を変えても同じです。対象は、通った実行と、サンプルか待ち時間で失敗した実行です。ECU 自身が実時間や乱数で動くなら、値の列も変わります。
@@ -1897,9 +1899,38 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 - **仮想時刻に根拠のあるイベントだけ:** ここに記録されるのは、時刻同期された制御リンク経由で運ばれる構造化 `control::Event`（`Ecu::log()` / `control::Agent::log()`）だけです。子プロセスの生の `stdout`/`stderr` パイプは実時間のみ（`--log-dir` や `serve` の `log` イベント）であり、仮想時刻軸には**決して**配置しません。
 - イベントは `(at_ms, participant, 発行順)` で決定的に整列され、`recorded_to_ms`（`--record-after-fail-ms` の失敗後テールを含む）で切り詰められます。
 
+### 仮想時刻付き CAN フレーム（`can_frames[]`）
+
+`--timeline` と一緒に `--record-can`（または要求ファイル・`serve` `intent` の `"record_can": true`）を指定すると、ランチャーは `SimulationController` 上に各 `can` ネットワーク向けの受動的な受信専用 SIL Kit CAN コントローラー（`vehicle_sil_can_tap_<network>`）を接続します。受動オブザーバーは `SetBaudRate()` も `SendFrame()` も一切呼ばないため、`CanBusSimulator` のビットレート競合検知やバス調停タイミングには一切影響しません。`record_can` が `false`（既定）のときは受動 CAN コントローラーを作らず、`can_frames` と `limits.can_*` を完全に省略して既存のタイムラインファイルとバイト単位で同一にします。
+
+```json
+{
+  "at_ms": 260,
+  "network": "J1939_CAN",
+  "id": 217056256,
+  "extended": true,
+  "dlc": 8,
+  "data": "FFFFFF201EFFFFFF"
+}
+```
+
+| キー | 値 |
+|---|---|
+| `at_ms` | SIL Kit の `CanFrameEvent::timestamp` の仮想時刻（ms。時刻同期 participant では直接 SIL Kit CAN の送信ステップ時刻または `CanBusSimulator` の調停完了時刻 `tx.end`、`t >= 0` 以降の非同期送信元では SIL Kit が付与したコントローラーの現在ステップ時刻。終了時に `recorded_to_ms` で切り詰めます） |
+| `network` | `networks:` で定義された CAN ネットワーク名 |
+| `id` | 整数の CAN 調停 ID（`extended` が `false` なら 11 ビット `0..2047`、`true` なら 29 ビット `0..536870911`） |
+| `extended` | 29 ビット拡張 ID（`IDE`）なら `true`、11 ビット標準 ID なら `false` |
+| `dlc` | CAN の Data Length Code（`0..15`） |
+| `data` | ペイロードを大文字 16 進数文字列にしたもの（空または RTR では `""`） |
+| `rtr` | 省略可能: Remote Transmission Request フレームのときだけ `true`、それ以外は省略 |
+| `fd` | 省略可能: CAN FD フレームのときだけ `true`、それ以外は省略 |
+
+- **仮想時刻の根拠と混在実行での挙動:** 根拠のある仮想時刻（直接 SIL Kit CAN での送信ステップ時刻、または `CanBusSimulator` の調停完了時刻 `tx.end`）がそのまま得られるのは、時刻同期された仮想時間 participant のフレームです。`event.timestamp < 0` で届くフレーム（たとえば `SimulationController` の初回ステップ前に届いた非同期送信元からのフレーム）には仮想時刻を捏造せず、破棄してネットワークごとに `limits.can_dropped[].untimed_dropped` で数えます。一方、仮想時刻が動き始めた後（`t >= 0`）は、SIL Kit の時刻同期された受信側（`SimulationController`）が `AddFrameHandler` を呼ぶ前に非同期・実時間の送信元（混在実行の外部ブリッジなど）からのフレームへコントローラーの現在ステップ時刻を付与します（`docs/internals/can.md` と同じ仕様です）。`--record-can` は混在実行の挙動を変えず、ステップ 0 以降にそれらのフレームを区別することはできません。
+- **順序と打ち切り境界:** フレームは `(at_ms, network, 到着順)` で決定的に整列され、`recorded_to_ms`（`--record-after-fail-ms` の失敗後テールを含む）で切り詰められます。厳密な `< p` ゲートによる決定的な打ち切りはシナリオ実行（`end_ms` や、引き継ぎ時点で記録を止める `after_scenario: "pause"` を含む）に適用されます。手動の `--stop-at-ms` 実行では `stop_at_ms` 以下を包含的に記録するため、`t == stop_at_ms` に並行出力されたフレームの収録はベストエフォートになります（`--record` や `--record-events` と同じです）。`CanBusSimulator` を使わない場合、異なる ECU がまったく同じ仮想時刻に送信したフレーム同士は IPC の到着順が実行ごとに変わりえます。`CanBusSimulator` を使うと調停により時刻が直列化され決定的になります。
+
 ### 上限
 
-系列の点や ECU イベントが多すぎるときは、**古い側を捨て、新しい側を残します**（失敗のある終わりの側は、必ず全部残ります）。
+系列の点・ECU イベント・CAN フレームが多すぎるときは、**古い側を捨て、新しい側を残します**（失敗のある終わりの側は、必ず全部残ります）。
 
 - 系列の上限は、系列ごとに 100,000 点、全部の系列を合わせて 1,000,000 点です（残る点の数の上限です）。数えるのは、`sampled` の点と、`written` のうち `ramp` と `wave` の点です。`set` の点は数えず、捨てません。
 - 点の全体の上限を超えたときは、点の多い系列から順に、同じ数になるまで古い側を捨てます。
@@ -1923,7 +1954,17 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
   | `dropped_before_ms` | その participant で残ったイベントのうち最も古い仮想時刻（残りが 0 件または `dropped` が 0 のときは `null`） |
   | `agent_dropped` | ランチャーへ届く前に ECU の `control::Agent` 内で捨てられたイベント数（トランスポートが報告する場合。SIL Kit wire v2 では現在 `0` を報告します） |
 
-- 点だけを捨てた実行では、標準エラーの行が `[vehicle_sil_launch] timeline: <file> (without <N> older points, dropped at its limits: limits.dropped in the file)` になります。ECU イベントも（または ECU イベントだけ）捨てたときは標準エラーの行に `limits.events_dropped` と捨てたイベント数も示し、結果に注記 `timeline-limit` が入ります。ファイルを開かなくても、欠けたことがわかります。
+- `--record-can` / `"record_can"` が有効なとき、`limits` には `can_frames_per_network`（10,000）、`can_frames_total`（20,000）、`can_dropped[]`（上限破棄も時刻なし破棄もなければ空）も入ります。CAN フレームの全体上限を超えたときは、保持件数の多いネットワークから古いフレームを捨てます。
+
+  | `can_dropped[]` のキー | 値 |
+  |---|---|
+  | `network` | フレームを捨てた CAN ネットワーク |
+  | `dropped` | タイムライン記録側の上限で古い側から捨てたフレーム数 |
+  | `dropped_from_ms` | 捨てたフレームのうち最も古い仮想時刻（`dropped` が 0 のときは `null`） |
+  | `dropped_before_ms` | そのネットワークで残ったフレームのうち最も古い仮想時刻（残りが 0 件または `dropped` が 0 のときは `null`） |
+  | `untimed_dropped` | SIL Kit が `event.timestamp < 0` で渡したため破棄した時刻なしフレーム数（仮想時刻を捏造しません） |
+
+- 点だけを捨てた実行では、標準エラーの行が `[vehicle_sil_launch] timeline: <file> (without <N> older points, dropped at its limits: limits.dropped in the file)` になります。ECU イベントや CAN フレームも（またはそれらだけ）捨てたとき、あるいは時刻なし CAN フレームを破棄したときは標準エラーの行に対応する `limits.*_dropped` と件数も示し、結果に注記 `timeline-limit` が入ります。ファイルを開かなくても、欠けたことがわかります。
 
 ## Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）
 

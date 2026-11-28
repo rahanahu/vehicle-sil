@@ -2959,6 +2959,9 @@ components:
         record_events:
           type: boolean
           title: Record Events
+        record_can:
+          type: boolean
+          title: Record Can
         params:
           additionalProperties:
             anyOf:
@@ -3481,6 +3484,9 @@ components:
         record_events:
           type: boolean
           title: Record Events
+        record_can:
+          type: boolean
+          title: Record Can
         params:
           additionalProperties:
             anyOf:

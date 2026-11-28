@@ -5,6 +5,7 @@
 // zero controller guard overhead. Internal.
 #pragma once
 
+#include "run_can_recorder.hpp"
 #include "run_context.hpp"
 #include "run_control.hpp"
 #include "vehicle_sil/runner/detail/run_samples.hpp"
@@ -33,16 +34,17 @@ namespace vehicle_sil::runner::detail {
 class RunRecorder
 {
 public:
-    RunRecorder(const RunContext& ctx, RunControl& control, RunSamples& samples) :
-      ctx_(ctx), control_(control), samples_(samples)
+    RunRecorder(const RunContext& ctx, RunControl& control, RunSamples& samples, RunCanRecorder& can_recorder) :
+      ctx_(ctx), control_(control), samples_(samples), can_recorder_(can_recorder)
     {
     }
 
-    /// True when this run records a manual timeline (no scenario, --timeline set, --record or --record-events).
+    /// True when this run records a manual timeline (no scenario, --timeline set, and at least one
+    /// of --record, --record-events, or --record-can).
     [[nodiscard]] bool active() const noexcept
     {
         return ctx_.scenario == nullptr && !ctx_.plan.timeline.empty() &&
-               (!ctx_.plan.recorded_variables.empty() || ctx_.plan.record_events);
+               (!ctx_.plan.recorded_variables.empty() || ctx_.plan.record_events || ctx_.plan.record_can);
     }
 
     /// Called on the start window thread once control-link hellos have arrived: creates the
@@ -70,10 +72,12 @@ private:
 
     void consume(std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken);
     void consume_events(std::vector<RunSamples::EventBatch> batches);
+    void consume_can(RunCanRecorder::Taken taken);
 
     const RunContext& ctx_;
     RunControl& control_;
     RunSamples& samples_;
+    RunCanRecorder& can_recorder_;
     std::shared_ptr<scenario::TimelineRecord> record_{};
     std::vector<std::vector<Binding>> bindings_{}; ///< per configuration participant index
     std::optional<SimTime> last_seen_{};

@@ -143,7 +143,16 @@
       `Recorded ${count} signal${count === 1 ? '' : 's'} up to ${to}`,
     'manual.recordedEventsTo': ({ count, to }) =>
       `Recorded ${count} ECU event${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.recordedCanTo': ({ count, to }) =>
+      `Recorded ${count} CAN frame${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.recordedSummaryTo': ({ items, to }) => `Recorded ${items} up to ${to}`,
+    'manual.partSignals': ({ count }) => `${count} signal${count === 1 ? '' : 's'}`,
+    'manual.partEvents': ({ count }) => `${count} ECU event${count === 1 ? '' : 's'}`,
+    'manual.partCan': ({ count }) => `${count} CAN frame${count === 1 ? '' : 's'}`,
+    'manual.partSep': ', ',
     'manual.recordedEmptyTo': ({ to }) => `No signals or ECU events recorded up to ${to}`,
+    'manual.recordedEmptyAllTo': ({ to }) =>
+      `No signals, ECU events, or CAN frames recorded up to ${to}`,
     'manual.nothingRecorded': 'Manual run: no samples recorded',
     'fact.file': 'timeline file',
     'fact.scenario': 'scenario',
@@ -404,6 +413,34 @@
     'events.droppedTimelineNoRange': ({ participant, count }) => `${participant}: ${count} dropped`,
     'events.droppedAgent': ({ participant, count }) =>
       `${participant}: ${count} dropped in ECU queue`,
+
+    // --- virtual-time CAN frames
+    'can.count': ({ shown, total }) =>
+      shown === total ? `CAN frames (${total})` : `CAN frames (${shown} / ${total})`,
+    'can.allNetworks': 'All networks',
+    'can.filterNetwork': 'Filter CAN frames by network',
+    'can.searchPlaceholder': 'Filter ID, PGN, SA/DA, or data…',
+    'can.searchLabel': 'Filter CAN frames by ID, PGN, or hex data',
+    'can.visibleOnly': 'Visible range only',
+    'can.noneMatching': 'No matching CAN frames.',
+    'can.truncated': ({ shown, total }) =>
+      `Showing first ${shown} of ${total} matching CAN frames.`,
+    'can.showAll': ({ count }) => `Show all (${count})`,
+    'can.colTime': 'Time',
+    'can.colDelta': 'Δt',
+    'can.colNetwork': 'Network',
+    'can.colId': 'CAN ID',
+    'can.colDlc': 'DLC',
+    'can.colData': 'Data',
+    'can.flagRtr': 'RTR',
+    'can.flagFd': 'FD',
+    'can.pinRow': ({ at }) => `Pin cursor at ${at}`,
+    'can.droppedHeading': 'CAN frames were dropped. ',
+    'can.droppedTimeline': ({ network, count, from, to }) =>
+      `${network}: ${count} dropped (${from} to ${to})`,
+    'can.droppedTimelineNoRange': ({ network, count }) => `${network}: ${count} dropped`,
+    'can.droppedUntimed': ({ network, count }) =>
+      `${network}: ${count} untimed frame${count === 1 ? '' : 's'} dropped (no virtual timestamp)`,
   };
 
   const ja = {
@@ -531,7 +568,16 @@
     'manual.recordedTo': ({ count, to }) => `${count} 個の信号を ${to} まで記録しました`,
     'manual.recordedEventsTo': ({ count, to }) =>
       `${count} 件の ECU イベントを ${to} まで記録しました`,
+    'manual.recordedCanTo': ({ count, to }) =>
+      `${count} 件の CAN フレームを ${to} まで記録しました`,
+    'manual.recordedSummaryTo': ({ items, to }) => `${items}を ${to} まで記録しました`,
+    'manual.partSignals': ({ count }) => `${count} 個の信号`,
+    'manual.partEvents': ({ count }) => `${count} 件の ECU イベント`,
+    'manual.partCan': ({ count }) => `${count} 件の CAN フレーム`,
+    'manual.partSep': '・',
     'manual.recordedEmptyTo': ({ to }) => `${to} までに記録された信号や ECU イベントはありません`,
+    'manual.recordedEmptyAllTo': ({ to }) =>
+      `${to} までに記録された信号・ECU イベント・CAN フレームはありません`,
     'manual.nothingRecorded': '手動実行: 記録されたサンプルはありません',
     'fact.file': '時間の軸のファイル',
     'fact.scenario': 'シナリオ',
@@ -792,6 +838,33 @@
     'events.droppedTimelineNoRange': ({ participant, count }) => `${participant}: ${count} 件欠落`,
     'events.droppedAgent': ({ participant, count }) =>
       `${participant}: ECU 側キューで ${count} 件欠落`,
+
+    // --- 仮想時刻付き CAN フレーム
+    'can.count': ({ shown, total }) =>
+      shown === total ? `CAN フレーム（${total}）` : `CAN フレーム（${shown} / ${total}）`,
+    'can.allNetworks': 'すべてのネットワーク',
+    'can.filterNetwork': 'ネットワークで CAN フレームを絞り込み',
+    'can.searchPlaceholder': 'ID・PGN・SA/DA・データを絞り込み…',
+    'can.searchLabel': 'ID・PGN・16進データで CAN フレームを絞り込み',
+    'can.visibleOnly': '表示範囲のみ',
+    'can.noneMatching': '条件に合う CAN フレームがありません。',
+    'can.truncated': ({ shown, total }) =>
+      `一致した ${total} 件のうち先頭 ${shown} 件を表示しています。`,
+    'can.showAll': ({ count }) => `すべて表示（${count}）`,
+    'can.colTime': '時刻',
+    'can.colDelta': 'Δt',
+    'can.colNetwork': 'ネットワーク',
+    'can.colId': 'CAN ID',
+    'can.colDlc': 'DLC',
+    'can.colData': 'データ',
+    'can.flagRtr': 'RTR',
+    'can.flagFd': 'FD',
+    'can.pinRow': ({ at }) => `${at} にカーソルを固定`,
+    'can.droppedHeading': '一部の CAN フレームが欠けています。',
+    'can.droppedTimeline': ({ network, count, from, to }) =>
+      `${network}: ${count} 件欠落（${from}〜${to}）`,
+    'can.droppedTimelineNoRange': ({ network, count }) => `${network}: ${count} 件欠落`,
+    'can.droppedUntimed': ({ network, count }) => `${network}: 仮想時刻なしの ${count} 件を除外`,
   };
 
   const MESSAGES = { en, ja };
@@ -883,6 +956,7 @@
 :host([hide~='tables']) #tables,
 :host([hide~='steps']) :is(.lane.steps, #step-details),
 :host([hide~='events']) :is(.lane.ecu-events, #ecu-events),
+:host([hide~='can']) #can-frames,
 :host([hide~='readout']) :is(.readout, .hover-readout),
 :host([hide~='legend']) .legend .key {
   display: none !important;
@@ -1947,6 +2021,104 @@ tr.ecu-event-row:focus-visible {
   gap: 8px;
   margin-top: 6px;
 }
+
+/* virtual-time CAN frames synchronized correlation drawer */
+#can-frames {
+  margin-top: 10px;
+}
+.can-frames-panel {
+  margin: 0;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--_panel);
+  padding: 6px 10px;
+}
+.can-frames-panel > summary {
+  padding: 2px 0;
+}
+.can-frames-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 8px 0 6px;
+}
+.can-frames-controls select,
+.can-frames-controls input[type='search'] {
+  font: inherit;
+  color: var(--_fg);
+  background: var(--_bg);
+  border: 1px solid var(--_border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.can-frames-controls input[type='search'] {
+  min-width: 160px;
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+.can-frames-visible-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.can-frames-wrap {
+  max-height: 280px;
+  overflow: auto;
+  border-top: 1px solid var(--_grid);
+}
+.can-frames-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--_panel);
+  z-index: 1;
+}
+tr.can-frame-row {
+  cursor: pointer;
+}
+tr.can-frame-row:hover td {
+  background: var(--_bg);
+}
+tr.can-frame-row.nearest-to-cursor td {
+  background: color-mix(in srgb, var(--_selection) 55%, transparent);
+}
+tr.can-frame-row.selected td,
+tr.can-frame-row.active-at-cursor td {
+  background: var(--_selection);
+}
+tr.can-frame-row:focus-visible {
+  outline: 2px solid var(--_sent);
+  outline-offset: -2px;
+}
+.can-id-cell {
+  white-space: nowrap;
+}
+.can-flag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid var(--_border);
+  color: var(--_muted);
+}
+.can-j1939 {
+  margin-left: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.can-data-cell code {
+  white-space: pre;
+}
+.can-frames-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
 `;
 })(globalThis);
 
@@ -2951,6 +3123,43 @@ tr.ecu-event-row:focus-visible {
                 (isNum(d.agent_dropped) && d.agent_dropped > 0)),
           )
         : [];
+    const rawCanFrames = Array.isArray(tl.can_frames) ? tl.can_frames : [];
+    const canFrames = [];
+    for (let i = 0; i < rawCanFrames.length; i++) {
+      const fr = rawCanFrames[i];
+      if (!isObject(fr) || !isNum(fr.at_ms) || !isNum(fr.id)) continue;
+      const id = Math.trunc(fr.id) >>> 0;
+      const extended = Boolean(fr.extended);
+      const dlc = isNum(fr.dlc) ? Math.trunc(fr.dlc) : 0;
+      const data = typeof fr.data === 'string' ? fr.data.toUpperCase() : '';
+      const rtr = fr.rtr === true;
+      const fd = fr.fd === true;
+      const j1939 = extended ? decodeJ1939Id(id) : null;
+      canFrames.push({
+        index: canFrames.length,
+        atMs: fr.at_ms,
+        network: typeof fr.network === 'string' ? fr.network : '',
+        id,
+        idHex: formatCanIdHex(id, extended),
+        extended,
+        dlc,
+        data,
+        dataSpaced: formatCanDataHex(data),
+        rtr,
+        fd,
+        j1939,
+      });
+      end = Math.max(end, fr.at_ms);
+    }
+    const canDropped =
+      isObject(tl.limits) && Array.isArray(tl.limits.can_dropped)
+        ? tl.limits.can_dropped.filter(
+            (d) =>
+              isObject(d) &&
+              ((isNum(d.dropped) && d.dropped > 0) ||
+                (isNum(d.untimed_dropped) && d.untimed_dropped > 0)),
+          )
+        : [];
     const finalMargin = Math.max(timeStep ?? 0, end * 0.04, end > 0 ? 0 : 10);
     const finalDomain = [0, end + finalMargin];
     return {
@@ -2975,8 +3184,10 @@ tr.ecu-event-row:focus-visible {
       events,
       eventGroups: groupEventsByTime(events),
       eventsDropped,
+      canFrames,
+      canDropped,
       late: findings.some((f) => f.code === 'control-link-late-values'),
-      domain: events.length > 0 ? finalDomain : domain,
+      domain: events.length > 0 || canFrames.length > 0 ? finalDomain : domain,
     };
   }
 
@@ -3023,6 +3234,73 @@ tr.ecu-event-row:focus-visible {
       }
       if (query) {
         const hay = `${ev.participant} ${ev.level} ${ev.text}`.toLowerCase();
+        if (!hay.includes(query)) return false;
+      }
+      return true;
+    });
+  }
+
+  /** Stateless 29-bit J1939 identifier decode matching `vehicle_sil::j1939::Identifier::decode`. */
+  function decodeJ1939Id(id) {
+    const u = (id >>> 0) & 0x1fffffff;
+    const priority = (u >>> 26) & 0x7;
+    const edp = (u >>> 25) & 0x1;
+    const dp = (u >>> 24) & 0x1;
+    const pf = (u >>> 16) & 0xff;
+    const ps = (u >>> 8) & 0xff;
+    const sa = u & 0xff;
+    const pdu1 = pf < 240;
+    const pgn = (edp << 17) | (dp << 16) | (pf << 8) | (pdu1 ? 0 : ps);
+    const da = pdu1 ? ps : 0xff;
+    return {
+      priority,
+      pgn,
+      pgnHex: `0x${pgn.toString(16).toUpperCase().padStart(4, '0')}`,
+      sa,
+      saHex: `0x${sa.toString(16).toUpperCase().padStart(2, '0')}`,
+      da,
+      daHex: `0x${da.toString(16).toUpperCase().padStart(2, '0')}`,
+      pdu1,
+    };
+  }
+
+  function formatCanIdHex(id, extended) {
+    const u = id >>> 0;
+    return `0x${u
+      .toString(16)
+      .toUpperCase()
+      .padStart(extended ? 8 : 3, '0')}`;
+  }
+
+  function formatCanDataHex(data) {
+    if (typeof data !== 'string' || data.length === 0) return '';
+    const clean = data.replace(/\s+/g, '').toUpperCase();
+    const bytes = [];
+    for (let i = 0; i < clean.length; i += 2) {
+      bytes.push(clean.slice(i, i + 2));
+    }
+    return bytes.join(' ');
+  }
+
+  /** Filters recorded CAN frames by network, ID/PGN/hex query, and optional visible zoom window. */
+  function filterCanFrames(frames, opts) {
+    const network = opts?.network || '';
+    const query = (opts?.query || '').trim().toLowerCase();
+    const visibleOnly = Boolean(opts?.visibleOnly);
+    const view = opts?.view;
+    return frames.filter((fr) => {
+      if (network && fr.network !== network) return false;
+      if (visibleOnly && Array.isArray(view) && view.length === 2) {
+        if (fr.atMs < view[0] - 1e-9 || fr.atMs > view[1] + 1e-9) return false;
+      }
+      if (query) {
+        const j = fr.j1939;
+        const jStr = j
+          ? `p${j.priority} pgn ${j.pgnHex} ${j.pgnHex.slice(2)} ${j.saHex}->${j.daHex} ${j.saHex}→${j.daHex}`
+          : '';
+        const flags = `${fr.rtr ? 'rtr ' : ''}${fr.fd ? 'fd ' : ''}`;
+        const hay =
+          `${fr.network} ${fr.idHex} ${fr.idHex.slice(2)} ${flags}${jStr} ${fr.data} ${fr.dataSpaced}`.toLowerCase();
         if (!hay.includes(query)) return false;
       }
       return true;
@@ -3381,6 +3659,7 @@ tr.ecu-event-row:focus-visible {
       recordedTo: model.recordedTo,
       stepCount: model.steps.length,
       eventCount: model.events.length,
+      canFrameCount: model.canFrames.length,
       failure: f
         ? {
             step: f.step.index,
@@ -3812,6 +4091,10 @@ tr.ecu-event-row:focus-visible {
     callStackFrames,
     groupEventsByTime,
     filterEcuEvents,
+    decodeJ1939Id,
+    formatCanIdHex,
+    formatCanDataHex,
+    filterCanFrames,
   };
 
   global.VehicleSilTimeline = api;
@@ -3883,6 +4166,10 @@ tr.ecu-event-row:focus-visible {
       eventFilter: { participant: '', level: '', query: '', visibleOnly: false, showAll: false },
       /** Index of the explicitly selected ECU event row, or null. */
       selectedEventIndex: null,
+      /** Active CAN frame filter state (preserved across zoom/cursor/language redraws; reset on new file). */
+      canFilter: { network: '', query: '', visibleOnly: false, showAll: false },
+      /** Index of the explicitly selected CAN frame row, or null. */
+      selectedCanIndex: null,
       readouts: [],
       width: 0,
       /** The name of the file shown (null for data without a name, or none). */
@@ -3986,6 +4273,13 @@ tr.ecu-event-row:focus-visible {
         showAll: false,
       };
       state.selectedEventIndex = null;
+      state.canFilter = {
+        network: '',
+        query: '',
+        visibleOnly: false,
+        showAll: false,
+      };
+      state.selectedCanIndex = null;
       const o = current.options;
       state.view = initialView(model);
       state.cursor = isNum(o.cursor) ? o.cursor : null;
@@ -4101,14 +4395,32 @@ tr.ecu-event-row:focus-visible {
         ),
       );
     } else if (m.isManual) {
-      const heading =
-        m.recordedTo !== null
-          ? m.vars.length === 0
-            ? m.events.length > 0
-              ? t('manual.recordedEventsTo', { count: m.events.length, to: fmtMs(m.recordedTo) })
-              : t('manual.recordedEmptyTo', { to: fmtMs(m.recordedTo) })
-            : t('manual.recordedTo', { count: m.vars.length, to: fmtMs(m.recordedTo) })
-          : t('manual.nothingRecorded');
+      let heading;
+      if (m.recordedTo === null) {
+        heading = t('manual.nothingRecorded');
+      } else {
+        const to = fmtMs(m.recordedTo);
+        const hasVars = m.vars.length > 0;
+        const hasEvents = m.events.length > 0;
+        const hasCan = m.canFrames.length > 0;
+        const streamCount = (hasVars ? 1 : 0) + (hasEvents ? 1 : 0) + (hasCan ? 1 : 0);
+        if (streamCount === 0) {
+          heading = Array.isArray(m.tl.can_frames)
+            ? t('manual.recordedEmptyAllTo', { to })
+            : t('manual.recordedEmptyTo', { to });
+        } else if (streamCount === 1) {
+          if (hasVars) heading = t('manual.recordedTo', { count: m.vars.length, to });
+          else if (hasEvents)
+            heading = t('manual.recordedEventsTo', { count: m.events.length, to });
+          else heading = t('manual.recordedCanTo', { count: m.canFrames.length, to });
+        } else {
+          const items = [];
+          if (hasVars) items.push(t('manual.partSignals', { count: m.vars.length }));
+          if (hasEvents) items.push(t('manual.partEvents', { count: m.events.length }));
+          if (hasCan) items.push(t('manual.partCan', { count: m.canFrames.length }));
+          heading = t('manual.recordedSummaryTo', { items: items.join(t('manual.partSep')), to });
+        }
+      }
       parts.push(
         h(
           'div',
@@ -4563,6 +4875,8 @@ tr.ecu-event-row:focus-visible {
     const targetAt = isNum(f.at) ? f.at : isNum(f.step.start_ms) ? f.step.start_ms : null;
     const cursorChanged = targetAt !== null && targetAt !== state.cursor;
     state.step = f.step.index;
+    state.selectedEventIndex = null;
+    state.selectedCanIndex = null;
     if (targetAt !== null) {
       state.cursor = targetAt;
       state.pinned = true;
@@ -4596,6 +4910,8 @@ tr.ecu-event-row:focus-visible {
     const stepChanged = st.index !== state.step;
     const cursorChanged = targetAt !== null && targetAt !== state.cursor;
     state.step = st.index;
+    state.selectedEventIndex = null;
+    state.selectedCanIndex = null;
     if (targetAt !== null) {
       state.cursor = targetAt;
       state.pinned = true;
@@ -4617,6 +4933,8 @@ tr.ecu-event-row:focus-visible {
     const stepChanged = st.index !== state.step;
     const cursorChanged = clusterAt !== state.cursor;
     state.step = st.index;
+    state.selectedEventIndex = null;
+    state.selectedCanIndex = null;
     state.cursor = clusterAt;
     state.pinned = true;
     state.pinnedCursor = clusterAt;
@@ -4660,6 +4978,11 @@ tr.ecu-event-row:focus-visible {
     } else {
       state.selectedEventIndex = null;
     }
+    if (options && 'canIndex' in options) {
+      state.selectedCanIndex = options.canIndex;
+    } else {
+      state.selectedCanIndex = null;
+    }
     const [v0, v1] = state.view;
     if (clamped < v0 || clamped > v1) {
       const span = v1 - v0;
@@ -4676,6 +4999,7 @@ tr.ecu-event-row:focus-visible {
     } else if (options?.flushedView) {
       renderChart();
       if (state.eventFilter.visibleOnly && m.events.length > 0) renderEcuEventsRows();
+      if (state.canFilter.visibleOnly && m.canFrames.length > 0) renderCanFramesRows();
       emit('viewchange', { from: v0, to: v1 });
     } else {
       updateCursor();
@@ -4700,6 +5024,7 @@ tr.ecu-event-row:focus-visible {
     if (noDraw) return;
     renderChart();
     if (state.eventFilter.visibleOnly && state.model.events.length > 0) renderEcuEventsRows();
+    if (state.canFilter.visibleOnly && state.model.canFrames.length > 0) renderCanFramesRows();
     if (changed) emit('viewchange', { from: t0, to: t1 });
   }
 
@@ -4710,6 +5035,7 @@ tr.ecu-event-row:focus-visible {
     renderParticipants(m);
     renderTables(m);
     renderEcuEventsChrome(m);
+    renderCanFramesChrome(m);
     renderChart();
   }
 
@@ -5520,6 +5846,302 @@ tr.ecu-event-row:focus-visible {
       row.setAttribute('aria-selected', isSelected || isAtCursor ? 'true' : 'false');
       const deltaCell = row.querySelectorAll('.ev-delta')[0];
       if (deltaCell) deltaCell.textContent = eventDeltaText(evAt);
+    }
+  }
+
+  const CAN_FRAMES_PAGE_LIMIT = 500;
+
+  /** Renders the CAN Frames honesty banner + filter chrome + table shell (visible even when hide="tables"). */
+  function renderCanFramesChrome(m) {
+    const box = $('can-frames');
+    if (!box) return;
+    if (m.canFrames.length === 0 && m.canDropped.length === 0) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    box.hidden = false;
+    const f = state.canFilter;
+    const networks = [...new Set(m.canFrames.map((fr) => fr.network).filter(Boolean))].sort();
+
+    const droppedParts = [];
+    for (const d of m.canDropped) {
+      const network = typeof d.network === 'string' && d.network ? d.network : '?';
+      if (isNum(d.dropped) && d.dropped > 0) {
+        if (isNum(d.dropped_from_ms) && isNum(d.dropped_before_ms)) {
+          droppedParts.push(
+            t('can.droppedTimeline', {
+              network,
+              count: d.dropped,
+              from: fmtMs(d.dropped_from_ms),
+              to: fmtMs(d.dropped_before_ms),
+            }),
+          );
+        } else {
+          droppedParts.push(t('can.droppedTimelineNoRange', { network, count: d.dropped }));
+        }
+      }
+      if (isNum(d.untimed_dropped) && d.untimed_dropped > 0) {
+        droppedParts.push(t('can.droppedUntimed', { network, count: d.untimed_dropped }));
+      }
+    }
+    const droppedBanner = droppedParts.length
+      ? h(
+          'div',
+          { class: 'banner warn small', 'data-testid': 'can-dropped-banner' },
+          h('strong', { text: t('can.droppedHeading') }),
+          droppedParts.join('; '),
+          '.',
+        )
+      : null;
+
+    const summaryEl = h('summary', {
+      id: 'can-frames-summary',
+      text: t('can.count', { shown: m.canFrames.length, total: m.canFrames.length }),
+    });
+
+    const networkSelect = h(
+      'select',
+      {
+        id: 'can-frames-network',
+        'data-testid': 'can-frames-network',
+        'aria-label': t('can.filterNetwork'),
+        onchange: (e) => {
+          state.canFilter.network = e.target.value;
+          state.canFilter.showAll = false;
+          renderCanFramesRows();
+        },
+      },
+      h('option', { value: '', text: t('can.allNetworks') }),
+      ...networks.map((net) => h('option', { value: net, text: net })),
+    );
+    networkSelect.value = f.network;
+
+    const searchInput = h('input', {
+      id: 'can-frames-search',
+      type: 'search',
+      'data-testid': 'can-frames-search',
+      'aria-label': t('can.searchLabel'),
+      placeholder: t('can.searchPlaceholder'),
+      oninput: (e) => {
+        state.canFilter.query = e.target.value;
+        state.canFilter.showAll = false;
+        renderCanFramesRows();
+      },
+    });
+    searchInput.value = f.query;
+
+    const visibleToggle = h('input', {
+      id: 'can-frames-visible-only',
+      type: 'checkbox',
+      'data-testid': 'can-frames-visible-only',
+      checked: f.visibleOnly,
+      onchange: (e) => {
+        state.canFilter.visibleOnly = Boolean(e.target.checked);
+        state.canFilter.showAll = false;
+        renderCanFramesRows();
+      },
+    });
+
+    const controls =
+      m.canFrames.length > 0
+        ? h(
+            'div',
+            { class: 'can-frames-controls small', 'data-testid': 'can-frames-controls' },
+            networkSelect,
+            searchInput,
+            h('label', { class: 'can-frames-visible-toggle' }, visibleToggle, t('can.visibleOnly')),
+          )
+        : null;
+
+    const tableWrap =
+      m.canFrames.length > 0
+        ? h(
+            'div',
+            { class: 'table-wrap can-frames-wrap' },
+            h(
+              'table',
+              { class: 'can-frames-table small', 'data-testid': 'can-frames-table' },
+              h(
+                'thead',
+                {},
+                h(
+                  'tr',
+                  {},
+                  h('th', { scope: 'col', text: t('can.colTime') }),
+                  h('th', { scope: 'col', text: t('can.colDelta') }),
+                  h('th', { scope: 'col', text: t('can.colNetwork') }),
+                  h('th', { scope: 'col', text: t('can.colId') }),
+                  h('th', { scope: 'col', text: t('can.colDlc') }),
+                  h('th', { scope: 'col', text: t('can.colData') }),
+                ),
+              ),
+              h('tbody', { id: 'can-frames-body' }),
+            ),
+          )
+        : null;
+
+    const panel = h(
+      'details',
+      { class: 'can-frames-panel', open: true, 'data-testid': 'can-frames-panel' },
+      summaryEl,
+      droppedBanner,
+      controls,
+      tableWrap,
+      h('p', {
+        id: 'can-frames-empty',
+        class: 'muted small',
+        hidden: true,
+        text: t('can.noneMatching'),
+      }),
+      h('div', { id: 'can-frames-more', class: 'can-frames-more small', hidden: true }),
+    );
+    box.replaceChildren(panel);
+    if (m.canFrames.length > 0) renderCanFramesRows();
+  }
+
+  /** Rebuilds only the CAN Frames table tbody rows (never touches filter inputs or focus). */
+  function renderCanFramesRows() {
+    const m = state.model;
+    const tbody = $('can-frames-body');
+    if (!m || !tbody) return;
+    const f = state.canFilter;
+    const matched = filterCanFrames(m.canFrames, {
+      network: f.network,
+      query: f.query,
+      visibleOnly: f.visibleOnly,
+      view: state.view,
+    });
+    const summaryEl = $('can-frames-summary');
+    if (summaryEl) {
+      summaryEl.textContent = t('can.count', { shown: matched.length, total: m.canFrames.length });
+    }
+    const emptyEl = $('can-frames-empty');
+    if (emptyEl) emptyEl.hidden = matched.length > 0;
+    const limit = f.showAll ? matched.length : Math.min(matched.length, CAN_FRAMES_PAGE_LIMIT);
+    const slice = matched.slice(0, limit);
+    const pinnedAt = state.pinned && state.pinnedCursor !== null ? state.pinnedCursor : null;
+    const cursorAt = pinnedAt !== null ? pinnedAt : state.cursor;
+    let nearestDist = null;
+    if (cursorAt !== null && isNum(cursorAt) && slice.length > 0) {
+      for (const fr of slice) {
+        const d = Math.abs(fr.atMs - cursorAt);
+        if (nearestDist === null || d < nearestDist) nearestDist = d;
+      }
+    }
+    const rows = slice.map((fr) => {
+      const isSelected = state.selectedCanIndex === fr.index;
+      const isAtCursor = pinnedAt !== null && Math.abs(fr.atMs - pinnedAt) < 1e-6;
+      const isNearest =
+        nearestDist !== null &&
+        cursorAt !== null &&
+        Math.abs(Math.abs(fr.atMs - cursorAt) - nearestDist) < 1e-9;
+      const cls = [
+        'can-frame-row',
+        isSelected ? 'selected' : '',
+        isAtCursor ? 'active-at-cursor' : '',
+        isNearest ? 'nearest-to-cursor' : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      const pinRow = () => pinCursorImpl(fr.atMs, { canIndex: fr.index });
+      const idChildren = [h('code', { text: fr.idHex })];
+      if (fr.rtr) idChildren.push(h('span', { class: 'can-flag', text: t('can.flagRtr') }));
+      if (fr.fd) idChildren.push(h('span', { class: 'can-flag', text: t('can.flagFd') }));
+      if (fr.j1939) {
+        const j = fr.j1939;
+        idChildren.push(
+          h('span', {
+            class: 'can-j1939 muted',
+            text: `P${j.priority} PGN ${j.pgnHex} ${j.saHex}→${j.daHex}`,
+          }),
+        );
+      }
+      return h(
+        'tr',
+        {
+          class: cls,
+          'data-testid': 'can-frame-row',
+          'data-can-index': fr.index,
+          'data-can-at': fr.atMs,
+          'aria-selected': isSelected || isAtCursor ? 'true' : 'false',
+          tabindex: '0',
+          title: t('can.pinRow', { at: fmtMs(fr.atMs) }),
+          onclick: pinRow,
+          onkeydown: (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              pinRow();
+            }
+          },
+        },
+        h('td', { class: 'num', text: fmtMs(fr.atMs) }),
+        h('td', { class: 'num can-delta', text: eventDeltaText(fr.atMs) }),
+        h('td', {}, h('code', { text: fr.network })),
+        h('td', { class: 'can-id-cell' }, ...idChildren),
+        h('td', { class: 'num', text: String(fr.dlc) }),
+        h('td', { class: 'can-data-cell' }, h('code', { text: fr.dataSpaced || '—' })),
+      );
+    });
+    tbody.replaceChildren(...rows);
+
+    const moreEl = $('can-frames-more');
+    if (moreEl) {
+      if (matched.length > limit) {
+        moreEl.hidden = false;
+        moreEl.replaceChildren(
+          h('span', {
+            class: 'muted',
+            text: t('can.truncated', { shown: limit, total: matched.length }),
+          }),
+          h('button', {
+            type: 'button',
+            class: 'link',
+            'data-testid': 'can-frames-show-all',
+            text: t('can.showAll', { count: matched.length }),
+            onclick: () => {
+              state.canFilter.showAll = true;
+              renderCanFramesRows();
+            },
+          }),
+        );
+      } else {
+        moreEl.hidden = true;
+        moreEl.replaceChildren();
+      }
+    }
+  }
+
+  /** Updates Δt cells and active/selected/nearest row highlights in-place when cursor or ref changes. */
+  function syncCanFramesCursor() {
+    const tbody = $('can-frames-body');
+    if (!tbody || !state.model || state.model.canFrames.length === 0) return;
+    const pinnedAt = state.pinned && state.pinnedCursor !== null ? state.pinnedCursor : null;
+    const cursorAt = pinnedAt !== null ? pinnedAt : state.cursor;
+    const rows = tbody.querySelectorAll('[data-can-index]');
+    let nearestDist = null;
+    if (cursorAt !== null && isNum(cursorAt)) {
+      for (const row of rows) {
+        const frAt = Number(row.getAttribute('data-can-at'));
+        const d = Math.abs(frAt - cursorAt);
+        if (nearestDist === null || d < nearestDist) nearestDist = d;
+      }
+    }
+    for (const row of rows) {
+      const frIdx = Number(row.getAttribute('data-can-index'));
+      const frAt = Number(row.getAttribute('data-can-at'));
+      const isSelected = state.selectedCanIndex === frIdx;
+      const isAtCursor = pinnedAt !== null && Math.abs(frAt - pinnedAt) < 1e-6;
+      const isNearest =
+        nearestDist !== null &&
+        cursorAt !== null &&
+        Math.abs(Math.abs(frAt - cursorAt) - nearestDist) < 1e-9;
+      row.classList.toggle('selected', isSelected);
+      row.classList.toggle('active-at-cursor', isAtCursor);
+      row.classList.toggle('nearest-to-cursor', isNearest);
+      row.setAttribute('aria-selected', isSelected || isAtCursor ? 'true' : 'false');
+      const deltaCell = row.querySelectorAll('.can-delta')[0];
+      if (deltaCell) deltaCell.textContent = eventDeltaText(frAt);
     }
   }
 
@@ -6394,12 +7016,14 @@ tr.ecu-event-row:focus-visible {
         updateCursor();
       } else if (savedClusterAt !== null && savedStep) {
         state.selectedEventIndex = null;
+        state.selectedCanIndex = null;
         focusClusterImpl(savedClusterAt, savedStep.index);
       } else if (savedEventAt !== null) {
         const firstEv = state.model.events.find((ev) => ev.atMs === savedEventAt);
         pinCursorImpl(savedEventAt, { eventIndex: firstEv ? firstEv.index : null });
       } else if (savedStep) {
         state.selectedEventIndex = null;
+        state.selectedCanIndex = null;
         const targetAt =
           savedStep.status === 'failed'
             ? (savedStep.failed?.at_ms ?? savedStep.at_ms ?? savedStep.start_ms)
@@ -6410,10 +7034,12 @@ tr.ecu-event-row:focus-visible {
           moveCursor(targetAt, savedStep);
         } else {
           syncEcuEventsCursor();
+          syncCanFramesCursor();
         }
         showStep(savedStep, false, { preserveZoom: true });
       } else {
         state.selectedEventIndex = null;
+        state.selectedCanIndex = null;
         state.pinned = true;
         state.pinnedCursor = t;
         moveCursor(t);
@@ -6588,6 +7214,7 @@ tr.ecu-event-row:focus-visible {
       if (evReadout) evReadout.title = evReadout.textContent = '';
       updateStepDetails();
       syncEcuEventsCursor();
+      syncCanFramesCursor();
       return;
     }
     const scale = makeScale(state.view[0], state.view[1], state.width);
@@ -6639,6 +7266,7 @@ tr.ecu-event-row:focus-visible {
     const inspected = hoveredStep ?? (hoveredStep === undefined ? stepOf(state.step) : null);
     updateStepDetails(inspected ?? active.find((st) => isObject(st.watch)) ?? active[0]);
     syncEcuEventsCursor();
+    syncCanFramesCursor();
   }
 
   // --- loading
@@ -6858,6 +7486,7 @@ tr.ecu-event-row:focus-visible {
         }),
         h('p', { id: 'chart-hint', 'data-text': 'page.hint' }),
         h('section', { id: 'ecu-events', hidden: true }),
+        h('section', { id: 'can-frames', hidden: true }),
         h('div', { id: 'tables' }),
       ),
     ];
@@ -6894,6 +7523,7 @@ tr.ecu-event-row:focus-visible {
       state.pinned = false;
       state.pinnedCursor = null;
       state.selectedEventIndex = null;
+      state.selectedCanIndex = null;
       updateCursor();
     });
     listen($('clear-ref'), 'click', () => {
@@ -6932,6 +7562,7 @@ tr.ecu-event-row:focus-visible {
           state.pinnedCursor = null;
           state.refCursor = null;
           state.selectedEventIndex = null;
+          state.selectedCanIndex = null;
           updateCursor();
         }
         return;
@@ -6955,6 +7586,8 @@ tr.ecu-event-row:focus-visible {
         state.view[1],
         Math.max(state.view[0], t + (e.key === 'ArrowLeft' ? -stepT : stepT)),
       );
+      state.selectedEventIndex = null;
+      state.selectedCanIndex = null;
       if (state.pinned) state.pinnedCursor = next;
       moveCursor(next);
     });
@@ -7029,6 +7662,7 @@ tr.ecu-event-row:focus-visible {
     'help',
     'steps',
     'events',
+    'can',
     'readout',
     'legend',
     'tables',
@@ -7226,10 +7860,10 @@ tr.ecu-event-row:focus-visible {
         }
         if (what.has('cursor')) {
           state.cursor = o.cursor;
-          if (o.cursor === null) {
-            state.pinned = false;
-            state.pinnedCursor = null;
-          }
+          state.selectedEventIndex = null;
+          state.selectedCanIndex = null;
+          state.pinned = false;
+          state.pinnedCursor = null;
           updateCursor();
         }
       } finally {
@@ -7324,6 +7958,7 @@ tr.ecu-event-row:focus-visible {
         state.pinnedCursor = null;
         state.refCursor = null;
         state.selectedEventIndex = null;
+        state.selectedCanIndex = null;
         updateCursor();
         return true;
       });

@@ -1,0 +1,182 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "time_step_ms": 10,
+  "scenario": {
+    "file": "scenarios/throttle_step.yaml",
+    "name": "throttle step",
+    "status": "passed",
+    "over_at_ms": 500,
+    "recorded_to_ms": 500,
+    "end_ms": null
+  },
+  "variables": [
+    {
+      "name": "Engine.engine.throttle",
+      "participant": "Engine",
+      "type": "real",
+      "causality": "input",
+      "unit": "%",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": false
+    },
+    {
+      "name": "Dashboard.dashboard.engine_speed",
+      "participant": "Dashboard",
+      "type": "real",
+      "causality": "output",
+      "unit": "rpm",
+      "min": 0,
+      "max": 6000,
+      "items": [],
+      "ecu_step_ms": 5,
+      "written": false,
+      "watched": true
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 5,
+      "kind": "set",
+      "text": "set Engine.engine.throttle = 50",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 0,
+      "end_ms": 0,
+      "code": null,
+      "message": null,
+      "lines": [0],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 7,
+      "kind": "expect",
+      "text": "expect Dashboard.dashboard.engine_speed ge 1500 within 500 ms",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 300,
+      "end_ms": 300,
+      "code": null,
+      "message": null,
+      "lines": [],
+      "watch": {
+        "mode": "once",
+        "from_ms": 0,
+        "to_ms": 500,
+        "conditions": [
+          {
+            "variable": "Dashboard.dashboard.engine_speed",
+            "compare": [{ "op": "ge", "value": 1500, "tolerance": null }]
+          }
+        ]
+      },
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Engine.engine.throttle",
+      "source": "written",
+      "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
+      "points": [[0, 50]]
+    },
+    {
+      "variable": "Dashboard.dashboard.engine_speed",
+      "source": "sampled",
+      "encoding": "changes",
+      "columns": ["at_ms", "value"],
+      "samples": 51,
+      "first_ms": 0,
+      "last_ms": 500,
+      "not_applied_from": null,
+      "points": [
+        [0, 600],
+        [100, 1200],
+        [300, 1800]
+      ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Engine.engine.throttle",
+      "kind": "set",
+      "line": 5,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 50,
+      "base_source": "written",
+      "shape": null,
+      "text": "Engine.engine.throttle = 50"
+    }
+  ],
+  "findings": [],
+  "can_frames": [
+    {
+      "at_ms": 0,
+      "network": "J1939_CAN",
+      "id": 418316032,
+      "extended": true,
+      "dlc": 8,
+      "data": "0102030405060708"
+    },
+    {
+      "at_ms": 20,
+      "network": "J1939_CAN",
+      "id": 417994496,
+      "extended": true,
+      "dlc": 3,
+      "data": "04F000"
+    },
+    {
+      "at_ms": 100,
+      "network": "J1939_CAN",
+      "id": 217056256,
+      "extended": true,
+      "dlc": 8,
+      "data": "0000008025000000"
+    },
+    {
+      "at_ms": 250,
+      "network": "AUX_CAN",
+      "id": 291,
+      "extended": false,
+      "dlc": 4,
+      "data": "DEADBEEF",
+      "fd": true
+    },
+    {
+      "at_ms": 300,
+      "network": "AUX_CAN",
+      "id": 512,
+      "extended": false,
+      "dlc": 0,
+      "data": "",
+      "rtr": true
+    }
+  ],
+  "limits": {
+    "points_per_series": 50000,
+    "points_total": 200000,
+    "dropped": [],
+    "can_frames_per_network": 10000,
+    "can_frames_total": 20000,
+    "can_dropped": []
+  }
+}

@@ -84,6 +84,8 @@ struct RunChoices
     std::optional<std::chrono::milliseconds> record_after_fail{};
     /// Opt-in virtual-timestamped structured ECU event recording (RunIntent::record_events).
     bool record_events = false;
+    /// Opt-in virtual-timestamped CAN frame recording (RunIntent::record_can).
+    bool record_can = false;
 };
 
 /// What the plan knows of one participant of the run beside its entry in the configuration: what
@@ -151,6 +153,10 @@ struct RunPlan
     std::optional<std::chrono::milliseconds> record_after_fail{};
     /// Opt-in virtual-timestamped structured ECU event recording (RunChoices::record_events).
     bool record_events = false;
+    /// Opt-in virtual-timestamped CAN frame recording (RunChoices::record_can).
+    bool record_can = false;
+    /// Valid NetworkKind::Can network names from config.networks, in config order.
+    std::vector<std::string> can_networks{};
 
     /// The configuration of `check` (a check that passed has one).
     [[nodiscard]] const config::SimulationConfig& config() const { return *check.config; }

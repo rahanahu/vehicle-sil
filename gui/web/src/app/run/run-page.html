@@ -257,6 +257,11 @@
                 仮想時刻付き ECU イベントを記録
               </p>
             }
+            @if (sessionRecordCan()) {
+              <p class="file record-session" data-testid="session-record-can" i18n>
+                仮想時刻付き CAN フレームを記録
+              </p>
+            }
           } @else if (scenarios.hasValue()) {
             <mat-form-field class="picker picker-gap" subscriptSizing="dynamic">
               <mat-label i18n>シナリオ</mat-label>
@@ -436,6 +441,17 @@
               (change)="recordEvents.set($event.checked)"
               i18n
               >仮想時刻付き ECU イベントを記録</mat-checkbox
+            >
+          }
+          @if (!running() && recordCanAvailable()) {
+            <mat-checkbox
+              class="record-can"
+              data-testid="record-can"
+              [checked]="recordCan()"
+              [disabled]="running()"
+              (change)="recordCan.set($event.checked)"
+              i18n
+              >仮想時刻付き CAN フレームを記録</mat-checkbox
             >
           }
           @if (!running() && recordSignalsAvailable()) {
