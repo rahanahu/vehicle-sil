@@ -1107,9 +1107,11 @@
         : st.start_ms;
     if (preserveZoom && currentView && curSpan > 0) {
       const margin = curSpan * 0.02;
-      if (target >= currentView[0] + margin && target <= currentView[1] - margin) {
-        return [currentView[0], currentView[1]];
-      }
+      const leftOk =
+        currentView[0] <= d0 + 1e-9 ? target >= currentView[0] : target >= currentView[0] + margin;
+      const rightOk =
+        currentView[1] >= d1 - 1e-9 ? target <= currentView[1] : target <= currentView[1] - margin;
+      if (leftOk && rightOk) return [currentView[0], currentView[1]];
     }
     if (st.status === 'failed' && model.failure && model.failure.step.index === st.index) {
       return failureJumpView(model, currentView, preserveZoom);

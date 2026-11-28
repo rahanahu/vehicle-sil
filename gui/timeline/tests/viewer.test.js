@@ -3351,3 +3351,101 @@ test('logic analyzer: short-run leadMs, non-sticky navigation, quiet restoration
   await new Promise((r) => Promise.resolve().then(r));
   assert.equal(el._shadow.getElementById('participants').hidden, false);
 });
+
+test('stepFocusView preserves whole-run view when selecting steps at domain edges d0 and d1', () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Brake.pressure',
+        participant: 'Brake',
+        type: 'real',
+        causality: 'output',
+        unit: 'bar',
+        min: 0,
+        max: 180,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 1,
+        kind: 'set',
+        name: 'init',
+        text: 'x = 0',
+        start_ms: 0,
+        at_ms: 0,
+        end_ms: 0,
+        status: 'passed',
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+      {
+        index: 2,
+        line: 2,
+        kind: 'wait',
+        name: 'mid',
+        text: 'wait 940 ms',
+        start_ms: 0,
+        at_ms: 940,
+        end_ms: 940,
+        status: 'passed',
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+      {
+        index: 3,
+        line: 3,
+        kind: 'check',
+        name: 'end',
+        text: 'x == 1',
+        start_ms: 940,
+        at_ms: 940,
+        end_ms: 940,
+        status: 'passed',
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+    ],
+    series: [
+      makeSeries(
+        'Brake.pressure',
+        'sampled',
+        [
+          [0, 0],
+          [940, 1],
+        ],
+        { last_ms: 940 },
+      ),
+    ],
+  });
+  tl.scenario.recorded_to_ms = 940;
+  tl.scenario.over_at_ms = 940;
+  const m = model(tl);
+  assert.equal(m.domain[0], 0);
+  assert.ok(m.domain[1] > 940);
+
+  // Step at start_ms = d0 (0 ms) keeps the whole-run view instead of collapsing to stepViewFor().
+  assert.deepEqual(T.stepFocusView(m, m.steps[0], m.domain, true), m.domain);
+  // Step at start_ms = d1 also keeps the whole-run view.
+  const endEdgeStep = { ...m.steps[2], start_ms: m.domain[1], end_ms: m.domain[1] };
+  assert.deepEqual(T.stepFocusView(m, endEdgeStep, m.domain, true), m.domain);
+  // Step at start_ms = 0 when zoomed to [0, 200] (flush with d0) also keeps [0, 200].
+  assert.deepEqual(T.stepFocusView(m, m.steps[0], [0, 200], true), [0, 200]);
+  // Step at 199 when zoomed to [0, 200] (NOT flush with d1) still pans to keep margin from the cropped right edge.
+  const nearCroppedRight = { ...m.steps[2], start_ms: 199, end_ms: 199 };
+  const panned = T.stepFocusView(m, nearCroppedRight, [0, 200], true);
+  assert.ok(panned[1] > 200 && panned[1] - panned[0] === 200);
+});
