@@ -27,6 +27,7 @@ DEFAULT_FEATURES = [
     "scenario-cases", "scenario-templates",
     "connections", "connect", "check-text", "compare-commands", "serve", "check-file-only",
     "serve-prepare", "control-metrics", "external-registry", "record-signals", "record-after-fail",
+    "manual-timeline",
 ]
 
 def _peer_variables(name: str) -> list[dict]:
@@ -1333,6 +1334,77 @@ def _execute_run(
             outside=outside_rows,
         ))
 
+    def write_manual_timeline(recorded_to_ms: int | None) -> bool:
+        record_entries = list(dict.fromkeys(req_dict.get("record") or ()))
+        if has_scenario or not timeline_file or not record_entries:
+            return False
+        parts_by_name = {pt["name"]: pt for pt in chk_doc.get("participants", [])}
+        tl_vars: list[dict] = []
+        tl_series: list[dict] = []
+        for entry in record_entries:
+            if not isinstance(entry, str) or "." not in entry:
+                continue
+            pname, vname = entry.split(".", 1)
+            pt = parts_by_name.get(pname) or {}
+            vmeta = next((v for v in (pt.get("variables") or ()) if v.get("name") == vname), None)
+            vtype = vmeta["type"] if vmeta else "real"
+            tl_vars.append({
+                "name": entry,
+                "participant": pname,
+                "type": vtype,
+                "causality": vmeta["causality"] if vmeta else "output",
+                "unit": vmeta["unit"] if vmeta else "",
+                "min": vmeta["min"] if vmeta else None,
+                "max": vmeta["max"] if vmeta else None,
+                "items": vmeta["items"] if vmeta else [],
+                "ecu_step_ms": pt.get("step_ms") or 10,
+                "written": False,
+                "watched": False,
+                "recorded": True,
+            })
+            if recorded_to_ms is None:
+                pts: list[list] = []
+                first_ms = None
+                last_ms = None
+                sample_count = 0
+            else:
+                end_t = max(0, recorded_to_ms)
+                mid_t = end_t // 2
+                if vtype == "bool":
+                    pts = [[0, False], [mid_t, True]] if mid_t > 0 else [[0, True]]
+                elif vtype == "enum":
+                    pts = [[0, 0], [mid_t, 1]] if mid_t > 0 else [[0, 1]]
+                else:
+                    pts = [[0, 10], [mid_t, 42], [end_t, 65]] if end_t > mid_t > 0 else [[0, 42]]
+                first_ms = 0
+                last_ms = end_t
+                sample_count = max(1, (end_t // max(1, time_step_ms)) + 1)
+            tl_series.append({
+                "variable": entry, "source": "sampled", "encoding": "changes",
+                "columns": ["at_ms", "value"], "samples": sample_count,
+                "first_ms": first_ms, "last_ms": last_ms,
+                "not_applied_from": None, "points": pts,
+            })
+        tl_doc = {
+            "vehicle_sil_timeline": 1,
+            "vehicle_sil": _version(),
+            "stage": "run",
+            "file": cfg,
+            "variant": req_dict.get("variant"),
+            "params": [],
+            "time_step_ms": time_step_ms,
+            "scenario": None,
+            "recorded_to_ms": recorded_to_ms,
+            "variables": tl_vars,
+            "steps": [],
+            "series": tl_series,
+            "lines": [],
+            "findings": [],
+            "limits": {"points_per_series": 100000, "points_total": 1000000, "dropped": []},
+        }
+        Path(timeline_file).write_text(json.dumps(tl_doc) + "\n", encoding="utf-8")
+        return True
+
     def ctrl_step_to(target_ms: int, *, is_paused: bool) -> None:
         if ctrl_server is None:
             return
@@ -1381,7 +1453,8 @@ def _execute_run(
                 if ctrl_server is not None:
                     ctrl_server.set_time(sim_ms, False, running=False, ended=True)
                     ctrl_server.stop()
-                _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result={
+                wrote_manual_tl = write_manual_timeline(None if has_manual_wait else sim_ms)
+                res_hold: dict = {
                     "vehicle_sil_run": 2, "vehicle_sil": _version(), "file": cfg,
                     "result": "stopped", "end": "stopped", "ok": True,
                     "simulation": "not_started" if has_manual_wait else "ended",
@@ -1390,7 +1463,10 @@ def _execute_run(
                     "participants": _result_participants(started_parts), "findings": [],
                     "timing": {"speed": speed, "time_step_ms": time_step_ms, "wall_ms": 100, "paused_ms": 50,
                                "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "sim_ms": sim_ms},
-                }))
+                }
+                if wrote_manual_tl:
+                    res_hold["timeline"] = timeline_file
+                _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result=res_hold))
                 return 0 if once else None
             if holding and cname == "pause":
                 emit_accepted_command("pause", cmd.get("id"), at_ms=0)
@@ -1977,6 +2053,8 @@ def _execute_run(
                     res_stop["scenario"]["case"] = req_dict["case"]
                 if chk_doc.get("scenario", {}).get("params"):
                     res_stop["scenario"]["params"] = chk_doc["scenario"]["params"]
+            elif write_manual_timeline(sim_ms):
+                res_stop["timeline"] = timeline_file
             _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result=res_stop))
             return 0 if once else None
         elif cname == "pause":
@@ -2094,6 +2172,8 @@ def _execute_run(
         if chk_doc.get("scenario", {}).get("params"):
             sc_pass["params"] = chk_doc["scenario"]["params"]
         res_obj["scenario"] = sc_pass
+    elif write_manual_timeline(sim_ms):
+        res_obj["timeline"] = timeline_file
     if fault == "large-result":
         res_obj["blob"] = "z" * (5 * 1024 * 1024)
     _emit(next_ev("result", run=run_id, launcher_ends=once, status=settle_run_status(), result=res_obj))

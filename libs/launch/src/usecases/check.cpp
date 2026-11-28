@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <exception>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -302,6 +303,10 @@ namespace {
         {
             if (!check.cases.empty() && check.case_name.empty())
             {
+                for (config::Finding& finding : read.findings)
+                {
+                    add(std::move(finding));
+                }
                 report.scenario = std::move(check);
             }
             return std::move(read.usage_errors);
@@ -767,12 +772,14 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             {
                 // Multi-case scenario with unselected or unknown case: evaluate hot_eligibility
                 // before marking usage=true and preserve the checked configuration, participants,
-                // networks, and scenario metadata (cases, case_details, params, param_meta,
-                // missing_params).
+                // networks, prior findings, and scenario metadata (cases, case_details, params,
+                // param_meta, missing_params).
                 report.hot_eligibility =
                     evaluate_hot_eligibility(report, options.trace_enabled, /*refuse_fixed_registry=*/true);
                 report.usage = true;
-                report.findings = std::move(wrong);
+                report.findings.insert(report.findings.begin(),
+                                       std::make_move_iterator(wrong.begin()),
+                                       std::make_move_iterator(wrong.end()));
                 finalize(report);
                 return report;
             }

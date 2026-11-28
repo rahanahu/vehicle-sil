@@ -126,6 +126,14 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
             plan.members[i].sample_every_step = asked[i];
         }
     }
+    else if (!choices.timeline.empty() && !plan.recorded_variables.empty())
+    {
+        const std::vector<bool> asked = scenario::sample_every_step_participants(check, plan.recorded_variables);
+        for (std::size_t i = 0; i < asked.size(); ++i)
+        {
+            plan.members[i].sample_every_step = asked[i];
+        }
+    }
     plan.base = std::move(base);
     plan.stop_at_ms = choices.stop_at_ms;
     plan.start_timeout_ms = choices.start_timeout_ms;

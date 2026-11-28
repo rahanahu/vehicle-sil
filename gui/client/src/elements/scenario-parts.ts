@@ -203,9 +203,10 @@ export class VsilScenarioResultElement extends Part {
 }
 
 /**
- * `<vsil-timeline>`: ties the `<vehicle-sil-timeline>` inside it to the timeline of the run's scenario. The page's own
- * `<vehicle-sil-timeline>` (with its attributes) is used; when there is none, the part adds a default one. The part
- * changes only `src` and `hidden` of it, and does not load the element's script: the page does.
+ * `<vsil-timeline>`: ties the `<vehicle-sil-timeline>` inside it to the run's recorded timeline (both scenario runs
+ * and manual runs with recorded signals). The page's own `<vehicle-sil-timeline>` (with its attributes) is used; when
+ * there is none, the part adds a default one. The part changes only `src` and `hidden` of it, and does not load the
+ * element's script: the page does.
  */
 export class VsilTimelineElement extends Part {
   protected draw(client: Front): void {
@@ -216,15 +217,20 @@ export class VsilTimelineElement extends Part {
       this.own(() => own.remove()); // only what the part made
     }
     const shown = timeline;
+    const sessionReadable = client.low?.session?.session;
+    const apply = (url: string | null) => {
+      shown.hidden = url === null;
+      setData(this, 'timeline', url === null ? 'none' : 'shown');
+      // The attribute, not the property: it also reaches an element that is defined later. The same file is not set again.
+      if (url !== null && shown.getAttribute('src') !== `/${url}`)
+        shown.setAttribute('src', `/${url}`);
+    };
     this.own(
-      watch(client.scenario, (scenario) => {
-        const url = scenario?.timeline_url ?? null;
-        shown.hidden = url === null;
-        setData(this, 'timeline', url === null ? 'none' : 'shown');
-        // The attribute, not the property: it also reaches an element that is defined later. The same file is not set again.
-        if (url !== null && shown.getAttribute('src') !== `/${url}`)
-          shown.setAttribute('src', `/${url}`);
-      }),
+      sessionReadable
+        ? watch([sessionReadable, client.scenario] as const, (session, scenario) =>
+            apply(session?.timelineUrl ?? scenario?.timeline_url ?? null),
+          )
+        : watch(client.scenario, (scenario) => apply(scenario?.timeline_url ?? null)),
     );
     this.own(() => setData(this, 'timeline', null));
   }

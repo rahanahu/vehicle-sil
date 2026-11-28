@@ -1593,6 +1593,7 @@ class TimelineSchema(unittest.TestCase):
         # Every key of the file is always there (null when it does not apply), except path-scoped optional
         # provenance/conditional fields so existing timeline records stay valid unchanged.
         may_be_left_out = {
+            ("", "recorded_to_ms"),
             ("scenario.", "case"),
             ("variables.", "recorded"),
             ("steps.", "file"),
@@ -1692,9 +1693,68 @@ class TimelineSchema(unittest.TestCase):
             "a failed compared entry whose variable is a number": lambda d: failed_step(d)["failed"]["conditions"][0].update(
                 compared=[{"variable": 0, "value": 1, "sample_ms": 10}]),
             "a variable recorded flag that is a text": lambda d: d["variables"][0].update(recorded="yes"),
+            "scenario that is a string": lambda d: d.update(scenario="manual"),
+            "top-level recorded_to_ms that is a string": lambda d: d.update(recorded_to_ms="200"),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
+        # Manual-run timeline (scenario: null + top-level recorded_to_ms, empty steps & lines) is valid,
+        # while malformed manual shapes are rejected.
+        manual_good = {
+            "vehicle_sil_timeline": 1,
+            "vehicle_sil": "0.4.0",
+            "stage": "run",
+            "file": "simulation.yaml",
+            "variant": None,
+            "params": [],
+            "time_step_ms": 5,
+            "scenario": None,
+            "recorded_to_ms": 200,
+            "variables": [
+                {
+                    "name": "Engine.engine.speed",
+                    "participant": "Engine",
+                    "type": "real",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": 0,
+                    "max": 8000,
+                    "items": [],
+                    "ecu_step_ms": 10,
+                    "written": False,
+                    "watched": False,
+                    "recorded": True,
+                }
+            ],
+            "steps": [],
+            "series": [
+                {
+                    "variable": "Engine.engine.speed",
+                    "source": "sampled",
+                    "encoding": "changes",
+                    "columns": ["at_ms", "value"],
+                    "samples": 20,
+                    "first_ms": 0,
+                    "last_ms": 190,
+                    "not_applied_from": None,
+                    "points": [[0, 800]],
+                }
+            ],
+            "lines": [],
+            "findings": [],
+            "limits": {"points_per_series": 100000, "points_total": 1000000, "dropped": []},
+        }
+        self.assertEqual(problems(TIMELINE, manual_good), [])
+        manual_null = copy.deepcopy(manual_good)
+        manual_null["recorded_to_ms"] = None
+        manual_null["series"][0].update(samples=0, first_ms=None, last_ms=None, points=[])
+        self.assertEqual(problems(TIMELINE, manual_null), [])
+        manual_bad_rec = copy.deepcopy(manual_good)
+        manual_bad_rec["recorded_to_ms"] = "200"
+        self.assertNotEqual(problems(TIMELINE, manual_bad_rec), [])
+        manual_bad_sc = copy.deepcopy(manual_good)
+        manual_bad_sc["scenario"] = {}
+        self.assertNotEqual(problems(TIMELINE, manual_bad_sc), [])
         # What a later version may add is no mistake: keys, and values of the open lists.
         additions = {
             "a key it does not know": lambda d: d.update(notes=[]),
@@ -1883,6 +1943,30 @@ class TimelineOfARun(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(var_compares), 4)
         self.assertTrue(all(comp["value"] is None for comp in var_compares))
+
+    def test_the_timeline_of_a_manual_run_is_valid(self):
+        example = Path(EXAMPLE_DIR)
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-timeline-manual-") as directory:
+            out = Path(directory) / "manual.timeline.json"
+            proc = subprocess.run(
+                [LAUNCH, "run", "simulation.yaml", "--stop-at-ms", "200",
+                 "--record", "Engine.engine.speed", "--record", "Dashboard.dashboard.engine_speed",
+                 "--timeline", str(out)],
+                cwd=example, capture_output=True, text=True, encoding="utf-8",
+                stdin=subprocess.DEVNULL, timeout=120,
+            )
+            self.assertEqual(proc.returncode, 0, f"manual timeline run failed:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
+            data = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(problems(TIMELINE, data), [],
+                         "the timeline file of a manual run is not valid for schema/timeline.schema.json")
+        self.assertIsNone(data["scenario"])
+        self.assertEqual(data["recorded_to_ms"], 200)
+        self.assertEqual(data["steps"], [])
+        self.assertEqual(data["lines"], [])
+        self.assertEqual([v["name"] for v in data["variables"]],
+                         ["Engine.engine.speed", "Dashboard.dashboard.engine_speed"])
+        self.assertTrue(all(not v["written"] and not v["watched"] and v.get("recorded") is True for v in data["variables"]))
+        self.assertTrue(all(s["source"] == "sampled" and s["points"] for s in data["series"]))
 
 
 class ControlMetricsSchema(unittest.TestCase):

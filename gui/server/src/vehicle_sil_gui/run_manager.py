@@ -25,8 +25,8 @@ from .allowed import Facts, RunFacts, allowed as allowed_of, allowed_start
 from .config_service import CHECK_TIMEOUT_S, ConfigService, make_request_file
 from .contracts import (PROTOCOL, PrepareRequest, RunRequest, StopSessionRequest, parse_time_command_request)
 from .hub import Hub, encode
-from .launcher import (FEATURE_TIMELINE, NO_CONNECTION, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, Launcher,
-                       hide_request, hide_request_in_event)
+from .launcher import (FEATURE_MANUAL_TIMELINE, FEATURE_TIMELINE, NO_CONNECTION, SPEED_MAX, SPEED_MIN, STEP_MS_MAX,
+                       Launcher, hide_request, hide_request_in_event)
 from .paths import ConfigFile
 from .recording import Recording
 from .refusal import Refused
@@ -448,10 +448,11 @@ class RunManager:
         path = await asyncio.to_thread(self.timelines.file_of, run_id) if run_id else None
         if path is None:
             raise Refused(404, "no-timeline",
-                          f"run {run_id} has no timeline file on this server: a scenario run started from this GUI "
-                          "server records one when the launcher has the feature 'timeline', and it can be read once "
-                          f"the run has ended; the server keeps the files of the last {self.timelines.kept} such runs "
-                          "until it stops", {"run_id": run_id})
+                          f"run {run_id} has no timeline file on this server: a run with a recorded timeline started "
+                          "from this GUI server records one when the launcher has the feature 'timeline' (and "
+                          "'manual-timeline' for manual runs with recorded signals), and it can be read once the run "
+                          f"has ended; the server keeps the files of the last {self.timelines.kept} such runs until "
+                          "it stops", {"run_id": run_id})
         return path
 
     # ------------------------------------------------------------ prepare, start, stop, time, write
@@ -592,7 +593,10 @@ class RunManager:
                     stack.callback(lambda: control.remove(credentials))
                 except OSError as e:
                     why_not = f"the file with the control server's credentials could not be made ({e})"
-            if r.scenario is not None and FEATURE_TIMELINE in self.launcher.features:
+            if FEATURE_TIMELINE in self.launcher.features and (
+                r.scenario is not None
+                or (bool(r.intent.get("record")) and FEATURE_MANUAL_TIMELINE in self.launcher.features)
+            ):
                 timeline = await process.run_thread_reclaimable(self.timelines.new_file, control.remove)
                 stack.callback(control.remove, timeline)
             self.not_closing()
@@ -943,7 +947,7 @@ class RunManager:
         whole = written_whole(run.session.result)
         failed = _is_failed_run(run.session)
         if await asyncio.to_thread(self.timelines.finish, run.session.id, run.timeline, whole,
-                                   run.session.scenario or "", failed=failed):
+                                   run.session.scenario or run.session.file, failed=failed):
             run.session.timeline_url = api_path(run.session.id)
 
     def _remove_credentials(self, run: Run, last: bool = False) -> None:

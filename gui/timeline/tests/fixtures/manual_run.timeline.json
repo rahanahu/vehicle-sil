@@ -1,0 +1,83 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "time_step_ms": 10,
+  "scenario": null,
+  "recorded_to_ms": 500,
+  "variables": [
+    {
+      "name": "Engine.engine.speed",
+      "participant": "Engine",
+      "type": "integer",
+      "causality": "output",
+      "unit": "rpm",
+      "min": 0,
+      "max": 6000,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": false,
+      "recorded": true
+    },
+    {
+      "name": "Dashboard.dashboard.engine_speed",
+      "participant": "Dashboard",
+      "type": "integer",
+      "causality": "output",
+      "unit": "rpm",
+      "min": 0,
+      "max": 6000,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": false,
+      "recorded": true
+    }
+  ],
+  "steps": [],
+  "series": [
+    {
+      "variable": "Engine.engine.speed",
+      "source": "sampled",
+      "encoding": "changes",
+      "columns": ["at_ms", "value"],
+      "samples": 51,
+      "first_ms": 0,
+      "last_ms": 500,
+      "not_applied_from": null,
+      "points": [
+        [0, 800],
+        [150, 1400],
+        [350, 2100],
+        [500, 2100]
+      ]
+    },
+    {
+      "variable": "Dashboard.dashboard.engine_speed",
+      "source": "sampled",
+      "encoding": "changes",
+      "columns": ["at_ms", "value"],
+      "samples": 51,
+      "first_ms": 0,
+      "last_ms": 500,
+      "not_applied_from": null,
+      "points": [
+        [0, 800],
+        [160, 1380],
+        [360, 2090],
+        [500, 2100]
+      ]
+    }
+  ],
+  "lines": [],
+  "findings": [],
+  "limits": {
+    "points_per_series": 50000,
+    "points_total": 200000,
+    "dropped": []
+  }
+}

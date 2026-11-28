@@ -391,10 +391,13 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
         TimelineInput input;
         input.file = report.check.file;
         input.variant = runner.plan().config().variant;
-        input.params = report.check.scenario->params;
+        if (report.check.scenario)
+        {
+            input.params = report.check.scenario->params;
+        }
         input.time_step_ms = runner.plan().timing.time_step_ms;
         input.scenario = runner.plan().scenario();
-        input.run = &*report.run->scenario.result;
+        input.run = report.run->scenario.result ? &*report.run->scenario.result : nullptr;
         input.catalog = &catalog;
         input.record = report.run->scenario.timeline_record.get();
         input.recorded_variables = runner.plan().recorded_variables;

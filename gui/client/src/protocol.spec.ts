@@ -1538,10 +1538,12 @@ describe('generated OpenAPI 3.1 and WebSocket JSON Schemas align with client bui
           over_at_ms: 200,
           timeline_url: 'api/timeline/7',
         },
+        timeline_url: 'api/timeline/7',
       },
     });
 
     expect(summary?.unreadable).toEqual([]);
+    expect(summary?.timeline_url).toBe('api/timeline/7');
     expect(summary?.intent).toEqual({
       scenario: 'sub/scenarios/cases.yaml',
       case: 'full_load',

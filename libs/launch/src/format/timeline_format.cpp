@@ -80,11 +80,12 @@ const control::VariableInfo* described(const scenario::ScenarioCatalog* catalog,
 
 const std::string& variable_text(const TimelineInput& input, std::size_t index)
 {
-    if (index < input.scenario->variables.size())
+    const std::size_t scenario_count = input.scenario != nullptr ? input.scenario->variables.size() : 0;
+    if (index < scenario_count)
     {
         return input.scenario->variables[index].text;
     }
-    return input.record->extra_variables()[index - input.scenario->variables.size()].text;
+    return input.record->extra_variables()[index - scenario_count].text;
 }
 
 void write_variable_object(JsonWriter& w, const scenario::ScenarioCatalog* catalog, const std::string& text,
@@ -133,6 +134,21 @@ void write_variable_object(JsonWriter& w, const scenario::ScenarioCatalog* catal
 
 void write_variables(JsonWriter& w, const TimelineInput& input)
 {
+    if (input.scenario == nullptr)
+    {
+        const scenario::TimelineRecord fromRecorded(input.recorded_variables);
+        const scenario::TimelineRecord& uses = input.record != nullptr ? *input.record : fromRecorded;
+        w.begin_array("variables");
+        const auto& extras = uses.extra_variables();
+        for (std::size_t k = 0; k < extras.size(); ++k)
+        {
+            const scenario::RecordedVariable& rv = extras[k];
+            write_variable_object(w, input.catalog, rv.text, rv.participant, rv.name, rv.type, rv.items, rv.step,
+                                  uses.is_written(k), uses.is_watched(k), uses.is_recorded(k));
+        }
+        w.end_array();
+        return;
+    }
     const scenario::Scenario& scenario = *input.scenario;
     // Without a record (the scenario never began): from the steps, as the record does.
     const scenario::TimelineRecord fromSteps(scenario, {}, input.recorded_variables);
@@ -351,7 +367,7 @@ void write_series(JsonWriter& w, const TimelineInput& input)
                     return at + SimDuration(rem == 0 ? 0 : ecu_step.count() - rem);
                 };
                 const auto it = std::find_if(series.written.begin(), series.written.end(), [&](const scenario::TimelineRecord::Written& p) {
-                    return p.refused || (input.run->over_at && applied_at(p.at) > *input.run->over_at);
+                    return p.refused || (input.run != nullptr && input.run->over_at && applied_at(p.at) > *input.run->over_at);
                 });
                 if (it != series.written.end())
                 {
@@ -438,10 +454,10 @@ void write_dither_line(JsonWriter& w, const scenario::Scenario& scenario, const 
 /// The lines of the inputs: what each step put on the line of a variable it writes.
 void write_lines(JsonWriter& w, const TimelineInput& input)
 {
-    const scenario::Scenario& scenario = *input.scenario;
     w.begin_array("lines");
-    if (input.record != nullptr)
+    if (input.scenario != nullptr && input.record != nullptr)
     {
+        const scenario::Scenario& scenario = *input.scenario;
         for (const scenario::TimelineRecord::Line& line : input.record->lines())
         {
             if (line.dither)
@@ -542,8 +558,6 @@ bool timeline_takes_finding(const std::string& code, bool& code_only)
 
 std::string format_timeline_json(const TimelineInput& input)
 {
-    const scenario::Scenario& scenario = *input.scenario;
-    const scenario::ScenarioRun& run = *input.run;
     JsonWriter w;
     w.begin_object();
     w.integer("vehicle_sil_timeline", kTimelineFormat);
@@ -553,36 +567,50 @@ std::string format_timeline_json(const TimelineInput& input)
     write_text_or_null(w, "variant", input.variant);
     detail::write_params_json(w, "params", input.params);
     w.integer("time_step_ms", input.time_step_ms);
-    w.begin_object("scenario");
-    w.string("file", run.file);
-    write_text_or_null(w, "name", run.name);
-    if (!run.case_name.empty())
+    if (input.scenario != nullptr && input.run != nullptr)
     {
-        w.string("case", run.case_name);
-    }
-    w.string("status", scenario::scenario_status_name(run.status));
-    write_ms(w, "over_at_ms", run.over_at);
-    write_ms(w, "recorded_to_ms", input.record != nullptr ? input.record->recorded_to() : std::nullopt);
-    if (run.end_ms)
-    {
-        w.integer("end_ms", *run.end_ms);
+        const scenario::ScenarioRun& run = *input.run;
+        w.begin_object("scenario");
+        w.string("file", run.file);
+        write_text_or_null(w, "name", run.name);
+        if (!run.case_name.empty())
+        {
+            w.string("case", run.case_name);
+        }
+        w.string("status", scenario::scenario_status_name(run.status));
+        write_ms(w, "over_at_ms", run.over_at);
+        write_ms(w, "recorded_to_ms", input.record != nullptr ? input.record->recorded_to() : std::nullopt);
+        if (run.end_ms)
+        {
+            w.integer("end_ms", *run.end_ms);
+        }
+        else
+        {
+            w.null("end_ms");
+        }
+        w.end_object();
     }
     else
     {
-        w.null("end_ms");
+        w.null("scenario");
+        write_ms(w, "recorded_to_ms", input.record != nullptr ? input.record->recorded_to() : std::nullopt);
     }
-    w.end_object();
     write_variables(w, input);
     w.begin_array("steps");
-    for (std::size_t i = 0; i < run.steps.size() && i < scenario.steps.size(); ++i)
+    if (input.scenario != nullptr && input.run != nullptr)
     {
-        w.begin_object();
-        detail::write_scenario_step_members(w, run.steps[i]);
-        write_step_lines(w, input, i);
-        write_watch(w, scenario, scenario.steps[i], run.steps[i],
-                    input.record != nullptr ? input.record->watches()[i] : std::nullopt);
-        write_failed(w, scenario, run.steps[i], input.record != nullptr ? input.record->failures()[i] : std::nullopt, input.record);
-        w.end_object();
+        const scenario::Scenario& scenario = *input.scenario;
+        const scenario::ScenarioRun& run = *input.run;
+        for (std::size_t i = 0; i < run.steps.size() && i < scenario.steps.size(); ++i)
+        {
+            w.begin_object();
+            detail::write_scenario_step_members(w, run.steps[i]);
+            write_step_lines(w, input, i);
+            write_watch(w, scenario, scenario.steps[i], run.steps[i],
+                        input.record != nullptr ? input.record->watches()[i] : std::nullopt);
+            write_failed(w, scenario, run.steps[i], input.record != nullptr ? input.record->failures()[i] : std::nullopt, input.record);
+            w.end_object();
+        }
     }
     w.end_array();
     write_series(w, input);

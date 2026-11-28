@@ -895,8 +895,8 @@ vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [-
 vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
-                       [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
-                       [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
+                       [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
+                       [--timeline <file>] [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
                        [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -940,7 +940,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--case <name>` | `check`, `run` (with `--scenario`), and `test` | Selects a named case from the scenario's `cases` (see "Named cases (`cases`, `--case`)" in [scenario.md](scenario.md#named-cases-cases---case)). Repeatable in `test`. |
 | `--variant <name>` | | Selects a variant of the configuration file (see [Variants](#variants-variants---variant)). |
 | `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
-| `--timeline <file>` | `run` only, and only with `--scenario` | Writes the values that the scenario wrote and saw to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
+| `--timeline <file>` | `run` only, with `--scenario` or `--record` | Writes the values that the run wrote and saw (scenario runs, or manual runs with `--record`) to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
 | `--record <participant>.<variable>` | `check` and `run` | Samples and records an extra ECU variable into the `--timeline` file without affecting scenario verdicts (can be repeated; also validated before starting participants). |
 | `--record-after-fail-ms <ms>` | `check` and `run`, only with `--scenario` | Continues advancing virtual time passively for up to `<ms>` ms (1 to 600000) after a normal scenario assertion or wait-timeout failure to record post-failure samples into `--timeline` without executing further scenario steps, writes, or dithers (harmless no-op when `--timeline` is omitted). |
 | `--control-metrics <file>` | `run` only | Writes the cumulative Control Hub SIL Kit transport counters (`HubTransport::stats()`) to a JSON file at the end of the run; does not require `--control` (see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](simulation-run.md#recording-control-hub-transport-metrics---control-metrics)). |

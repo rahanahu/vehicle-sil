@@ -55,6 +55,7 @@ def test_a_scenario_run_records_its_timeline_and_the_server_serves_it(tmp_path: 
             where.append(path.parent)
             url = session["scenario"]["timeline_url"]
             assert url == api_path(session["id"]) == f"api/timeline/{session['id']}"
+            assert session["timeline_url"] == url
 
             status, body, headers = await get_raw(c, url)
             assert status == 200, body
@@ -68,9 +69,10 @@ def test_a_scenario_run_records_its_timeline_and_the_server_serves_it(tmp_path: 
                 status, body, headers = await get_raw(c, url, token=token)
                 assert status == 401 and json.loads(body)["error"]["code"] == "unauthorized"
 
-            # Another run: a run without a scenario has none; an id the server never gave has none
+            # Another run: a manual run without record has none; an id the server never gave has none
             other, run_start_other = await run_to_end(c, {"file": "simulation.yaml", "stop_at_ms": 1000})
             assert "timeline" not in run_start_other and other["scenario"] is None and "scenario" not in other["result"]
+            assert other.get("timeline_url") is None
             for wrong in (other["id"], "999", "x", "-1", "1e3", "１"):
                 status, body = await c.get(f"api/timeline/{wrong}")
                 assert (status, body["error"]["code"]) == (404, "no-timeline"), (wrong, body)
@@ -81,6 +83,58 @@ def test_a_scenario_run_records_its_timeline_and_the_server_serves_it(tmp_path: 
         run_async(talk, gui)
         assert stop_server(gui.proc) == 0
     assert where and not where[0].exists(), "the server removes its timeline files when it ends"
+
+
+def test_a_manual_run_with_record_writes_and_serves_a_timeline(tmp_path: Path) -> None:
+    with gui_server(tmp_path) as gui:
+        async def talk(c: Client) -> None:
+            session, run_start = await run_to_end(
+                c,
+                {
+                    "file": "simulation.yaml",
+                    "stop_at_ms": 1000,
+                    "record": ["Engine.engine.speed", "Dashboard.dashboard.speed"],
+                },
+            )
+            assert "timeline" not in run_start
+            assert session["scenario"] is None
+            assert "scenario" not in session["result"]
+            path = Path(session["result"]["timeline"])
+            assert path.is_absolute() and path.parent.name.startswith("vehicle-sil-gui-timelines-")
+            url = session["timeline_url"]
+            assert url == api_path(session["id"])
+
+            status, body, headers = await get_raw(c, url)
+            assert status == 200, body
+            tl = json.loads(body)
+            assert tl["vehicle_sil_timeline"] == 1
+            assert tl["scenario"] is None
+            assert tl["recorded_to_ms"] == 1000
+            assert tl["steps"] == [] and tl["lines"] == []
+            assert [v["name"] for v in tl["variables"]] == ["Engine.engine.speed", "Dashboard.dashboard.speed"]
+            assert all(v["recorded"] is True and v["written"] is False and v["watched"] is False for v in tl["variables"])
+            assert headers["Content-Disposition"] == 'inline; filename="simulation.timeline.json"'
+        run_async(talk, gui)
+
+
+def test_a_manual_run_with_record_gets_no_timeline_without_manual_timeline_feature(tmp_path: Path) -> None:
+    features = f"{WITHOUT_TIMELINE},timeline,run-stop-at,record-signals"
+    with gui_server(tmp_path, env={"REPLAY_FEATURES": features}) as gui:
+        async def talk(c: Client) -> None:
+            session, _ = await run_to_end(
+                c,
+                {
+                    "file": "simulation.yaml",
+                    "stop_at_ms": 1000,
+                    "record": ["Engine.engine.speed"],
+                },
+            )
+            assert session["scenario"] is None
+            assert session.get("timeline_url") is None
+            assert "timeline" not in session["result"]
+            status, body = await c.get(api_path(session["id"]))
+            assert (status, body["error"]["code"]) == (404, "no-timeline")
+        run_async(talk, gui)
 
 
 def test_a_launcher_without_the_feature_is_given_no_timeline(tmp_path: Path) -> None:

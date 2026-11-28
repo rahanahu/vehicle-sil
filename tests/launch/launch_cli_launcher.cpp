@@ -651,7 +651,8 @@ void usage(const Options& o)
                 "serve --case stdout:\n" + serveCase.standard_output);
     }
     expect_usage({"run", "a.yaml", "--timeline", "t.json", "--timeout-ms", "0"},
-                 "--timeline writes what a scenario did over the time: give --scenario <file> too, or leave --timeline out");
+                 "--timeline needs --scenario or --record: give --scenario <file> or at least one --record "
+                 "<participant>.<variable>, or leave --timeline out");
     expect_usage({"run", "a.yaml", "--scenario", "s.yaml", "--start-paused", "--speed", "fast"},
                  "--speed must be a number of simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, "
                  "2: twice as fast) or max (as fast as possible), not 'fast'");
@@ -697,6 +698,113 @@ void usage(const Options& o)
     expect_code(dashed, 3, "vehicle_sil_launch check -- -h");
     require(dashed.standard_output.rfind("error: -h: the file does not exist", 0) == 0,
             "check -- -h wrote:\n" + dashed.standard_output);
+
+    // Unselected case preserves prior configuration/scenario errors, warnings, and notes in CLI and --json.
+    {
+        const fs::path caseDir = o.work_dir / "usage_case_preserve";
+        fs::create_directories(caseDir);
+        const fs::path brokenCfg = caseDir / "sim_broken.yaml";
+        const fs::path otherCfg = caseDir / "sim_other.yaml";
+        const fs::path healthyCfg = caseDir / "sim_healthy.yaml";
+        const fs::path brokenScn = caseDir / "cases_broken.yaml";
+        const fs::path healthyScn = caseDir / "cases_healthy.yaml";
+        write_file(brokenCfg,
+                   "vehicle_sil_simulation: 2\n"
+                   "networks: []\n"
+                   "participants:\n"
+                   "  - name: Engine\n"
+                   "    command: [missing/engine]\n"
+                   "  - name: Brake\n"
+                   "    command: [" +
+                       yaml_quote(shown_path(o.helper)) +
+                       ", --out, '{\"vehicle_sil_ecu\":1,\"name\":\"Brake\",\"step_ns\":10000000,\"networks\":[],"
+                       "\"variables\":[{\"name\":\"pressure\",\"type\":\"real\",\"causality\":\"input\","
+                       "\"unit\":\"\",\"min\":null,\"max\":null,\"step\":null,\"description\":\"\","
+                       "\"items\":[],\"builtin\":false}],"
+                       "\"control\":{\"transport\":\"silkit\",\"wire_version\":1,\"wire_revision\":0},\"features\":[]}']\n");
+        write_file(otherCfg,
+                   "vehicle_sil_simulation: 2\n"
+                   "networks: []\n"
+                   "participants:\n"
+                   "  - name: Brake\n"
+                   "    command: [missing/brake]\n");
+        write_file(healthyCfg,
+                   "vehicle_sil_simulation: 2\n"
+                   "networks: []\n"
+                   "participants:\n"
+                   "  - name: Brake\n"
+                   "    command: [" +
+                       yaml_quote(shown_path(o.helper)) +
+                       ", --out, '{\"vehicle_sil_ecu\":1,\"name\":\"Brake\",\"step_ns\":10000000,\"networks\":[],"
+                       "\"variables\":[{\"name\":\"pressure\",\"type\":\"real\",\"causality\":\"input\","
+                       "\"unit\":\"\",\"min\":null,\"max\":null,\"step\":null,\"description\":\"\","
+                       "\"items\":[],\"builtin\":false}],"
+                       "\"control\":{\"transport\":\"silkit\",\"wire_version\":2,\"wire_revision\":1},\"features\":[]}']\n");
+        write_file(brokenScn,
+                   "vehicle_sil_scenario: 1\n"
+                   "unknown_top_key: 1\n"
+                   "cases:\n"
+                   "  idle: {}\n"
+                   "  full: {}\n"
+                   "steps:\n"
+                   "  - set: { Brake.pressure: 1 }\n");
+        write_file(healthyScn,
+                   "vehicle_sil_scenario: 1\n"
+                   "cases:\n"
+                   "  idle: {}\n"
+                   "  full: {}\n"
+                   "steps:\n"
+                   "  - set: { Brake.pressure: 1 }\n");
+
+        const std::string brokenCfgStr = shown_path(brokenCfg);
+        const std::string otherCfgStr = shown_path(otherCfg);
+        const std::string brokenScnStr = shown_path(brokenScn);
+        const Captured cliBroken = launch(
+            o, {"check", "--compare-commands", otherCfgStr, "--scenario", brokenScnStr, brokenCfgStr});
+        expect_code(cliBroken, 4, "check broken config with unselected cases");
+        require(cliBroken.standard_output.empty(), "plain check usage stdout:\n" + cliBroken.standard_output);
+        const std::string cliErr = lf(cliBroken.standard_error);
+        require(contains(cliErr, "error: the scenario defines cases, and a check or a run is of one of them: give --case <name> with one of idle, full") &&
+                    contains(cliErr, "\nerror: " + brokenCfgStr + ":5: participant 'Engine': ") &&
+                    contains(cliErr, "[executable]") &&
+                    contains(cliErr, "\nerror: " + brokenScnStr + ":2: unknown key 'unknown_top_key'") &&
+                    contains(cliErr, "[unknown-key]") &&
+                    contains(cliErr, "\nwarning: " + brokenCfgStr + ":6: participant 'Brake': ") &&
+                    contains(cliErr, "[control-link-version]") &&
+                    contains(cliErr, "\nnote: ") &&
+                    contains(cliErr, "[commands-changed]"),
+                "plain check unselected case stderr:\n" + cliErr);
+
+        const Captured jsonBroken = launch(
+            o, {"check", "--json", "--compare-commands", otherCfgStr, "--scenario", brokenScnStr, brokenCfgStr});
+        expect_code(jsonBroken, 4, "check --json broken config with unselected cases");
+        const std::string outJson = lf(jsonBroken.standard_output);
+        require(contains(outJson, "\n  \"result\": \"usage\",\n") &&
+                    contains(outJson, "\n  \"errors\": 3,\n  \"warnings\": 1,\n  \"notes\": 1,\n") &&
+                    contains(outJson, "\"code\": \"usage\"") &&
+                    contains(outJson, "\"code\": \"executable\"") &&
+                    contains(outJson, "\"code\": \"unknown-key\"") &&
+                    contains(outJson, "\"code\": \"control-link-version\"") &&
+                    contains(outJson, "\"code\": \"commands-changed\""),
+                "check --json unselected case stdout:\n" + outJson);
+
+        const std::string healthyCfgStr = shown_path(healthyCfg);
+        const std::string healthyScnStr = shown_path(healthyScn);
+        const Captured jsonHealthyUnselected =
+            launch(o, {"check", "--json", "--scenario", healthyScnStr, healthyCfgStr});
+        expect_code(jsonHealthyUnselected, 4, "check --json healthy config with unselected cases");
+        require(contains(lf(jsonHealthyUnselected.standard_output),
+                         "\n  \"result\": \"usage\",\n  \"strict\": false,\n  \"errors\": 1,\n  \"warnings\": 0,\n  \"notes\": 0,\n") &&
+                    contains(jsonHealthyUnselected.standard_output, "idle, full"),
+                "check --json healthy unselected stdout:\n" + jsonHealthyUnselected.standard_output);
+
+        const Captured jsonHealthySelected =
+            launch(o, {"check", "--json", "--scenario", healthyScnStr, "--case", "idle", healthyCfgStr});
+        expect_code(jsonHealthySelected, 0, "check --json healthy config with --case idle");
+        require(contains(lf(jsonHealthySelected.standard_output), "\n  \"result\": \"passed\",\n") &&
+                    contains(jsonHealthySelected.standard_output, "\"case\": \"idle\""),
+                "check --json healthy selected stdout:\n" + jsonHealthySelected.standard_output);
+    }
     log("CHECK usage errors: exit code 4 and the message; --help: exit code 0 -> ok");
 }
 
@@ -829,6 +937,18 @@ void request(const Options& o)
         require(contains(json.standard_output, "\n  \"file\": " + json_string(config) + ",\n  \"result\": \"usage\",\n") &&
                     contains(json.standard_output, "\n      \"code\": \"usage\",\n"),
                 "check --json --request with an unknown key wrote:\n" + json.standard_output);
+    }
+    {
+        const std::string badSyntax = shown_path(o.work_dir / "bench" / "syntax.json");
+        write_file(o.work_dir / "bench" / "syntax.json", "{\n  \"vehicle_sil_run_request\": [\n}\n");
+        const Captured syn = launch(o, {"check", "--request", badSyntax, config});
+        expect_code(syn, 4, "check --request syntax error");
+        const std::string synErr = lf(syn.standard_error);
+        require(synErr.rfind("error: " + badSyntax + ", line ", 0) == 0 &&
+                    !contains(synErr, badSyntax + ":") &&
+                    !contains(synErr, "[usage]") &&
+                    contains(synErr, "\n    "),
+                "check --request syntax error stderr:\n" + synErr);
     }
     expect_usage({"check", "--request", "", config}, "--request needs a request file: --request <file>.json");
     expect_usage({"check", "--request"}, "missing value for --request");

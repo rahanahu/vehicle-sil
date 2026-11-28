@@ -264,6 +264,27 @@ std::vector<bool> sample_every_step_participants(const config::CheckReport& chec
     return out;
 }
 
+std::vector<bool> sample_every_step_participants(const config::CheckReport& check,
+                                                 std::span<const RecordedVariable> recorded)
+{
+    std::vector<bool> out(check.config ? check.config->participants.size() : 0, false);
+    if (!check.config || recorded.empty())
+    {
+        return out;
+    }
+    for (std::size_t i = 0; i < out.size(); ++i)
+    {
+        const config::ParticipantConfig& p = check.config->participants[i];
+        const bool is_recorded = std::any_of(recorded.begin(), recorded.end(),
+                                             [&p](const RecordedVariable& r) { return r.participant == p.name; });
+        if (is_recorded && i < check.participants.size() && check.participants[i].ecu)
+        {
+            out[i] = config::SeenEcu(p, *check.participants[i].ecu).takes(ecu_executable::kFeatureSampleEveryStep);
+        }
+    }
+    return out;
+}
+
 std::vector<config::Finding> scenario_samples_findings(const config::CheckReport& check, const Scenario& scenario, std::string_view launcher_version)
 {
     std::vector<config::Finding> out;

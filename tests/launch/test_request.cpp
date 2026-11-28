@@ -31,8 +31,9 @@ using namespace std::chrono_literals;
 
 constexpr const char* kParamNeedsScenario = "--param sets a parameter of a scenario: give --scenario <file> too, or leave "
                                             "--param out";
-constexpr const char* kTimelineNeedsScenario = "--timeline writes what a scenario did over the time: give --scenario <file> "
-                                               "too, or leave --timeline out";
+constexpr const char* kTimelineNeedsScenarioOrRecord =
+    "--timeline needs --scenario or --record: give --scenario <file> or at least one --record "
+    "<participant>.<variable>, or leave --timeline out";
 constexpr const char* kScenarioNotPaused = "--scenario cannot be used with --start-paused: the scenario writes its values for "
                                            "0 before the first step and runs by itself; pause and step it with "
                                            "--stdin-commands or from a Control Server client (--control) if needed";
@@ -138,12 +139,15 @@ TEST_CASE(a_parameter_needs_a_scenario_except_in_a_test)
     CHECK(messages(r).empty());
 }
 
-TEST_CASE(a_timeline_needs_a_scenario)
+TEST_CASE(a_timeline_needs_a_scenario_or_record)
 {
     RunRequest r;
     r.host.timeline = "out.json";
-    CHECK(messages(r) == list(kTimelineNeedsScenario));
+    CHECK(messages(r) == list(kTimelineNeedsScenarioOrRecord));
     r.intent.scenario = "drive.yaml";
+    CHECK(messages(r).empty());
+    r.intent.scenario.reset();
+    r.intent.record = {"A.level"};
     CHECK(messages(r).empty());
 }
 
@@ -218,7 +222,7 @@ TEST_CASE(the_rules_are_reported_in_the_order_of_the_checks)
     RunRequest r = with_params();
     r.host.timeline = "out.json";
     r.intent.start_paused = true;
-    CHECK(messages(r) == list(kParamNeedsScenario, kTimelineNeedsScenario, kPausedNeedsCommands));
+    CHECK(messages(r) == list(kParamNeedsScenario, kTimelineNeedsScenarioOrRecord, kPausedNeedsCommands));
 }
 
 namespace {
@@ -695,9 +699,11 @@ TEST_CASE(record_intent_is_allowed_and_validated_pre_run_even_without_scenario)
     r.intent.record = {"A.level"};
     CHECK(messages(r, RequestCommand::Check).empty());
     CHECK(messages(r, RequestCommand::Run).empty());
-    // --timeline without --scenario is still refused even when --record is set.
+    // --timeline without --scenario is allowed when --record is non-empty, and refused when empty.
     r.host.timeline = "out.json";
-    CHECK(messages(r, RequestCommand::Run) == list(kTimelineNeedsScenario));
+    CHECK(messages(r, RequestCommand::Run).empty());
+    r.intent.record.clear();
+    CHECK(messages(r, RequestCommand::Run) == list(kTimelineNeedsScenarioOrRecord));
     r.intent.scenario = "drive.yaml";
     CHECK(messages(r, RequestCommand::Run).empty());
 

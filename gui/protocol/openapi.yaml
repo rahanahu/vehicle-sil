@@ -3828,6 +3828,12 @@ components:
           anyOf:
           - $ref: '#/components/schemas/SessionScenarioSummary'
           - type: 'null'
+        timeline_url:
+          anyOf:
+          - type: 'null'
+          - type: string
+          default: null
+          title: Timeline Url
         stop_at_ms:
           anyOf:
           - maximum: 1000000000000

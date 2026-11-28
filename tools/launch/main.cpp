@@ -113,8 +113,8 @@ constexpr const char* kUsage =
     "       vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
-    "                              [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]\n"
-    "                              [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]\n"
+    "                              [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]\n"
+    "                              [--timeline <file>] [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]\n"
     "                              [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]\n"
     "                              [--external-registry <uri>] [--timeout-ms <ms>] [--stop-at-ms <ms>]\n"
     "                              [--late-tolerance-ms <ms>]\n"
@@ -202,9 +202,9 @@ constexpr const char* kUsage =
     "  --scenarios <dir or files>  test: the scenarios: a directory (the files directly in it that end in .yaml,\n"
     "                              .yml or .json, in the order of their names) or files, in the order given;\n"
     "                              several after one --scenarios (so <file> comes first, or after --); repeatable\n"
-    "  --timeline <file>           run --scenario: write what the scenario wrote and saw over the virtual time\n"
-    "                              (its steps, the written and the sampled values) to <file> as JSON\n"
-    "                              (docs/simulation-run.md; schema/timeline.schema.json)\n"
+    "  --timeline <file>           run (with --scenario or --record): write what the run wrote and saw over virtual\n"
+    "                              time (scenario steps and written/sampled values, or manual-run --record samples)\n"
+    "                              to <file> as JSON (docs/simulation-run.md; schema/timeline.schema.json)\n"
     "  --record <participant>.<variable> check, run: also record this ECU variable in the timeline, independent of\n"
     "                              scenario assertions; repeatable (empty by default)\n"
     "  --record-after-fail-ms <ms> check, run (with --scenario): keep recording samples for <ms> virtual\n"
@@ -956,11 +956,49 @@ int write_serve_error_event(launch::EventStream& events, const launch::RunReport
     return code;
 }
 
-void write_usage_stderr(const std::vector<config::Finding>& errors)
+void write_usage_stderr(const std::vector<config::Finding>& errors, const std::string& file = {})
 {
     for (const auto& error : errors)
     {
-        write_stderr_line("error: " + error.message);
+        if (error.code == "usage")
+        {
+            write_stderr_line("error: " + error.message);
+        }
+        else
+        {
+            const char* sev = error.severity == config::Severity::Error   ? "error"
+                            : error.severity == config::Severity::Warning ? "warning"
+                                                                          : "note";
+            const std::string& shownFile = error.file.empty() ? file : error.file;
+            std::string line = std::string(sev) + ": ";
+            if (!shownFile.empty())
+            {
+                line += shownFile;
+                if (error.line > 0)
+                {
+                    line += ":" + std::to_string(error.line);
+                }
+                line += ": ";
+            }
+            else if (error.line > 0)
+            {
+                line += "line " + std::to_string(error.line) + ": ";
+            }
+            line += error.message;
+            if (!error.code.empty())
+            {
+                line += " [" + error.code + "]";
+            }
+            write_stderr_line(line);
+        }
+        std::size_t pos = 0;
+        while (pos < error.detail.size())
+        {
+            const std::size_t nl = error.detail.find('\n', pos);
+            const std::size_t end = nl == std::string::npos ? error.detail.size() : nl;
+            write_stderr_line("    " + error.detail.substr(pos, end - pos));
+            pos = nl == std::string::npos ? error.detail.size() : nl + 1;
+        }
     }
     const std::unique_lock lock(shared().stderr_mutex, kStderrWait);
     if (lock.owns_lock())
@@ -977,7 +1015,7 @@ void write_usage_stderr(const std::vector<config::Finding>& errors)
 int usage_error(const std::vector<config::Finding>& errors, bool json, launch::CommandKind command, const std::string& file,
                 launch::EventStream* events, const std::vector<std::string>& variants = {})
 {
-    write_usage_stderr(errors);
+    write_usage_stderr(errors, file);
     if (events != nullptr)
     {
         return write_serve_error_event(*events, launch::usage_run_report(file, errors, variants), cli::kExitUsage);
@@ -1349,7 +1387,7 @@ int check(const cli::Args& args)
     const launch::Checked report = launch::check_file(request, options);
     if (report.usage)
     {
-        write_usage_stderr(report.findings);
+        write_usage_stderr(report.findings, report.file);
         return args.flag("json") ? write_or_fail(launch::format_json(report), cli::kExitUsage) : cli::kExitUsage;
     }
     return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), launch::check_exit_code(report));
@@ -1567,7 +1605,7 @@ int run(const cli::Args& args, std::string& active_control_metrics, std::optiona
     write_stdin_notes(true); // before the result
     if (report.check.usage)
     {
-        write_usage_stderr(report.check.findings);
+        write_usage_stderr(report.check.findings, report.check.file);
         return args.flag("json") ? write_or_fail(launch::format_run_json(report), cli::kExitUsage) : cli::kExitUsage;
     }
     int code = write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
