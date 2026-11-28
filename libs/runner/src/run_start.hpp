@@ -10,6 +10,7 @@
 #include "run_notes.hpp"
 #include "run_output.hpp"
 #include "run_participants.hpp"
+#include "run_recorder.hpp"
 #include "run_scenario.hpp"
 #include "vehicle_sil/runner/detail/run_start_limit.hpp"
 
@@ -78,8 +79,9 @@ struct StartShared
 class RunStartWindow
 {
 public:
-    RunStartWindow(const RunContext& ctx, RunOutput& out, RunControl& control, RunScenario& scenario, StartShared& shared) :
-      ctx_(ctx), out_(out), control_(control), scenario_(scenario), shared_(shared)
+    RunStartWindow(const RunContext& ctx, RunOutput& out, RunControl& control, RunScenario& scenario,
+                   RunRecorder& recorder, StartShared& shared) :
+      ctx_(ctx), out_(out), control_(control), scenario_(scenario), recorder_(recorder), shared_(shared)
     {
     }
 
@@ -92,6 +94,7 @@ private:
     RunOutput& out_;
     RunControl& control_;
     RunScenario& scenario_;
+    RunRecorder& recorder_;
     StartShared& shared_;
 };
 
@@ -105,7 +108,7 @@ class RunStart
 {
 public:
     RunStart(const RunContext& ctx, RunOutput& out, RunControl& control, RunNotes& notes, RunScenario& scenario,
-             RunParticipants& participants, RunOutcome& outcome);
+             RunRecorder& recorder, RunParticipants& participants, RunOutcome& outcome);
 
     /// The controller's start window (the controller's thread).
     void window(control_silkit::HubTransport& transport, SimulationController& controller, const StartWindow& window)

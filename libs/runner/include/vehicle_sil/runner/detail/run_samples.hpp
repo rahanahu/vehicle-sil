@@ -68,14 +68,22 @@ public:
     /// The tap is set (between tap() and untap()). Main thread.
     [[nodiscard]] bool tapped() const { return tapped_; }
 
-    /// From here on the scenario gets samples: those the tap takes after this call, of the
-    /// control agents `incarnations` names (per participant of the configuration; "": none of it).
+    /// From here on the scenario or manual timeline recorder gets samples: those the tap takes
+    /// after this call, of the control agents `incarnations` names (per participant of the
+    /// configuration; "": none of it).
     void scenario_begins(std::vector<std::string> incarnations);
-    /// The scenario gets no sample any more; what it has not taken is dropped.
+    /// The scenario or manual timeline recorder gets no sample any more; what it has not taken is dropped.
     void scenario_ends();
-    /// The scenario's samples since the last call, in the order taken: the participant's place
-    /// in the configuration, the sample.
+    /// Alias of scenario_begins() for manual-run timeline recording.
+    void recording_begins(std::vector<std::string> incarnations) { scenario_begins(std::move(incarnations)); }
+    /// Alias of scenario_ends() for manual-run timeline recording.
+    void recording_ends() { scenario_ends(); }
+    /// The scenario's or manual recorder's samples since the last call, in the order taken: the
+    /// participant's place in the configuration, the sample.
     [[nodiscard]] std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> take();
+    /// Atomically returns all remaining queued samples and stops queueing new ones (as take() +
+    /// recording_ends() under one lock).
+    [[nodiscard]] std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> take_and_end();
 
     /// The run ended at `end_ms` (RunTiming::sim_ms): the traffic, from each participant's last
     /// step that began before it; then the tap goes. Main thread, once.

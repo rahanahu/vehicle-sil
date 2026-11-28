@@ -2643,3 +2643,83 @@ TEST_CASE(timeline_marks_not_applied_from_when_abandoned_write_has_at_le_over_at
     CHECK(doorSeries.find("\"not_applied_from\": 0,") != std::string::npos);
     CHECK(doorSeries.find("[5, 20]") != std::string::npos);
 }
+
+TEST_CASE(manual_timeline_record_and_json_format_without_scenario)
+{
+    const auto desc = catalog(10ms, 10ms);
+    RecordedVariable v1;
+    v1.participant = "Body";
+    v1.name = "body.speed";
+    v1.text = "Body.body.speed";
+    v1.type = control::ValueType::Real;
+    v1.step = 10ms;
+    RecordedVariable v2;
+    v2.participant = "Door";
+    v2.name = "mode";
+    v2.text = "Door.mode";
+    v2.type = control::ValueType::Enum;
+    v2.items = desc[1].variables[2].items;
+    v2.step = 10ms;
+
+    // 1. Manual TimelineRecord deduplicates inputs, creates sampled-only series, truncates at close(SimTime).
+    const std::vector<RecordedVariable> requested{v1, v2, v1};
+    TimelineRecord record(requested);
+    CHECK_EQ(record.variable_count(), std::size_t{2});
+    CHECK(!record.is_written(0) && !record.is_watched(0) && record.is_recorded(0));
+    CHECK(!record.is_written(1) && !record.is_watched(1) && record.is_recorded(1));
+    CHECK(record.watches().empty() && record.failures().empty() && record.lines().empty());
+
+    record.sampled(0, at(0ms), control::Value{800.0});
+    record.sampled(0, at(10ms), control::Value{800.0});
+    record.sampled(0, at(20ms), control::Value{1200.0});
+    record.sampled(0, at(30ms), control::Value{1500.0});
+    record.sampled(1, at(0ms), control::Value{std::int64_t{0}});
+    record.sampled(1, at(20ms), control::Value{std::int64_t{2}});
+    record.close(at(20ms));
+    // Further samples after close() are ignored.
+    record.sampled(0, at(40ms), control::Value{2000.0});
+    CHECK(record.recorded_to() == std::optional<SimTime>(at(20ms)));
+    CHECK_EQ(record.series().size(), std::size_t{2});
+    CHECK_EQ(record.series()[0].sample_count, std::uint64_t{3});
+    CHECK(record.series()[0].last_sample == std::optional<SimTime>(at(20ms)));
+
+    TimelineInput in;
+    in.file = "sim.yaml";
+    in.time_step_ms = 10;
+    in.scenario = nullptr;
+    in.run = nullptr;
+    in.catalog = &desc;
+    in.record = &record;
+    in.recorded_variables = {v1, v2};
+    in.findings = {
+        Finding{Severity::Warning, "control-link-late-values", "late", 0, "Body", "", "", ""},
+        Finding{Severity::Warning, "behind-real-time", "slow", 0, "", "", "", ""},
+    };
+    const std::string json = format_timeline_json(in);
+    CHECK(json.find("  \"vehicle_sil_timeline\": 1,\n") != std::string::npos);
+    CHECK(json.find("  \"stage\": \"run\",\n") != std::string::npos);
+    CHECK(json.find("  \"params\": [],\n") != std::string::npos);
+    CHECK(json.find("  \"scenario\": null,\n  \"recorded_to_ms\": 20,\n") != std::string::npos);
+    CHECK(json.find("  \"steps\": [],\n") != std::string::npos);
+    CHECK(json.find("  \"lines\": [],\n") != std::string::npos);
+    CHECK(json.find("\"written\": false,\n      \"watched\": false,\n      \"recorded\": true") != std::string::npos);
+    CHECK(json.find("\"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\"") != std::string::npos);
+    CHECK(json.find("\"variable\": \"Door.mode\",\n      \"source\": \"sampled\"") != std::string::npos);
+    CHECK(json.find("\"code\": \"control-link-late-values\"") != std::string::npos);
+    CHECK(json.find("behind-real-time") == std::string::npos);
+
+    // 2. Manual TimelineRecord::close(std::nullopt) handles zero samples cleanly and rejects later samples.
+    TimelineRecord emptyRecord(std::span<const RecordedVariable>{&v1, 1});
+    emptyRecord.close(std::nullopt);
+    emptyRecord.sampled(0, at(10ms), control::Value{900.0});
+    CHECK(!emptyRecord.recorded_to().has_value());
+    CHECK_EQ(emptyRecord.series().size(), std::size_t{1});
+    CHECK_EQ(emptyRecord.series()[0].sample_count, std::uint64_t{0});
+    CHECK(emptyRecord.series()[0].samples.empty());
+
+    TimelineInput emptyIn = in;
+    emptyIn.record = &emptyRecord;
+    emptyIn.findings.clear();
+    const std::string emptyJson = format_timeline_json(emptyIn);
+    CHECK(emptyJson.find("  \"scenario\": null,\n  \"recorded_to_ms\": null,\n") != std::string::npos);
+}

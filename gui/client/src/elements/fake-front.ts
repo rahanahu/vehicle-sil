@@ -13,6 +13,7 @@ import type {
   Outside,
   QueuedWrite,
   Readable,
+  SessionView,
   VariableView,
   WriteResult,
 } from '../index';
@@ -84,6 +85,7 @@ export interface FakeFront extends Front {
     clock: Cell<FrontClock>;
     controls: Cell<FrontControls>;
     scenario: Cell<FrontScenario | null>;
+    session: Cell<SessionView | null>;
     outside: Cell<readonly Outside[]>;
   };
   variables: Map<string, FakeVariable>;
@@ -131,6 +133,7 @@ export function fakeFront(): FakeFront {
     save: ok(),
   });
   const scenario = new Cell<FrontScenario | null>(null);
+  const session = new Cell<SessionView | null>(null);
   const outside = new Cell<readonly Outside[]>([]);
   const variables = new Map<string, FakeVariable>();
   const spies = {
@@ -147,7 +150,7 @@ export function fakeFront(): FakeFront {
     check: vi.fn(async () => ({ findings: [] }) as unknown as CheckResult),
   };
   const front = {
-    low: {},
+    low: { session: { session } },
     status,
     clock,
     controls,
@@ -203,7 +206,7 @@ export function fakeFront(): FakeFront {
       return variable;
     },
     close: vi.fn(),
-    cells: { status, clock, controls, scenario, outside },
+    cells: { status, clock, controls, scenario, session, outside },
     variables,
     spies,
     subscriptions: () =>
@@ -212,6 +215,7 @@ export function fakeFront(): FakeFront {
         clock,
         controls,
         scenario,
+        session,
         outside,
         ...[...variables.values()].map((v) => v.cell),
       ].reduce((sum, cell) => sum + cell.listeners.size, 0),

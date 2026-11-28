@@ -53,10 +53,11 @@ import {
   isParamRecord,
 } from './scenario-param-model';
 import { ScenarioParamsPanel } from './scenario-params';
-import { ScenarioPanel } from './scenario-panel';
+import { ScenarioPanel, timelinePageUrl } from './scenario-panel';
 import { SpeedPicker } from './speed-picker';
 import { TimeButtons } from './time-buttons';
 import { TimePanel } from './time-panel';
+import { TimelineView } from './timeline-view';
 
 /** 「使う」を切り替えてから照合を頼むまでの間（ミリ秒）。続けて切り替えたら、最後の組み合わせで 1 回だけ照合する。 */
 export const CHECK_DELAY_MS = 300;
@@ -202,6 +203,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     SpeedPicker,
     TimeButtons,
     TimePanel,
+    TimelineView,
   ],
   providers: [RunSession],
   templateUrl: './run-page.html',
@@ -642,6 +644,16 @@ export class RunPage {
   protected readonly recordSignalsSupported = computed(
     () => this.app.hasValue() && this.app.value().launcher.features.includes('record-signals'),
   );
+  /** ランチャーが手動実行でのタイムライン出力（`manual-timeline`）に対応しているか。 */
+  protected readonly manualTimelineSupported = computed(
+    () => this.app.hasValue() && this.app.value().launcher.features.includes('manual-timeline'),
+  );
+  /** 記録する信号の選択欄を表示し、`intent.record` を送れるか。 */
+  protected readonly recordSignalsAvailable = computed(
+    () =>
+      this.recordSignalsSupported() &&
+      (this.chosenScenario() !== null || this.manualTimelineSupported()),
+  );
   /** ランチャーが失敗後の追加記録（`record-after-fail`）に対応しているか。 */
   protected readonly recordAfterFailSupported = computed(
     () => this.app.hasValue() && this.app.value().launcher.features.includes('record-after-fail'),
@@ -829,8 +841,7 @@ export class RunPage {
         paramKeys.length > 0 ? Object.fromEntries(paramKeys.map((k) => [k, overrides[k]!])) : null;
       const pauseAfter =
         scenario !== null && this.handoverSupported() && this.afterScenario() === 'pause';
-      const record =
-        scenario !== null && this.recordSignalsSupported() ? this.recordedSignalsList() : [];
+      const record = this.recordSignalsAvailable() ? this.recordedSignalsList() : [];
       const recordAfterFail =
         scenario !== null && this.recordAfterFailSupported() ? this.recordAfterFailMs().trim() : '';
       const speed = this.speed();
@@ -1277,6 +1288,11 @@ export class RunPage {
       ...(session.speed !== null ? { speed: session.speed } : {}),
       ...(session.startPaused ? { start_paused: true } : {}),
     };
+  }
+
+  /** 手動実行のタイムラインを別タブの時間の軸ページで開く URL。 */
+  protected manualTimelineHref(url: string): string {
+    return timelinePageUrl(url, this.language.current);
   }
 
   /** この実行の操作をシナリオとして保存できるか（変数を読み書きできる実行で、シナリオの実行でない）。 */

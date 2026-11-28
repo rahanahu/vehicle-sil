@@ -22,6 +22,7 @@ add_library(vehicle_sil_runner STATIC
   src/run_outside.cpp
   src/run_participants.cpp
   src/run_plan.cpp
+  src/run_recorder.cpp
   src/run_samples.cpp
   src/run_scenario.cpp
   src/run_start.cpp

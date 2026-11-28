@@ -92,10 +92,10 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
                                  ? "give --scenario <file> or \"scenario\" in " + origin.file + ", or leave " + case_ref + " out"
                                  : "give --scenario <file> too, or leave --case out")));
     }
-    if (!host.timeline.empty() && !intent.scenario)
+    if (!host.timeline.empty() && !intent.scenario && intent.record.empty())
     {
-        out.push_back(usage("--timeline writes what a scenario did over the time: give --scenario <file> too, or leave "
-                            "--timeline out"));
+        out.push_back(usage("--timeline needs --scenario or --record: give --scenario <file> or at least one "
+                            "--record <participant>.<variable>, or leave --timeline out"));
     }
     if (intent.record_after_fail_ms)
     {

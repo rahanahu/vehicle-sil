@@ -190,6 +190,9 @@ public:
 
     explicit TimelineRecord(const Scenario& scenario, TimelineLimits limits = {},
                             std::span<const RecordedVariable> extra_recorded = {});
+    /// Manual-run record (no scenario): creates sampled series only for `recorded` (deduplicated
+    /// in first-seen order), with zero written series, steps, or lines.
+    explicit TimelineRecord(std::span<const RecordedVariable> recorded, TimelineLimits limits = {});
 
     // --- the engine's side ---
     /// A write that is sent, of `step` (index in Scenario::steps; kNoStep: of none): a point of the variable's
@@ -213,8 +216,9 @@ public:
     /// The index in the written series of `variable` of the point that written() named
     /// `serial`; empty if it went at a limit (or there is none).
     [[nodiscard]] std::optional<std::size_t> point_of(std::size_t variable, std::uint64_t serial) const;
-    /// The scenario is over: nothing after `to` is kept, and the limits are applied for good.
-    void close(SimTime to);
+    /// The run is over: nothing after `to` is kept, and the limits are applied for good.
+    /// `std::nullopt` closes the record with no recorded horizon (e.g. a manual run with zero samples).
+    void close(std::optional<SimTime> to);
 
     // --- the reader's side ---
     [[nodiscard]] const TimelineLimits& limits() const noexcept { return limits_; }
@@ -256,6 +260,7 @@ private:
     std::vector<Line> lines_;
     std::vector<std::optional<Line>> waiting_dither_; ///< per variable: put, and no write since
     std::optional<SimTime> recorded_to_{};
+    bool closed_ = false;
     std::size_t total_ = 0; ///< the points that can go, of all series
     std::uint64_t next_serial_ = 0;
 };

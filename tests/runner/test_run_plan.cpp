@@ -420,3 +420,34 @@ TEST_CASE(plan_run_validates_external_registry_uri_and_conflict_with_config_regi
     }
     CHECK(conflict_thrown);
 }
+
+TEST_CASE(plan_run_enables_best_effort_sample_every_step_for_manual_timeline_recording)
+{
+    Given check = checked({10000, 10000, 10000});
+    check.report.participants[0].ecu->description.features = {"sample-every-step"};
+    // Ecu1 lacks sample-every-step (best-effort: stays false, no error).
+    check.report.participants[2].ecu->description.features = {"sample-every-step"};
+
+    RecordedVariable rv0;
+    rv0.participant = "Ecu0";
+    rv0.name = "speed";
+    rv0.text = "Ecu0.speed";
+    RecordedVariable rv1;
+    rv1.participant = "Ecu1";
+    rv1.name = "speed";
+    rv1.text = "Ecu1.speed";
+
+    RunChoices choices;
+    choices.recorded_variables = {rv0, rv1};
+    // Without --timeline, sample_every_step stays false.
+    const RunPlan noTimeline = plan_run(check.report, nullptr, "dir", choices);
+    CHECK(!noTimeline.members[0].sample_every_step && !noTimeline.members[1].sample_every_step &&
+          !noTimeline.members[2].sample_every_step);
+
+    // With --timeline, only recorded participants advertising sample-every-step enable it.
+    choices.timeline = "manual.json";
+    const RunPlan manual = plan_run(check.report, nullptr, "dir", choices);
+    CHECK(manual.members[0].sample_every_step);
+    CHECK(!manual.members[1].sample_every_step);
+    CHECK(!manual.members[2].sample_every_step);
+}

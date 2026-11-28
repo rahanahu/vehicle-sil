@@ -74,8 +74,10 @@ test('every reference file and fixture is read, with a lane for each variable an
       name,
     );
     assert.equal(m.inputs.length + m.others.length, m.vars.length, name);
-    assert.equal(Boolean(m.failure), read.timeline.scenario.status === 'failed', name);
-    assert.ok(m.domain[1] >= (read.timeline.scenario.recorded_to_ms ?? 0), name);
+    const sc = read.timeline.scenario;
+    assert.equal(Boolean(m.failure), Boolean(sc && sc.status === 'failed'), name);
+    const recTo = read.timeline.recorded_to_ms ?? sc?.recorded_to_ms ?? 0;
+    assert.ok(m.domain[1] >= recTo, name);
   }
 });
 
@@ -89,13 +91,13 @@ test('the fixtures say only what the launcher writes: points within the record, 
   for (const file of files) {
     const name = path.basename(file);
     const tl = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const to = tl.scenario.recorded_to_ms;
+    const to = tl.recorded_to_ms ?? tl.scenario?.recorded_to_ms ?? null;
     // No point after the end of the record; a failed run's record ends at the failed step's time.
     for (const s of tl.series)
       for (const p of s.points)
         assert.ok(to !== null && p[0] <= to, `${name}: ${s.variable} ${p[0]}`);
     const failed = tl.steps.find((st) => st.status === 'failed');
-    if (tl.scenario.status === 'failed') assert.equal(to, failed.at_ms, `${name}: recorded_to_ms`);
+    if (tl.scenario?.status === 'failed') assert.equal(to, failed.at_ms, `${name}: recorded_to_ms`);
     // The points a limit counts: all of a sampled series, and of a written one all but the points of a set.
     const counted = (s) => {
       if (s.source === 'sampled') return s.points;
@@ -135,7 +137,8 @@ test('a file that is not a timeline of format 1 and stage run is refused with wh
     [{ ...good, stage: 'preview' }, /stage "preview".*draws only "run"/],
     [{ ...good, steps: undefined }, /no "steps" array/],
     [{ ...good, series: [1] }, /series\[0\] is not an object/],
-    [{ ...good, scenario: null }, /no "scenario" object/],
+    [{ ...good, scenario: undefined }, /no "scenario" object/],
+    [{ ...good, scenario: 'bad' }, /no "scenario" object/],
   ];
   for (const [input, pattern] of cases) {
     const read = T.readTimeline(
@@ -3724,4 +3727,129 @@ test('post-failure tail: failureJumpView honors trailMs, variableChangedNear sca
   const legacyFacts = elLegacy._shadow.getElementById('facts').textContent;
   assert.ok(legacyFacts.includes('recorded to 200 ms'), legacyFacts);
   assert.ok(!legacyFacts.includes('after failure'), legacyFacts);
+});
+
+test('manual run timeline (scenario: null): neutral header & summary, no pass/fail badge or warning, omits empty scenario tables', async () => {
+  const tl = fixture('manual_run');
+  const m = model(tl);
+  assert.equal(m.isManual, true);
+  assert.equal(m.status, null);
+  assert.equal(m.recordedTo, 500);
+  assert.equal(m.steps.length, 0);
+  assert.equal(m.lines.length, 0);
+  assert.equal(m.failure, null);
+
+  const meta = T.modelMetadata(m, 'simulation.timeline.json');
+  assert.equal(meta.manual, true);
+  assert.equal(meta.scenario, null);
+  assert.equal(meta.status, 'manual');
+  assert.equal(meta.recordedTo, 500);
+  assert.equal(meta.stepCount, 0);
+  assert.equal(meta.failure, null);
+  assert.deepEqual(
+    meta.variables.map((v) => [v.name, v.written, v.watched, v.recorded]),
+    [
+      ['Engine.engine.speed', false, false, true],
+      ['Dashboard.dashboard.engine_speed', false, false, true],
+    ],
+  );
+
+  // Legacy scenario timeline reports manual: false
+  const scenarioMeta = T.modelMetadata(model(reference('waits')), 'waits.timeline.json');
+  assert.equal(scenarioMeta.manual, false);
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  assert.equal(el._shadow.getElementById('title').textContent, 'Manual run (simulation.yaml)');
+  const facts = el._shadow.getElementById('facts');
+  assert.equal(
+    findNodes(facts, (n) => (n.attrs?.class ?? '').includes('badge')).length,
+    0,
+    'manual run must not render a pass/fail badge',
+  );
+  assert.ok(facts.textContent.includes('recorded to 500 ms'), facts.textContent);
+
+  const summary = el._shadow.getElementById('summary');
+  assert.equal(el._shadow.querySelectorAll('[data-testid=not-decided]').length, 0);
+  assert.equal(findNodes(summary, (n) => (n.attrs?.class ?? '').includes('warn')).length, 0);
+  const manualBanner = el._shadow.querySelectorAll('[data-testid=manual-summary]')[0];
+  assert.ok(manualBanner, 'neutral manual summary banner should render');
+  assert.ok(
+    manualBanner.textContent.includes('Recorded 2 signals up to 500 ms'),
+    manualBanner.textContent,
+  );
+
+  // Empty Steps and Input lines tables are omitted, and empty Findings is omitted too
+  assert.equal(el._shadow.querySelectorAll('[data-testid=steps-table]').length, 0);
+  assert.equal(el._shadow.querySelectorAll('[data-testid=lines-table]').length, 0);
+  assert.equal(el._shadow.querySelectorAll('[data-testid=findings-table]').length, 0);
+  const enChartText = el._shadow.getElementById('chart').textContent;
+  assert.ok(enChartText.includes('Recorded variables'), enChartText);
+  assert.ok(!enChartText.toLowerCase().includes('scenario'), enChartText);
+
+  // Japanese locale renders neutral JA header, summary, and chart group label
+  el.setAttribute('lang', 'ja');
+  el.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el._shadow.getElementById('title').textContent, '手動実行（simulation.yaml）');
+  assert.ok(
+    el._shadow
+      .getElementById('summary')
+      .textContent.includes('2 個の信号を 500 ms まで記録しました'),
+  );
+  const jaChartText = el._shadow.getElementById('chart').textContent;
+  assert.ok(jaChartText.includes('記録した変数'), jaChartText);
+  assert.ok(!jaChartText.includes('シナリオ'), jaChartText);
+
+  // Manual run with findings + dropped + late values keeps findings table and notices
+  const withNotices = JSON.parse(JSON.stringify(tl));
+  withNotices.findings = [
+    {
+      severity: 'warning',
+      code: 'control-link-late-values',
+      file: null,
+      line: null,
+      message: 'late values',
+    },
+  ];
+  withNotices.limits.dropped = [
+    {
+      variable: 'Engine.engine.speed',
+      source: 'sampled',
+      dropped: 3,
+      dropped_from_ms: 0,
+      dropped_before_ms: 30,
+    },
+  ];
+  const elNotices = new Element();
+  elNotices.data = withNotices;
+  elNotices.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.ok(
+    elNotices._shadow.getElementById('summary').textContent.includes('Points are missing.'),
+  );
+  assert.ok(
+    elNotices._shadow.getElementById('summary').textContent.includes('ECU values arrived late'),
+  );
+  assert.equal(elNotices._shadow.querySelectorAll('[data-testid=findings-table]').length, 1);
+  assert.equal(elNotices._shadow.querySelectorAll('[data-testid=steps-table]').length, 0);
+
+  // Manual run with recorded_to_ms: null (zero samples recorded)
+  const emptyManual = JSON.parse(JSON.stringify(tl));
+  emptyManual.recorded_to_ms = null;
+  emptyManual.series = [];
+  const elEmpty = new Element();
+  elEmpty.data = emptyManual;
+  elEmpty.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.ok(
+    elEmpty._shadow
+      .getElementById('summary')
+      .textContent.includes('Manual run: no samples recorded'),
+  );
+  assert.ok(elEmpty._shadow.getElementById('facts').textContent.includes('nothing recorded'));
 });

@@ -110,7 +110,9 @@
 
   timeline.addEventListener('load', (e) => {
     $('load').hidden = true;
-    document.title = t('page.titleOf', { name: e.detail.scenario ?? t('page.scenario') });
+    document.title = t('page.titleOf', {
+      name: e.detail.scenario ?? (e.detail.manual ? t('manual.title') : t('page.scenario')),
+    });
   });
   timeline.addEventListener('error', () => {
     $('load').hidden = false;

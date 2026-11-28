@@ -132,7 +132,8 @@ void check_start_boundary(bool deadline)
     RunParticipants participants(ctx, output, outcome, plan.base);
     RunNotes notes(ctx, participants);
     RunScenario scenario(ctx, output, control, samples);
-    RunStart start(ctx, output, control, notes, scenario, participants, outcome);
+    RunRecorder recorder(ctx, control, samples);
+    RunStart start(ctx, output, control, notes, scenario, recorder, participants, outcome);
     vehicle_sil::unit::InProcessRegistry registry;
     SimulationControllerOptions options;
     options.registry_uri = registry.uri;
@@ -1831,8 +1832,9 @@ TEST_CASE(run_watch_wakes_immediately_on_non_signal_stop_for_plain_and_scenario_
             RunParticipants participants(ctx, output, outcome, plan.base);
             RunNotes notes(ctx, participants);
             RunScenario scenario(ctx, output, control, samples);
-            RunStart start(ctx, output, control, notes, scenario, participants, outcome);
-            RunWatch watch(ctx, output, notes, samples, scenario, start, participants, outcome);
+            RunRecorder recorder(ctx, control, samples);
+            RunStart start(ctx, output, control, notes, scenario, recorder, participants, outcome);
+            RunWatch watch(ctx, output, notes, samples, scenario, recorder, start, participants, outcome);
 
             vehicle_sil::unit::InProcessRegistry registry;
             SimulationControllerOptions options;

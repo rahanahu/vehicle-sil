@@ -13,6 +13,7 @@
 #include "run_notes.hpp"
 #include "run_output.hpp"
 #include "run_participants.hpp"
+#include "run_recorder.hpp"
 #include "vehicle_sil/runner/detail/run_samples.hpp"
 #include "run_scenario.hpp"
 #include "run_start.hpp"
@@ -89,6 +90,7 @@ private:
     RunSamples samples_; ///< after control_ (its tap is on the hub), before scenario_ (which takes from it)
     RunNotes notes_;
     RunScenario scenario_;
+    RunRecorder recorder_;
     RunStart start_;
     RunWatch watch_;
     bool prepared_ = false;     ///< prepare() got through: run() goes on

@@ -708,7 +708,8 @@ A run with a scenario (`--scenario`) accepts the time commands from both. They d
     "scenario-variable-compare",
     "external-registry",
     "record-signals",
-    "record-after-fail"
+    "record-after-fail",
+    "manual-timeline"
   ]
 }
 ```
@@ -785,6 +786,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `external-registry` | `--external-registry <uri>` on `run`, `serve`, and `test`: connects to a running loopback `sil-kit-registry` using a fresh per-run `/vsil-<16hex>` simulation path (see "Observing runs in Vector SIL Kit Dashboard (`--external-registry`)" in [simulation-run.md](simulation-run.md#observing-runs-in-vector-sil-kit-dashboard---external-registry)) |
 | `record-signals` | `--record <participant>.<variable>` on `check` and `run`, `"record"` in request files and `serve` inline `intent`, and optional `"recorded": true` on `--timeline` `variables[]` to sample extra ECU signals without affecting scenario verdicts |
 | `record-after-fail` | `--record-after-fail-ms <ms>` on `check` and `run` and `"record_after_fail_ms"` in request files and `serve` inline `intent`: continues passive sample recording into `--timeline` for a short virtual-time tail after a normal assertion or wait-timeout failure |
+| `manual-timeline` | `run --record ... --timeline <file>` (and `serve` runs with `record` + `timeline`) without `--scenario`: passive manual-run timeline recording (`scenario: null`, top-level `recorded_to_ms`, and top-level `timeline` in `run --json`) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 | `scenario-time` | Control Server clients can move time while a scenario runs (only in builds with the Control Server) |
@@ -820,6 +822,7 @@ Each name indicates that the following are present:
 | `scenario-variable-compare` | `{ variable: ... }` in `expect` and `wait_until`, `variable` in `watch.conditions[].compare[]` and `compared` in `failed.conditions[]` of `--timeline`, and two-variable failure messages |
 | `record-signals` | `--record <participant>.<variable>`, `"record"` in request files and `serve` `intent`, the check findings `record-*`, and optional `"recorded": true` on `variables[]` in `--timeline` |
 | `record-after-fail` | `--record-after-fail-ms <ms>`, `"record_after_fail_ms"` in request files and `serve` `intent`, and post-failure passive tail extension of `recorded_to_ms` in `--timeline` |
+| `manual-timeline` | `--timeline` without `--scenario` when `--record` / `"record"` is non-empty, `scenario: null` with top-level `recorded_to_ms` in `--timeline`, and top-level `timeline` in `run --json` for manual runs |
 
 In a build with `scenario-control`, clients cannot write while a scenario runs: calls that write are rejected with `FAILED_PRECONDITION` (reason `scenario-running`). In a build with `scenario-time`, calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) are accepted during a scenario, as the same commands from stdin are, and do not change the result of the scenario; a build with `scenario-control` alone rejects them with the same reason (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
 

@@ -828,6 +828,11 @@ export interface SessionSummary {
   problems_omitted: number;
   /** Progress of the scenario run (`scenario` of `api/run`). null for a run without a scenario. */
   scenario: SummaryScenario | null;
+  /**
+   * Optional top-level URL where the server serves the run's timeline file (`api/timeline/<session id>`), set for both
+   * scenario runs and manual runs with recorded signals once the run ends with one. Omitted on older servers.
+   */
+  timeline_url?: string | null;
   /** Root-relative run intent suitable for re-running this session. Omitted on older servers. */
   intent?: SessionIntent | null;
   /**
@@ -1017,6 +1022,9 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
         u,
       ),
     ),
+    ...(f['timeline_url'] === undefined
+      ? {}
+      : { timeline_url: field(f, path, 'timeline_url', soft(nullable(string), null, u)) }),
     ...(f['intent'] === undefined
       ? {}
       : {

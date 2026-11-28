@@ -231,10 +231,11 @@ void timeline(const Options& o)
 
     // The command line.
     const Captured alone = launch(o, {"run", "sim.yaml", "--timeline", "x.json"}, dir);
-    expect_code(alone, 4, "--timeline without --scenario");
-    require(contains(lf(alone.standard_error), "error: --timeline writes what a scenario did over the time: give --scenario <file> "
-                                               "too, or leave --timeline out\n"),
-            "--timeline without --scenario:\n" + lf(alone.standard_error));
+    expect_code(alone, 4, "--timeline without --scenario or --record");
+    require(contains(lf(alone.standard_error),
+                     "error: --timeline needs --scenario or --record: give --scenario <file> or at least one "
+                     "--record <participant>.<variable>, or leave --timeline out\n"),
+            "--timeline without --scenario or --record:\n" + lf(alone.standard_error));
     const Captured checked = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml", "--timeline", "x.json"}, dir);
     expect_code(checked, 4, "check --timeline");
     require(contains(lf(checked.standard_error), "error: --timeline is for run: check starts no participant\n"),
@@ -583,6 +584,135 @@ void timeline(const Options& o)
         {
             const Captured bad = launch(o, badArgs, exDir);
             expect_code(bad, 4, "invalid --record-after-fail-ms usage");
+        }
+
+        // Manual run timeline recording (--record + --timeline without --scenario):
+        // 1. --stop-at-ms 200 --record Engine.engine.speed --record Dashboard.dashboard.engine_speed --timeline manual.json
+        //    (with --json): exit 0, valid manual JSON (scenario: null, recorded_to_ms: 200, steps: [], lines: [],
+        //    both signals recorded with written: false, watched: false, recorded: true), top-level "timeline" in run --json.
+        // 2. --stdin-commands (--speed 1 --record Engine.engine.speed --timeline manual_stop.json + stdin stop):
+        //    exit 0, valid manual timeline with samples up to stop.
+        // 3. --timeline with neither --record nor --scenario: exit 4 (usage error) and no file written.
+        // 4. serve --once manual run with record + timeline parity.
+        {
+            const Captured manualRun = launch(
+                o,
+                {"run", "simulation.yaml", "--stop-at-ms", "200", "--json",
+                 "--record", "Engine.engine.speed", "--record", "Dashboard.dashboard.engine_speed",
+                 "--timeline", "manual.json"},
+                exDir);
+            expect_code(manualRun, 0, "manual run --stop-at-ms 200 --record --timeline --json");
+            require(contains(lf(manualRun.standard_error), "\n[vehicle_sil_launch] timeline: manual.json\n"),
+                    "manual run stderr timeline line:\n" + lf(manualRun.standard_error));
+            require(contains(lf(manualRun.standard_output), "\n  \"timeline\": \"manual.json\"\n}\n") &&
+                        !contains(lf(manualRun.standard_output), "\n  \"scenario\":"),
+                    "manual run --json has top-level timeline and no scenario:\n" + lf(manualRun.standard_output));
+
+            const std::string manualTl = read_text(exDir / "manual.json");
+            require(contains(manualTl, "{\n  \"vehicle_sil_timeline\": 1,\n") &&
+                        contains(manualTl, "  \"stage\": \"run\",\n") &&
+                        contains(manualTl, "  \"params\": [],\n") &&
+                        contains(manualTl, "  \"scenario\": null,\n  \"recorded_to_ms\": 200,\n") &&
+                        contains(manualTl, "  \"steps\": [],\n") &&
+                        contains(manualTl, "  \"lines\": [],\n") &&
+                        contains(manualTl, "\"name\": \"Engine.engine.speed\"") &&
+                        contains(manualTl, "\"name\": \"Dashboard.dashboard.engine_speed\"") &&
+                        contains(manualTl, "\"written\": false,\n      \"watched\": false,\n      \"recorded\": true"),
+                    "manual timeline structure and variables:\n" + manualTl);
+            const std::string manualEng = series_of(manualTl, "Engine.engine.speed", "sampled");
+            const std::string manualDash = series_of(manualTl, "Dashboard.dashboard.engine_speed", "sampled");
+            require(contains(manualEng, "\"samples\": 21,") &&
+                        contains(manualEng, "\"first_ms\": 0,\n      \"last_ms\": 200,") &&
+                        contains(manualEng, "\"points\": [\n        [0, 50],") &&
+                        contains(manualEng, "[200, 1050]") &&
+                        contains(manualDash, "\"samples\": 41,") &&
+                        contains(manualDash, "\"first_ms\": 0,\n      \"last_ms\": 200,") &&
+                        contains(manualDash, "\"points\": [\n        [0, 0],\n        [5, 50],\n        [105, 550]\n      ]"),
+                    "manual timeline captured samples for both recorded signals:\n" + manualTl);
+
+            // Without --timeline, manual run --json omits top-level "timeline".
+            const Captured manualNoTl = launch(
+                o,
+                {"run", "simulation.yaml", "--stop-at-ms", "100", "--json", "--record", "Engine.engine.speed"},
+                exDir);
+            expect_code(manualNoTl, 0, "manual run --record without --timeline");
+            require(!contains(lf(manualNoTl.standard_output), "\"timeline\""),
+                    "manual run --json without --timeline omits timeline:\n" + lf(manualNoTl.standard_output));
+
+            // serve --once manual run with record + timeline parity.
+            const Captured manualServe = launch(
+                o,
+                {"serve", "--once", "simulation.yaml", "--stop-at-ms", "200",
+                 "--record", "Engine.engine.speed", "--record", "Dashboard.dashboard.engine_speed",
+                 "--timeline", "manual_serve.json"},
+                exDir);
+            expect_code(manualServe, 0, "serve --once manual run with record + timeline");
+            require(contains(lf(manualServe.standard_output), "\"line\":\"timeline: manual_serve.json\"") &&
+                        contains(lf(manualServe.standard_output), "\"timeline\":\"manual_serve.json\""),
+                    "serve --once events name manual timeline:\n" + lf(manualServe.standard_output));
+            expect_text(read_text(exDir / "manual_serve.json"), manualTl, "serve --once manual timeline matches run");
+
+            // Manual run with --stdin-commands: --speed 1 + stdin stop after Dashboard reaches t=500 ms.
+            {
+                std::mutex mu;
+                std::condition_variable cv;
+                bool sawProgress = false;
+                std::string errLog;
+                std::string outLog;
+                vehicle_sil::process::ProcessOptions procOpts;
+                procOpts.working_directory = exDir;
+                procOpts.input = true;
+                procOpts.on_line = [&](vehicle_sil::process::Stream stream, std::string_view line) {
+                    const std::lock_guard lock(mu);
+                    if (stream == vehicle_sil::process::Stream::Error)
+                    {
+                        errLog += std::string(line) + "\n";
+                        if (line.find("[Dashboard] t=500 ms") != std::string_view::npos)
+                        {
+                            sawProgress = true;
+                            cv.notify_all();
+                        }
+                    }
+                    else
+                    {
+                        outLog += std::string(line) + "\n";
+                    }
+                };
+                vehicle_sil::process::Process proc(
+                    o.launch,
+                    {"run", "simulation.yaml", "--speed", "1", "--stdin-commands",
+                     "--record", "Engine.engine.speed", "--timeline", "manual_stop.json"},
+                    std::move(procOpts));
+                {
+                    std::unique_lock lock(mu);
+                    require(cv.wait_for(lock, scaled_timeout(20s), [&] { return sawProgress; }),
+                            "did not observe Dashboard t=500 ms before stdin stop:\n" + errLog);
+                }
+                require(proc.write_input("{\"command\":\"stop\"}\n"), "failed to send stdin stop");
+                const auto status = proc.wait_for(scaled_timeout(20s));
+                if (!status)
+                {
+                    proc.kill_tree();
+                }
+                proc.finish_output(10s);
+                require(status.has_value() && status->code == std::optional<int>(0),
+                        "manual run with stdin stop must exit 0:\n" + outLog + "\n" + errLog);
+                require(contains(lf(errLog), "[vehicle_sil_launch] timeline: manual_stop.json\n"),
+                        "manual stop run printed timeline path:\n" + errLog);
+                const std::string stopTl = read_text(exDir / "manual_stop.json");
+                require(contains(stopTl, "  \"scenario\": null,\n  \"recorded_to_ms\": ") &&
+                            !contains(stopTl, "  \"recorded_to_ms\": null,\n") &&
+                            contains(stopTl, "  \"steps\": [],\n") &&
+                            contains(stopTl, "  \"lines\": [],\n") &&
+                            contains(stopTl, "\"variable\": \"Engine.engine.speed\",\n      \"source\": \"sampled\"") &&
+                            !contains(stopTl, "\"samples\": 0,"),
+                        "manual stdin stop timeline recorded samples up to stop:\n" + stopTl);
+            }
+
+            // Manual run with --timeline and neither --record nor --scenario: exit 4, no file written.
+            const Captured missingRec = launch(o, {"run", "simulation.yaml", "--timeline", "manual_none.json"}, exDir);
+            expect_code(missingRec, 4, "--timeline without --record or --scenario");
+            require(!fs::exists(exDir / "manual_none.json"), "usage error must not create manual_none.json");
         }
     }
 }

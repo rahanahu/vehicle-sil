@@ -345,6 +345,23 @@ describe('<vsil-timeline>', () => {
     expect(part.dataset['timeline']).toBe('none');
   });
 
+  it('shows a manual-run timeline from session.timelineUrl when scenario is null', async () => {
+    const front = fakeFront();
+    const part = await mountTimeline(front);
+    const timeline = part.querySelector<HTMLElement>('vehicle-sil-timeline')!;
+    expect(timeline.hidden).toBe(true);
+    expect(part.dataset['timeline']).toBe('none');
+
+    front.cells.session.set({ timelineUrl: 'api/timeline/manual-1' } as never);
+    expect(timeline.hidden).toBe(false);
+    expect(timeline.getAttribute('src')).toBe('/api/timeline/manual-1');
+    expect(part.dataset['timeline']).toBe('shown');
+
+    front.cells.session.set({ timelineUrl: null } as never);
+    expect(timeline.hidden).toBe(true);
+    expect(part.dataset['timeline']).toBe('none');
+  });
+
   it('adds a default element when there is none, and removes only that one when it leaves', async () => {
     const front = fakeFront();
     const part = await mountTimeline(front);

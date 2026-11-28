@@ -1446,6 +1446,10 @@
       "source": "手順と値を時間の軸の図で見る（新しいタブ）",
       "target": "See the steps and values on a timeline chart (new tab)"
     },
+    "7320582354976429030": {
+      "source": "記録した信号を時間の軸の図で見る（新しいタブ）",
+      "target": "See the recorded signals on a timeline chart (new tab)"
+    },
     "6150533291622650402": {
       "source": "時間の軸",
       "target": "Timeline"

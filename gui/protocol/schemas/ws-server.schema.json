@@ -3266,6 +3266,18 @@
             }
           ]
         },
+        "timeline_url": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Timeline Url"
+        },
         "stop_at_ms": {
           "anyOf": [
             {
@@ -3583,6 +3595,18 @@
               "type": "null"
             }
           ]
+        },
+        "timeline_url": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "title": "Timeline Url"
         },
         "stop_at_ms": {
           "anyOf": [

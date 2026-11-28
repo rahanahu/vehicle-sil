@@ -1020,3 +1020,86 @@ test('logic analyzer: post-failure tail recording input sends record_after_fail_
   expect(aroundView.to).toBeGreaterThanOrEqual(400);
   expect(aroundView.cursor).toBe(100);
 });
+
+test('logic analyzer: manual run with Recorded signals auto-opens clean manual timeline card without scenario steps or warnings', async ({
+  page,
+}) => {
+  await page.goto(`${base}#token=${server.token}`);
+  await inSync(page);
+
+  const cfgSelect = page.getByTestId('config-select');
+  await cfgSelect.click();
+  await page.getByRole('option', { name: 'simulation.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-outcome')).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  // Ensure manual run (Scenario = None): Recorded signals is visible and Record after failure is hidden
+  await page.getByTestId('scenario-select').click();
+  await page.getByRole('option', { name: 'なし（自分で操作する）', exact: true }).click();
+  await expect(page.getByTestId('record-after-fail-ms')).toHaveCount(0);
+  const disclosure = page.getByTestId('record-signals');
+  await expect(disclosure).toBeVisible();
+  await disclosure.locator('summary').click();
+
+  const pickSignal = async (signalName: string) => {
+    const box = page.getByTestId(`record-signal-option-${signalName}`).getByRole('checkbox');
+    if (!(await box.isChecked())) {
+      const checkResp = page.waitForResponse(
+        (r) =>
+          r.url().endsWith('/api/check') &&
+          Array.isArray((r.request().postDataJSON() as Record<string, unknown>)['record']) &&
+          ((r.request().postDataJSON() as Record<string, unknown>)['record'] as string[]).includes(
+            signalName,
+          ),
+      );
+      await box.check();
+      await checkResp;
+    }
+  };
+  await pickSignal('Engine.engine.speed');
+  await pickSignal('Dashboard.dashboard.speed');
+  await expect(page.getByTestId('record-signals-count')).toContainText('2');
+
+  // Set stop_at_ms = 1000 so the manual run finishes cleanly without needing Stop
+  const stopCheck = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/check') &&
+      (r.request().postDataJSON() as Record<string, unknown>)['stop_at_ms'] === 1000,
+  );
+  await page.getByTestId('stop-at-ms').fill('1000');
+  await stopCheck;
+
+  const runReqPromise = page.waitForRequest(
+    (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+  );
+  const runId = await start(page);
+  const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+  expect(runBody['scenario']).toBeUndefined();
+  expect(runBody['record']).toEqual(['Dashboard.dashboard.speed', 'Engine.engine.speed']);
+
+  // Manual timeline card opens automatically with no scenario card and no failure/warning chrome
+  const card = page.getByTestId('manual-timeline-card');
+  await expect(card).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('scenario-card')).toHaveCount(0);
+  await expect(card.getByTestId('manual-timeline-link')).toHaveAttribute(
+    'href',
+    new RegExp(`%2Fapi%2Ftimeline%2F${runId}&`),
+  );
+  await expect(card.getByTestId('timeline-failure-strip')).toHaveCount(0);
+  const timeline = card.getByTestId('timeline-element');
+  await expect(timeline).toBeVisible();
+  await expect(card.getByTestId('timeline-visible-count')).toContainText('2 / 2', {
+    timeout: RUN_TIMEOUT,
+  });
+
+  // Search, hide (×), and restore work cleanly on the manual timeline
+  await card.getByTestId('timeline-signal-search').fill('dashboard.speed');
+  await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 2');
+  await timeline.locator('button.lane-hide').first().click();
+  await expect(card.getByTestId('timeline-visible-count')).toContainText('0 / 2');
+  const restoreChip = card.locator(
+    '[data-testid="timeline-restore-var"][data-variable="Dashboard.dashboard.speed"]',
+  );
+  await expect(restoreChip).toBeVisible();
+  await restoreChip.click();
+  await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 2');
+});

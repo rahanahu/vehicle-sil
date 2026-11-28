@@ -82,6 +82,15 @@ std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> Ru
     return taken;
 }
 
+std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> RunSamples::take_and_end()
+{
+    std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken;
+    const std::lock_guard lock(mutex_);
+    taken.swap(queue_);
+    scenario_.clear();
+    return taken;
+}
+
 RunTraffic RunSamples::finish(std::int64_t end_ms)
 {
     const SimTime end = SimTime{std::chrono::milliseconds(end_ms)};

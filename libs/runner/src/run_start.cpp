@@ -88,6 +88,10 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
     {
         scenario_.begin(transport, cancelled);
     }
+    else if (recorder_.active() && !cancelled())
+    {
+        recorder_.begin(transport);
+    }
     // Not for a scenario that was refused: nothing would run after the hold, and its finding is
     // only told when the run ends. The simulation starts and is stopped at 0 at once.
     if (ctx_.holds() && !cancelled() && !scenario_.refused())
@@ -150,9 +154,9 @@ void wait_for_pause_at_start(SimulationController& controller)
 } // namespace
 
 RunStart::RunStart(const RunContext& ctx, RunOutput& out, RunControl& control, RunNotes& notes, RunScenario& scenario,
-                   RunParticipants& participants, RunOutcome& outcome) :
+                   RunRecorder& recorder, RunParticipants& participants, RunOutcome& outcome) :
   ctx_(ctx), out_(out), control_(control), notes_(notes), participants_(participants), outcome_(outcome),
-  window_(ctx, out, control, scenario, shared_)
+  window_(ctx, out, control, scenario, recorder, shared_)
 {
 }
 

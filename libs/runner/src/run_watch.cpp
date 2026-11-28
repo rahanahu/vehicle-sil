@@ -145,6 +145,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         notes_.note_joined(controller, outcome_);
         notes_.note_time(controller, TimeNote::Poll);
         out_.outside_due(std::chrono::steady_clock::now());
+        recorder_.drain();
         const TimeState time = controller.time_state();
         if (!running)
         {
@@ -301,6 +302,7 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
     const WatchResult& watched = over.result;
     const bool forScenario = over.for_scenario;
     scenario_.finish(controller, watched, forScenario, outcome_);
+    recorder_.finish(controller, watched, outcome_);
     note_timing(controller);
     // The run's end is known: what the participants' steps before it said of the networks. The
     // hub's tap goes with it.

@@ -1614,17 +1614,17 @@ passed: 0 errors, 1 warning, 1 note
 
 ## シナリオの実行を時間の軸で記録する（`--timeline`）
 
-`run --scenario` に `--timeline <file>` を付けると、シナリオが書いた値と見た値を、仮想時刻の順に 1 つの JSON のファイルに書きます。グラフにする道具や、2 つの実行を比べる道具が読むためのファイルです。`vehicle_sil_launch version --json` の `features` に `timeline` があれば使えます。
+`run` に `--timeline <file>` を付けると、シナリオ実行（`--scenario`）または `--record`（要求ファイル・`serve` `intent` の `"record"` を含む）を 1 つ以上指定した手動実行で仮想時刻に沿って記録した値を、1 つの JSON のファイルに書きます。グラフにする道具や、2 つの実行を比べる道具が読むためのファイルです。`vehicle_sil_launch version --json` の `features` に `timeline` があればシナリオのタイムライン、`manual-timeline` があれば手動実行のタイムラインが使えます。
 
 ```sh
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
 ```
 
-- ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`serve [--once]` では `log` のイベント）。`run --json` と `serve [--once]` の結果では、`scenario.timeline` にファイルの名前（引数のとおり）が入り、`--timeline` がなければ `null` です。**`--timeline` を付けない実行の出力は、ほかに何も変わりません。**
+- ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`serve [--once]` では `log` のイベント）。`run --json` と `serve [--once]` の結果では、シナリオ実行の `scenario.timeline` にファイルの名前（引数のとおり、`--timeline` がなければ `null`）が入り、手動実行でタイムラインを書いたときは最上位の `timeline` にファイルの名前が入ります（それ以外は省略）。**`--timeline` を付けない実行の出力は、ほかに何も変わりません。**
 - ファイルは、何かを起動する前に開きます（ディレクトリがなければ作ります）。開けなければエラー `setup`（終了コード 3）で、何も起動しません。実行の後に書けなかったとき（ディスクがいっぱい、など）は、エラー `timeline-write` です。シナリオの結果（`scenario.status`）は変わりませんが、エラーの指摘なので、シナリオが通っていても実行は失敗です（終了コード 1）。
 - 上限で点を捨てたときは、`timeline:` の行に捨てた点の数を足し、注記 `timeline-limit` を出します（下の「上限」。終了コードは変わりません）。
-- シナリオが通っても、失敗しても、途中で終わっても書きます。照合のエラーで何も起動しなかったときは書きません。
-- `--scenario` のない `run` に付けると、引数のエラーです。`check` と `test` には付けられません。
+- 実行が通っても、失敗しても、途中で終わっても書きます。照合のエラーで何も起動しなかったときは書きません。
+- `--scenario` も `--record` もない `run` に `--timeline` を付けると、引数のエラーです（`check` と `test` には付けられません）。手動実行が既定ですべての信号を記録することはありません。記録対象の participant の `--describe` に `sample-every-step` があるときは、ランチャーがベストエフォートで `--sample-every-step` を有効にします（非対応でもエラーや警告は出しません）。
 - 形は `schema/timeline.schema.json`（JSON Schema）にあります。改行はどの OS でも LF です。
 
 ### 時間の軸のファイルを見る
@@ -1650,7 +1650,8 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `vehicle_sil`、`stage` | vehicle-sil のバージョン、`"run"`（実際の実行の記録） |
 | `file`、`variant`、`params` | 設定ファイル（引数のとおり）、機種（なければ `null`）、シナリオのパラメーターと効いた値（`check --json` の `scenario.params` と同じ形） |
 | `time_step_ms` | controller のタイムステップ（`run --json` の `timing.time_step_ms` と同じ） |
-| `scenario` | `file`、`name`、省略可能な `case`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
+| `scenario` | `file`、`name`、省略可能な `case`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」）。手動実行（`--scenario` なしの `--record`）では `null` |
+| `recorded_to_ms` | 手動実行だけ（`scenario` が `null` のときに出力し、`scenario` がオブジェクトのときは省略）。記録した系列の右端の仮想時刻（`stop_at_ms` で止まったときは `stop_at_ms`、それ以外は最後のサンプル時刻、サンプルが 0 件なら `null`） |
 | `variables[]` | シナリオが使う変数（最初に出た順）と、続けて `--record` / `"record"` で追加指定された変数。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む）、省略可能な `recorded`（`--record` / `"record"` で指定されたときだけ `true`、それ以外は省略） |
 | `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキー（省略可能な `file`、`name`、`call_stack` を含む）に、`lines`、`watch`、`failed` を足したもの |
 | `series[]` | 値の列（下） |
@@ -1660,7 +1661,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 読む側は、知らないキーを無視します。知らない値（系列の `source` と `encoding`、`watch` の `mode`、条件の `op`、手順の `kind`、線の `kind` と `base_source`、`shape` の `type`）は、その部分を描かずに名前と `text` を出します。形式のバージョンを上げずに、キーと値が増えることがあります。手順の `status` は、これに入りません。[結果を決める値](scenario.md#結果を決める値)を見てください。
 
-この節のキーは、どのファイルにも全部あります。当てはまらないキーの値は `null` です。例外は変数の `recorded`、手順の `expect_skipped`、`file`、`name`、`call_stack`、`watch.conditions[].compare[]` の `variable`、`failed.conditions[]` の `compared`、線の `file`、`scenario` の `case` で、該当するときだけ書きます。
+この節のキーは、どのファイルにも全部あります。当てはまらないキーの値は `null` です。例外は最上位の `recorded_to_ms`（手動実行だけ）、変数の `recorded`、手順の `expect_skipped`、`file`、`name`、`call_stack`、`watch.conditions[].compare[]` の `variable`、`failed.conditions[]` の `compared`、線の `file`、`scenario` の `case` で、該当するときだけ書きます。
 
 手順の `lines` は、その手順が置いた線の、いちばん上の `lines[]` の中の位置（0 から）の配列です（書かない手順、時刻が `recorded_to_ms` より後の手順、書き込みを 1 つも送らなかった手順では空）。
 
@@ -1852,7 +1853,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 ### 記録の終わり（`recorded_to_ms`）
 
-`scenario.recorded_to_ms` は、記録の右端の仮想時刻です。系列には、これ以前の点だけが入ります。`lines[]` も、これ以前に置いて、書き込みを送った線だけです。
+`scenario.recorded_to_ms`（`scenario` が `null` の手動実行では最上位の `recorded_to_ms`）は、記録の右端の仮想時刻です。系列には、これ以前の点だけが入ります。`lines[]` も、これ以前に置いて、書き込みを送った線だけです。
 
 | シナリオ | `recorded_to_ms` |
 |---|---|
@@ -1860,6 +1861,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの（`end_ms` があるときは `min(end_ms, now)` まで延びます。`after_scenario: "pause"` では引き継ぎ時点で記録を閉じ、引き継ぎ後の手動操作は記録しません） |
 | 途中で終わった（`incomplete`） | 最後のコントローラー時刻までに観測したサンプルと送信した書き込みのうち、最も遅い時刻（どちらもなければ 0）。書き込みが断られた後で participant の失敗が実行の結果になったときは、その書き込みの時刻（`failed` はどの手順でも `null` ですが、`not_applied_from` は `null` ではありません） |
 | シナリオが始まらなかった（`not_run`。シミュレーションは始まったのにシナリオを始められなかったときは `incomplete`） | `null`（系列は空） |
+| 手動実行（`scenario` が `null`） | 最上位の `recorded_to_ms`: `stop_at_ms` に達したときは `stop_at_ms`、それ以外は観測した最後のサンプル時刻（サンプルが 0 件、またはシミュレーションが始まらなかったときは `null`） |
 
 - controller はタイムステップごとにしかサンプルを見ないので、シナリオが終わったとわかる時刻（`over_at_ms`）は、ふつう `recorded_to_ms` より後です。その間のサンプルと書き込みは、ファイルに入れません。`over_at_ms` が `recorded_to_ms` 以前になるのは 2 つの場合だけです。1 つはエージェントがすぐ断った書き込みで失敗した実行（`over_at_ms` は断られた時点のタイムステップ、`recorded_to_ms` はその書き込みの時刻）、もう 1 つは `--record-after-fail-ms` を付けた実行（`over_at_ms` は失敗検知時のタイムステップのまま、`recorded_to_ms` が受動的な失敗後テールまで延びます）です。失敗後テールの記録は `--timeline` が有効なときの通常の判定失敗・待ち時間切れ（`scenario-failed` / `scenario-timeout`）にだけ適用され、書き込み失敗（`scenario-write`）、利用不可変数、成功、失敗前の中断ではテールに入りません。失敗検知時刻（`over_at_ms`）以降は新たな手順・書き込み・動き・揺れを発行しませんが、`time_step_ms >= ecu_step_ms` の構成で検知前に `(at_ms, over_at_ms]` 向けに先読み送信済みだった書き込みは ECU に適用済みの場合があり、その場合はタイムラインにそのまま残ります。
 - **同じ実行からは、同じファイルができます。** 入っているのは仮想時刻で決まるものだけです（実時間、プロセス ID、遅れの数は入りません）。速さ（`--speed`）を変えても同じです。対象は、通った実行と、サンプルか待ち時間で失敗した実行です。ECU 自身が実時間や乱数で動くなら、値の列も変わります。

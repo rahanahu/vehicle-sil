@@ -893,8 +893,8 @@ vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [-
 vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
-                       [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
-                       [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
+                       [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
+                       [--timeline <file>] [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
                        [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -938,7 +938,7 @@ vehicle_sil_launch version [--json]
 | `--case <name>` | `check`、`run`（`--scenario` と一緒に）、`test` | シナリオの `cases` から名前付きケースを選びます（[scenario.md](scenario.md#名前付きケースcases--case) の「名前付きケース」）。`test` では繰り返せます。 |
 | `--variant <name>` | | 設定ファイルの機種を選びます（[機種](#機種variants--variant)）。 |
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
-| `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ | シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
+| `--timeline <file>` | `run` だけ、`--scenario` または `--record` と一緒に | 実行が書いた値と見た値（シナリオ実行、または `--record` を付けた手動実行）を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
 | `--record <participant>.<variable>` | `check` と `run` | シナリオの判定に影響せず追加の ECU 変数を `--timeline` にサンプリング記録します（繰り返せます。participant の起動前に検証されます）。 |
 | `--record-after-fail-ms <ms>` | `check` と `run`、`--scenario` と一緒にだけ | 通常のシナリオの判定失敗または待ち時間切れの後に、仮想時刻を最大 `<ms>` ms（1 から 600000）受動的に進め、後続の手順・書き込み・揺れを一切行わずに失敗後のサンプルを `--timeline` へ記録します（`--timeline` がない実行では何もしません）。 |
 | `--control-metrics <file>` | `run` だけ | 実行の終わりに、Control Hub の SIL Kit トランスポートの累計カウンター（`HubTransport::stats()`）を JSON のファイルに書きます。`--control` は要りません（[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」）。 |
