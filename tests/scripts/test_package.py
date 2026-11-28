@@ -516,6 +516,7 @@ class PackageVersionSyncTest(unittest.TestCase):
             self.assertIn("package: error:", p.stderr)
 
     def test_sync_with_real_uv_lock_rc_and_release_preserves_root_pyproject(self) -> None:
+        import os
         import shutil
         import tomllib
 
@@ -523,91 +524,120 @@ class PackageVersionSyncTest(unittest.TestCase):
         if uv is None:
             self.skipTest("uv is required for real uv lock --offline verification")
 
-        tree = self._copy_version_tree(with_uv_lock=True)
+        tree = self._copy_version_tree(with_uv_lock=False)
+        # Use a self-contained zero-PyPI workspace so `uv lock --offline` needs no PyPI index metadata cache on CI.
+        (tree / "pyproject.toml").write_text(
+            '[project]\nname = "vehicle-sil-dev"\nversion = "0.0.0"\nrequires-python = ">=3.11"\ndependencies = []\n'
+            '[dependency-groups]\ndev = ["vehicle-sil-control", "vehicle-sil-gui"]\n'
+            '[tool.uv]\npackage = false\ndefault-groups = ["dev"]\n'
+            '[tool.uv.workspace]\nmembers = ["gui/server", "python"]\n'
+            '[tool.uv.sources]\nvehicle-sil-control = { workspace = true }\n'
+            'vehicle-sil-gui = { workspace = true }\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        (tree / "gui" / "server" / "pyproject.toml").write_text(
+            '[project]\nname = "vehicle-sil-gui"\nversion = "0.6.0"\nrequires-python = ">=3.11"\n'
+            'dependencies = ["vehicle-sil-control"]\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        (tree / "python" / "pyproject.toml").write_text(
+            '[project]\nname = "vehicle-sil-control"\nversion = "0.6.0"\nrequires-python = ">=3.11"\n'
+            'dependencies = []\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        empty_cache = self.dir / "empty-uv-cache"
+        empty_cache.mkdir()
         root_pyproject_before = (tree / "pyproject.toml").read_bytes()
 
-        for base, pre, expected_ver, expected_pep in (
-            ("0.7.0", "rc.1", "0.7.0-rc.1", "0.7.0rc1"),
-            ("0.7.0", "", "0.7.0", "0.7.0"),
-        ):
-            self._set_cmake_version(tree, base, pre)
-            out, err = io.StringIO(), io.StringIO()
-            with (
-                mock.patch.object(package_mod, "ROOT", tree),
-                contextlib.redirect_stdout(out),
-                contextlib.redirect_stderr(err),
+        with mock.patch.dict(os.environ, {"UV_CACHE_DIR": str(empty_cache)}):
+            init_lock = subprocess.run([uv, "lock", "--offline"], cwd=tree, capture_output=True, text=True)
+            self.assertEqual(init_lock.returncode, 0, init_lock.stderr)
+
+            for base, pre, expected_ver, expected_pep in (
+                ("0.7.0", "rc.1", "0.7.0-rc.1", "0.7.0rc1"),
+                ("0.7.0", "", "0.7.0", "0.7.0"),
             ):
-                rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
-                self.assertEqual(rc, 0, err.getvalue())
-                self.assertEqual((tree / "pyproject.toml").read_bytes(), root_pyproject_before)
+                self._set_cmake_version(tree, base, pre)
+                out, err = io.StringIO(), io.StringIO()
+                with (
+                    mock.patch.object(package_mod, "ROOT", tree),
+                    contextlib.redirect_stdout(out),
+                    contextlib.redirect_stderr(err),
+                ):
+                    rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+                    self.assertEqual(rc, 0, err.getvalue())
+                    self.assertEqual((tree / "pyproject.toml").read_bytes(), root_pyproject_before)
 
-                lock_data = tomllib.loads((tree / "uv.lock").read_text(encoding="utf-8"))
-                pkgs = {p["name"]: p["version"] for p in lock_data["package"]}
-                self.assertEqual(pkgs["vehicle-sil-dev"], "0.0.0")
-                self.assertEqual(pkgs["vehicle-sil-gui"], expected_pep)
-                self.assertEqual(pkgs["vehicle-sil-control"], expected_pep)
+                    lock_data = tomllib.loads((tree / "uv.lock").read_text(encoding="utf-8"))
+                    pkgs = {p["name"]: p["version"] for p in lock_data["package"]}
+                    self.assertEqual(pkgs["vehicle-sil-dev"], "0.0.0")
+                    self.assertEqual(pkgs["vehicle-sil-gui"], expected_pep)
+                    self.assertEqual(pkgs["vehicle-sil-control"], expected_pep)
 
-                check_lock = subprocess.run(
-                    [uv, "lock", "--check", "--offline"], cwd=tree, capture_output=True, text=True
-                )
-                self.assertEqual(check_lock.returncode, 0, check_lock.stderr)
+                    check_lock = subprocess.run(
+                        [uv, "lock", "--check", "--offline"], cwd=tree, capture_output=True, text=True
+                    )
+                    self.assertEqual(check_lock.returncode, 0, check_lock.stderr)
 
-                # Re-running --sync is idempotent and leaves every file untouched.
-                snapshot = {rel: (tree / rel).read_bytes() for rel in (*self.VERSION_FILES, "uv.lock")}
-                out2, err2 = io.StringIO(), io.StringIO()
-                with contextlib.redirect_stdout(out2), contextlib.redirect_stderr(err2):
-                    rc2 = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
-                self.assertEqual(rc2, 0, err2.getvalue())
-                self.assertIn("already in sync", out2.getvalue())
-                self.assertEqual(
-                    {rel: (tree / rel).read_bytes() for rel in (*self.VERSION_FILES, "uv.lock")},
-                    snapshot,
-                )
+                    # Re-running --sync is idempotent and leaves every file untouched.
+                    snapshot = {rel: (tree / rel).read_bytes() for rel in (*self.VERSION_FILES, "uv.lock")}
+                    out2, err2 = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out2), contextlib.redirect_stderr(err2):
+                        rc2 = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+                    self.assertEqual(rc2, 0, err2.getvalue())
+                    self.assertIn("already in sync", out2.getvalue())
+                    self.assertEqual(
+                        {rel: (tree / rel).read_bytes() for rel in (*self.VERSION_FILES, "uv.lock")},
+                        snapshot,
+                    )
 
-                # Release tag check passes with a dated CHANGELOG heading.
-                (tree / "CHANGELOG.md").write_text(
-                    f"# Changelog\n\n## [{expected_ver}] - 2026-11-29\n\n- change\n",
-                    encoding="utf-8",
-                    newline="\n",
-                )
-                out3, err3 = io.StringIO(), io.StringIO()
-                with contextlib.redirect_stdout(out3), contextlib.redirect_stderr(err3):
-                    rc3 = package_mod.version_command(argparse.Namespace(expect=f"v{expected_ver}"))
-                self.assertEqual(rc3, 0, err3.getvalue())
+                    # Release tag check passes with a dated CHANGELOG heading.
+                    (tree / "CHANGELOG.md").write_text(
+                        f"# Changelog\n\n## [{expected_ver}] - 2026-11-29\n\n- change\n",
+                        encoding="utf-8",
+                        newline="\n",
+                    )
+                    out3, err3 = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out3), contextlib.redirect_stderr(err3):
+                        rc3 = package_mod.version_command(argparse.Namespace(expect=f"v{expected_ver}"))
+                    self.assertEqual(rc3, 0, err3.getvalue())
 
-                # Mutating root pyproject.toml does not fail version checks.
-                (tree / "pyproject.toml").write_text(
-                    root_pyproject_before.decode("utf-8").replace('version = "0.0.0"', 'version = "9.9.9"'),
-                    encoding="utf-8",
-                    newline="\n",
-                )
-                self.assertEqual(package_mod.version_problems(expected_ver, release=True), [])
-                (tree / "pyproject.toml").write_bytes(root_pyproject_before)
+                    # Mutating root pyproject.toml does not fail version checks.
+                    (tree / "pyproject.toml").write_text(
+                        root_pyproject_before.decode("utf-8").replace('version = "0.0.0"', 'version = "9.9.9"'),
+                        encoding="utf-8",
+                        newline="\n",
+                    )
+                    self.assertEqual(package_mod.version_problems(expected_ver, release=True), [])
+                    (tree / "pyproject.toml").write_bytes(root_pyproject_before)
 
-                # Intentional mismatches fail and identify the mismatch.
-                out4, err4 = io.StringIO(), io.StringIO()
-                with contextlib.redirect_stdout(out4), contextlib.redirect_stderr(err4):
-                    rc4 = package_mod.version_command(argparse.Namespace(expect="v9.9.9"))
-                self.assertEqual(rc4, 1)
-                self.assertIn("v9.9.9", err4.getvalue())
+                    # Intentional mismatches fail and identify the mismatch.
+                    out4, err4 = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out4), contextlib.redirect_stderr(err4):
+                        rc4 = package_mod.version_command(argparse.Namespace(expect="v9.9.9"))
+                    self.assertEqual(rc4, 1)
+                    self.assertIn("v9.9.9", err4.getvalue())
 
-                saved_lock = (tree / "uv.lock").read_text(encoding="utf-8")
-                import re
+                    saved_lock = (tree / "uv.lock").read_text(encoding="utf-8")
+                    import re
 
-                drifted_lock, n_sub = re.subn(
-                    r'(name = "vehicle-sil-gui"\s*\nversion = ")[^"]*(")',
-                    r"\g<1>0.0.1\2",
-                    saved_lock,
-                    count=1,
-                )
-                self.assertEqual(n_sub, 1)
-                (tree / "uv.lock").write_text(drifted_lock, encoding="utf-8", newline="\n")
-                out5, err5 = io.StringIO(), io.StringIO()
-                with contextlib.redirect_stdout(out5), contextlib.redirect_stderr(err5):
-                    rc5 = package_mod.version_command(argparse.Namespace(expect=f"v{expected_ver}"))
-                self.assertEqual(rc5, 1)
-                self.assertIn("uv.lock", err5.getvalue())
-                (tree / "uv.lock").write_text(saved_lock, encoding="utf-8", newline="\n")
+                    drifted_lock, n_sub = re.subn(
+                        r'(name = "vehicle-sil-gui"\s*\nversion = ")[^"]*(")',
+                        r"\g<1>0.0.1\2",
+                        saved_lock,
+                        count=1,
+                    )
+                    self.assertEqual(n_sub, 1)
+                    (tree / "uv.lock").write_text(drifted_lock, encoding="utf-8", newline="\n")
+                    out5, err5 = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out5), contextlib.redirect_stderr(err5):
+                        rc5 = package_mod.version_command(argparse.Namespace(expect=f"v{expected_ver}"))
+                    self.assertEqual(rc5, 1)
+                    self.assertIn("uv.lock", err5.getvalue())
+                    (tree / "uv.lock").write_text(saved_lock, encoding="utf-8", newline="\n")
 
     def test_uv_lock_problems_handles_invalid_utf8_and_non_list_package(self) -> None:
         tree = self.dir / "bad-lock"
