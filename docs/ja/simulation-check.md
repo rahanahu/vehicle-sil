@@ -140,7 +140,7 @@
 | `registry-on-network` | 注記 | `registry_uri` がループバックのアドレスではありません。 | この PC だけで動かすなら、`127.0.0.1` にするか、`registry_uri` を書きません。 |
 | `listen-variable-ignored` | 注記 | `vehicle_sil_launch` 自身の環境の `VEHICLE_SIL_LISTEN_ON_NETWORK` が、`run` が participant に渡す値と違います（その値は使いません）。 | ほかの PC から参加させたいときだけ、`registry_uri` に、その PC から接続できるアドレスを書きます。 |
 | `step-not-checked` | 注記 | `describe: false` の participant に `step_ms` があります。 | `step_ms` を削除するか、`ecu_main` の実行ファイルなら `describe: true` にします。 |
-| `executable` | エラー | 実行ファイルがない（区切りのない名前は `PATH` にもない）、ディレクトリ、バッチファイル、実行の許可がない、のどれかです。 | `command` のパスを直すか、実行ファイルを置きます。 |
+| `executable` | エラー | 実行ファイルがない（区切りのない名前は `PATH` にもない）、ディレクトリ、バッチファイル、実行の許可がない、のどれかです。`manual: true`（または `--manual`）かつ `describe: false` の participant では出しません。 | `command` のパスを直すか、実行ファイルを置きます。 |
 | `found-on-path` | 注記 | 実行ファイルを `PATH` で見つけました（その場所を表示します）。 | 表示された場所が、意図した実行ファイルかを確認します。 |
 | `not-required-ecu` | エラー | `role: bridge` でない `describe: true` の participant に `required: false` があります。 | `required: false` を削除します（その ECU なしで動かすなら、`enabled: false` か `--disable`）。`role: bridge` は、自分で参加するブリッジのためのものです。`ecu_main` で作った ECU は、`role: bridge` を付けても、`required: false` では始まりません。 |
 | `no-required-participant` | エラー | 無効にしていない participant がどれも `required: false` か、すべてを無効にしました（シミュレーションが待つ participant がない）。 | 必須（`required: true`）の participant を、1 つ以上有効にします。 |
@@ -188,7 +188,7 @@
 | `commands-not-compared` | 注記 | `--compare-commands` のとき: コマンドを比べられませんでした。ファイルを読めないか、どちらかの構成の比べるものに誤りがあります。`commands` は `"not_compared"` です。 | 文が挙げるものを直して、もう一度照合します。 |
 | `descriptions-write` | エラー | `--write-descriptions` のファイルを書けません（ディレクトリがない、権限がない、ディスクがいっぱい。Windows では、ほかのプログラムが開いていることがあります）。ほかの結果には影響しません。 | あるディレクトリの、書けるファイルを指定します。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
-| `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
+| `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドがあれば表示して待つ）。 | `run` が表示するコマンドで起動するか、`command` を省略した場合は設定した `name` でシミュレーションの registry に接続します。 |
 | `version-mismatch` | 注記 | 実行ファイルをビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` のバージョンと違います。 | 一緒に動かなければ、同じバージョンでビルドし直します。 |
 | `coarse-time-step` | 警告 | 実行速度が数値で、設定に `time_step_ms` があり、ECU のステップがタイムステップの境目で始まりません。 | 指摘の文にある値を、`time_step_ms` に書きます。 |
 | `control-link-not-offered` | 注記 | 変数のある ECU が、それをシミュレーションに公開すると `--describe` に出力していません（`--no-control`、`control` のない古い実行ファイル）。 | 変数を読み書きしたいなら、`--no-control` を削除するか、新しい vehicle-sil で ECU をビルドし直します。 |

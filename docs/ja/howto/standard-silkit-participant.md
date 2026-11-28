@@ -69,7 +69,8 @@ participants:
 
 | 設定 | 必要な理由 |
 |---|---|
-| `describe: false` | 標準の SIL Kit participant は vehicle-sil 独自の `--describe` オプションを持ちません。`vehicle_sil_launch check` は実行ファイルの存在だけを確認して `--describe` を省き、注記として `not-checked`（そのネットワーク上の `describe: true` の ECU が 1 つだけのときは `single-participant` も）を出して終了コード 0 で通ります。 |
+| `describe: false` | 標準の SIL Kit participant は vehicle-sil 独自の `--describe` オプションを持ちません。`vehicle_sil_launch check` は実行ファイルの存在だけを確認して（外部ホスト向けに `manual: true` を併用している場合を除く）`--describe` を省き、注記として `not-checked`（そのネットワーク上の `describe: true` の ECU が 1 つだけのときは `single-participant` も）を出して終了コード 0 で通ります。 |
+| `manual: true`（外部ホストで動かす場合） | 標準の participant を別の PC で起動する場合（例: Windows のランチャーに Linux から接続する構成）は、`describe: false` と `manual: true` を両方指定します。`command` を省略する（またはランチャー側にローカル実行ファイルがないリモート用コマンドを書く）ことができ、非ループバックの `registry_uri`（例: `silkit://0.0.0.0:8500`）を設定したうえで、リモート側からランチャーのネットワーク URI へ接続して起動します。 |
 | `"{name}"` と `"{registry_uri}"` | `describe: false` の participant には、ランチャーが `--name` や `--registry-uri` を自動付与しません。プレースホルダーで設定上の participant 名と実行時の registry URI を渡します。YAML が `{...}` をマッピングとして解釈しないよう、必ず引用符で囲みます。 |
 | `required: true`（既定） | coordinated な participant は `required: true` のままにし、SIL Kit のシステムコントローラーが参加を待ってから仮想時間を開始するようにします。 |
 

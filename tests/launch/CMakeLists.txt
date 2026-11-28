@@ -326,6 +326,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       late
       live
       manual_again
+      manual_external
       manual_fails
       manual_frozen
       manual_late

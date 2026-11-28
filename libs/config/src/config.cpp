@@ -876,11 +876,13 @@ private:
             const auto name = nameNode == ryml::NONE ? std::nullopt : this->name(nameNode, at + ": ", "participant");
             const std::string who = name.value_or("");
             const std::string prefix = name ? "participant '" + *name + "': " : at + ": ";
-            // Whether the entry can be described and compared: a name, a command, a known
-            // describe; an unknown key or a bad step_ms does not stop that.
+            // Whether the entry can be described and compared: a name, a command (unless manual
+            // with describe: false), a known describe; an unknown key or a bad step_ms does not
+            // stop that.
             bool usable = name.has_value();
             bool hasCommand = false;
             bool describeRead = true;
+            bool manualRead = true;
             std::size_t requiredLine = 0;
             std::map<std::string, std::size_t> seen;
             for (auto child = tree().first_child(item); child != ryml::NONE; child = tree().next_sibling(child))
@@ -923,7 +925,9 @@ private:
                 }
                 else if (key == "manual")
                 {
-                    participant.manual = boolean(child, prefix, key, who).value_or(false);
+                    const auto manual = boolean(child, prefix, key, who);
+                    participant.manual = manual.value_or(false);
+                    manualRead = manual.has_value();
                 }
                 else if (key == "role")
                 {
@@ -968,7 +972,8 @@ private:
                       who);
                 usable = false;
             }
-            if (!hasCommand)
+            const bool commandOptional = manualRead && describeRead && participant.manual && !participant.describe;
+            if (!hasCommand && !commandOptional)
             {
                 error("missing-key", participant.line, prefix + "no command: add command: [<path of the executable>]", who);
                 usable = false;
@@ -2131,6 +2136,10 @@ private:
     /// false if an argument has an error.
     bool check_arguments(const std::string& prefix, const std::string& who, ParticipantConfig& participant)
     {
+        if (participant.command.empty())
+        {
+            return true;
+        }
         const std::size_t line = participant.command_line;
         const std::size_t before = findings_.size();
         bool hasRegistry = false;
@@ -2863,6 +2872,10 @@ ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
 std::optional<Finding> executable_finding(const ParticipantConfig& participant, const std::filesystem::path& path,
                                           const std::filesystem::file_status& status)
 {
+    if (participant.command.empty())
+    {
+        return std::nullopt;
+    }
     const std::string shown = process::shown_path(path);
     const std::string prefix = "participant '" + participant.name + "': the executable " + participant.command.front();
     std::string problem;

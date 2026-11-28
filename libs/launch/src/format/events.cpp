@@ -826,8 +826,8 @@ void EventStream::participant_manual(const std::string& name, const std::vector<
                  w.string({}, word);
              }
              w.end_array();
-             w.string("working_directory", working_directory);
-             w.string("command_line", command_line);
+             optional_text(w, "working_directory", working_directory);
+             optional_text(w, "command_line", command_line);
              if (!environment.empty())
              {
                  w.begin_object("environment");
