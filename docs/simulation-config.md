@@ -104,7 +104,7 @@ Keys of each element of `participants`:
 | Key | Required | Value | Default |
 |---|---|---|---|
 | `participants[].name` | Yes | Participant name | |
-| `participants[].command` | Yes | Array of the executable and its arguments | |
+| `participants[].command` | Yes (optional when `manual: true` and `describe: false`) | Array of the executable and its arguments | |
 | `participants[].step_ms` | | Step size that the executable reports in its `--describe` output (ms, an integer from 1 to 10^12) | Not checked |
 | `participants[].describe` | | `true`: an ecu_main executable (checked); `false`: any other executable (not checked) | `true` |
 | `participants[].required` | | Whether the simulation waits for this participant (`true` or `false`) | `true` |
@@ -135,7 +135,7 @@ To migrate from format 1, set `vehicle_sil_simulation: 2` and move `stop_at_ms`,
 
 **`participants[].name`**: The name must not be empty, must fit on one line (no control characters) and must not start with `-`. `SimulationController` (the participant name of vehicle-sil's controller) is not allowed. For the check, the name is passed to ecu_main executables with `--name`.
 
-**`participants[].command`**: If there are no arguments, a single string is enough. The string is not split at spaces.
+**`participants[].command`**: If there are no arguments, a single string is enough. The string is not split at spaces. `command` may be omitted only when `manual: true` and `describe: false` (for example, an external SIL Kit participant started on another computer); an empty `command: []` or `command: ""` is still an error.
 
 **`participants[].step_ms`**: Checked only if written.
 
@@ -323,7 +323,7 @@ passed: 0 errors, 1 warning, 1 note
 
 To start a participant yourself instead of through `run`, for example to run an ECU from a debugger, write `manual: true` for that participant. To start it yourself for one run only, without editing the file, pass `--manual <participant name>` to `check` and `run` (it can be repeated). `run` does not start that participant. It prints the command to start it and waits for it to join. Below, such a participant is called a manual participant.
 
-The check is the same as for the other participants (with `describe: true`, it runs `--describe`). For each manual participant, the check reports the note `participant-manual`.
+The check is the same as for the other participants (with `describe: true`, it runs `--describe` and requires the executable locally). When `manual: true` is written in the configuration file together with `describe: false`, `command` may be omitted and `check` does not require the executable to exist on the launcher computer; with `--manual` on the command line for a `describe: false` participant, `command` is still required in the file, and `check` skips the local executable check for it. If `command` is written and exists locally, `check` still resolves it as usual. For each manual participant, the check reports the note `participant-manual`.
 
 Rules for combining the options:
 
@@ -336,7 +336,7 @@ Rules for combining the options:
 
 #### The command `run` prints
 
-When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, `--map-network` if it has `network_names`, and `--j1939-node` if it has `j1939_nodes`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. Under `serve [--once]`, the `participant` event whose `state` is `manual` carries the same information.
+When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). If `command` was omitted (`manual: true` with `describe: false`), `run` prints no command and simply waits for the participant to join under its configured `name`; if `command` was written but does not exist locally, `run` prints the written command with placeholders expanded and without a local working directory. The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, `--map-network` if it has `network_names`, and `--j1939-node` if it has `j1939_nodes`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. Under `serve [--once]`, the `participant` event whose `state` is `manual` carries the same information.
 
 The arguments are quoted for the shell you paste them into:
 

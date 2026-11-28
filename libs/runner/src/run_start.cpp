@@ -479,12 +479,19 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         {
             saidWaiting = true;
             std::string names;
+            bool allHaveCommand = true;
             for (const auto& name : missing)
             {
                 names += (names.empty() ? "" : ", ") + name;
+                const auto it = std::find_if(ctx_.config.participants.begin(), ctx_.config.participants.end(),
+                                             [&name](const config::ParticipantConfig& p) { return p.name == name; });
+                if (it != ctx_.config.participants.end() && it->command.empty())
+                {
+                    allHaveCommand = false;
+                }
             }
             out_.say("waiting for " + names + " to join (manual): start " + (missing.size() == 1 ? "it" : "them") +
-                " with the command above; Ctrl+C stops the run");
+                (allHaveCommand ? " with the command above" : "") + "; Ctrl+C stops the run");
         }
         if (late)
         {

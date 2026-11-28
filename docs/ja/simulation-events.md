@@ -310,9 +310,9 @@ vehicle_sil_launch serve --once simulation.yaml   # 標準入力に {"command":"
 | `started` | `pid` | そのプロセスの ID |
 | `started` | `command` | 起動した実行ファイルと引数の配列 |
 | `started` | `log` | `--log-dir` のファイル（なければ `null`） |
-| `manual` | `command` | 起動する実行ファイルと引数の配列 |
-| `manual` | `working_directory` | 起動するディレクトリ |
-| `manual` | `command_line` | 同じものを、この OS のシェルに貼れる 1 行にしたもの（標準エラーに書く行と同じ） |
+| `manual` | `command` | 起動する実行ファイルと引数の配列（`command` を省略した場合は `[]`） |
+| `manual` | `working_directory` | 起動するディレクトリ（`command` を省略したか、実行ファイルがローカルに見つからない場合は `null`） |
+| `manual` | `command_line` | 同じものを、この OS のシェルに貼れる 1 行にしたもの（標準エラーに書く行と同じ。`command` を省略した場合は `null`） |
 | `manual` | `environment` | 起動するときに設定する環境変数の名前と値のオブジェクト |
 | `failed` | `reason` | `left_simulation`、`process_ended`、`ended_before_start`（下の表） |
 | `failed` | `message` | この失敗の `finding` の `message` と同じ文 |

@@ -310,9 +310,9 @@ The `code` of `caution` in `allowed` of `state`. Codes can be added; the meaning
 | `started` | `pid` | ID of the process |
 | `started` | `command` | Array of the executable that was started and its arguments |
 | `started` | `log` | The `--log-dir` file (`null` if none) |
-| `manual` | `command` | Array of the executable to start and its arguments |
-| `manual` | `working_directory` | The directory to start it in |
-| `manual` | `command_line` | The same command as one line that you can paste into this OS's shell (the same line that is written to stderr) |
+| `manual` | `command` | Array of the executable to start and its arguments (`[]` if `command` was omitted) |
+| `manual` | `working_directory` | The directory to start it in (`null` if `command` was omitted or the executable was not found locally) |
+| `manual` | `command_line` | The same command as one line that you can paste into this OS's shell (the same line that is written to stderr; `null` if `command` was omitted) |
 | `manual` | `environment` | Object of the names and values of the environment variables to set when you start it |
 | `failed` | `reason` | `left_simulation`, `process_ended`, `ended_before_start` (see the table below) |
 | `failed` | `message` | The same text as the `message` of the `finding` for this failure |
