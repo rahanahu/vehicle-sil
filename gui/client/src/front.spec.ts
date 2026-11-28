@@ -2737,9 +2737,10 @@ describe('the front door', () => {
       );
       await vi.advanceTimersByTimeAsync(500);
       const timedOut = await waiting;
+      expect(timedOut).toBeInstanceOf(ActionError);
       expect(timedOut).toMatchObject({ code: 'timeout', outcome: 'unknown' });
-      expect(timedOut.message).toContain('last observed:');
-      expect(timedOut.message).toContain('"run":"running"');
+      expect((timedOut as ActionError).message).toContain('last observed:');
+      expect((timedOut as ActionError).message).toContain('"run":"running"');
 
       // Also verify primitive, updated, nullish, and circular values in timeout messages.
       let listener: ((v: unknown) => void) | undefined;
@@ -2759,7 +2760,7 @@ describe('the front door', () => {
       current = 42;
       listener?.(42);
       await vi.advanceTimersByTimeAsync(100);
-      expect((await numTimeout).message).toContain('last observed: 42');
+      expect(((await numTimeout) as ActionError).message).toContain('last observed: 42');
 
       const circular: Record<string, unknown> = { name: 'loop' };
       circular['self'] = circular;
@@ -2768,14 +2769,14 @@ describe('the front door', () => {
         (e: unknown) => e as ActionError,
       );
       await vi.advanceTimersByTimeAsync(100);
-      expect((await circTimeout).message).toContain('[Circular]');
+      expect(((await circTimeout) as ActionError).message).toContain('[Circular]');
 
       current = undefined;
       const undefTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
         (e: unknown) => e as ActionError,
       );
       await vi.advanceTimersByTimeAsync(100);
-      expect((await undefTimeout).message).toContain('last observed: undefined');
+      expect(((await undefTimeout) as ActionError).message).toContain('last observed: undefined');
 
       // Edge cases: null-prototype / throwing getters / throwing toJSON+toString / throwing Error.message must reject cleanly.
       for (const bad of [
@@ -2815,8 +2816,9 @@ describe('the front door', () => {
         );
         await vi.advanceTimersByTimeAsync(100);
         const err = await badTimeout;
+        expect(err).toBeInstanceOf(ActionError);
         expect(err).toMatchObject({ code: 'timeout', outcome: 'unknown' });
-        expect(err.message).toContain('last observed:');
+        expect((err as ActionError).message).toContain('last observed:');
       }
       const controller = new AbortController();
       const aborted = until(rig.front.status, (s) => s.run === 'ended', {
