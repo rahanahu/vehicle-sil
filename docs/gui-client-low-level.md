@@ -405,6 +405,7 @@ The `kind` of a `WriteError`:
 - A write is applied in the step at the given virtual time (`atMs`; if omitted, the next step), so it does not complete while the simulation is paused. Because `enqueue()` awaits the ECU queue barrier, you can `await client.variables.enqueue(...)`, then call `step()` / `runUntil()`, then `await queued.applied()` with zero `sleep()` calls.
 - `keepalive` (`WriteOptions.keepalive`, forwarded via `HttpRequest.keepalive` to `fetch(..., { keepalive })`) lets a release write sent from a browser `pagehide` handler outlive page unload while keeping `Authorization` and `Origin` headers. See "[Held inputs, reconnect recovery, and bus observation](gui.md#held-inputs-reconnect-recovery-and-bus-observation)" in `docs/gui.md`.
 - `client.variables.operations` lists recent operations, including writes from other clients, but not a scenario's own writes.
+- After a scenario run finishes (including `--speed max` runs), read `client.session.get().session?.scenario.timelineUrl` and fetch `GET api/timeline/<run_id>` for step-accurate values across the run rather than relying on live polling.
 
 ### Write before the first step
 

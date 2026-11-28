@@ -5947,3 +5947,115 @@ TEST_CASE(scenario_variable_comparisons_during_boundaries_mixed_and_unseen_rhs)
         CHECK(!fc.compared[0].sample.has_value());
     }
 }
+
+TEST_CASE(scenario_warns_when_expect_precedes_write_at_same_virtual_time)
+{
+    const auto check = [](const std::string& body) {
+        return read_scenario(kHead + body, catalog(), ScenarioContext{"s.yaml"});
+    };
+    const auto hasSameTimeWarning = [](const ScenarioRead& r) {
+        return std::any_of(r.findings.begin(), r.findings.end(), [](const config::Finding& f) {
+            return f.severity == config::Severity::Warning && f.code == "scenario-same-time-order";
+        });
+    };
+
+    // expect before set at implicit 0 ms -> warning.
+    {
+        const ScenarioRead r = check("  - expect: { Body.level: 1 }\n"
+                                     "  - set: { Body.level: 1 }\n");
+        CHECK(hasSameTimeWarning(r));
+        const std::string s = lines(r.findings);
+        CHECK(s.find("W 4 scenario-same-time-order: 'Body.level' is written here at the same virtual time (0 ms) as an earlier expect (line 3)") !=
+              std::string::npos);
+    }
+
+    // expect before set at explicit same at_ms -> warning.
+    {
+        const ScenarioRead r = check("  - at_ms: 50\n    expect: { Body.level: 2 }\n"
+                                     "  - at_ms: 50\n    set: { Body.level: 2 }\n");
+        CHECK(hasSameTimeWarning(r));
+    }
+
+    // expect RHS variable written later at same time -> warning.
+    {
+        const ScenarioRead r = check("  - at_ms: 20\n    expect: { Body.body.speed: { eq: { variable: Body.level } } }\n"
+                                     "  - at_ms: 20\n    set: { Body.level: 10 }\n");
+        CHECK(hasSameTimeWarning(r));
+    }
+
+    // Post-wait expect followed by after_ms: 0 set -> warning (without explicit ms).
+    {
+        const ScenarioRead r = check("  - wait_until: { Body.body.speed: { ge: 100 } }\n    timeout_ms: 100\n"
+                                     "  - expect: { Body.level: 3 }\n"
+                                     "  - set: { Body.level: 3 }\n");
+        CHECK(hasSameTimeWarning(r));
+    }
+
+    // set before expect at same time -> NO warning.
+    CHECK(!hasSameTimeWarning(check("  - at_ms: 20\n    set: { Body.level: 2 }\n"
+                                    "  - at_ms: 20\n    expect: { Body.level: 2 }\n")));
+
+    // Different variables at same time -> NO warning.
+    CHECK(!hasSameTimeWarning(check("  - at_ms: 20\n    expect: { Body.body.speed: 0 }\n"
+                                    "  - at_ms: 20\n    set: { Body.level: 2 }\n")));
+
+    // Different virtual times -> NO warning.
+    CHECK(!hasSameTimeWarning(check("  - at_ms: 20\n    expect: { Body.level: 0 }\n"
+                                    "  - at_ms: 30\n    set: { Body.level: 2 }\n")));
+
+    // ramp with expect beside it on the same variable -> NO self-warning.
+    CHECK(!hasSameTimeWarning(check("  - set: { Body.level: 0 }\n"
+                                    "  - at_ms: 10\n    ramp: { Body.level: { to: 10, over_ms: 20 } }\n"
+                                    "    expect: { Body.level: { ge: 0 } }\n")));
+}
+
+TEST_CASE(scenario_multi_clause_failure_reports_failing_clause_lines)
+{
+    World world;
+    const Scenario s = read(kHead +
+                            "  - set: { Body.level: 5 }\n"
+                            "  - at_ms: 20\n"
+                            "    expect:\n"
+                            "      Body.level: 5\n"
+                            "      Body.body.speed: { ge: 999 }\n"
+                            "      Door.lamp: true\n");
+    const ScenarioRun run = world.run(s);
+    CHECK(run.status == ScenarioStatus::Failed);
+    CHECK_EQ(run.steps[1].line, std::size_t{4});
+    CHECK_EQ(run.steps[1].failed_line, std::size_t{7});
+    CHECK(run.steps[1].message.find("Body.body.speed ge 999 (line 7)") != std::string::npos);
+    CHECK(run.steps[1].message.find("Door.lamp eq true (line 8)") != std::string::npos);
+    CHECK(run.steps[1].message.find("Body.level") == std::string::npos);
+}
+
+TEST_CASE(scenario_unknown_variable_prefers_ranked_candidates_and_sorts_fallback)
+{
+    ScenarioCatalog cat;
+    CatalogParticipant p;
+    p.name = "ECU";
+    p.step = 10ms;
+    for (const char* name : {"zeta_flag", "engine.speed", "wheel.speed", "alpha_cmd", "beta_cmd", "gamma_cmd",
+                             "delta_cmd", "epsilon_cmd", "theta_cmd", "iota_cmd", "kappa_cmd"})
+    {
+        control::VariableInfo info;
+        info.name = name;
+        info.type = control::ValueType::Integer;
+        info.causality = control::Causality::Input;
+        p.variables.push_back(std::move(info));
+    }
+    cat.push_back(std::move(p));
+
+    // Leaf match (`speed` -> `engine.speed`, `wheel.speed`).
+    {
+        const ScenarioRead r = read_scenario(kHead + "  - expect: { ECU.speed: 0 }\n", cat);
+        const std::string err = lines(r.findings);
+        CHECK(err.find("did you mean one of 'ECU.engine.speed' or 'ECU.wheel.speed'?") != std::string::npos);
+    }
+    // Completely unrelated name on >8 variables -> sorted and capped fallback.
+    {
+        const ScenarioRead r = read_scenario(kHead + "  - expect: { ECU.nonexistent_xyz: 0 }\n", cat);
+        const std::string err = lines(r.findings);
+        CHECK(err.find("its variables include alpha_cmd, beta_cmd, delta_cmd, engine.speed, epsilon_cmd, gamma_cmd, iota_cmd, kappa_cmd (and 3 more)") !=
+              std::string::npos);
+    }
+}

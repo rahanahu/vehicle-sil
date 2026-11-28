@@ -129,3 +129,54 @@ def test_saving_keeps_the_commands_by_default(tmp_path: Path) -> None:
 
 def reply_stamp(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def test_saved_check_reuses_descriptions_and_falls_back_when_executable_changes(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    ecu, mark = tmp_path / "ecu.py", tmp_path / "started.txt"
+    ecu.write_text(ECU, encoding="utf-8")
+    if sys.platform == "win32":
+        ecu_exe = tmp_path / "ecu.cmd"
+        exe_body = f'@echo off\r\n"{sys.executable}" "{ecu}" %*\r\n'
+        rebuild_suffix = "\r\nrem rebuilt\r\n"
+    else:
+        ecu_exe = tmp_path / "ecu.sh"
+        exe_body = f"#!/bin/sh\nexec {sys.executable!r} {ecu.as_posix()!r} \"$@\"\n"
+        rebuild_suffix = "\n# rebuilt\n"
+    ecu_exe.write_text(exe_body, encoding="utf-8")
+    ecu_exe.chmod(0o755)
+    saved = (
+        "vehicle_sil_simulation: 2\nnetworks:\n  - name: CAN1\n    kind: can\nparticipants:\n"
+        f"  - name: Engine\n    command: [{ecu_exe.as_posix()!r}, {mark.as_posix()!r}, Engine]\n"
+        f"  - name: Dashboard\n    command: [{ecu_exe.as_posix()!r}, {mark.as_posix()!r}, Dashboard]\n"
+    )
+    (root / "sim.yaml").write_text(saved, encoding="utf-8")
+
+    def starts() -> int:
+        return mark.read_text(encoding="utf-8").count("started\n") if mark.exists() else 0
+
+    async def talk(c: Client) -> None:
+        status, reply = await c.post("api/check", {"file": "sim.yaml"})
+        assert status == 200 and reply["check"]["result"] == "passed", reply
+        assert starts() == 2
+
+        # Second check on the unchanged saved file + YAML skips --describe.
+        status, reply = await c.post("api/check", {"file": "sim.yaml"})
+        assert status == 200 and reply["check"]["result"] == "passed", reply
+        assert starts() == 2
+
+        # Modifying the ECU executable (different size/mtime) without touching sim.yaml triggers fallback.
+        ecu_exe.write_text(exe_body + rebuild_suffix, encoding="utf-8")
+        ecu_exe.chmod(0o755)
+        status, reply = await c.post("api/check", {"file": "sim.yaml"})
+        assert status == 200 and reply["check"]["result"] == "passed", reply
+        assert {p["status"] for p in reply["check"]["participants"]} == {"described"}
+        assert starts() == 4
+
+        # Next check reuses the refreshed descriptions.
+        status, reply = await c.post("api/check", {"file": "sim.yaml"})
+        assert status == 200 and starts() == 4, reply
+
+    with gui_server(tmp_path, root=root, launcher=Path(LAUNCHER)) as gui:
+        run_async(talk, gui)

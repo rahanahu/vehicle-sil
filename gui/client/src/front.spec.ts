@@ -2736,7 +2736,90 @@ describe('the front door', () => {
         (e: unknown) => e as ActionError,
       );
       await vi.advanceTimersByTimeAsync(500);
-      expect(await waiting).toMatchObject({ code: 'timeout', outcome: 'unknown' });
+      const timedOut = await waiting;
+      expect(timedOut).toBeInstanceOf(ActionError);
+      expect(timedOut).toMatchObject({ code: 'timeout', outcome: 'unknown' });
+      expect((timedOut as ActionError).message).toContain('last observed:');
+      expect((timedOut as ActionError).message).toContain('"run":"running"');
+
+      // Also verify primitive, updated, nullish, and circular values in timeout messages.
+      let listener: ((v: unknown) => void) | undefined;
+      let current: unknown = 10;
+      const customSource = {
+        get: () => current,
+        subscribe: (fn: (v: unknown) => void) => {
+          listener = fn;
+          return () => {
+            listener = undefined;
+          };
+        },
+      };
+      const numTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
+        (e: unknown) => e as ActionError,
+      );
+      current = 42;
+      listener?.(42);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(((await numTimeout) as ActionError).message).toContain('last observed: 42');
+
+      const circular: Record<string, unknown> = { name: 'loop' };
+      circular['self'] = circular;
+      current = circular;
+      const circTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
+        (e: unknown) => e as ActionError,
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      expect(((await circTimeout) as ActionError).message).toContain('[Circular]');
+
+      current = undefined;
+      const undefTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
+        (e: unknown) => e as ActionError,
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      expect(((await undefTimeout) as ActionError).message).toContain('last observed: undefined');
+
+      // Edge cases: null-prototype / throwing getters / throwing toJSON+toString / throwing Error.message must reject cleanly.
+      for (const bad of [
+        {
+          toJSON() {
+            throw new Error('toJSON boom');
+          },
+          toString() {
+            throw new Error('toString boom');
+          },
+        },
+        Object.create(null, {
+          x: {
+            enumerable: true,
+            get() {
+              throw new Error('getter boom');
+            },
+          },
+        }),
+        {
+          toJSON() {
+            throw new Error('toJSON boom');
+          },
+          [Symbol.toPrimitive]() {
+            throw new Error('toPrimitive boom');
+          },
+        },
+        Object.defineProperty(new Error('orig'), 'message', {
+          get() {
+            throw new Error('message getter boom');
+          },
+        }),
+      ]) {
+        current = bad;
+        const badTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
+          (e: unknown) => e as ActionError,
+        );
+        await vi.advanceTimersByTimeAsync(100);
+        const err = await badTimeout;
+        expect(err).toBeInstanceOf(ActionError);
+        expect(err).toMatchObject({ code: 'timeout', outcome: 'unknown' });
+        expect((err as ActionError).message).toContain('last observed:');
+      }
       const controller = new AbortController();
       const aborted = until(rig.front.status, (s) => s.run === 'ended', {
         signal: controller.signal,

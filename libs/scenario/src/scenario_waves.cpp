@@ -984,6 +984,7 @@ std::optional<ScenarioMotion> Reader::read_wave_of(ryml::id_type node, std::size
 
     ScenarioMotion out;
     out.variable = v;
+    out.line = line;
     out.hint = "give the wave around: <value>";
     std::string text = name + " " + shape;
     std::optional<std::int64_t> length; // of a shape that says it itself

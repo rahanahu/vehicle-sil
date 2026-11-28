@@ -1680,7 +1680,105 @@ void Reader::read_step(ryml::id_type node, std::optional<InheritedTiming> inheri
     {
         note_lines(step, state, time);
     }
+    check_same_time_order(step, time, length);
     scenario_.steps.push_back(std::move(step));
+}
+
+void Reader::check_same_time_order(const ScenarioStep& step, std::optional<std::int64_t> time, std::int64_t length)
+{
+    bool sameGroup = false;
+    if (time)
+    {
+        sameGroup = same_time_active_ && same_time_at_ && *same_time_at_ == *time;
+        if (!sameGroup)
+        {
+            same_time_reads_.clear();
+            same_time_warned_.clear();
+            same_time_at_ = *time;
+            same_time_active_ = true;
+        }
+    }
+    else if (!end_known_ && step.after_ms == 0 && same_time_active_ && !same_time_at_)
+    {
+        sameGroup = true;
+    }
+    else
+    {
+        same_time_reads_.clear();
+        same_time_warned_.clear();
+        same_time_at_.reset();
+        same_time_active_ = !end_known_;
+    }
+
+    if (step.skipped.empty())
+    {
+        // Check writes against earlier reads in the same virtual-time group before adding this
+        // step's own conditions, so `ramp`/`wave` with an `expect` beside it does not warn on itself.
+        const auto check_write = [&](std::size_t var, std::size_t writeLine) {
+            const auto it = same_time_reads_.find(var);
+            if (it == same_time_reads_.end() || !same_time_warned_.insert(var).second)
+            {
+                return;
+            }
+            const std::string& varText = scenario_.variables[var].text;
+            const std::string atText = time ? " (" + std::to_string(*time) + " ms)" : std::string{};
+            const std::string readLoc = loc_text(it->second.file, it->second.line);
+            add(config::Severity::Warning, "scenario-same-time-order", writeLine > 0 ? writeLine : step.line,
+                "'" + varText + "' is written here at the same virtual time" + atText + " as an earlier expect (" +
+                    readLoc +
+                    "): writes at time T are applied before conditions at time T are evaluated, so the expect sees "
+                    "the written value; put the write first or add after_ms/at_ms to separate them",
+                scenario_.participants[scenario_.variables[var].participant].name);
+        };
+        for (const ScenarioWrite& w : step.writes)
+        {
+            check_write(w.variable, w.line);
+        }
+        for (const ScenarioMotion& m : step.motions)
+        {
+            // Motions without an explicit base whose value at t=0 equals the base (such as a ramp
+            // without from: or a sine/triangle/sawtooth/lag wave without around:) continue smoothly
+            // from the current value at T, so an earlier expect at T does not observe a jump.
+            const bool preservesValueAtStart =
+                m.shape && m.shape->uses_base() && !m.base.has_value() &&
+                m.shape->value(SimDuration{}, 0.0) == 0.0 && m.shape->value(SimDuration{}, 1.0) == 1.0;
+            if (!preservesValueAtStart)
+            {
+                check_write(m.variable, m.line);
+            }
+        }
+        for (const ScenarioOverlay& o : step.overlays)
+        {
+            check_write(o.variable, o.line);
+        }
+
+        const auto note_read = [&](std::size_t var, std::size_t readLine) {
+            if (same_time_reads_.find(var) == same_time_reads_.end())
+            {
+                same_time_reads_.emplace(var, SameTimeRead{step.file, readLine > 0 ? readLine : step.line});
+            }
+        };
+        for (const ScenarioCondition& cond : step.conditions)
+        {
+            note_read(cond.variable, cond.line);
+            for (const ScenarioComparison& cmp : cond.all)
+            {
+                if (cmp.rhs_variable)
+                {
+                    note_read(*cmp.rhs_variable, cond.line);
+                }
+            }
+        }
+    }
+
+    const std::int64_t stepDuration = !step.skipped.empty() ? step.skipped_ms : length;
+    if (stepDuration > 0 || step.waits() || step.kind == StepKind::WaitUntil)
+    {
+        same_time_reads_.clear();
+        same_time_warned_.clear();
+        same_time_at_.reset();
+        same_time_active_ = false;
+    }
 }
 
 void Reader::skip(ScenarioStep& step, const StepReadState& state)
@@ -1759,7 +1857,7 @@ void Reader::read_set(ryml::id_type node, ScenarioStep& step, StepReadState& sta
         if (const auto value = value_of(child, *v, "the value", true, &state))
         {
             const ScenarioVariable& var = scenario_.variables[*v];
-            step.writes.push_back(ScenarioWrite{*v, *value, var.text + " = " + value_text(*value, &var)});
+            step.writes.push_back(ScenarioWrite{*v, *value, var.text + " = " + value_text(*value, &var), doc().line(child)});
         }
     }
 }
@@ -1824,6 +1922,7 @@ std::int64_t Reader::read_ramp(ryml::id_type node, ScenarioStep& step, StepReadS
         }
         ScenarioMotion ramp;
         ramp.variable = *v;
+        ramp.line = line;
         double to = 0.0;
         bool hasTo = false;
         bool hasOver = false;
@@ -2079,6 +2178,7 @@ void Reader::read_conditions(ryml::id_type node, ScenarioStep& step, StepReadSta
         const std::string lhsText = scenario_.variables[*v].text;
         ScenarioCondition condition;
         condition.variable = *v;
+        condition.line = doc().line(child);
         std::vector<std::string> rhsTexts;
         std::vector<std::string> condAbsent;
         bool good = true;

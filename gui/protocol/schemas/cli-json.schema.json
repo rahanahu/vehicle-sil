@@ -20,6 +20,16 @@
       "title": "Port",
       "type": "integer"
     },
+    "pid": {
+      "minimum": 1,
+      "title": "Pid",
+      "type": "integer"
+    },
+    "instance": {
+      "minLength": 1,
+      "title": "Instance",
+      "type": "string"
+    },
     "dev_url": {
       "minLength": 1,
       "type": "string",
@@ -34,7 +44,9 @@
   "required": [
     "vehicle_sil_gui",
     "url",
-    "port"
+    "port",
+    "pid",
+    "instance"
   ],
   "type": "object"
 }

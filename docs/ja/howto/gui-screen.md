@@ -289,7 +289,7 @@ rm token.header
 | ファイルが 404 になる | 配信されない拡張子か、`.` で始まる名前、シンボリックリンクです。 | [gui.md](../gui.md) の「`--web` で配信するファイル」の表を確認します。 |
 | `curl` の `POST` が `forbidden-origin` で拒否される | `Origin` ヘッダーがないか、サーバー自身の origin と違います。 | `-H "Origin: http://127.0.0.1:<port>"` を付けます。 |
 | ファイルを直したのに、画面が変わらない | ブラウザが前のページを表示しています。 | ページを読み込み直します（GUI サーバーの再起動は不要です）。 |
-| `cannot listen on 127.0.0.1:<port> (address already in use)` または `(permission denied or port already in use)` が出て終了コード 2 で終わる | すでにあるサーバーと同じ `--port` で起動しました（サーバーは日本語 Windows などのロケールに依存せず純 ASCII で理由を出力し、Windows の `SO_EXCLUSIVEADDRUSE` 下のポート競合・権限エラーでは `permission denied or port already in use` になります）。 | 1 つ目を止めるか、別の `--port` を選びます（`--port` を省くと空きポートを自動で選びます）。`--port` なしなら、2 つ目は別のポートで自分のトークンとランチャーで起動するため、表示された URL を使ってください。 |
+| `cannot listen on 127.0.0.1:<port> (address already in use)` または `(permission denied or port already in use)` が出て終了コード 2 で終わる | すでにあるサーバーと同じ `--port` で起動しました（サーバーは日本語 Windows などのロケールに依存せず純 ASCII で理由を出力し、Windows の `SO_EXCLUSIVEADDRUSE` 下のポート競合・権限エラーでは `permission denied or port already in use` になります）。 | 1 つ目を止めるか、別の `--port` を選びます（`--port` を省くと空きポートを自動で選びます）。`--port` なしなら、2 つ目は別のポートで自分のトークンとランチャーで起動するため、表示された URL を使ってください。自動化ラッパーからは `--json`（`pid` と `instance` を出力）が使え、パイプ扱いと停止方法は [gui.md](../gui.md#ビルド済みのツールの起動スクリプト) の「ビルド済みのツールの起動スクリプト」を参照してください。 |
 
 ## ネットワークを外につなぐ（任意）
 

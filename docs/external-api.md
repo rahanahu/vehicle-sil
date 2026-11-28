@@ -44,6 +44,7 @@ For scenario files, **validate syntax with JSON Schema, and validate against the
 | Running simulations (`run`, `test`, `serve`) | [simulation-run.md](simulation-run.md) |
 | Events v4 (`serve [--once]`), stdin commands, and `version --json` | [simulation-events.md](simulation-events.md) |
 | Control API (gRPC) and Python SDK | [control-api.md](control-api.md) |
+| C++ build, FetchContent, and public CMake targets | [build.md](build.md#use-from-another-project-fetchcontent), [architecture.md](architecture.md#targets) |
 
 ## Runnable Examples
 

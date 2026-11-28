@@ -318,6 +318,7 @@ In a run with a scenario, every ECU whose values the scenario reads sends a samp
 - When a condition compares two variables (`{ variable: ... }`), both the left-hand and right-hand ECUs are read by the scenario (`--sample-every-step` under `samples: every_step`, and `watched: true` with a `sampled` series in `--timeline`). At each virtual timestamp, all samples arriving for that timestamp across all participants are latched together before conditions are evaluated, so the result does not depend on participant order in `simulation.yaml`. When the right-hand variable is an input driven by the scenario (including with `dither`), the comparison uses the `sampled` value reported by the ECU rather than the scheduled `written` value.
 - An `expect` at time 0 does not fail for lack of a sample: it looks at the sample of the ECU step that starts at 0 ms (`its sample of 0 ms`), which already shows the writes at time 0.
 - A missing sample fails a step at time 0 when a `ramp` without `from` or a `wave` without `around` moves a variable that the scenario has not written yet (`scenario-write`). Writes at time 0 are handed over before the first simulation step, so there is no sample yet to take the start value from (see [Writes](#writes)).
+- Scenarios judge participant variables rather than raw bus frames directly; to check CAN/J1939 frames from a scenario without sending on the bus, add a listen-only `Spy` participant (`vehicle_sil::spy::Spy`, see [Listen-only participants](j1939-guide.md#listen-only-participants)).
 
 ### How often the ECUs send their values (`samples`)
 
@@ -347,6 +348,9 @@ With `samples: as_sent`, it depends on whether the ECU step that starts at T tak
 | Does not take a sample (example: the 105 ms step of an ECU with a 5 ms step size) | Sees the previous sample (the value before the `set`) and fails. |
 
 To check that a value was applied in such a scenario, use `expect` with `within_ms`; it holds on the next sample.
+
+- **Same-time evaluation order (`scenario-same-time-order`)**: At the same virtual time `T`, steps run in file order. If an `expect` or `wait_until` appears earlier in the file than a later same-time write (`set`, `ramp`, `wave`, and so on) to the same variable, the check sees the value before that write, and `check` warns with `scenario-same-time-order`. Write the `set` before checking the same variable (or place checks in later time steps).
+- **Downstream / cross-ECU reactions**: An `expect` at time `T` only reads the ECU sample taken at `T`. It does **not** wait for another ECU's periodic step or CAN/LIN bus propagation after a `set` at `T` (use `expect` with `within_ms` or `wait_until` to check downstream responses).
 
 ### Participants with a variable map (`variables`)
 
@@ -749,6 +753,7 @@ steps:
 Rules for `cases`:
 
 - `cases` must be a non-empty mapping of case names to `{ params?, only? }`. Case values cannot be `null` (use `{}` for a case with no overrides).
+- Use `cases` when variants share the same step sequence and only parameter values or `only` filters differ; when scenarios need different step sequences, split them into separate files (sharing repeated sequences via `template:`).
 - Case names allow UTF-8 text (such as `無負荷`, `定格`, `上限直前`) and single-dash names like `-10C` or internal `a--b`, and forbid empty names, names starting with `--`, control characters (below `U+0020` or `U+007F`, including newlines), and invalid UTF-8.
 - Every parameter in `cases.<name>.params` must be declared in top-level `params` or used in `steps` (`scenario-param` otherwise).
 - When both top-level `only` and `cases.<name>.only` are present, raw variant names in both are validated first, and the effective variant filter is their intersection. An empty intersection fails with `scenario-variant` (not skipped).
@@ -1107,6 +1112,7 @@ The check lists every error; it does not stop at the first one. The exit code is
 | `scenario-samples-unsupported` | Warning | The scenario reads the values of a participant whose executable does not say that it accepts `--sample-every-step` (no `sample-every-step` in the `features` of its `--describe`), so the run cannot ask it for a sample of every step. Not given for a participant without a description. See [How often the ECUs send their values](#how-often-the-ecus-send-their-values-samples). |
 | `scenario-samples-as-sent` | Note | The scenario has `samples: as_sent` and reads a value: it judges with the samples as each ECU sends them. |
 | `scenario-nothing-checked` | Warning | Every checking step (`expect`, `wait_until`, and `expect` beside `ramp` and `wave`) is skipped, so the scenario checks nothing. |
+| `scenario-same-time-order` | Warning | An `expect` or `wait_until` appears earlier in the file than a later value-changing write (`set`, `ramp`, `wave`, etc.) to the same variable at the same virtual time, so the condition sees the value before that write. |
 | `scenario-step-skipped` | Note | The step uses a variable with `absent: true` or a variable of a participant that the variant disables, so it is skipped in the run. If only the `expect` beside a `ramp` or `wave` uses it, only that `expect` is skipped. |
 
 How the check judges a `dither`:

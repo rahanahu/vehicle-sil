@@ -616,7 +616,7 @@ FAILED: 8 runs, 6 passed, 1 failed, 1 skipped
 | 最初の失敗で止める | `--fail-fast` を付けます。 |
 | 機種のない設定ファイルで実行する | `test simulation.yaml --scenarios scenarios/` のように、同じ書き方です。 |
 
-`test` のルールは、[simulation-run.md](../simulation-run.md) の「シナリオをまとめて実行する（`vehicle_sil_launch test`）」にあります。
+`test --scenarios <dir>` が拾うのは `<dir>` 直下の `.yaml`・`.yml`・`.json` ファイルだけです（サブディレクトリへ再帰しないため、`templates/` などは除外され、下位フォルダのファイルは直接指定します）。`test` の詳細なルールは、[simulation-run.md](../simulation-run.md) の「シナリオをまとめて実行する（`vehicle_sil_launch test`）」にあります。
 
 ## 手順 8: CI で実行する
 
@@ -775,6 +775,7 @@ vehicle_sil_launch run simulation.yaml --request replay.request.json --control 0
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
+| `set` と同じ時刻の `expect` が、別の（下流）ECU の出力で失敗する | `within_ms` のない `expect` は時刻 `T` のサンプルだけを見るため、CAN/LIN バス伝搬や下流 ECU の次ステップ実行を待ちません。 | 下流 ECU の反応を見るには、`within_ms` つきの `expect` か `wait_until` を使います。 |
 | `samples: as_sent` で、`set` と同じ時刻の `expect` が、設定する前の値を見て失敗する | その時刻に始まる ECU のステップが、サンプルを取らないことがあります。 | `samples: as_sent` を消します。または、値が反映されたことを、`within_ms` を付けた `expect` で確認します。 |
 | `samples: as_sent` で、短いパルスが、`within_ms` でも `hold_for_ms` でも見えない | サンプルとサンプルの間に変化して戻った値は、条件に現れません。 | `samples: as_sent` を消して、ECU がステップごとにサンプルを送信するようにします。 |
 | 最初のステップの前に、実行が `scenario-not-observed` で失敗する | シナリオが値を読む ECU が、ステップより粗い頻度で値を送信しています。その実行ファイルが `--sample-every-step` を受け取らないか、受け取ると言って従っていません（自分で control agent を作る実行ファイル）。どちらかは、指摘の文にあります。 | 実行ファイルをこの vehicle-sil で作り直すか、ステップごとに値を送信するようにします（`sample_period` を 0）。できなければ、シナリオの最上位に `samples: as_sent` を書きます。 |

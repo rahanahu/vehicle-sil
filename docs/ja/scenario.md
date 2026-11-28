@@ -318,6 +318,7 @@ ECU は、ステップの終わりの全変数の値を 1 組（サンプル）�
 - 条件が 2 つの変数を比較するとき（`{ variable: ... }`）は、左辺と右辺の両方の ECU をシナリオが読むものとして扱います（`samples: every_step` での `--sample-every-step` 付与、および `--timeline` での `watched: true` と `sampled` 系列の記録）。同じ仮想時刻のサンプルは全 participant 分を一括反映してから条件を評価するため、`simulation.yaml` の定義順で合否は変わりません。右辺がシナリオで駆動する入力（`dither` を含む）のときも、予約した `written` 値ではなく ECU が適用して返した `sampled` 値で比較します。
 - 時刻 0 の `expect` は、サンプルがないことでは失敗しません。0 ms に始まるステップのサンプルを見ます（`its sample of 0 ms`）。このサンプルには、時刻 0 の書き込みがもう反映されています。
 - サンプルがなくて失敗するのは、時刻 0 に、シナリオがまだ書いていない変数を、`from` のない `ramp` か `around` のない `wave` で動かすときです（`scenario-write`）。時刻 0 の書き込みは最初のステップの前に渡すので、始まりの値にするサンプルがまだありません（[書き込み](#書き込み)）。
+- シナリオが判定するのは participant の変数であり、生のバスフレームそのものではありません。バスに送信せずに CAN/J1939 フレームをシナリオから検査したいときは、受信専用の `Spy` participant（`vehicle_sil::spy::Spy`、[受信だけをする participant](j1939-guide.md#受信だけをする-participant)）を追加します。
 
 ### ECU が値を送る頻度（`samples`）
 
@@ -347,6 +348,9 @@ ECU がサンプルを送信する頻度は、Agent の `sample_period` です�
 | サンプルを取らない（例: ステップが 5 ms の ECU の 105 ms のステップ） | 前のサンプル（`set` の前の値）を見て、失敗します。 |
 
 このようなシナリオで、値が反映されたことを確認するには、`within_ms` を付けた `expect` を使います（次のサンプルで成り立ちます）。
+
+- **同じ時刻の評価順（`scenario-same-time-order`）**: 同じ仮想時刻 `T` の手順はファイルに書いた順に実行されます。同じ変数に対する `expect` または `wait_until` が、同じ時刻の後の書き込み（`set`・`ramp`・`wave` 等）より前に書かれていると、確認は書き込み前の値を読み、`check` が警告 `scenario-same-time-order` を出します。同じ変数を確認するときは `set` を先に書くか、後の時刻で確認してください。
+- **他 ECU への伝搬や周期応答**: 時刻 `T` の `expect` が見るのは `T` 時点のサンプルだけであり、`set` 直後の他 ECU の次ステップ実行や CAN/LIN バス伝搬は待ちません。下流 ECU の反応を確認するときは `within_ms` つきの `expect` か `wait_until` を使います。
 
 ### 対応表（`variables`）のある participant
 
@@ -749,6 +753,7 @@ steps:
 `cases` のルール:
 
 - `cases` は空でないマッピングで、各要素は `{ params?, only? }` です。値は `null` にできません（上書きがない場合は `{}` と書きます）。
+- `cases` は同じ手順のままパラメーター値や対象機種（`only`）だけを変えるための機能です。手順の構成自体を変えたいときは別ファイルに分けます（共通部分は `template:` で共有できます）。
 - ケース名には UTF-8 文字列（`無負荷`、`定格`、`上限直前` など）や先頭 1 本のハイフン（`-10C`、`a--b`）を使えます。空文字列、`--` で始まる名前、制御文字（`U+0020` 未満・`U+007F`、改行を含む）、不正な UTF-8 は禁止です。
 - `cases.<名前>.params` に書いたすべてのパラメーターは、最上位 `params` で宣言されているか、`steps` で使われている必要があります（そうでなければ `scenario-param`）。
 - 最上位 `only` と `cases.<名前>.only` の両方があるときは、まず両方の生の variant 名を検証し、その積集合を実行対象とします。積集合が空になるときはスキップせず `scenario-variant` エラーで失敗します。
@@ -1107,6 +1112,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario-samples-unsupported` | 警告 | シナリオが値を読む participant の実行ファイルが、`--sample-every-step` を受け取ると言っていない（`--describe` の `features` に `sample-every-step` がない）。実行は、ステップごとのサンプルを頼めない。説明（`--describe` の結果）のない participant には出さない。[ECU が値を送る頻度](#ecu-が値を送る頻度samples)にあります。 |
 | `scenario-samples-as-sent` | 注記 | シナリオに `samples: as_sent` があり、値を読む。それぞれの ECU が送信するままのサンプルで判定する。 |
 | `scenario-nothing-checked` | 警告 | 確認する手順（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）を全部スキップするので、シナリオが何も確認しない。 |
+| `scenario-same-time-order` | 警告 | 同じ仮想時刻・同じ変数に対し、値を変える後の書き込み（`set`・`ramp`・`wave` 等）よりファイル上で前に `expect` や `wait_until` が書かれているため、条件が書き込み前の値を見る。 |
 | `scenario-step-skipped` | 注記 | 手順が `absent: true` の変数か、機種が無効にした participant の変数を使うので、実行でスキップする。`ramp` と `wave` の横の `expect` だけが使うときは、その `expect` だけをスキップする。 |
 
 照合が `dither` をどう見るか:

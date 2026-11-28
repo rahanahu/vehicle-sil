@@ -389,16 +389,23 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
                                               ctx_.plan.ecu_start_margin.count());
         }
         const std::filesystem::path& checked_executable = ctx_.check.participants[i].executable;
+        const auto normalize_participant_executable = [](const std::filesystem::path& path) {
+#ifdef _WIN32
+            return process::normalize_executable_path(path);
+#else
+            return without_dots(std::filesystem::absolute(path));
+#endif
+        };
         if (p.manual)
         {
             const std::filesystem::path executable =
-                checked_executable.empty() ? std::filesystem::path{} : without_dots(std::filesystem::absolute(checked_executable));
+                checked_executable.empty() ? std::filesystem::path{} : normalize_participant_executable(checked_executable);
             const std::string written =
                 p.command.empty() ? std::string{} : config::expand_placeholders({p.command.front()}, "", "").front();
             show_manual(p, executable, written, arguments, workDir);
             continue;
         }
-        const std::filesystem::path executable = without_dots(std::filesystem::absolute(checked_executable));
+        const std::filesystem::path executable = normalize_participant_executable(checked_executable);
 #ifndef _WIN32
         if (!config::registry_on_network(ctx_.config))
         {

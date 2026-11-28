@@ -772,7 +772,8 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
             if (step.status == scenario::StepStatus::Failed)
             {
                 const std::string what = step.name.empty() ? step.text : "'" + step.name + "' (" + step.text + ")";
-                add_scenario(step.code, what + ": " + step.message, step.line, config::Severity::Error, step.file,
+                const std::size_t line = step.failed_line > 0 ? step.failed_line : step.line;
+                add_scenario(step.code, what + ": " + step.message, line, config::Severity::Error, step.file,
                              format_provenance(&step.call_stack));
             }
         }

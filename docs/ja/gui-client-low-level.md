@@ -405,6 +405,7 @@ watch.close();
 - 書き込みは、指定した仮想時間（`atMs`。省くと次のステップ）のステップで反映されるので、止まっている間は確定しません。`enqueue()` が ECU キュー到達を待つため、`await client.variables.enqueue(...)` → `step()` / `runUntil()` → `await queued.applied()` の順で `sleep()` なしに決定論的に書けます。
 - `keepalive`（`WriteOptions.keepalive`、`HttpRequest.keepalive` を通じて `fetch(..., { keepalive })` へ転送）を使うと、ブラウザの `pagehide` ハンドラから送る解除書き込みに `Authorization` と `Origin` ヘッダーを付けたままページ離脱後も完了させられます。[docs/ja/gui.md](gui.md#保持入力切断復帰バス観測) の「保持入力・切断復帰・バス観測」を参照してください。
 - 最近の操作（ほかのクライアントの書き込みも。シナリオ自身の書き込みは除く）は `client.variables.operations` で読めます。
+- シナリオ実行の終了後（`--speed max` 実行を含む）に全ステップ精度の値を調べるには、ライブポーリングではなく `client.session.get().session?.scenario.timelineUrl`（`GET api/timeline/<run_id>`）を取得してください。
 
 ### 最初のステップの前に書く
 

@@ -600,6 +600,7 @@ private:
                                       const std::vector<std::string>& rhs_texts);
 
     std::string step_text(const ScenarioStep& step, const StepReadState& state) const;
+    void check_same_time_order(const ScenarioStep& step, std::optional<std::int64_t> time, std::int64_t length);
 
     struct EvalScope
     {
@@ -712,6 +713,15 @@ private:
     /// The latest the step before can end, in milliseconds (a wait counted with its whole time).
     std::int64_t latest_ms_ = 0;
     bool too_long_ = false; ///< said once
+    struct SameTimeRead
+    {
+        std::string file;
+        std::size_t line = 0;
+    };
+    std::map<std::size_t, SameTimeRead> same_time_reads_{};
+    std::set<std::size_t> same_time_warned_{};
+    std::optional<std::int64_t> same_time_at_{};
+    bool same_time_active_ = false;
 };
 
 } // namespace vehicle_sil::scenario::reader

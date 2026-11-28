@@ -113,8 +113,8 @@ def test_omit_only_fields_reject_null_at_runtime_and_emit_no_null_in_json_schema
         (C.WriteRequest, {"run_id": "r1", "instance": None, "writes": {"E": {"x": 1}}}),
         (C.WriteRequest, {"run_id": "r1", "writes": {"E": {"x": 1}}, "late": None}),
         (C.WatchPayload, {"id": 1, "variables": "all", "period_ms": None}),
-        (C.CliReadyMessage, {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "dev_url": None}),
-        (C.CliReadyMessage, {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "auth": None}),
+        (C.CliReadyMessage, {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "pid": 1, "instance": "abc", "dev_url": None}),
+        (C.CliReadyMessage, {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "pid": 1, "instance": "abc", "auth": None}),
     ):
         with pytest.raises(ValidationError):
             model.model_validate(bad)

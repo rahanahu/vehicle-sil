@@ -494,6 +494,10 @@ void apply_variant(SimulationConfig& config, const VariantConfig& variant);
 [[nodiscard]] std::size_t edit_distance(std::string_view a, std::string_view b);
 /// The candidate closest to `word` if it is close enough to be a typing error, or "".
 [[nodiscard]] std::string closest(std::string_view word, const std::vector<std::string>& candidates);
+/// Up to `max_results` ranked candidates for `word` (exact leaf match, close edit on leaf,
+/// substring/token overlap, or broader edit distance), sorted best-first.
+[[nodiscard]] std::vector<std::string> closest_matches(std::string_view word, const std::vector<std::string>& candidates,
+                                                       std::size_t max_results = 3);
 } // namespace detail
 
 } // namespace vehicle_sil::config

@@ -616,7 +616,7 @@ When a run fails, the remaining runs still run. The command on the `to see a fai
 | Stop at the first failure | Add `--fail-fast`. |
 | Run with a configuration file without variants | Write the command the same way: `test simulation.yaml --scenarios scenarios/`. |
 
-For the rules of `test`, see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](../simulation-run.md#running-several-scenarios-vehicle_sil_launch-test).
+`test --scenarios <dir>` scans `.yaml`, `.yml`, and `.json` files directly inside `<dir>` only (non-recursive; subdirectories such as `templates/` are skipped, so pass nested files explicitly). For all rules of `test`, see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](../simulation-run.md#running-several-scenarios-vehicle_sil_launch-test).
 
 ## Step 8: Run in CI
 
@@ -775,6 +775,7 @@ The values that a scenario sees are the samples of the ECUs. In a run with a sce
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| An `expect` right after a `set` (at the same virtual time) fails on a downstream ECU's output | `expect` without `within_ms` checks only the sample taken at `T`, before the next CAN/LIN frame propagation or downstream ECU step. | Use `expect` with `within_ms` or `wait_until` when checking a downstream ECU reaction. |
 | With `samples: as_sent`, an `expect` at the same time as a `set` sees the value from before the `set`, and fails | The ECU step that starts at that time may not take a sample. | Remove `samples: as_sent`, or use an `expect` with `within_ms` to check that the value was applied. |
 | With `samples: as_sent`, a short pulse is not seen, with either `within_ms` or `hold_for_ms` | A value that changes and changes back between 2 samples does not appear in the condition. | Remove `samples: as_sent`, so that the ECU sends a sample after every ECU step. |
 | The run fails before the first step with `scenario-not-observed` | An ECU whose values the scenario reads sends them less often than its step: its executable does not accept `--sample-every-step`, or says that it does and does not follow it (an executable that makes its own control agent). The finding message says which. | Build the executable again with this vehicle-sil, or make it send its values after every step (`sample_period` 0). If you cannot, write `samples: as_sent` at the top of the scenario. |

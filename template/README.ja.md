@@ -8,19 +8,19 @@
 
 | 必要なもの | Linux | Windows |
 |---|---|---|
-| コンパイラ | GCC 12 以上か Clang（C++20 に対応したもの） | MSYS2 UCRT64 の MinGW-w64 GCC |
-| CMake 3.21 以上、Ninja、Git | ディストリビューションのパッケージ | MSYS2 のパッケージ |
-| Python 3.9 以上（`get_tools.py` の実行） | ディストリビューションのパッケージ | MSYS2 の Python |
-| Python 3.11 以上（GUI） | [uv](https://docs.astral.sh/uv/) があれば、足りない Python とパッケージを uv がインストールします。 | uv（MSYS2 の `mingw-w64-ucrt-x86_64-uv`）が必要です。 |
+| コンパイラ | GCC 12 以上か Clang（C++20 に対応したもの） | MinGW-w64 GCC（MSYS2 UCRT64、または `PATH` 上のスタンドアロン UCRT64 MinGW-w64） |
+| CMake 3.21 以上、Ninja、Git | ディストリビューションのパッケージ | MSYS2 パッケージまたは `PATH` 上の各種インストーラー |
+| Python 3.9 以上（`get_tools.py` の実行） | ディストリビューションのパッケージまたは `uv` | MSYS2 の Python、単体 Python、または `uv run --no-project` |
+| Python 3.11 以上（GUI） | [uv](https://docs.astral.sh/uv/) があれば、足りない Python とパッケージを uv がインストールします。 | uv（`mingw-w64-ucrt-x86_64-uv` または Windows 版 `uv`）が必要です。 |
 
-Windows では、MSYS2 の「UCRT64」シェルで作業します。MSVC（Visual Studio）はテンプレート ECU のビルドに対して公式に非対応です。必要なものは、次のコマンドでインストールします。
+Windows では MSYS2 の「UCRT64」シェルが CI 検証済み環境ですが、`PATH` にスタンドアロン MinGW-w64（UCRT64）GCC と CMake、Ninja、Git が通っていれば MSYS2 なしでもビルドできます（別系統の MinGW/GCC DLL が `PATH` の手前に混ざらないようにしてください）。MSVC（Visual Studio）はテンプレート ECU のビルドに対して公式に非対応です。MSYS2 UCRT64 で必要なものを入れるには次を実行します。
 
 ```sh
 pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
   mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-uv
 ```
 
-Windows の GUI は、uv がダウンロードする Python（ビルド済み wheel 対応）で動きます。MSYS2 の Python には、GUI のパッケージをインストールできません。なお、ほかのコンパイラ（MSVC を含む）で作った外部の実行ファイルやツールも、SIL Kit や gRPC を介してプロセス境界越しに接続できます。
+ビルド済みツール（`get_tools.py` の `VERSION`、`0.6.0`）と `CMakeLists.txt` の `GIT_TAG`（`v0.6.0`）は必ず同じリリースに合わせてください（異なると `check` が `version-mismatch` で失敗します）。Windows の GUI は、uv がダウンロードする Python（ビルド済み wheel 対応）で動きます。MSYS2 の Python には、GUI のパッケージをインストールできません。なお、ほかのコンパイラ（MSVC を含む）で作った外部の実行ファイルやツールも、SIL Kit や gRPC を介してプロセス境界越しに接続できます。
 
 WSL では、`/mnt/<drive>` ではなく WSL の Linux ファイルシステム（`~/` 配下など）に置いてください（9p 上のビルドは遅くなります）。また、Windows と WSL で同じ作業ツリーや `node_modules` を共有しないでください。
 
@@ -45,6 +45,9 @@ vehicle-sil の[リリースのページ](https://github.com/rahanahu/vehicle-si
 
 ```sh
 python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
+# MSYS2 Python なしで uv を使う場合: uv run --no-project python get_tools.py
+# Windows の Git Bash の場合（get_tools.py が表示したパスに合わせる）:
+#   export PATH="$(cygpath -u '...\tools\vehicle-sil-tools-0.6.0-windows-x86_64\bin'):$PATH"
 # 続けて、表示された PATH の行を実行する（コマンド プロンプトか PowerShell から実行したときは、自分のシェルの名前の行）
 ```
 
@@ -79,8 +82,8 @@ python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
 ## 手順 3: ビルドして実行する
 
 ```sh
-cmake --preset linux             # Windows: cmake --preset windows
-cmake --build --preset linux     # Windows: cmake --build --preset windows
+cmake --preset linux             # Release: linux-release | Windows: windows / windows-release
+cmake --build --preset linux     # Release: linux-release | Windows: windows / windows-release
 vehicle_sil_launch check simulation.yaml
 vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
@@ -152,7 +155,7 @@ vehicle-sil-gui simulation.live.yaml
 | ECU を追加する | `CMakeLists.txt` に `add_executable` から `vehicle_sil_copy_runtime_dlls` までの 4 行を追加し、`simulation.yaml` の `participants` に追加します。 |
 | ネットワークの名前（`J1939_CAN`）を変える | ECU のコードと `simulation.yaml` の `networks` で、同じ名前にします。 |
 
-Manufacturer Code の 0x7F0 は仮の値です。
+Manufacturer Code の 0x7F0 は仮の値です。`CMakeLists.txt` では `vehicle_sil::simulation` とあわせて任意の補助ターゲット（`vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_monitor`、`vehicle_sil::spy` など）もリンクできます（[docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.6.0/docs/ja/build.md#外部プロジェクトから使うfetchcontent)）。
 
 ECU を 1 つ追加する手順の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.6.0/docs/ja/howto/first-ecu.md)」にあります。
 

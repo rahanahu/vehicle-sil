@@ -375,14 +375,48 @@ std::string detail::scenario_lines_text(const std::vector<scenario::ScenarioLine
     return table(rows);
 }
 
+std::string detail::called_from_inline(std::string_view detail)
+{
+    constexpr std::string_view kPrefix = "called from: ";
+    std::string out;
+    std::size_t pos = 0;
+    while (pos < detail.size())
+    {
+        const std::size_t end = detail.find('\n', pos);
+        const std::string_view line =
+            detail.substr(pos, end == std::string_view::npos ? std::string_view::npos : end - pos);
+        if (line.rfind(kPrefix, 0) == 0)
+        {
+            std::string_view loc = line.substr(kPrefix.size());
+            if (const std::size_t meta = loc.find(" ("); meta != std::string_view::npos)
+            {
+                loc = loc.substr(0, meta);
+            }
+            if (!loc.empty())
+            {
+                out += out.empty() ? "called from " : ", ";
+                out.append(loc);
+            }
+        }
+        if (end == std::string_view::npos)
+        {
+            break;
+        }
+        pos = end + 1;
+    }
+    return out;
+}
+
 std::string detail::findings_text(const std::string& file, const std::vector<config::Finding>& findings)
 {
     std::string out;
     for (const auto& finding : findings)
     {
+        const std::string caller = called_from_inline(finding.detail);
         out += std::string(severity_name(finding.severity)) + ": " + (finding.file.empty() ? file : finding.file) +
                (finding.line > 0 ? ":" + std::to_string(finding.line) : std::string{}) + ": " + finding.message +
-               (finding.code.empty() ? std::string{} : " [" + finding.code + "]") + "\n";
+               (finding.code.empty() ? std::string{} : " [" + finding.code + "]") +
+               (caller.empty() ? std::string{} : " (" + caller + ")") + "\n";
         if (!finding.detail.empty())
         {
             std::istringstream in(finding.detail);

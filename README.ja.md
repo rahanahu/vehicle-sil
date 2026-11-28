@@ -21,6 +21,7 @@ vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェア�
 | Vector SIL Kit Dashboard で構成やメトリクスを観測する | 既存の ECU と `vehicle_sil_sim_controller` を Vector 公式 `sil-kit-registry` と `--silkit-config` で動かします。 | [Vector SIL Kit Dashboard でシミュレーションを観測する](docs/ja/howto/vector-dashboard.md) |
 | ほかの ECU に影響せずバスの通信を観測する | 受信だけの participant（`vehicle_sil::spy::Spy`）が、バスに何も送信せずに J1939 の通信をシナリオや GUI 向けの ECU 変数にします。 | [受信だけをする participant](docs/ja/j1939-guide.md#受信だけをする-participant) |
 | 外部ツールから連携する・スキーマで検証する | GUI の HTTP/WS API、OpenAPI・JSON Schema、ランチャーのイベント、実行可能なクライアント例への入口（タグ固定）。 | [external-api.md](docs/ja/external-api.md) |
+| ビルドプリセットと公開 CMake ターゲット | Linux/Windows のビルド、単体 MinGW の補足、FetchContent でリンクする `vehicle_sil::*` ターゲット一覧。 | [docs/build.md](docs/ja/build.md)、[architecture.md](docs/ja/architecture.md#ターゲット) |
 | 実機の CAN やネットワークにつなぐ | シミュレーションのバスと実機のバスの間でフレームを中継するブリッジが、Vector XL の CAN 用（Windows）、SocketCAN 用（Linux）、イーサネット用にあります。 | Vector XL（Windows）は [bridges.md](docs/ja/bridges.md)、SocketCAN（Linux）は [socketcan-bridge.md](docs/ja/socketcan-bridge.md)、イーサネットは [ethernet-bridge.md](docs/ja/ethernet-bridge.md)。自分でブリッジを作るときは [bridge-contract.md](docs/ja/bridge-contract.md) |
 | ほかの PC の ECU を参加させる | 設定ファイルに、SIL Kit の registry（参加者どうしを引き合わせるサーバー）のアドレスと、相手が自分で起動する ECU を書きます。 | [複数の PC で動かす](docs/ja/howto/multi-pc.md) |
 

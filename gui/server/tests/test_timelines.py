@@ -308,6 +308,46 @@ def test_the_files_of_the_last_runs_are_kept_and_the_rest_removed(tmp_path: Path
     assert not directory.exists() and timelines.ready == {}
 
 
+def test_keep_runs_evicts_passing_runs_before_failed_runs() -> None:
+    timelines = Timelines(kept=3)
+    try:
+        def add(run_id: str, *, failed: bool = False) -> Path:
+            p = timelines.new_file()
+            p.write_text('{"vehicle_sil_timeline": 1}\n', encoding="utf-8")
+            assert timelines.finish(run_id, p, True, f"{run_id}.yaml", failed=failed) is True
+            return p
+
+        p_fail1 = add("fail-1", failed=True)
+        add("pass-1")
+        add("pass-2")
+        # Adding pass-3 evicts pass-1 (oldest passing), keeping fail-1.
+        add("pass-3")
+        assert list(timelines.ready) == ["fail-1", "pass-2", "pass-3"]
+        assert p_fail1.is_file()
+
+        # Adding pass-4 evicts pass-2, keeping fail-1.
+        add("pass-4")
+        assert list(timelines.ready) == ["fail-1", "pass-3", "pass-4"]
+        assert p_fail1.is_file()
+
+        # When failed runs fill the cap and another failed run finishes, oldest failed is evicted.
+        add("fail-2", failed=True)
+        add("fail-3", failed=True)
+        assert list(timelines.ready) == ["fail-1", "fail-2", "fail-3"]
+        add("fail-4", failed=True)
+        assert list(timelines.ready) == ["fail-2", "fail-3", "fail-4"]
+        assert not p_fail1.exists()
+
+        # Even if all kept slots are failed, a newly finished passing run is kept (oldest failed evicted).
+        add("pass-new")
+        assert list(timelines.ready) == ["fail-3", "fail-4", "pass-new"]
+    finally:
+        timelines.remove_all()
+
+    with pytest.raises(ValueError, match="1 or more"):
+        Timelines(kept=0)
+
+
 @pytest.mark.parametrize("name", ["timeline.html", "vehicle-sil-timeline.js", "page.js"])
 def test_the_page_dir_is_found_only_with_all_its_files(tmp_path: Path, monkeypatch, name: str) -> None:
     import vehicle_sil_gui.timelines as module
