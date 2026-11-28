@@ -689,6 +689,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `strict` | `true` or `false` | `--strict` |
 | `after_scenario` | `"stop"` (default: end when scenario finishes) or `"pause"` (pause at scenario pass for manual handover; requires `scenario`, cannot be combined with `stop_at_ms`, and `run` needs `--stdin-commands` or `--control`) | |
 | `record` | A list of `"<participant>.<variable>"` names to sample and record into the `--timeline` file without affecting scenario verdicts | `--record` |
+| `record_after_fail_ms` | Virtual-time post-failure tail duration (an integer from 1 to 600000 ms) to continue passive sample recording into `--timeline` after a normal assertion or wait-timeout failure. Requires `scenario`. | `--record-after-fail-ms` |
 
 ### Arguments together with a request file
 
@@ -696,7 +697,7 @@ An argument wins over the file, field by field.
 
 | Key | With an argument for the same thing |
 |---|---|
-| `variant`, `scenario`, `case`, `speed`, `time_policy` | The argument replaces the file's value. |
+| `variant`, `scenario`, `case`, `speed`, `time_policy`, `record_after_fail_ms` | The argument replaces the file's value. |
 | `start_paused`, `strict` | On if the file or the argument says so. No argument switches them off. |
 | `connect` | By network: `--connect <network>=<target>` replaces the file's target of that network, and `--connect <network>=none` takes it away for this run. The other networks of the file stay. |
 | `params` | By name: `--param <name>=<value>` replaces the file's value of that parameter. The others stay; their `from` in the check JSON is `request_file`. |
@@ -1855,12 +1856,12 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 
 | Scenario | `recorded_to_ms` |
 |---|---|
-| Failed (`failed`) | The `at_ms` of the failed step (or of the failed dither write when all steps had already passed; in a run that ended at `stop_at_ms`, the time it stopped) |
+| Failed (`failed`) | The `at_ms` of the failed step (or of the failed dither write when all steps had already passed; in a run that ended at `stop_at_ms`, the time it stopped). With `--record-after-fail-ms <ms>` (or `record_after_fail_ms`), a normal assertion or wait-timeout failure extends recording passively up to `at_ms + <ms>` (or the actual stop time if stopped earlier by the user, `stop_at_ms`, `--timeout-ms`, or a participant failure during the tail), with no new scenario steps, writes, motions, or dithers issued after failure detection (`over_at_ms`). |
 | Passed (`passed`) | The latest `at_ms` of the steps (extended up to `min(end_ms, now)` when `end_ms` is set; with `after_scenario: "pause"`, the timeline closes at handover and does not record post-handover manual steps) |
 | Ended partway (`incomplete`) | The latest time among observed samples and writes sent through the last controller time (0 if there were none). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
 
-- The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Only in a run that failed on a write that the ECU's Agent refused at once is `over_at_ms` (the time step of the refusal) at or before `recorded_to_ms` (the time of that write).
+- The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Two exceptions can place `over_at_ms` at or before `recorded_to_ms`: a run that failed on a write that the ECU's Agent refused at once (`over_at_ms` is the time step of the refusal while `recorded_to_ms` is the time of that write), and a run with `--record-after-fail-ms` (where `over_at_ms` stays at the failure detection tick while `recorded_to_ms` extends through the passive post-failure tail). Post-failure tail recording applies only to normal assertion or wait-timeout failures (`scenario-failed` / `scenario-timeout`) when `--timeline` is active; write errors (`scenario-write`), unusable-variable failures, passes, and early stops before failure do not enter the tail. No new scenario steps, writes, motions, or dithers are issued after failure detection (`over_at_ms`), while writes already pipelined for `(at_ms, over_at_ms]` before detection (when `time_step_ms >= ecu_step_ms`) may already have been applied by the ECU and remain visible in the timeline.
 - **The same run gives the same file.** The file holds only what virtual time decides (no real time, process IDs or lateness counts), so a different speed (`--speed`) gives the same file. This holds for runs that passed and for runs that failed on a sample or a wait. If an ECU itself depends on real time or random numbers, its value series change too.
 - For runs that passed and runs that failed on a sample or a wait, a different controller time step (`time_step_ms`) gives the same file, except `over_at_ms` and `time_step_ms`. The following do depend on the time step, in the same places as the scenario result does (see "Timing" in [scenario.md](scenario.md#timing) and "Results" in [scenario.md](scenario.md#results)):
   - The `end_ms` of a wait step that succeeded (`wait_until`, `expect` with `within_ms`), and the times of the steps after it.

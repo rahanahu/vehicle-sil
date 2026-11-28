@@ -253,7 +253,8 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
                                                         *port_,
                                                         [this](const scenario::ScenarioStepRun& step) { note_step(step); }, record_.get(),
                                                         ctx_.plan.stop_at_ms ? std::optional<SimTime>(SimTime{} +
-                                                            std::chrono::milliseconds(*ctx_.plan.stop_at_ms)) : std::nullopt);
+                                                            std::chrono::milliseconds(*ctx_.plan.stop_at_ms)) : std::nullopt,
+                                                        ctx_.plan.record_after_fail);
     const auto& extra_names = engine_->extra_participants();
     if (!extra_names.empty())
     {
@@ -421,6 +422,8 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
         RunSamples& samples;
         ~Ends() { samples.scenario_ends(); }
     } ends{samples_};
+    const bool was_in_failing_tail = engine_->in_failing_tail();
+    const bool had_failing_tail = engine_->had_failing_tail();
     if (!engine_->over())
     {
         const bool stoppedAt = !for_scenario && watched.end == WatchEnd::Ended &&
@@ -434,13 +437,19 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
         }
         else
         {
+            if (was_in_failing_tail)
+            {
+                drain();
+            }
             engine_->cut_short();
         }
     }
-    if (watched.end == WatchEnd::Failed)
+    if (watched.end == WatchEnd::Failed && !had_failing_tail)
     {
         // A participant failed: whatever the scenario made of it (a write to it that failed),
         // the run's result is the participant's failure and a scenario that did not finish.
+        // If the scenario had already entered FailingTail after a normal assertion/timeout failure,
+        // preserve the established failure alongside participant-failed.
         engine_->superseded();
     }
     const std::string file = outcome.scenario.result->file;

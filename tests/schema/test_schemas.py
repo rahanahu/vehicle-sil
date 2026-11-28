@@ -1408,6 +1408,15 @@ REQUEST_SAMPLES = [
     ("record empty item", "{" + R + ', "record": [""]}', "invalid"),
     ("record non-string item", "{" + R + ', "record": [1]}', "invalid"),
     ("record null", "{" + R + ', "record": null}', "invalid"),
+    ("record_after_fail_ms valid", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 300}', "valid"),
+    ("record_after_fail_ms min", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 1}', "valid"),
+    ("record_after_fail_ms max", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 600000}', "valid"),
+    ("record_after_fail_ms zero", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 0}', "invalid"),
+    ("record_after_fail_ms negative", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": -5}', "invalid"),
+    ("record_after_fail_ms above max", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 600001}', "invalid"),
+    ("record_after_fail_ms float", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 1.5}', "invalid"),
+    ("record_after_fail_ms string", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": "300"}', "invalid"),
+    ("record_after_fail_ms null", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": null}', "invalid"),
 ]
 
 

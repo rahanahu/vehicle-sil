@@ -36,6 +36,7 @@ from .protocol import (
     REQUEST_VERSION,
     encode_ndjson,
     validate_name_sequence,
+    validate_record_after_fail_ms,
 )
 
 if TYPE_CHECKING:
@@ -727,6 +728,7 @@ class Serve:
         enable: Sequence[str] = (),
         manual: Sequence[str] = (),
         record: Sequence[str] = (),
+        record_after_fail_ms: Optional[int] = None,
         connect: Optional[Mapping[str, str]] = None,
         time_policy: Optional[str] = None,
         speed: Optional[Union[float, int, str]] = None,
@@ -764,6 +766,7 @@ class Serve:
                     stop_at_ms,
                     late_tolerance_ms,
                     after_scenario,
+                    record_after_fail_ms,
                 )
             )
             or bool(disable_list or enable_list or manual_list or record_list)
@@ -798,6 +801,8 @@ class Serve:
                 intent_dict["manual"] = manual_list
             if record_list:
                 intent_dict["record"] = record_list
+            if record_after_fail_ms is not None:
+                intent_dict["record_after_fail_ms"] = validate_record_after_fail_ms(record_after_fail_ms)
             if connect is not None:
                 if not isinstance(connect, Mapping):
                     raise TypeError("connect must be a mapping")

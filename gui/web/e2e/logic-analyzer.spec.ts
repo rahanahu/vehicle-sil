@@ -937,3 +937,86 @@ test('logic analyzer: selecting an extra recorded signal in Run setup records an
   await restoreChip.click();
   await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 3');
 });
+
+test('logic analyzer: post-failure tail recording input sends record_after_fail_ms and shows Around failure framing', async ({
+  page,
+}) => {
+  await page.goto(`${base}#token=${server.token}`);
+  await inSync(page);
+
+  const cfgSelect = page.getByTestId('config-select');
+  await cfgSelect.click();
+  await page.getByRole('option', { name: 'simulation.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-outcome')).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  await page.getByTestId('scenario-select').click();
+  await page.getByRole('option', { name: 'fails.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-scenario')).toContainText('fails.yaml', {
+    timeout: RUN_TIMEOUT,
+  });
+
+  // Set post-failure tail recording to 300 ms and also pick Dashboard.dashboard.speed
+  const tailInput = page.getByTestId('record-after-fail-ms');
+  await expect(tailInput).toBeVisible();
+  const tailCheck = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/check') &&
+      (r.request().postDataJSON() as Record<string, unknown>)['record_after_fail_ms'] === 300,
+  );
+  await tailInput.fill('300');
+  await tailCheck;
+
+  const disclosure = page.getByTestId('record-signals');
+  await disclosure.locator('summary').click();
+  const dashSpeedBox = page
+    .getByTestId('record-signal-option-Dashboard.dashboard.speed')
+    .getByRole('checkbox');
+  if (!(await dashSpeedBox.isChecked())) {
+    const recCheck = page.waitForResponse(
+      (r) =>
+        r.url().endsWith('/api/check') &&
+        Array.isArray((r.request().postDataJSON() as Record<string, unknown>)['record']) &&
+        ((r.request().postDataJSON() as Record<string, unknown>)['record'] as string[]).includes(
+          'Dashboard.dashboard.speed',
+        ),
+    );
+    await dashSpeedBox.check();
+    await recCheck;
+  }
+
+  const runReqPromise = page.waitForRequest(
+    (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+  );
+  const runId = await start(page);
+  const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+  expect(runBody['record_after_fail_ms']).toBe(300);
+  expect(runBody['record']).toEqual(['Dashboard.dashboard.speed']);
+
+  const card = page.getByTestId('scenario-card');
+  await expect(card.getByTestId('scenario-timeline')).toHaveAttribute(
+    'href',
+    new RegExp(`%2Fapi%2Ftimeline%2F${runId}&`),
+    { timeout: RUN_TIMEOUT },
+  );
+  const timeline = card.getByTestId('timeline-element');
+  await expect(timeline).toBeVisible();
+
+  // Around failure button appears because recorded_to_ms (400) > failed.at_ms (100)
+  const aroundBtn = card.getByTestId('timeline-window-around-failure');
+  await expect(aroundBtn).toBeVisible();
+  await card.getByTestId('timeline-window-150').click();
+  const preView = await timeline.evaluate((el) => {
+    const t = el as HTMLElement & { from: number; to: number };
+    return { from: t.from, to: t.to };
+  });
+  expect(preView.to).toBeLessThan(200);
+
+  await aroundBtn.click();
+  const aroundView = await timeline.evaluate((el) => {
+    const t = el as HTMLElement & { from: number; to: number; cursor: number | null };
+    return { from: t.from, to: t.to, cursor: t.cursor };
+  });
+  expect(aroundView.from).toBe(0);
+  expect(aroundView.to).toBeGreaterThanOrEqual(400);
+  expect(aroundView.cursor).toBe(100);
+});

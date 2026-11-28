@@ -26,7 +26,7 @@ DEFAULT_FEATURES = [
     "manual-participants", "timeline", "run-stop-at", "scenario-end-ms", "scenario-handover",
     "scenario-cases", "scenario-templates",
     "connections", "connect", "check-text", "compare-commands", "serve", "check-file-only",
-    "serve-prepare", "control-metrics", "external-registry", "record-signals",
+    "serve-prepare", "control-metrics", "external-registry", "record-signals", "record-after-fail",
 ]
 
 def _peer_variables(name: str) -> list[dict]:
@@ -114,6 +114,7 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
     variant = req.get("variant")
     scenario = req.get("scenario")
     scenario_case = req.get("case")
+    record_after_fail_ms = req.get("record_after_fail_ms")
     i = 0
     while i < len(argv):
         if argv[i] == "--disable" and i + 1 < len(argv):
@@ -124,6 +125,12 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
             man.append(argv[i + 1]); i += 2
         elif argv[i] == "--record" and i + 1 < len(argv):
             rec.append(argv[i + 1]); i += 2
+        elif argv[i] == "--record-after-fail-ms" and i + 1 < len(argv):
+            try:
+                record_after_fail_ms = int(argv[i + 1])
+            except ValueError:
+                record_after_fail_ms = argv[i + 1]
+            i += 2
         elif argv[i] == "--variant" and i + 1 < len(argv):
             variant = argv[i + 1]; i += 2
         elif argv[i] == "--scenario" and i + 1 < len(argv):
@@ -146,6 +153,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
         req["scenario"] = scenario
     if scenario_case is not None:
         req["case"] = scenario_case
+    if record_after_fail_ms is not None:
+        req["record_after_fail_ms"] = record_after_fail_ms
     return req, req_path
 
 
@@ -321,6 +330,38 @@ def inspect_config(
             "file_sha256": sha,
             "hot_eligibility": {"eligible": True, "reason": None, "message": None},
         }, fault
+
+    record_after_fail_ms = req.get("record_after_fail_ms")
+    if record_after_fail_ms is not None and not file_only:
+        if (
+            isinstance(record_after_fail_ms, bool)
+            or not isinstance(record_after_fail_ms, int)
+            or record_after_fail_ms < 1
+            or record_after_fail_ms > 600000
+        ):
+            return 4, {
+                "vehicle_sil_check": 1, "vehicle_sil": _version(), "file": cfg_path,
+                "result": "usage", "strict": False, "errors": 1, "warnings": 0, "notes": 0,
+                "participants": [], "networks": [], "findings": [{
+                    "severity": "error", "code": "usage", "file": req_path or cfg_path, "line": 1,
+                    "participant": None, "network": None,
+                    "message": "record_after_fail_ms must be an integer between 1 and 600000",
+                }],
+                "file_sha256": sha,
+                "hot_eligibility": {"eligible": True, "reason": None, "message": None},
+            }, fault
+        if not scenario:
+            return 4, {
+                "vehicle_sil_check": 1, "vehicle_sil": _version(), "file": cfg_path,
+                "result": "usage", "strict": False, "errors": 1, "warnings": 0, "notes": 0,
+                "participants": [], "networks": [], "findings": [{
+                    "severity": "error", "code": "usage", "file": req_path or cfg_path, "line": 1,
+                    "participant": None, "network": None,
+                    "message": "--record-after-fail-ms needs a scenario",
+                }],
+                "file_sha256": sha,
+                "hot_eligibility": {"eligible": True, "reason": None, "message": None},
+            }, fault
 
     # Build participants
     participants: list[dict] = []
@@ -1580,6 +1621,21 @@ def _execute_run(
                     "failed": None,
                 },
             ]
+            tail_ms = (
+                req_dict.get("record_after_fail_ms")
+                if is_fail_sc
+                and isinstance(req_dict.get("record_after_fail_ms"), int)
+                and not isinstance(req_dict.get("record_after_fail_ms"), bool)
+                and req_dict.get("record_after_fail_ms") > 0
+                else 0
+            )
+            fail_recorded_to = 100 + tail_ms
+            speed_points = [[0, 50], [50, 300], [100, 550]]
+            if tail_ms > 0:
+                mid_t = 100 + max(1, tail_ms // 2)
+                speed_points.append([mid_t, 720])
+                if fail_recorded_to > mid_t:
+                    speed_points.append([fail_recorded_to, 890])
             tl_doc = {
                 "vehicle_sil_timeline": 1,
                 "vehicle_sil": _version(),
@@ -1593,7 +1649,7 @@ def _execute_run(
                     "name": sc_title,
                     "status": "failed" if is_fail_sc else "passed",
                     "over_at_ms": 101 if is_fail_sc else 1000,
-                    "recorded_to_ms": 100 if is_fail_sc else 1000,
+                    "recorded_to_ms": fail_recorded_to if is_fail_sc else 1000,
                     "end_ms": None,
                 },
                 "variables": [
@@ -1608,8 +1664,9 @@ def _execute_run(
                      "columns": ["at_ms", "value"], "samples": None, "first_ms": None, "last_ms": None,
                      "not_applied_from": None, "points": [[0, 50]]},
                     {"variable": "Engine.engine.speed", "source": "sampled", "encoding": "changes",
-                     "columns": ["at_ms", "value"], "samples": 11, "first_ms": 0, "last_ms": 100,
-                     "not_applied_from": None, "points": [[0, 50], [50, 300], [100, 550]]},
+                     "columns": ["at_ms", "value"], "samples": 11 + (tail_ms // 10), "first_ms": 0,
+                     "last_ms": fail_recorded_to if is_fail_sc else 1000,
+                     "not_applied_from": None, "points": speed_points},
                 ],
                 "lines": [
                     {"variable": "Engine.engine.demand", "kind": "set", "line": 5, "step": 1,
@@ -1657,9 +1714,19 @@ def _execute_run(
                         else [[0, 0], [50, 1]] if vtype == "enum"
                         else [[0, 10], [50, 42], [100, 65]]
                     )
+                    if tail_ms > 0:
+                        mid_t = 100 + max(1, tail_ms // 2)
+                        if vtype == "bool":
+                            pts.append([mid_t, False])
+                        elif vtype == "enum":
+                            pts.append([mid_t, 0])
+                        else:
+                            pts.append([mid_t, 95])
+                            if fail_recorded_to > mid_t:
+                                pts.append([fail_recorded_to, 120])
                     tl_doc["series"].append({
                         "variable": entry, "source": "sampled", "encoding": "changes",
-                        "columns": ["at_ms", "value"], "samples": 11, "first_ms": 0, "last_ms": rec_to,
+                        "columns": ["at_ms", "value"], "samples": 11 + (tail_ms // 10), "first_ms": 0, "last_ms": rec_to,
                         "not_applied_from": None, "points": pts,
                     })
                     sampled_names.add(entry)

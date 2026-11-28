@@ -19,7 +19,7 @@ import threading
 import time
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
-from .protocol import validate_name_sequence
+from .protocol import validate_name_sequence, validate_record_after_fail_ms
 
 _MAX_FINDING_DETAIL_CHARS = 500
 
@@ -99,6 +99,7 @@ def _split_once_arguments(
     params: Optional[Mapping[str, Union[bool, int, float, str]]] = None,
     after_scenario: Optional[str] = None,
     record: Sequence[str] = (),
+    record_after_fail_ms: Optional[int] = None,
 ) -> Tuple[List[str], Dict[str, Any]]:
     """Splits legacy single-run CLI `arguments` into `serve --once` host CLI flags and the initial
     stdin `{"command": "run", ...}` payload."""
@@ -123,6 +124,8 @@ def _split_once_arguments(
         record_list = list(dict.fromkeys(validate_name_sequence(record, "record", kind="signal names")))
         if record_list:
             intent["record"] = record_list
+    if record_after_fail_ms is not None:
+        intent["record_after_fail_ms"] = validate_record_after_fail_ms(record_after_fail_ms)
 
     i = 0
     n = len(arguments)
@@ -163,6 +166,14 @@ def _split_once_arguments(
                     f"after_scenario is given more than once ({intent['after_scenario']!r} and {val!r})"
                 )
             intent["after_scenario"] = val
+            i += 2
+        elif arg == "--record-after-fail-ms" and i + 1 < n:
+            val = validate_record_after_fail_ms(int(arguments[i + 1]))
+            if "record_after_fail_ms" in intent:
+                raise ValueError(
+                    f"record_after_fail_ms is given more than once ({intent['record_after_fail_ms']!r} and {val!r})"
+                )
+            intent["record_after_fail_ms"] = val
             i += 2
         elif arg == "--variant" and i + 1 < n:
             intent["variant"] = arguments[i + 1]
@@ -230,6 +241,7 @@ class Launch:
         params: Optional[Mapping[str, Union[bool, int, float, str]]] = None,
         after_scenario: Optional[str] = None,
         record: Sequence[str] = (),
+        record_after_fail_ms: Optional[int] = None,
         arguments: Sequence[str] = (),
         cwd: Optional[str] = None,
         stderr=None,
@@ -242,6 +254,7 @@ class Launch:
             params=params,
             after_scenario=after_scenario,
             record=record,
+            record_after_fail_ms=record_after_fail_ms,
         )
         command = [
             os.fspath(launcher),

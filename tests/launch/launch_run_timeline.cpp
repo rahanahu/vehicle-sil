@@ -382,4 +382,207 @@ void timeline(const Options& o)
         require(contains(optTl, "\"name\": \"OptBridge.mode_now\"") && contains(optTl, "\"recorded\": true"),
                 "optional record-only ECU timeline declares recorded variable:\n" + optTl);
     }
+
+    // Post-failure tail recording (--record-after-fail-ms / request "record_after_fail_ms" / serve intent):
+    // 1. Representative failing scenario on real examples/ecu_main (Engine + Dashboard):
+    //    set Engine.engine.throttle = 50; wait_until Engine.engine.speed >= 1700 (timeout_ms: 200);
+    //    after_ms: 10 set Engine.engine.throttle = 0 (must NOT run!).
+    //    With --record Dashboard.dashboard.engine_speed --record-after-fail-ms 300:
+    //    - exit code 1, failed step at_ms == 200, recorded_to_ms == 500
+    //    - step 3 not_run, zero writes after failure
+    //    - both Engine.engine.speed and Dashboard.dashboard.engine_speed climb past 1700 rpm (to 1800) during tail!
+    // 2. Without --record-after-fail-ms: recorded_to_ms == 200 (unchanged).
+    // 3. serve --once inline intent produces the exact same timeline.
+    // 4. User Stop during a long tail (--speed 1 + stdin stop) stops promptly and preserves Failed verdict!
+    // 5. CLI usage errors on invalid values, missing scenario, and unsupported subcommands.
+    {
+        const fs::path exDir = example_copy(o);
+        write_file(exDir / "fail_slow.yaml",
+                   "vehicle_sil_scenario: 1\n"
+                   "name: slow engine climb\n"
+                   "steps:\n"
+                   "  - set: { Engine.engine.throttle: 50 }\n"
+                   "  - wait_until: { Engine.engine.speed: { ge: 1700 } }\n"
+                   "    timeout_ms: 200\n"
+                   "  - after_ms: 10\n"
+                   "    set: { Engine.engine.throttle: 0 }\n");
+
+        const Captured noTail = launch(
+            o,
+            {"run", "simulation.yaml", "--scenario", "fail_slow.yaml",
+             "--record", "Dashboard.dashboard.engine_speed", "--timeline", "no_tail.json"},
+            exDir);
+        expect_code(noTail, 1, "failing scenario without --record-after-fail-ms");
+        const std::string noTailText = read_text(exDir / "no_tail.json");
+        require(contains(noTailText, "    \"status\": \"failed\",\n") &&
+                    contains(noTailText, "    \"recorded_to_ms\": 200,\n") &&
+                    contains(noTailText, "        \"at_ms\": 200,\n        \"code\": \"scenario-timeout\","),
+                "baseline failing timeline without tail:\n" + noTailText);
+
+        const Captured withTail = launch(
+            o,
+            {"run", "simulation.yaml", "--scenario", "fail_slow.yaml",
+             "--record", "Dashboard.dashboard.engine_speed",
+             "--record-after-fail-ms", "300", "--timeline", "with_tail.json"},
+            exDir);
+        expect_code(withTail, 1, "failing scenario with --record-after-fail-ms 300");
+        const std::string tailText = read_text(exDir / "with_tail.json");
+        require(contains(tailText, "    \"status\": \"failed\",\n") &&
+                    contains(tailText, "    \"recorded_to_ms\": 500,\n") &&
+                    contains(tailText, "        \"at_ms\": 200,\n        \"code\": \"scenario-timeout\",") &&
+                    contains(tailText, "      \"index\": 3,\n      \"line\": 7,\n      \"kind\": \"set\",\n"
+                                       "      \"text\": \"set Engine.engine.throttle = 0\",\n      \"status\": \"not_run\","),
+                "failing timeline with 300ms tail:\n" + tailText);
+
+        const auto series_of = [](const std::string& text, const std::string& variable, const std::string& source) {
+            const auto from = text.find("      \"variable\": \"" + variable + "\",\n      \"source\": \"" + source + "\",\n");
+            const auto to = text.find("\n    }", from);
+            require(from != std::string::npos && to != std::string::npos, "missing " + source + " series for " + variable + ":\n" + text);
+            return text.substr(from, to - from);
+        };
+        // Zero writes after failure: Engine.engine.throttle has only [0, 50].
+        const std::string throttleWritten = series_of(tailText, "Engine.engine.throttle", "written");
+        require(contains(throttleWritten, "      \"points\": [\n        [0, 50]\n      ]"),
+                "zero writes after failure:\n" + throttleWritten);
+        // Engine.engine.speed continues recording up to 500ms and climbs past 1700 rpm to 1800 rpm.
+        const std::string engineSpeed = series_of(tailText, "Engine.engine.speed", "sampled");
+        require(contains(engineSpeed, "\"last_ms\": 500,") &&
+                    contains(engineSpeed, ", 1750]") && contains(engineSpeed, ", 1800]"),
+                "Engine.engine.speed post-failure samples up to 500ms climbing past 1700 rpm:\n" + engineSpeed);
+        // Dashboard.dashboard.engine_speed (extra recorded signal) continues recording up to 500ms and climbs past 1700 rpm!
+        const std::string dashSpeed = series_of(tailText, "Dashboard.dashboard.engine_speed", "sampled");
+        require(contains(dashSpeed, "\"last_ms\": 500,") && contains(dashSpeed, ", 1800]"),
+                "Dashboard.dashboard.engine_speed post-failure samples up to 500ms climbing past 1700 rpm:\n" + dashSpeed);
+
+        // serve --once inline intent produces the exact same timeline.
+        const Captured serveTail = launch(
+            o,
+            {"serve", "--once", "simulation.yaml", "--scenario", "fail_slow.yaml",
+             "--record", "Dashboard.dashboard.engine_speed",
+             "--record-after-fail-ms", "300", "--timeline", "serve_tail.json"},
+            exDir);
+        expect_code(serveTail, 1, "serve --once with record_after_fail_ms 300");
+        expect_text(read_text(exDir / "serve_tail.json"), tailText, "serve --once timeline with record_after_fail_ms");
+
+        // User Stop during a long tail (--speed 1 + stdin stop right after failure):
+        // stops promptly without waiting out the 10-second tail and preserves Failed verdict!
+        {
+            std::mutex mu;
+            std::condition_variable cv;
+            bool sawFailure = false;
+            std::string errLog;
+            std::string outLog;
+            vehicle_sil::process::ProcessOptions procOpts;
+            procOpts.working_directory = exDir;
+            procOpts.input = true;
+            procOpts.on_line = [&](vehicle_sil::process::Stream stream, std::string_view line) {
+                const std::lock_guard lock(mu);
+                if (stream == vehicle_sil::process::Stream::Error)
+                {
+                    errLog += std::string(line) + "\n";
+                    if (line.find("FAILED at 200 ms") != std::string_view::npos)
+                    {
+                        sawFailure = true;
+                        cv.notify_all();
+                    }
+                }
+                else
+                {
+                    outLog += std::string(line) + "\n";
+                }
+            };
+            const auto started = std::chrono::steady_clock::now();
+            vehicle_sil::process::Process proc(
+                o.launch,
+                {"run", "simulation.yaml", "--scenario", "fail_slow.yaml",
+                 "--speed", "1", "--stdin-commands",
+                 "--record-after-fail-ms", "10000", "--timeline", "stop_during_tail.json"},
+                std::move(procOpts));
+            {
+                std::unique_lock lock(mu);
+                require(cv.wait_for(lock, scaled_timeout(20s), [&] { return sawFailure; }),
+                        "did not observe scenario FAILED line before sending stop:\n" + errLog);
+            }
+            require(proc.write_input("{\"command\":\"stop\"}\n"), "failed to send stdin stop during tail");
+            const auto status = proc.wait_for(scaled_timeout(20s));
+            const auto elapsed = std::chrono::steady_clock::now() - started;
+            if (!status)
+            {
+                proc.kill_tree();
+            }
+            proc.finish_output(10s);
+            require(status.has_value() && status->code == std::optional<int>(1),
+                    "stop during tail must exit with code 1 (Failed):\n" + outLog + "\n" + errLog);
+            require(elapsed < scaled_timeout(8s),
+                    "stop during 10s tail must finish promptly instead of waiting out the full tail");
+            const std::string stopTailText = read_text(exDir / "stop_during_tail.json");
+            require(contains(stopTailText, "    \"status\": \"failed\",\n") &&
+                        contains(stopTailText, "        \"at_ms\": 200,\n        \"code\": \"scenario-timeout\","),
+                    "stop during tail preserves Failed verdict and failed step:\n" + stopTailText);
+            const auto recPos = stopTailText.find("    \"recorded_to_ms\": ");
+            require(recPos != std::string::npos, "missing recorded_to_ms:\n" + stopTailText);
+            const double recTo = std::stod(stopTailText.substr(recPos + 22));
+            require(recTo >= 200.0 && recTo < 10000.0,
+                    "recorded_to_ms after early stop during tail should be in [200, 10000), got " + std::to_string(recTo));
+        }
+
+        // Regression (phys_leak): on default simulation.yaml (time_step_ms=5, Engine step_ms=10),
+        // Step 2 (expect at 100ms) fails at over_at_ms=105ms; Step 3 (after_ms: 5, at=105ms,
+        // applied_step=110ms > 105ms) must NOT be submitted at tick(100) or applied during the tail!
+        {
+            write_file(exDir / "phys_leak.yaml",
+                       "vehicle_sil_scenario: 1\n"
+                       "name: phys_leak\n"
+                       "steps:\n"
+                       "  - at_ms: 0\n"
+                       "    set: { Engine.engine.throttle: 0 }\n"
+                       "  - at_ms: 100\n"
+                       "    expect: { Engine.engine.speed: { ge: 9999 } }\n"
+                       "  - after_ms: 5\n"
+                       "    set: { Engine.engine.throttle: 100 }\n");
+            const Captured leakRun = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "phys_leak.yaml",
+                 "--record", "Engine.engine.throttle",
+                 "--record", "Dashboard.dashboard.engine_speed",
+                 "--record-after-fail-ms", "400", "--speed", "max",
+                 "--timeline", "phys_leak.json"},
+                exDir);
+            expect_code(leakRun, 1, "phys_leak regression run");
+            const std::string leakText = read_text(exDir / "phys_leak.json");
+            require(contains(leakText, "    \"status\": \"failed\",\n") &&
+                        contains(leakText, "    \"over_at_ms\": 105,\n") &&
+                        contains(leakText, "    \"recorded_to_ms\": 500,\n") &&
+                        contains(leakText, "\"text\": \"set Engine.engine.throttle = 100\",\n      \"status\": \"not_run\","),
+                    "phys_leak timeline status and step 3 not_run:\n" + leakText);
+            const std::string thrWritten = series_of(leakText, "Engine.engine.throttle", "written");
+            require(contains(thrWritten, "      \"points\": [\n        [0, 0]\n      ]") &&
+                        !contains(thrWritten, "[105, 100]"),
+                    "phys_leak written throttle must not contain [105, 100]:\n" + thrWritten);
+            const std::string thrSampled = series_of(leakText, "Engine.engine.throttle", "sampled");
+            require(contains(thrSampled, "      \"points\": [\n        [0, 0]\n      ]") &&
+                        !contains(thrSampled, ", 100]"),
+                    "phys_leak sampled throttle must stay 0 through tail:\n" + thrSampled);
+            const std::string engSpeed = series_of(leakText, "Engine.engine.speed", "sampled");
+            require(contains(engSpeed, "\"last_ms\": 500,") &&
+                        contains(engSpeed, ", 800]") && !contains(engSpeed, ", 850]"),
+                    "phys_leak Engine.engine.speed must remain at idle 800 rpm:\n" + engSpeed);
+        }
+
+        // CLI usage errors for --record-after-fail-ms:
+        for (const std::vector<std::string>& badArgs : std::vector<std::vector<std::string>>{
+                 {"run", "simulation.yaml", "--scenario", "fail_slow.yaml", "--record-after-fail-ms", "0"},
+                 {"run", "simulation.yaml", "--scenario", "fail_slow.yaml", "--record-after-fail-ms", "-5"},
+                 {"run", "simulation.yaml", "--scenario", "fail_slow.yaml", "--record-after-fail-ms", "600001"},
+                 {"run", "simulation.yaml", "--scenario", "fail_slow.yaml", "--record-after-fail-ms", "abc"},
+                 {"run", "simulation.yaml", "--record-after-fail-ms", "300"},
+                 {"check", "simulation.yaml", "--record-after-fail-ms", "300"},
+                 {"test", "simulation.yaml", "--record-after-fail-ms", "300", "--scenarios", "fail_slow.yaml"},
+                 {"serve", "simulation.yaml", "--record-after-fail-ms", "300"},
+                 {"connections", "simulation.yaml", "--record-after-fail-ms", "300"}})
+        {
+            const Captured bad = launch(o, badArgs, exDir);
+            expect_code(bad, 4, "invalid --record-after-fail-ms usage");
+        }
+    }
 }

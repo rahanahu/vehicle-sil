@@ -234,6 +234,9 @@ describe('TimelineView', () => {
     root().querySelector<HTMLButtonElement>('[data-testid="timeline-window-300"]')!.click();
     expect(jumpSpy).toHaveBeenLastCalledWith({ leadMs: 300 });
 
+    // Without a post-failure tail (recordedTo === failure.at), Around failure button stays hidden
+    expect(root().querySelector('[data-testid="timeline-window-around-failure"]')).toBeNull();
+
     root().querySelector<HTMLButtonElement>('[data-testid="timeline-window-all"]')!.click();
     expect(resetSpy).toHaveBeenCalledTimes(1);
 
@@ -330,5 +333,25 @@ describe('TimelineView', () => {
     expect(
       root().querySelector('[data-testid="timeline-visible-count"]')?.textContent?.trim(),
     ).toBe('4 / 4');
+  });
+
+  it('shows Around failure quick-zoom button when recordedTo extends past failure.at and frames leadMs + trailMs', async () => {
+    const el = timelineEl()!;
+    const jumpSpy = vi.spyOn(el, 'jumpToFailure').mockReturnValue(true);
+
+    emitLoad(
+      makeLoadDetail({
+        recordedTo: 940,
+        end: 980,
+      }),
+    );
+    await fixture.whenStable();
+
+    const aroundBtn = root().querySelector<HTMLButtonElement>(
+      '[data-testid="timeline-window-around-failure"]',
+    );
+    expect(aroundBtn).not.toBeNull();
+    aroundBtn!.click();
+    expect(jumpSpy).toHaveBeenLastCalledWith({ leadMs: 300, trailMs: 315 });
   });
 });

@@ -57,7 +57,15 @@ std::vector<config::Finding> validate_timing(const RunRequest& request)
         values.timeout_ms = host.timeout->count();
     }
     values.describe_timeout_ms = host.describe_timeout.count();
-    return config::validate_timing_values(values);
+    std::vector<config::Finding> out = config::validate_timing_values(values);
+    if (intent.record_after_fail_ms &&
+        (*intent.record_after_fail_ms < 1 || *intent.record_after_fail_ms > kMaxRecordAfterFailMs))
+    {
+        const std::string tail =
+            request.origin.named("record_after_fail_ms", "--record-after-fail-ms", "record_after_fail_ms");
+        out.push_back(usage(tail + " must be between 1 and " + std::to_string(kMaxRecordAfterFailMs)));
+    }
+    return out;
 }
 
 std::vector<config::Finding> validate_request(const RunRequest& request, RequestCommand command)
@@ -88,6 +96,22 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
     {
         out.push_back(usage("--timeline writes what a scenario did over the time: give --scenario <file> too, or leave "
                             "--timeline out"));
+    }
+    if (intent.record_after_fail_ms)
+    {
+        const std::string tail = origin.named("record_after_fail_ms", "--record-after-fail-ms", "record_after_fail_ms");
+        if (command == RequestCommand::Test)
+        {
+            out.push_back(usage("test does not accept " + tail +
+                                ": run one scenario with vehicle_sil_launch run --scenario <file>"));
+        }
+        else if (!intent.scenario)
+        {
+            out.push_back(usage(tail + " needs a scenario: " +
+                                (origin.has("record_after_fail_ms")
+                                     ? "give --scenario <file> or \"scenario\" in " + origin.file + ", or leave " + tail + " out"
+                                     : "give --scenario <file> too, or leave --record-after-fail-ms out")));
+        }
     }
     if (!host.control_metrics.empty() && command != RequestCommand::Run)
     {
@@ -256,6 +280,11 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
     {
         intent.after_scenario = written.after_scenario;
         origin.fields.emplace_back("after_scenario");
+    }
+    if (!given.record_after_fail_ms && written.record_after_fail_ms)
+    {
+        intent.record_after_fail_ms = written.record_after_fail_ms;
+        origin.fields.emplace_back("record_after_fail_ms");
     }
     bool params = false;
     for (const config::ParamValue& param : written.params)

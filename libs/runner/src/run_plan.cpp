@@ -77,6 +77,18 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
             throw std::invalid_argument("plan_run: after_scenario=pause cannot be used when time is locked (outside-real-time)");
         }
     }
+    if (choices.record_after_fail)
+    {
+        if (choices.record_after_fail->count() < 1 || choices.record_after_fail->count() > config::kMaxRecordAfterFailMs)
+        {
+            throw std::invalid_argument("plan_run: record_after_fail must be between 1 and " +
+                                        std::to_string(config::kMaxRecordAfterFailMs) + " ms");
+        }
+        if (scenario == nullptr || !scenario->scenario)
+        {
+            throw std::invalid_argument("plan_run: record_after_fail requires a valid scenario");
+        }
+    }
     if (!choices.external_registry_uri.empty())
     {
         if (const std::string err = external_registry_uri_error(choices.external_registry_uri); !err.empty())
@@ -102,6 +114,7 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
         plan.members.emplace_back().outside = outside;
     }
     plan.recorded_variables = choices.recorded_variables;
+    plan.record_after_fail = choices.record_after_fail;
     if (const scenario::Scenario* read = plan.scenario(); read != nullptr)
     {
         const std::span<const scenario::RecordedVariable> recordedForSampling =

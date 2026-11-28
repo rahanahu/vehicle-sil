@@ -128,6 +128,7 @@ const INTENT_FIELDS = new Set([
   'case',
   'after_scenario',
   'record',
+  'record_after_fail_ms',
   'variant',
   'params',
   'speed',
@@ -369,6 +370,9 @@ export class FrontActions {
       ...(intent.case !== undefined ? { case: intent.case } : {}),
       ...(intent.after_scenario !== undefined ? { after_scenario: intent.after_scenario } : {}),
       ...(intent.record ? { record: intent.record } : {}),
+      ...(intent.record_after_fail_ms !== undefined
+        ? { record_after_fail_ms: intent.record_after_fail_ms }
+        : {}),
       ...(intent.variant !== undefined ? { variant: intent.variant } : {}),
       ...(intent.params ? { params: intent.params } : {}),
       ...(intent.speed !== undefined ? { speed: intent.speed } : {}),

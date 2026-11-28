@@ -80,6 +80,10 @@ runner::RunChoices run_choices(const RunRequest& request)
     choices.collect_control_metrics = !request.host.control_metrics.empty();
     choices.external_registry_uri = request.host.external_registry_uri;
     choices.after_scenario = request.intent.after_scenario;
+    if (request.intent.record_after_fail_ms)
+    {
+        choices.record_after_fail = std::chrono::milliseconds(*request.intent.record_after_fail_ms);
+    }
     return choices;
 }
 

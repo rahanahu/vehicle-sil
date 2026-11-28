@@ -689,6 +689,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `strict` | `true` か `false` | `--strict` |
 | `after_scenario` | `"stop"`（既定: シナリオ終了で停止）または `"pause"`（シナリオ成功時に一時停止して手動制御へ引き継ぐ。`scenario` が必須で、`stop_at_ms` とは併用できず、`run` では `--stdin-commands` か `--control` が必要） | |
 | `record` | シナリオの判定に影響せず `--timeline` にサンプリング記録する `"<participant>.<variable>"` の一覧 | `--record` |
+| `record_after_fail_ms` | 通常の判定失敗または待ち時間切れの後に、受動的なサンプル記録を `--timeline` へ続ける仮想時間（1 から 600000 ms の整数）。`scenario` が必須です。 | `--record-after-fail-ms` |
 
 ### 引数と要求ファイルを一緒に使う
 
@@ -696,7 +697,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 
 | キー | 同じものを引数でも指定したとき |
 |---|---|
-| `variant`、`scenario`、`case`、`speed`、`time_policy` | 引数が、ファイルの値を置き換えます。 |
+| `variant`、`scenario`、`case`、`speed`、`time_policy`、`record_after_fail_ms` | 引数が、ファイルの値を置き換えます。 |
 | `start_paused`、`strict` | ファイルか引数のどちらかが指定すれば有効です。無効にする引数はありません。 |
 | `connect` | ネットワークごとです。`--connect <network>=<target>` はそのネットワークのファイルの先を置き換え、`--connect <network>=none` はこの実行だけ外します。ファイルのほかのネットワークは残ります。 |
 | `params` | 名前ごとです。`--param <name>=<value>` は、そのパラメーターのファイルの値を置き換えます。ほかは残り、照合の JSON の `from` は `request_file` です。 |
@@ -1855,12 +1856,12 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 | シナリオ | `recorded_to_ms` |
 |---|---|
-| 失敗した（`failed`） | 失敗した手順の `at_ms`（すべての手順が通った後に揺れの書き込みが失敗したときはその時刻、`stop_at_ms` で終わった実行では、止まった時刻） |
+| 失敗した（`failed`） | 失敗した手順の `at_ms`（すべての手順が通った後に揺れの書き込みが失敗したときはその時刻、`stop_at_ms` で終わった実行では、止まった時刻）。`--record-after-fail-ms <ms>`（または `record_after_fail_ms`）があるときは、通常の判定失敗または待ち時間切れの検知時刻（`over_at_ms`）以降は新たな手順・書き込み・動き・揺れを一切発行せずに、受動的な記録を `at_ms + <ms>` まで延ばします（途中で利用者停止、`stop_at_ms`、`--timeout-ms`、またはテール中の participant 失敗で終わった場合は実際に止まった時刻まで） |
 | 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの（`end_ms` があるときは `min(end_ms, now)` まで延びます。`after_scenario: "pause"` では引き継ぎ時点で記録を閉じ、引き継ぎ後の手動操作は記録しません） |
 | 途中で終わった（`incomplete`） | 最後のコントローラー時刻までに観測したサンプルと送信した書き込みのうち、最も遅い時刻（どちらもなければ 0）。書き込みが断られた後で participant の失敗が実行の結果になったときは、その書き込みの時刻（`failed` はどの手順でも `null` ですが、`not_applied_from` は `null` ではありません） |
 | シナリオが始まらなかった（`not_run`。シミュレーションは始まったのにシナリオを始められなかったときは `incomplete`） | `null`（系列は空） |
 
-- controller はタイムステップごとにしかサンプルを見ないので、シナリオが終わったとわかる時刻（`over_at_ms`）は、ふつう `recorded_to_ms` より後です。その間のサンプルと書き込みは、ファイルに入れません。エージェントがすぐ断った書き込みで失敗した実行だけ、`over_at_ms`（断られた時点のタイムステップ）が `recorded_to_ms`（その書き込みの時刻）以前です。
+- controller はタイムステップごとにしかサンプルを見ないので、シナリオが終わったとわかる時刻（`over_at_ms`）は、ふつう `recorded_to_ms` より後です。その間のサンプルと書き込みは、ファイルに入れません。`over_at_ms` が `recorded_to_ms` 以前になるのは 2 つの場合だけです。1 つはエージェントがすぐ断った書き込みで失敗した実行（`over_at_ms` は断られた時点のタイムステップ、`recorded_to_ms` はその書き込みの時刻）、もう 1 つは `--record-after-fail-ms` を付けた実行（`over_at_ms` は失敗検知時のタイムステップのまま、`recorded_to_ms` が受動的な失敗後テールまで延びます）です。失敗後テールの記録は `--timeline` が有効なときの通常の判定失敗・待ち時間切れ（`scenario-failed` / `scenario-timeout`）にだけ適用され、書き込み失敗（`scenario-write`）、利用不可変数、成功、失敗前の中断ではテールに入りません。失敗検知時刻（`over_at_ms`）以降は新たな手順・書き込み・動き・揺れを発行しませんが、`time_step_ms >= ecu_step_ms` の構成で検知前に `(at_ms, over_at_ms]` 向けに先読み送信済みだった書き込みは ECU に適用済みの場合があり、その場合はタイムラインにそのまま残ります。
 - **同じ実行からは、同じファイルができます。** 入っているのは仮想時刻で決まるものだけです（実時間、プロセス ID、遅れの数は入りません）。速さ（`--speed`）を変えても同じです。対象は、通った実行と、サンプルか待ち時間で失敗した実行です。ECU 自身が実時間や乱数で動くなら、値の列も変わります。
 - 通った実行と、サンプルか待ち時間で失敗した実行では、`over_at_ms` と `time_step_ms` を除いて、controller のタイムステップ（`time_step_ms`）を変えても同じファイルです。ただし、次のものはタイムステップによります（シナリオの結果がタイムステップによる所と同じです。[scenario.md](scenario.md) の「時刻」と「結果」）。
   - 成り立った待つ手順（`wait_until`、`within_ms` つきの `expect`）の `end_ms` と、その後ろの手順の時刻。

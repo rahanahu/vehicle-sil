@@ -31,6 +31,9 @@ inline constexpr int kSimulationFormat = 2;
 /// both take it from vehicle_sil/ecu/executable.hpp.
 inline constexpr std::int64_t kMaxMillis = ecu_executable::kMaxMillis;
 
+/// Maximum virtual-time post-failure tail recording duration (10 minutes = 600,000 ms).
+inline constexpr std::int64_t kMaxRecordAfterFailMs = 600'000;
+
 /// The participant name of the controller that vehicle_sil_launch runs; no participant may use it.
 inline constexpr std::string_view kControllerName = "SimulationController";
 

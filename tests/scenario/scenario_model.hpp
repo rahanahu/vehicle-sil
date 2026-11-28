@@ -132,6 +132,8 @@ public:
     Policy policy = [](std::size_t, SimTime) { return 0; };
     bool reverse = false; ///< the ECUs step in the reverse order
     std::optional<SimTime> stop_at;
+    /// Optional post-failure tail recording window passed to ScenarioEngine.
+    std::optional<std::chrono::milliseconds> record_after_fail{};
     /// A participant failed and ended the run: the engine is told so when the run is over.
     bool superseded = false;
     /// timeline_of(): the simulation ends here for another reason (none: after 5 s).
@@ -280,7 +282,7 @@ public:
     ScenarioRun run(const Scenario& s, SimDuration limit = 5s)
     {
         scenario = &s;
-        ScenarioEngine e(s, tick, *this, on_step, record, stop_at);
+        ScenarioEngine e(s, tick, *this, on_step, record, stop_at, record_after_fail);
         engine = &e;
         std::vector<EnginePeer> peers;
         for (const auto& p : s.participants)

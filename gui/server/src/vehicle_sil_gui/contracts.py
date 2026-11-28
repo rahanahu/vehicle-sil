@@ -36,6 +36,8 @@ from pydantic_core import CoreSchema
 from vehicle_sil_control.protocol import (
     EVENTS_FORMAT,
     MAX_ID,
+    RECORD_AFTER_FAIL_MS_MAX,
+    RECORD_AFTER_FAIL_MS_MIN,
     SPEED_MAX,
     SPEED_MIN,
     STEP_MS_MAX,
@@ -57,6 +59,7 @@ REQUEST_FIELDS: tuple[str, ...] = (
     "enable",
     "manual",
     "record",
+    "record_after_fail_ms",
     "strict",
     "connect",
     "time_policy",
@@ -241,6 +244,7 @@ PosInt = Annotated[StrictInt, Field(ge=1)]
 CommandId = Annotated[StrictInt, Field(ge=0, le=MAX_ID)]
 StepMs = Annotated[StrictInt, Field(ge=1, le=STEP_MS_MAX)]
 AtMs = Annotated[StrictInt, Field(ge=0, le=STEP_MS_MAX)]
+RecordAfterFailMs = Annotated[StrictInt, Field(ge=RECORD_AFTER_FAIL_MS_MIN, le=RECORD_AFTER_FAIL_MS_MAX)]
 FiniteFloat = Annotated[StrictFloat, Field(allow_inf_nan=False)]
 FiniteNumber = StrictInt | FiniteFloat
 SpeedValue = Union[
@@ -262,6 +266,7 @@ OmitNonNegInt = Annotated[NonNegInt | None, OmitOnly]
 OmitPosInt = Annotated[PosInt | None, OmitOnly]
 OmitStepMs = Annotated[StepMs | None, OmitOnly]
 OmitAtMs = Annotated[AtMs | None, OmitOnly]
+OmitRecordAfterFailMs = Annotated[RecordAfterFailMs | None, OmitOnly]
 OmitSpeedValue = Annotated[SpeedValue | None, OmitOnly]
 OmitAfterScenario = Annotated[AfterScenario | None, OmitOnly]
 OmitBool = Annotated[StrictBool, OmitOnly]
@@ -638,6 +643,7 @@ class RunRequest(PrepareRequest):
     case: OmitNonEmptyUtf8Str = None
     after_scenario: OmitAfterScenario = None
     record: Annotated[list[NonEmptyUtf8Str] | None, OmitOnly] = None
+    record_after_fail_ms: OmitRecordAfterFailMs = None
     params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
     strict: OmitBool = False
     connect: Annotated[dict[NonEmptyStr, StrictStr] | None, OmitOnly] = None
@@ -1149,6 +1155,7 @@ class SessionIntentSummary(ContractModel):
     case: OmitNonEmptyUtf8Str = None
     after_scenario: OmitAfterScenario = None
     record: Annotated[list[NonEmptyUtf8Str] | None, OmitOnly] = None
+    record_after_fail_ms: OmitRecordAfterFailMs = None
     params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
     strict: OmitOptionalBool = None
     connect: Annotated[dict[NonEmptyStr, StrictStr] | None, OmitOnly] = None

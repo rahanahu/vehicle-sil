@@ -103,9 +103,14 @@ export interface VehicleSilTimelineFocusOptions {
   preserveZoom?: boolean;
   /**
    * Explicit pre-failure lead window in virtual ms (for `jumpToFailure()`).
-   * Frames `[failure.at - leadMs, failure.at + leadMs * 0.25]` clamped to the run domain without writing sticky `from`/`to`.
+   * Frames `[failure.at - leadMs, failure.at + (trailMs ?? leadMs * 0.25)]` clamped to the run domain without writing sticky `from`/`to`.
    */
   leadMs?: number;
+  /**
+   * Explicit post-failure trail window in virtual ms (for `jumpToFailure()`).
+   * When finite and >= 0, sets the right edge to `min(domain[1], failure.at + trailMs)`.
+   */
+  trailMs?: number;
 }
 
 export interface VehicleSilTimelineLoadDetail {

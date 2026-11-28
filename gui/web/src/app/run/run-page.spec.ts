@@ -1900,6 +1900,202 @@ describe('RunPage', () => {
     ).toBeNull();
     localStorage.removeItem('vehicle-sil-gui-language');
   });
+
+  it('shows Record after failure input only with a scenario when record-after-fail is advertised, validates 1..600000, resets on file switch, restores from session.intent, and preserves clearing across language switch', async () => {
+    const appWithTail = () => {
+      const base = response('app') as { launcher: { version: { features: string[] } } };
+      return {
+        ...base,
+        launcher: {
+          ...base.launcher,
+          version: {
+            ...base.launcher.version,
+            features: [...new Set([...base.launcher.version.features, 'record-after-fail'])],
+          },
+        },
+      };
+    };
+
+    const firstScenario = (response('scenarios') as { scenarios: { path: string }[] }).scenarios[0]
+      .path;
+    const secondFile = (response('configs') as { files: { path: string }[] }).files[1]?.path;
+
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithTail());
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const initialCheck = await checkRequest();
+    expect(
+      (initialCheck.request.body as Record<string, unknown>)['record_after_fail_ms'],
+    ).toBeUndefined();
+    initialCheck.flush(response('check-passed'));
+    await settle();
+
+    const host = fixture.nativeElement as HTMLElement;
+    // Hidden without a scenario
+    expect(host.querySelector('[data-testid="record-after-fail-ms"]')).toBeNull();
+
+    const page = fixture.componentInstance as unknown as {
+      selectFile(f: string): void;
+      selectScenario(s: string | null): void;
+    };
+    page.selectScenario(firstScenario);
+    TestBed.tick();
+    (await checkRequest()).flush(response('check-passed'));
+    await settle();
+
+    const tailInput = () =>
+      host.querySelector<HTMLInputElement>('[data-testid="record-after-fail-ms"]')!;
+    expect(tailInput()).not.toBeNull();
+    expect(tailInput().value).toBe('');
+
+    // Reject 0 and > 600000
+    tailInput().value = '0';
+    tailInput().dispatchEvent(new Event('input'));
+    tailInput().dispatchEvent(new Event('blur'));
+    TestBed.tick();
+    expect(text(fixture, 'blocked')).toContain('失敗後の追加記録は 1 から 600000 までの整数');
+
+    tailInput().value = '600001';
+    tailInput().dispatchEvent(new Event('input'));
+    TestBed.tick();
+    expect(text(fixture, 'blocked')).toContain('失敗後の追加記録は 1 から 600000 までの整数');
+
+    // Valid value 300 is forwarded in check, pageIntent, and run
+    tailInput().value = '300';
+    tailInput().dispatchEvent(new Event('input'));
+    TestBed.tick();
+    expect(pageIntent.get().record_after_fail_ms).toBe(300);
+
+    const tailCheck = await checkRequest();
+    expect(tailCheck.request.body).toMatchObject({
+      scenario: firstScenario,
+      record_after_fail_ms: 300,
+    });
+    tailCheck.flush(response('check-passed'));
+    await advance(1);
+    await settle();
+    expect(text(fixture, 'blocked')).toBe('');
+
+    button(fixture, 'start').click();
+    const runReq = http.expectOne('api/run');
+    expect(runReq.request.body).toMatchObject({
+      scenario: firstScenario,
+      record_after_fail_ms: 300,
+    });
+    runReq.flush(response('run'));
+
+    // Switching config file resets recordAfterFailMs
+    if (secondFile) {
+      page.selectFile(secondFile);
+      TestBed.tick();
+      (await checkRequest()).flush(response('check-passed'));
+      await settle();
+      page.selectScenario(firstScenario);
+      TestBed.tick();
+      (await checkRequest()).flush(response('check-passed'));
+      await settle();
+      expect(tailInput().value).toBe('');
+      page.selectFile('bad-lines.yaml');
+      TestBed.tick();
+      (await checkRequest()).flush(response('check-passed'));
+      await settle();
+    }
+
+    // Ended session with intent.record_after_fail_ms restores '300'
+    const baseSession = (server('ws-pass')[3] as { session: Record<string, unknown> }).session;
+    const endedSessionMsg = {
+      type: 'session',
+      stream_seq: 44,
+      session: {
+        ...baseSession,
+        id: '88',
+        file: 'bad-lines.yaml',
+        state: 'ended',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        allowed: { start: { ok: true, reason: null, message: null } },
+        intent: {
+          disable: [],
+          manual: [],
+          scenario: firstScenario,
+          record_after_fail_ms: 300,
+          speed: 1,
+        },
+      },
+    };
+    fake.last().send(endedSessionMsg);
+    fake.last().send({ type: 'synced', stream_seq: 45, run_id: '88', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const restoredCheck = await checkRequest();
+    expect(restoredCheck.request.body).toMatchObject({
+      scenario: firstScenario,
+      record_after_fail_ms: 300,
+    });
+    restoredCheck.flush(response('check-passed'));
+    await settle();
+    expect(tailInput().value).toBe('300');
+
+    // Clearing the field omits record_after_fail_ms and persists empty across JA -> EN language switch
+    tailInput().value = '';
+    tailInput().dispatchEvent(new Event('input'));
+    TestBed.tick();
+    expect(pageIntent.get().record_after_fail_ms).toBeUndefined();
+    const clearedCheck = await checkRequest();
+    expect(
+      (clearedCheck.request.body as Record<string, unknown>)['record_after_fail_ms'],
+    ).toBeUndefined();
+    clearedCheck.flush(response('check-passed'));
+    await settle();
+
+    const lang = TestBed.inject(LanguageChoice);
+    (lang as unknown as { reload: () => void }).reload = vi.fn();
+    lang.choose('en');
+    fixture.destroy();
+    TestBed.resetTestingModule();
+    sessionStorage.setItem('vehicle-sil-gui-token', 'secret');
+    fake = new FakeWebSockets();
+    await TestBed.configureTestingModule({
+      imports: [RunPage],
+      providers: [
+        provideHttpClient(withInterceptors([authInterceptor])),
+        provideHttpClientTesting(),
+        { provide: SOCKET_FACTORY, useValue: fake.factory },
+        { provide: ACTION_GUARD, useValue: 0 },
+        { provide: PAGE_RELOAD, useValue: vi.fn() },
+      ],
+    }).compileComponents();
+    http = TestBed.inject(HttpTestingController);
+    const reloaded = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithTail());
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send({
+      ...(server('ws-pass')[0] as Record<string, unknown>),
+      session: endedSessionMsg.session,
+    });
+    fake.last().send({ type: 'synced', stream_seq: 1, run_id: '88', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const afterLangCheck = await checkRequest();
+    expect(
+      (afterLangCheck.request.body as Record<string, unknown>)['record_after_fail_ms'],
+    ).toBeUndefined();
+    afterLangCheck.flush(response('check-passed'));
+    await settle();
+    expect(
+      (reloaded.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+        '[data-testid="record-after-fail-ms"]',
+      )!.value,
+    ).toBe('');
+    localStorage.removeItem('vehicle-sil-gui-language');
+  });
 });
 
 describe('readRunChoices', () => {
@@ -1920,6 +2116,8 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, record: ['Engine.engine.mode'] })?.record).toEqual([
       'Engine.engine.mode',
     ]);
+    expect(readRunChoices({ ...choices, recordAfterFailMs: '300' })?.recordAfterFailMs).toBe('300');
+    expect(readRunChoices({ ...choices, recordAfterFailMs: '' })?.recordAfterFailMs).toBe('');
     expect(readRunChoices({ ...choices, scenario: 'scenarios/a.yaml' })?.scenario).toBe(
       'scenarios/a.yaml',
     );
@@ -1950,6 +2148,7 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, params: { a: null } })).toBeNull();
     expect(readRunChoices({ ...choices, manual: ['A', 1] })).toBeNull();
     expect(readRunChoices({ ...choices, record: ['A', 1] })).toBeNull();
+    expect(readRunChoices({ ...choices, recordAfterFailMs: 300 })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: true })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: 'yes' })).toBeNull();
   });
