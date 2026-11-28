@@ -106,8 +106,8 @@ def _first_finding_summary(findings: object) -> str:
     line = first.get("line")
     loc = ""
     if isinstance(file, str) and file:
-        loc = f"{file}:{line}: " if isinstance(line, int) and line > 0 else f"{file}: "
-    elif isinstance(line, int) and line > 0:
+        loc = f"{file}:{line}: " if isinstance(line, int) and not isinstance(line, bool) and line > 0 else f"{file}: "
+    elif isinstance(line, int) and not isinstance(line, bool) and line > 0:
         loc = f"line {line}: "
     msg = " ".join(first["message"].split())
     if len(msg) > 240:

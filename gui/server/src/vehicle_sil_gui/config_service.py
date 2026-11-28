@@ -27,10 +27,10 @@ from .config_save import (check_text, check_unchanged, decide, existing_file, ne
 from .contracts import (CHECK_FIELDS, CheckFileRequest, CheckTextRequest, ConnectionsRequest, DescribeRequest, RunRequest,
                         format_validation_error, model_allowed_fields, validate_model_defer_file)
 from .descriptions import Descriptions
-from .launcher import (DESCRIPTIONS_NAME, FEATURE_CHECK_TEXT, FEATURE_RUN_STOP_AT, FEATURE_SCENARIO_CASES,
-                       FEATURE_SCENARIO_HANDOVER, NO_CONNECTION, InvalidRequest, Launcher, cached_check_command,
-                       check_command, connections_command, describe_command, hide_request, save_check_command,
-                       text_check_command, with_participant_timeouts, write_request_file)
+from .launcher import (DESCRIPTIONS_NAME, FEATURE_RUN_STOP_AT, FEATURE_SCENARIO_CASES, FEATURE_SCENARIO_HANDOVER,
+                       NO_CONNECTION, InvalidRequest, Launcher, cached_check_command, check_command,
+                       connections_command, describe_command, hide_request, save_check_command, text_check_command,
+                       with_participant_timeouts, write_request_file)
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .refusal import Refused
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
@@ -625,19 +625,18 @@ class ConfigService:
     async def _check_locked(self, relative: str, intent: dict, *, write_cache: bool = True) -> tuple[int, dict]:
         stamp = self.stamp(relative)
         key = (relative, intent.get("variant"))
-        supports_descriptions = FEATURE_CHECK_TEXT in self.launcher.features
         has_connect = bool(intent.get("connect"))
         subset_only = bool(intent.get("disable") or intent.get("enable") or intent.get("manual"))
         request = make_request_file(intent)
         try:
-            if supports_descriptions and not has_connect and self.descriptions.made_from(key) == stamp:
+            if not has_connect and self.descriptions.made_from(key) == stamp:
                 desc_path = await asyncio.to_thread(self.descriptions.path_of, key)
                 code, result = await self._run_check(
                     relative, intent, request, stamp, descriptions=desc_path, write_descriptions=False,
                 )
                 if not _needs_live_describe(result):
                     return code, result
-            if supports_descriptions and write_cache and not subset_only and not has_connect:
+            if write_cache and not subset_only and not has_connect:
                 plain_intent = not any(k != "variant" for k in intent)
                 desc_path = await asyncio.to_thread(self.descriptions.path_of, key)
                 try:

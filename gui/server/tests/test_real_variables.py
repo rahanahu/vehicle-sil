@@ -988,7 +988,7 @@ def test_running_never_exposes_ready_with_empty_peers(tmp_path: Path, control_en
                 pytest.skip(app["variables"]["reason"])
             ws = await c.ws()
             await ws.until(is_synced)
-            status, started = await c.post("api/run", {"file": "forever.yaml", "speed": 1, "start_paused": True})
+            status, started = await c.post("api/run", {"file": "forever.yaml", "speed": 1})
             assert status == 200, started
             await ws.until(lambda m: m["type"] == "event" and m["event"].get("event") == "phase"
                            and m["event"].get("phase") == "running")

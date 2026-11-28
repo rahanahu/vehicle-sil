@@ -411,8 +411,11 @@ class Variables:
         self.schema_version += 1
         if self.state in (READY, ENDED):
             self._tell_schema(soon=True)
-        elif self.state == CONNECTING and self._synced and self.peers:
-            if len(self.peers) >= self._expected_peers:
+        elif self.state == CONNECTING and self._synced:
+            if not self.peers:
+                if not self._run_active:
+                    self._cancel_ready_timer()
+            elif len(self.peers) >= self._expected_peers:
                 self._enter_ready()
             elif self._ready_timer is None and not self._closed:
                 self._ready_timer = asyncio.get_running_loop().call_later(TOLD_TOGETHER_S, self._enter_ready)

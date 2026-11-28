@@ -136,8 +136,21 @@ def test_saved_check_reuses_descriptions_and_falls_back_when_executable_changes(
     root.mkdir()
     ecu, mark = tmp_path / "ecu.py", tmp_path / "started.txt"
     ecu.write_text(ECU, encoding="utf-8")
-    saved = ("vehicle_sil_simulation: 2\nnetworks:\n  - name: CAN1\n    kind: can\nparticipants:\n"
-             + participant("Engine", ecu, mark) + participant("Dashboard", ecu, mark))
+    if sys.platform == "win32":
+        ecu_exe = tmp_path / "ecu.cmd"
+        exe_body = f'@echo off\r\n"{sys.executable}" "{ecu}" %*\r\n'
+        rebuild_suffix = "\r\nrem rebuilt\r\n"
+    else:
+        ecu_exe = tmp_path / "ecu.sh"
+        exe_body = f"#!/bin/sh\nexec {sys.executable!r} {ecu.as_posix()!r} \"$@\"\n"
+        rebuild_suffix = "\n# rebuilt\n"
+    ecu_exe.write_text(exe_body, encoding="utf-8")
+    ecu_exe.chmod(0o755)
+    saved = (
+        "vehicle_sil_simulation: 2\nnetworks:\n  - name: CAN1\n    kind: can\nparticipants:\n"
+        f"  - name: Engine\n    command: [{ecu_exe.as_posix()!r}, {mark.as_posix()!r}, Engine]\n"
+        f"  - name: Dashboard\n    command: [{ecu_exe.as_posix()!r}, {mark.as_posix()!r}, Dashboard]\n"
+    )
     (root / "sim.yaml").write_text(saved, encoding="utf-8")
 
     def starts() -> int:
@@ -154,7 +167,8 @@ def test_saved_check_reuses_descriptions_and_falls_back_when_executable_changes(
         assert starts() == 2
 
         # Modifying the ECU executable (different size/mtime) without touching sim.yaml triggers fallback.
-        ecu.write_text(ECU + "\n# rebuilt\n", encoding="utf-8")
+        ecu_exe.write_text(exe_body + rebuild_suffix, encoding="utf-8")
+        ecu_exe.chmod(0o755)
         status, reply = await c.post("api/check", {"file": "sim.yaml"})
         assert status == 200 and reply["check"]["result"] == "passed", reply
         assert {p["status"] for p in reply["check"]["participants"]} == {"described"}

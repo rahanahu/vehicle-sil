@@ -106,7 +106,11 @@ class Timelines:
                 return False
             stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(scenario.replace("\\", "/")).stem) or "scenario"
             key = str(run_id)
+            prev = self.ready.get(key)
+            if prev is not None and prev[0] != path:
+                _remove(prev[0])
             self.ready[key] = (path, f"{stem}.timeline.json")
+            self.ready.move_to_end(key)
             if failed:
                 self._failed.add(key)
             else:

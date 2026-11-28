@@ -2776,6 +2776,48 @@ describe('the front door', () => {
       );
       await vi.advanceTimersByTimeAsync(100);
       expect((await undefTimeout).message).toContain('last observed: undefined');
+
+      // Edge cases: null-prototype / throwing getters / throwing toJSON+toString / throwing Error.message must reject cleanly.
+      for (const bad of [
+        {
+          toJSON() {
+            throw new Error('toJSON boom');
+          },
+          toString() {
+            throw new Error('toString boom');
+          },
+        },
+        Object.create(null, {
+          x: {
+            enumerable: true,
+            get() {
+              throw new Error('getter boom');
+            },
+          },
+        }),
+        {
+          toJSON() {
+            throw new Error('toJSON boom');
+          },
+          [Symbol.toPrimitive]() {
+            throw new Error('toPrimitive boom');
+          },
+        },
+        Object.defineProperty(new Error('orig'), 'message', {
+          get() {
+            throw new Error('message getter boom');
+          },
+        }),
+      ]) {
+        current = bad;
+        const badTimeout = until(customSource, () => false, { timeoutMs: 100 }).catch(
+          (e: unknown) => e as ActionError,
+        );
+        await vi.advanceTimersByTimeAsync(100);
+        const err = await badTimeout;
+        expect(err).toMatchObject({ code: 'timeout', outcome: 'unknown' });
+        expect(err.message).toContain('last observed:');
+      }
       const controller = new AbortController();
       const aborted = until(rig.front.status, (s) => s.run === 'ended', {
         signal: controller.signal,

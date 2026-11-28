@@ -454,36 +454,50 @@ export function watch(
  * Formats the most recently observed `until()` value concisely for timeout error messages.
  */
 function describeObservedValue(value: unknown): string {
-  if (value === undefined) return 'undefined';
-  if (value === null) return 'null';
-  if (typeof value === 'string') {
-    const shown = JSON.stringify(value);
-    return shown.length > 200 ? `${shown.slice(0, 197)}..."` : shown;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
-    return String(value);
-  }
-  if (value instanceof Error) {
-    return value.message || value.name;
-  }
   try {
-    const seen = new WeakSet<object>();
-    const json = JSON.stringify(value, (_key, item: unknown) => {
-      if (typeof item === 'bigint') return item.toString();
-      if (typeof item === 'object' && item !== null) {
-        if (seen.has(item)) return '[Circular]';
-        seen.add(item);
-      }
-      return item;
-    });
-    if (json !== undefined) {
-      return json.length > 200 ? `${json.slice(0, 197)}...` : json;
+    if (value === undefined) return 'undefined';
+    if (value === null) return 'null';
+    if (typeof value === 'string') {
+      const shown = JSON.stringify(value);
+      return shown.length > 200 ? `${shown.slice(0, 197)}..."` : shown;
     }
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+      return String(value);
+    }
+    if (value instanceof Error) {
+      let msg = '';
+      try {
+        msg = value.message || value.name;
+      } catch {
+        try {
+          msg = value.name;
+        } catch {
+          msg = 'Error';
+        }
+      }
+      return msg.length > 200 ? `${msg.slice(0, 197)}...` : msg;
+    }
+    try {
+      const seen = new WeakSet<object>();
+      const json = JSON.stringify(value, (_key, item: unknown) => {
+        if (typeof item === 'bigint') return item.toString();
+        if (typeof item === 'object' && item !== null) {
+          if (seen.has(item)) return '[Circular]';
+          seen.add(item);
+        }
+        return item;
+      });
+      if (json !== undefined) {
+        return json.length > 200 ? `${json.slice(0, 197)}...` : json;
+      }
+    } catch {
+      // Fall through to String(value) if a custom getter/toJSON throws.
+    }
+    const text = String(value);
+    return text.length > 200 ? `${text.slice(0, 197)}...` : text;
   } catch {
-    // Fall back to String(value) if a custom getter/toJSON throws.
+    return '[unprintable]';
   }
-  const text = String(value);
-  return text.length > 200 ? `${text.slice(0, 197)}...` : text;
 }
 
 /**
