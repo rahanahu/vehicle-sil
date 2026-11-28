@@ -32,6 +32,7 @@ DEFAULT_FEATURES = (
     "record-signals",
     "record-after-fail",
     "manual-timeline",
+    "record-events",
 )
 
 

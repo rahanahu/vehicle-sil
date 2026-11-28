@@ -136,6 +136,9 @@
     'manual.titleFile': ({ file }) => `Manual run (${file})`,
     'manual.recordedTo': ({ count, to }) =>
       `Recorded ${count} signal${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.recordedEventsTo': ({ count, to }) =>
+      `Recorded ${count} ECU event${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.recordedEmptyTo': ({ to }) => `No signals or ECU events recorded up to ${to}`,
     'manual.nothingRecorded': 'Manual run: no samples recorded',
     'fact.file': 'timeline file',
     'fact.scenario': 'scenario',
@@ -368,6 +371,34 @@
       `<vehicle-sil-timeline>: hide has "${value}", which is not a part, so it is ignored. The parts: ${known}.`,
     'warn.theme': ({ value }) =>
       `<vehicle-sil-timeline>: theme="${value}" is not light, dark or auto, so the colours follow the page (auto).`,
+
+    // --- virtual-time ECU events
+    'events.count': ({ shown, total }) =>
+      shown === total ? `ECU events (${total})` : `ECU events (${shown} / ${total})`,
+    'events.allParticipants': 'All participants',
+    'events.allLevels': 'All levels',
+    'events.filterParticipant': 'Filter ECU events by participant',
+    'events.filterLevel': 'Filter ECU events by level',
+    'events.searchPlaceholder': 'Filter events…',
+    'events.searchLabel': 'Filter ECU events by text',
+    'events.visibleOnly': 'Visible range only',
+    'events.noneMatching': 'No matching events.',
+    'events.truncated': ({ shown, total }) => `Showing first ${shown} of ${total} matching events.`,
+    'events.showAll': ({ count }) => `Show all (${count})`,
+    'events.colTime': 'Time',
+    'events.colDelta': 'Δt',
+    'events.colParticipant': 'Participant',
+    'events.colLevel': 'Level',
+    'events.colText': 'Event',
+    'events.pinRow': ({ at }) => `Pin cursor at ${at}`,
+    'events.stripLabel': 'ECU events',
+    'events.clusterLabel': ({ at, count }) => `${count} ECU events at ${at}`,
+    'events.droppedHeading': 'ECU events were dropped. ',
+    'events.droppedTimeline': ({ participant, count, from, to }) =>
+      `${participant}: ${count} dropped (${from} to ${to})`,
+    'events.droppedTimelineNoRange': ({ participant, count }) => `${participant}: ${count} dropped`,
+    'events.droppedAgent': ({ participant, count }) =>
+      `${participant}: ${count} dropped in ECU queue`,
   };
 
   const ja = {
@@ -493,6 +524,9 @@
     'manual.title': '手動実行',
     'manual.titleFile': ({ file }) => `手動実行（${file}）`,
     'manual.recordedTo': ({ count, to }) => `${count} 個の信号を ${to} まで記録しました`,
+    'manual.recordedEventsTo': ({ count, to }) =>
+      `${count} 件の ECU イベントを ${to} まで記録しました`,
+    'manual.recordedEmptyTo': ({ to }) => `${to} までに記録された信号や ECU イベントはありません`,
     'manual.nothingRecorded': '手動実行: 記録されたサンプルはありません',
     'fact.file': '時間の軸のファイル',
     'fact.scenario': 'シナリオ',
@@ -724,6 +758,35 @@
       `<vehicle-sil-timeline>: hide の「${value}」は部分の名前でないので、使いません。部分: ${known}。`,
     'warn.theme': ({ value }) =>
       `<vehicle-sil-timeline>: theme="${value}" は light、dark、auto のどれでもないので、色はページに従います（auto）。`,
+
+    // --- 仮想時刻付き ECU イベント
+    'events.count': ({ shown, total }) =>
+      shown === total ? `ECU イベント（${total}）` : `ECU イベント（${shown} / ${total}）`,
+    'events.allParticipants': 'すべての participant',
+    'events.allLevels': 'すべてのレベル',
+    'events.filterParticipant': 'participant で ECU イベントを絞り込み',
+    'events.filterLevel': 'レベルで ECU イベントを絞り込み',
+    'events.searchPlaceholder': 'イベントを絞り込み…',
+    'events.searchLabel': '文字で ECU イベントを絞り込み',
+    'events.visibleOnly': '表示範囲のみ',
+    'events.noneMatching': '条件に合うイベントがありません。',
+    'events.truncated': ({ shown, total }) =>
+      `一致した ${total} 件のうち先頭 ${shown} 件を表示しています。`,
+    'events.showAll': ({ count }) => `すべて表示（${count}）`,
+    'events.colTime': '時刻',
+    'events.colDelta': 'Δt',
+    'events.colParticipant': 'participant',
+    'events.colLevel': 'レベル',
+    'events.colText': '内容',
+    'events.pinRow': ({ at }) => `${at} にカーソルを固定`,
+    'events.stripLabel': 'ECU イベント',
+    'events.clusterLabel': ({ at, count }) => `${at} の ECU イベント ${count} 件`,
+    'events.droppedHeading': '一部の ECU イベントが欠けています。',
+    'events.droppedTimeline': ({ participant, count, from, to }) =>
+      `${participant}: ${count} 件欠落（${from}〜${to}）`,
+    'events.droppedTimelineNoRange': ({ participant, count }) => `${participant}: ${count} 件欠落`,
+    'events.droppedAgent': ({ participant, count }) =>
+      `${participant}: ECU 側キューで ${count} 件欠落`,
   };
 
   const MESSAGES = { en, ja };

@@ -709,7 +709,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "external-registry",
     "record-signals",
     "record-after-fail",
-    "manual-timeline"
+    "manual-timeline",
+    "record-events"
   ]
 }
 ```
@@ -787,6 +788,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `record-signals` | `check` と `run` の `--record <participant>.<variable>`、要求ファイル・`serve` インライン `intent` の `"record"`、および `--timeline` の `variables[]` の省略可能な `"recorded": true`（シナリオ判定に影響せず追加の ECU 信号を記録する） |
 | `record-after-fail` | `check` と `run` の `--record-after-fail-ms <ms>` および要求ファイル・`serve` インライン `intent` の `"record_after_fail_ms"`（通常の判定失敗・待ち時間切れの後に短い仮想時間テールで受動的なサンプル記録を `--timeline` へ続ける） |
 | `manual-timeline` | `--scenario` なしの `run --record ... --timeline <file>`（および `record` + `timeline` の `serve` 実行）による手動実行のタイムライン記録（`scenario: null`、最上位 `recorded_to_ms`、`run --json` の最上位 `timeline`） |
+| `record-events` | `check` と `run` の `--record-events`、要求ファイル・`serve` インライン `intent` の `"record_events"`、および `--timeline` の上限付き仮想時刻付き構造化 ECU イベント（`events[]` と `limits.events_*`） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |
@@ -823,6 +825,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `record-signals` | `--record <participant>.<variable>`、要求ファイルと `serve` `intent` の `"record"`、照合の指摘 `record-*`、`--timeline` の `variables[]` の省略可能な `"recorded": true` |
 | `record-after-fail` | `--record-after-fail-ms <ms>`、要求ファイルと `serve` `intent` の `"record_after_fail_ms"`、および `--timeline` の `recorded_to_ms` の失敗後受動テール延長 |
 | `manual-timeline` | `--record` / `"record"` があるときの `--scenario` なし `--timeline`、`--timeline` の `scenario: null` と最上位 `recorded_to_ms`、手動実行での `run --json` 最上位 `timeline` |
+| `record-events` | `--record-events`、要求ファイルと `serve` `intent` の `"record_events"`、`record_events` が `true` のときの `--scenario` なし `--timeline`、および `--timeline` の省略可能な `events[]`・`limits.events_per_participant`・`limits.events_total`・`limits.events_dropped[]` |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは書けません。書く呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します。`scenario-time` のあるビルドでは、時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）を、シナリオの実行中も、標準入力の同じコマンドと同じように受け付けます。シナリオの結果は変わりません。`scenario-control` だけのビルドは、これらも同じ理由で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。
 

@@ -167,6 +167,7 @@ ECU は、`--registry-uri` で参加するとき、何も書かなくても、�
 | 送信する頻度 | Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）で、間引きはしません。 |
 | `--sample-every-step` | コードの `Ecu::set_agent_options()` の指定にかかわらず、ECU のステップごとに送信します（`sample_period` が 0）。コードのほかのオプションはそのままです。`vehicle_sil_launch run --scenario` が、シナリオが値を読む ECU に付けます。条件が ECU のステップを全部見るためです（[scenario.md](scenario.md#ecu-が値を送る頻度samples) の「ECU が値を送る頻度」）。`command` には書きません。自分の `main()` では、`Ecu::sample_every_step()` が同じことをします（最初の `input()`、`output()`、`agent()` の前に呼びます）。 |
 | 変数の利用状態 | `VariableOptions::availability` を付けて宣言した変数について、アプリケーションが変えたとき（`Ecu::set_availability()`）と、シミュレーション時間の 1 秒ごとに送信します（[control-api.md](control-api.md) の「変数の利用状態」）。 |
+| 仮想時刻付きの構造化イベント（`Ecu::log()`） | `Ecu::log(control::EventLevel, std::string_view)`（内部で `control::Agent::log()` を呼ぶ）を使うと、ECU の現在の仮想ステップ時刻を付与した構造化イベントを時刻同期された制御リンク経由で送信できます。`vehicle_sil_launch run --timeline <file> --record-events` で信号波形とともに `events[]` に記録されます。生の `stdout`/`stderr` 出力は実時間のみ（`--log-dir` や `serve` の `log` イベント）であり、仮想時刻軸には配置されません。 |
 | `--describe` の `control` | 公開することを `control` に出力します（`Ecu::describe()` 自体は出力せず、`ecu_main` が追加します）。 |
 | ランチャーが待つ ECU | `vehicle_sil_launch run` は、`control` で公開すると出力した ECU だけを待ちます。 |
 | `--no-control` | 公開しなくなり、`--describe` の `control` も `null` になります。 |

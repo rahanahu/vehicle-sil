@@ -82,6 +82,7 @@ def write(directory: Path, examples: Path) -> list[Path]:
         "example.dashboard.yaml": (EXAMPLE / "simulation.dashboard.yaml").read_text(encoding="utf-8"),
         "panels/rpm-bar.js": (EXAMPLE / "panels" / "rpm-bar.js").read_text(encoding="utf-8"),
         "scenarios/throttle_step.yaml": (EXAMPLE / "scenarios" / "throttle_step.yaml").read_text(encoding="utf-8"),
+        "scenarios/engine_disconnect.yaml": (EXAMPLE / "scenarios" / "engine_disconnect.yaml").read_text(encoding="utf-8"),
         # The second step fails with the real ECUs (the speed stays far below)
         "scenarios/fails.yaml": "vehicle_sil_scenario: 1\nname: speed too high\nsteps:\n  - at_ms: 0\n"
                                 "    set: { Engine.engine.throttle: 50 }\n  - after_ms: 50\n"

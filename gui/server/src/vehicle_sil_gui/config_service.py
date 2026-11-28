@@ -27,8 +27,9 @@ from .config_save import (check_text, check_unchanged, decide, existing_file, ne
 from .contracts import (CHECK_FIELDS, CheckFileRequest, CheckTextRequest, ConnectionsRequest, DescribeRequest, RunRequest,
                         format_validation_error, model_allowed_fields, validate_model_defer_file)
 from .descriptions import Descriptions
-from .launcher import (DESCRIPTIONS_NAME, FEATURE_RECORD_AFTER_FAIL, FEATURE_RECORD_SIGNALS, FEATURE_RUN_STOP_AT,
-                       FEATURE_SCENARIO_CASES, FEATURE_SCENARIO_HANDOVER, NO_CONNECTION, InvalidRequest, Launcher,
+from .launcher import (DESCRIPTIONS_NAME, FEATURE_RECORD_AFTER_FAIL, FEATURE_RECORD_EVENTS,
+                       FEATURE_RECORD_SIGNALS, FEATURE_RUN_STOP_AT, FEATURE_SCENARIO_CASES,
+                       FEATURE_SCENARIO_HANDOVER, NO_CONNECTION, InvalidRequest, Launcher,
                        cached_check_command, check_command, connections_command, describe_command, hide_request,
                        save_check_command, text_check_command, with_participant_timeouts, write_request_file)
 from .paths import ConfigFile, ConfigRoot, PathRejected
@@ -482,6 +483,10 @@ class ConfigService:
             raise Refused(409, "launcher-unsupported",
                           "the launcher does not support post-failure tail recording in requests: install one with "
                           "record-after-fail")
+        if req.record_events is True and FEATURE_RECORD_EVENTS not in self.launcher.features:
+            raise Refused(409, "launcher-unsupported",
+                          "the launcher does not support virtual-time ECU event recording in requests: install one "
+                          "with record-events")
         if req.after_scenario == "pause":
             if FEATURE_SCENARIO_HANDOVER not in self.launcher.features:
                 raise Refused(409, "launcher-unsupported",
@@ -519,7 +524,8 @@ class ConfigService:
                   "after_scenario": after_scenario,
                   "disable": disable or None, "enable": list(req.enable) if req.enable else None,
                   "manual": manual or None, "record": record or None,
-                  "record_after_fail_ms": req.record_after_fail_ms, "strict": req.strict or None, "speed": speed,
+                  "record_after_fail_ms": req.record_after_fail_ms,
+                  "record_events": True if req.record_events else None, "strict": req.strict or None, "speed": speed,
                   "start_paused": req.start_paused or None, "connect": req.connect or None,
                   "time_policy": req.time_policy, "stop_at_ms": req.stop_at_ms,
                   "late_tolerance_ms": req.late_tolerance_ms}

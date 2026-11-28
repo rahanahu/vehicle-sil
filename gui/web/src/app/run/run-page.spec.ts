@@ -2226,6 +2226,147 @@ describe('RunPage', () => {
     expect(link?.getAttribute('href')).toContain('%2Fapi%2Ftimeline%2Fmanual-99');
     expect(manualCard!.querySelector('app-timeline-view')).not.toBeNull();
   });
+
+  it('shows Record virtual-time ECU events checkbox when record-events is advertised, gates manual runs on manual-timeline, sends record_events, restores from session.intent, resets on file switch, and preserves unchecking across language switch', async () => {
+    const appWithFeatures = (features: string[]) => {
+      const base = response('app') as { launcher: { version: { features: string[] } } };
+      return {
+        ...base,
+        launcher: {
+          ...base.launcher,
+          version: {
+            ...base.launcher.version,
+            features: [...new Set([...base.launcher.version.features, ...features])],
+          },
+        },
+      };
+    };
+    const firstScenario = (response('scenarios') as { scenarios: { path: string }[] }).scenarios[0]
+      .path;
+    const secondFile = (response('configs') as { files: { path: string }[] }).files[1]?.path;
+
+    // 1. Without manual-timeline, record-events checkbox is hidden on manual runs, shown on scenario runs
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithFeatures(['record-events']));
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const initCheck = await checkRequest();
+    expect((initCheck.request.body as Record<string, unknown>)['record_events']).toBeUndefined();
+    initCheck.flush(response('check-passed'));
+    await settle();
+
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="record-events"]')).toBeNull();
+
+    const page = fixture.componentInstance as unknown as {
+      selectFile(f: string): void;
+      selectScenario(s: string | null): void;
+    };
+
+    // Select a scenario -> checkbox appears (off by default)
+    page.selectScenario(firstScenario);
+    TestBed.tick();
+    const scenCheck = await checkRequest();
+    expect((scenCheck.request.body as Record<string, unknown>)['record_events']).toBeUndefined();
+    scenCheck.flush(response('check-passed'));
+    await settle();
+
+    const cb = host.querySelector<HTMLInputElement>(
+      '[data-testid="record-events"] input[type="checkbox"]',
+    )!;
+    expect(cb).not.toBeNull();
+    expect(cb.checked).toBe(false);
+
+    // Enable checkbox -> sends record_events: true on api/check, pageIntent, and api/run
+    cb.click();
+    TestBed.tick();
+    expect(pageIntent.get().record_events).toBe(true);
+    const enabledCheck = await checkRequest();
+    expect(enabledCheck.request.body).toMatchObject({ record_events: true });
+    enabledCheck.flush(response('check-passed'));
+    await advance(1);
+    await settle();
+
+    button(fixture, 'start').click();
+    const runReq = http.expectOne('api/run');
+    expect(runReq.request.body).toMatchObject({ record_events: true });
+    runReq.flush(response('run'));
+
+    // Switching config file resets recordEvents back to false
+    if (secondFile) {
+      page.selectFile(secondFile);
+      TestBed.tick();
+      const otherCheck = await checkRequest();
+      expect((otherCheck.request.body as Record<string, unknown>)['record_events']).toBeUndefined();
+      otherCheck.flush(response('check-passed'));
+      await settle();
+
+      page.selectFile('bad-lines.yaml');
+      TestBed.tick();
+      const backCheck = await checkRequest();
+      backCheck.flush(response('check-passed'));
+      await settle();
+    }
+
+    // Ended session with intent.record_events: true restores checkbox
+    const baseSession = (server('ws-pass')[3] as { session: Record<string, unknown> }).session;
+    fake.last().send({
+      type: 'session',
+      stream_seq: 60,
+      session: {
+        ...baseSession,
+        id: 'ev-run-1',
+        file: 'bad-lines.yaml',
+        state: 'ended',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        allowed: { start: { ok: true, reason: null, message: null } },
+        intent: {
+          disable: [],
+          manual: [],
+          scenario: firstScenario,
+          record_events: true,
+        },
+      },
+    });
+    fake.last().send({ type: 'synced', stream_seq: 61, run_id: 'ev-run-1', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    const restoredCheck = await checkRequest();
+    expect(restoredCheck.request.body).toMatchObject({ record_events: true });
+    restoredCheck.flush(response('check-passed'));
+    await settle();
+
+    // Unchecking clears record_events and persists false across language switch via language.keep('run', ...)
+    const restoredCb = host.querySelector<HTMLInputElement>(
+      '[data-testid="record-events"] input[type="checkbox"]',
+    )!;
+    expect(restoredCb.checked).toBe(true);
+    restoredCb.click();
+    TestBed.tick();
+    expect(pageIntent.get().record_events).toBeUndefined();
+    const uncheckedCheck = await checkRequest();
+    expect(
+      (uncheckedCheck.request.body as Record<string, unknown>)['record_events'],
+    ).toBeUndefined();
+    uncheckedCheck.flush(response('check-passed'));
+    await settle();
+
+    const lang = TestBed.inject(LanguageChoice);
+    (lang as unknown as { reload: () => void }).reload = vi.fn();
+    lang.choose('en');
+    const kept = JSON.parse(sessionStorage.getItem('vehicle-sil-gui-carry') ?? '{}') as Record<
+      string,
+      unknown
+    >;
+    expect(readRunChoices(kept['run'])?.recordEvents).toBe(false);
+    sessionStorage.removeItem('vehicle-sil-gui-carry');
+    localStorage.removeItem('vehicle-sil-gui-language');
+  });
 });
 
 describe('readRunChoices', () => {
@@ -2248,6 +2389,8 @@ describe('readRunChoices', () => {
     ]);
     expect(readRunChoices({ ...choices, recordAfterFailMs: '300' })?.recordAfterFailMs).toBe('300');
     expect(readRunChoices({ ...choices, recordAfterFailMs: '' })?.recordAfterFailMs).toBe('');
+    expect(readRunChoices({ ...choices, recordEvents: true })?.recordEvents).toBe(true);
+    expect(readRunChoices({ ...choices, recordEvents: false })?.recordEvents).toBe(false);
     expect(readRunChoices({ ...choices, scenario: 'scenarios/a.yaml' })?.scenario).toBe(
       'scenarios/a.yaml',
     );
@@ -2279,6 +2422,7 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, manual: ['A', 1] })).toBeNull();
     expect(readRunChoices({ ...choices, record: ['A', 1] })).toBeNull();
     expect(readRunChoices({ ...choices, recordAfterFailMs: 300 })).toBeNull();
+    expect(readRunChoices({ ...choices, recordEvents: 'yes' })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: true })).toBeNull();
     expect(readRunChoices({ ...choices, stopAtEdited: 'yes' })).toBeNull();
   });

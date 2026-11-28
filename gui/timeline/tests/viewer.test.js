@@ -889,6 +889,7 @@ test('the types (vehicle-sil-timeline.d.ts) name every option of the element, an
     /^ {2}focusStep\(index: number, options\?: VehicleSilTimelineFocusOptions\): boolean;/m,
   );
   assert.match(types, /^ {2}pan\(fraction: number\): void;/m);
+  assert.match(types, /^ {2}pinCursor\(atMs: number\): boolean;/m);
   assert.match(types, /^ {2}variablehide: CustomEvent<\{ variable: string \}>;/m);
   // The parts of hide: the type, the element's check and the CSS name the same words
   const union = /export type VehicleSilTimelinePart =([^;]+);/.exec(types)[1];
@@ -898,7 +899,12 @@ test('the types (vehicle-sil-timeline.d.ts) name every option of the element, an
     [...css.matchAll(/\[hide~='(\w+)'\]/g)].map((m) => m[1]).sort(),
     [...parts].sort(),
   );
-  assert.match(source, new RegExp(`const PARTS = \\[${parts.map((p) => `'${p}'`).join(', ')}\\]`));
+  const partsDecl = /const PARTS = \[([\s\S]*?)\];/.exec(source);
+  assert.ok(partsDecl, 'viewer.js declares PARTS');
+  assert.deepEqual(
+    [...partsDecl[1].matchAll(/'(\w+)'/g)].map((m) => m[1]),
+    parts,
+  );
 });
 
 test('provenance helpers resolve scenario case, step file/name/call_stack, and line file in EN and JA', () => {
@@ -1049,6 +1055,17 @@ const makeMockDom = () => {
       this.clientWidth = 800;
       this.parentElement = null;
       this.style = { setProperty() {} };
+      this.classList = {
+        toggle: (cls, force) => {
+          const set = new Set((this.className || '').split(/\s+/).filter(Boolean));
+          if (force === undefined) {
+            if (set.has(cls)) set.delete(cls);
+            else set.add(cls);
+          } else if (force) set.add(cls);
+          else set.delete(cls);
+          this.className = [...set].join(' ');
+        },
+      };
     }
     get id() {
       return this.attrs.id || '';
@@ -1101,6 +1118,11 @@ const makeMockDom = () => {
         this._listeners.set(type, list);
       }
       list.push(fn);
+    }
+    dispatchEvent(ev) {
+      const list = this._listeners?.get(ev.type) ?? [];
+      for (const fn of list) fn.call(this, ev);
+      return true;
     }
     getElementById(id) {
       return byTag(this, (n) => n.attrs.id === id)[0] || null;
@@ -3852,4 +3874,208 @@ test('manual run timeline (scenario: null): neutral header & summary, no pass/fa
       .textContent.includes('Manual run: no samples recorded'),
   );
   assert.ok(elEmpty._shadow.getElementById('facts').textContent.includes('nothing recorded'));
+});
+
+test('virtual-time ECU events: parsing, grouping, filtering, ticks, drawer, pinCursor(), and events_dropped banner', async () => {
+  const tl = fixture('ecu_events');
+  const m = model(tl);
+  assert.equal(m.events.length, 5);
+  assert.equal(m.eventsDropped.length, 0);
+  assert.equal(m.eventGroups.length, 3);
+  // Simultaneous timestamps are grouped (0 ms: 2 info -> info; 300 ms: 1 warning -> warning; 520 ms: error+info -> error).
+  assert.deepEqual(
+    m.eventGroups.map((g) => [g.atMs, g.severity, g.events.length]),
+    [
+      [0, 'info', 2],
+      [300, 'warning', 1],
+      [520, 'error', 2],
+    ],
+  );
+
+  // filterEcuEvents supports participant, level, text query, and visible zoom range
+  assert.equal(T.filterEcuEvents(m.events, { participant: 'Engine' }).length, 3);
+  assert.equal(T.filterEcuEvents(m.events, { level: 'warning' }).length, 1);
+  assert.equal(T.filterEcuEvents(m.events, { query: 'heartbeat' }).length, 1);
+  assert.equal(
+    T.filterEcuEvents(m.events, { visibleOnly: true, view: [200, 400] })
+      .map((e) => e.atMs)
+      .join(','),
+    '300',
+  );
+
+  const meta = T.modelMetadata(m, 'ecu_events.timeline.json');
+  assert.equal(meta.eventCount, 5);
+
+  // Legacy v1 timeline without events has 0 events, no events lane, and hidden #ecu-events
+  const legacyTl = reference('waits');
+  assert.equal(T.modelMetadata(model(legacyTl), 'waits.timeline.json').eventCount, 0);
+  const { Element } = makeMockDom();
+  const elLegacy = new Element();
+  elLegacy.data = legacyTl;
+  elLegacy.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(elLegacy._shadow.getElementById('ecu-events').hidden, true);
+  assert.equal(elLegacy._shadow.querySelectorAll('[data-testid=ecu-event-tick]').length, 0);
+
+  // Render ecu_events fixture even with hide="header summary help tables toolbar" (embedded mode)
+  const el = new Element();
+  el.hide = 'header summary help tables toolbar';
+  el.data = tl;
+  const cursorEvents = [];
+  el.addEventListener('cursorchange', (e) => cursorEvents.push(e.detail.cursor));
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  assert.equal(el._shadow.getElementById('ecu-events').hidden, false);
+  const ticks = el._shadow.querySelectorAll('[data-testid=ecu-event-tick]');
+  assert.equal(ticks.length, 3);
+  assert.ok(
+    findNodes(
+      el._shadow.getElementById('chart'),
+      (n) => n.tagName === 'text' && n.textContent === '×2',
+    ).length >= 2,
+    'simultaneous timestamps should show ×2 badges',
+  );
+  const rows = el._shadow.querySelectorAll('[data-testid=ecu-event-row]');
+  assert.equal(rows.length, 5);
+  assert.equal(el._shadow.querySelectorAll('[data-testid=events-dropped-banner]').length, 0);
+
+  // Clicking a row pins the waveform cursor at that exact virtual time and updates Δt
+  rows[2].dispatchEvent({ type: 'click', stopPropagation() {}, preventDefault() {} });
+  assert.equal(el.cursor, 300);
+  assert.equal(cursorEvents[cursorEvents.length - 1], 300);
+  assert.equal(rows[2].attrs['aria-selected'], 'true');
+  const deltas = el._shadow.querySelectorAll('.ev-delta').map((n) => n.textContent);
+  assert.deepEqual(deltas, ['-300 ms', '-300 ms', '0 ms', '+220 ms', '+220 ms']);
+
+  // Public pinCursor() clamps to domain, emits cursorchange, and is not clobbered by pending from/to/cursor microtasks
+  assert.equal(el.pinCursor(520), true);
+  assert.equal(el.cursor, 520);
+  assert.equal(cursorEvents[cursorEvents.length - 1], 520);
+  assert.equal(el.pinCursor(-50), true);
+  assert.equal(el.cursor, 0);
+  assert.equal(el.pinCursor('not-a-number'), false);
+
+  // Synchronous el.from / el.to + el.pinCursor() must pan into view and keep the panned view after microtask flush
+  el.from = 0;
+  el.to = 100;
+  assert.equal(el.pinCursor(520), true);
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el.cursor, 520);
+  assert.ok(el.from <= 520 && el.to >= 520, `expected 520 inside [${el.from}, ${el.to}]`);
+
+  // Synchronous el.from / el.to + in-view el.pinCursor(50) must still redraw #range, emit viewchange, and refresh visibleOnly rows
+  el.resetView();
+  const visibleToggle = el._shadow.getElementById('ecu-events-visible-only');
+  visibleToggle.checked = true;
+  visibleToggle.dispatchEvent({ type: 'change', target: visibleToggle });
+  assert.equal(el._shadow.querySelectorAll('[data-testid=ecu-event-row]').length, 5);
+  const viewEvents = [];
+  el.addEventListener('viewchange', (e) => viewEvents.push(e.detail));
+  el.from = 0;
+  el.to = 100;
+  assert.equal(el.pinCursor(50), true);
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el.cursor, 50);
+  assert.equal(el.from, 0);
+  assert.equal(el.to, 100);
+  assert.deepEqual(viewEvents[viewEvents.length - 1], { from: 0, to: 100 });
+  assert.ok(
+    el._shadow.getElementById('range').textContent.includes('Showing 0 ms to 100 ms'),
+    el._shadow.getElementById('range').textContent,
+  );
+  assert.deepEqual(
+    el._shadow.querySelectorAll('[data-testid=ecu-event-row]').map((n) => n.attrs['data-event-at']),
+    ['0', '0'],
+  );
+  visibleToggle.checked = false;
+  visibleToggle.dispatchEvent({ type: 'change', target: visibleToggle });
+
+  // Synchronous el.cursor = null / el.cursor = 100 + el.pinCursor() must remain pinned after microtask flush
+  el.cursor = null;
+  assert.equal(el.pinCursor(300), true);
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el.cursor, 300);
+
+  el.cursor = 100;
+  assert.equal(el.pinCursor(300), true);
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el.cursor, 300);
+  el.resetView();
+
+  // Empty manual --record-events timeline (0 signals, 0 events, recorded_to_ms != null) shows neutral EN & JA summary
+  const emptyEventsManual = JSON.parse(JSON.stringify(fixture('manual_run')));
+  emptyEventsManual.variables = [];
+  emptyEventsManual.series = [];
+  emptyEventsManual.events = [];
+  const elEmptyEv = new Element();
+  elEmptyEv.data = emptyEventsManual;
+  elEmptyEv.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.ok(
+    elEmptyEv._shadow
+      .getElementById('summary')
+      .textContent.includes('No signals or ECU events recorded up to 500 ms'),
+    elEmptyEv._shadow.getElementById('summary').textContent,
+  );
+  elEmptyEv.setAttribute('lang', 'ja');
+  elEmptyEv.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.ok(
+    elEmptyEv._shadow
+      .getElementById('summary')
+      .textContent.includes('500 ms までに記録された信号や ECU イベントはありません'),
+    elEmptyEv._shadow.getElementById('summary').textContent,
+  );
+
+  // Filtering by participant and text + visible-only toggle synced to zoom
+  const partSelect = el._shadow.getElementById('ecu-events-participant');
+  partSelect.value = 'Dashboard';
+  partSelect.dispatchEvent({ type: 'change', target: partSelect });
+  assert.equal(el._shadow.querySelectorAll('[data-testid=ecu-event-row]').length, 2);
+
+  partSelect.value = '';
+  partSelect.dispatchEvent({ type: 'change', target: partSelect });
+  const visibleCb = el._shadow.getElementById('ecu-events-visible-only');
+  visibleCb.checked = true;
+  visibleCb.dispatchEvent({ type: 'change', target: visibleCb });
+  el.from = 250;
+  el.to = 350;
+  await new Promise((r) => Promise.resolve().then(r));
+  const zoomedRows = el._shadow.querySelectorAll('[data-testid=ecu-event-row]');
+  assert.equal(zoomedRows.length, 1);
+  assert.equal(zoomedRows[0].attrs['data-event-at'], '300');
+
+  // events_dropped honesty banner renders for both dropped and agent_dropped entries (EN & JA)
+  const droppedTl = JSON.parse(JSON.stringify(tl));
+  droppedTl.limits.events_dropped = [
+    {
+      participant: 'Engine',
+      dropped: 12,
+      dropped_from_ms: 0,
+      dropped_before_ms: 200,
+      agent_dropped: 3,
+    },
+  ];
+  const elDrop = new Element();
+  elDrop.data = droppedTl;
+  elDrop.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const bannerEn = elDrop._shadow.querySelectorAll('[data-testid=events-dropped-banner]')[0];
+  assert.ok(bannerEn, 'events_dropped honesty banner must render');
+  assert.ok(
+    bannerEn.textContent.includes('Engine: 12 dropped (0 ms to 200 ms)'),
+    bannerEn.textContent,
+  );
+  assert.ok(bannerEn.textContent.includes('3 dropped in ECU queue'), bannerEn.textContent);
+
+  elDrop.setAttribute('lang', 'ja');
+  elDrop.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  const bannerJa = elDrop._shadow.querySelectorAll('[data-testid=events-dropped-banner]')[0];
+  assert.ok(
+    bannerJa.textContent.includes('一部の ECU イベントが欠けています。'),
+    bannerJa.textContent,
+  );
+  assert.ok(bannerJa.textContent.includes('ECU 側キューで 3 件欠落'), bannerJa.textContent);
 });

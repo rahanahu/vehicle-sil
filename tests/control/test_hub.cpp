@@ -1000,6 +1000,69 @@ TEST_CASE(control_hub_tap_sees_every_sample_in_order_until_it_is_taken_away)
     CHECK_EQ(seen.size(), std::size_t{4});
 }
 
+TEST_CASE(control_hub_events_tap_sees_batches_and_agent_dropped_until_cleared)
+{
+    Hub hub;
+    FakePeer engine("Engine", "e1", hub);
+    FakePeer body("Body", "b1", hub);
+    engine.connect();
+    body.connect();
+    const auto sub = hub.subscribe();
+    (void)sub->poll(0, 0ms); // clear initial peer updates
+
+    struct SeenBatch
+    {
+        std::string participant;
+        std::string incarnation;
+        std::vector<std::string> texts;
+        std::uint64_t dropped = 0;
+    };
+    std::vector<SeenBatch> seen;
+    hub.set_events_tap([&seen](const std::string& participant, const std::string& incarnation,
+                               std::span<const Event> events, std::uint64_t agent_dropped) {
+        SeenBatch b;
+        b.participant = participant;
+        b.incarnation = incarnation;
+        b.dropped = agent_dropped;
+        for (const auto& ev : events)
+        {
+            b.texts.push_back(std::to_string(ev.time.time_since_epoch().count() / 1'000'000) + ":" + ev.text);
+        }
+        seen.push_back(std::move(b));
+    });
+
+    const ConnectionId oldConn = engine.connection;
+    hub.agent_events(engine.connection,
+                     {Event{at(10ms), EventLevel::Info, "started"}, Event{at(20ms), EventLevel::Warning, "warm"}}, 3);
+    hub.agent_events(body.connection, {}, 5); // agent_dropped-only batch is still delivered to tap
+    hub.agent_events(body.connection, {}, 0); // empty no-op batch is skipped
+
+    CHECK_EQ(seen.size(), std::size_t{2});
+    CHECK(seen[0].participant == "Engine");
+    CHECK(seen[0].incarnation == "e1");
+    CHECK((seen[0].texts == std::vector<std::string>{"10:started", "20:warm"}));
+    CHECK_EQ(seen[0].dropped, std::uint64_t{3});
+    CHECK(seen[1].participant == "Body");
+    CHECK(seen[1].incarnation == "b1");
+    CHECK(seen[1].texts.empty());
+    CHECK_EQ(seen[1].dropped, std::uint64_t{5});
+
+    // Subscribers still receive events identically.
+    const auto updates = sub->poll(0, 0ms);
+    CHECK_EQ(updates.size(), std::size_t{2});
+
+    // Stale/replaced connection's events are ignored by the tap.
+    FakePeer engine2("Engine", "e2", hub);
+    engine2.connect();
+    hub.agent_events(oldConn, {Event{at(30ms), EventLevel::Error, "stale"}}, 1);
+    CHECK_EQ(seen.size(), std::size_t{2});
+
+    // Clearing the tap stops delivery cleanly.
+    hub.set_events_tap({});
+    hub.agent_events(engine2.connection, {Event{at(40ms), EventLevel::Info, "after clear"}}, 2);
+    CHECK_EQ(seen.size(), std::size_t{2});
+}
+
 namespace {
 
 /// A peer that is a schema and a link, without an agent: the test says what its agent answers.

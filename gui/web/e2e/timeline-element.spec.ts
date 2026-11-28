@@ -649,7 +649,7 @@ test('timeline element: settings it cannot use are said: in the console, and nam
     '<vehicle-sil-timeline>: cursor="12ms" is not a number, so it is ignored. Write a number, such as 120.',
     '<vehicle-sil-timeline>: theme="blue" is not light, dark or auto, so the colours follow the page (auto).',
     '<vehicle-sil-timeline>: hide has "nothing", which is not a part, so it is ignored. ' +
-      'The parts: header, summary, toolbar, help, steps, readout, legend, tables.',
+      'The parts: header, summary, toolbar, help, steps, events, readout, legend, tables.',
     '<vehicle-sil-timeline>: from (200) is not before to (100), so the view does not change. ' +
       'Give from a smaller number than to.',
     '<vehicle-sil-timeline>: cursor="abc" is not a number, so it is ignored. Write a number, such as 120.',

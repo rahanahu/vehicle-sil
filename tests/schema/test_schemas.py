@@ -1417,6 +1417,11 @@ REQUEST_SAMPLES = [
     ("record_after_fail_ms float", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": 1.5}', "invalid"),
     ("record_after_fail_ms string", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": "300"}', "invalid"),
     ("record_after_fail_ms null", "{" + R + ', "scenario": "scenarios/brake.yaml", "record_after_fail_ms": null}', "invalid"),
+    ("record_events true", "{" + R + ', "record_events": true}', "valid"),
+    ("record_events false", "{" + R + ', "record_events": false}', "valid"),
+    ("record_events int", "{" + R + ', "record_events": 1}', "invalid"),
+    ("record_events string", "{" + R + ', "record_events": "true"}', "invalid"),
+    ("record_events null", "{" + R + ', "record_events": null}', "invalid"),
 ]
 
 
@@ -1594,6 +1599,7 @@ class TimelineSchema(unittest.TestCase):
         # provenance/conditional fields so existing timeline records stay valid unchanged.
         may_be_left_out = {
             ("", "recorded_to_ms"),
+            ("", "events"),
             ("scenario.", "case"),
             ("variables.", "recorded"),
             ("steps.", "file"),
@@ -1603,6 +1609,9 @@ class TimelineSchema(unittest.TestCase):
             ("steps.watch.conditions.compare.", "variable"),
             ("steps.failed.conditions.", "compared"),
             ("lines.", "file"),
+            ("limits.", "events_per_participant"),
+            ("limits.", "events_total"),
+            ("limits.", "events_dropped"),
         }
 
         def walk(node, where):
@@ -1967,6 +1976,59 @@ class TimelineOfARun(unittest.TestCase):
                          ["Engine.engine.speed", "Dashboard.dashboard.engine_speed"])
         self.assertTrue(all(not v["written"] and not v["watched"] and v.get("recorded") is True for v in data["variables"]))
         self.assertTrue(all(s["source"] == "sampled" and s["points"] for s in data["series"]))
+
+    def test_the_timeline_with_record_events_is_valid(self):
+        example = Path(EXAMPLE_DIR)
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-timeline-events-") as directory:
+            scen_out = Path(directory) / "disconnect.timeline.json"
+            proc = subprocess.run(
+                [LAUNCH, "run", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml",
+                 "--record-events", "--timeline", str(scen_out)],
+                cwd=example, capture_output=True, text=True, encoding="utf-8",
+                stdin=subprocess.DEVNULL, timeout=120,
+            )
+            self.assertEqual(proc.returncode, 0, f"engine_disconnect --record-events failed:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
+            scen_data = json.loads(scen_out.read_text(encoding="utf-8"))
+
+            man_out = Path(directory) / "manual_events.timeline.json"
+            proc2 = subprocess.run(
+                [LAUNCH, "run", "simulation.yaml", "--stop-at-ms", "300",
+                 "--record-events", "--timeline", str(man_out)],
+                cwd=example, capture_output=True, text=True, encoding="utf-8",
+                stdin=subprocess.DEVNULL, timeout=120,
+            )
+            self.assertEqual(proc2.returncode, 0, f"manual --record-events failed:\n{proc2.stdout[-2000:]}\n{proc2.stderr[-2000:]}")
+            man_data = json.loads(man_out.read_text(encoding="utf-8"))
+
+        self.assertEqual(problems(TIMELINE, scen_data), [],
+                         "scenario --record-events timeline is not valid for schema/timeline.schema.json")
+        self.assertIsInstance(scen_data.get("events"), list)
+        self.assertGreater(len(scen_data["events"]), 0)
+        self.assertEqual(scen_data["limits"]["events_per_participant"], 2000)
+        self.assertEqual(scen_data["limits"]["events_total"], 5000)
+        self.assertEqual(scen_data["limits"]["events_dropped"], [])
+
+        self.assertEqual(problems(TIMELINE, man_data), [],
+                         "manual --record-events timeline is not valid for schema/timeline.schema.json")
+        self.assertIsNone(man_data["scenario"])
+        self.assertEqual(man_data["recorded_to_ms"], 300)
+        self.assertEqual(man_data["variables"], [])
+        self.assertEqual(man_data["series"], [])
+        self.assertGreater(len(man_data["events"]), 0)
+
+        # Synthetic dropped-events entry passes schema, malformed event entry fails schema.
+        with_drop = copy.deepcopy(man_data)
+        with_drop["limits"]["events_dropped"] = [{
+            "participant": "Engine",
+            "dropped": 3,
+            "dropped_from_ms": 0,
+            "dropped_before_ms": 250,
+            "agent_dropped": 1,
+        }]
+        self.assertEqual(problems(TIMELINE, with_drop), [])
+        bad_event = copy.deepcopy(man_data)
+        bad_event["events"] = [{"at_ms": "not-a-number", "participant": "Engine", "level": "info", "text": "x"}]
+        self.assertTrue(problems(TIMELINE, bad_event))
 
 
 class ControlMetricsSchema(unittest.TestCase):

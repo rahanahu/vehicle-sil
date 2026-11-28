@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test';
 import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GUI_PORT, guiToken } from '../support/gui-server';
+import { scaled } from '../support/timeouts';
 import {
   RUN_TIMEOUT,
   choose,
@@ -1027,6 +1028,109 @@ test('real manual run with Recorded signals: writes scenario-free timeline and o
     await expect(restoreChip).toBeVisible();
     await restoreChip.click();
     await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 2');
+  } finally {
+    await stopRun(page, target, RUN_TIMEOUT);
+  }
+});
+
+test('real vehicle_sil_launch: virtual-timestamped ECU events correlate with waveforms on engine_disconnect', async ({
+  page,
+}) => {
+  test.setTimeout(scaled(90_000));
+  const target: Target = { base: `http://127.0.0.1:${GUI_PORT}/`, token: guiToken() };
+  const headers = { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin };
+  const appResp = await page.request.get(new URL('api/app', target.base).href, { headers });
+  const appJson = (await appResp.json()) as {
+    launcher?: { version?: { features?: string[] } };
+  };
+  const features = appJson.launcher?.version?.features ?? [];
+  test.skip(
+    !features.includes('record-events') || !features.includes('timeline'),
+    'launcher does not advertise record-events / timeline',
+  );
+
+  await openRun(page);
+  await stopIfRunning(page);
+  try {
+    await choose(page, 'simulation.yaml');
+    const scCheck = page.waitForResponse(
+      (r) =>
+        r.url().endsWith('/api/check') &&
+        (r.request().postDataJSON() as Record<string, unknown>)['scenario'] ===
+          'scenarios/engine_disconnect.yaml',
+    );
+    await page.getByRole('combobox', { name: 'シナリオ' }).click();
+    await page.getByRole('option', { name: 'engine_disconnect.yaml', exact: true }).click();
+    await scCheck;
+
+    // Opt in to recording virtual-timestamped structured ECU events
+    const recordEventsCb = page.getByTestId('record-events').getByRole('checkbox');
+    await expect(recordEventsCb).toBeVisible();
+    await expect(recordEventsCb).not.toBeChecked();
+    const evCheck = page.waitForResponse(
+      (r) =>
+        r.url().endsWith('/api/check') &&
+        (r.request().postDataJSON() as Record<string, unknown>)['record_events'] === true,
+    );
+    await recordEventsCb.check();
+    await evCheck;
+
+    await expect(page.getByTestId('check-outcome')).toContainText('通った', {
+      timeout: RUN_TIMEOUT,
+    });
+
+    const runReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const runId = await start(page);
+    const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(runBody['record_events']).toBe(true);
+    await expect(result(page, runId)).toBeVisible({ timeout: RUN_TIMEOUT });
+
+    // Verify timeline JSON contains grounded virtual-timestamped ECU events including bus disconnect at 300 ms
+    const tlResp = await page.request.get(new URL(`api/timeline/${runId}`, target.base).href, {
+      headers,
+    });
+    expect(tlResp.status()).toBe(200);
+    const tlJson = (await tlResp.json()) as {
+      events?: { at_ms: number; participant: string; level: string; text: string }[];
+      limits?: { events_dropped?: unknown[] };
+    };
+    expect(Array.isArray(tlJson.events)).toBe(true);
+    const events = tlJson.events ?? [];
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    const disconnectEvent = events.find((e) => e.participant === 'Engine' && e.at_ms === 300);
+    expect(
+      disconnectEvent,
+      `expected Engine event at 300 ms in ${JSON.stringify(events)}`,
+    ).toBeDefined();
+
+    // Open the inline logic analyzer on the passed Scenario card
+    const card = page.getByTestId('scenario-card');
+    await expect(card).toBeVisible({ timeout: RUN_TIMEOUT });
+    const toggle = card.getByTestId('timeline-toggle');
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+      await toggle.click();
+    }
+    const timeline = card.getByTestId('timeline-element');
+    await expect(timeline).toBeVisible({ timeout: RUN_TIMEOUT });
+
+    // Severity ticks and synchronized ECU Events table render inside the embedded logic analyzer
+    await expect(timeline.locator('[data-testid="ecu-event-tick"]').first()).toBeVisible({
+      timeout: RUN_TIMEOUT,
+    });
+    const rows = timeline.locator('[data-testid="ecu-event-row"]');
+    await expect(rows.first()).toBeVisible({ timeout: RUN_TIMEOUT });
+
+    // Click the 300 ms Engine disconnect event row and verify waveform cursor pins to 300.0 ms
+    const disconnectRow = timeline
+      .locator('[data-testid="ecu-event-row"][data-event-at="300"]')
+      .first();
+    await expect(disconnectRow).toBeVisible();
+    await disconnectRow.click();
+    await expect(card.getByTestId('timeline-readout')).toContainText('300.0 ms');
+    await expect(disconnectRow).toHaveAttribute('aria-selected', 'true');
+    await expect(disconnectRow.locator('.ev-delta')).toHaveText('0 ms');
   } finally {
     await stopRun(page, target, RUN_TIMEOUT);
   }

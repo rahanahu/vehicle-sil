@@ -432,6 +432,67 @@ def test_session_intent_preserves_record_after_fail_ms_in_summary(tmp_path: Path
     asyncio.run(main())
 
 
+def test_config_service_validates_and_forwards_record_events(tmp_path: Path) -> None:
+    from vehicle_sil_control.protocol import request_text
+
+    root = _simple_root(tmp_path)
+
+    async def main() -> None:
+        cfg_file = ConfigService(root, FakeLauncher()).resolve("simple.yaml")
+
+        # 1. record_events=True is forwarded and serialized by request_text()
+        svc = ConfigService(root, FakeLauncher())
+        intent, _, _ = await svc.build_intent(
+            cfg_file,
+            RunRequest(file="simple.yaml", record_events=True),
+            None,
+        )
+        assert intent["record_events"] is True
+        serialized = json.loads(request_text(intent))
+        assert serialized["record_events"] is True
+
+        # 2. Omitted or False stays omitted from intent (even on launchers without record-events)
+        no_ev_features = [f for f in FakeLauncher().features if f != "record-events"]
+        svc_old = ConfigService(root, FakeLauncher(features=no_ev_features))
+        intent_omitted, _, _ = await svc_old.build_intent(cfg_file, RunRequest(file="simple.yaml"), None)
+        assert "record_events" not in intent_omitted
+        intent_false, _, _ = await svc_old.build_intent(
+            cfg_file, RunRequest(file="simple.yaml", record_events=False), None,
+        )
+        assert "record_events" not in intent_false
+
+        # 3. Launcher without record-events + record_events=True -> 409 launcher-unsupported
+        with pytest.raises(Refused) as exc_unsup:
+            await svc_old.build_intent(cfg_file, RunRequest(file="simple.yaml", record_events=True), None)
+        assert (exc_unsup.value.status, exc_unsup.value.code) == (409, "launcher-unsupported")
+
+    asyncio.run(main())
+
+
+def test_session_intent_preserves_record_events_in_summary(tmp_path: Path) -> None:
+    from fake_runtime import in_process_gui
+
+    root = _simple_root(tmp_path)
+
+    async def main() -> None:
+        async with in_process_gui(root=root) as gui:
+            status, body = await gui.client.post(
+                "api/run",
+                {
+                    "file": "simple.yaml",
+                    "disable": [],
+                    "record_events": True,
+                },
+            )
+            assert status == 200, body
+            s_status, s_body = await gui.client.get("api/session")
+            assert s_status == 200
+            assert s_body["session"]["intent"]["record_events"] is True
+            await gui.runtime.runs[0].finish(returncode=0)
+
+    asyncio.run(main())
+
+
 def test_run_manager_write_variables_honors_handover_and_prestate_refusals(tmp_path: Path) -> None:
     from vehicle_sil_gui.session import Limits as SessionLimits
     from vehicle_sil_gui.source import PeerInfo

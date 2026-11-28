@@ -1103,3 +1103,74 @@ test('logic analyzer: manual run with Recorded signals auto-opens clean manual t
   await restoreChip.click();
   await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 2');
 });
+
+test('logic analyzer: Record virtual-time ECU events toggle renders severity ticks, synchronized ECU Events table, filtering, and click-to-pin cursor correlation', async ({
+  page,
+}) => {
+  await page.goto(`${base}#token=${server.token}`);
+  await inSync(page);
+
+  const cfgSelect = page.getByTestId('config-select');
+  await cfgSelect.click();
+  await page.getByRole('option', { name: 'simulation.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-outcome')).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  // Select failing scenario and opt in to Record virtual-time ECU events
+  await page.getByTestId('scenario-select').click();
+  await page.getByRole('option', { name: 'fails.yaml', exact: true }).click();
+  await expect(page.getByTestId('check-outcome')).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  const recordEventsCb = page.getByTestId('record-events').getByRole('checkbox');
+  await expect(recordEventsCb).toBeVisible();
+  await expect(recordEventsCb).not.toBeChecked();
+  const checkPromise = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/check') &&
+      (r.request().postDataJSON() as Record<string, unknown>)['record_events'] === true,
+  );
+  await recordEventsCb.check();
+  await checkPromise;
+
+  const runReqPromise = page.waitForRequest(
+    (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+  );
+  await start(page);
+  const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+  expect(runBody['record_events']).toBe(true);
+
+  const card = page.getByTestId('scenario-card');
+  await expect(card).toBeVisible({ timeout: RUN_TIMEOUT });
+  const timeline = card.getByTestId('timeline-element');
+  await expect(timeline).toBeVisible({ timeout: RUN_TIMEOUT });
+
+  // Embedded timeline shows severity ticks and synchronized ECU Events table even though hide="tables"
+  const rows = timeline.locator('[data-testid="ecu-event-row"]');
+  await expect(rows).toHaveCount(4, { timeout: RUN_TIMEOUT });
+  await expect(timeline.locator('[data-testid="ecu-event-tick"]')).toHaveCount(1);
+
+  // "Visible range only" narrows rows to the zoomed failure window, and whole-run reveals all 3 grouped ticks
+  const visibleOnly = timeline.locator('[data-testid="ecu-events-visible-only"]');
+  await visibleOnly.check();
+  await expect(rows).toHaveCount(1);
+  await card.getByTestId('timeline-whole-run').click();
+  await expect(timeline.locator('[data-testid="ecu-event-tick"]')).toHaveCount(3);
+  await expect(rows).toHaveCount(4);
+  await visibleOnly.uncheck();
+
+  // Clicking the 50 ms event row pins the cursor at 50.0 ms and updates Δt column
+  await rows.nth(2).click();
+  await expect(card.getByTestId('timeline-readout')).toContainText('50.0 ms');
+  await expect(rows.nth(2)).toHaveAttribute('aria-selected', 'true');
+  await expect(rows.nth(2).locator('.ev-delta')).toHaveText('0 ms');
+  await expect(rows.nth(3).locator('.ev-delta')).toHaveText('+50 ms');
+
+  // Participant and text filters narrow the ECU Events table cleanly
+  await timeline.locator('[data-testid="ecu-events-participant"]').selectOption('Dashboard');
+  await expect(rows).toHaveCount(1);
+  await timeline.locator('[data-testid="ecu-events-participant"]').selectOption('');
+  await expect(rows).toHaveCount(4);
+  await timeline.locator('[data-testid="ecu-events-search"]').fill('speed below target');
+  await expect(rows).toHaveCount(1);
+  await timeline.locator('[data-testid="ecu-events-search"]').fill('');
+  await expect(rows).toHaveCount(4);
+});

@@ -231,11 +231,11 @@ void timeline(const Options& o)
 
     // The command line.
     const Captured alone = launch(o, {"run", "sim.yaml", "--timeline", "x.json"}, dir);
-    expect_code(alone, 4, "--timeline without --scenario or --record");
+    expect_code(alone, 4, "--timeline without --scenario, --record or --record-events");
     require(contains(lf(alone.standard_error),
-                     "error: --timeline needs --scenario or --record: give --scenario <file> or at least one "
-                     "--record <participant>.<variable>, or leave --timeline out\n"),
-            "--timeline without --scenario or --record:\n" + lf(alone.standard_error));
+                     "error: --timeline needs --scenario, --record or --record-events: give --scenario <file>, at least "
+                     "one --record <participant>.<variable>, or --record-events, or leave --timeline out\n"),
+            "--timeline without --scenario, --record or --record-events:\n" + lf(alone.standard_error));
     const Captured checked = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml", "--timeline", "x.json"}, dir);
     expect_code(checked, 4, "check --timeline");
     require(contains(lf(checked.standard_error), "error: --timeline is for run: check starts no participant\n"),
@@ -718,10 +718,193 @@ void timeline(const Options& o)
                         "manual stdin stop timeline recorded samples up to stop:\n" + stopTl);
             }
 
-            // Manual run with --timeline and neither --record nor --scenario: exit 4, no file written.
+            // Manual run with --timeline and neither --record nor --scenario nor --record-events: exit 4, no file written.
             const Captured missingRec = launch(o, {"run", "simulation.yaml", "--timeline", "manual_none.json"}, exDir);
-            expect_code(missingRec, 4, "--timeline without --record or --scenario");
+            expect_code(missingRec, 4, "--timeline without --record, --record-events or --scenario");
             require(!fs::exists(exDir / "manual_none.json"), "usage error must not create manual_none.json");
+        }
+
+        // Virtual-timestamped structured ECU events (--record-events / request "record_events" / serve inline intent):
+        // 1. engine_disconnect.yaml (native J1939 address claims + ecu.connected bus disconnect/reconnect events):
+        //    - baseline without --record-events omits "events" and "events_per_participant" completely.
+        //    - with --record-events: records real virtual-timestamped events from Engine & Dashboard (at 300ms disconnect,
+        //      reconnect, J1939 address claim), deterministic across repeated runs & speeds, and identical via --request and serve --once.
+        //    - raw child stdout/stderr lines (e.g. "t=100 ms") NEVER appear in "events".
+        // 2. Failing scenario with --record-after-fail-ms + --record-events captures ECU events occurring DURING FailingTail!
+        // 3. Manual run with --record-events (without --record!) produces valid manual timeline with recorded events.
+        // 4. --record-events refused on test, serve, connections (exit 4).
+        {
+            fs::create_directories(exDir / "scenarios");
+            write_file(exDir / "scenarios" / "engine_disconnect.yaml",
+                       lf(read_text(o.example_dir / "scenarios" / "engine_disconnect.yaml")));
+            const Captured baseDisc = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml",
+                 "--timeline", "disc_base.json"},
+                exDir);
+            expect_code(baseDisc, 0, "engine_disconnect baseline without --record-events");
+            const std::string baseDiscText = read_text(exDir / "disc_base.json");
+            require(!contains(baseDiscText, "\"events\"") && !contains(baseDiscText, "\"events_per_participant\""),
+                    "baseline timeline without --record-events omits events keys:\n" + baseDiscText);
+
+            const Captured evDisc1 = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml",
+                 "--record-events", "--timeline", "disc_ev1.json"},
+                exDir);
+            expect_code(evDisc1, 0, "engine_disconnect with --record-events");
+            const std::string evDiscText = read_text(exDir / "disc_ev1.json");
+            const auto evStart = evDiscText.find("  \"events\": [");
+            const auto evEnd = evDiscText.find("  \"findings\": [", evStart);
+            require(evStart != std::string::npos && evEnd != std::string::npos, "missing events section:\n" + evDiscText);
+            const std::string evSection = evDiscText.substr(evStart, evEnd - evStart);
+            require(contains(evDiscText, "  \"events\": [\n") &&
+                        contains(evSection, "\"participant\": \"Engine\"") &&
+                        contains(evSection, "\"at_ms\": 0,") &&
+                        contains(evSection, "claiming at address 0") &&
+                        contains(evSection, "\"at_ms\": 250,") &&
+                        contains(evSection, "claimed at address 0") &&
+                        contains(evSection, "\"at_ms\": 300,") &&
+                        contains(evSection, "ecu.connected") &&
+                        contains(evDiscText, "    \"events_per_participant\": 2000,\n    \"events_total\": 5000,\n    \"events_dropped\": []\n"),
+                    "engine_disconnect --record-events timeline:\n" + evDiscText);
+            // Raw stdout/stderr lines from Dashboard/Engine must NEVER leak into virtual-time events[].
+            require(!contains(evSection, "t=500 ms") && !contains(evSection, "rpm"),
+                    "raw stdout/stderr must not appear in virtual-time events:\n" + evSection);
+
+            // Deterministic across runs and speeds.
+            const Captured evDisc2 = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml",
+                 "--record-events", "--speed", "4", "--timeline", "disc_ev2.json"},
+                exDir);
+            expect_code(evDisc2, 0, "engine_disconnect --record-events --speed 4");
+            expect_text(read_text(exDir / "disc_ev2.json"), evDiscText,
+                        "timeline with --record-events is deterministic across speeds");
+
+            // Request file "record_events": true and serve --once inline intent match byte for byte.
+            write_file(exDir / "req_events.json",
+                       "{\n"
+                       "  \"vehicle_sil_run_request\": 1,\n"
+                       "  \"scenario\": \"scenarios/engine_disconnect.yaml\",\n"
+                       "  \"record_events\": true\n"
+                       "}\n");
+            const Captured evReq = launch(
+                o, {"run", "simulation.yaml", "--request", "req_events.json", "--timeline", "disc_req.json"}, exDir);
+            expect_code(evReq, 0, "run --request with record_events");
+            expect_text(read_text(exDir / "disc_req.json"), evDiscText, "request file record_events timeline parity");
+
+            const Captured evServe = launch(
+                o,
+                {"serve", "--once", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml",
+                 "--record-events", "--timeline", "disc_serve.json"},
+                exDir);
+            expect_code(evServe, 0, "serve --once with record_events");
+            expect_text(read_text(exDir / "disc_serve.json"), evDiscText, "serve --once record_events timeline parity");
+
+            // Failing scenario + --record-after-fail-ms + --record-events:
+            // Fails at t=100ms (before J1939 address claim completes at 250ms). With --record-after-fail-ms 300,
+            // recorded_to_ms extends to 400ms and captures the J1939 address-claimed events emitted at 250ms during FailingTail!
+            write_file(exDir / "fail_before_claim.yaml",
+                       "vehicle_sil_scenario: 1\n"
+                       "name: fail before j1939 claim\n"
+                       "steps:\n"
+                       "  - at_ms: 100\n"
+                       "    expect: { Engine.engine.speed: { ge: 9999 } }\n");
+            const Captured failNoTail = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "fail_before_claim.yaml",
+                 "--record-events", "--timeline", "fail_ev_notail.json"},
+                exDir);
+            expect_code(failNoTail, 1, "failing scenario --record-events without tail");
+            const std::string failNoTailText = read_text(exDir / "fail_ev_notail.json");
+            require(contains(failNoTailText, "    \"recorded_to_ms\": 100,\n") &&
+                        !contains(failNoTailText, "\"at_ms\": 250,"),
+                    "without tail, 250ms claim events are truncated past 100ms:\n" + failNoTailText);
+
+            const Captured failWithTail = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "fail_before_claim.yaml",
+                 "--record-events", "--record-after-fail-ms", "300", "--timeline", "fail_ev_tail.json"},
+                exDir);
+            expect_code(failWithTail, 1, "failing scenario --record-events with 300ms tail");
+            const std::string failWithTailText = read_text(exDir / "fail_ev_tail.json");
+            require(contains(failWithTailText, "    \"status\": \"failed\",\n") &&
+                        contains(failWithTailText, "    \"recorded_to_ms\": 400,\n") &&
+                        contains(failWithTailText, "  \"events\": [\n") &&
+                        contains(failWithTailText, "\"at_ms\": 250,"),
+                    "FailingTail captures virtual-time ECU events emitted after failure (at 250ms <= 400ms):\n" +
+                        failWithTailText);
+
+            // end_ms determinism at the `< p` controller boundary:
+            // Engine claims its J1939 address at t == 250 ms. With end_ms: 250, the scenario finishes
+            // at controller tick p = 250 ms, where only ECU steps strictly before p (`t < 250 ms`) are
+            // guaranteed to have completed. The t == 250 ms event must NEVER leak into events[],
+            // regardless of arrival timing or --speed.
+            write_file(exDir / "end_at_claim.yaml",
+                       "vehicle_sil_scenario: 1\n"
+                       "name: end at j1939 claim boundary\n"
+                       "end_ms: 250\n"
+                       "steps:\n"
+                       "  - set: { Engine.engine.throttle: 20 }\n");
+            const Captured endFast1 = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "end_at_claim.yaml",
+                 "--speed", "max", "--record-events", "--timeline", "end_claim_max1.json"},
+                exDir);
+            expect_code(endFast1, 0, "end_ms: 250 --record-events --speed max (1)");
+            const std::string endFast1Text = read_text(exDir / "end_claim_max1.json");
+            require(contains(endFast1Text, "    \"status\": \"passed\",\n") &&
+                        contains(endFast1Text, "    \"recorded_to_ms\": 250,\n") &&
+                        contains(endFast1Text, "\"at_ms\": 0,") &&
+                        contains(endFast1Text, "claiming at address 0") &&
+                        !contains(endFast1Text, "\"at_ms\": 250,") &&
+                        !contains(endFast1Text, "claimed at address 0"),
+                    "end_ms: 250 must observe only events with t < 250ms (no t == 250ms race):\n" + endFast1Text);
+            const Captured endSlow = launch(
+                o,
+                {"run", "simulation.yaml", "--scenario", "end_at_claim.yaml",
+                 "--speed", "4", "--record-events", "--timeline", "end_claim_s4.json"},
+                exDir);
+            expect_code(endSlow, 0, "end_ms: 250 --record-events --speed 4");
+            expect_text(read_text(exDir / "end_claim_s4.json"), endFast1Text,
+                        "end_ms: 250 --record-events is deterministic across speeds");
+
+            // Manual run with --record-events alone (no --scenario, no --record!):
+            const Captured manualEv = launch(
+                o,
+                {"run", "simulation.yaml", "--stop-at-ms", "300", "--json",
+                 "--record-events", "--timeline", "manual_ev.json"},
+                exDir);
+            expect_code(manualEv, 0, "manual run --record-events --timeline --stop-at-ms 300");
+            require(contains(lf(manualEv.standard_output), "\n  \"timeline\": \"manual_ev.json\"\n}\n"),
+                    "manual --record-events run --json exposes top-level timeline:\n" + lf(manualEv.standard_output));
+            const std::string manualEvText = read_text(exDir / "manual_ev.json");
+            require(contains(manualEvText, "  \"scenario\": null,\n  \"recorded_to_ms\": 300,\n") &&
+                        contains(manualEvText, "  \"variables\": [],\n") &&
+                        contains(manualEvText, "  \"series\": [],\n") &&
+                        contains(manualEvText, "  \"events\": [\n") &&
+                        contains(manualEvText, "\"participant\": \"Engine\"") &&
+                        contains(manualEvText, "\"at_ms\": 0,") &&
+                        contains(manualEvText, "claiming at address 0") &&
+                        contains(manualEvText, "\"at_ms\": 250,") &&
+                        contains(manualEvText, "claimed at address 0") &&
+                        contains(manualEvText, "    \"events_per_participant\": 2000,\n    \"events_total\": 5000,\n    \"events_dropped\": []\n"),
+                    "manual --record-events timeline:\n" + manualEvText);
+
+            // --record-events refused on test, serve, connections (exit 4).
+            // Use run_captured directly so launch() does not rewrite `serve` per-run flags into an inline NDJSON intent.
+            vehicle_sil::process::CaptureOptions rawOpts;
+            rawOpts.timeout = scaled_timeout(30s);
+            rawOpts.working_directory = exDir;
+            for (const std::vector<std::string>& badArgs : std::vector<std::vector<std::string>>{
+                     {"test", "simulation.yaml", "--record-events", "--scenarios", "scenarios/engine_disconnect.yaml"},
+                     {"serve", "simulation.yaml", "--record-events"},
+                     {"connections", "simulation.yaml", "--record-events"}})
+            {
+                const Captured bad = vehicle_sil::process::run_captured(o.launch, badArgs, rawOpts);
+                expect_code(bad, 4, "refuse --record-events on unsupported subcommand");
+            }
         }
     }
 }

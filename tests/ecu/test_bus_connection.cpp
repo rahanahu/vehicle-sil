@@ -6,6 +6,7 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/ecu/detail/bus_connection.hpp"
+#include "vehicle_sil/ecu/ecu.hpp"
 
 #include <array>
 #include <cstdint>
@@ -131,4 +132,87 @@ TEST_CASE(gated_eth_port_forwards_capabilities_and_tokens_when_connected)
     CHECK(gate.send(f) == eth::SendResult::Failed);
     CHECK(gate.send(f, 79) == eth::SendResult::Failed);
     CHECK_EQ(inner.two_arg_tokens.size(), 4u);
+}
+
+namespace {
+
+class MinimalEcu final : public vehicle_sil::Ecu
+{
+public:
+    MinimalEcu() : agent_("MinimalEcu: ", {}) {}
+
+    void step(SimTime now, const std::function<void()>& body)
+    {
+        if (!started_)
+        {
+            (void)agent_.get();
+            started_ = true;
+        }
+        agent_.begin(now);
+        body();
+        agent_.end(now);
+    }
+
+    [[nodiscard]] vehicle_sil::EcuDescription describe() const override { return {}; }
+    void on_step(std::function<void(SimTime)>) override {}
+    void every(vehicle_sil::SimDuration, std::function<void(SimTime)>) override {}
+    void at(SimTime, std::function<void(SimTime)>) override {}
+
+private:
+    void require_not_started(const char*) const override {}
+    [[nodiscard]] bool started() const noexcept override { return started_; }
+    vehicle_sil::detail::EcuAgent& ecu_agent() noexcept override { return agent_; }
+    vehicle_sil::j1939::Network& add_j1939(const std::string&, vehicle_sil::j1939::NetworkOptions) override
+    {
+        throw std::logic_error("unused");
+    }
+    vehicle_sil::can::RawChannel& add_can(const std::string&, vehicle_sil::can::RawChannelOptions) override
+    {
+        throw std::logic_error("unused");
+    }
+    vehicle_sil::lin::LinMaster& add_lin_master(const std::string&, vehicle_sil::lin::LinScheduleTable,
+                                                vehicle_sil::lin::LinMasterOptions) override
+    {
+        throw std::logic_error("unused");
+    }
+    vehicle_sil::lin::LinSlave& add_lin_slave(const std::string&, vehicle_sil::lin::LinSlaveOptions) override
+    {
+        throw std::logic_error("unused");
+    }
+    vehicle_sil::eth::Channel& add_ethernet(const std::string&, vehicle_sil::eth::ChannelOptions) override
+    {
+        throw std::logic_error("unused");
+    }
+    void keep(std::shared_ptr<void>) override {}
+
+    vehicle_sil::detail::EcuAgent agent_;
+    bool started_ = false;
+};
+
+} // namespace
+
+TEST_CASE(ecu_log_forwards_structured_events_with_step_timestamp)
+{
+    using namespace std::chrono_literals;
+    namespace control = vehicle_sil::control;
+
+    MinimalEcu ecu;
+    ecu.step(SimTime{10ms}, [&] { ecu.log(control::EventLevel::Info, "booted"); });
+    ecu.step(SimTime{50ms}, [&] {
+        ecu.log(control::EventLevel::Warning, "temp high");
+        ecu.log(control::EventLevel::Error, "fault active");
+    });
+
+    std::vector<control::Event> events;
+    ecu.agent().drain_events(events);
+    CHECK_EQ(events.size(), std::size_t{3});
+    CHECK(events[0].time == SimTime{10ms});
+    CHECK(events[0].level == control::EventLevel::Info);
+    CHECK(events[0].text == "booted");
+    CHECK(events[1].time == SimTime{50ms});
+    CHECK(events[1].level == control::EventLevel::Warning);
+    CHECK(events[1].text == "temp high");
+    CHECK(events[2].time == SimTime{50ms});
+    CHECK(events[2].level == control::EventLevel::Error);
+    CHECK(events[2].text == "fault active");
 }

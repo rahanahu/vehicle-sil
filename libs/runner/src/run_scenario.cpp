@@ -163,7 +163,48 @@ void RunScenario::note_step(const scenario::ScenarioStepRun& step)
     out_.event([&step](RunEvents& e) { e.scenario_step(step); });
 }
 
-void RunScenario::drain()
+void RunScenario::drain_events(std::optional<SimTime> before)
+{
+    if (!record_ || !record_->events_enabled())
+    {
+        return;
+    }
+    for (auto& batch : samples_.take_events())
+    {
+        if (batch.agent_dropped > 0)
+        {
+            record_->note_agent_events_dropped(batch.participant, batch.agent_dropped);
+        }
+        for (auto& ev : batch.events)
+        {
+            pending_events_.push_back(BufferedEvent{batch.participant, std::move(ev)});
+        }
+    }
+    if (!before)
+    {
+        for (auto& item : pending_events_)
+        {
+            record_->event(item.participant, item.event.time, item.event.level, std::move(item.event.text));
+        }
+        pending_events_.clear();
+        return;
+    }
+    std::vector<BufferedEvent> remaining;
+    for (auto& item : pending_events_)
+    {
+        if (item.event.time < *before)
+        {
+            record_->event(item.participant, item.event.time, item.event.level, std::move(item.event.text));
+        }
+        else
+        {
+            remaining.push_back(std::move(item));
+        }
+    }
+    pending_events_ = std::move(remaining);
+}
+
+void RunScenario::drain(std::optional<SimTime> before)
 {
     trace::Span traceDrain("scenario.drain");
     auto taken = samples_.take();
@@ -180,6 +221,7 @@ void RunScenario::drain()
             engine_->extra_sample(*extra_places_[participant], std::move(sample));
         }
     }
+    drain_events(before);
 }
 
 void RunScenario::begin(control_silkit::HubTransport& transport, const std::function<bool()>& cancelled)
@@ -254,6 +296,10 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     {
         record_ = std::make_shared<scenario::TimelineRecord>(*ctx_.scenario, scenario::TimelineLimits{},
                                                              ctx_.plan.recorded_variables);
+        if (ctx_.plan.record_events)
+        {
+            record_->enable_events();
+        }
     }
     engine_ = std::make_unique<scenario::ScenarioEngine>(*ctx_.scenario, step_,
                                                         *port_,
@@ -294,6 +340,10 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     }
     // From here on the scenario gets the samples of these agents, and none that came before.
     samples_.scenario_begins(std::move(incarnations));
+    if (record_ && record_->events_enabled())
+    {
+        samples_.events_begins();
+    }
     engine_->begin(found);
     port_->give_up = [this] { return quit_.load(); };
 }
@@ -338,7 +388,7 @@ void RunScenario::loop(SimulationController& controller)
             const SimTime p = *waited.time;
             trace::instant("scenario.woken", to_ns(p));
             const trace::Span traceTick("scenario.tick", to_ns(p));
-            drain();
+            drain(p);
             if (engine_->tick(p))
             {
                 if (ctx_.plan.after_scenario == config::AfterScenario::Pause &&
@@ -437,15 +487,20 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
                                controller.wall_time_to_stop_at().has_value();
         if (stoppedAt)
         {
-            // The controller's last step: the samples of the steps before it are all there.
-            drain();
-            engine_->stopped_at(controller.time_state().now);
+            // The controller's last step: the samples and events of the steps before it are all there.
+            const SimTime now = controller.time_state().now;
+            drain(now);
+            engine_->stopped_at(now);
         }
         else
         {
             if (was_in_failing_tail)
             {
-                drain();
+                drain(std::nullopt);
+            }
+            else
+            {
+                drain_events(std::nullopt);
             }
             engine_->cut_short();
         }

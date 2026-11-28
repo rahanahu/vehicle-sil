@@ -2956,6 +2956,9 @@ components:
           minimum: 1
           type: integer
           title: Record After Fail Ms
+        record_events:
+          type: boolean
+          title: Record Events
         params:
           additionalProperties:
             anyOf:
@@ -3475,6 +3478,9 @@ components:
           minimum: 1
           type: integer
           title: Record After Fail Ms
+        record_events:
+          type: boolean
+          title: Record Events
         params:
           additionalProperties:
             anyOf:

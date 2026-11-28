@@ -60,6 +60,7 @@ REQUEST_FIELDS: tuple[str, ...] = (
     "manual",
     "record",
     "record_after_fail_ms",
+    "record_events",
     "strict",
     "connect",
     "time_policy",
@@ -644,6 +645,7 @@ class RunRequest(PrepareRequest):
     after_scenario: OmitAfterScenario = None
     record: Annotated[list[NonEmptyUtf8Str] | None, OmitOnly] = None
     record_after_fail_ms: OmitRecordAfterFailMs = None
+    record_events: OmitOptionalBool = None
     params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
     strict: OmitBool = False
     connect: Annotated[dict[NonEmptyStr, StrictStr] | None, OmitOnly] = None
@@ -1156,6 +1158,7 @@ class SessionIntentSummary(ContractModel):
     after_scenario: OmitAfterScenario = None
     record: Annotated[list[NonEmptyUtf8Str] | None, OmitOnly] = None
     record_after_fail_ms: OmitRecordAfterFailMs = None
+    record_events: OmitOptionalBool = None
     params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
     strict: OmitOptionalBool = None
     connect: Annotated[dict[NonEmptyStr, StrictStr] | None, OmitOnly] = None

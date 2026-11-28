@@ -998,6 +998,14 @@
       "source": "失敗後の追加記録 (ms):",
       "target": "Record after failure (ms):"
     },
+    "7046824380962549883": {
+      "source": " 仮想時刻付き ECU イベントを記録 ",
+      "target": " Record virtual-time ECU events "
+    },
+    "6402307169611265721": {
+      "source": "仮想時刻付き ECU イベントを記録",
+      "target": "Record virtual-time ECU events"
+    },
     "4650179018992621111": {
       "source": "なし（自分で操作する）",
       "target": "None (control the run yourself)"

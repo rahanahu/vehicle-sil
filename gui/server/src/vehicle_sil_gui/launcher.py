@@ -63,6 +63,7 @@ FEATURE_EXTERNAL_REGISTRY = "external-registry"
 FEATURE_RECORD_SIGNALS = "record-signals"
 FEATURE_RECORD_AFTER_FAIL = "record-after-fail"
 FEATURE_MANUAL_TIMELINE = "manual-timeline"
+FEATURE_RECORD_EVENTS = "record-events"
 
 
 def external_registry_uri_error(uri: str) -> str | None:

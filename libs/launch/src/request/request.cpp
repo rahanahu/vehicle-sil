@@ -92,10 +92,16 @@ std::vector<config::Finding> validate_request(const RunRequest& request, Request
                                  ? "give --scenario <file> or \"scenario\" in " + origin.file + ", or leave " + case_ref + " out"
                                  : "give --scenario <file> too, or leave --case out")));
     }
-    if (!host.timeline.empty() && !intent.scenario && intent.record.empty())
+    if (!host.timeline.empty() && !intent.scenario && intent.record.empty() && !intent.record_events)
     {
-        out.push_back(usage("--timeline needs --scenario or --record: give --scenario <file> or at least one "
-                            "--record <participant>.<variable>, or leave --timeline out"));
+        out.push_back(usage("--timeline needs --scenario, --record or --record-events: give --scenario <file>, at least "
+                            "one --record <participant>.<variable>, or --record-events, or leave --timeline out"));
+    }
+    if (intent.record_events && command == RequestCommand::Test)
+    {
+        const std::string events_opt = origin.named("record_events", "--record-events", "record_events");
+        out.push_back(usage("test does not accept " + events_opt +
+                            ": run one simulation with vehicle_sil_launch run --record-events"));
     }
     if (intent.record_after_fail_ms)
     {
@@ -285,6 +291,11 @@ RunRequest with_request_file(const RunRequest& arguments, const RequestFile& fil
     {
         intent.record_after_fail_ms = written.record_after_fail_ms;
         origin.fields.emplace_back("record_after_fail_ms");
+    }
+    if (!given.record_events && written.record_events)
+    {
+        intent.record_events = true;
+        origin.fields.emplace_back("record_events");
     }
     bool params = false;
     for (const config::ParamValue& param : written.params)

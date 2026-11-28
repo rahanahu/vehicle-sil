@@ -40,6 +40,8 @@ struct TimelineInput
     const scenario::TimelineRecord* record = nullptr;
     /// Extra variables requested via RunIntent::record (used when `record` is null, e.g. not_run).
     std::vector<scenario::RecordedVariable> recorded_variables{};
+    /// Opt-in virtual-timestamped ECU events requested via RunIntent::record_events.
+    bool record_events = false;
     /// The findings of the check and of the run; the file takes those of the scenario
     /// (timeline_takes_finding()).
     std::vector<config::Finding> findings{};

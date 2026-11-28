@@ -1,0 +1,173 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "time_step_ms": 10,
+  "scenario": {
+    "file": "scenarios/engine_disconnect.yaml",
+    "name": "engine disconnect",
+    "status": "passed",
+    "over_at_ms": 540,
+    "recorded_to_ms": 540,
+    "end_ms": null
+  },
+  "variables": [
+    {
+      "name": "Engine.ecu.connected",
+      "participant": "Engine",
+      "type": "bool",
+      "causality": "input",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": false
+    },
+    {
+      "name": "Dashboard.dashboard.engine_lost",
+      "participant": "Dashboard",
+      "type": "bool",
+      "causality": "output",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": true
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 9,
+      "kind": "set",
+      "text": "set Engine.ecu.connected = false",
+      "status": "passed",
+      "start_ms": 300,
+      "at_ms": 300,
+      "end_ms": 300,
+      "code": null,
+      "message": null,
+      "lines": [0],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 11,
+      "kind": "expect",
+      "text": "expect Dashboard.dashboard.engine_lost eq true within 400 ms",
+      "status": "passed",
+      "start_ms": 300,
+      "at_ms": 520,
+      "end_ms": 520,
+      "code": null,
+      "message": null,
+      "lines": [],
+      "watch": {
+        "mode": "once",
+        "from_ms": 300,
+        "to_ms": 700,
+        "conditions": [
+          {
+            "variable": "Dashboard.dashboard.engine_lost",
+            "compare": [{ "op": "eq", "value": true, "tolerance": null }]
+          }
+        ]
+      },
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Engine.ecu.connected",
+      "source": "written",
+      "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
+      "points": [
+        [300, false],
+        [520, true]
+      ]
+    },
+    {
+      "variable": "Dashboard.dashboard.engine_lost",
+      "source": "sampled",
+      "encoding": "changes",
+      "columns": ["at_ms", "value"],
+      "samples": 55,
+      "first_ms": 0,
+      "last_ms": 540,
+      "not_applied_from": null,
+      "points": [
+        [0, false],
+        [520, true],
+        [540, false]
+      ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Engine.ecu.connected",
+      "kind": "set",
+      "line": 9,
+      "step": 1,
+      "from_ms": 300,
+      "to_ms": 300,
+      "base": false,
+      "base_source": "written",
+      "shape": null,
+      "text": "Engine.ecu.connected = false"
+    }
+  ],
+  "findings": [],
+  "events": [
+    {
+      "at_ms": 0,
+      "participant": "Engine",
+      "level": "info",
+      "text": "J1939 address claimed (0x00)"
+    },
+    {
+      "at_ms": 0,
+      "participant": "Dashboard",
+      "level": "info",
+      "text": "J1939 address claimed (0x17)"
+    },
+    {
+      "at_ms": 300,
+      "participant": "Engine",
+      "level": "warning",
+      "text": "ecu.connected set to false (disconnected from buses)"
+    },
+    {
+      "at_ms": 520,
+      "participant": "Dashboard",
+      "level": "error",
+      "text": "engine heartbeat timeout detected"
+    },
+    {
+      "at_ms": 520,
+      "participant": "Engine",
+      "level": "info",
+      "text": "ecu.connected set to true (reconnected to buses)"
+    }
+  ],
+  "limits": {
+    "points_per_series": 50000,
+    "points_total": 200000,
+    "dropped": [],
+    "events_per_participant": 2000,
+    "events_total": 5000,
+    "events_dropped": []
+  }
+}
