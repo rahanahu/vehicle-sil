@@ -62,8 +62,9 @@ Commands:
             template/CMakeLists.txt (GIT_TAG v<version>), examples/fetchcontent_consumer/CMakeLists.txt
             (VEHICLE_SIL_GIT_TAG "v<version>"), CHANGELOG.md (a heading "## [<version>] - Unreleased" or
             "## [<version>] - YYYY-MM-DD"). --expect v<version> also checks a tag, and that the heading has the
-            release date. --check checks read-only (default); --sync updates the derived files and uv.lock (via
-            uv lock --offline) from CMakeLists.txt without modifying CHANGELOG.md (--dry-run previews).
+            release date. --check checks read-only (default); --sync updates the derived files and workspace versions
+            in uv.lock from CMakeLists.txt and verifies uv.lock via uv lock --check --offline without modifying
+            CHANGELOG.md (--dry-run previews).
 
 The full output of each step goes to build/logs/<tag>-<step>.log; the summary shows one line per step and, for a
 failed step, its first error lines and its log. Stops at the first failed step.
@@ -277,6 +278,13 @@ def pep440_version(version: str) -> str:
     return f"{m.group(1)}{short}{m.group(3)}"
 
 
+WORKSPACE_LOCK_PACKAGES = ("vehicle-sil-gui", "vehicle-sil-control")
+_LOCK_TABLE_HEADER_RE = re.compile(r"^\s*\[\[?\s*[A-Za-z0-9_.-]+\s*\]\]?\s*(?:#.*)?$")
+_LOCK_PACKAGE_HEADER_RE = re.compile(r"^\s*\[\[package\]\]\s*(?:#.*)?$")
+_LOCK_NAME_RE = re.compile(r'^(\s*name\s*=\s*)"([^"]*)"(\s*(?:#.*)?)$')
+_LOCK_VERSION_RE = re.compile(r'^(\s*version\s*=\s*)"([^"]*)"(\s*(?:#.*)?)$')
+
+
 def uv_lock_problems(version: str) -> list[str]:
     """Check uv.lock workspace package versions when uv.lock exists (stdlib tomllib only, no uv invocation)."""
     lock_path = ROOT / "uv.lock"
@@ -296,7 +304,7 @@ def uv_lock_problems(version: str) -> list[str]:
         if isinstance(pkg, dict) and isinstance(pkg.get("name"), str)
     }
     problems = []
-    for name in ("vehicle-sil-gui", "vehicle-sil-control"):
+    for name in WORKSPACE_LOCK_PACKAGES:
         got = packages.get(name)
         if got is None:
             problems.append(f"uv.lock has no package {name!r} (expected {want})")
@@ -306,6 +314,88 @@ def uv_lock_problems(version: str) -> list[str]:
                 f"run `scripts/package.py version --sync` (or `uv lock`) (expected {want})"
             )
     return problems
+
+
+def _sync_uv_lock_text(text: str, version: str) -> tuple[str, list[str]]:
+    """Update only WORKSPACE_LOCK_PACKAGES version lines in uv.lock, preserving formatting and pins."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        return text, [f"uv.lock could not be parsed: {e}"]
+    raw_packages = data.get("package", [])
+    if not isinstance(raw_packages, list):
+        return text, ["uv.lock has non-list 'package' section"]
+
+    parsed_counts = {
+        pkg: sum(1 for entry in raw_packages if isinstance(entry, dict) and entry.get("name") == pkg)
+        for pkg in WORKSPACE_LOCK_PACKAGES
+    }
+
+    lines = text.splitlines(keepends=True)
+    found: dict[str, list[list[tuple[int, str, str, str]]]] = {pkg: [] for pkg in WORKSPACE_LOCK_PACKAGES}
+    errors: list[str] = []
+
+    in_package = False
+    pkg_name: str | None = None
+    ver_lines: list[tuple[int, str, str, str]] = []
+
+    def finalize_block() -> None:
+        if in_package and pkg_name in WORKSPACE_LOCK_PACKAGES:
+            found[pkg_name].append(list(ver_lines))
+
+    for idx, raw_line in enumerate(lines):
+        line_no_eol = raw_line.rstrip("\r\n")
+        eol = raw_line[len(line_no_eol):]
+        if _LOCK_PACKAGE_HEADER_RE.match(line_no_eol):
+            finalize_block()
+            in_package = True
+            pkg_name = None
+            ver_lines = []
+            continue
+        if _LOCK_TABLE_HEADER_RE.match(line_no_eol):
+            finalize_block()
+            in_package = False
+            pkg_name = None
+            ver_lines = []
+            continue
+        if not in_package:
+            continue
+        name_m = _LOCK_NAME_RE.match(line_no_eol)
+        if name_m:
+            if pkg_name is not None:
+                errors.append("uv.lock: duplicate name in [[package]] block")
+            else:
+                pkg_name = name_m.group(2)
+            continue
+        ver_m = _LOCK_VERSION_RE.match(line_no_eol)
+        if ver_m:
+            ver_lines.append((idx, ver_m.group(1), ver_m.group(3), eol))
+
+    finalize_block()
+
+    for pkg in WORKSPACE_LOCK_PACKAGES:
+        block_count = len(found[pkg])
+        if parsed_counts[pkg] != 1 or block_count != 1:
+            reported = block_count if block_count != 1 else parsed_counts[pkg]
+            errors.append(f"uv.lock: expected 1 package entry for {pkg!r}, found {reported}")
+            continue
+        if len(found[pkg][0]) != 1:
+            errors.append(f"uv.lock: expected 1 version line for {pkg!r}, found {len(found[pkg][0])}")
+
+    if errors:
+        return text, errors
+
+    want = pep440_version(version)
+    for pkg in WORKSPACE_LOCK_PACKAGES:
+        idx, prefix, suffix, eol = found[pkg][0][0]
+        lines[idx] = f'{prefix}"{want}"{suffix}{eol}'
+
+    new_text = "".join(lines)
+    try:
+        tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError as e:
+        return text, [f"uv.lock update produced invalid TOML: {e}"]
+    return new_text, []
 
 
 def version_problems(version: str, release: bool = False) -> list[str]:
@@ -380,6 +470,24 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
         if new_text != text:
             updates.append((rel, new_text))
 
+    lock_path = ROOT / "uv.lock"
+    lock_raw = b""
+    lock_changed = False
+    new_lock_bytes: bytes | None = None
+    if lock_path.is_file():
+        try:
+            lock_raw = lock_path.read_bytes()
+            lock_text = lock_raw.decode("utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            errors.append(f"uv.lock could not be parsed: {e}")
+        else:
+            updated_lock_text, lock_errors = _sync_uv_lock_text(lock_text, version)
+            if lock_errors:
+                errors.extend(lock_errors)
+            elif updated_lock_text != lock_text:
+                lock_changed = True
+                new_lock_bytes = updated_lock_text.encode("utf-8")
+
     if errors:
         for e in errors:
             print(f"error: {e}", file=sys.stderr)
@@ -388,27 +496,28 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
     pyproject_changed = any(
         rel in ("gui/server/pyproject.toml", "python/pyproject.toml") for rel, _ in updates
     )
-    need_uv_lock = (ROOT / "uv.lock").is_file() and (bool(uv_lock_problems(version)) or pyproject_changed)
+    need_uv_check = lock_path.is_file() and (lock_changed or pyproject_changed)
 
     if dry_run:
         print(version)
-        if not updates and not need_uv_lock:
+        if not updates and not lock_changed and not need_uv_check:
             print("already in sync")
         else:
             for rel, _ in updates:
                 print(f"would update {rel}")
-            if need_uv_lock:
-                print("would update uv.lock (via uv lock --offline)")
+            if lock_changed:
+                print("would update uv.lock (and verify via uv lock --check --offline)")
+            elif need_uv_check:
+                print("would verify uv.lock (via uv lock --check --offline)")
     else:
         uv: str | None = None
-        if need_uv_lock:
+        if need_uv_check:
             uv = shutil.which("uv")
             if not uv:
-                raise Usage("uv not found: install uv or run `uv lock` to update uv.lock")
+                raise Usage("uv not found: install uv to verify uv.lock")
         snapshots: list[tuple[Path, bytes]] = [(ROOT / rel, (ROOT / rel).read_bytes()) for rel, _ in updates]
-        if need_uv_lock and (ROOT / "uv.lock").is_file():
-            lock_path = ROOT / "uv.lock"
-            snapshots.append((lock_path, lock_path.read_bytes()))
+        if lock_changed or need_uv_check:
+            snapshots.append((lock_path, lock_raw))
 
         def rollback() -> None:
             for path, raw in snapshots:
@@ -420,13 +529,19 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
         try:
             for rel, new_text in updates:
                 (ROOT / rel).write_text(new_text, encoding="utf-8", newline="\n")
-            if need_uv_lock:
+            if lock_changed:
+                assert new_lock_bytes is not None
+                lock_path.write_bytes(new_lock_bytes)
+            if need_uv_check:
                 assert uv is not None
-                p = subprocess.run([uv, "lock", "--offline"], cwd=ROOT, capture_output=True, text=True)
+                p = subprocess.run([uv, "lock", "--check", "--offline"], cwd=ROOT, capture_output=True, text=True)
                 if p.returncode != 0:
                     rollback()
                     msg = (p.stderr or p.stdout or f"exit code {p.returncode}").strip()
-                    print(f"error: uv lock --offline failed: {msg}", file=sys.stderr)
+                    print(
+                        f"error: uv lock --check --offline failed: {msg} (run `uv lock` if dependencies changed)",
+                        file=sys.stderr,
+                    )
                     return 1
             remaining = [p for p in version_problems(version) if not p.startswith("CHANGELOG.md")]
             if remaining:
@@ -438,13 +553,15 @@ def sync_versions(version: str, dry_run: bool = False) -> int:
             rollback()
             raise
         print(version)
-        if not updates and not need_uv_lock:
+        if not updates and not lock_changed and not need_uv_check:
             print("already in sync")
         else:
             for rel, _ in updates:
                 print(f"updated {rel}")
-            if need_uv_lock:
+            if lock_changed:
                 print("updated uv.lock")
+            elif need_uv_check:
+                print("verified uv.lock")
 
     changelog = ROOT / "CHANGELOG.md"
     changelog_text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""

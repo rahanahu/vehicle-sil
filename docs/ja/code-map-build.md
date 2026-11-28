@@ -106,7 +106,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 - `template/README.md` と `template/README.ja.md` のバージョン
 - `CHANGELOG.md` の見出し `## [<version>] - Unreleased`
 
-ルートの `CMakeLists.txt` を更新した後、`scripts/package.py version --sync` は上のファイル（`CHANGELOG.md` を除く）を更新し、`uv.lock` の更新が必要なときは `uv lock --offline` を実行します（`--dry-run` は書き換えずに予定を表示します）。
+ルートの `CMakeLists.txt` を更新した後、`scripts/package.py version --sync` は上のファイル（`CHANGELOG.md` を除く）と `uv.lock` 内のワークスペースパッケージの版番号を直接更新し、`uv lock --check --offline` で `uv.lock` をオフライン検証します（サードパーティ依存の再解決や PyPI キャッシュは不要、`--dry-run` は書き換えずに予定を表示します）。
 
 Python パッケージに関する補足:
 

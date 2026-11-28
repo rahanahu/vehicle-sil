@@ -315,28 +315,41 @@ class PackageVersionSyncTest(unittest.TestCase):
         self.assertIn("would update python/pyproject.toml", out.getvalue())
         self.assertIn("would update examples/fetchcontent_consumer/CMakeLists.txt", out.getvalue())
         self.assertIn("would update template/README.ja.md", out.getvalue())
-        self.assertIn("would update uv.lock (via uv lock --offline)", out.getvalue())
+        self.assertIn("would update uv.lock (and verify via uv lock --check --offline)", out.getvalue())
         self.assertIn("warning: CHANGELOG.md", err.getvalue())
         self.assertIn("not modified by --sync", err.getvalue())
         for rel, content in before.items():
             self.assertEqual((tree / rel).read_text(encoding="utf-8"), content, f"{rel} was modified during --dry-run")
 
     def test_sync_updates_derived_files_and_uv_lock_and_is_idempotent(self) -> None:
+        import tomllib
+
         tree = self._copy_version_tree(with_uv_lock=True)
         root_pyproject_before = (tree / "pyproject.toml").read_bytes()
+        before_lock = tomllib.loads((tree / "uv.lock").read_text(encoding="utf-8"))
+        before_third_party = sorted(
+            (p["name"], p["version"])
+            for p in before_lock["package"]
+            if p["name"] not in ("vehicle-sil-dev", "vehicle-sil-gui", "vehicle-sil-control")
+        )
 
         def fake_uv_run(cmd, cwd=None, capture_output=False, text=False):
             self.assertEqual(Path(cmd[0]).name, "uv")
-            self.assertEqual(cmd[1:], ["lock", "--offline"])
+            self.assertEqual(cmd[1:], ["lock", "--check", "--offline"])
             self.assertEqual(Path(cwd), tree)
             ver = package_mod.project_version()
             pep = package_mod.pep440_version(ver)
-            lock_text = (
-                f'version = 1\n\n[[package]]\nname = "vehicle-sil-dev"\nversion = "0.0.0"\n\n'
-                f'[[package]]\nname = "vehicle-sil-gui"\nversion = "{pep}"\n\n'
-                f'[[package]]\nname = "vehicle-sil-control"\nversion = "{pep}"\n'
+            lock_data = tomllib.loads((tree / "uv.lock").read_text(encoding="utf-8"))
+            pkgs = {p["name"]: p["version"] for p in lock_data["package"]}
+            self.assertEqual(pkgs["vehicle-sil-dev"], "0.0.0")
+            self.assertEqual(pkgs["vehicle-sil-gui"], pep)
+            self.assertEqual(pkgs["vehicle-sil-control"], pep)
+            after_third_party = sorted(
+                (p["name"], p["version"])
+                for p in lock_data["package"]
+                if p["name"] not in ("vehicle-sil-dev", "vehicle-sil-gui", "vehicle-sil-control")
             )
-            (tree / "uv.lock").write_text(lock_text, encoding="utf-8", newline="\n")
+            self.assertEqual(after_third_party, before_third_party)
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
         for base, pre, expected_ver in (("9.8.7", "rc.1", "9.8.7-rc.1"), ("9.8.7", "", "9.8.7")):
@@ -421,8 +434,7 @@ class PackageVersionSyncTest(unittest.TestCase):
         before = {rel: (tree / rel).read_bytes() for rel in tracked}
 
         def failing_uv(cmd, cwd=None, capture_output=False, text=False):
-            # Simulate partial uv.lock mutation before failing.
-            (Path(cwd) / "uv.lock").write_bytes(b"corrupted-partial-lock\n")
+            self.assertEqual(cmd[1:], ["lock", "--check", "--offline"])
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="simulated offline failure")
 
         out, err = io.StringIO(), io.StringIO()
@@ -436,24 +448,35 @@ class PackageVersionSyncTest(unittest.TestCase):
             rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
 
         self.assertEqual(rc, 1)
-        self.assertIn("uv lock --offline failed: simulated offline failure", err.getvalue())
+        self.assertIn("uv lock --check --offline failed: simulated offline failure", err.getvalue())
         for rel, content in before.items():
             self.assertEqual((tree / rel).read_bytes(), content, f"{rel} was not rolled back after uv failure")
 
     def test_sync_rolls_back_all_files_when_post_sync_check_fails(self) -> None:
+        import re
+
         tree = self._copy_version_tree(with_uv_lock=True)
         self._set_cmake_version(tree, "9.8.7", "rc.1")
         tracked = (*self.VERSION_FILES, "uv.lock")
         before = {rel: (tree / rel).read_bytes() for rel in tracked}
 
-        def noop_uv(cmd, cwd=None, capture_output=False, text=False):
+        def corrupting_uv(cmd, cwd=None, capture_output=False, text=False):
+            lock_file = Path(cwd) / "uv.lock"
+            tampered, count = re.subn(
+                r'(?m)^(name = "vehicle-sil-gui"\r?\nversion = ")[^"]*(")',
+                r"\g<1>0.0.1\2",
+                lock_file.read_text(encoding="utf-8"),
+                count=1,
+            )
+            self.assertEqual(count, 1)
+            lock_file.write_text(tampered, encoding="utf-8", newline="\n")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
         out, err = io.StringIO(), io.StringIO()
         with (
             mock.patch.object(package_mod, "ROOT", tree),
             mock.patch.object(package_mod.shutil, "which", return_value="/usr/bin/uv"),
-            mock.patch.object(package_mod.subprocess, "run", side_effect=noop_uv),
+            mock.patch.object(package_mod.subprocess, "run", side_effect=corrupting_uv),
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(err),
         ):
@@ -474,7 +497,6 @@ class PackageVersionSyncTest(unittest.TestCase):
         orig_write_bytes = Path.write_bytes
 
         def failing_uv(cmd, cwd=None, capture_output=False, text=False):
-            (Path(cwd) / "uv.lock").write_bytes(b"corrupted-partial-lock\n")
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="simulated offline failure")
 
         def guarded_write_bytes(self_path: Path, data: bytes) -> int:
@@ -496,7 +518,7 @@ class PackageVersionSyncTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         stderr_text = err.getvalue()
         self.assertIn(f"warning: failed to restore {fail_path}: simulated restore permission error", stderr_text)
-        self.assertIn("error: uv lock --offline failed: simulated offline failure", stderr_text)
+        self.assertIn("error: uv lock --check --offline failed: simulated offline failure", stderr_text)
         for rel, content in before.items():
             if rel == fail_rel:
                 continue
@@ -515,47 +537,100 @@ class PackageVersionSyncTest(unittest.TestCase):
             self.assertEqual(p.returncode, 2, (bad_args, p.stdout, p.stderr))
             self.assertIn("package: error:", p.stderr)
 
+    def test_sync_uv_lock_text_preserves_crlf_comments_and_rejects_malformed_lock(self) -> None:
+        sample = (
+            'version = 1\r\n'
+            '\r\n'
+            '[[package]]\r\n'
+            'name = "aiohttp"\r\n'
+            'version = "3.14.5"\r\n'
+            'dependencies = [\r\n'
+            '    { name = "attrs" },\r\n'
+            ']\r\n'
+            '\r\n'
+            '[[package]]\r\n'
+            'name = "vehicle-sil-control"\r\n'
+            'version = "0.6.0"  # control comment\r\n'
+            'provides-extras = ["grpc"]\r\n'
+            '\r\n'
+            '[[package]]\r\n'
+            'name = "vehicle-sil-dev"\r\n'
+            'version = "0.0.0"\r\n'
+            '\r\n'
+            '[[package]]\r\n'
+            'name = "vehicle-sil-gui"\r\n'
+            'version = "0.6.0" # gui comment\r\n'
+        )
+        updated, errs = package_mod._sync_uv_lock_text(sample, "0.7.0-rc.1")
+        self.assertEqual(errs, [])
+        expected = sample.replace('version = "0.6.0"', 'version = "0.7.0rc1"')
+        self.assertEqual(updated, expected)
+        self.assertIn("\r\n", updated)
+
+        for label, bad_text in (
+            ("invalid-toml", "[[package]\nname = 'broken'\n"),
+            ("non-list-package", "package = 123\n"),
+            (
+                "missing-workspace-pkg",
+                'version = 1\n\n[[package]]\nname = "vehicle-sil-control"\nversion = "0.6.0"\n',
+            ),
+            (
+                "duplicate-workspace-pkg",
+                'version = 1\n\n'
+                '[[package]]\nname = "vehicle-sil-control"\nversion = "0.6.0"\n\n'
+                '[[package]]\nname = "vehicle-sil-control"\nversion = "0.6.0"\n\n'
+                '[[package]]\nname = "vehicle-sil-gui"\nversion = "0.6.0"\n',
+            ),
+            (
+                "missing-version-line",
+                'version = 1\n\n'
+                '[[package]]\nname = "vehicle-sil-control"\n\n'
+                '[[package]]\nname = "vehicle-sil-gui"\nversion = "0.6.0"\n',
+            ),
+        ):
+            out_text, bad_errs = package_mod._sync_uv_lock_text(bad_text, "0.7.0-rc.1")
+            self.assertTrue(bad_errs, f"expected error for {label}")
+            self.assertEqual(out_text, bad_text)
+
+        tree = self._copy_version_tree(with_uv_lock=True)
+        self._set_cmake_version(tree, "0.7.0", "rc.1")
+        before_gui = (tree / "gui" / "server" / "pyproject.toml").read_bytes()
+        (tree / "uv.lock").write_bytes(b"\xff\xfe\xfd")
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(package_mod, "ROOT", tree),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+        self.assertEqual(rc, 1)
+        self.assertIn("uv.lock could not be parsed", err.getvalue())
+        self.assertEqual((tree / "gui" / "server" / "pyproject.toml").read_bytes(), before_gui)
+        self.assertEqual((tree / "uv.lock").read_bytes(), b"\xff\xfe\xfd")
+
     def test_sync_with_real_uv_lock_rc_and_release_preserves_root_pyproject(self) -> None:
         import os
+        import re
         import shutil
         import tomllib
 
         uv = shutil.which("uv")
         if uv is None:
-            self.skipTest("uv is required for real uv lock --offline verification")
+            self.skipTest("uv is required for real uv lock --check --offline verification")
 
-        tree = self._copy_version_tree(with_uv_lock=False)
-        # Use a self-contained zero-PyPI workspace so `uv lock --offline` needs no PyPI index metadata cache on CI.
-        (tree / "pyproject.toml").write_text(
-            '[project]\nname = "vehicle-sil-dev"\nversion = "0.0.0"\nrequires-python = ">=3.11"\ndependencies = []\n'
-            '[dependency-groups]\ndev = ["vehicle-sil-control", "vehicle-sil-gui"]\n'
-            '[tool.uv]\npackage = false\ndefault-groups = ["dev"]\n'
-            '[tool.uv.workspace]\nmembers = ["gui/server", "python"]\n'
-            '[tool.uv.sources]\nvehicle-sil-control = { workspace = true }\n'
-            'vehicle-sil-gui = { workspace = true }\n',
-            encoding="utf-8",
-            newline="\n",
-        )
-        (tree / "gui" / "server" / "pyproject.toml").write_text(
-            '[project]\nname = "vehicle-sil-gui"\nversion = "0.6.0"\nrequires-python = ">=3.11"\n'
-            'dependencies = ["vehicle-sil-control"]\n',
-            encoding="utf-8",
-            newline="\n",
-        )
-        (tree / "python" / "pyproject.toml").write_text(
-            '[project]\nname = "vehicle-sil-control"\nversion = "0.6.0"\nrequires-python = ">=3.11"\n'
-            'dependencies = []\n',
-            encoding="utf-8",
-            newline="\n",
-        )
+        tree = self._copy_version_tree(with_uv_lock=True)
         empty_cache = self.dir / "empty-uv-cache"
         empty_cache.mkdir()
         root_pyproject_before = (tree / "pyproject.toml").read_bytes()
+        initial_lock = tomllib.loads((tree / "uv.lock").read_text(encoding="utf-8"))
+        third_party_before = sorted(
+            (p["name"], p["version"])
+            for p in initial_lock["package"]
+            if p["name"] not in ("vehicle-sil-dev", "vehicle-sil-gui", "vehicle-sil-control")
+        )
+        self.assertGreater(len(third_party_before), 10)
 
         with mock.patch.dict(os.environ, {"UV_CACHE_DIR": str(empty_cache)}):
-            init_lock = subprocess.run([uv, "lock", "--offline"], cwd=tree, capture_output=True, text=True)
-            self.assertEqual(init_lock.returncode, 0, init_lock.stderr)
-
             for base, pre, expected_ver, expected_pep in (
                 ("0.7.0", "rc.1", "0.7.0-rc.1", "0.7.0rc1"),
                 ("0.7.0", "", "0.7.0", "0.7.0"),
@@ -576,6 +651,12 @@ class PackageVersionSyncTest(unittest.TestCase):
                     self.assertEqual(pkgs["vehicle-sil-dev"], "0.0.0")
                     self.assertEqual(pkgs["vehicle-sil-gui"], expected_pep)
                     self.assertEqual(pkgs["vehicle-sil-control"], expected_pep)
+                    third_party_after = sorted(
+                        (p["name"], p["version"])
+                        for p in lock_data["package"]
+                        if p["name"] not in ("vehicle-sil-dev", "vehicle-sil-gui", "vehicle-sil-control")
+                    )
+                    self.assertEqual(third_party_after, third_party_before)
 
                     check_lock = subprocess.run(
                         [uv, "lock", "--check", "--offline"], cwd=tree, capture_output=True, text=True
@@ -622,8 +703,6 @@ class PackageVersionSyncTest(unittest.TestCase):
                     self.assertIn("v9.9.9", err4.getvalue())
 
                     saved_lock = (tree / "uv.lock").read_text(encoding="utf-8")
-                    import re
-
                     drifted_lock, n_sub = re.subn(
                         r'(name = "vehicle-sil-gui"\s*\nversion = ")[^"]*(")',
                         r"\g<1>0.0.1\2",
@@ -638,6 +717,41 @@ class PackageVersionSyncTest(unittest.TestCase):
                     self.assertEqual(rc5, 1)
                     self.assertIn("uv.lock", err5.getvalue())
                     (tree / "uv.lock").write_text(saved_lock, encoding="utf-8", newline="\n")
+
+    def test_sync_rolls_back_when_real_uv_lock_check_detects_dependency_change(self) -> None:
+        import os
+        import shutil
+
+        uv = shutil.which("uv")
+        if uv is None:
+            self.skipTest("uv is required for real uv lock --check --offline verification")
+
+        tree = self._copy_version_tree(with_uv_lock=True)
+        self._set_cmake_version(tree, "0.7.0", "rc.1")
+        py_toml = tree / "python" / "pyproject.toml"
+        py_toml.write_text(
+            py_toml.read_text(encoding="utf-8").replace("grpcio>=1.85.0", "grpcio>=9.99.0"),
+            encoding="utf-8",
+            newline="\n",
+        )
+        tracked = (*self.VERSION_FILES, "uv.lock")
+        before = {rel: (tree / rel).read_bytes() for rel in tracked}
+        empty_cache = self.dir / "empty-uv-cache"
+        empty_cache.mkdir()
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {"UV_CACHE_DIR": str(empty_cache)}),
+            mock.patch.object(package_mod, "ROOT", tree),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = package_mod.version_command(argparse.Namespace(sync=True, dry_run=False))
+
+        self.assertEqual(rc, 1)
+        self.assertIn("uv lock --check --offline failed", err.getvalue())
+        for rel, content in before.items():
+            self.assertEqual((tree / rel).read_bytes(), content, f"{rel} was not rolled back")
 
     def test_uv_lock_problems_handles_invalid_utf8_and_non_list_package(self) -> None:
         tree = self.dir / "bad-lock"
