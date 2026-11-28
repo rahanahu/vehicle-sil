@@ -1402,6 +1402,12 @@ REQUEST_SAMPLES = [
     ("case null", "{" + R + ', "case": null}', "invalid"),
     ("case number", "{" + R + ', "case": 1}', "invalid"),
     ("cli_params is serve intent only", "{" + R + ', "cli_params": {"x": "1"}}', "invalid"),
+    ("record valid", "{" + R + ', "record": ["Engine.engine.speed", "Dashboard.ecu.connected"]}', "valid"),
+    ("record empty", "{" + R + ', "record": []}', "valid"),
+    ("record string", "{" + R + ', "record": "Engine.engine.speed"}', "invalid"),
+    ("record empty item", "{" + R + ', "record": [""]}', "invalid"),
+    ("record non-string item", "{" + R + ', "record": [1]}', "invalid"),
+    ("record null", "{" + R + ', "record": null}', "invalid"),
 ]
 
 
@@ -1579,6 +1585,7 @@ class TimelineSchema(unittest.TestCase):
         # provenance/conditional fields so existing timeline records stay valid unchanged.
         may_be_left_out = {
             ("scenario.", "case"),
+            ("variables.", "recorded"),
             ("steps.", "file"),
             ("steps.", "name"),
             ("steps.", "expect_skipped"),
@@ -1675,12 +1682,14 @@ class TimelineSchema(unittest.TestCase):
                 compared=[{"variable": "Body.other", "value": 1}]),
             "a failed compared entry whose variable is a number": lambda d: failed_step(d)["failed"]["conditions"][0].update(
                 compared=[{"variable": 0, "value": 1, "sample_ms": 10}]),
+            "a variable recorded flag that is a text": lambda d: d["variables"][0].update(recorded="yes"),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
         # What a later version may add is no mistake: keys, and values of the open lists.
         additions = {
             "a key it does not know": lambda d: d.update(notes=[]),
+            "an extra recorded flag on a variable": lambda d: d["variables"][0].update(recorded=True),
             "scenario case and step/line provenance": lambda d: (
                 d["scenario"].update(case="nominal"),
                 d["steps"][0].update(

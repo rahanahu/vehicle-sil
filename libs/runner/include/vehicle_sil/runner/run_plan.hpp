@@ -78,6 +78,8 @@ struct RunChoices
     std::string external_registry_uri{};
     /// What to do after the scenario passes: stop the simulation (default) or pause for handover.
     config::AfterScenario after_scenario = config::AfterScenario::Stop;
+    /// Resolved extra variables to record in the timeline (Checked::recorded_variables).
+    std::vector<scenario::RecordedVariable> recorded_variables{};
 };
 
 /// What the plan knows of one participant of the run beside its entry in the configuration: what
@@ -139,6 +141,8 @@ struct RunPlan
     bool collect_control_metrics = false;
     std::string external_registry_uri{};
     config::AfterScenario after_scenario = config::AfterScenario::Stop;
+    /// Resolved extra variables to record in the timeline (RunChoices::recorded_variables).
+    std::vector<scenario::RecordedVariable> recorded_variables{};
 
     /// The configuration of `check` (a check that passed has one).
     [[nodiscard]] const config::SimulationConfig& config() const { return *check.config; }

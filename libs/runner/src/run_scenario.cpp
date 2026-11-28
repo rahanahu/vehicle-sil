@@ -165,7 +165,14 @@ void RunScenario::drain()
     for (auto& [participant, sample] : taken)
     {
         // RunSamples gives only the samples of the control agents begin() named.
-        engine_->sample(*places_[participant], std::move(sample));
+        if (places_[participant])
+        {
+            engine_->sample(*places_[participant], std::move(sample));
+        }
+        else if (participant < extra_places_.size() && extra_places_[participant])
+        {
+            engine_->extra_sample(*extra_places_[participant], std::move(sample));
+        }
     }
 }
 
@@ -239,13 +246,45 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     port_->give_up = cancelled;
     if (!ctx_.plan.timeline.empty())
     {
-        record_ = std::make_shared<scenario::TimelineRecord>(*ctx_.scenario);
+        record_ = std::make_shared<scenario::TimelineRecord>(*ctx_.scenario, scenario::TimelineLimits{},
+                                                             ctx_.plan.recorded_variables);
     }
     engine_ = std::make_unique<scenario::ScenarioEngine>(*ctx_.scenario, step_,
                                                         *port_,
                                                         [this](const scenario::ScenarioStepRun& step) { note_step(step); }, record_.get(),
                                                         ctx_.plan.stop_at_ms ? std::optional<SimTime>(SimTime{} +
                                                             std::chrono::milliseconds(*ctx_.plan.stop_at_ms)) : std::nullopt);
+    const auto& extra_names = engine_->extra_participants();
+    if (!extra_names.empty())
+    {
+        extra_places_.assign(ctx_.config.participants.size(), std::nullopt);
+        std::vector<scenario::EnginePeer> extra_found(extra_names.size());
+        for (std::size_t ep = 0; ep < extra_names.size(); ++ep)
+        {
+            const std::string& name = extra_names[ep];
+            const auto peer = std::find_if(peers.begin(), peers.end(), [&name](const control::PeerInfo& info) {
+                return info.participant == name && info.connected;
+            });
+            const auto link = std::find_if(links.begin(), links.end(), [&name](const control_silkit::LinkInfo& info) {
+                return info.participant == name && info.state == control_silkit::LinkState::Connected && info.ready;
+            });
+            for (std::size_t place = 0; place < ctx_.config.participants.size(); ++place)
+            {
+                if (ctx_.config.participants[place].name == name)
+                {
+                    extra_places_[place] = ep;
+                    if (peer != peers.end() && link != links.end())
+                    {
+                        extra_found[ep].connected = true;
+                        extra_found[ep].schema = peer->schema;
+                        incarnations[place] = peer->incarnation;
+                    }
+                    break;
+                }
+            }
+        }
+        engine_->begin_extra(extra_found);
+    }
     // From here on the scenario gets the samples of these agents, and none that came before.
     samples_.scenario_begins(std::move(incarnations));
     engine_->begin(found);

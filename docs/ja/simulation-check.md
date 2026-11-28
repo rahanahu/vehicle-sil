@@ -222,6 +222,11 @@
 | `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確認する手順（`expect`、`wait_until`）が、この設定（機種）では全部飛びます。 | 変数の名前が違うだけなら `variables` で対応させ、この機種向けでないシナリオなら、シナリオの `only` に対象の機種を書きます。 |
 | `scenario-samples-unsupported` | 警告 | `--scenario` のシナリオが値を読む participant の実行ファイルが、`--sample-every-step` を受け取れません（`--describe` の出力の `features` に `sample-every-step` がありません）。`run` は、ECU のステップごとのサンプルを頼めません。説明のない participant には出しません。 | 実行ファイルを、この vehicle-sil かそれ以降で作り直します。または、シナリオに `samples: as_sent` を書きます。 |
 | `scenario-samples-as-sent` | 注記 | `--scenario` のシナリオに `samples: as_sent` があり、値を読みます。それぞれの ECU が送信するままのサンプルで判定します。 | 意図したとおりなら、何もしません。 |
+| `record-variable-format` | エラー | `--record` / `"record"` の項目が `<participant>.<variable>` の形になっていません。 | participant 名と変数名を `.` で区切って書きます。 |
+| `record-unknown-participant` | エラー | `--record` / `"record"` の participant が設定ファイルにありません。 | participant 名を直します（指摘の文が近い名前を挙げます）。 |
+| `record-participant-unusable` | エラー | `--record` / `"record"` の participant はサンプリングできません（無効、機種で除外、`describe: false`、`--describe` 失敗、`--no-control`、未対応の制御バージョン・トランスポート、ステップ幅のない実時間動作）。 | ステップ動作する SIL Kit 制御対応の participant を有効・記述済みにするか、`--record` / `"record"` から外します。 |
+| `record-variable-absent` | エラー | `--record` / `"record"` の変数が、この機種の participant の `variables` 対応で `absent: true` になっています。 | この機種の指定から外すか、`variables` の対応を見直します。 |
+| `record-unknown-variable` | エラー | `--record` / `"record"` に書かれた変数がその participant にありません。 | 変数名を直します（指摘の文が近い名前を挙げます）。 |
 | `usage` | エラー | 引数のエラーです（`--json` のときの JSON だけ）。 | 標準エラーの使い方に従って、引数を直します。 |
 | `internal` | エラー | `vehicle_sil_launch` 自身の想定外の失敗です（`--json` のときの JSON だけ）。 | 標準エラーの理由を確認します。 |
 

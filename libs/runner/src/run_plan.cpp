@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -100,9 +101,13 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     {
         plan.members.emplace_back().outside = outside;
     }
+    plan.recorded_variables = choices.recorded_variables;
     if (const scenario::Scenario* read = plan.scenario(); read != nullptr)
     {
-        const std::vector<bool> asked = scenario::sample_every_step_participants(check, *read);
+        const std::span<const scenario::RecordedVariable> recordedForSampling =
+            choices.timeline.empty() ? std::span<const scenario::RecordedVariable>{}
+                                     : std::span<const scenario::RecordedVariable>(plan.recorded_variables);
+        const std::vector<bool> asked = scenario::sample_every_step_participants(check, *read, recordedForSampling);
         for (std::size_t i = 0; i < asked.size(); ++i)
         {
             plan.members[i].sample_every_step = asked[i];

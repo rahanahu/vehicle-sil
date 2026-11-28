@@ -240,4 +240,146 @@ void timeline(const Options& o)
     require(contains(lf(checked.standard_error), "error: --timeline is for run: check starts no participant\n"),
             "check --timeline:\n" + lf(checked.standard_error));
     require(!fs::exists(dir / "x.json"), "a wrong command line writes no file");
+
+    // Extra signal recording (--record / request "record" / serve inline intent.record):
+    // 1. Run a Body-only scenario with --record on Door.mode_now (not in scenario), Door.ecu.connected,
+    //    and Body.level (written-only in scenario) -> timeline records all of them with recorded: true.
+    // 2. Run the same scenario with and without --record under --strict -> identical verdict, steps,
+    //    timestamps, and writes (verdict invariance).
+    // 3. check/run with --record Body.nonexistent fails pre-run before starting any ECU.
+    {
+        const std::string bodyOnly = "vehicle_sil_scenario: 1\n"
+                                     "name: body only\n"
+                                     "steps:\n"
+                                     "  - set: { Body.level: 20 }\n"
+                                     "  - at_ms: 50\n"
+                                     "    expect: { Body.level_changed_at_ms: 0 }\n";
+        const fs::path recDir = scenario_ecus(o, "", bodyOnly);
+
+        const Captured baseJson = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--strict", "--json", "--timeline", "base.json"}, recDir);
+        expect_code(baseJson, 0, "baseline --strict run");
+        const std::string baseTimeline = read_text(recDir / "base.json");
+        require(!contains(baseTimeline, "\"recorded\""), "baseline timeline omits recorded:\n" + baseTimeline);
+
+        const Captured recJson =
+            launch(o,
+                   {"run", "sim.yaml", "--scenario", "s.yaml", "--strict", "--json", "--timeline", "extra.json",
+                    "--record", "Door.mode_now", "--record", "Door.ecu.connected", "--record", "Body.level"},
+                   recDir);
+        expect_code(recJson, 0, "extra --record --strict run");
+
+        // Verdict invariance: comparing run --json output (stripping wall_ms/actual_speed/registry_uri and timeline filename).
+        auto normalizeRunJson = [](std::string text, const std::string& tlName) {
+            text = without_timing(lf(std::move(text)));
+            const std::string from = "\"timeline\": \"" + tlName + "\"";
+            const auto pos = text.find(from);
+            if (pos != std::string::npos)
+            {
+                text.replace(pos, from.size(), "\"timeline\": \"<tl>\"");
+            }
+            return text;
+        };
+        expect_text(normalizeRunJson(recJson.standard_output, "extra.json"),
+                    normalizeRunJson(baseJson.standard_output, "base.json"),
+                    "run --json invariant with and without --record under --strict");
+
+        const std::string extraTimeline = read_text(recDir / "extra.json");
+        require(contains(extraTimeline, "\"name\": \"Door.mode_now\"") &&
+                    contains(extraTimeline, "\"name\": \"Door.ecu.connected\"") &&
+                    contains(extraTimeline, "\"written\": false,\n      \"watched\": false,\n      \"recorded\": true") &&
+                    contains(extraTimeline, "\"written\": true,\n      \"watched\": false,\n      \"recorded\": true") &&
+                    contains(extraTimeline, "\"variable\": \"Door.mode_now\",\n      \"source\": \"sampled\"") &&
+                    contains(extraTimeline, "\"variable\": \"Door.ecu.connected\",\n      \"source\": \"sampled\"") &&
+                    contains(extraTimeline, "\"variable\": \"Body.level\",\n      \"source\": \"sampled\""),
+                "extra recorded signals and series in timeline:\n" + extraTimeline);
+
+        // Request file "record" and serve --once inline intent.record produce the exact same timeline!
+        write_file(recDir / "req.json",
+                   "{\n"
+                   "  \"vehicle_sil_run_request\": 1,\n"
+                   "  \"scenario\": \"s.yaml\",\n"
+                   "  \"strict\": true,\n"
+                   "  \"record\": [\"Door.mode_now\", \"Door.ecu.connected\", \"Body.level\"]\n"
+                   "}\n");
+        const Captured reqRun = launch(o, {"run", "sim.yaml", "--request", "req.json", "--timeline", "from_req.json"}, recDir);
+        expect_code(reqRun, 0, "run --request with record");
+        expect_text(read_text(recDir / "from_req.json"), extraTimeline, "timeline from request file record");
+
+        const Captured serveRun = launch(
+            o,
+            {"serve", "--once", "sim.yaml", "--scenario", "s.yaml", "--strict", "--timeline", "from_serve.json",
+             "--record", "Door.mode_now", "--record", "Door.ecu.connected", "--record", "Body.level"},
+            recDir);
+        expect_code(serveRun, 0, "serve --once with inline intent.record");
+        expect_text(read_text(recDir / "from_serve.json"), extraTimeline, "timeline from serve --once inline intent.record");
+
+        // Pre-run validation: check and run fail before starting any ECU on unknown variable.
+        const Captured badCheck = launch(o, {"check", "sim.yaml", "--record", "Body.nonexistent"}, recDir);
+        expect_code(badCheck, 1, "check --record Body.nonexistent");
+        require(contains(lf(badCheck.standard_output), "[record-unknown-variable]"),
+                "check reports record-unknown-variable:\n" + lf(badCheck.standard_output));
+
+        const Captured badRun = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--record", "Body.nonexistent"}, recDir);
+        expect_code(badRun, 1, "run --record Body.nonexistent");
+        require(contains(lf(badRun.standard_output), "[record-unknown-variable]") &&
+                    !contains(lf(badRun.standard_error), "registry at"),
+                "run fails pre-run before starting any ECU:\n" + lf(badRun.standard_output) + "\n" + lf(badRun.standard_error));
+    }
+
+    // Absent or delayed optional (required: false) record-only ECU must NOT wait in expected_agents(),
+    // emit control-link-no-hello, or alter scenario pass/fail or exit code (even under --strict).
+    {
+        const std::string cfg =
+            "vehicle_sil_simulation: 2\n"
+            "networks: []\n"
+            "participants:\n"
+            "  - name: Body\n"
+            "    command: [" + ecu(o) + "]\n"
+            "  - name: OptBridge\n"
+            "    role: bridge\n"
+            "    required: false\n"
+            "    manual: true\n"
+            "    command: [" + ecu(o) + "]\n";
+        const fs::path optDir =
+            scenario_dir(o, cfg, {{"Body", "scenario-variables"}, {"OptBridge", "scenario-variables"}});
+        write_file(optDir / "s.yaml",
+                   "vehicle_sil_scenario: 1\n"
+                   "name: body only with optional bridge\n"
+                   "steps:\n"
+                   "  - set: { Body.level: 20 }\n"
+                   "  - at_ms: 50\n"
+                   "    expect: { Body.level_changed_at_ms: 0 }\n");
+
+        const Captured baseRun =
+            launch(o,
+                   {"run", "sim.yaml", "--scenario", "s.yaml", "--time-policy", "free", "--speed", "max",
+                    "--strict", "--json", "--timeline", "base.json"},
+                   optDir);
+        expect_code(baseRun, 0, "optional record-only ECU: baseline --strict run");
+
+        const Captured recRun =
+            launch(o,
+                   {"run", "sim.yaml", "--scenario", "s.yaml", "--time-policy", "free", "--speed", "max",
+                    "--strict", "--json", "--timeline", "opt.json", "--record", "OptBridge.mode_now"},
+                   optDir);
+        expect_code(recRun, 0, "optional record-only ECU: --record keeps --strict exit 0");
+        require(!contains(recRun.standard_output, "control-link-no-hello"),
+                "optional record-only ECU must not emit control-link-no-hello:\n" + recRun.standard_output);
+        auto normalizeOptJson = [](std::string text, const std::string& tlName) {
+            text = without_timing(lf(std::move(text)));
+            const std::string from = "\"timeline\": \"" + tlName + "\"";
+            const auto pos = text.find(from);
+            if (pos != std::string::npos)
+            {
+                text.replace(pos, from.size(), "\"timeline\": \"<tl>\"");
+            }
+            return text;
+        };
+        expect_text(normalizeOptJson(recRun.standard_output, "opt.json"),
+                    normalizeOptJson(baseRun.standard_output, "base.json"),
+                    "optional record-only ECU run --json identical with and without --record under --strict");
+        const std::string optTl = read_text(optDir / "opt.json");
+        require(contains(optTl, "\"name\": \"OptBridge.mode_now\"") && contains(optTl, "\"recorded\": true"),
+                "optional record-only ECU timeline declares recorded variable:\n" + optTl);
+    }
 }

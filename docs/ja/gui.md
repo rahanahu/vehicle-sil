@@ -539,6 +539,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | 結果と再実行 | 実行が終わると、「シナリオ」および「結果」のカードに、全体の合否、ケース名、適用パラメータ、失敗手順の `file:line`、展開可能なテンプレート `call_stack`、失敗メッセージ（信号間比較の両辺値とサンプル時刻を含む）、および手順の表（`<file>:<line>`、任意の `name`、`skipped` を含む状態、仮想時刻、「タイムラインで表示」ボタン）が表示されます。「同じ条件で再実行」は `session.intent` をそのまま通常の `POST api/run` へ渡して仮想時刻 0 から新しい単独実行を開始し、外部接続 `connect` の検査や Hot 起動の再利用をそのまま維持します。 |
 | 変数 | シナリオの実行中は、変数に書き込めません（シナリオの結果を変えないため。サーバーも `scenario-running` で拒否します）。引き継ぎが成立した後は、同じ実行のまま通常の書き込みと時間操作（「ステップ送り」「再開」「速度」）が使えるようになります。 |
 | 時間の軸 | 実行が終わったら、「シナリオ」のカードのリンク「時間の軸」で新しいタブに図を開け、シナリオ失敗時はカード内の `<vehicle-sil-timeline>` が自動展開して失敗手順へフォーカスします（「[シナリオの実行の時間の軸](#シナリオの実行の時間の軸)」）。 |
+| 追加で記録する信号 | シナリオを選んでいてランチャーが `record-signals` に対応している場合、「構成ファイル」カード内の「追加で記録する信号」折りたたみ欄から、申告済み participant の `<participant>.<variable>` 信号を追加で選んでタイムラインに記録できます（既定は空で、全信号を自動記録しません）。追加信号はシナリオの合否判定に影響せず、実行前に照合され（`api/check`・`api/run` の `record`）、再実行用に `session.intent` へ保持されます。 |
 
 - ほかの場所のシナリオのファイルは選べません（「[セキュリティ](#セキュリティ)」）。
 - 手順の表は、ランチャーのイベント `scenario_step` で進み、結果が出たら、実行されなかった手順を含む全部の手順になります。途中から開いた画面も同じ表を表示します。
@@ -546,7 +547,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送ります。Control Server のクライアントの時間の呼び出しも、同じ答えになります。
 - 引き継ぎが起きるのは、シナリオが `passed` で完了したときだけです。シナリオの失敗、途中での「停止」、`stop_at_ms` 到達、未完了や異常終了では決して引き継がれず、書き込み制限が維持され、引き継ぎ表示も出ません。
 - ランチャーに Control Server があれば（`features` に `control-server`）、「変数」の画面で値を見られます（再生中は書き込むコンポーネントが押せず「シナリオの実行中は書けません（見るだけです）」と表示され、引き継ぎ成立後に書けるようになります）。Control Server のないランチャーでは、シナリオの実行を含めてどの実行にも変数はなく、「変数」の画面はほかの実行と同じく理由を表示します。
-- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`・`api/run` の `variant`・`scenario`・`case`・`params`・`after_scenario`、セッション要約の `session.intent`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオ) の「シナリオ」）、ライブラリでは `front.scenarios({ file })`（その下の 1 回の呼び出しが `client.low.scenarios(file)`）、`Intent` の `variant`・`scenario`・`case`・`params`・`after_scenario`、正面の口の `scenario`（`case`・`params`・`handed_over`・`over_at_ms` を持つ `FrontScenario`）、`session.intent`、`isScenarioHandedOver` / `isScenarioRunning` です。
+- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`・`api/run` の `variant`・`scenario`・`case`・`params`・`after_scenario`・`record`、セッション要約の `session.intent`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオ) の「シナリオ」）、ライブラリでは `front.scenarios({ file })`（その下の 1 回の呼び出しが `client.low.scenarios(file)`）、`Intent` の `variant`・`scenario`・`case`・`params`・`after_scenario`・`record`、正面の口の `scenario`（`case`・`params`・`handed_over`・`over_at_ms` を持つ `FrontScenario`）、`session.intent`、`isScenarioHandedOver` / `isScenarioRunning` です。
 
 ### シナリオの実行の時間の軸
 

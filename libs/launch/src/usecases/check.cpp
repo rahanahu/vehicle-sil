@@ -803,6 +803,16 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
             report.findings.push_back(unused_request_params(request.origin.file, unused, "this run has no scenario"));
         }
     }
+    if (!intent.record.empty())
+    {
+        scenario::RecordedVariablesCheck recorded =
+            scenario::check_recorded_variables(intent.record, scenario::scenario_catalog(report));
+        report.recorded_variables = std::move(recorded.variables);
+        for (config::Finding& finding : recorded.findings)
+        {
+            report.findings.push_back(std::move(finding));
+        }
+    }
     finalize(report);
     return report;
 }

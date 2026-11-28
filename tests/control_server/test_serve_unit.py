@@ -1685,6 +1685,62 @@ class ServeUnitTest(unittest.TestCase):
             },
         )
 
+    def test_record_signal_arguments_and_validation(self) -> None:
+        # _split_once_arguments merges record kwarg + repeatable --record preserving order and deduplicating.
+        host, cmd = _split_once_arguments(
+            ["--record", "Dashboard.speed", "--record", "Engine.mode", "--record", "Dashboard.speed"],
+            start_paused=False,
+            record=["Engine.mode", "Engine.throttle"],
+        )
+        self.assertEqual(host, [])
+        self.assertEqual(
+            cmd,
+            {
+                "command": "run",
+                "intent": {"record": ["Engine.mode", "Engine.throttle", "Dashboard.speed"]},
+            },
+        )
+
+        # Reject non-sequence string/bytes with "signal names" wording, empty strings, and --request conflicts.
+        with self.assertRaises(TypeError) as str_err:
+            _split_once_arguments([], start_paused=False, record="Engine.speed")  # type: ignore[arg-type]
+        self.assertIn("signal names", str(str_err.exception))
+        with self.assertRaises(ValueError):
+            _split_once_arguments([], start_paused=False, record=[""])
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--record", ""], start_paused=False)
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--request", "bench.json"], start_paused=False, record=["Engine.speed"])
+        with self.assertRaises(ValueError):
+            _split_once_arguments(["--request", "bench.json", "--record", "Engine.speed"], start_paused=False)
+
+        # Serve.start(record=...) deduplicates and validates with aligned "signal names" wording.
+        def handler(proc: _FakeProcess, c: dict) -> None:
+            if c.get("command") == "run":
+                proc.stdout.push_event({"event": "run_start", "seq": 2, "t_ms": 2, "run": "r-1", "id": c["id"]})
+                proc.stdout.push_event({
+                    "event": "result",
+                    "seq": 3,
+                    "t_ms": 3,
+                    "run": "r-1",
+                    "launcher_ends": False,
+                    "status": {"instance": "0123456789abcdef", "status_rev": 1, "launcher_state": "ready"},
+                    "result": {"result": "passed", "ok": True},
+                })
+
+        fake_proc = _FakeProcess(["/fake/launch", "serve", "--", "sim.yaml"], handler=handler)
+        with mock.patch("vehicle_sil_control.serve.subprocess.Popen", return_value=fake_proc):
+            with Serve("/fake/launch", "sim.yaml") as srv:
+                with self.assertRaises(TypeError) as serve_str_err:
+                    srv.start(record="Engine.speed")  # type: ignore[arg-type]
+                self.assertIn("signal names", str(serve_str_err.exception))
+                with self.assertRaises(ValueError):
+                    srv.start(record=[""])
+                run = srv.start(record=["Dashboard.speed", "Engine.mode", "Dashboard.speed"])
+                self.assertEqual(run.wait()["result"], "passed")
+        run_cmds = [c for c in fake_proc.stdin.commands if c.get("command") == "run"]
+        self.assertEqual(run_cmds[0]["intent"], {"record": ["Dashboard.speed", "Engine.mode"]})
+
 
 if __name__ == "__main__":
     unittest.main()

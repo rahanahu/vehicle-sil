@@ -110,6 +110,12 @@
       "enum": ["stop", "pause"],
       "default": "stop",
       "description": "What to do after the scenario passes: \"stop\" (the default) ends the run, \"pause\" pauses the simulation at the scenario end time for manual handover (requires scenario, cannot be combined with stop_at_ms, and needs --stdin-commands or --control)."
+    },
+    "record": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Extra ECU variables (\"<participant>.<variable>\") to record in the timeline independent of scenario assertions (--record). Added after the file's entries when combined with --record (deduplicated preserving first-seen order). Empty by default: never records all signals by default.",
+      "examples": [["Engine.engine.speed", "Dashboard.dashboard.engine_lost"]]
     }
   }
 }

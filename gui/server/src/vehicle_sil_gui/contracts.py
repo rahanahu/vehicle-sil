@@ -56,6 +56,7 @@ REQUEST_FIELDS: tuple[str, ...] = (
     "disable",
     "enable",
     "manual",
+    "record",
     "strict",
     "connect",
     "time_policy",
@@ -636,6 +637,7 @@ class RunRequest(PrepareRequest):
     scenario: OmitStr = None
     case: OmitNonEmptyUtf8Str = None
     after_scenario: OmitAfterScenario = None
+    record: Annotated[list[NonEmptyUtf8Str] | None, OmitOnly] = None
     params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
     strict: OmitBool = False
     connect: Annotated[dict[NonEmptyStr, StrictStr] | None, OmitOnly] = None
@@ -1146,6 +1148,7 @@ class SessionIntentSummary(ContractModel):
     scenario: OmitNonEmptyStr = None
     case: OmitNonEmptyUtf8Str = None
     after_scenario: OmitAfterScenario = None
+    record: Annotated[list[NonEmptyUtf8Str] | None, OmitOnly] = None
     params: Annotated[dict[StrictStr, ParamScalar] | None, OmitOnly] = None
     strict: OmitOptionalBool = None
     connect: Annotated[dict[NonEmptyStr, StrictStr] | None, OmitOnly] = None

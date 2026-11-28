@@ -108,12 +108,13 @@ constexpr const char* kUsage =
     "                                [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
     "                                [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
     "                                [--text-from-stdin] [--descriptions <file>] [--write-descriptions <file>]\n"
-    "                                [--compare-commands <file>]\n"
+    "                                [--compare-commands <file>] [--record <participant>.<variable>]...\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
     "                              [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]\n"
+    "                              [--record <participant>.<variable>]...\n"
     "                              [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]\n"
     "                              [--external-registry <uri>] [--timeout-ms <ms>] [--stop-at-ms <ms>]\n"
     "                              [--late-tolerance-ms <ms>]\n"
@@ -204,6 +205,8 @@ constexpr const char* kUsage =
     "  --timeline <file>           run --scenario: write what the scenario wrote and saw over the virtual time\n"
     "                              (its steps, the written and the sampled values) to <file> as JSON\n"
     "                              (docs/simulation-run.md; schema/timeline.schema.json)\n"
+    "  --record <participant>.<variable> check, run: also record this ECU variable in the timeline, independent of\n"
+    "                              scenario assertions; repeatable (empty by default)\n"
     "  --control-metrics <file>    run: write the Control Hub SIL Kit transport counters (HubTransport::stats())\n"
     "                              to <file> as JSON at the end of the run (docs/simulation-run.md;\n"
     "                              schema/control-metrics.schema.json)\n"
@@ -258,7 +261,7 @@ constexpr const char* kUsage =
     "                              runs\n"
     "  --request <file>            check, run, connections: what to run, from the request file <file> (JSON:\n"
     "                              variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed,\n"
-    "                              start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario; schema/run-request.schema.json). An argument wins over the\n"
+    "                              start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record; schema/run-request.schema.json). An argument wins over the\n"
     "                              file, field by field: --connect and --param by name, --connect <network>=none\n"
     "                              takes the file's target away; the lists add up. scenario in <file> is from the\n"
     "                              directory of the configuration file. Only this file is read: none is looked for.\n"
@@ -1005,7 +1008,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--stop-at-ms" || a == "--late-tolerance-ms" || a == "--participant-start-timeout-ms" ||
                  a == "--participant-stop-timeout-ms" ||
-                 a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" ||
+                 a == "--disable" || a == "--enable" || a == "--manual" || a == "--record" || a == "--speed" || a == "--scenario" ||
                  a == "--case" || a == "--control" ||
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
                  a == "--network" || a == "--time-policy" || a == "--request" || a == "--descriptions" ||
@@ -1183,6 +1186,7 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
     intent.disable = args.all("disable");
     intent.enable = args.all("enable");
     intent.manual = args.all("manual");
+    intent.record = args.all("record");
     if (args.has("variant") && !isTest) // test: each of its --variant, in test()
     {
         intent.variant = args.str("variant", "");
@@ -1590,7 +1594,7 @@ int serve(const cli::Args& args, launch::EventStream* events, const std::string&
                            false, launch::CommandKind::Run, file, events);
     }
     for (const char* perRun : {"scenario", "case", "variant", "param", "speed", "strict", "start-paused", "stop-at-ms",
-                               "late-tolerance-ms", "disable", "enable", "manual", "connect", "time-policy", "request"})
+                               "late-tolerance-ms", "disable", "enable", "manual", "record", "connect", "time-policy", "request"})
     {
         if (args.has(perRun) || args.flag(perRun))
         {
@@ -1820,7 +1824,7 @@ int test(const cli::Args& args)
         throw cli::UsageError("--control-metrics is for run, not for test (which runs multiple simulations into one "
                               "summary): run one simulation with vehicle_sil_launch run --control-metrics <file>");
     }
-    for (const char* runOnly : {"log-dir", "stdin-commands", "speed", "start-paused", "manual", "control",
+    for (const char* runOnly : {"log-dir", "stdin-commands", "speed", "start-paused", "manual", "record", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"})
     {
         if (args.has(runOnly) || args.flag(runOnly))
@@ -2037,7 +2041,7 @@ int main(int argc, char** argv)
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
                                 "control-metrics", "external-registry", "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
                                {"json", "strict", "events", "once", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin", "file-only"},
-                               {"disable", "enable", "manual", "param", "variant", "case", "scenarios", "connect"})
+                               {"disable", "enable", "manual", "record", "param", "variant", "case", "scenarios", "connect"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "stop-at-ms", "late-tolerance-ms",
                                 "participant-start-timeout-ms", "participant-stop-timeout-ms",
@@ -2046,7 +2050,7 @@ int main(int argc, char** argv)
                                 "timeline", "control-metrics", "external-registry", "time-policy", "request", "descriptions", "write-descriptions",
                                 "compare-commands"},
                                {"json", "strict", "events", "once", "stdin-commands", "start-paused", "text-from-stdin", "file-only"},
-                               {"disable", "enable", "manual", "param", "connect"});
+                               {"disable", "enable", "manual", "record", "param", "connect"});
         if (args.positionals().empty())
         {
             code = usage_error("no command: give check <file>, run <file>, serve <file>, test <file>, connections <file> or version", json,

@@ -127,6 +127,9 @@ private:
     /// Per participant of the configuration: its place among the scenario's participants (none:
     /// the scenario does not use it). Never written after the constructor.
     std::vector<std::optional<std::size_t>> places_;
+    /// Per participant of the configuration: its place among ScenarioEngine::extra_participants()
+    /// (set in begin() before the scenario thread starts).
+    std::vector<std::optional<std::size_t>> extra_places_;
     std::unique_ptr<HubPort> port_;
     /// run --timeline: what the engine notes (made in begin(), before the engine). Touched as
     /// engine_ is: the engine fills it; finish() gives it to the outcome.

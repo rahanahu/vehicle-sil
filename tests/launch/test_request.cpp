@@ -688,3 +688,25 @@ TEST_CASE(external_registry_validation_and_config_conflict)
     CHECK(!ok_check.usage);
     CHECK(ok_check.hot_eligibility.eligible);
 }
+
+TEST_CASE(record_intent_is_allowed_and_validated_pre_run_even_without_scenario)
+{
+    RunRequest r;
+    r.intent.record = {"A.level"};
+    CHECK(messages(r, RequestCommand::Check).empty());
+    CHECK(messages(r, RequestCommand::Run).empty());
+    // --timeline without --scenario is still refused even when --record is set.
+    r.host.timeline = "out.json";
+    CHECK(messages(r, RequestCommand::Run) == list(kTimelineNeedsScenario));
+    r.intent.scenario = "drive.yaml";
+    CHECK(messages(r, RequestCommand::Run).empty());
+
+    // Pre-run validation runs in check_file() without --scenario and reports invalid entries.
+    const std::filesystem::path dir = request_files("record-check");
+    const vehicle_sil::config::test::InDirectory there(dir);
+    RunRequest checkReq = of_file("sim.yaml");
+    checkReq.intent.record = {"badformat", "NoSuch.x", "B.level", "A.level"};
+    const Checked rep = check_file(checkReq);
+    CHECK(rep.recorded_variables.empty());
+    CHECK(codes(rep, "record-") == "record-variable-format record-unknown-participant record-participant-unusable record-participant-unusable ");
+}

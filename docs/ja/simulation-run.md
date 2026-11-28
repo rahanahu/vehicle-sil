@@ -688,6 +688,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `late_tolerance_ms` | 実時間の遅延許容値（0～10^12 ms の整数）。既定は 10 ms。 | `--late-tolerance-ms` |
 | `strict` | `true` か `false` | `--strict` |
 | `after_scenario` | `"stop"`（既定: シナリオ終了で停止）または `"pause"`（シナリオ成功時に一時停止して手動制御へ引き継ぐ。`scenario` が必須で、`stop_at_ms` とは併用できず、`run` では `--stdin-commands` か `--control` が必要） | |
+| `record` | シナリオの判定に影響せず `--timeline` にサンプリング記録する `"<participant>.<variable>"` の一覧 | `--record` |
 
 ### 引数と要求ファイルを一緒に使う
 
@@ -700,6 +701,7 @@ vehicle_sil_launch run --request bench.json --connect CAN1=none simulation.yaml 
 | `connect` | ネットワークごとです。`--connect <network>=<target>` はそのネットワークのファイルの先を置き換え、`--connect <network>=none` はこの実行だけ外します。ファイルのほかのネットワークは残ります。 |
 | `params` | 名前ごとです。`--param <name>=<value>` は、そのパラメーターのファイルの値を置き換えます。ほかは残り、照合の JSON の `from` は `request_file` です。 |
 | `disable`、`enable`、`manual` | ファイルの名前と引数の名前を合わせます。同じ名前で食い違うとき（ファイルの `disable` と `--enable`、ファイルの `enable` や `manual` と `--disable`、ファイルの `disable` と `--manual`）は、引数が勝ちます。 |
+| `record` | ファイルの変数名の後ろに `--record` 引数を結合し、最初に現れた順を保って重複を除きます。 |
 
 ファイルの `scenario` と、`params` のパラメーターを外す引数はありません（`--scenario` と `--param` は置き換えるだけです）。それらのない実行には、それらを書いていない要求ファイルを使います。`after_scenario` にはコマンドライン引数がありません。通常の CLI `run --scenario` では既定で `"stop"` になり、`--request` ファイル（または `serve` のインライン `intent`）に `"after_scenario": "pause"` を書いたときだけ手動引き継ぎになります。
 
@@ -1648,7 +1650,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `file`、`variant`、`params` | 設定ファイル（引数のとおり）、機種（なければ `null`）、シナリオのパラメーターと効いた値（`check --json` の `scenario.params` と同じ形） |
 | `time_step_ms` | controller のタイムステップ（`run --json` の `timing.time_step_ms` と同じ） |
 | `scenario` | `file`、`name`、省略可能な `case`、`status`、`over_at_ms`、`end_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
-| `variables[]` | シナリオが使う変数（最初に出た順）。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む） |
+| `variables[]` | シナリオが使う変数（最初に出た順）と、続けて `--record` / `"record"` で追加指定された変数。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む）、省略可能な `recorded`（`--record` / `"record"` で指定されたときだけ `true`、それ以外は省略） |
 | `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキー（省略可能な `file`、`name`、`call_stack` を含む）に、`lines`、`watch`、`failed` を足したもの |
 | `series[]` | 値の列（下） |
 | `lines[]` | 入力ごとの線: 手順が置いた値と動き（下の「入力の線」） |
@@ -1657,7 +1659,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 読む側は、知らないキーを無視します。知らない値（系列の `source` と `encoding`、`watch` の `mode`、条件の `op`、手順の `kind`、線の `kind` と `base_source`、`shape` の `type`）は、その部分を描かずに名前と `text` を出します。形式のバージョンを上げずに、キーと値が増えることがあります。手順の `status` は、これに入りません。[結果を決める値](scenario.md#結果を決める値)を見てください。
 
-この節のキーは、どのファイルにも全部あります。当てはまらないキーの値は `null` です。例外は手順の `expect_skipped`、`file`、`name`、`call_stack`、`watch.conditions[].compare[]` の `variable`、`failed.conditions[]` の `compared`、線の `file`、`scenario` の `case` で、該当するときだけ書きます。
+この節のキーは、どのファイルにも全部あります。当てはまらないキーの値は `null` です。例外は変数の `recorded`、手順の `expect_skipped`、`file`、`name`、`call_stack`、`watch.conditions[].compare[]` の `variable`、`failed.conditions[]` の `compared`、線の `file`、`scenario` の `case` で、該当するときだけ書きます。
 
 手順の `lines` は、その手順が置いた線の、いちばん上の `lines[]` の中の位置（0 から）の配列です（書かない手順、時刻が `recorded_to_ms` より後の手順、書き込みを 1 つも送らなかった手順では空）。
 
@@ -1759,7 +1761,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `source` | 中身 | `encoding` |
 |---|---|---|
 | `written` | シナリオが送った書き込みの全部。点は `[時刻, 値]` で、時刻は、その書き込みが効く時刻。**送った値で、ECU に入ったとは限りません**（下の `not_applied_from`） | `all` |
-| `sampled` | シナリオが見たサンプルの値。条件が読む変数だけ | `changes`: 値が変わったサンプルだけが点になる。`samples`（見たサンプルの数）、`first_ms`、`last_ms`（最初と最後のサンプルの時刻）を別に持つ。`written` の系列では、この 3 つは `null` |
+| `sampled` | 実行中に観測されたサンプルの値。条件が読む変数と、`--record` / `"record"` で指定された変数に入る | `changes`: 値が変わったサンプルだけが点になる。`samples`（見たサンプルの数）、`first_ms`、`last_ms`（最初と最後のサンプルの時刻）を別に持つ。`written` の系列では、この 3 つは `null` |
 
 - `columns` は、点の列の名前で、`["at_ms", "value"]` です。**シナリオが `dither` を置く入力の `written` の系列は 3 列**で、`["at_ms", "value", "base"]` です。3 列目の `base`（基準）は、揺れを足して型に丸める前の値で、`set` の値か、`ramp` や `wave` のその時刻の値です（[scenario.md](scenario.md) の「細かい揺れを重ねる」）。3 列になるのは、シナリオの文面がその入力に揺れを置くとき（`inputs` の宣言か、その機種で実行する、波形を書いた手順 `dither`）で、揺れを置く前の点も、外した後の点も、全部の点が 3 列です。実行がその手順まで進んだかどうかにはよりません（列の数は controller のタイムステップで変わりません）。読む側は、`columns` の名前で列を取ります。
 
@@ -1781,7 +1783,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
   }
   ```
 
-- 記録するのは、シナリオが使う変数だけです。シナリオが書く変数に `written` の系列、条件が読む変数に `sampled` の系列があります（両方の変数には 2 つ）。順は `variables[]` の順で、1 つの変数では `written` が先です。
+- 記録するのは、シナリオが使う変数と、`--record`（または要求ファイル・`serve` `intent` の `"record"`）で追加指定された変数だけです。シナリオが書く変数に `written` の系列、条件が読む変数または `--record` で指定された変数に `sampled` の系列があります（両方の変数には 2 つ）。`--record` で追加した変数は、シナリオの判定結果やサンプリング警告には影響しません。順は `variables[]` の順で、1 つの変数では `written` が先です。
 - 点は 1 行に 1 つです。時刻は戻りません。同じ時刻の点が続くことがあり（`ramp` の終わりと次の `set`）、順は送った順です。
 - 値は、bool が `true` と `false`、enum が項目の値（名前は `variables[].items`）、数にならない real が `null` です。
 - サンプルは「ステップの終わりの値、時刻はステップの始まり」です（[scenario.md](scenario.md) の「値の見え方」）。`sampled` の値は、点から次の点まで（最後の点は `last_ms` まで）続くものとして読みます。

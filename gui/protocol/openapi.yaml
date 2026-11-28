@@ -2945,6 +2945,12 @@ components:
           - pause
           type: string
           title: After Scenario
+        record:
+          items:
+            minLength: 1
+            type: string
+          type: array
+          title: Record
         params:
           additionalProperties:
             anyOf:
@@ -3453,6 +3459,12 @@ components:
           - pause
           type: string
           title: After Scenario
+        record:
+          items:
+            minLength: 1
+            type: string
+          type: array
+          title: Record
         params:
           additionalProperties:
             anyOf:

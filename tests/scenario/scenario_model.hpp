@@ -98,6 +98,7 @@ struct ModelEcu
 {
     std::string name;
     SimDuration step{10ms};
+    SimDuration sample_period{10ms};
     std::int64_t level = 0, gain = 0, mode = 0, changed_at = -1, gain_at_0 = -1;
     bool lamp = false, pulse = false;
     double ratio = 0.0, speed = 0.0;
@@ -289,6 +290,19 @@ public:
             peer.schema = model_variables();
             peers.push_back(std::move(peer));
         }
+        if (!e.extra_participants().empty())
+        {
+            std::vector<EnginePeer> extraPeers;
+            extraPeers.reserve(e.extra_participants().size());
+            for (const std::string& pName : e.extra_participants())
+            {
+                EnginePeer peer;
+                peer.connected = std::any_of(ecus.begin(), ecus.end(), [&pName](const ModelEcu& m) { return m.name == pName; });
+                peer.schema = model_variables();
+                extraPeers.push_back(std::move(peer));
+            }
+            e.begin_extra(extraPeers);
+        }
         e.begin(peers);
         for (SimTime p{}; p <= at(limit); p += tick)
         {
@@ -451,7 +465,7 @@ private:
         m.pulse = now == at(200ms);
         const double target = 10.0 * static_cast<double>(m.level);
         m.speed += std::clamp(target - m.speed, -50.0, 50.0);
-        if (to_ns(now) % SimDuration(10ms).count() == 0)
+        if (to_ns(now) % m.sample_period.count() == 0)
         {
             control::Snapshot sample;
             sample.time = now;
@@ -480,6 +494,14 @@ private:
                 if (scenario->participants[i].name == ecus[it->ecu].name && it->sample)
                 {
                     engine->sample(i, it->sample);
+                }
+            }
+            const auto& extras = engine->extra_participants();
+            for (std::size_t i = 0; i < extras.size(); ++i)
+            {
+                if (extras[i] == ecus[it->ecu].name && it->sample)
+                {
+                    engine->extra_sample(i, it->sample);
                 }
             }
             for (const auto& [ticket, result] : it->results)

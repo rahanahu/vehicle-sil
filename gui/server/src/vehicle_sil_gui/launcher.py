@@ -60,6 +60,7 @@ FEATURE_RUN_STOP_AT = "run-stop-at"
 FEATURE_SCENARIO_HANDOVER = "scenario-handover"
 FEATURE_SCENARIO_CASES = "scenario-cases"
 FEATURE_EXTERNAL_REGISTRY = "external-registry"
+FEATURE_RECORD_SIGNALS = "record-signals"
 
 
 def external_registry_uri_error(uri: str) -> str | None:

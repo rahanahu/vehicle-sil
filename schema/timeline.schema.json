@@ -226,6 +226,10 @@
           "watched": {
             "type": "boolean",
             "description": "A condition of the scenario reads it: it has a series with the source \"sampled\"."
+          },
+          "recorded": {
+            "type": "boolean",
+            "description": "Present and true only when the variable was explicitly requested via --record (or \"record\" in a request file / serve intent); omitted otherwise. Recorded variables always have a series with the source \"sampled\"."
           }
         }
       }

@@ -192,6 +192,8 @@ ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, Scena
     }
     run_ = scenario_not_run(scenario);
     variables_.resize(scenario.variables.size());
+    participants_read_ = participants_read(scenario);
+    any_read_ = std::any_of(participants_read_.begin(), participants_read_.end(), [](bool r) { return r; });
     samples_.resize(scenario.participants.size());
     open_writes_.resize(scenario.steps.size(), 0);
     for (const ScenarioVariable& v : scenario.variables)
@@ -228,6 +230,38 @@ ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, Scena
         {
             lines_->dithered.push_back(v);
         }
+    }
+    if (record_ != nullptr)
+    {
+        const auto& extras = record_->extra_variables();
+        extra_variables_.reserve(extras.size());
+        for (std::size_t k = 0; k < extras.size(); ++k)
+        {
+            const RecordedVariable& rv = extras[k];
+            ExtraVariable ev;
+            ev.timeline_index = scenario.variables.size() + k;
+            ev.name = rv.name;
+            ev.type = rv.type;
+            ev.items = rv.items;
+            const auto sp = std::find_if(scenario.participants.begin(), scenario.participants.end(),
+                                         [&rv](const ScenarioParticipant& p) { return p.name == rv.participant; });
+            if (sp != scenario.participants.end())
+            {
+                ev.scenario_participant = static_cast<std::size_t>(sp - scenario.participants.begin());
+            }
+            else
+            {
+                auto ep = std::find(extra_participants_.begin(), extra_participants_.end(), rv.participant);
+                if (ep == extra_participants_.end())
+                {
+                    extra_participants_.push_back(rv.participant);
+                    ep = extra_participants_.end() - 1;
+                }
+                ev.extra_participant = static_cast<std::size_t>(ep - extra_participants_.begin());
+            }
+            extra_variables_.push_back(std::move(ev));
+        }
+        extra_samples_.resize(extra_participants_.size());
     }
 }
 
@@ -288,6 +322,20 @@ void ScenarioEngine::begin(const std::vector<EnginePeer>& peers)
         }
         variables_[i].index = static_cast<std::size_t>(it - schema.begin());
     }
+    for (ExtraVariable& ev : extra_variables_)
+    {
+        if (!ev.scenario_participant || *ev.scenario_participant >= peers.size() || !peers[*ev.scenario_participant].connected)
+        {
+            continue;
+        }
+        const auto& schema = peers[*ev.scenario_participant].schema;
+        const auto it = std::find_if(schema.begin(), schema.end(), [&ev](const control::VariableInfo& info) { return info.name == ev.name; });
+        if (it != schema.end() && it->type == ev.type &&
+            (ev.type != control::ValueType::Enum || enum_items_match(it->items, ev.items)))
+        {
+            ev.index = static_cast<std::size_t>(it - schema.begin());
+        }
+    }
     run_.status = ScenarioStatus::Incomplete;
     if (scenario_.steps.empty())
     {
@@ -306,11 +354,37 @@ void ScenarioEngine::begin(const std::vector<EnginePeer>& peers)
     close_record();
 }
 
+void ScenarioEngine::begin_extra(const std::vector<EnginePeer>& peers)
+{
+    for (ExtraVariable& ev : extra_variables_)
+    {
+        if (!ev.extra_participant || *ev.extra_participant >= peers.size() || !peers[*ev.extra_participant].connected)
+        {
+            continue;
+        }
+        const auto& schema = peers[*ev.extra_participant].schema;
+        const auto it = std::find_if(schema.begin(), schema.end(), [&ev](const control::VariableInfo& info) { return info.name == ev.name; });
+        if (it != schema.end() && it->type == ev.type &&
+            (ev.type != control::ValueType::Enum || enum_items_match(it->items, ev.items)))
+        {
+            ev.index = static_cast<std::size_t>(it - schema.begin());
+        }
+    }
+}
+
 void ScenarioEngine::sample(std::size_t participant, std::shared_ptr<const control::Snapshot> sample)
 {
     if (participant < samples_.size() && sample && !over_ && (!stop_at_ || sample->time < *stop_at_))
     {
         samples_[participant].push_back(std::move(sample));
+    }
+}
+
+void ScenarioEngine::extra_sample(std::size_t extra_participant, std::shared_ptr<const control::Snapshot> sample)
+{
+    if (extra_participant < extra_samples_.size() && sample && !over_ && (!stop_at_ || sample->time < *stop_at_))
+    {
+        extra_samples_[extra_participant].push_back(std::move(sample));
     }
 }
 
@@ -328,6 +402,10 @@ bool ScenarioEngine::tick(SimTime p)
     if (!over_)
     {
         observe(p);
+    }
+    if (!over_)
+    {
+        observe_extra(p);
     }
     if (!over_ && can_settle_at(p))
     {
@@ -362,6 +440,10 @@ void ScenarioEngine::stopped_at(SimTime p)
     if (!over_)
     {
         observe(p, true);
+    }
+    if (!over_)
+    {
+        observe_extra(p);
     }
     if (!over_)
     {
@@ -743,9 +825,18 @@ void ScenarioEngine::finish(ScenarioStatus status)
                 left_.emplace_back(i, std::move(sample));
             }
         }
+        for (std::size_t i = 0; i < extra_samples_.size(); ++i)
+        {
+            for (auto& sample : extra_samples_[i])
+            {
+                extra_left_.emplace_back(i, std::move(sample));
+            }
+        }
     }
     samples_.clear();
     samples_.resize(scenario_.participants.size());
+    extra_samples_.clear();
+    extra_samples_.resize(extra_participants_.size());
 }
 
 void ScenarioEngine::close_record()
@@ -813,9 +904,34 @@ void ScenarioEngine::close_record()
                     record_->sampled(v, sample->time, sample->values[*variables_[v].index]);
                 }
             }
+            for (const ExtraVariable& ev : extra_variables_)
+            {
+                if (ev.scenario_participant == participant && ev.index && *ev.index < sample->values.size())
+                {
+                    record_->sampled(ev.timeline_index, sample->time, sample->values[*ev.index]);
+                }
+            }
+        }
+        std::stable_sort(extra_left_.begin(), extra_left_.end(), [](const auto& a, const auto& b) {
+            return a.second->time != b.second->time ? a.second->time < b.second->time : a.first < b.first;
+        });
+        for (const auto& [ep, sample] : extra_left_)
+        {
+            if (sample->time > to || sample->time >= now_)
+            {
+                continue;
+            }
+            for (const ExtraVariable& ev : extra_variables_)
+            {
+                if (ev.extra_participant == ep && ev.index && *ev.index < sample->values.size())
+                {
+                    record_->sampled(ev.timeline_index, sample->time, sample->values[*ev.index]);
+                }
+            }
         }
     }
     left_.clear();
+    extra_left_.clear();
     record_->close(to);
 }
 
@@ -1680,6 +1796,10 @@ void ScenarioEngine::observe(SimTime p, bool final_boundary)
     std::vector<Taken> batch;
     for (std::size_t i = 0; i < samples_.size(); ++i)
     {
+        if (i >= participants_read_.size() || !participants_read_[i])
+        {
+            continue;
+        }
         while (!samples_[i].empty() && samples_[i].front()->time < p)
         {
             batch.push_back(Taken{samples_[i].front()->time, i, std::move(samples_[i].front())});
@@ -1727,6 +1847,17 @@ void ScenarioEngine::observe(SimTime p, bool final_boundary)
                         if (record_ != nullptr)
                         {
                             record_->sampled(v, t, *variable.value);
+                        }
+                    }
+                }
+                if (record_ != nullptr)
+                {
+                    for (const ExtraVariable& ev : extra_variables_)
+                    {
+                        if (ev.scenario_participant == taken.participant && ev.index &&
+                            *ev.index < taken.sample->values.size())
+                        {
+                            record_->sampled(ev.timeline_index, t, taken.sample->values[*ev.index]);
                         }
                     }
                 }
@@ -1785,6 +1916,100 @@ void ScenarioEngine::observe(SimTime p, bool final_boundary)
         for (; next < batch.size(); ++next)
         {
             left_.emplace_back(batch[next].participant, std::move(batch[next].sample));
+        }
+    }
+}
+
+void ScenarioEngine::observe_extra(SimTime p)
+{
+    struct Taken
+    {
+        SimTime time;
+        std::size_t participant;
+        std::shared_ptr<const control::Snapshot> sample;
+    };
+    // Drain samples from written-only scenario participants (those not read by scenario conditions
+    // or sample-based motions) without advancing last_seen_ or triggering watch evaluations.
+    std::vector<Taken> writtenOnlyBatch;
+    for (std::size_t i = 0; i < samples_.size(); ++i)
+    {
+        if (i < participants_read_.size() && participants_read_[i])
+        {
+            continue;
+        }
+        while (!samples_[i].empty() && samples_[i].front()->time < p)
+        {
+            if (record_ != nullptr)
+            {
+                writtenOnlyBatch.push_back(Taken{samples_[i].front()->time, i, std::move(samples_[i].front())});
+            }
+            samples_[i].pop_front();
+        }
+    }
+    const auto advance_last_seen = [this](SimTime t) {
+        if (!any_read_)
+        {
+            last_seen_ = last_seen_ ? std::max(*last_seen_, t) : t;
+        }
+    };
+    if (record_ != nullptr && !writtenOnlyBatch.empty())
+    {
+        std::stable_sort(writtenOnlyBatch.begin(), writtenOnlyBatch.end(), [](const Taken& a, const Taken& b) {
+            return a.time != b.time ? a.time < b.time : a.participant < b.participant;
+        });
+        for (const Taken& taken : writtenOnlyBatch)
+        {
+            advance_last_seen(taken.time);
+            for (std::size_t v = 0; v < variables_.size(); ++v)
+            {
+                if (scenario_.variables[v].participant == taken.participant && variables_[v].index &&
+                    *variables_[v].index < taken.sample->values.size())
+                {
+                    record_->sampled(v, taken.time, taken.sample->values[*variables_[v].index]);
+                }
+            }
+            for (const ExtraVariable& ev : extra_variables_)
+            {
+                if (ev.scenario_participant == taken.participant && ev.index &&
+                    *ev.index < taken.sample->values.size())
+                {
+                    record_->sampled(ev.timeline_index, taken.time, taken.sample->values[*ev.index]);
+                }
+            }
+        }
+    }
+    if (extra_samples_.empty())
+    {
+        return;
+    }
+    std::vector<Taken> batch;
+    for (std::size_t i = 0; i < extra_samples_.size(); ++i)
+    {
+        while (!extra_samples_[i].empty() && extra_samples_[i].front()->time < p)
+        {
+            if (record_ != nullptr)
+            {
+                batch.push_back(Taken{extra_samples_[i].front()->time, i, std::move(extra_samples_[i].front())});
+            }
+            extra_samples_[i].pop_front();
+        }
+    }
+    if (record_ == nullptr || batch.empty())
+    {
+        return;
+    }
+    std::stable_sort(batch.begin(), batch.end(), [](const Taken& a, const Taken& b) {
+        return a.time != b.time ? a.time < b.time : a.participant < b.participant;
+    });
+    for (const Taken& taken : batch)
+    {
+        advance_last_seen(taken.time);
+        for (const ExtraVariable& ev : extra_variables_)
+        {
+            if (ev.extra_participant == taken.participant && ev.index && *ev.index < taken.sample->values.size())
+            {
+                record_->sampled(ev.timeline_index, taken.time, taken.sample->values[*ev.index]);
+            }
         }
     }
 }

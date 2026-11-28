@@ -172,6 +172,8 @@ export interface Intent {
   case?: string;
   /** What to do once the scenario passes (`stop`, or `pause` to hand over to manual control). */
   after_scenario?: AfterScenario;
+  /** Extra signals (`<participant>.<variable>`) to record on the timeline independent of scenario assertions. */
+  record?: string[];
   variant?: string;
   params?: Record<string, string | number | boolean>;
   speed?: number | 'max';

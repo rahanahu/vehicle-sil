@@ -41,6 +41,7 @@ import { STDERR_CODE, launcherStderr } from './launcher-stderr';
 import { LogView } from './log-view';
 import { OutsideChoice, OutsideRows, connectChoice, connectText } from './outside-connect';
 import { ParticipantStatus } from './participant-status';
+import { RecordSignals } from './record-signals';
 import { RecordingPanel } from './recording-panel';
 import { ResultPanel } from './result-panel';
 import { RunSession } from './run-session';
@@ -85,6 +86,8 @@ interface RunChoices {
   disable: string[];
   /** 自分で起動する participant（古い持ち越しにはない）。 */
   manual?: string[];
+  /** 追加で記録する信号（古い持ち越しにはない）。 */
+  record?: string[];
   speed: Speed;
   stopAt?: string;
   stopAtEdited?: boolean;
@@ -118,6 +121,7 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !Array.isArray(v['disable']) ||
     !v['disable'].every(isText) ||
     !(v['manual'] === undefined || (Array.isArray(v['manual']) && v['manual'].every(isText))) ||
+    !(v['record'] === undefined || (Array.isArray(v['record']) && v['record'].every(isText))) ||
     !speedOk ||
     !(v['variant'] === undefined || v['variant'] === null || isText(v['variant'])) ||
     !(v['scenario'] === undefined || v['scenario'] === null || isText(v['scenario'])) ||
@@ -184,6 +188,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     OutsideChoice,
     OutsideRows,
     ParticipantStatus,
+    RecordSignals,
     RecordingPanel,
     ResultPanel,
     RunStatus,
@@ -628,6 +633,47 @@ export class RunPage {
   protected readonly handoverSupported = computed(
     () => this.app.hasValue() && this.app.value().launcher.features.includes('scenario-handover'),
   );
+  /** ランチャーがシナリオ外の追加信号記録（`record-signals`）に対応しているか。 */
+  protected readonly recordSignalsSupported = computed(
+    () => this.app.hasValue() && this.app.value().launcher.features.includes('record-signals'),
+  );
+  /** 追加で記録する信号（`<participant>.<variable>`）。既定は空（全信号の自動記録はしない）。 */
+  private readonly recordedSignalsSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const carried = this.carriedFor(session?.id ?? null);
+      return {
+        file,
+        id: session?.id ?? null,
+        names:
+          carried && carried.file === file && carried.record !== undefined
+            ? carried.record
+            : session && session.file === file && session.intent?.record
+              ? session.intent.record
+              : [],
+      };
+    },
+    {
+      equal: (a, b) =>
+        a.file === b.file &&
+        a.id === b.id &&
+        a.names.length === b.names.length &&
+        a.names.every((n, i) => n === b.names[i]),
+    },
+  );
+  protected readonly recordedSignals = linkedSignal<
+    { file: string | null; id: string | null; names: readonly string[] },
+    ReadonlySet<string>
+  >({
+    source: this.recordedSignalsSource,
+    computation: ({ names }) => new Set(names),
+    equal: (a, b) => a.size === b.size && [...a].every((name) => b.has(name)),
+  });
+  protected readonly recordedSignalsList = computed(() => [...this.recordedSignals()].sort());
+  protected readonly sessionRecordSignals = computed<readonly string[]>(
+    () => this.session()?.intent?.record ?? [],
+  );
   private readonly afterScenarioSource = computed(
     () => {
       const file = this.selected();
@@ -716,6 +762,8 @@ export class RunPage {
         paramKeys.length > 0 ? Object.fromEntries(paramKeys.map((k) => [k, overrides[k]!])) : null;
       const pauseAfter =
         scenario !== null && this.handoverSupported() && this.afterScenario() === 'pause';
+      const record =
+        scenario !== null && this.recordSignalsSupported() ? this.recordedSignalsList() : [];
       const speed = this.speed();
       const paused = scenario === null && this.startPaused();
       const connect = this.connectToSend();
@@ -728,6 +776,7 @@ export class RunPage {
         ...(scenarioCase !== null ? { case: scenarioCase } : {}),
         ...(params !== null ? { params } : {}),
         ...(pauseAfter ? { after_scenario: 'pause' as const } : {}),
+        ...(record.length > 0 ? { record } : {}),
         ...(speed !== null ? { speed } : {}),
         ...(!pauseAfter && !this.stopAtInvalid() && stopAt !== ''
           ? { stop_at_ms: Number(stopAt) }
@@ -983,6 +1032,7 @@ export class RunPage {
         file: this.selected(),
         disable: [...this.disabled()],
         manual: [...this.manual()],
+        record: this.recordedSignalsList(),
         speed: this.speed(),
         stopAt: this.stopAt(),
         stopAtEdited: this.stopAtEdited(),
@@ -1012,6 +1062,7 @@ export class RunPage {
           case: scenarioCase,
           params,
           after_scenario,
+          record,
           speed,
           start_paused,
           stop_at_ms,
@@ -1024,6 +1075,7 @@ export class RunPage {
           case: scenarioCase,
           params,
           after_scenario,
+          record,
           speed,
           start_paused,
           stop_at_ms,
@@ -1043,6 +1095,7 @@ export class RunPage {
         case: undefined,
         params: undefined,
         after_scenario: undefined,
+        record: undefined,
         speed: undefined,
         start_paused: undefined,
         stop_at_ms: undefined,

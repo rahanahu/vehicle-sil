@@ -40,6 +40,8 @@ struct Checked : config::CheckReport
 {
     /// --scenario: the scenario file that was read and checked.
     std::optional<scenario::ScenarioCheck> scenario{};
+    /// --record / RunIntent::record: resolved extra variables to record in the timeline.
+    std::vector<scenario::RecordedVariable> recorded_variables{};
     /// Lowercase hex FIPS 180-4 SHA-256 of the raw configuration file bytes if read, or empty
     /// string if unreadable/not read (e.g. --text-from-stdin).
     std::string file_sha256{};

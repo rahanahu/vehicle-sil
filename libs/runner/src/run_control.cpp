@@ -71,7 +71,9 @@ std::vector<std::string> RunControl::expected_agents() const
     for (std::size_t i = 0; i < ctx_.config.participants.size(); ++i)
     {
         const config::ParticipantConfig& p = ctx_.config.participants[i];
-        // Also an optional one whose variables the scenario uses.
+        // Also an optional one whose variables the scenario uses (never one only requested via
+        // --record, so an absent or delayed optional ECU cannot emit control-link-no-hello or
+        // change scenario pass/fail / --strict exit codes).
         const bool used = ctx_.scenario != nullptr &&
                           std::any_of(ctx_.scenario->participants.begin(), ctx_.scenario->participants.end(),
                                       [&p](const scenario::ScenarioParticipant& s) { return s.name == p.name; });

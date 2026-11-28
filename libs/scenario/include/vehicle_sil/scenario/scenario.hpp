@@ -57,6 +57,20 @@ struct ScenarioParticipant
     SimDuration step{};
 };
 
+/// An ECU variable requested for timeline recording (RunIntent::record / --record), resolved
+/// against the checked configuration's ScenarioCatalog before the run starts.
+struct RecordedVariable
+{
+    std::string participant{};
+    std::string name{};
+    std::string text{}; ///< "<participant>.<name>"
+    control::ValueType type = control::ValueType::Real;
+    std::vector<control::EnumItem> items{};
+    SimDuration step{};
+
+    friend bool operator==(const RecordedVariable&, const RecordedVariable&) = default;
+};
+
 enum class Compare
 {
     Eq,
