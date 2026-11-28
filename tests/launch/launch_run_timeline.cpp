@@ -325,4 +325,61 @@ void timeline(const Options& o)
                     !contains(lf(badRun.standard_error), "registry at"),
                 "run fails pre-run before starting any ECU:\n" + lf(badRun.standard_output) + "\n" + lf(badRun.standard_error));
     }
+
+    // Absent or delayed optional (required: false) record-only ECU must NOT wait in expected_agents(),
+    // emit control-link-no-hello, or alter scenario pass/fail or exit code (even under --strict).
+    {
+        const std::string cfg =
+            "vehicle_sil_simulation: 2\n"
+            "networks: []\n"
+            "participants:\n"
+            "  - name: Body\n"
+            "    command: [" + ecu(o) + "]\n"
+            "  - name: OptBridge\n"
+            "    role: bridge\n"
+            "    required: false\n"
+            "    manual: true\n"
+            "    command: [" + ecu(o) + "]\n";
+        const fs::path optDir =
+            scenario_dir(o, cfg, {{"Body", "scenario-variables"}, {"OptBridge", "scenario-variables"}});
+        write_file(optDir / "s.yaml",
+                   "vehicle_sil_scenario: 1\n"
+                   "name: body only with optional bridge\n"
+                   "steps:\n"
+                   "  - set: { Body.level: 20 }\n"
+                   "  - at_ms: 50\n"
+                   "    expect: { Body.level_changed_at_ms: 0 }\n");
+
+        const Captured baseRun =
+            launch(o,
+                   {"run", "sim.yaml", "--scenario", "s.yaml", "--time-policy", "free", "--speed", "max",
+                    "--strict", "--json", "--timeline", "base.json"},
+                   optDir);
+        expect_code(baseRun, 0, "optional record-only ECU: baseline --strict run");
+
+        const Captured recRun =
+            launch(o,
+                   {"run", "sim.yaml", "--scenario", "s.yaml", "--time-policy", "free", "--speed", "max",
+                    "--strict", "--json", "--timeline", "opt.json", "--record", "OptBridge.mode_now"},
+                   optDir);
+        expect_code(recRun, 0, "optional record-only ECU: --record keeps --strict exit 0");
+        require(!contains(recRun.standard_output, "control-link-no-hello"),
+                "optional record-only ECU must not emit control-link-no-hello:\n" + recRun.standard_output);
+        auto normalizeOptJson = [](std::string text, const std::string& tlName) {
+            text = without_timing(lf(std::move(text)));
+            const std::string from = "\"timeline\": \"" + tlName + "\"";
+            const auto pos = text.find(from);
+            if (pos != std::string::npos)
+            {
+                text.replace(pos, from.size(), "\"timeline\": \"<tl>\"");
+            }
+            return text;
+        };
+        expect_text(normalizeOptJson(recRun.standard_output, "opt.json"),
+                    normalizeOptJson(baseRun.standard_output, "base.json"),
+                    "optional record-only ECU run --json identical with and without --record under --strict");
+        const std::string optTl = read_text(optDir / "opt.json");
+        require(contains(optTl, "\"name\": \"OptBridge.mode_now\"") && contains(optTl, "\"recorded\": true"),
+                "optional record-only ECU timeline declares recorded variable:\n" + optTl);
+    }
 }
