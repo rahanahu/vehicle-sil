@@ -124,3 +124,61 @@ def test_cli_external_registry_validation_and_missing_feature(
     err_feat = capsys.readouterr().err
     assert rc_feat == cli.EXIT_USAGE == 2
     assert "has no 'external-registry'" in err_feat
+
+
+def test_keep_runs_validation_and_server_wiring(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    for bad in ("0", "-2"):
+        rc = cli.main(["--keep-runs", bad, "--no-browser"])
+        assert rc == cli.EXIT_USAGE == 2
+        assert "--keep-runs must be 1 or more" in capsys.readouterr().err
+
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+
+    server = GuiServer(Options(
+        root=tmp_path,
+        launcher=Launcher(tmp_path / "vehicle_sil_launch"),
+        port=0,
+        token="t",
+        keep_runs=7,
+    ))
+    assert server.runs.timelines.kept == 7
+
+
+def test_exception_handler_suppresses_disconnect_tracebacks_to_debug_and_delegates_others(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    loop = asyncio.new_event_loop()
+    seen_other: list[dict[str, object]] = []
+    loop.set_exception_handler(lambda _loop, ctx: seen_other.append(ctx))
+    try:
+        restore = cli.install_exception_handler(loop)
+        caplog.set_level(logging.DEBUG, logger="vehicle_sil_gui")
+
+        for exc in (
+            ConnectionResetError("reset"),
+            ConnectionAbortedError("aborted"),
+            BrokenPipeError("pipe"),
+            _win_oserror(err=None, strerror="win reset", winerror=10054),
+            _win_oserror(err=None, strerror="win abort", winerror=10053),
+            _win_oserror(err=None, strerror="netname", winerror=64),
+            _win_oserror(err=None, strerror="op aborted", winerror=995),
+        ):
+            loop.call_exception_handler({"message": "Fatal error on transport", "exception": exc})
+
+        assert seen_other == []
+        assert any("client connection closed" in r.message for r in caplog.records)
+
+        # Unrelated exceptions and task/future exceptions still delegate to the previous handler.
+        loop.call_exception_handler({"message": "boom", "exception": RuntimeError("bad")})
+        fut = loop.create_future()
+        loop.call_exception_handler({"message": "task", "exception": ConnectionResetError("in task"), "future": fut})
+        assert len(seen_other) == 2
+
+        restore()
+        loop.call_exception_handler({"message": "after restore", "exception": ConnectionResetError("after")})
+        assert len(seen_other) == 3
+    finally:
+        loop.close()

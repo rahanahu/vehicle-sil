@@ -1749,5 +1749,7 @@ class CliReadyMessage(ContractModel):
     vehicle_sil_gui: ExactLiteral4
     url: NonEmptyStr
     port: Annotated[StrictInt, Field(ge=1, le=65535)]
+    pid: Annotated[StrictInt, Field(ge=1)]
+    instance: NonEmptyStr
     dev_url: OmitNonEmptyStr = None
     auth: Annotated[ExactLiteralFalse | None, OmitOnly] = None
