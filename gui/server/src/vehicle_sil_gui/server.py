@@ -225,6 +225,7 @@ class Options:
     external_registry_uri: str | None = None
     check_timeout_s: float = CHECK_TIMEOUT_S
     silent_after_s: float = SILENT_AFTER_S
+    keep_runs: int = 4
     limits: Limits = field(default_factory=Limits)
     variables: bool = True  # start the launcher's control server and read the ECUs' variables from it
     variable_limits: VariableLimits = field(default_factory=VariableLimits)
@@ -272,6 +273,7 @@ class GuiServer:
             external_registry_uri=options.external_registry_uri,
             check_timeout_s=options.check_timeout_s,
             silent_after_s=options.silent_after_s,
+            keep_runs=options.keep_runs,
             limits=options.limits,
             variables=options.variables,
             variable_limits=options.variable_limits,

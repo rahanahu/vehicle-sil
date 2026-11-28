@@ -72,11 +72,15 @@ def read_page_file(directory: Path, name: str) -> bytes | None:
 class Timelines:
     """The temporary directory and the files in it. Its methods touch the disk: call them off the event loop."""
 
-    def __init__(self) -> None:
+    def __init__(self, kept: int = KEPT) -> None:
+        if kept < 1:
+            raise ValueError("kept must be 1 or more")
         self._lock = threading.Lock()
         self._closed = False
+        self.kept = kept
         self.directory: Path | None = None
         self.ready: OrderedDict[str, tuple[Path, str]] = OrderedDict()  # run_id -> (file, name), oldest first
+        self._failed: set[str] = set()
 
     def new_file(self) -> Path:
         """A name for the next run's file (the launcher creates the file). Makes the directory on first use."""
@@ -87,10 +91,11 @@ class Timelines:
                 self.directory = Path(tempfile.mkdtemp(prefix="vehicle-sil-gui-timelines-"))
             return self.directory / f"{secrets.token_hex(8)}.timeline.json"
 
-    def finish(self, run_id: str, path: Path, usable: bool, scenario: str) -> bool:
+    def finish(self, run_id: str, path: Path, usable: bool, scenario: str, *, failed: bool = False) -> bool:
         """The run has ended: keeps its file when the launcher wrote a whole one (usable, and the file is not
-        empty), and removes the oldest beyond KEPT; otherwise removes it. Whether it is kept. scenario: the
-        scenario file, whose name the file is given when it is served (<name>.timeline.json)."""
+        empty), and removes older files beyond `kept` (evicting passing runs before failed ones); otherwise removes
+        it. Whether it is kept. scenario: the scenario file, whose name the file is given when it is served
+        (<name>.timeline.json)."""
         with self._lock:
             try:
                 kept = usable and path.stat().st_size > 0
@@ -100,9 +105,23 @@ class Timelines:
                 _remove(path)
                 return False
             stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(scenario.replace("\\", "/")).stem) or "scenario"
-            self.ready[str(run_id)] = (path, f"{stem}.timeline.json")
-            while len(self.ready) > KEPT:
-                _, (old, _) = self.ready.popitem(last=False)
+            key = str(run_id)
+            prev = self.ready.get(key)
+            if prev is not None and prev[0] != path:
+                _remove(prev[0])
+            self.ready[key] = (path, f"{stem}.timeline.json")
+            self.ready.move_to_end(key)
+            if failed:
+                self._failed.add(key)
+            else:
+                self._failed.discard(key)
+            while len(self.ready) > self.kept:
+                # Prefer keeping failed runs when evicting; never evict the run that just finished.
+                victim = next((rid for rid in self.ready if rid != key and rid not in self._failed), None)
+                if victim is None:
+                    victim = next(iter(self.ready))
+                old, _ = self.ready.pop(victim)
+                self._failed.discard(victim)
                 _remove(old)
             return True
 
@@ -116,6 +135,7 @@ class Timelines:
         with self._lock:
             self._closed = True
             self.ready.clear()
+            self._failed.clear()
             if self.directory is not None:
                 shutil.rmtree(self.directory, ignore_errors=True)
                 if self.directory.exists():

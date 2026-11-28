@@ -334,6 +334,66 @@ def test_the_run_page_s_check_and_a_run_write_no_descriptions(tmp_path: Path, ro
         run_async(main, gui)
 
 
+def test_saved_file_check_reuses_and_invalidates_descriptions_cache(tmp_path: Path, root: Path) -> None:
+    server, log = serve(tmp_path, root)
+
+    async def main(c: Client) -> None:
+        # Cold saved check writes descriptions.
+        status, reply = await c.post("api/check", {"file": FILE})
+        assert status == 200 and reply["check"]["result"] == "passed", reply
+        assert "--write-descriptions" in log.checks()[0]["argv"]
+        saved = option(log.checks()[0]["argv"], "--write-descriptions")
+
+        # Repeated saved check reuses saved descriptions without --write-descriptions.
+        status, reply = await c.post("api/check", {"file": FILE})
+        assert status == 200 and reply["check"]["result"] == "passed", reply
+        assert "--descriptions" in log.checks()[1]["argv"]
+        assert option(log.checks()[1]["argv"], "--descriptions") == saved
+        assert log.checks()[1]["descriptions"] is True
+
+        # Modifying the YAML file invalidates the cache -> writes descriptions again.
+        touch(root / FILE)
+        status, reply = await c.post("api/check", {"file": FILE})
+        assert status == 200 and "--write-descriptions" in log.checks()[2]["argv"], reply
+
+        # Subset check (disable) reuses cache when warm without overwriting saved full descriptions.
+        status, reply = await c.post("api/check", {"file": FILE, "disable": ["Dashboard"]})
+        assert status == 200 and "--descriptions" in log.checks()[3]["argv"], reply
+        assert "--write-descriptions" not in log.checks()[3]["argv"]
+
+        # connect check bypasses saved --descriptions so bridges can be probed.
+        status, reply = await c.post("api/connections", {"file": "connect.yaml", "network": "ETH_EXT"})
+        assert status == 200, reply
+        status, reply = await c.post("api/check", {"file": "connect.yaml", "connect": {"ETH_EXT": "fake0"}})
+        assert status == 200 and "--descriptions" not in log.checks()[-1]["argv"], reply
+        assert "--write-descriptions" not in log.checks()[-1]["argv"]
+
+        # A scenario/case usage failure on api/check must not poison subsequent text checks
+        # (warm cache on FILE stays usable: [False]; cold cache on connect.yaml still writes: [True, False]).
+        status, reply = await c.post("api/check", {
+            "file": FILE, "scenario": "scenarios/throttle.yaml", "case": "missing-case",
+        })
+        assert status == 200 and reply["check"]["result"] == "usage", reply
+        before = len(log.checks())
+        status, reply = await c.post("api/check", {"file": FILE, "text": unsaved(root)})
+        assert status == 200 and reply["check"]["result"] == "passed", reply
+        assert ["--write-descriptions" in e["argv"] for e in log.checks()[before:]] == [False]
+
+        status, reply = await c.post("api/check", {
+            "file": "connect.yaml", "scenario": "scenarios/throttle.yaml", "case": "missing-case",
+        })
+        assert status == 200 and reply["check"]["result"] == "usage", reply
+        before = len(log.checks())
+        status, reply = await c.post("api/check", {
+            "file": "connect.yaml", "text": (root / "connect.yaml").read_text(encoding="utf-8") + "# 編集中\n",
+        })
+        assert status == 200 and reply["check"]["result"] == "passed", reply
+        assert ["--write-descriptions" in e["argv"] for e in log.checks()[before:]] == [True, False]
+
+    with server as gui:
+        run_async(main, gui)
+
+
 def test_reading_the_text_of_a_configuration_file(tmp_path: Path, root: Path) -> None:
     server, _ = serve(tmp_path, root)
     files = {

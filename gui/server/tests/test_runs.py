@@ -209,6 +209,8 @@ def test_a_run_whose_check_fails_is_refused_with_the_findings_of_the_check(gui: 
         assert status == 422, body
         error = body["error"]
         assert error["code"] == "check-failed" and "check-error.yaml" in error["message"]
+        assert "check-error.yaml:11:" in error["message"]
+        assert "step_ms is 20" in error["message"]
         assert error["detail"] == {"result": "failed", "findings": checked["check"]["findings"]}
         assert any(f["severity"] == "error" for f in error["detail"]["findings"])
         status, body = await c.get("api/session")
@@ -216,6 +218,33 @@ def test_a_run_whose_check_fails_is_refused_with_the_findings_of_the_check(gui: 
         got = await run_to_end(c, {"file": "simulation.yaml", "stop_at_ms": 1000})
         assert got[-1]["session"]["result"]["result"] == "passed"
     run_async(main, gui)
+
+
+def test_check_failed_message_summarizes_first_finding_and_fallbacks() -> None:
+    from vehicle_sil_gui.run_manager import RunManager
+
+    msg_multi = RunManager._check_failed_message("sim.yaml", {
+        "result": "failed",
+        "errors": 2,
+        "findings": [
+            {"severity": "warning", "message": "minor warn"},
+            {"severity": "error", "file": "a.yaml", "line": 7, "message": "first\nerror"},
+            {"severity": "error", "file": "b.yaml", "line": 9, "message": "second error"},
+        ],
+    })
+    assert msg_multi == "the check of sim.yaml found 2 error(s), so no run was started: a.yaml:7: first error (+1 more)"
+
+    msg_strict = RunManager._check_failed_message("sim.yaml", {
+        "result": "failed",
+        "errors": 0,
+        "findings": [
+            {"severity": "warning", "file": "", "line": 4, "message": "strict warning"},
+        ],
+    })
+    assert msg_strict == "the check of sim.yaml found the result 'failed', so no run was started: line 4: strict warning"
+
+    msg_empty = RunManager._check_failed_message("sim.yaml", {"result": "failed", "errors": 1, "findings": []})
+    assert "fix what detail.findings lists" in msg_empty
 
 
 def test_a_variant_goes_to_the_check_and_the_run(gui: Gui) -> None:

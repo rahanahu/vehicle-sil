@@ -29,8 +29,8 @@ from .contracts import (CHECK_FIELDS, CheckFileRequest, CheckTextRequest, Connec
 from .descriptions import Descriptions
 from .launcher import (DESCRIPTIONS_NAME, FEATURE_RECORD_AFTER_FAIL, FEATURE_RECORD_SIGNALS, FEATURE_RUN_STOP_AT,
                        FEATURE_SCENARIO_CASES, FEATURE_SCENARIO_HANDOVER, NO_CONNECTION, InvalidRequest, Launcher,
-                       check_command, connections_command, describe_command, hide_request, save_check_command,
-                       text_check_command, with_participant_timeouts, write_request_file)
+                       cached_check_command, check_command, connections_command, describe_command, hide_request,
+                       save_check_command, text_check_command, with_participant_timeouts, write_request_file)
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .refusal import Refused
 from .scenarios import list_scenarios, relative_to_config, resolve_scenario
@@ -74,6 +74,24 @@ def network_names(result: dict) -> list[str]:
     networks = result.get("networks")
     return [n["name"] for n in networks if isinstance(n, dict) and isinstance(n.get("name"), str)] \
         if isinstance(networks, list) else []
+
+
+def _needs_live_describe(result: dict) -> bool:
+    """True when saved --descriptions left any describable participant undescribed or could not be read."""
+    participants = result.get("participants")
+    if isinstance(participants, list) and any(
+        isinstance(p, dict)
+        and p.get("status") == "not_described"
+        and p.get("describe") is not False
+        and p.get("enabled") is not False
+        and not p.get("manual")
+        for p in participants
+    ):
+        return True
+    findings = result.get("findings")
+    return isinstance(findings, list) and any(
+        isinstance(f, dict) and f.get("code") == "descriptions-not-used" for f in findings
+    )
 
 
 def file_sha256(path: Path) -> str | None:
@@ -433,7 +451,9 @@ class ConfigService:
         cached = self.cached_names(relative, variant, self.stamp(relative))
         if cached is not None:
             return cached
-        await self._in_check_queue(lambda: self._check_locked(relative, {"variant": variant} if variant else {}))
+        await self._in_check_queue(
+            lambda: self._check_locked(relative, {"variant": variant} if variant else {}, write_cache=False)
+        )
         return self._names.get((relative, variant), ((), []))[1]
 
     async def build_intent(
@@ -612,10 +632,40 @@ class ConfigService:
         finally:
             self._check_lock.release()
 
-    async def _check_locked(self, relative: str, intent: dict) -> tuple[int, dict]:
+    async def _check_locked(self, relative: str, intent: dict, *, write_cache: bool = True) -> tuple[int, dict]:
         stamp = self.stamp(relative)
+        key = (relative, intent.get("variant"))
+        has_connect = bool(intent.get("connect"))
+        subset_only = bool(intent.get("disable") or intent.get("enable") or intent.get("manual"))
         request = make_request_file(intent)
         try:
+            if not has_connect and self.descriptions.made_from(key) == stamp:
+                desc_path = await asyncio.to_thread(self.descriptions.path_of, key)
+                code, result = await self._run_check(
+                    relative, intent, request, stamp, descriptions=desc_path, write_descriptions=False,
+                )
+                if not _needs_live_describe(result):
+                    return code, result
+            if write_cache and not subset_only and not has_connect:
+                plain_intent = not any(k != "variant" for k in intent)
+                desc_path = await asyncio.to_thread(self.descriptions.path_of, key)
+                try:
+                    code, result = await self._run_check(
+                        relative, intent, request, stamp, descriptions=desc_path, write_descriptions=True,
+                    )
+                except Refused as e:
+                    if e.code != "shutting-down":
+                        if plain_intent:
+                            self.descriptions.made(key, stamp, False)
+                        else:
+                            self.descriptions.forget_key(key)
+                    raise
+                usable = result.get("result") not in ("usage", "unreadable")
+                if usable or plain_intent:
+                    self.descriptions.made(key, stamp, usable)
+                else:
+                    self.descriptions.forget_key(key)
+                return code, result
             return await self._run_check(relative, intent, request, stamp)
         finally:
             control.remove(request)
@@ -627,7 +677,9 @@ class ConfigService:
         intent = {"variant": variant} if variant else {}
         request = make_request_file(intent)
         try:
-            code, result = await self._run_check(relative, intent, request, stamp, descriptions=path)
+            code, result = await self._run_check(
+                relative, intent, request, stamp, descriptions=path, write_descriptions=True,
+            )
         except Refused as e:
             if e.code != "shutting-down":
                 self.descriptions.made(key, stamp, False)
@@ -661,9 +713,15 @@ class ConfigService:
         request: Path,
         stamp: tuple,
         descriptions: Path | None = None,
+        *,
+        write_descriptions: bool = True,
     ) -> tuple[int, dict]:
-        argv = (check_command(self.launcher, relative, request) if descriptions is None else
-                describe_command(self.launcher, relative, request, descriptions))
+        if descriptions is None:
+            argv = check_command(self.launcher, relative, request)
+        elif write_descriptions:
+            argv = describe_command(self.launcher, relative, request, descriptions)
+        else:
+            argv = cached_check_command(self.launcher, relative, request, descriptions)
         code, result = await self._run_launcher_check(argv, request, descriptions)
         names = [p["name"] for p in result["participants"] if isinstance(p, dict) and isinstance(p.get("name"), str)]
         if names or result.get("result") not in ("usage",):

@@ -24,6 +24,8 @@ namespace vehicle_sil::launch::detail {
 /// format_text() without its last line: the tables and the findings. `scenario`: the line of the
 /// scenario of --scenario, its parameters and its lines; null for none.
 [[nodiscard]] std::string check_text_body(const config::CheckReport& report, const scenario::ScenarioCheck* scenario);
+/// Extracts `"called from a:1, b:2"` from `detail` lines starting with `"called from: "`, or "".
+[[nodiscard]] std::string called_from_inline(std::string_view detail);
 /// Each finding as "<severity>: <file>[:<line>]: <message> [<code>]" (the detail indented below;
 /// the code last, as GCC puts its [-W...] option, so that "error:" stays at the start), then an
 /// empty line; "" for none.

@@ -1639,6 +1639,7 @@ def test_cli_json_schema_validates_readiness(tmp_path: Path) -> None:
     with gui_server(tmp_path) as gui:
         assert gui.info is not None
         validator.validate(gui.info)
+        assert gui.info["pid"] == gui.proc.pid and isinstance(gui.info["instance"], str) and gui.info["instance"]
         assert "auth" not in gui.info and "dev_url" not in gui.info
     with gui_server(tmp_path, args=("--no-auth",)) as gui:
         assert gui.info is not None
@@ -1649,10 +1650,12 @@ def test_cli_json_schema_validates_readiness(tmp_path: Path) -> None:
         validator.validate(gui.info)
         assert isinstance(gui.info.get("dev_url"), str) and gui.info["dev_url"].startswith("http://127.0.0.1:4200")
     for bad in (
-        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "auth": True},
-        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "auth": None},
-        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 0},
-        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "extra": 1},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "pid": 1, "instance": "abc", "auth": True},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "pid": 1, "instance": "abc", "auth": None},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 0, "pid": 1, "instance": "abc"},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "pid": 0, "instance": "abc"},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "pid": 1, "instance": ""},
+        {"vehicle_sil_gui": 4, "url": "http://127.0.0.1:8765/", "port": 8765, "pid": 1, "instance": "abc", "extra": 1},
     ):
         with pytest.raises(jsonschema.ValidationError):
             validator.validate(bad)

@@ -44,6 +44,7 @@ GUI サーバー API の全スキーマ（`openapi.yaml` と `schemas/*.schema.j
 | 実行（`run`、`test`、`serve`） | [simulation-run.md](simulation-run.md) |
 | Events v4（`serve [--once]`）、標準入力コマンド、`version --json` | [simulation-events.md](simulation-events.md) |
 | Control API（gRPC）と Python SDK | [control-api.md](control-api.md) |
+| C++ ビルド・FetchContent・公開 CMake ターゲット | [build.md](build.md#外部プロジェクトから使うfetchcontent)、[architecture.md](architecture.md#ターゲット) |
 
 ## 実行できるサンプル
 

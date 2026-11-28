@@ -24,4 +24,8 @@ namespace vehicle_sil::process {
 /// can mix '/' and '\\'): for messages, so that one path reads the same everywhere.
 [[nodiscard]] std::string shown_path(const std::filesystem::path& path);
 
+/// Resolves relative `path` against the current directory and collapses `.` / `..` segments
+/// lexically with native separators (without following symbolic links).
+[[nodiscard]] std::filesystem::path normalize_executable_path(const std::filesystem::path& path);
+
 } // namespace vehicle_sil::process

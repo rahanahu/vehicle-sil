@@ -325,12 +325,20 @@ def test_the_browser_is_not_given_the_token(tmp_path: Path) -> None:
 
 
 def test_no_auth_startup_output_json_and_stderr(tmp_path: Path) -> None:
-    # Default --json: has #token= and no "auth" key.
+    # Default --json: has #token=, pid, instance, and no "auth" key.
     with gui_server(tmp_path) as default_gui:
         assert default_gui.info is not None
         assert "#token=" in default_gui.info["url"]
+        assert default_gui.info["pid"] == default_gui.proc.pid
+        assert isinstance(default_gui.info["instance"], str) and len(default_gui.info["instance"]) > 0
         assert "auth" not in default_gui.info
         assert "WARNING: --no-auth" not in default_gui.stderr_text()
+
+        async def check_instance(c: Client) -> None:
+            status, app = await c.get("api/app")
+            assert status == 200 and app["instance"] == default_gui.info["instance"]
+
+        run_async(check_instance, default_gui)
 
     # --no-auth --json --dev-origin: clean URLs without #token=, explicit "auth": False, stderr warning.
     dev = "http://127.0.0.1:4200"
@@ -339,6 +347,8 @@ def test_no_auth_startup_output_json_and_stderr(tmp_path: Path) -> None:
             "vehicle_sil_gui": 4,
             "url": f"http://127.0.0.1:{gui.port}/",
             "port": gui.port,
+            "pid": gui.proc.pid,
+            "instance": gui.info["instance"],
             "dev_url": f"{dev}/",
             "auth": False,
         }

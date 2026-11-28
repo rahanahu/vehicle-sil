@@ -8,19 +8,19 @@ This is a project template for building ECUs with [vehicle-sil](https://github.c
 
 | Requirement | Linux | Windows |
 |---|---|---|
-| Compiler | GCC 12 or later, or Clang (with C++20 support) | MinGW-w64 GCC of MSYS2 UCRT64 |
-| CMake 3.21 or later, Ninja, Git | Distribution packages | MSYS2 packages |
-| Python 3.9 or later (to run `get_tools.py`) | Distribution package | The Python of MSYS2 |
-| Python 3.11 or later (for the GUI) | If you have [uv](https://docs.astral.sh/uv/), uv installs any missing Python and packages. | uv is required (`mingw-w64-ucrt-x86_64-uv` of MSYS2). |
+| Compiler | GCC 12 or later, or Clang (with C++20 support) | MinGW-w64 GCC (MSYS2 UCRT64, or standalone UCRT64 MinGW-w64 on `PATH`) |
+| CMake 3.21 or later, Ninja, Git | Distribution packages | MSYS2 packages or standalone installers on `PATH` |
+| Python 3.9 or later (to run `get_tools.py`) | Distribution package or `uv` | MSYS2 Python, standalone Python, or `uv run --no-project` |
+| Python 3.11 or later (for the GUI) | If you have [uv](https://docs.astral.sh/uv/), uv installs any missing Python and packages. | uv is required (`mingw-w64-ucrt-x86_64-uv` or Windows `uv`). |
 
-On Windows, work in the MSYS2 "UCRT64" shell. MSVC (Visual Studio) is officially unsupported for building template ECUs. Install the requirements with this command:
+On Windows, the CI-verified environment is the MSYS2 "UCRT64" shell, though standalone MinGW-w64 (UCRT64) GCC with CMake, Ninja, and Git on `PATH` also works without MSYS2 (avoid placing another toolchain's MinGW/GCC DLLs ahead of it on `PATH`). MSVC (Visual Studio) is officially unsupported for building template ECUs. In MSYS2 UCRT64, install the requirements with:
 
 ```sh
 pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
   mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-uv
 ```
 
-On Windows, the GUI runs on a Python that uv downloads (with prebuilt wheels). The GUI packages cannot be installed into the Python of MSYS2. External executables or tools built with other compilers (including MSVC) can still connect across process boundaries via SIL Kit or gRPC.
+Keep the prebuilt tools version (`VERSION` in `get_tools.py`, `0.6.0`) and `GIT_TAG` in `CMakeLists.txt` (`v0.6.0`) on the same release, or `check` will fail with `version-mismatch`. On Windows, the GUI runs on a Python that uv downloads (with prebuilt wheels). The GUI packages cannot be installed into the Python of MSYS2. External executables or tools built with other compilers (including MSVC) can still connect across process boundaries via SIL Kit or gRPC.
 
 On WSL, place the project on the WSL Linux filesystem (such as under `~/`) rather than `/mnt/<drive>` (9p builds are much slower), and do not share one working tree or `node_modules` between Windows and WSL.
 
@@ -45,6 +45,9 @@ The template and the tools exist only for released versions. A copy of `template
 
 ```sh
 python3 get_tools.py     # Windows (UCRT64 shell): python get_tools.py
+# Or with uv without MSYS2 Python: uv run --no-project python get_tools.py
+# Git Bash on Windows (adjust path printed by get_tools.py):
+#   export PATH="$(cygpath -u '...\tools\vehicle-sil-tools-0.6.0-windows-x86_64\bin'):$PATH"
 # then run the PATH line that it prints (from Command Prompt or PowerShell, the line named after your shell)
 ```
 
@@ -79,8 +82,8 @@ To extract the tools by hand instead of with `get_tools.py`, check the archive a
 ## Step 3: Build and run
 
 ```sh
-cmake --preset linux             # Windows: cmake --preset windows
-cmake --build --preset linux     # Windows: cmake --build --preset windows
+cmake --preset linux             # Release: linux-release | Windows: windows / windows-release
+cmake --build --preset linux     # Release: linux-release | Windows: windows / windows-release
 vehicle_sil_launch check simulation.yaml
 vehicle_sil_launch run simulation.yaml --stop-at-ms 1000
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
@@ -152,7 +155,7 @@ Do not edit the files in `schema/` by hand: `get_tools.py` overwrites them with 
 | Add an ECU | Add the 4 lines from `add_executable` to `vehicle_sil_copy_runtime_dlls` to `CMakeLists.txt`, and add the ECU to `participants` in `simulation.yaml`. |
 | Rename the network (`J1939_CAN`) | Use the same name in the ECU code and in `networks` of `simulation.yaml`. |
 
-The Manufacturer Code 0x7F0 is a placeholder.
+The Manufacturer Code 0x7F0 is a placeholder. You can link optional helper targets alongside `vehicle_sil::simulation` in `CMakeLists.txt` (such as `vehicle_sil::j1939_periodic_sender`, `vehicle_sil::j1939_monitor`, or `vehicle_sil::spy`; see [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.6.0/docs/build.md#use-from-another-project-fetchcontent)).
 
 For the complete procedure to add an ECU, see the guide "[Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.6.0/docs/howto/first-ecu.md)".
 

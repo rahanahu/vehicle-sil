@@ -64,6 +64,58 @@ def _noop() -> None:
     return None
 
 
+def _is_failed_run(session: Session) -> bool:
+    if session.scenario_status == "failed":
+        return True
+    res = session.result
+    if not isinstance(res, dict):
+        return False
+    if res.get("result") == "failed":
+        return True
+    scenario = res.get("scenario")
+    return isinstance(scenario, dict) and scenario.get("status") == "failed"
+
+
+def _expected_peers(check: object) -> int:
+    if not isinstance(check, dict):
+        return 0
+    participants = check.get("participants")
+    if not isinstance(participants, list):
+        return 0
+    return sum(
+        1 for p in participants
+        if isinstance(p, dict)
+        and p.get("status") == "described"
+        and not p.get("manual")
+        and isinstance(p.get("variables"), list)
+        and len(p["variables"]) > 0
+    )
+
+
+def _first_finding_summary(findings: object) -> str:
+    if not isinstance(findings, list):
+        return ""
+    valid = [f for f in findings if isinstance(f, dict) and isinstance(f.get("message"), str) and f["message"].strip()]
+    if not valid:
+        return ""
+    errors = [f for f in valid if f.get("severity") == "error"]
+    warnings = [f for f in valid if f.get("severity") == "warning"]
+    group = errors or warnings or valid
+    first = group[0]
+    file = first.get("file")
+    line = first.get("line")
+    loc = ""
+    if isinstance(file, str) and file:
+        loc = f"{file}:{line}: " if isinstance(line, int) and not isinstance(line, bool) and line > 0 else f"{file}: "
+    elif isinstance(line, int) and not isinstance(line, bool) and line > 0:
+        loc = f"line {line}: "
+    msg = " ".join(first["message"].split())
+    if len(msg) > 240:
+        msg = msg[:237].rstrip() + "..."
+    more = f" (+{len(group) - 1} more)" if len(group) > 1 else ""
+    return f"{loc}{msg}{more}"
+
+
 @dataclass(eq=False)
 class Run:
     """One active or completed run and the session it feeds."""
@@ -229,6 +281,7 @@ class RunManager:
         external_registry_uri: str | None = None,
         check_timeout_s: float = CHECK_TIMEOUT_S,
         silent_after_s: float = SILENT_AFTER_S,
+        keep_runs: int = TIMELINES_KEPT,
         limits: Limits | None = None,
         variables: bool = True,
         variable_limits: VariableLimits | None = None,
@@ -253,7 +306,7 @@ class RunManager:
         self._save = save
         self._command_changes_allowed = command_changes_allowed
         self._auth = auth
-        self.timelines = Timelines()
+        self.timelines = Timelines(kept=keep_runs)
         self.current: Run | None = None  # the last run started (the one the screens see)
         self._runs: set[Run] = set()  # every launcher not yet followed to its end
         self._starting = False
@@ -398,8 +451,8 @@ class RunManager:
                           f"run {run_id} has no timeline file on this server: a run with a recorded timeline started "
                           "from this GUI server records one when the launcher has the feature 'timeline' (and "
                           "'manual-timeline' for manual runs with recorded signals), and it can be read once the run "
-                          f"has ended; the server keeps the files of the last {TIMELINES_KEPT} such runs until it stops",
-                          {"run_id": run_id})
+                          f"has ended; the server keeps the files of the last {self.timelines.kept} such runs until "
+                          "it stops", {"run_id": run_id})
         return path
 
     # ------------------------------------------------------------ prepare, start, stop, time, write
@@ -663,6 +716,7 @@ class RunManager:
             await asyncio.shield(self._discard_failed_start(run))
             raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
         if isinstance(st.passed_check, dict):
+            run.variables.set_expected_peers(_expected_peers(st.passed_check))
             names = [p["name"] for p in st.passed_check.get("participants", [])
                      if isinstance(p, dict) and isinstance(p.get("name"), str)]
             if names or st.passed_check.get("result") not in ("usage",):
@@ -852,6 +906,9 @@ class RunManager:
     def _check_failed_message(relative: str, result: dict) -> str:
         errors = result.get("errors")
         what = f"{errors} error(s)" if isinstance(errors, int) and errors else f"the result {result.get('result')!r}"
+        summary = _first_finding_summary(result.get("findings"))
+        if summary:
+            return f"the check of {relative} found {what}, so no run was started: {summary}"
         return (f"the check of {relative} found {what}, so no run was started: fix what detail.findings lists "
                 "(the same findings as POST api/check), then start again")
 
@@ -888,8 +945,9 @@ class RunManager:
         if run.timeline is None:
             return
         whole = written_whole(run.session.result)
+        failed = _is_failed_run(run.session)
         if await asyncio.to_thread(self.timelines.finish, run.session.id, run.timeline, whole,
-                                   run.session.scenario or run.session.file):
+                                   run.session.scenario or run.session.file, failed=failed):
             run.session.timeline_url = api_path(run.session.id)
 
     def _remove_credentials(self, run: Run, last: bool = False) -> None:
@@ -933,12 +991,21 @@ class RunManager:
             ))
 
     def _dispatch_messages(self, session: Session, messages: list[dict], run: Run | None) -> bool:
+        if run is not None and any(
+            m["type"] == "event"
+            and (m["event"].get("event") == "state"
+                 or (m["event"].get("event") == "phase" and m["event"].get("phase") == "running"))
+            for m in messages
+        ):
+            run.variables.on_run_active()
         sent = self._hub.broadcast(messages, session.log_key)
         if run is not None:
             for m in messages:
                 if m["type"] != "event":
                     continue
-                if m["event"]["event"] == control.EVENT:
+                if m["event"]["event"] == "check":
+                    run.variables.set_expected_peers(_expected_peers(m["event"].get("check")))
+                elif m["event"]["event"] == control.EVENT:
                     self._control_started(run, m["event"])
                 elif m["event"]["event"] == "phase" and m["event"].get("phase") == "stopping":
                     run.variables.read_last()  # the simulation is over: its control server closes soon

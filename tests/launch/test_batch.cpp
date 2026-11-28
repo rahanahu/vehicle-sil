@@ -998,4 +998,30 @@ TEST_CASE(batch_template_forwarded_params_and_only_intersection_with_case_filter
         CHECK(rep.runs[1].variant == "medium" && rep.runs[1].case_name == "med_only");
         CHECK(rep.runs[1].run && rep.runs[1].run->check.scenario && !rep.runs[1].run->check.scenario->not_for_variant);
     }
+
+    // 3. Batch failure_reason() surfaces caller location on 1-line output for template-originated check failures.
+    write(dir / "sim_ok_exec.yaml",
+          std::string("vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+                      "  - name: Engine\n    command: [\"") +
+              VEHICLE_SIL_PROCESS_HELPER +
+              "\"]\n    describe: false\n"
+              "variants:\n  small: {}\n  medium: {}\n");
+    write(dir / "templates" / "bad_step.yaml",
+          "vehicle_sil_scenario_template: 1\n"
+          "steps:\n"
+          "  - bogus_key: 1\n");
+    write(dir / "calls_bad_step.yaml",
+          "vehicle_sil_scenario: 1\n"
+          "steps:\n"
+          "  - template: templates/bad_step.yaml\n");
+    {
+        TestOptions opts;
+        opts.variants = {"small"};
+        opts.scenarios = {{"calls_bad_step.yaml"}};
+        const TestReport rep = test_in(dir, "sim_ok_exec.yaml", opts);
+        CHECK_EQ(rep.exit_code(), 1);
+        CHECK_EQ(rep.runs.size(), std::size_t{1});
+        CHECK(rep.runs[0].reason.find("templates/bad_step.yaml:3:") != std::string::npos);
+        CHECK(rep.runs[0].reason.find("(called from calls_bad_step.yaml:3)") != std::string::npos);
+    }
 }

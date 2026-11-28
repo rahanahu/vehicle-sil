@@ -48,9 +48,11 @@ struct StartFlags
     std::vector<std::pair<std::string, std::string>> environment{};
 };
 
-/// Starts the process suspended with the given standard handles, puts it in `job` and resumes
-/// it. Throws StartError (also when there is no job, the process cannot join it or does not
-/// resume: then the process is ended before it runs). Returns the process handle.
+/// Starts the process with the given standard handles and puts it in `job` (atomically via
+/// PROC_THREAD_ATTRIBUTE_JOB_LIST when supported, falling back to CREATE_SUSPENDED +
+/// AssignProcessToJobObject + ResumeThread). Throws StartError (also when there is no job, the
+/// process cannot join it or does not resume: then the process is ended before it runs). Returns
+/// the process handle.
 HANDLE start(const std::filesystem::path& executable, const std::vector<std::string>& arguments, HANDLE in, HANDLE out,
              HANDLE err, HANDLE job, const StartFlags& flags = {});
 

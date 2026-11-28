@@ -884,6 +884,66 @@ void ScenarioEngine::pass(std::size_t index, SimTime at, SimTime end)
 void ScenarioEngine::fail(std::size_t index, SimTime at, std::string code, std::string message, TimelineFailure failure,
                           bool allow_tail)
 {
+    const auto has_distinct_lines = [](const auto& items) {
+        if (items.size() < 2)
+        {
+            return false;
+        }
+        std::size_t first = 0;
+        for (const auto& item : items)
+        {
+            if (item.line == 0)
+            {
+                continue;
+            }
+            if (first == 0)
+            {
+                first = item.line;
+            }
+            else if (item.line != first)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::size_t failedLine = 0;
+    const ScenarioStep& def = scenario_.steps[index];
+    if (!failure.conditions.empty() && has_distinct_lines(def.conditions))
+    {
+        const std::size_t condIdx = failure.conditions.front().condition;
+        if (condIdx < def.conditions.size() && def.conditions[condIdx].line > 0 &&
+            def.conditions[condIdx].line != def.line)
+        {
+            failedLine = def.conditions[condIdx].line;
+        }
+    }
+    else if (failure.write && *failure.write < failure.writes.size())
+    {
+        const std::size_t var = failure.writes[*failure.write].variable;
+        if (has_distinct_lines(def.writes))
+        {
+            for (const ScenarioWrite& w : def.writes)
+            {
+                if (w.variable == var && w.line > 0 && w.line != def.line)
+                {
+                    failedLine = w.line;
+                    break;
+                }
+            }
+        }
+        else if (has_distinct_lines(def.motions))
+        {
+            for (const ScenarioMotion& m : def.motions)
+            {
+                if (m.variable == var && m.line > 0 && m.line != def.line)
+                {
+                    failedLine = m.line;
+                    break;
+                }
+            }
+        }
+    }
     if (record_ != nullptr)
     {
         record_->failed(index, std::move(failure));
@@ -892,6 +952,7 @@ void ScenarioEngine::fail(std::size_t index, SimTime at, std::string code, std::
     ScenarioStepRun& step = run_.steps[index];
     step.status = StepStatus::Failed;
     step.at = at;
+    step.failed_line = failedLine;
     if (step.kind == StepKind::WaitUntil || scenario_.steps[index].within_ms)
     {
         step.end.reset();

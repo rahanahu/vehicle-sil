@@ -122,7 +122,9 @@ std::string failure_reason(const RunReport& report)
     {
         loc = "line " + std::to_string(first->line) + ": ";
     }
+    const std::string caller = detail::called_from_inline(first->detail);
     return loc + first->message +
+           (caller.empty() ? std::string{} : " (" + caller + ")") +
            (severity == config::Severity::Warning ? " (a warning, and --strict fails on it)" : "") +
            (count > 1 ? " (and " + std::to_string(count - 1) + " more " + kind + (count == 2 ? "" : "s") + ")" : std::string{});
 }

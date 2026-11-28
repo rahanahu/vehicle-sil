@@ -63,6 +63,10 @@ class Descriptions:
         for key in [k for k in self._stamps if k[0] == file]:
             del self._stamps[key]
 
+    def forget_key(self, key: Key) -> None:
+        """Clear any cached stamp for a single (file, variant) key without poisoning future text checks."""
+        self._stamps.pop(key, None)
+
     def _new_path(self) -> Path:
         assert self.directory is not None
         return self.directory / f"{secrets.token_hex(8)}.json"

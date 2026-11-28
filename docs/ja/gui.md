@@ -253,7 +253,8 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--external-registry <uri>` | 各実行を起動済みのループバック SIL Kit registry（`silkit://<loopback-host>:<port>`。ポートは 1 から 65535、パスなし。`--dashboard-uri` を付けた公式 `sil-kit-registry` など）へ接続する（「[Vector SIL Kit Dashboard で GUI の実行を観測する](#vector-sil-kit-dashboard-で-gui-の実行を観測する)」） |
 | `--web <dir>` | 自分の画面を配信する: そのビルドの出力のディレクトリ（`index.html` があること）。既定はサンプルの画面（「[`--web` で配信するファイル](#--web-で配信するファイル)」） |
 | `--dev-origin <origin>` | 画面の開発サーバー（`ng serve`、Vite など。`http://127.0.0.1:<port>` の形だけ）からのリクエストも受け付ける（「[開発サーバーを使う](#開発サーバーを使う)」） |
-| `--json` | URL の代わりに `{"vehicle_sil_gui": 4, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき。`--no-auth` のときは `"auth": false` も入り、`url`/`dev_url` に `#token=...` は付かない） |
+| `--json` | URL の代わりに `{"vehicle_sil_gui": 4, "url": ..., "port": ..., "pid": ..., "instance": ...}` を 1 行で表示する（ツールから起動するとき。`--no-auth` のときは `"auth": false` も入り、`url`/`dev_url` に `#token=...` は付かない） |
+| `--keep-runs <n>` | サーバーが保持する完了済みシナリオのタイムラインファイル数（既定 4、最小 1）。上限超過時は過去の成功 run より失敗 run を優先して残す |
 | `--stop-timeout <seconds>` | 終了するとき、実行中のシミュレーションが止まるのを待ち、ランチャーにシグナルを送るまでの時間。既定ではランチャーの終了を待つ |
 | `--participant-start-timeout-ms <ms>` | 起動時に必須 participant を待つ実時間（既定 30000 ms） |
 | `--participant-stop-timeout-ms <ms>` | ランチャーが participant の停止を段階ごとに待つ実時間（既定 10000 ms） |
@@ -313,6 +314,7 @@ GUI サーバーは、対応する構成では `POST api/prepare` で常駐の `
 
 - パッケージをソースからビルドはしません。
 - uv がないときは、Python 3.11 以上の仮想環境に `python -m pip install --require-hashes -r <tools>/python/requirements.txt` でインストールし、その Python を環境変数 `VEHICLE_SIL_PYTHON` で指定します。足りなければ、そのことを表示して終了コード 2 で終わります。
+- `bin/vehicle-sil-gui` は `uv run` を介してサーバーを起動するため、自動化スクリプトから停止するときは `uv` の PID だけへ `SIGKILL` を送らず、プロセスグループへの終了シグナル（POSIX は `killpg`、Windows は `taskkill /T`）を使ってください。また `--json` を標準出力パイプで受けるラッパーからは、無関係な孫プロセスへパイプの書込み側ハンドルを引き継いだまま EOF を待ち続けないよう、最初の 1 行を読んだ時点で扱うようにしてください（`--port` 競合時は即座に終了コード `2` で終了します）。
 - GUI サーバーの Python は、カレントディレクトリのモジュールを読み込みません（`python -P`）。
 - `bin/vehicle-sil-gui` は `uv run` 経由でサーバーを起動するため、自動化から停止するときは `uv` の PID だけに `SIGKILL` を送る（子プロセスの Python が残ります）のではなく、`SIGTERM` を送るかプロセスグループにシグナルを送ってください（POSIX は `killpg`、Windows は `taskkill /T`）。
 
@@ -557,11 +559,12 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | 項目 | 内容 |
 |---|---|
 | ページ | GUI サーバーの `timeline/`（`gui/timeline` の `timeline.html`、`page.js`、`vehicle-sil-timeline.js`。ビルド済みの道具の圧縮ファイルでは GUI の中にあります）。リンクは `timeline/?src=/api/timeline/<run_id>&lang=<ja か en>` です。ページは要素 `<vehicle-sil-timeline>` 1 つで、この要素は自分の画面にも置けます（「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）。 |
-| ファイル | `GET api/timeline/<run_id>`（ほかの API と同じく、トークンが要ります）。サーバーは、ファイルを書いた最後の 4 つのシナリオの実行のファイルを、自分の一時ディレクトリ（`vehicle-sil-gui-timelines-*`）に置き、止まるときに消します。ファイルがなくなった実行は、ページが 404 `no-timeline` と言います。 |
+| ファイル | `GET api/timeline/<run_id>`（ほかの API と同じく、トークンが要ります）。既定では最後の 4 つ（`--keep-runs N` で変更可、過去の成功 run より失敗 run を優先保持）のシナリオ実行のファイルを自分の一時ディレクトリ（`vehicle-sil-gui-timelines-*`）に置き、止まるときに消します。ファイルがなくなった実行は、ページが 404 `no-timeline` と言います。 |
 | `timeline` のないランチャー | サーバーは `--timeline` を渡さず、カードにリンクは出ません。 |
 | トークン | リンクにトークンは入れません。新しいタブは、GUI のタブの `sessionStorage`（GUI がトークンを持つ所）の写しを持って始まり、ページはそこからトークンを読んで `Authorization: Bearer` で送ります。ほかの開き方（アドレスのコピー、ブックマーク、ブラウザによっては中ボタンなど、開いたタブとのつながりのない開き方）ではトークンがなく、ページがそう言います（HTTP 401）。リンクを左クリックで開くか、サーバーが表示したアドレスの `#token=<トークン>` を、ページのアドレスの末尾に付けてください。ページはそれを読んでアドレスから消し、ファイルを読み込みます。 |
 
-- ファイルは、最後の 4 つの実行より前のものと、サーバーが止まった後には残りません。残したいときは、それまでにトークンを付けて `api/timeline/<run_id>` を取るか、自分で `vehicle_sil_launch run --scenario <シナリオ> --timeline <ファイル>` で実行します。
+- **完了済み・`--speed max` 実行の詳細調査**: ライブポーリング（`variables` / `watch`）は実時間間隔でサンプリングするため、完了後の実行や `--speed max` での実行は `timeline_url` / `scenario.timeline_url` / `GET api/timeline/<run_id>`（全ステップのサンプルを保持）で調査してください。
+- ファイルは `--keep-runs`（既定 4、失敗 run を優先保持）の件数まで保持され、サーバー停止時に削除されます。残したいときは、押し出される前にトークンを付けて `api/timeline/<run_id>` を取得するか、`vehicle_sil_launch run --scenario <シナリオ> --timeline <ファイル>` で直接実行してください。
 - サーバーの API は、要約のトップレベル `timeline_url`（シナリオ実行では `scenario.timeline_url` も）と `GET api/timeline/<run_id>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオの実行の時間の軸apitimeline) の「シナリオの実行の時間の軸（`api/timeline`）」）、ライブラリでは、セッションのコピーの `timelineUrl`（旧サーバーでは `scenario.timelineUrl` へフォールバック）です。
 - 「シナリオ」のカードには「時間の軸をここに表示」もあり、時間の軸が利用可能になるとコンテンツ全幅で展開し、`<vehicle-sil-timeline>` 要素（`hide="header summary help tables toolbar"`。「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）を表示します。シナリオが失敗終了したときは自動で展開し、単一のコンパクトな操作バー、波形上の失敗要約ストリップ、ズーム維持の「失敗時刻へ移動」ボタン、明示的な失敗前プリセット（`-150 ms`、`-300 ms`、失敗後の追加記録があるときは「失敗前後」、「全体」）、および信号フィルタバー（検索、「すべて」・「失敗に関係」・「失敗直前に変化」・「入力」・「出力」プリセット、participant チップ、レーンの `×` 非表示とインライン復元チップ）を備えます。信号の検索・非表示・復元は表示のみを変え、ズーム・カーソル・選択イベントを維持します。別の実行へ切り替えると、選択・カーソル・表示範囲・フィルタ状態はすべて初期化されます。各手順行の「タイムラインで表示」を押すと展開して該当手順へジャンプします（拡大中はズーム幅を維持）。
 

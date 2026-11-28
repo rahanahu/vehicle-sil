@@ -29,6 +29,7 @@ from .run_manager import END_BUDGET_S, RUNNER_SHUTDOWN_S
 from .server import CHECK_TIMEOUT_S, GuiServer, Options
 from .session import SILENT_AFTER_S
 from .static import check_web_dir, find_web_dir
+from .timelines import KEPT as TIMELINES_KEPT
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
 WSAEACCES, WSAEADDRINUSE, WSAEADDRNOTAVAIL = 10013, 10048, 10049
@@ -85,7 +86,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--dev-origin", help="also accept requests from this development server, "
                                         "http://127.0.0.1:<port> (the proxy of ng serve, Vite and the like)")
     p.add_argument("--json", action="store_true",
-                   help=f'print {{"vehicle_sil_gui": {PROTOCOL}, "url": ..., "port": ...}} on one line instead of the URL')
+                   help=f'print {{"vehicle_sil_gui": {PROTOCOL}, "url": ..., "port": ..., "pid": ..., "instance": ...}} '
+                        "on one line instead of the URL")
     p.add_argument("--stop-timeout", type=float, metavar="SECONDS",
                    help="on exit, wait this many seconds before signaling the launcher (default: wait for it)")
     p.add_argument("--participant-start-timeout-ms", type=int, default=30000,
@@ -98,6 +100,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--silent-after", type=float, default=SILENT_AFTER_S, metavar="SECONDS",
                    help="tell the screen when a running launcher has written nothing for this long (it writes a "
                         f"heartbeat every second; default {SILENT_AFTER_S:g})")
+    p.add_argument("--keep-runs", type=int, default=TIMELINES_KEPT, metavar="N",
+                   help="how many scenario timeline files to keep on the server (default "
+                        f"{TIMELINES_KEPT}; failed runs are kept before passing ones)")
     p.add_argument("--no-variables", action="store_true",
                    help="do not start the launcher's control server (run --control): the screen then shows no "
                         "variables of the ECUs, and --start-paused stands still after the first step, not before it")
@@ -177,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
         return usage_error("--check-timeout must be more than 0 seconds")
     if not args.silent_after >= 1:
         return usage_error("--silent-after must be 1 second or more (the launcher writes a heartbeat every second)")
+    if args.keep_runs < 1:
+        return usage_error("--keep-runs must be 1 or more")
     if args.no_save and args.allow_command_changes:
         return usage_error("--no-save and --allow-command-changes cannot be used together: --no-save saves nothing; "
                            "leave out one of them")
@@ -231,11 +238,12 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
                                participant_stop_timeout_ms=args.participant_stop_timeout_ms,
                                external_registry_uri=args.external_registry,
                                check_timeout_s=args.check_timeout, silent_after_s=args.silent_after,
-                               variables=not args.no_variables, save=not args.no_save,
+                               keep_runs=args.keep_runs, variables=not args.no_variables, save=not args.no_save,
                                command_changes_allowed=args.allow_command_changes, auth=not args.no_auth))
     runner = web.AppRunner(server.app(), access_log=None, handle_signals=False, shutdown_timeout=RUNNER_SHUTDOWN_S)
     await runner.setup()
     stop = asyncio.Event()
+    restore_exc = install_exception_handler(asyncio.get_running_loop())
     signals = install_signal_handlers(stop, server)
     page: Path | None = None
     try:
@@ -265,7 +273,13 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
         if args.json:
             # Flush startup warnings to stderr before the stdout JSON readiness line unblocks callers.
             emit_warnings()
-            line = {"vehicle_sil_gui": PROTOCOL, "url": url, "port": port}
+            line = {
+                "vehicle_sil_gui": PROTOCOL,
+                "url": url,
+                "port": port,
+                "pid": os.getpid(),
+                "instance": server.instance,
+            }
             if dev_url:
                 line["dev_url"] = dev_url
             if args.no_auth:
@@ -297,6 +311,7 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
             server.kill_all()
         await runner.cleanup()
         signals()
+        restore_exc()
         if page is not None:
             remove(page)
 
@@ -325,6 +340,44 @@ def remove(page: Path) -> None:
         page.unlink()
     except OSError:
         pass
+
+
+_DISCONNECT_WINERRORS = frozenset({64, 995, 10053, 10054})
+_DISCONNECT_TYPES = (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)
+
+
+def _is_client_disconnect(context: dict[str, object]) -> bool:
+    if "future" in context:
+        return False
+    exc = context.get("exception")
+    if isinstance(exc, _DISCONNECT_TYPES):
+        return True
+    return isinstance(exc, OSError) and getattr(exc, "winerror", None) in _DISCONNECT_WINERRORS
+
+
+def install_exception_handler(loop: asyncio.AbstractEventLoop):
+    """Logs abrupt client socket disconnects (common on Windows ProactorEventLoop) at debug level instead
+    of printing a traceback to stderr."""
+    previous = loop.get_exception_handler()
+    gui_log = logging.getLogger("vehicle_sil_gui")
+
+    def handler(current_loop: asyncio.AbstractEventLoop, context: dict[str, object]) -> None:
+        if _is_client_disconnect(context):
+            exc = context.get("exception")
+            gui_log.debug("client connection closed (%s): %s", context.get("message", "transport"), exc)
+            return
+        if previous is not None:
+            previous(current_loop, context)
+        else:
+            current_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
+
+    def restore() -> None:
+        if loop.get_exception_handler() is handler:
+            loop.set_exception_handler(previous)
+
+    return restore
 
 
 def install_signal_handlers(stop: asyncio.Event, server: GuiServer):

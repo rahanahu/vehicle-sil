@@ -978,3 +978,30 @@ def test_real_scenario_negative_cases_never_hand_over(tmp_path: Path) -> None:
             assert end_inc["session"]["scenario"]["handed_over"] is False
             await ws.close()
         run_async(talk, gui)
+
+
+def test_running_never_exposes_ready_with_empty_peers(tmp_path: Path, control_env: dict) -> None:
+    with gui_server(tmp_path, env=control_env) as gui:
+        async def talk(c: Client) -> None:
+            _, app = await c.get("api/app")
+            if not app["variables"]["available"]:
+                pytest.skip(app["variables"]["reason"])
+            ws = await c.ws()
+            await ws.until(is_synced)
+            status, started = await c.post("api/run", {"file": "forever.yaml", "speed": 1})
+            assert status == 200, started
+            await ws.until(lambda m: m["type"] == "event" and m["event"].get("event") == "phase"
+                           and m["event"].get("phase") == "running")
+            for m in ws.received:
+                if m.get("type") == "variables" and m.get("run_id") == started["run_id"]:
+                    v = m["variables"]
+                    if v["state"] == "ready":
+                        assert len(v["peers"]) > 0, v
+            await ws.until(is_variables("ready"))
+            ready_msgs = [m for m in ws.received if m.get("type") == "variables"
+                          and m.get("run_id") == started["run_id"] and m["variables"]["state"] == "ready"]
+            assert ready_msgs and len(ready_msgs[0]["variables"]["peers"]) == 2
+            await c.post("api/stop-session", {"run_id": started["run_id"], "instance": started["instance"], "force": False})
+            await ws.until(is_ended)
+            await ws.close()
+        run_async(talk, gui)
