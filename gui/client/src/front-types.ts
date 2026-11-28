@@ -178,6 +178,8 @@ export interface Intent {
   record_after_fail_ms?: number;
   /** true: record virtual-timestamped structured ECU events (`Ecu::log` / `Agent::log`) on the timeline. */
   record_events?: boolean;
+  /** true: record virtual-timestamped CAN frames passively observed on configured CAN networks on the timeline. */
+  record_can?: boolean;
   variant?: string;
   params?: Record<string, string | number | boolean>;
   speed?: number | 'max';

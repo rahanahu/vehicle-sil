@@ -79,6 +79,7 @@
 :host([hide~='tables']) #tables,
 :host([hide~='steps']) :is(.lane.steps, #step-details),
 :host([hide~='events']) :is(.lane.ecu-events, #ecu-events),
+:host([hide~='can']) #can-frames,
 :host([hide~='readout']) :is(.readout, .hover-readout),
 :host([hide~='legend']) .legend .key {
   display: none !important;
@@ -1138,6 +1139,104 @@ tr.ecu-event-row:focus-visible {
   color: var(--_bad);
 }
 .ecu-events-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* virtual-time CAN frames synchronized correlation drawer */
+#can-frames {
+  margin-top: 10px;
+}
+.can-frames-panel {
+  margin: 0;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--_panel);
+  padding: 6px 10px;
+}
+.can-frames-panel > summary {
+  padding: 2px 0;
+}
+.can-frames-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 8px 0 6px;
+}
+.can-frames-controls select,
+.can-frames-controls input[type='search'] {
+  font: inherit;
+  color: var(--_fg);
+  background: var(--_bg);
+  border: 1px solid var(--_border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.can-frames-controls input[type='search'] {
+  min-width: 160px;
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+.can-frames-visible-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.can-frames-wrap {
+  max-height: 280px;
+  overflow: auto;
+  border-top: 1px solid var(--_grid);
+}
+.can-frames-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--_panel);
+  z-index: 1;
+}
+tr.can-frame-row {
+  cursor: pointer;
+}
+tr.can-frame-row:hover td {
+  background: var(--_bg);
+}
+tr.can-frame-row.nearest-to-cursor td {
+  background: color-mix(in srgb, var(--_selection) 55%, transparent);
+}
+tr.can-frame-row.selected td,
+tr.can-frame-row.active-at-cursor td {
+  background: var(--_selection);
+}
+tr.can-frame-row:focus-visible {
+  outline: 2px solid var(--_sent);
+  outline-offset: -2px;
+}
+.can-id-cell {
+  white-space: nowrap;
+}
+.can-flag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid var(--_border);
+  color: var(--_muted);
+}
+.can-j1939 {
+  margin-left: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.can-data-cell code {
+  white-space: pre;
+}
+.can-frames-more {
   display: flex;
   align-items: center;
   gap: 8px;

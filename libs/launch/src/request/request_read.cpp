@@ -20,7 +20,7 @@ const std::vector<std::string> kKeys{"vehicle_sil_run_request", "variant",      
                                      "case",                    "disable",      "enable",      "manual",
                                      "connect",                 "time_policy",  "speed",       "start_paused",
                                      "strict",                  "stop_at_ms",   "late_tolerance_ms", "after_scenario",
-                                     "record",                  "record_after_fail_ms", "record_events"};
+                                     "record",                  "record_after_fail_ms", "record_events", "record_can"};
 
 class Reader : private config::detail::YamlReader
 {
@@ -208,6 +208,10 @@ public:
             else if (key == "record_events")
             {
                 intent.record_events = flag(child, key);
+            }
+            else if (key == "record_can")
+            {
+                intent.record_can = flag(child, key);
             }
             if (findings_.size() == before)
             {

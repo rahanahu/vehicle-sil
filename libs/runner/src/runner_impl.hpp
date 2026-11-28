@@ -7,6 +7,7 @@
 // Internal.
 #pragma once
 
+#include "run_can_recorder.hpp"
 #include "run_connection.hpp"
 #include "run_context.hpp"
 #include "run_control.hpp"
@@ -88,6 +89,7 @@ private:
     /// hub until they are destroyed (the tap, the scenario's engine and port).
     RunControl control_;
     RunSamples samples_; ///< after control_ (its tap is on the hub), before scenario_ (which takes from it)
+    RunCanRecorder can_recorder_; ///< passive SIL Kit CAN observer; before scenario_ and recorder_
     RunNotes notes_;
     RunScenario scenario_;
     RunRecorder recorder_;

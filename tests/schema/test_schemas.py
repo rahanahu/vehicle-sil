@@ -1422,6 +1422,11 @@ REQUEST_SAMPLES = [
     ("record_events int", "{" + R + ', "record_events": 1}', "invalid"),
     ("record_events string", "{" + R + ', "record_events": "true"}', "invalid"),
     ("record_events null", "{" + R + ', "record_events": null}', "invalid"),
+    ("record_can true", "{" + R + ', "record_can": true}', "valid"),
+    ("record_can false", "{" + R + ', "record_can": false}', "valid"),
+    ("record_can int", "{" + R + ', "record_can": 1}', "invalid"),
+    ("record_can string", "{" + R + ', "record_can": "true"}', "invalid"),
+    ("record_can null", "{" + R + ', "record_can": null}', "invalid"),
 ]
 
 
@@ -1600,6 +1605,7 @@ class TimelineSchema(unittest.TestCase):
         may_be_left_out = {
             ("", "recorded_to_ms"),
             ("", "events"),
+            ("", "can_frames"),
             ("scenario.", "case"),
             ("variables.", "recorded"),
             ("steps.", "file"),
@@ -1609,9 +1615,14 @@ class TimelineSchema(unittest.TestCase):
             ("steps.watch.conditions.compare.", "variable"),
             ("steps.failed.conditions.", "compared"),
             ("lines.", "file"),
+            ("can_frames.", "rtr"),
+            ("can_frames.", "fd"),
             ("limits.", "events_per_participant"),
             ("limits.", "events_total"),
             ("limits.", "events_dropped"),
+            ("limits.", "can_frames_per_network"),
+            ("limits.", "can_frames_total"),
+            ("limits.", "can_dropped"),
         }
 
         def walk(node, where):
@@ -2029,6 +2040,84 @@ class TimelineOfARun(unittest.TestCase):
         bad_event = copy.deepcopy(man_data)
         bad_event["events"] = [{"at_ms": "not-a-number", "participant": "Engine", "level": "info", "text": "x"}]
         self.assertTrue(problems(TIMELINE, bad_event))
+
+    def test_the_timeline_with_record_can_is_valid(self):
+        example = Path(EXAMPLE_DIR)
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-timeline-can-") as directory:
+            scen_out = Path(directory) / "disconnect_can.timeline.json"
+            proc = subprocess.run(
+                [LAUNCH, "run", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml",
+                 "--record-can", "--timeline", str(scen_out)],
+                cwd=example, capture_output=True, text=True, encoding="utf-8",
+                stdin=subprocess.DEVNULL, timeout=120,
+            )
+            self.assertEqual(proc.returncode, 0, f"engine_disconnect --record-can failed:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
+            scen_data = json.loads(scen_out.read_text(encoding="utf-8"))
+
+            man_out = Path(directory) / "manual_can.timeline.json"
+            proc2 = subprocess.run(
+                [LAUNCH, "run", "simulation.yaml", "--stop-at-ms", "350",
+                 "--record-can", "--timeline", str(man_out)],
+                cwd=example, capture_output=True, text=True, encoding="utf-8",
+                stdin=subprocess.DEVNULL, timeout=120,
+            )
+            self.assertEqual(proc2.returncode, 0, f"manual --record-can failed:\n{proc2.stdout[-2000:]}\n{proc2.stderr[-2000:]}")
+            man_data = json.loads(man_out.read_text(encoding="utf-8"))
+
+        self.assertEqual(problems(TIMELINE, scen_data), [],
+                         "scenario --record-can timeline is not valid for schema/timeline.schema.json")
+        self.assertIsInstance(scen_data.get("can_frames"), list)
+        self.assertGreater(len(scen_data["can_frames"]), 0)
+        self.assertEqual(scen_data["limits"]["can_frames_per_network"], 10000)
+        self.assertEqual(scen_data["limits"]["can_frames_total"], 20000)
+        self.assertEqual(scen_data["limits"]["can_dropped"], [])
+
+        self.assertEqual(problems(TIMELINE, man_data), [],
+                         "manual --record-can timeline is not valid for schema/timeline.schema.json")
+        self.assertIsNone(man_data["scenario"])
+        self.assertEqual(man_data["recorded_to_ms"], 350)
+        self.assertEqual(man_data["variables"], [])
+        self.assertEqual(man_data["series"], [])
+        self.assertGreater(len(man_data["can_frames"]), 0)
+
+        # Synthetic can_dropped + optional rtr/fd flags pass schema; malformed can_frames fail schema.
+        with_drop = copy.deepcopy(man_data)
+        with_drop["can_frames"].append({
+            "at_ms": 100,
+            "network": "J1939_CAN",
+            "id": 0x123,
+            "extended": False,
+            "dlc": 4,
+            "data": "",
+            "rtr": True,
+        })
+        with_drop["can_frames"].append({
+            "at_ms": 101,
+            "network": "J1939_CAN",
+            "id": 0x124,
+            "extended": False,
+            "dlc": 12,
+            "data": "0102030405060708090A0B0C",
+            "fd": True,
+        })
+        with_drop["limits"]["can_dropped"] = [{
+            "network": "J1939_CAN",
+            "dropped": 5,
+            "dropped_from_ms": 0,
+            "dropped_before_ms": 250,
+            "untimed_dropped": 2,
+        }]
+        self.assertEqual(problems(TIMELINE, with_drop), [])
+        bad_can = copy.deepcopy(man_data)
+        bad_can["can_frames"] = [{
+            "at_ms": 0,
+            "network": "J1939_CAN",
+            "id": 0x123,
+            "extended": False,
+            "dlc": 2,
+            "data": "abcd",  # lowercase hex rejected by schema pattern
+        }]
+        self.assertTrue(problems(TIMELINE, bad_can))
 
 
 class ControlMetricsSchema(unittest.TestCase):

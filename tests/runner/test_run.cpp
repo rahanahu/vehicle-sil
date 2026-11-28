@@ -12,6 +12,7 @@
 #include "vehicle_sil/config/detail/check_words.hpp"
 #include "vehicle_sil/runner/detail/run_close.hpp"
 #include "vehicle_sil/runner/detail/run_words.hpp"
+#include "run_can_recorder.hpp"
 #include "run_connection.hpp"
 #include "run_control.hpp"
 #include "run_notes.hpp"
@@ -29,6 +30,8 @@
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
+
+#include <silkit/services/can/ICanController.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -129,10 +132,11 @@ void check_start_boundary(bool deadline)
     RunOutput output(ctx);
     RunControl control(ctx, output);
     RunSamples samples({}, {});
+    RunCanRecorder can_recorder;
     RunParticipants participants(ctx, output, outcome, plan.base);
     RunNotes notes(ctx, participants);
-    RunScenario scenario(ctx, output, control, samples);
-    RunRecorder recorder(ctx, control, samples);
+    RunScenario scenario(ctx, output, control, samples, can_recorder);
+    RunRecorder recorder(ctx, control, samples, can_recorder);
     RunStart start(ctx, output, control, notes, scenario, recorder, participants, outcome);
     vehicle_sil::unit::InProcessRegistry registry;
     SimulationControllerOptions options;
@@ -294,7 +298,8 @@ TEST_CASE(scenario_completion_notification_survives_both_wait_orders)
     RunOutput output(ctx);
     RunControl control(ctx, output);
     RunSamples samples({}, {});
-    RunScenario scenario(ctx, output, control, samples);
+    RunCanRecorder can_recorder;
+    RunScenario scenario(ctx, output, control, samples, can_recorder);
     vehicle_sil::unit::InProcessRegistry registry;
     SimulationControllerOptions options;
     options.registry_uri = registry.uri;
@@ -437,6 +442,365 @@ TEST_CASE(a_timeline_that_dropped_ecu_events_emits_timeline_limit_note)
         CHECK(out.find("N 0 timeline-limit:") != std::string::npos);
         CHECK(out.find("2 older points and 3 ECU events were dropped") != std::string::npos);
         CHECK(out.find("limits.dropped and limits.events_dropped") != std::string::npos);
+    }
+}
+
+TEST_CASE(a_timeline_that_dropped_can_frames_or_untimed_can_emits_timeline_limit_note)
+{
+    Scenario scenario;
+    scenario.variables.resize(1);
+    scenario.steps.resize(1);
+    scenario.steps[0].conditions.resize(1);
+
+    // 1. CAN frames evicted at timeline limits -> timeline-limit note naming limits.can_dropped.
+    {
+        TimelineLimits lim;
+        lim.can_frames_per_network = 2;
+        lim.can_frames_total = 10;
+        auto rec = std::make_shared<TimelineRecord>(scenario, lim);
+        rec->enable_can();
+        const std::array<std::uint8_t, 2> payload{0x12, 0x34};
+        for (int i = 0; i < 5; ++i)
+        {
+            rec->can_frame("CAN1", SimTime{std::chrono::milliseconds(10 * i)}, 0x100u + static_cast<std::uint32_t>(i),
+                           false, false, false, 2, payload);
+        }
+        rec->close(SimTime{std::chrono::milliseconds(100)});
+        CHECK_EQ(rec->dropped_can(), std::uint64_t{3});
+        CHECK_EQ(rec->untimed_can_dropped(), std::uint64_t{0});
+        CHECK(rec->dropped_any());
+
+        RunOutcome o = passed_run();
+        o.scenario.timeline = "out/can.json";
+        o.scenario.timeline_record = rec;
+        const std::string out = lines(assess_run(o));
+        CHECK(out.find("N 0 timeline-limit:") != std::string::npos);
+        CHECK(out.find("3 older CAN frames were dropped") != std::string::npos);
+        CHECK(out.find("limits.can_dropped in the file says where and why") != std::string::npos);
+    }
+
+    // 2. Untimed CAN frames (timestamp < 0) alone trigger timeline-limit note.
+    {
+        auto rec = std::make_shared<TimelineRecord>(scenario);
+        rec->enable_can();
+        rec->note_untimed_can_dropped("CAN1", 2);
+        rec->close(SimTime{std::chrono::milliseconds(100)});
+        CHECK_EQ(rec->dropped_can(), std::uint64_t{0});
+        CHECK_EQ(rec->untimed_can_dropped(), std::uint64_t{2});
+        CHECK(rec->dropped_any());
+
+        RunOutcome o = passed_run();
+        o.scenario.timeline = "out/can_untimed.json";
+        o.scenario.timeline_record = rec;
+        const std::string out = lines(assess_run(o));
+        CHECK(out.find("N 0 timeline-limit:") != std::string::npos);
+        CHECK(out.find("2 untimed CAN frames (timestamp < 0) were dropped") != std::string::npos);
+        CHECK(out.find("limits.can_dropped in the file says where and why") != std::string::npos);
+    }
+
+    // 3. Points + CAN frames dropped together -> plural verb "say where and why".
+    {
+        TimelineLimits lim;
+        lim.points_per_series = 2;
+        lim.points_total = 100;
+        lim.can_frames_per_network = 1;
+        lim.can_frames_total = 10;
+        auto rec = std::make_shared<TimelineRecord>(scenario, lim);
+        rec->enable_can();
+        const std::array<std::uint8_t, 2> payload{0xAB, 0xCD};
+        for (int i = 0; i < 4; ++i)
+        {
+            rec->sampled(0, SimTime{std::chrono::milliseconds(10 * i)}, control::Value{std::int64_t{i}});
+            rec->can_frame("CAN1", SimTime{std::chrono::milliseconds(10 * i)}, 0x200u + static_cast<std::uint32_t>(i),
+                           false, false, false, 2, payload);
+        }
+        rec->close(SimTime{std::chrono::milliseconds(100)});
+
+        RunOutcome o = passed_run();
+        o.scenario.timeline = "out/points_and_can.json";
+        o.scenario.timeline_record = rec;
+        const std::string out = lines(assess_run(o));
+        CHECK(out.find("N 0 timeline-limit:") != std::string::npos);
+        CHECK(out.find("limits.dropped and limits.can_dropped in the file say where and why") != std::string::npos);
+    }
+}
+
+TEST_CASE(run_can_recorder_rejects_untimed_frames_and_captures_virtual_time_frames)
+{
+    using namespace vehicle_sil::runner::detail;
+    namespace sk = SilKit::Services::Can;
+
+    // 1. Unit check: feed_for_test rejects negative timestamps without fabricating virtual time,
+    //    captures timed frames with flags/payload, and ignores frames before recording_begins() or after untap().
+    {
+        RunCanRecorder rec;
+        rec.initialize_for_test({"CAN1", "CAN2"});
+        CHECK(!rec.recording());
+
+        sk::CanFrameEvent ev{};
+        ev.timestamp = 10ms;
+        ev.frame.canId = 0x18F00400u;
+        ev.frame.flags = static_cast<sk::CanFrameFlagMask>(sk::CanFrameFlag::Ide);
+        ev.frame.dlc = 8;
+        const std::array<std::uint8_t, 8> bytes{0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD};
+        ev.frame.dataField = SilKit::Util::Span<const std::uint8_t>(bytes.data(), bytes.size());
+
+        // Before recording_begins(): ignored.
+        rec.feed_for_test(0, ev);
+        CHECK(rec.take().frames.empty());
+
+        rec.recording_begins();
+        CHECK(rec.recording());
+        // Negative timestamp: dropped and counted, NEVER enqueued.
+        sk::CanFrameEvent untimed = ev;
+        untimed.timestamp = std::chrono::nanoseconds{-1};
+        rec.feed_for_test(0, untimed);
+        rec.feed_for_test(0, untimed);
+        rec.feed_for_test(1, untimed);
+
+        // Timed extended frame on CAN1 and timed standard RTR frame on CAN2.
+        rec.feed_for_test(0, ev);
+        sk::CanFrameEvent rtrEv{};
+        rtrEv.timestamp = 25ms;
+        rtrEv.frame.canId = 0x123u;
+        rtrEv.frame.flags = static_cast<sk::CanFrameFlagMask>(sk::CanFrameFlag::Rtr);
+        rtrEv.frame.dlc = 4;
+        rec.feed_for_test(1, rtrEv);
+
+        const RunCanRecorder::Taken taken = rec.take();
+        CHECK_EQ(taken.untimed_dropped.size(), std::size_t{2});
+        CHECK_EQ(taken.untimed_dropped[0], std::uint64_t{2});
+        CHECK_EQ(taken.untimed_dropped[1], std::uint64_t{1});
+        CHECK_EQ(taken.frames.size(), std::size_t{2});
+        CHECK(taken.frames[0].at == SimTime{10ms});
+        CHECK_EQ(taken.frames[0].net_idx, std::uint16_t{0});
+        CHECK_EQ(taken.frames[0].id, 0x18F00400u);
+        CHECK(taken.frames[0].extended() && !taken.frames[0].rtr() && !taken.frames[0].fd());
+        CHECK_EQ(taken.frames[0].dlc, std::uint8_t{8});
+        CHECK_EQ(taken.frames[0].data_len, std::uint8_t{8});
+        CHECK_EQ(taken.frames[0].data[7], std::uint8_t{0xDD});
+
+        CHECK(taken.frames[1].at == SimTime{25ms});
+        CHECK_EQ(taken.frames[1].net_idx, std::uint16_t{1});
+        CHECK_EQ(taken.frames[1].id, 0x123u);
+        CHECK(!taken.frames[1].extended() && taken.frames[1].rtr() && !taken.frames[1].fd());
+        CHECK_EQ(taken.frames[1].dlc, std::uint8_t{4});
+        CHECK_EQ(taken.frames[1].data_len, std::uint8_t{0});
+
+        // Second take() returns empty deltas.
+        const RunCanRecorder::Taken empty = rec.take();
+        CHECK(empty.frames.empty());
+        CHECK_EQ(empty.untimed_dropped[0], std::uint64_t{0});
+        CHECK_EQ(empty.untimed_dropped[1], std::uint64_t{0});
+
+        // After untap(): ignored cleanly.
+        rec.untap();
+        CHECK(!rec.tapped());
+        CHECK(!rec.recording());
+        rec.feed_for_test(0, ev);
+        CHECK(rec.take().frames.empty());
+    }
+
+    // 2. Real SIL Kit test: RunCanRecorder on a time-synchronized SimulationController (matching
+    //    production RunnerImpl::run()) captures grounded virtual-timestamped frames from a
+    //    synchronized sender with exact timestamps, IDs, flags, and payloads.
+    {
+        vehicle_sil::unit::InProcessRegistry registry;
+        SimulationControllerOptions ctrlOpts;
+        ctrlOpts.registry_uri = registry.uri;
+        ctrlOpts.required_participants = {"SyncSender"};
+        ctrlOpts.time_control = TimeControlOptions{.step = 10ms};
+        ctrlOpts.stop_at = 100ms;
+        SimulationController controller(ctrlOpts);
+
+        RunCanRecorder recorder;
+        recorder.tap(controller.runtime(), {"CAN_SYNC"});
+        CHECK(recorder.tapped());
+        controller.set_start_window([&recorder](const StartWindow&) { recorder.recording_begins(); });
+
+        ParticipantRuntime syncSender(
+            vehicle_sil::unit::coordinated_options("SyncSender", registry.uri, VirtualTimeOptions{10ms, std::nullopt}));
+        auto* syncCan = syncSender.participant().CreateCanController("CAN", "CAN_SYNC");
+        syncSender.add_communication_ready_handler([syncCan] { syncCan->Start(); });
+        const std::array<std::uint8_t, 4> syncData1{0xDE, 0xAD, 0xBE, 0xEF};
+        const std::array<std::uint8_t, 2> syncData2{0x11, 0x22};
+        syncSender.set_step_handler([syncCan, &syncData1, &syncData2](SimTime now, SimDuration) {
+            if (now == SimTime{20ms})
+            {
+                sk::CanFrame frame{};
+                frame.canId = 0x123u;
+                frame.dlc = 4;
+                frame.dataField = SilKit::Util::Span<const std::uint8_t>(syncData1.data(), syncData1.size());
+                syncCan->SendFrame(frame);
+            }
+            else if (now == SimTime{50ms})
+            {
+                sk::CanFrame frame{};
+                frame.canId = 0x18FF1000u;
+                frame.flags = static_cast<sk::CanFrameFlagMask>(sk::CanFrameFlag::Ide);
+                frame.dlc = 2;
+                frame.dataField = SilKit::Util::Span<const std::uint8_t>(syncData2.data(), syncData2.size());
+                syncCan->SendFrame(frame);
+            }
+        });
+
+        vehicle_sil::unit::start_together(controller, {&syncSender}, 30s);
+        const auto state = controller.wait_until_finished(vehicle_sil::test::scaled_timeout(30s));
+        CHECK(state && *state == SilKit::Services::Orchestration::ParticipantState::Shutdown);
+
+        const RunCanRecorder::Taken taken = recorder.take_and_end();
+        recorder.untap();
+        CHECK(!recorder.recording());
+
+        CHECK_EQ(taken.frames.size(), std::size_t{2});
+        CHECK(taken.frames[0].at == SimTime{20ms});
+        CHECK_EQ(taken.frames[0].id, 0x123u);
+        CHECK(!taken.frames[0].extended());
+        CHECK_EQ(taken.frames[0].data_len, std::uint8_t{4});
+        CHECK_EQ(taken.frames[0].data[0], std::uint8_t{0xDE});
+        CHECK(taken.frames[1].at == SimTime{50ms});
+        CHECK_EQ(taken.frames[1].id, 0x18FF1000u);
+        CHECK(taken.frames[1].extended());
+        CHECK_EQ(taken.frames[1].data_len, std::uint8_t{2});
+        CHECK_EQ(taken.frames[1].data[1], std::uint8_t{0x22});
+        CHECK(taken.untimed_dropped.size() == 1 && taken.untimed_dropped[0] == 0);
+    }
+}
+
+TEST_CASE(after_scenario_pause_handover_stops_can_recorder_and_drops_post_handover_traffic)
+{
+    using namespace vehicle_sil::runner::detail;
+    namespace sk = SilKit::Services::Can;
+
+    CheckReport check;
+    check.file = "sim.yaml";
+    check.config.emplace();
+    ParticipantConfig member;
+    member.name = "Member";
+    check.config->participants.push_back(member);
+    check.participants.emplace_back();
+    NetworkConfig canNet;
+    canNet.name = "CAN_HO";
+    canNet.kind = NetworkKind::Can;
+    check.config->networks.push_back(canNet);
+    check.checked_after_scenario = AfterScenario::Pause;
+
+    Scenario read;
+    read.end_ms = 50;
+    scenario::ScenarioCheck scCheck;
+    scCheck.file = "s.yaml";
+    scCheck.end_ms = 50;
+    scCheck.scenario = read;
+
+    RunChoices choices;
+    choices.timeline = "handover.json";
+    choices.record_can = true;
+    choices.after_scenario = AfterScenario::Pause;
+    RunPlan plan = plan_run(check, &scCheck, ".", choices);
+
+    RunObservers observers;
+    StopRequests stops;
+    std::mutex stateMu;
+    std::condition_variable stateCv;
+    bool handedOver = false;
+    RunControls::Observers ctrlObs;
+    ctrlObs.on_state = [&](const RunState& s) {
+        if (s.handed_over && s.paused)
+        {
+            const std::lock_guard lock(stateMu);
+            handedOver = true;
+            stateCv.notify_all();
+        }
+    };
+    RunControls controls(stops, /*start_paused=*/false, std::move(ctrlObs), /*scenario=*/true);
+    controls.set_control_server(true);
+    controls.set_time_lock({});
+    controls.set_phase(Phase::Running);
+
+    RunContext ctx{plan.config(), plan.check, plan, observers, nullptr, &read, controls, controls.time()};
+    RunOutcome outcome = planned_outcome(plan);
+    RunOutput output(ctx);
+    RunControl control(ctx, output);
+    RunSamples samples({"Member"}, TrafficPlan{});
+    RunCanRecorder can_recorder;
+    RunScenario scenario(ctx, output, control, samples, can_recorder);
+
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = {"Member"};
+    options.time_control = TimeControlOptions{.step = 10ms, .speed = std::nullopt};
+    SimulationController controller(options);
+    control_silkit::HubTransport transport(control.hub(), controller.runtime());
+
+    can_recorder.tap(controller.runtime(), plan.can_networks);
+    CHECK(can_recorder.tapped());
+    scenario.prepare(10ms);
+    attach_controller(controls.time(), controller, 10, std::nullopt);
+    controller.guard_from(SimTime{});
+    controller.set_start_window([&](const StartWindow&) {
+        scenario.begin(transport, [] { return false; });
+    });
+
+    ParticipantRuntime peer(
+        vehicle_sil::unit::coordinated_options("Member", registry.uri, VirtualTimeOptions{10ms, std::nullopt}));
+    auto* peerCan = peer.participant().CreateCanController("CAN", "CAN_HO");
+    peer.add_communication_ready_handler([peerCan] { peerCan->Start(); });
+    std::atomic<int> sentPostHandover{0};
+    peer.set_step_handler([peerCan, &sentPostHandover](SimTime now, SimDuration) {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        const std::array<std::uint8_t, 2> payload{static_cast<std::uint8_t>(ms & 0xFF), 0xA5};
+        sk::CanFrame frame{};
+        frame.canId = 0x321u;
+        frame.dlc = 2;
+        frame.dataField = SilKit::Util::Span<const std::uint8_t>(payload.data(), payload.size());
+        peerCan->SendFrame(frame);
+        if (now >= SimTime{50ms})
+        {
+            sentPostHandover.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+
+    vehicle_sil::unit::start_together(controller, {&peer}, 30s);
+    scenario.start(controller, outcome);
+
+    // Wait for scenario pass + handover to manual pause at 50 ms.
+    {
+        std::unique_lock lock(stateMu);
+        CHECK(stateCv.wait_for(lock, vehicle_sil::test::scaled_timeout(20s), [&] { return handedOver; }));
+    }
+    CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)) == std::optional<SimTime>(SimTime{50ms}));
+    // Immediately after handover, RunCanRecorder must have stopped recording so post-handover CAN traffic cannot leak RAM!
+    CHECK(!can_recorder.recording());
+
+    // Advance manually by 80 ms (50..120 ms) while Member keeps blasting CAN frames on every 10 ms step.
+    controller.step(80ms);
+    CHECK(controller.wait_until_paused(vehicle_sil::test::scaled_timeout(10s)) == std::optional<SimTime>(SimTime{130ms}));
+    CHECK(sentPostHandover.load(std::memory_order_relaxed) >= 8);
+    // Zero frames may have accumulated in RunCanRecorder's queue after handover.
+    const RunCanRecorder::Taken post = can_recorder.take();
+    CHECK(post.frames.empty());
+
+    controls.time().detach();
+    controller.stop("done");
+    static_cast<void>(controller.wait_until_finished(vehicle_sil::test::scaled_timeout(20s)));
+    peer.stop("done");
+
+    WatchResult watched;
+    watched.end = WatchEnd::Ended;
+    watched.state = SilKit::Services::Orchestration::ParticipantState::Shutdown;
+    scenario.finish(controller, watched, false, outcome);
+    can_recorder.untap();
+
+    CHECK(outcome.scenario.result.has_value());
+    CHECK(outcome.scenario.result->status == scenario::ScenarioStatus::Passed);
+    CHECK(outcome.scenario.timeline_record != nullptr);
+    CHECK(outcome.scenario.timeline_record->recorded_to() == std::optional<SimTime>(SimTime{50ms}));
+    // Strictly pre-handover frames (< 50 ms: 0, 10, 20, 30, 40 ms) were recorded; zero post-handover frames!
+    CHECK_EQ(outcome.scenario.timeline_record->can_frames().size(), std::size_t{5});
+    for (const auto& f : outcome.scenario.timeline_record->can_frames())
+    {
+        CHECK(f.at < SimTime{50ms});
     }
 }
 
@@ -1903,10 +2267,11 @@ TEST_CASE(run_watch_wakes_immediately_on_non_signal_stop_for_plain_and_scenario_
             RunOutput output(ctx);
             RunControl control(ctx, output);
             RunSamples samples({}, {});
+            RunCanRecorder can_recorder;
             RunParticipants participants(ctx, output, outcome, plan.base);
             RunNotes notes(ctx, participants);
-            RunScenario scenario(ctx, output, control, samples);
-            RunRecorder recorder(ctx, control, samples);
+            RunScenario scenario(ctx, output, control, samples, can_recorder);
+            RunRecorder recorder(ctx, control, samples, can_recorder);
             RunStart start(ctx, output, control, notes, scenario, recorder, participants, outcome);
             RunWatch watch(ctx, output, notes, samples, scenario, recorder, start, participants, outcome);
 

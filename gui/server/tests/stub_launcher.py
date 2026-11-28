@@ -27,7 +27,7 @@ DEFAULT_FEATURES = [
     "scenario-cases", "scenario-templates",
     "connections", "connect", "check-text", "compare-commands", "serve", "check-file-only",
     "serve-prepare", "control-metrics", "external-registry", "record-signals", "record-after-fail",
-    "manual-timeline", "record-events",
+    "manual-timeline", "record-events", "record-can",
 ]
 
 def _peer_variables(name: str) -> list[dict]:
@@ -117,6 +117,7 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
     scenario_case = req.get("case")
     record_after_fail_ms = req.get("record_after_fail_ms")
     record_events = bool(req.get("record_events"))
+    record_can = bool(req.get("record_can"))
     i = 0
     while i < len(argv):
         if argv[i] == "--disable" and i + 1 < len(argv):
@@ -141,6 +142,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
             scenario_case = argv[i + 1]; i += 2
         elif argv[i] == "--record-events":
             record_events = True; i += 1
+        elif argv[i] == "--record-can":
+            record_can = True; i += 1
         else:
             i += 1
     if dis:
@@ -161,6 +164,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
         req["record_after_fail_ms"] = record_after_fail_ms
     if record_events:
         req["record_events"] = True
+    if record_can:
+        req["record_can"] = True
     return req, req_path
 
 
@@ -1342,7 +1347,10 @@ def _execute_run(
     def write_manual_timeline(recorded_to_ms: int | None) -> bool:
         record_entries = list(dict.fromkeys(req_dict.get("record") or ()))
         record_events_on = bool(req_dict.get("record_events"))
-        if has_scenario or not timeline_file or (not record_entries and not record_events_on):
+        record_can_on = bool(req_dict.get("record_can"))
+        if has_scenario or not timeline_file or (
+            not record_entries and not record_events_on and not record_can_on
+        ):
             return False
         parts_by_name = {pt["name"]: pt for pt in chk_doc.get("participants", [])}
         tl_vars: list[dict] = []
@@ -1430,6 +1438,28 @@ def _execute_run(
             tl_doc["limits"]["events_per_participant"] = 2000
             tl_doc["limits"]["events_total"] = 5000
             tl_doc["limits"]["events_dropped"] = []
+        if record_can_on:
+            can_list: list[dict] = []
+            if recorded_to_ms is not None:
+                end_t = max(0, recorded_to_ms)
+                can_list.append({
+                    "at_ms": 0, "network": "J1939_CAN", "id": 0x18EEFF00,
+                    "extended": True, "dlc": 8, "data": "0102030405060708",
+                })
+                if end_t >= 100:
+                    can_list.append({
+                        "at_ms": 100, "network": "J1939_CAN", "id": 0x0CF00400,
+                        "extended": True, "dlc": 8, "data": "0000006009000000",
+                    })
+                if end_t >= 300:
+                    can_list.append({
+                        "at_ms": 300, "network": "J1939_CAN", "id": 0x18EA1700,
+                        "extended": True, "dlc": 3, "data": "04F000",
+                    })
+            tl_doc["can_frames"] = can_list
+            tl_doc["limits"]["can_frames_per_network"] = 10000
+            tl_doc["limits"]["can_frames_total"] = 20000
+            tl_doc["limits"]["can_dropped"] = []
         Path(timeline_file).write_text(json.dumps(tl_doc) + "\n", encoding="utf-8")
         return True
 
@@ -1858,6 +1888,38 @@ def _execute_run(
                 tl_doc["limits"]["events_per_participant"] = 2000
                 tl_doc["limits"]["events_total"] = 5000
                 tl_doc["limits"]["events_dropped"] = []
+            if bool(req_dict.get("record_can")):
+                sc_can = [
+                    {
+                        "at_ms": 0, "network": "J1939_CAN", "id": 0x18EEFF00,
+                        "extended": True, "dlc": 8, "data": "0102030405060708",
+                    },
+                    {
+                        "at_ms": 20, "network": "J1939_CAN", "id": 0x18EA1700,
+                        "extended": True, "dlc": 3, "data": "04F000",
+                    },
+                    {
+                        "at_ms": 50, "network": "J1939_CAN", "id": 0x0CF00400,
+                        "extended": True, "dlc": 8, "data": "0000006009000000",
+                    },
+                    {
+                        "at_ms": 100, "network": "J1939_CAN", "id": 0x0CF00400,
+                        "extended": True, "dlc": 8, "data": "000000581B000000",
+                    },
+                ]
+                if is_fail_sc and tail_ms > 0:
+                    sc_can.append({
+                        "at_ms": 100 + max(1, tail_ms // 2),
+                        "network": "J1939_CAN",
+                        "id": 0x123,
+                        "extended": False,
+                        "dlc": 4,
+                        "data": "DEADBEEF",
+                    })
+                tl_doc["can_frames"] = [fr for fr in sc_can if fr["at_ms"] <= rec_to]
+                tl_doc["limits"]["can_frames_per_network"] = 10000
+                tl_doc["limits"]["can_frames_total"] = 20000
+                tl_doc["limits"]["can_dropped"] = []
             Path(timeline_file).write_text(json.dumps(tl_doc) + "\n", encoding="utf-8")
         _emit(next_ev("scenario_step", run=run_id, index=1, status="running", at_ms=0, name="step 1"))
         _emit(next_ev("scenario_step", run=run_id, index=1, status="passed", at_ms=0, name="step 1"))

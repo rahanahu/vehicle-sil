@@ -20,6 +20,7 @@ function makeLoadDetail(
     recordedTo: 640,
     stepCount: 10,
     eventCount: 0,
+    canFrameCount: 0,
     failure: {
       step: 10,
       at: 640,

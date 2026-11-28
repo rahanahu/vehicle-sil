@@ -11,6 +11,7 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/scenario/scenario.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -32,6 +33,8 @@ struct TimelineLimits
     std::size_t points_total = 1'000'000;
     std::size_t events_per_participant = 2'000;
     std::size_t events_total = 5'000;
+    std::size_t can_frames_per_network = 10'000;
+    std::size_t can_frames_total = 20'000;
 };
 
 /// How a step looks at its conditions.
@@ -208,6 +211,30 @@ public:
         std::uint64_t agent_dropped = 0;         ///< events dropped by the ECU's Agent before reaching the Hub
     };
 
+    /// A virtual-timestamped CAN frame observed on a CAN network (--record-can).
+    struct CanFrame
+    {
+        SimTime at{};
+        std::string network{};
+        std::uint32_t id = 0;
+        bool extended = false;
+        bool rtr = false;
+        bool fd = false;
+        std::uint8_t dlc = 0;
+        std::uint8_t data_len = 0;
+        std::array<std::uint8_t, 64> data{};
+        std::uint64_t seq = 0; ///< monotonic insertion sequence for deterministic tie-breaking
+    };
+    /// Per-network accounting of dropped CAN frames.
+    struct CanDrop
+    {
+        std::string network{};
+        std::uint64_t dropped = 0;               ///< frames evicted by timeline limits for this network
+        std::optional<SimTime> dropped_from{};   ///< virtual time of oldest evicted frame (null if dropped == 0)
+        std::optional<SimTime> dropped_before{}; ///< virtual time of oldest kept frame (null if none kept or dropped == 0)
+        std::uint64_t untimed_dropped = 0;       ///< frames rejected because SIL Kit event.timestamp < 0
+    };
+
     /// The `step` of a write that is no step's (a dither alone moved the input).
     static constexpr std::size_t kNoStep = static_cast<std::size_t>(-1);
 
@@ -242,6 +269,13 @@ public:
     void event(std::string participant, SimTime at, control::EventLevel level, std::string text);
     /// Notes events dropped inside an ECU's Agent before reaching the Hub.
     void note_agent_events_dropped(std::string participant, std::uint64_t count);
+    /// Enables opt-in bounded recording of virtual-timestamped CAN frames.
+    void enable_can() noexcept { can_enabled_ = true; }
+    /// Records one virtual-timestamped CAN frame (no-op unless enable_can() was called and record is open).
+    void can_frame(std::string_view network, SimTime at, std::uint32_t id, bool extended, bool rtr, bool fd,
+                   std::uint8_t dlc, std::span<const std::uint8_t> data);
+    /// Notes untimed CAN frames rejected because SIL Kit event.timestamp < 0.
+    void note_untimed_can_dropped(std::string_view network, std::uint64_t count);
     /// The index in the written series of `variable` of the point that written() named
     /// `serial`; empty if it went at a limit (or there is none).
     [[nodiscard]] std::optional<std::size_t> point_of(std::size_t variable, std::uint64_t serial) const;
@@ -270,8 +304,21 @@ public:
     [[nodiscard]] const std::vector<EventDrop>& events_dropped() const noexcept { return events_dropped_; }
     /// Total ECU events lost (evicted at timeline limits plus agent-side drops).
     [[nodiscard]] std::uint64_t dropped_events() const noexcept;
-    /// True if any series points or ECU events were dropped.
-    [[nodiscard]] bool dropped_any() const noexcept { return dropped() > 0 || dropped_events() > 0; }
+    /// Whether opt-in CAN frame recording was enabled on this record.
+    [[nodiscard]] bool can_enabled() const noexcept { return can_enabled_; }
+    /// Once closed: virtual-timestamped CAN frames up to recorded_to(), ordered by (at, network, seq).
+    [[nodiscard]] const std::vector<CanFrame>& can_frames() const noexcept { return can_frames_; }
+    /// Once closed: per-network dropped CAN frame accounting (only networks with dropped > 0 or untimed_dropped > 0).
+    [[nodiscard]] const std::vector<CanDrop>& can_dropped() const noexcept { return can_dropped_; }
+    /// Total CAN frames evicted by timeline limits across all networks.
+    [[nodiscard]] std::uint64_t dropped_can() const noexcept;
+    /// Total untimed CAN frames rejected (event.timestamp < 0) across all networks.
+    [[nodiscard]] std::uint64_t untimed_can_dropped() const noexcept;
+    /// True if any series points, ECU events, or CAN frames were dropped.
+    [[nodiscard]] bool dropped_any() const noexcept
+    {
+        return dropped() > 0 || dropped_events() > 0 || dropped_can() > 0 || untimed_can_dropped() > 0;
+    }
     /// Whether a step of the scenario writes the variable, whether a condition reads it, and
     /// whether it was explicitly requested via RunIntent::record.
     [[nodiscard]] bool is_written(std::size_t variable) const { return variable < written_.size() && written_[variable].has_value(); }
@@ -294,11 +341,36 @@ private:
         std::uint64_t agent_dropped = 0;
     };
 
+    struct StoredCanFrame
+    {
+        SimTime at{};
+        std::uint32_t id = 0;
+        bool extended = false;
+        bool rtr = false;
+        bool fd = false;
+        std::uint8_t dlc = 0;
+        std::uint8_t data_len = 0;
+        std::array<std::uint8_t, 64> data{};
+        std::uint64_t seq = 0;
+    };
+    struct NetworkCanFrames
+    {
+        std::string network{};
+        std::deque<StoredCanFrame> frames{};
+        std::uint64_t dropped = 0;
+        std::optional<SimTime> dropped_from{};
+        std::optional<SimTime> dropped_before{};
+        std::uint64_t untimed_dropped = 0;
+    };
+
     static void drop_oldest(Series& series, std::size_t keep);
     void enforce(bool final);
     ParticipantEvents& participant_events_for(std::string_view participant);
     static void drop_oldest_events(ParticipantEvents& pe, std::size_t keep);
     void enforce_events(bool final);
+    NetworkCanFrames& network_can_for(std::string_view network);
+    static void drop_oldest_can(NetworkCanFrames& nc, std::size_t keep);
+    void enforce_can(bool final);
 
     TimelineLimits limits_;
     std::vector<RecordedVariable> extra_variables_{};
@@ -321,6 +393,12 @@ private:
     std::uint64_t next_event_seq_ = 0;
     std::vector<Event> events_{};
     std::vector<EventDrop> events_dropped_{};
+    bool can_enabled_ = false;
+    std::vector<NetworkCanFrames> network_can_{};
+    std::size_t can_total_ = 0;
+    std::uint64_t next_can_seq_ = 0;
+    std::vector<CanFrame> can_frames_{};
+    std::vector<CanDrop> can_dropped_{};
 };
 
 } // namespace vehicle_sil::scenario

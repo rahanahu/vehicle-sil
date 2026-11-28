@@ -208,6 +208,79 @@ def test_a_scenario_run_with_record_events_includes_events_and_omits_when_off(tm
         run_async(talk, gui)
 
 
+def test_a_manual_run_with_record_can_writes_and_serves_a_timeline(tmp_path: Path) -> None:
+    with gui_server(tmp_path) as gui:
+        async def talk(c: Client) -> None:
+            session, run_start = await run_to_end(
+                c,
+                {
+                    "file": "simulation.yaml",
+                    "stop_at_ms": 500,
+                    "record_can": True,
+                },
+            )
+            assert "timeline" not in run_start
+            assert session["scenario"] is None
+            url = session["timeline_url"]
+            assert url == api_path(session["id"])
+
+            status, body, headers = await get_raw(c, url)
+            assert status == 200, body
+            tl = json.loads(body)
+            assert tl["vehicle_sil_timeline"] == 1
+            assert tl["scenario"] is None
+            assert tl["recorded_to_ms"] == 500
+            assert tl["variables"] == [] and tl["series"] == []
+            assert len(tl["can_frames"]) >= 2
+            assert tl["can_frames"][0]["at_ms"] == 0
+            assert tl["can_frames"][0]["network"] == "J1939_CAN"
+            assert tl["limits"]["can_dropped"] == []
+            assert headers["Content-Disposition"] == 'inline; filename="simulation.timeline.json"'
+        run_async(talk, gui)
+
+
+def test_a_manual_run_with_record_can_gets_no_timeline_without_manual_timeline_feature(tmp_path: Path) -> None:
+    features = f"{WITHOUT_TIMELINE},timeline,run-stop-at,record-can"
+    with gui_server(tmp_path, env={"REPLAY_FEATURES": features}) as gui:
+        async def talk(c: Client) -> None:
+            session, _ = await run_to_end(
+                c,
+                {
+                    "file": "simulation.yaml",
+                    "stop_at_ms": 500,
+                    "record_can": True,
+                },
+            )
+            assert session["scenario"] is None
+            assert session.get("timeline_url") is None
+            assert "timeline" not in session["result"]
+            status, body = await c.get(api_path(session["id"]))
+            assert (status, body["error"]["code"]) == (404, "no-timeline")
+        run_async(talk, gui)
+
+
+def test_a_scenario_run_with_record_can_includes_frames_and_omits_when_off(tmp_path: Path) -> None:
+    with gui_server(tmp_path) as gui:
+        async def talk(c: Client) -> None:
+            with_can, _ = await run_to_end(
+                c, {"file": "simulation.yaml", "scenario": PASS, "record_can": True},
+            )
+            status, body, _ = await get_raw(c, with_can["timeline_url"])
+            assert status == 200
+            tl_with = json.loads(body)
+            assert isinstance(tl_with["can_frames"], list) and len(tl_with["can_frames"]) >= 2
+            assert tl_with["limits"]["can_dropped"] == []
+
+            # Second run in the same hot server without record_can omits can_frames & can_dropped
+            without_can, _ = await run_to_end(c, {"file": "simulation.yaml", "scenario": PASS})
+            status2, body2, _ = await get_raw(c, without_can["timeline_url"])
+            assert status2 == 200
+            tl_without = json.loads(body2)
+            assert "can_frames" not in tl_without
+            assert "can_dropped" not in tl_without["limits"]
+        run_async(talk, gui)
+
+
 def test_a_launcher_without_the_feature_is_given_no_timeline(tmp_path: Path) -> None:
     with gui_server(tmp_path, env={"REPLAY_FEATURES": WITHOUT_TIMELINE}) as gui:
         async def talk(c: Client) -> None:

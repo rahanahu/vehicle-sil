@@ -138,7 +138,16 @@
       `Recorded ${count} signal${count === 1 ? '' : 's'} up to ${to}`,
     'manual.recordedEventsTo': ({ count, to }) =>
       `Recorded ${count} ECU event${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.recordedCanTo': ({ count, to }) =>
+      `Recorded ${count} CAN frame${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.recordedSummaryTo': ({ items, to }) => `Recorded ${items} up to ${to}`,
+    'manual.partSignals': ({ count }) => `${count} signal${count === 1 ? '' : 's'}`,
+    'manual.partEvents': ({ count }) => `${count} ECU event${count === 1 ? '' : 's'}`,
+    'manual.partCan': ({ count }) => `${count} CAN frame${count === 1 ? '' : 's'}`,
+    'manual.partSep': ', ',
     'manual.recordedEmptyTo': ({ to }) => `No signals or ECU events recorded up to ${to}`,
+    'manual.recordedEmptyAllTo': ({ to }) =>
+      `No signals, ECU events, or CAN frames recorded up to ${to}`,
     'manual.nothingRecorded': 'Manual run: no samples recorded',
     'fact.file': 'timeline file',
     'fact.scenario': 'scenario',
@@ -399,6 +408,34 @@
     'events.droppedTimelineNoRange': ({ participant, count }) => `${participant}: ${count} dropped`,
     'events.droppedAgent': ({ participant, count }) =>
       `${participant}: ${count} dropped in ECU queue`,
+
+    // --- virtual-time CAN frames
+    'can.count': ({ shown, total }) =>
+      shown === total ? `CAN frames (${total})` : `CAN frames (${shown} / ${total})`,
+    'can.allNetworks': 'All networks',
+    'can.filterNetwork': 'Filter CAN frames by network',
+    'can.searchPlaceholder': 'Filter ID, PGN, SA/DA, or data…',
+    'can.searchLabel': 'Filter CAN frames by ID, PGN, or hex data',
+    'can.visibleOnly': 'Visible range only',
+    'can.noneMatching': 'No matching CAN frames.',
+    'can.truncated': ({ shown, total }) =>
+      `Showing first ${shown} of ${total} matching CAN frames.`,
+    'can.showAll': ({ count }) => `Show all (${count})`,
+    'can.colTime': 'Time',
+    'can.colDelta': 'Δt',
+    'can.colNetwork': 'Network',
+    'can.colId': 'CAN ID',
+    'can.colDlc': 'DLC',
+    'can.colData': 'Data',
+    'can.flagRtr': 'RTR',
+    'can.flagFd': 'FD',
+    'can.pinRow': ({ at }) => `Pin cursor at ${at}`,
+    'can.droppedHeading': 'CAN frames were dropped. ',
+    'can.droppedTimeline': ({ network, count, from, to }) =>
+      `${network}: ${count} dropped (${from} to ${to})`,
+    'can.droppedTimelineNoRange': ({ network, count }) => `${network}: ${count} dropped`,
+    'can.droppedUntimed': ({ network, count }) =>
+      `${network}: ${count} untimed frame${count === 1 ? '' : 's'} dropped (no virtual timestamp)`,
   };
 
   const ja = {
@@ -526,7 +563,16 @@
     'manual.recordedTo': ({ count, to }) => `${count} 個の信号を ${to} まで記録しました`,
     'manual.recordedEventsTo': ({ count, to }) =>
       `${count} 件の ECU イベントを ${to} まで記録しました`,
+    'manual.recordedCanTo': ({ count, to }) =>
+      `${count} 件の CAN フレームを ${to} まで記録しました`,
+    'manual.recordedSummaryTo': ({ items, to }) => `${items}を ${to} まで記録しました`,
+    'manual.partSignals': ({ count }) => `${count} 個の信号`,
+    'manual.partEvents': ({ count }) => `${count} 件の ECU イベント`,
+    'manual.partCan': ({ count }) => `${count} 件の CAN フレーム`,
+    'manual.partSep': '・',
     'manual.recordedEmptyTo': ({ to }) => `${to} までに記録された信号や ECU イベントはありません`,
+    'manual.recordedEmptyAllTo': ({ to }) =>
+      `${to} までに記録された信号・ECU イベント・CAN フレームはありません`,
     'manual.nothingRecorded': '手動実行: 記録されたサンプルはありません',
     'fact.file': '時間の軸のファイル',
     'fact.scenario': 'シナリオ',
@@ -787,6 +833,33 @@
     'events.droppedTimelineNoRange': ({ participant, count }) => `${participant}: ${count} 件欠落`,
     'events.droppedAgent': ({ participant, count }) =>
       `${participant}: ECU 側キューで ${count} 件欠落`,
+
+    // --- 仮想時刻付き CAN フレーム
+    'can.count': ({ shown, total }) =>
+      shown === total ? `CAN フレーム（${total}）` : `CAN フレーム（${shown} / ${total}）`,
+    'can.allNetworks': 'すべてのネットワーク',
+    'can.filterNetwork': 'ネットワークで CAN フレームを絞り込み',
+    'can.searchPlaceholder': 'ID・PGN・SA/DA・データを絞り込み…',
+    'can.searchLabel': 'ID・PGN・16進データで CAN フレームを絞り込み',
+    'can.visibleOnly': '表示範囲のみ',
+    'can.noneMatching': '条件に合う CAN フレームがありません。',
+    'can.truncated': ({ shown, total }) =>
+      `一致した ${total} 件のうち先頭 ${shown} 件を表示しています。`,
+    'can.showAll': ({ count }) => `すべて表示（${count}）`,
+    'can.colTime': '時刻',
+    'can.colDelta': 'Δt',
+    'can.colNetwork': 'ネットワーク',
+    'can.colId': 'CAN ID',
+    'can.colDlc': 'DLC',
+    'can.colData': 'データ',
+    'can.flagRtr': 'RTR',
+    'can.flagFd': 'FD',
+    'can.pinRow': ({ at }) => `${at} にカーソルを固定`,
+    'can.droppedHeading': '一部の CAN フレームが欠けています。',
+    'can.droppedTimeline': ({ network, count, from, to }) =>
+      `${network}: ${count} 件欠落（${from}〜${to}）`,
+    'can.droppedTimelineNoRange': ({ network, count }) => `${network}: ${count} 件欠落`,
+    'can.droppedUntimed': ({ network, count }) => `${network}: 仮想時刻なしの ${count} 件を除外`,
   };
 
   const MESSAGES = { en, ja };

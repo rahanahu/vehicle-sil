@@ -1135,3 +1135,119 @@ test('real vehicle_sil_launch: virtual-timestamped ECU events correlate with wav
     await stopRun(page, target, RUN_TIMEOUT);
   }
 });
+
+test('real vehicle_sil_launch: virtual-timestamped CAN frames decode J1939 and correlate with waveforms on throttle_step', async ({
+  page,
+}) => {
+  test.setTimeout(scaled(90_000));
+  const target: Target = { base: `http://127.0.0.1:${GUI_PORT}/`, token: guiToken() };
+  const headers = { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin };
+  const appResp = await page.request.get(new URL('api/app', target.base).href, { headers });
+  const appJson = (await appResp.json()) as {
+    launcher?: { version?: { features?: string[] } };
+  };
+  const features = appJson.launcher?.version?.features ?? [];
+  test.skip(
+    !features.includes('record-can') || !features.includes('timeline'),
+    'launcher does not advertise record-can / timeline',
+  );
+
+  await openRun(page);
+  await stopIfRunning(page);
+  try {
+    await choose(page, 'simulation.yaml');
+    const scCheck = page.waitForResponse(
+      (r) =>
+        r.url().endsWith('/api/check') &&
+        (r.request().postDataJSON() as Record<string, unknown>)['scenario'] ===
+          'scenarios/throttle_step.yaml',
+    );
+    await page.getByRole('combobox', { name: 'シナリオ' }).click();
+    await page.getByRole('option', { name: 'throttle_step.yaml', exact: true }).click();
+    await scCheck;
+
+    // Opt in to recording virtual-timestamped CAN frames
+    const recordCanCb = page.getByTestId('record-can').getByRole('checkbox');
+    await expect(recordCanCb).toBeVisible();
+    await expect(recordCanCb).not.toBeChecked();
+    const canCheck = page.waitForResponse(
+      (r) =>
+        r.url().endsWith('/api/check') &&
+        (r.request().postDataJSON() as Record<string, unknown>)['record_can'] === true,
+    );
+    await recordCanCb.check();
+    await canCheck;
+
+    await expect(page.getByTestId('check-outcome')).toContainText('通った', {
+      timeout: RUN_TIMEOUT,
+    });
+
+    const runReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const runId = await start(page);
+    const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(runBody['record_can']).toBe(true);
+    await expect(result(page, runId)).toBeVisible({ timeout: RUN_TIMEOUT });
+
+    // Verify timeline JSON contains real grounded virtual-timestamped J1939 CAN frames on J1939_CAN
+    const tlResp = await page.request.get(new URL(`api/timeline/${runId}`, target.base).href, {
+      headers,
+    });
+    expect(tlResp.status()).toBe(200);
+    const tlJson = (await tlResp.json()) as {
+      can_frames?: {
+        at_ms: number;
+        network: string;
+        id: number;
+        extended: boolean;
+        dlc: number;
+        data: string;
+      }[];
+      limits?: { can_dropped?: unknown[] };
+    };
+    expect(Array.isArray(tlJson.can_frames)).toBe(true);
+    const frames = tlJson.can_frames ?? [];
+    expect(frames.length).toBeGreaterThan(0);
+    const engineSpeedFrame = frames.find(
+      (f) => f.network === 'J1939_CAN' && f.extended && ((f.id >>> 8) & 0xffff) === 0xff10,
+    );
+    expect(
+      engineSpeedFrame,
+      `expected J1939 engine speed (PGN 0xFF10) frame in ${JSON.stringify(frames.slice(0, 5))}`,
+    ).toBeDefined();
+    const addrClaimFrame = frames.find(
+      (f) => f.network === 'J1939_CAN' && f.extended && ((f.id >>> 16) & 0xff) === 0xee,
+    );
+    expect(
+      addrClaimFrame,
+      `expected J1939 Address Claimed (PGN 0xEE00) frame in ${JSON.stringify(frames.slice(0, 5))}`,
+    ).toBeDefined();
+
+    // Open the inline logic analyzer on the passed Scenario card
+    const card = page.getByTestId('scenario-card');
+    await expect(card).toBeVisible({ timeout: RUN_TIMEOUT });
+    const toggle = card.getByTestId('timeline-toggle');
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+      await toggle.click();
+    }
+    const timeline = card.getByTestId('timeline-element');
+    await expect(timeline).toBeVisible({ timeout: RUN_TIMEOUT });
+
+    // Synchronized CAN Frames table renders J1939 decode (PGN 0xFF10) inside the embedded logic analyzer
+    const rows = timeline.locator('[data-testid="can-frame-row"]');
+    await expect(rows.first()).toBeVisible({ timeout: RUN_TIMEOUT });
+    await timeline.locator('[data-testid="can-frames-search"]').fill('0xFF10');
+    await expect(rows.first()).toBeVisible();
+    await expect(rows.first()).toContainText('PGN 0xFF10');
+
+    // Click an engine-speed CAN frame row and verify waveform cursor pins to its virtual time with Δt = 0 ms
+    const targetRow = rows.nth(1);
+    await expect(targetRow).toBeVisible();
+    await targetRow.click();
+    await expect(targetRow).toHaveAttribute('aria-selected', 'true');
+    await expect(targetRow.locator('.can-delta')).toHaveText('0 ms');
+  } finally {
+    await stopRun(page, target, RUN_TIMEOUT);
+  }
+});

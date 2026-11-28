@@ -42,6 +42,8 @@ struct TimelineInput
     std::vector<scenario::RecordedVariable> recorded_variables{};
     /// Opt-in virtual-timestamped ECU events requested via RunIntent::record_events.
     bool record_events = false;
+    /// Opt-in virtual-timestamped CAN frames requested via RunIntent::record_can.
+    bool record_can = false;
     /// The findings of the check and of the run; the file takes those of the scenario
     /// (timeline_takes_finding()).
     std::vector<config::Finding> findings{};

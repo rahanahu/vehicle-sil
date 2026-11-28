@@ -4,6 +4,7 @@
 // controller's time gate and the run's result. Internal.
 #pragma once
 
+#include "run_can_recorder.hpp"
 #include "run_context.hpp"
 #include "run_control.hpp"
 #include "run_output.hpp"
@@ -67,7 +68,8 @@ namespace vehicle_sil::runner::detail {
 class RunScenario
 {
 public:
-    RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control, RunSamples& samples);
+    RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control, RunSamples& samples,
+                RunCanRecorder& can_recorder);
     ~RunScenario();
 
     /// `step`: the step of the launcher's controller. Main thread, in the setup (no controller
@@ -127,12 +129,16 @@ private:
     /// Drains queued structured ECU events into pending_events_ and flushes events with time < *before
     /// (or all pending events if `before` is empty) into the TimelineRecord (if enabled).
     void drain_events(std::optional<SimTime> before);
+    /// Drains queued CAN frames into pending_can_ and flushes frames with time < *before
+    /// (or all pending frames if `before` is empty) into the TimelineRecord (if enabled).
+    void drain_can(std::optional<SimTime> before);
     void loop(SimulationController& controller);
 
     const RunContext& ctx_;
     RunOutput& out_;
     RunControl& control_;
     RunSamples& samples_;
+    RunCanRecorder& can_recorder_;
     std::chrono::milliseconds step_{}; ///< the controller's step (prepare())
     /// Per participant of the configuration: its place among the scenario's participants (none:
     /// the scenario does not use it). Never written after the constructor.
@@ -147,6 +153,9 @@ private:
     /// Drained ECU events with time >= the current controller tick, held until a later tick so the
     /// scenario's `< p` virtual-time boundary matches ScenarioEngine::observe(p). Touched as engine_ is.
     std::vector<BufferedEvent> pending_events_;
+    /// Drained CAN frames with time >= the current controller tick, held until a later tick so the
+    /// scenario's `< p` virtual-time boundary matches ScenarioEngine::observe(p). Touched as engine_ is.
+    std::vector<CapturedCanFrame> pending_can_;
     std::unique_ptr<scenario::ScenarioEngine> engine_; ///< the window's thread, then the scenario's, then main
     /// begin() found these and made no engine (the scenario does not begin). Touched as engine_ is.
     std::vector<ScenarioNotObserved> not_observed_;

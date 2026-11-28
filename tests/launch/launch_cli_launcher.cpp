@@ -651,8 +651,9 @@ void usage(const Options& o)
                 "serve --case stdout:\n" + serveCase.standard_output);
     }
     expect_usage({"run", "a.yaml", "--timeline", "t.json", "--timeout-ms", "0"},
-                 "--timeline needs --scenario, --record or --record-events: give --scenario <file>, at least one --record "
-                 "<participant>.<variable>, or --record-events, or leave --timeline out");
+                 "--timeline needs --scenario, --record, --record-events or --record-can: give --scenario <file>, at least "
+                 "one --record <participant>.<variable>, --record-events or --record-can, or leave --timeline out");
+    expect_usage({"run", "a.yaml", "--record-can", "--record-can"}, "--record-can is given twice");
     expect_usage({"run", "a.yaml", "--scenario", "s.yaml", "--start-paused", "--speed", "fast"},
                  "--speed must be a number of simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, "
                  "2: twice as fast) or max (as fast as possible), not 'fast'");
@@ -929,7 +930,7 @@ void request(const Options& o)
     write_file(o.work_dir / "bench" / "wrong.json", "{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}\n");
     const std::string unknown = wrong + ", line 3: unknown key 'conect': did you mean 'connect'? (the keys here: "
                                         "vehicle_sil_run_request, variant, params, scenario, case, disable, enable, manual, connect, "
-                                        "time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record, record_after_fail_ms, record_events)";
+                                        "time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record, record_after_fail_ms, record_events, record_can)";
     expect_usage({"check", "--request", wrong, config}, unknown);
     expect_usage({"run", "--json", "--request", wrong, config}, unknown);
     {

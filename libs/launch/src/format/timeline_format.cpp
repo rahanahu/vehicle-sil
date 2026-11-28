@@ -10,6 +10,7 @@
 #include "vehicle_sil/scenario/timeline.hpp"
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -548,7 +549,49 @@ void write_events(JsonWriter& w, const TimelineInput& input)
     w.end_array();
 }
 
-void write_limits(JsonWriter& w, const TimelineInput& input, bool include_events)
+std::string format_hex(const std::array<std::uint8_t, 64>& data, std::uint8_t length)
+{
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    const std::size_t n = std::min<std::size_t>(length, data.size());
+    std::string out;
+    out.reserve(n * 2);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        out.push_back(kHex[(data[i] >> 4) & 0x0Fu]);
+        out.push_back(kHex[data[i] & 0x0Fu]);
+    }
+    return out;
+}
+
+void write_can_frames(JsonWriter& w, const TimelineInput& input)
+{
+    w.begin_array("can_frames");
+    if (input.record != nullptr)
+    {
+        for (const scenario::TimelineRecord::CanFrame& frame : input.record->can_frames())
+        {
+            w.begin_object();
+            write_ms(w, "at_ms", frame.at);
+            w.string("network", frame.network);
+            w.integer("id", static_cast<std::int64_t>(frame.id));
+            w.boolean("extended", frame.extended);
+            w.integer("dlc", static_cast<std::int64_t>(frame.dlc));
+            w.string("data", format_hex(frame.data, frame.data_len));
+            if (frame.rtr)
+            {
+                w.boolean("rtr", true);
+            }
+            if (frame.fd)
+            {
+                w.boolean("fd", true);
+            }
+            w.end_object();
+        }
+    }
+    w.end_array();
+}
+
+void write_limits(JsonWriter& w, const TimelineInput& input, bool include_events, bool include_can)
 {
     const scenario::TimelineLimits limits = input.record != nullptr ? input.record->limits() : scenario::TimelineLimits{};
     w.begin_object("limits");
@@ -587,6 +630,26 @@ void write_limits(JsonWriter& w, const TimelineInput& input, bool include_events
                 write_ms(w, "dropped_from_ms", drop.dropped_from);
                 write_ms(w, "dropped_before_ms", drop.dropped_before);
                 w.integer("agent_dropped", static_cast<std::int64_t>(drop.agent_dropped));
+                w.end_object();
+            }
+        }
+        w.end_array();
+    }
+    if (include_can)
+    {
+        w.integer("can_frames_per_network", static_cast<std::int64_t>(limits.can_frames_per_network));
+        w.integer("can_frames_total", static_cast<std::int64_t>(limits.can_frames_total));
+        w.begin_array("can_dropped");
+        if (input.record != nullptr)
+        {
+            for (const scenario::TimelineRecord::CanDrop& drop : input.record->can_dropped())
+            {
+                w.begin_object();
+                w.string("network", drop.network);
+                w.integer("dropped", static_cast<std::int64_t>(drop.dropped));
+                write_ms(w, "dropped_from_ms", drop.dropped_from);
+                write_ms(w, "dropped_before_ms", drop.dropped_before);
+                w.integer("untimed_dropped", static_cast<std::int64_t>(drop.untimed_dropped));
                 w.end_object();
             }
         }
@@ -663,11 +726,16 @@ std::string format_timeline_json(const TimelineInput& input)
     }
     w.end_array();
     const bool include_events = input.record_events || (input.record != nullptr && input.record->events_enabled());
+    const bool include_can = input.record_can || (input.record != nullptr && input.record->can_enabled());
     write_series(w, input);
     write_lines(w, input);
     if (include_events)
     {
         write_events(w, input);
+    }
+    if (include_can)
+    {
+        write_can_frames(w, input);
     }
     w.begin_array("findings");
     for (const config::Finding& finding : input.findings)
@@ -695,7 +763,7 @@ std::string format_timeline_json(const TimelineInput& input)
         w.end_object();
     }
     w.end_array();
-    write_limits(w, input, include_events);
+    write_limits(w, input, include_events, include_can);
     w.end_object();
     return w.take() + "\n";
 }

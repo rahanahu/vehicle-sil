@@ -1006,6 +1006,14 @@
       "source": "仮想時刻付き ECU イベントを記録",
       "target": "Record virtual-time ECU events"
     },
+    "278844496535824766": {
+      "source": " 仮想時刻付き CAN フレームを記録 ",
+      "target": " Record virtual-time CAN frames "
+    },
+    "8103178702480470571": {
+      "source": "仮想時刻付き CAN フレームを記録",
+      "target": "Record virtual-time CAN frames"
+    },
     "4650179018992621111": {
       "source": "なし（自分で操作する）",
       "target": "None (control the run yourself)"

@@ -42,6 +42,10 @@ void RunRecorder::begin(control_silkit::HubTransport& transport)
     {
         record_->enable_events();
     }
+    if (ctx_.plan.record_can)
+    {
+        record_->enable_can();
+    }
     const std::size_t participant_count = ctx_.config.participants.size();
     bindings_.assign(participant_count, {});
     std::vector<std::string> incarnations(participant_count);
@@ -92,6 +96,33 @@ void RunRecorder::begin(control_silkit::HubTransport& transport)
     if (ctx_.plan.record_events)
     {
         samples_.events_begins();
+    }
+    if (ctx_.plan.record_can)
+    {
+        can_recorder_.recording_begins();
+    }
+}
+
+void RunRecorder::consume_can(RunCanRecorder::Taken taken)
+{
+    if (!record_ || !record_->can_enabled())
+    {
+        return;
+    }
+    for (std::size_t i = 0; i < taken.untimed_dropped.size(); ++i)
+    {
+        if (taken.untimed_dropped[i] > 0)
+        {
+            record_->note_untimed_can_dropped(can_recorder_.network_name(static_cast<std::uint16_t>(i)),
+                                              taken.untimed_dropped[i]);
+        }
+    }
+    for (const CapturedCanFrame& f : taken.frames)
+    {
+        const std::string_view net = can_recorder_.network_name(f.net_idx);
+        record_->can_frame(net, f.at, f.id, f.extended(), f.rtr(), f.fd(), f.dlc,
+                           std::span<const std::uint8_t>(f.data.data(), f.data_len));
+        last_seen_ = last_seen_ ? std::max(*last_seen_, f.at) : f.at;
     }
 }
 
@@ -160,6 +191,10 @@ void RunRecorder::drain()
     {
         consume_events(samples_.take_events());
     }
+    if (record_->can_enabled())
+    {
+        consume_can(can_recorder_.take());
+    }
 }
 
 void RunRecorder::finish(SimulationController& controller, const WatchResult& watched, RunOutcome& outcome)
@@ -171,12 +206,14 @@ void RunRecorder::finish(SimulationController& controller, const WatchResult& wa
     auto remaining = samples_.take_and_end();
     auto remaining_events =
         ctx_.plan.record_events ? samples_.take_events_and_end() : std::vector<RunSamples::EventBatch>{};
+    auto remaining_can = ctx_.plan.record_can ? can_recorder_.take_and_end() : RunCanRecorder::Taken{};
     if (!record_)
     {
         return;
     }
     consume(std::move(remaining));
     consume_events(std::move(remaining_events));
+    consume_can(std::move(remaining_can));
     std::optional<SimTime> to = last_seen_;
     if (watched.end == WatchEnd::Ended && watched.state == orch::ParticipantState::Shutdown &&
         ctx_.plan.stop_at_ms && controller.wall_time_to_stop_at().has_value())
@@ -193,6 +230,7 @@ void RunRecorder::end()
     {
         samples_.recording_ends();
         samples_.events_ends();
+        can_recorder_.recording_ends();
     }
 }
 

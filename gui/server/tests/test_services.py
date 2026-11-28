@@ -493,6 +493,83 @@ def test_session_intent_preserves_record_events_in_summary(tmp_path: Path) -> No
     asyncio.run(main())
 
 
+def test_config_service_validates_and_forwards_record_can(tmp_path: Path) -> None:
+    from vehicle_sil_control.protocol import request_text
+
+    root = _simple_root(tmp_path)
+
+    async def main() -> None:
+        cfg_file = ConfigService(root, FakeLauncher()).resolve("simple.yaml")
+
+        # 1. record_can=True is forwarded and serialized by request_text()
+        svc = ConfigService(root, FakeLauncher())
+        intent, _, _ = await svc.build_intent(
+            cfg_file,
+            RunRequest(file="simple.yaml", record_can=True),
+            None,
+        )
+        assert intent["record_can"] is True
+        serialized = json.loads(request_text(intent))
+        assert serialized["record_can"] is True
+
+        # 2. Omitted or False stays omitted from intent (even on launchers without record-can)
+        no_can_features = [f for f in FakeLauncher().features if f != "record-can"]
+        svc_old = ConfigService(root, FakeLauncher(features=no_can_features))
+        intent_omitted, _, _ = await svc_old.build_intent(cfg_file, RunRequest(file="simple.yaml"), None)
+        assert "record_can" not in intent_omitted
+        intent_false, _, _ = await svc_old.build_intent(
+            cfg_file, RunRequest(file="simple.yaml", record_can=False), None,
+        )
+        assert "record_can" not in intent_false
+
+        # 3. Launcher without record-can + record_can=True -> 409 launcher-unsupported
+        with pytest.raises(Refused) as exc_unsup:
+            await svc_old.build_intent(cfg_file, RunRequest(file="simple.yaml", record_can=True), None)
+        assert (exc_unsup.value.status, exc_unsup.value.code) == (409, "launcher-unsupported")
+
+    asyncio.run(main())
+
+
+def test_session_intent_preserves_record_can_and_hot_start_isolation(tmp_path: Path) -> None:
+    from fake_runtime import in_process_gui
+
+    root = _simple_root(tmp_path)
+
+    async def main() -> None:
+        async with in_process_gui(root=root) as gui:
+            status1, body1 = await gui.client.post(
+                "api/run",
+                {
+                    "file": "simple.yaml",
+                    "disable": [],
+                    "record_can": True,
+                },
+            )
+            assert status1 == 200, body1
+            s_status1, s_body1 = await gui.client.get("api/session")
+            assert s_status1 == 200
+            assert s_body1["session"]["intent"]["record_can"] is True
+            assert gui.runtime.runs[0].spec.timeline is not None
+            await gui.runtime.runs[0].finish(returncode=0)
+
+            # Second run on the same server without record_can must not inherit record_can or timeline
+            status2, body2 = await gui.client.post(
+                "api/run",
+                {
+                    "file": "simple.yaml",
+                    "disable": [],
+                },
+            )
+            assert status2 == 200, body2
+            s_status2, s_body2 = await gui.client.get("api/session")
+            assert s_status2 == 200
+            assert "record_can" not in (s_body2["session"]["intent"] or {})
+            assert gui.runtime.runs[1].spec.timeline is None
+            await gui.runtime.runs[1].finish(returncode=0)
+
+    asyncio.run(main())
+
+
 def test_run_manager_write_variables_honors_handover_and_prestate_refusals(tmp_path: Path) -> None:
     from vehicle_sil_gui.session import Limits as SessionLimits
     from vehicle_sil_gui.source import PeerInfo

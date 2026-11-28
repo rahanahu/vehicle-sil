@@ -10,11 +10,15 @@ target_include_directories(vehicle_sil_peer_tests PRIVATE ${PROJECT_SOURCE_DIR}/
 set_tests_properties(peer.peer_reports_a_lin_controller_that_cannot_be_initialised_and_names_the_network
                      PROPERTIES COST 32)
 
-# Every SIL Kit bus controller of the libraries is made in libs/peer/src/peer.cpp on the network's
-# name in the simulation (Peer::simulation_name(), PeerOptions::network_names); the check itself
-# must reject a controller made on the code's name, and one made in another file.
+# Every SIL Kit bus controller of the ECU libraries is made in libs/peer/src/peer.cpp on the
+# network's name in the simulation (Peer::simulation_name(), PeerOptions::network_names); the
+# check itself must reject a controller made on the code's name, and one made in another file.
+# Exception: libs/runner/src/run_can_recorder.cpp runs on the launcher's SimulationController and
+# already receives canonical simulation network names from SimulationConfig::networks (never ECU-local
+# names).
 add_test(NAME peer.controllers_are_made_on_the_simulation_name
          COMMAND ${CMAKE_COMMAND} -DDIRS=${PROJECT_SOURCE_DIR}/libs -DFILE=peer.cpp
+                 -DALLOW_SIMULATION_FILES=${PROJECT_SOURCE_DIR}/libs/runner/src/run_can_recorder.cpp
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckControllerNetworks.cmake)
 add_test(NAME peer.controller_check_rejects_a_direct_name
          COMMAND ${CMAKE_COMMAND} -DDIRS=${CMAKE_CURRENT_SOURCE_DIR}/controller_fixtures/direct -DFILE=peer.cpp

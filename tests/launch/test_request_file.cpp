@@ -147,7 +147,7 @@ TEST_CASE(a_request_file_with_a_mistake_is_refused_with_the_file_and_the_line)
 {
     check_text(errors_of("{\n  \"vehicle_sil_run_request\": 1,\n  \"conect\": {}\n}"),
                "bench.json, line 3: unknown key 'conect': did you mean 'connect'? (the keys here: vehicle_sil_run_request, "
-               "variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record, record_after_fail_ms, record_events)\n");
+               "variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed, start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record, record_after_fail_ms, record_events, record_can)\n");
     // What the caller decides is not in the file.
     CHECK(errors_of(with("\"timeline\": \"t.json\"")).find("unknown key 'timeline'") != std::string::npos);
     CHECK(errors_of(with("\"file\": \"sim.yaml\"")).find("unknown key 'file'") != std::string::npos);
@@ -1009,4 +1009,43 @@ TEST_CASE(record_events_is_read_validated_and_merged_like_strict)
     const RunRequest mergedBoth = with_request_file(cliTrue, fileTrue, false);
     CHECK(mergedBoth.intent.record_events);
     CHECK(!mergedBoth.origin.has("record_events"));
+}
+
+TEST_CASE(record_can_is_read_validated_and_merged_like_strict)
+{
+    const RequestFile fileTrue = file_of(with("\"record_can\": true"));
+    CHECK(fileTrue.fields == list("record_can"));
+    CHECK(fileTrue.intent.record_can);
+
+    const RequestFile fileFalse = file_of(with("\"record_can\": false"));
+    CHECK(fileFalse.fields == list("record_can"));
+    CHECK(!fileFalse.intent.record_can);
+
+    for (const char* bad : {"\"record_can\": 1", "\"record_can\": \"true\"", "\"record_can\": null",
+                            "\"record_can\": []"})
+    {
+        CHECK(!errors_of(with(bad)).empty());
+        CHECK(!read_request_intent(std::string("{") + bad + "}", "intent").file.has_value());
+    }
+
+    const RequestFileRead inlineRead = read_request_intent(R"({"record_can":true})", "intent");
+    CHECK(inlineRead.findings.empty() && inlineRead.file.has_value());
+    CHECK(inlineRead.file && inlineRead.file->intent.record_can);
+
+    // File true sets intent and records origin; CLI true wins over file false (OR merge).
+    const RunRequest fromFile = with_request_file(RunRequest{}, fileTrue, false);
+    CHECK(fromFile.intent.record_can);
+    CHECK(fromFile.origin.has("record_can"));
+    CHECK(messages(fromFile, RequestCommand::Test) ==
+          list("test does not accept record_can in bench.json: run one simulation with vehicle_sil_launch run --record-can"));
+
+    RunRequest cliTrue;
+    cliTrue.intent.record_can = true;
+    const RunRequest mergedFalse = with_request_file(cliTrue, fileFalse, false);
+    CHECK(mergedFalse.intent.record_can);
+    CHECK(!mergedFalse.origin.has("record_can"));
+
+    const RunRequest mergedBoth = with_request_file(cliTrue, fileTrue, false);
+    CHECK(mergedBoth.intent.record_can);
+    CHECK(!mergedBoth.origin.has("record_can"));
 }

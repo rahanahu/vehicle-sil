@@ -576,6 +576,8 @@ def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
         C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record_after_fail_ms": 300})
     with pytest.raises(ValidationError):
         C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record_events": True})
+    with pytest.raises(ValidationError):
+        C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record_can": True})
 
     rec_req = C.RunRequest.model_validate({"file": "a.yaml", "record": ["Engine.engine.mode", "Dashboard.speed"]})
     assert rec_req.record == ["Engine.engine.mode", "Dashboard.speed"]
@@ -619,6 +621,19 @@ def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
     ):
         with pytest.raises(ValidationError):
             C.RunRequest.model_validate(bad_ev)
+
+    can_req = C.RunRequest.model_validate({"file": "a.yaml", "record_can": True})
+    assert can_req.record_can is True
+    assert C.CheckFileRequest.model_validate({"file": "a.yaml", "record_can": False}).record_can is False
+    assert C.SessionIntentSummary.model_validate({"record_can": True}).record_can is True
+    for bad_can in (
+        {"file": "a.yaml", "record_can": None},
+        {"file": "a.yaml", "record_can": 1},
+        {"file": "a.yaml", "record_can": 0},
+        {"file": "a.yaml", "record_can": "true"},
+    ):
+        with pytest.raises(ValidationError):
+            C.RunRequest.model_validate(bad_can)
 
     base_rec = {
         "run_id": "1",

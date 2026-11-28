@@ -101,6 +101,7 @@ def _split_once_arguments(
     record: Sequence[str] = (),
     record_after_fail_ms: Optional[int] = None,
     record_events: bool = False,
+    record_can: bool = False,
 ) -> Tuple[List[str], Dict[str, Any]]:
     """Splits legacy single-run CLI `arguments` into `serve --once` host CLI flags and the initial
     stdin `{"command": "run", ...}` payload."""
@@ -131,6 +132,10 @@ def _split_once_arguments(
         raise TypeError("record_events must be a bool")
     if record_events:
         intent["record_events"] = True
+    if not isinstance(record_can, bool):
+        raise TypeError("record_can must be a bool")
+    if record_can:
+        intent["record_can"] = True
 
     i = 0
     n = len(arguments)
@@ -147,6 +152,9 @@ def _split_once_arguments(
             i += 1
         elif arg == "--record-events":
             intent["record_events"] = True
+            i += 1
+        elif arg == "--record-can":
+            intent["record_can"] = True
             i += 1
         elif arg == "--stop-at-ms" and i + 1 < n:
             intent["stop_at_ms"] = int(arguments[i + 1])
@@ -251,6 +259,7 @@ class Launch:
         record: Sequence[str] = (),
         record_after_fail_ms: Optional[int] = None,
         record_events: bool = False,
+        record_can: bool = False,
         arguments: Sequence[str] = (),
         cwd: Optional[str] = None,
         stderr=None,
@@ -265,6 +274,7 @@ class Launch:
             record=record,
             record_after_fail_ms=record_after_fail_ms,
             record_events=record_events,
+            record_can=record_can,
         )
         command = [
             os.fspath(launcher),

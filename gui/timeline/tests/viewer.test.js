@@ -4079,3 +4079,396 @@ test('virtual-time ECU events: parsing, grouping, filtering, ticks, drawer, pinC
   );
   assert.ok(bannerJa.textContent.includes('ECU 側キューで 3 件欠落'), bannerJa.textContent);
 });
+
+test('virtual-time CAN frames: J1939 PDU1/PDU2 + 11-bit decode, filtering, click-to-pin, nearest highlight, dropped/untimed banner, 20k pagination, XSS safety, and legacy v1 invariance', async () => {
+  // 1. Exact stateless 29-bit J1939 decode (PDU1 broadcast, PDU1 unicast, PDU2, DP/EDP)
+  assert.deepEqual(T.decodeJ1939Id(0x18eeff00), {
+    priority: 6,
+    pgn: 0xee00,
+    pgnHex: '0xEE00',
+    sa: 0x00,
+    saHex: '0x00',
+    da: 0xff,
+    daHex: '0xFF',
+    pdu1: true,
+  });
+  assert.deepEqual(T.decodeJ1939Id(0x18ea1700), {
+    priority: 6,
+    pgn: 0xea00,
+    pgnHex: '0xEA00',
+    sa: 0x00,
+    saHex: '0x00',
+    da: 0x17,
+    daHex: '0x17',
+    pdu1: true,
+  });
+  assert.deepEqual(T.decodeJ1939Id(0x0cf00400), {
+    priority: 3,
+    pgn: 0xf004,
+    pgnHex: '0xF004',
+    sa: 0x00,
+    saHex: '0x00',
+    da: 0xff,
+    daHex: '0xFF',
+    pdu1: false,
+  });
+  // DP=1, EDP=1 (0x1B F0 04 2A -> P=6, EDP=1, DP=1, PF=0xF0, PS=0x04, SA=0x2A)
+  assert.deepEqual(T.decodeJ1939Id(0x1bf0042a), {
+    priority: 6,
+    pgn: 0x3f004,
+    pgnHex: '0x3F004',
+    sa: 0x2a,
+    saHex: '0x2A',
+    da: 0xff,
+    daHex: '0xFF',
+    pdu1: false,
+  });
+  assert.equal(T.formatCanIdHex(0x0cf00400, true), '0x0CF00400');
+  assert.equal(T.formatCanIdHex(0x123, false), '0x123');
+  assert.equal(T.formatCanDataHex('0102030405060708'), '01 02 03 04 05 06 07 08');
+  assert.equal(T.formatCanDataHex(''), '');
+
+  // 2. Fixture parsing, metadata, and filtering
+  const tl = fixture('can_frames');
+  const m = model(tl);
+  assert.equal(m.canFrames.length, 5);
+  assert.equal(m.canDropped.length, 0);
+  assert.equal(m.canFrames[0].idHex, '0x18EEFF00');
+  assert.equal(m.canFrames[1].j1939.daHex, '0x17');
+  assert.equal(m.canFrames[2].j1939.pgnHex, '0xF004');
+  assert.equal(m.canFrames[3].j1939, null);
+  assert.equal(m.canFrames[3].fd, true);
+  assert.equal(m.canFrames[4].rtr, true);
+  assert.equal(T.modelMetadata(m, 'can_frames.timeline.json').canFrameCount, 5);
+
+  assert.equal(T.filterCanFrames(m.canFrames, { network: 'AUX_CAN' }).length, 2);
+  assert.equal(T.filterCanFrames(m.canFrames, { query: 'F004' }).length, 1);
+  assert.equal(T.filterCanFrames(m.canFrames, { query: '0x00→0x17' }).length, 1);
+  assert.equal(T.filterCanFrames(m.canFrames, { query: 'DE AD' }).length, 1);
+  assert.equal(T.filterCanFrames(m.canFrames, { query: 'rtr' }).length, 1);
+  assert.equal(
+    T.filterCanFrames(m.canFrames, { visibleOnly: true, view: [80, 260] })
+      .map((f) => f.atMs)
+      .join(','),
+    '100,250',
+  );
+
+  // 3. Legacy v1 timeline without can_frames remains unchanged (0 frames, hidden #can-frames)
+  const legacyTl = reference('waits');
+  assert.equal(T.modelMetadata(model(legacyTl), 'waits.timeline.json').canFrameCount, 0);
+  const { Element } = makeMockDom();
+  const elLegacy = new Element();
+  elLegacy.data = legacyTl;
+  elLegacy.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(elLegacy._shadow.getElementById('can-frames').hidden, true);
+
+  // 4. Embedded drawer rendering (even with hide="tables"), zero CAN SVG elements on chart, click-to-pin, Δt, nearest highlight
+  const el = new Element();
+  el.hide = 'header summary help tables toolbar';
+  el.data = tl;
+  const cursorEvents = [];
+  el.addEventListener('cursorchange', (e) => cursorEvents.push(e.detail.cursor));
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  assert.equal(el._shadow.getElementById('can-frames').hidden, false);
+  const rows = el._shadow.querySelectorAll('[data-testid=can-frame-row]');
+  assert.equal(rows.length, 5);
+  assert.equal(el._shadow.querySelectorAll('[data-testid=can-dropped-banner]').length, 0);
+  // Check rendered J1939 decode + 11-bit standard + FD/RTR badges
+  assert.ok(
+    rows[1].textContent.includes('0x18EA1700') &&
+      rows[1].textContent.includes('P6 PGN 0xEA00 0x00→0x17'),
+  );
+  assert.ok(
+    rows[2].textContent.includes('0x0CF00400') &&
+      rows[2].textContent.includes('P3 PGN 0xF004 0x00→0xFF'),
+  );
+  assert.ok(
+    rows[3].textContent.includes('0x123') &&
+      rows[3].textContent.includes('FD') &&
+      !rows[3].textContent.includes('PGN'),
+  );
+  assert.ok(rows[4].textContent.includes('0x200') && rows[4].textContent.includes('RTR'));
+
+  // Click 100 ms row -> pins cursor at 100 ms, marks selected + aria-selected="true", updates Δt
+  rows[2].dispatchEvent({ type: 'click', stopPropagation() {}, preventDefault() {} });
+  assert.equal(el.cursor, 100);
+  assert.equal(cursorEvents[cursorEvents.length - 1], 100);
+  assert.equal(rows[2].attrs['aria-selected'], 'true');
+  assert.ok(rows[2].className.includes('selected'));
+  const deltas = el._shadow.querySelectorAll('.can-delta').map((n) => n.textContent);
+  assert.deepEqual(deltas, ['-100 ms', '-80 ms', '0 ms', '+150 ms', '+200 ms']);
+
+  // Pinning cursor at 240 ms via pinCursor() clears selectedCanIndex and highlights nearest frame (250 ms)
+  assert.equal(el.pinCursor(240), true);
+  assert.equal(el.cursor, 240);
+  assert.ok(!rows[2].className.includes('selected'));
+  assert.ok(rows[3].className.includes('nearest-to-cursor'), rows[3].className);
+  assert.ok(!rows[2].className.includes('nearest-to-cursor'), rows[2].className);
+
+  // Unpin clears selected/active state; clearing cursor removes nearest highlight and resets Δt
+  el.unpinCursor();
+  assert.ok(!rows[2].className.includes('selected'));
+  assert.equal(rows[2].attrs['aria-selected'], 'false');
+  el.cursor = null;
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el.cursor, null);
+  assert.ok(!rows[3].className.includes('nearest-to-cursor'));
+  assert.deepEqual(
+    el._shadow.querySelectorAll('.can-delta').map((n) => n.textContent),
+    ['—', '—', '—', '—', '—'],
+  );
+
+  // Network dropdown, search, and Visible range only synced to zoom
+  const netSelect = el._shadow.getElementById('can-frames-network');
+  netSelect.value = 'AUX_CAN';
+  netSelect.dispatchEvent({ type: 'change', target: netSelect });
+  assert.equal(el._shadow.querySelectorAll('[data-testid=can-frame-row]').length, 2);
+  netSelect.value = '';
+  netSelect.dispatchEvent({ type: 'change', target: netSelect });
+
+  const searchInput = el._shadow.getElementById('can-frames-search');
+  searchInput.value = '0xEA00';
+  searchInput.dispatchEvent({ type: 'input', target: searchInput });
+  assert.equal(el._shadow.querySelectorAll('[data-testid=can-frame-row]').length, 1);
+  searchInput.value = '';
+  searchInput.dispatchEvent({ type: 'input', target: searchInput });
+
+  const visibleCb = el._shadow.getElementById('can-frames-visible-only');
+  visibleCb.checked = true;
+  visibleCb.dispatchEvent({ type: 'change', target: visibleCb });
+  el.from = 90;
+  el.to = 260;
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.deepEqual(
+    el._shadow.querySelectorAll('[data-testid=can-frame-row]').map((n) => n.attrs['data-can-at']),
+    ['100', '250'],
+  );
+
+  // 5. Mutual exclusion between ECU event selection and CAN frame selection
+  const bothTl = JSON.parse(JSON.stringify(tl));
+  bothTl.events = [{ at_ms: 20, participant: 'Engine', level: 'info', text: 'claimed' }];
+  const elBoth = new Element();
+  elBoth.data = bothTl;
+  elBoth.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const evRow = elBoth._shadow.querySelectorAll('[data-testid=ecu-event-row]')[0];
+  const canRow = elBoth._shadow.querySelectorAll('[data-testid=can-frame-row]')[2];
+  canRow.dispatchEvent({ type: 'click', stopPropagation() {}, preventDefault() {} });
+  assert.ok(canRow.className.includes('selected'));
+  evRow.dispatchEvent({ type: 'click', stopPropagation() {}, preventDefault() {} });
+  assert.ok(evRow.className.includes('selected'));
+  assert.ok(!canRow.className.includes('selected'));
+  canRow.dispatchEvent({ type: 'click', stopPropagation() {}, preventDefault() {} });
+  assert.ok(canRow.className.includes('selected'));
+  assert.ok(!evRow.className.includes('selected'));
+
+  // 6. can_dropped + untimed_dropped honesty banner (EN & JA), including empty can_frames with untimed_dropped > 0
+  const dropOnlyTl = JSON.parse(JSON.stringify(tl));
+  dropOnlyTl.can_frames = [];
+  dropOnlyTl.limits.can_dropped = [
+    {
+      network: 'J1939_CAN',
+      dropped: 42,
+      dropped_from_ms: 0,
+      dropped_before_ms: 150,
+      untimed_dropped: 7,
+    },
+  ];
+  const elDrop = new Element();
+  elDrop.data = dropOnlyTl;
+  elDrop.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(elDrop._shadow.getElementById('can-frames').hidden, false);
+  const bannerEn = elDrop._shadow.querySelectorAll('[data-testid=can-dropped-banner]')[0];
+  assert.ok(bannerEn, 'can_dropped banner must render even when can_frames is empty');
+  assert.ok(
+    bannerEn.textContent.includes('J1939_CAN: 42 dropped (0 ms to 150 ms)'),
+    bannerEn.textContent,
+  );
+  assert.ok(
+    bannerEn.textContent.includes('7 untimed frames dropped (no virtual timestamp)'),
+    bannerEn.textContent,
+  );
+
+  elDrop.setAttribute('lang', 'ja');
+  elDrop.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  const bannerJa = elDrop._shadow.querySelectorAll('[data-testid=can-dropped-banner]')[0];
+  assert.ok(
+    bannerJa.textContent.includes('一部の CAN フレームが欠けています。'),
+    bannerJa.textContent,
+  );
+  assert.ok(bannerJa.textContent.includes('仮想時刻なしの 7 件を除外'), bannerJa.textContent);
+
+  // 7. Manual CAN-only and multi-stream summaries (EN & JA)
+  const manualCanTl = JSON.parse(JSON.stringify(fixture('manual_run')));
+  manualCanTl.variables = [];
+  manualCanTl.series = [];
+  manualCanTl.can_frames = tl.can_frames.slice(0, 3);
+  const elManualCan = new Element();
+  elManualCan.data = manualCanTl;
+  elManualCan.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.ok(
+    elManualCan._shadow
+      .getElementById('summary')
+      .textContent.includes('Recorded 3 CAN frames up to 500 ms'),
+    elManualCan._shadow.getElementById('summary').textContent,
+  );
+  elManualCan.setAttribute('lang', 'ja');
+  elManualCan.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.ok(
+    elManualCan._shadow
+      .getElementById('summary')
+      .textContent.includes('3 件の CAN フレームを 500 ms まで記録しました'),
+    elManualCan._shadow.getElementById('summary').textContent,
+  );
+
+  // 8. 20,000 frames pagination caps initial DOM render at 500 rows with Show all button
+  const bigTl = JSON.parse(JSON.stringify(tl));
+  bigTl.can_frames = Array.from({ length: 20_000 }, (_, i) => ({
+    at_ms: i * 0.1,
+    network: 'J1939_CAN',
+    id: 0x0cf00400,
+    extended: true,
+    dlc: 8,
+    data: '0000006009000000',
+  }));
+  const elBig = new Element();
+  elBig.data = bigTl;
+  elBig.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(elBig._shadow.querySelectorAll('[data-testid=can-frame-row]').length, 500);
+  const showAllBtn = elBig._shadow.querySelectorAll('[data-testid=can-frames-show-all]')[0];
+  assert.ok(showAllBtn && showAllBtn.textContent.includes('20000'));
+  // Zero CAN SVG elements added to the chart
+  assert.equal(
+    findNodes(elBig._shadow.getElementById('chart'), (n) =>
+      (n.attrs?.['data-testid'] || '').includes('can'),
+    ).length,
+    0,
+  );
+
+  // 9. XSS safety: HTML tags in network / data stay plain text (zero injected elements)
+  const xssTl = JSON.parse(JSON.stringify(tl));
+  xssTl.can_frames = [
+    {
+      at_ms: 10,
+      network: '<img src=x onerror=alert(1)>',
+      id: 0x123,
+      extended: false,
+      dlc: 2,
+      data: '<script>alert(2)</script>',
+    },
+  ];
+  const elXss = new Element();
+  elXss.data = xssTl;
+  elXss.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const xssBox = elXss._shadow.getElementById('can-frames');
+  assert.equal(findNodes(xssBox, (n) => n.tagName === 'img' || n.tagName === 'script').length, 0);
+  assert.ok(xssBox.textContent.includes('<img src=x onerror=alert(1)>'));
+});
+
+test('CAN and ECU event row selection clears cleanly on jumpToFailure(), focusStep(), ArrowRight, and el.cursor = null with zero dual aria-selected', async () => {
+  const tl = JSON.parse(JSON.stringify(fixture('can_frames')));
+  // Convert step 2 into a failed step at 300 ms so jumpToFailure() targets 300 ms while step 1 is at 0 ms
+  tl.scenario.status = 'failed';
+  tl.scenario.over_at_ms = 300;
+  tl.scenario.recorded_to_ms = 300;
+  tl.steps[1].status = 'failed';
+  tl.steps[1].code = 'scenario-failed';
+  tl.steps[1].message = 'speed too low';
+  tl.steps[1].failed = {
+    at_ms: 300,
+    code: 'scenario-failed',
+    conditions: [{ condition: 0, value: 1200, sample_ms: 300 }],
+    writes: [],
+    write: null,
+  };
+  tl.events = [
+    { at_ms: 100, participant: 'Engine', level: 'info', text: 'ramp started' },
+    { at_ms: 300, participant: 'Engine', level: 'error', text: 'speed check failed' },
+  ];
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  const canRows = () => el._shadow.querySelectorAll('[data-testid=can-frame-row]');
+  const evRows = () => el._shadow.querySelectorAll('[data-testid=ecu-event-row]');
+  const click = (node) =>
+    node.dispatchEvent({ type: 'click', stopPropagation() {}, preventDefault() {} });
+
+  // 1. Click CAN row 0 (0 ms), then jumpToFailure() -> 300 ms: row 0 clears .selected & aria-selected, only row 4 (300 ms) is active
+  click(canRows()[0]);
+  assert.ok(canRows()[0].className.includes('selected'));
+  assert.equal(el.jumpToFailure(), true);
+  assert.equal(el.cursor, 300);
+  assert.ok(!canRows()[0].className.includes('selected'));
+  assert.equal(canRows()[0].attrs['aria-selected'], 'false');
+  assert.deepEqual(
+    canRows()
+      .filter((r) => r.attrs['aria-selected'] === 'true')
+      .map((r) => r.attrs['data-can-index']),
+    ['4'],
+  );
+
+  // Same for ECU event row 0 (100 ms) + jumpToFailure() -> 300 ms: no dual aria-selected
+  click(evRows()[0]);
+  assert.ok(evRows()[0].className.includes('selected'));
+  assert.equal(el.jumpToFailure(), true);
+  assert.ok(!evRows()[0].className.includes('selected'));
+  assert.equal(evRows()[0].attrs['aria-selected'], 'false');
+  assert.deepEqual(
+    evRows()
+      .filter((r) => r.attrs['aria-selected'] === 'true')
+      .map((r) => r.attrs['data-event-index']),
+    ['1'],
+  );
+
+  // 2. Click CAN row 2 (100 ms), then focusStep(1) -> 0 ms: row 2 clears .selected & aria-selected
+  click(canRows()[2]);
+  assert.ok(canRows()[2].className.includes('selected'));
+  assert.equal(el.focusStep(1), true);
+  assert.equal(el.cursor, 0);
+  assert.ok(!canRows()[2].className.includes('selected'));
+  assert.equal(canRows()[2].attrs['aria-selected'], 'false');
+
+  // 3. Click CAN row 2 (100 ms), then ArrowRight on #chart -> 110 ms: row 2 clears .selected & aria-selected
+  click(canRows()[2]);
+  assert.ok(canRows()[2].className.includes('selected'));
+  const chart = el._shadow.getElementById('chart');
+  chart.dispatchEvent({ type: 'keydown', key: 'ArrowRight', shiftKey: false, preventDefault() {} });
+  assert.equal(el.cursor, 110);
+  assert.ok(!canRows()[2].className.includes('selected'));
+  assert.equal(canRows()[2].attrs['aria-selected'], 'false');
+
+  // 4. Click CAN row 2 (100 ms) and ECU event row 0 (100 ms), then el.cursor = null: clears .selected & aria-selected
+  click(canRows()[2]);
+  assert.ok(canRows()[2].className.includes('selected'));
+  el.cursor = null;
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el.cursor, null);
+  assert.equal(
+    canRows().filter((r) => r.className.includes('selected') || r.attrs['aria-selected'] === 'true')
+      .length,
+    0,
+  );
+
+  click(evRows()[0]);
+  assert.ok(evRows()[0].className.includes('selected'));
+  el.cursor = null;
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(
+    evRows().filter((r) => r.className.includes('selected') || r.attrs['aria-selected'] === 'true')
+      .length,
+    0,
+  );
+});

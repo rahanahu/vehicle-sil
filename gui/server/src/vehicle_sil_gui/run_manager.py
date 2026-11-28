@@ -596,7 +596,7 @@ class RunManager:
             if FEATURE_TIMELINE in self.launcher.features and (
                 r.scenario is not None
                 or (
-                    (bool(r.intent.get("record")) or bool(r.intent.get("record_events")))
+                    (bool(r.intent.get("record")) or bool(r.intent.get("record_events")) or bool(r.intent.get("record_can")))
                     and FEATURE_MANUAL_TIMELINE in self.launcher.features
                 )
             ):
