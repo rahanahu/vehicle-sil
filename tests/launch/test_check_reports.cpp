@@ -9,6 +9,7 @@
 #include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/error_result.hpp"
+#include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/process/paths.hpp"
 #include "vehicle_sil/scenario/scenario.hpp"
@@ -1549,15 +1550,61 @@ TEST_CASE(check_scenario_with_cases_and_case_selection)
     CHECK(missingCase.scenario->cases == std::vector<std::string>({"無負荷", "定格"}));
     const std::string missingJson = format_json(missingCase);
     CHECK(missingJson.find("\"result\": \"usage\"") != std::string::npos);
+    CHECK(missingJson.find("\"errors\": 2,\n") != std::string::npos);
+    CHECK(missingJson.find("\"code\": \"usage\"") != std::string::npos);
+    CHECK(missingJson.find("\"code\": \"executable\"") != std::string::npos);
     CHECK(missingJson.find("\"eligible\": true") != std::string::npos);
     CHECK(missingJson.find("\"name\": \"Engine\"") != std::string::npos);
     CHECK(missingJson.find("\"case\": null") != std::string::npos);
     CHECK(missingJson.find("\"case_details\": [") != std::string::npos);
-    // Human-readable text output stays concise on usage (does not dump participant/scenario tables).
+    // Human-readable text output stays concise on usage (does not dump participant/scenario tables),
+    // while preserving the prior executable error alongside the usage error.
     const std::string missingText = format_text(missingCase);
     CHECK(missingText.find("participant  step") == std::string::npos);
     CHECK(missingText.find("scenario cases.yaml") == std::string::npos);
-    CHECK(missingText.find("cannot read sim.yaml: 1 error, 0 warnings, 0 notes") != std::string::npos);
+    CHECK(missingText.find("[executable]") != std::string::npos);
+    CHECK(missingText.find("cannot read sim.yaml: 2 errors, 0 warnings, 0 notes") != std::string::npos);
+
+    // Healthy config without --case keeps 1 error (usage only) and exit 4.
+    {
+        const std::filesystem::path okExe = dir / "ok_ecu";
+        {
+            std::ofstream out(okExe, std::ios::binary);
+            out << "#!/bin/sh\n";
+        }
+#ifndef _WIN32
+        std::filesystem::permissions(okExe, std::filesystem::perms::owner_all);
+#endif
+        const std::optional<ExecutableStamp> stamp = executable_stamp(okExe);
+        CHECK(stamp.has_value());
+        if (stamp)
+        {
+            SavedDescription okDesc;
+            okDesc.name = "Engine";
+            okDesc.command = {"./ok_ecu"};
+            okDesc.executable = *stamp;
+            okDesc.output =
+                "{\"vehicle_sil_ecu\":1,\"vehicle_sil\":\"0.6.0\",\"name\":\"Engine\",\"step_ns\":10000000,"
+                "\"networks\":[],\"control\":{\"transport\":\"silkit\",\"wire_version\":2,\"wire_revision\":1},"
+                "\"variables\":[{\"name\":\"level\",\"type\":\"integer\",\"causality\":\"input\","
+                "\"unit\":\"\",\"min\":0,\"max\":100,\"step\":1,\"description\":\"\",\"items\":[]}]}\n";
+            CHECK(write_saved_descriptions(dir / "ok_descriptions.json", {okDesc}).empty());
+        }
+        std::ofstream out(dir / "sim_healthy.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\nnetworks: []\nparticipants:\n"
+               "  - name: Engine\n    command: [./ok_ecu]\n";
+    }
+    RunRequest healthyMissingReq;
+    healthyMissingReq.host.config = "sim_healthy.yaml";
+    healthyMissingReq.host.descriptions = "ok_descriptions.json";
+    healthyMissingReq.intent.scenario = "cases.yaml";
+    const Checked healthyMissing = check_file(healthyMissingReq);
+    CHECK(healthyMissing.usage);
+    CHECK_EQ(check_exit_code(healthyMissing), 4);
+    CHECK_EQ(healthyMissing.findings.size(), std::size_t{1});
+    CHECK(healthyMissing.findings.front().code == "usage");
+    CHECK(healthyMissing.findings.front().message.find("無負荷, 定格") != std::string::npos);
+    CHECK(format_text(healthyMissing).find("cannot read sim_healthy.yaml: 1 error, 0 warnings, 0 notes") != std::string::npos);
 
     req.intent.scenario = "single_case.yaml";
     const Checked singleMissing = check_file(req);
@@ -1956,4 +2003,192 @@ TEST_CASE(check_file_allows_remote_manual_describe_false_without_loosening_local
         CHECK(std::any_of(r.findings.begin(), r.findings.end(),
                           [](const Finding& f) { return f.severity == Severity::Error && f.code == "executable"; }));
     }
+}
+
+TEST_CASE(check_unselected_case_preserves_prior_config_and_scenario_findings)
+{
+    const auto dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "check-case-preserves-findings";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    const std::filesystem::path brakeExe = dir / "brake_ecu";
+    {
+        std::ofstream out(brakeExe, std::ios::binary);
+        out << "#!/bin/sh\n";
+    }
+#ifndef _WIN32
+    std::filesystem::permissions(brakeExe, std::filesystem::perms::owner_all);
+#endif
+    const std::optional<ExecutableStamp> stamp = executable_stamp(brakeExe);
+    CHECK(stamp.has_value());
+    if (!stamp)
+    {
+        return;
+    }
+
+    SavedDescription brakeDesc;
+    brakeDesc.name = "Brake";
+    brakeDesc.command = {"./brake_ecu"};
+    brakeDesc.executable = *stamp;
+    brakeDesc.output =
+        "{\"vehicle_sil_ecu\":1,\"vehicle_sil\":\"0.6.0\",\"name\":\"Brake\",\"step_ns\":10000000,"
+        "\"networks\":[],\"control\":{\"transport\":\"silkit\",\"wire_version\":1,\"wire_revision\":0},"
+        "\"variables\":[{\"name\":\"pressure\",\"type\":\"real\",\"causality\":\"input\","
+        "\"unit\":\"bar\",\"min\":0,\"max\":100,\"step\":0.1,\"description\":\"Brake pressure\",\"items\":[]}]}\n";
+    SavedDescription healthyBrakeDesc = brakeDesc;
+    healthyBrakeDesc.command = {"./brake_ecu", "--ok"};
+    healthyBrakeDesc.output =
+        "{\"vehicle_sil_ecu\":1,\"vehicle_sil\":\"0.6.0\",\"name\":\"Brake\",\"step_ns\":10000000,"
+        "\"networks\":[],\"control\":{\"transport\":\"silkit\",\"wire_version\":2,\"wire_revision\":1},"
+        "\"variables\":[{\"name\":\"pressure\",\"type\":\"real\",\"causality\":\"input\","
+        "\"unit\":\"bar\",\"min\":0,\"max\":100,\"step\":0.1,\"description\":\"Brake pressure\",\"items\":[]}]}\n";
+    CHECK(write_saved_descriptions(dir / "descriptions.json", {brakeDesc, healthyBrakeDesc}).empty());
+
+    {
+        std::ofstream out(dir / "sim_broken.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Engine\n"
+               "    command: [missing/engine]\n"
+               "  - name: Brake\n"
+               "    command: [./brake_ecu]\n";
+    }
+    {
+        std::ofstream out(dir / "sim_other.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Brake\n"
+               "    command: [./brake_ecu]\n";
+    }
+    {
+        std::ofstream out(dir / "sim_healthy.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Brake\n"
+               "    command: [./brake_ecu, --ok]\n";
+    }
+    {
+        std::ofstream out(dir / "cases_with_error.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\n"
+               "name: load\n"
+               "unknown_top_key: 1\n"
+               "params: { lvl: 10 }\n"
+               "cases:\n"
+               "  idle: { params: { lvl: 0 } }\n"
+               "  full: { params: { lvl: 50 } }\n"
+               "steps:\n"
+               "  - set: { Brake.pressure: \"${lvl}\" }\n";
+    }
+    {
+        std::ofstream out(dir / "cases_healthy.yaml", std::ios::binary);
+        out << "vehicle_sil_scenario: 1\n"
+               "name: load\n"
+               "params: { lvl: 10 }\n"
+               "cases:\n"
+               "  idle: { params: { lvl: 0 } }\n"
+               "  full: { params: { lvl: 50 } }\n"
+               "steps:\n"
+               "  - set: { Brake.pressure: \"${lvl}\" }\n";
+    }
+    const vehicle_sil::config::test::InDirectory there(dir);
+
+    const auto has_finding = [](const Checked& c, Severity sev, std::string_view code) {
+        return std::any_of(c.findings.begin(), c.findings.end(), [&](const Finding& f) {
+            return f.severity == sev && f.code == code;
+        });
+    };
+
+    // 1. Broken config + scenario top-level error + unselected case preserves all errors, warnings, and notes.
+    RunRequest brokenReq;
+    brokenReq.host.config = "sim_broken.yaml";
+    brokenReq.host.descriptions = "descriptions.json";
+    brokenReq.host.compare_commands = "sim_other.yaml";
+    brokenReq.intent.scenario = "cases_with_error.yaml";
+    const Checked brokenUnselected = check_file(brokenReq);
+    CHECK(brokenUnselected.usage);
+    CHECK_EQ(check_exit_code(brokenUnselected), 4);
+    CHECK(!brokenUnselected.findings.empty());
+    if (!brokenUnselected.findings.empty())
+    {
+        CHECK(brokenUnselected.findings.front().code == "usage");
+        CHECK(brokenUnselected.findings.front().message.find("idle, full") != std::string::npos);
+    }
+    CHECK(has_finding(brokenUnselected, Severity::Error, "usage"));
+    CHECK(has_finding(brokenUnselected, Severity::Error, "executable"));
+    CHECK(has_finding(brokenUnselected, Severity::Error, "unknown-key"));
+    CHECK(has_finding(brokenUnselected, Severity::Warning, "control-link-version"));
+    CHECK(has_finding(brokenUnselected, Severity::Note, "commands-changed"));
+    CHECK_EQ(brokenUnselected.errors(), std::size_t{3});
+    CHECK_EQ(brokenUnselected.warnings(), std::size_t{1});
+    CHECK_EQ(brokenUnselected.notes(), std::size_t{1});
+    CHECK_EQ(brokenUnselected.findings.size(), std::size_t{5});
+    const std::string brokenJson = format_json(brokenUnselected);
+    CHECK(brokenJson.find("  \"result\": \"usage\",\n") != std::string::npos);
+    CHECK(brokenJson.find("  \"errors\": 3,\n") != std::string::npos);
+    CHECK(brokenJson.find("  \"warnings\": 1,\n") != std::string::npos);
+    CHECK(brokenJson.find("  \"notes\": 1,\n") != std::string::npos);
+    CHECK(brokenJson.find("\"code\": \"executable\"") != std::string::npos);
+    CHECK(brokenJson.find("\"code\": \"unknown-key\"") != std::string::npos);
+    CHECK(brokenJson.find("\"code\": \"control-link-version\"") != std::string::npos);
+    CHECK(brokenJson.find("\"code\": \"commands-changed\"") != std::string::npos);
+
+    // 2. Unknown --case also preserves prior findings while placing usage first with "did you mean".
+    RunRequest unknownReq = brokenReq;
+    unknownReq.intent.scenario_case = "ful";
+    const Checked brokenUnknown = check_file(unknownReq);
+    CHECK(brokenUnknown.usage);
+    CHECK_EQ(check_exit_code(brokenUnknown), 4);
+    CHECK(!brokenUnknown.findings.empty());
+    if (!brokenUnknown.findings.empty())
+    {
+        CHECK(brokenUnknown.findings.front().code == "usage");
+        CHECK(brokenUnknown.findings.front().message.find("did you mean 'full'?") != std::string::npos);
+    }
+    CHECK(has_finding(brokenUnknown, Severity::Error, "executable"));
+    CHECK(has_finding(brokenUnknown, Severity::Error, "unknown-key"));
+    CHECK(has_finding(brokenUnknown, Severity::Warning, "control-link-version"));
+    CHECK(has_finding(brokenUnknown, Severity::Note, "commands-changed"));
+    CHECK_EQ(brokenUnknown.errors(), std::size_t{3});
+    CHECK_EQ(brokenUnknown.warnings(), std::size_t{1});
+    CHECK_EQ(brokenUnknown.notes(), std::size_t{1});
+
+    // 3. A prior config error with line == 0 keeps usage at findings[0] while preserving the config error.
+    RunRequest line0Req;
+    line0Req.host.config = "sim_healthy.yaml";
+    line0Req.host.descriptions = "descriptions.json";
+    line0Req.intent.connect = {{"MISSING_NET", "eth0"}};
+    line0Req.intent.scenario = "cases_healthy.yaml";
+    const Checked line0Checked = check_file(line0Req);
+    CHECK(line0Checked.usage);
+    CHECK_EQ(check_exit_code(line0Checked), 4);
+    CHECK(!line0Checked.findings.empty());
+    if (!line0Checked.findings.empty())
+    {
+        CHECK(line0Checked.findings.front().code == "usage");
+    }
+    CHECK(has_finding(line0Checked, Severity::Error, "connect-network"));
+    CHECK_EQ(line0Checked.errors(), std::size_t{2});
+
+    // 4. Healthy config + healthy multi-case scenario without --case returns exit 4 with candidate cases only.
+    RunRequest healthyReq;
+    healthyReq.host.config = "sim_healthy.yaml";
+    healthyReq.host.descriptions = "descriptions.json";
+    healthyReq.intent.scenario = "cases_healthy.yaml";
+    const Checked healthyMissing = check_file(healthyReq);
+    CHECK(healthyMissing.usage);
+    CHECK_EQ(check_exit_code(healthyMissing), 4);
+    CHECK_EQ(healthyMissing.findings.size(), std::size_t{1});
+    CHECK(healthyMissing.findings.front().code == "usage");
+    CHECK(healthyMissing.findings.front().message.find("idle, full") != std::string::npos);
+
+    // 5. Healthy config + valid --case still passes normally.
+    healthyReq.intent.scenario_case = "idle";
+    const Checked healthyOk = check_file(healthyReq);
+    CHECK(!healthyOk.usage);
+    CHECK_EQ(check_exit_code(healthyOk), 0);
+    CHECK(healthyOk.passed());
+    CHECK(healthyOk.scenario && healthyOk.scenario->case_name == "idle");
 }
