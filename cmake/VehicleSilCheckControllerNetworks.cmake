@@ -6,12 +6,18 @@
 # code gives would put a renamed network of that kind on the wrong SIL Kit network, silently. The
 # check reads the text: a call in a comment counts, which errs on the safe side. A failure names
 # the file, the line and what to do.
-# Usage: cmake -DDIRS=<directory>[,<directory>...] -DFILE=<file name> -P VehicleSilCheckControllerNetworks.cmake
+# Usage: cmake -DDIRS=<directory>[,<directory>...] -DFILE=<file name>
+#              [-DALLOW_SIMULATION_FILES=<absolute file path>[,<path>...]]
+#              -P VehicleSilCheckControllerNetworks.cmake
 cmake_minimum_required(VERSION 3.21)
 if(NOT DEFINED DIRS OR NOT DEFINED FILE)
   message(FATAL_ERROR "VehicleSilCheckControllerNetworks.cmake: DIRS and FILE are required")
 endif()
 string(REPLACE "," ";" DIRS "${DIRS}")
+set(allowed_sim_files "")
+if(DEFINED ALLOW_SIMULATION_FILES)
+  string(REPLACE "," ";" allowed_sim_files "${ALLOW_SIMULATION_FILES}")
+endif()
 set(files "")
 foreach(dir IN LISTS DIRS)
   file(GLOB_RECURSE found "${dir}/*.hpp" "${dir}/*.h" "${dir}/*.cpp")
@@ -23,6 +29,9 @@ endif()
 set(bad "")
 set(calls 0)
 foreach(file IN LISTS files)
+  if(file IN_LIST allowed_sim_files)
+    continue()
+  endif()
   file(STRINGS "${file}" lines REGEX "Create(Can|Lin|Ethernet|Flexray)Controller\\(")
   get_filename_component(name "${file}" NAME)
   foreach(line IN LISTS lines)
