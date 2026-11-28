@@ -28,6 +28,7 @@ DEFAULT_FEATURES = (
     "scenario-templates",
     "control-links",
     "control-server",
+    "external-registry",
 )
 
 

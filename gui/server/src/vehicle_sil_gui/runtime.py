@@ -422,6 +422,7 @@ class ServeRuntime:
         cwd: Path,
         participant_start_timeout_ms: int = 30000,
         participant_stop_timeout_ms: int = 10000,
+        external_registry_uri: str | None = None,
         check_timeout_s: float = DEFAULT_CHECK_TIMEOUT_S,
         max_line: int = DEFAULT_MAX_LINE,
         escalate_wait_s: float = DEFAULT_ESCALATE_WAIT_S,
@@ -433,6 +434,7 @@ class ServeRuntime:
         self._cwd = cwd
         self._participant_start_timeout_ms = participant_start_timeout_ms
         self._participant_stop_timeout_ms = participant_stop_timeout_ms
+        self._external_registry_uri = external_registry_uri
         self._check_timeout_s = check_timeout_s
         self._max_line = max_line
         self._escalate_wait_s = escalate_wait_s
@@ -1102,7 +1104,13 @@ class ServeRuntime:
 
             cmd_credentials = credentials if once else owned_credentials
             argv = with_participant_timeouts(
-                serve_command(self._launcher, config, cmd_credentials, once=once),
+                serve_command(
+                    self._launcher,
+                    config,
+                    cmd_credentials,
+                    once=once,
+                    external_registry_uri=self._external_registry_uri,
+                ),
                 self._participant_start_timeout_ms,
                 self._participant_stop_timeout_ms,
             )

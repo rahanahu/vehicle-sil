@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -213,6 +214,83 @@ inline bool is_ipv6_loopback(const std::array<std::uint16_t, 8>& groups) noexcep
         host.remove_suffix(1); // the root of the names: "localhost." is "localhost"
     }
     return registry_uri_detail::equals_ignoring_case(host, "localhost");
+}
+
+/// Validates `--external-registry <uri>`: must be `silkit://<loopback-host>:<port>` with port 1..65535
+/// and no path, query, fragment or control characters. Empty string when valid, else a diagnostic message.
+[[nodiscard]] inline std::string external_registry_uri_error(std::string_view uri)
+{
+    const auto format_error = [uri]() {
+        return "--external-registry must be silkit://<loopback-host>:<port> with a port from 1 to 65535 and no path "
+               "(e.g. silkit://127.0.0.1:8500 or silkit://localhost:8500), not '" +
+               std::string(uri) + "'";
+    };
+    constexpr std::string_view kScheme = "silkit://";
+    if (uri.substr(0, kScheme.size()) != kScheme)
+    {
+        return format_error();
+    }
+    const std::string_view rest = uri.substr(kScheme.size());
+    const bool plain = std::none_of(rest.begin(), rest.end(), [](char c) {
+        const auto u = static_cast<unsigned char>(c);
+        return u <= 0x20 || u == 0x7F || c == '/' || c == '?' || c == '#';
+    });
+    if (!plain)
+    {
+        return format_error();
+    }
+    std::string_view port_part;
+    if (!rest.empty() && rest.front() == '[')
+    {
+        const auto close = rest.find(']');
+        if (close == std::string_view::npos || close <= 1 || close + 2 > rest.size() || rest[close + 1] != ':')
+        {
+            return format_error();
+        }
+        const std::string_view host_part = rest.substr(1, close - 1);
+        if (host_part.find('%') != std::string_view::npos || !registry_uri_detail::parse_ipv6(host_part))
+        {
+            return format_error();
+        }
+        port_part = rest.substr(close + 2);
+    }
+    else
+    {
+        const auto colon = rest.find(':');
+        if (colon == std::string_view::npos || colon == 0 || rest.find(':', colon + 1) != std::string_view::npos)
+        {
+            return format_error();
+        }
+        const std::string_view host_part = rest.substr(0, colon);
+        if (host_part.find_first_of("[]") != std::string_view::npos)
+        {
+            return format_error();
+        }
+        port_part = rest.substr(colon + 1);
+    }
+    int port = 0;
+    const bool valid_port = !port_part.empty() && port_part.front() != '0' &&
+                            std::all_of(port_part.begin(), port_part.end(),
+                                        [](char c) { return c >= '0' && c <= '9'; }) &&
+                            std::from_chars(port_part.data(), port_part.data() + port_part.size(), port).ptr ==
+                                port_part.data() + port_part.size() &&
+                            port >= 1 && port <= 65535;
+    if (!valid_port)
+    {
+        return format_error();
+    }
+    if (!is_loopback_registry_uri(uri))
+    {
+        return "--external-registry must name a loopback address on this computer (e.g. silkit://127.0.0.1:8500 or "
+               "silkit://localhost:8500), not '" +
+               std::string(uri) + "'";
+    }
+    return {};
+}
+
+[[nodiscard]] inline bool is_valid_external_registry_uri(std::string_view uri)
+{
+    return external_registry_uri_error(uri).empty();
 }
 
 } // namespace vehicle_sil

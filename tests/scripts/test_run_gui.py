@@ -236,6 +236,20 @@ def test_command_line(root: Path) -> None:
           f"default omits --no-auth ({default_plan})")
     check(isinstance(no_auth_plan, tuple) and "--no-auth" in no_auth_plan[0],
           f"--no-auth is forwarded ({no_auth_plan})")
+    ext_plan = planned(root, {"linux-gcc-control": ALL}, "--external-registry", "silkit://127.0.0.1:18500")
+    check(
+        isinstance(ext_plan, tuple)
+        and "--external-registry" in ext_plan[0]
+        and ext_plan[0][ext_plan[0].index("--external-registry") + 1] == "silkit://127.0.0.1:18500"
+        and ext_plan[0][-1].endswith("simulation.live.yaml"),
+        f"--external-registry is forwarded before config ({ext_plan})",
+    )
+    bad_ext = planned(root, {"linux-gcc-control": ALL}, "--external-registry", "silkit://0.0.0.0:8500", kind=run_gui.Usage)
+    check(isinstance(bad_ext, str) and "loopback address" in bad_ext,
+          f"non-loopback --external-registry is Usage ({bad_ext})")
+    p_bad_ext = run("--dry-run", "--external-registry", "silkit://127.0.0.1:0")
+    check(p_bad_ext.returncode == 2 and "silkit://<loopback-host>:<port>" in p_bad_ext.stderr,
+          f"port 0 --external-registry exits 2 ({p_bad_ext.returncode}: {p_bad_ext.stderr})")
 
 
 def test_bridges_of_the_build_go_on_path(root: Path) -> None:

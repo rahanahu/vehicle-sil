@@ -705,7 +705,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "scenario-handover",
     "scenario-cases",
     "scenario-templates",
-    "scenario-variable-compare"
+    "scenario-variable-compare",
+    "external-registry"
   ]
 }
 ```
@@ -779,6 +780,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-cases` | シナリオの名前付き `cases:`、`--case`・要求ファイルの `"case"`、`case_details` と複数ケース `check --json` の `usage` メタデータ保持、`serve` インライン `intent.cli_params` |
 | `scenario-templates` | 再利用可能なシナリオテンプレート（`vehicle_sil_scenario_template: 1`）、`call_stack` 出典情報、テンプレート由来のパラメーターメタデータ（`param_meta` と `missing_params`） |
 | `scenario-variable-compare` | シナリオ条件での実行時の変数間比較（`{ variable: <participant>.<変数> }`、[scenario.md](scenario.md#条件) の「条件」） |
+| `external-registry` | `run`、`serve`、`test` の `--external-registry <uri>`: 起動済みのループバック `sil-kit-registry` に実行ごとの `/vsil-<16hex>` シミュレーションパスで接続する（[simulation-run.md](simulation-run.md#vector-sil-kit-dashboard-で実行を観測する--external-registry) の「Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 | `scenario-time` | シナリオの実行中に、Control Server のクライアントが時間を動かせる（Control Server を持つビルドだけ） |

@@ -632,3 +632,59 @@ TEST_CASE(validate_request_requires_scenario_when_case_is_given)
     CHECK(validate_request(r, RequestCommand::Check).empty());
     CHECK(validate_request(r, RequestCommand::Run).empty());
 }
+
+TEST_CASE(external_registry_validation_and_config_conflict)
+{
+    RunRequest r;
+    r.host.external_registry_uri = "silkit://127.0.0.1:18500";
+    CHECK(messages(r, RequestCommand::Check) == list("--external-registry is for run, serve and test: check starts no participant"));
+    CHECK(messages(r, RequestCommand::Run).empty());
+    CHECK(messages(r, RequestCommand::Test).empty());
+    CHECK(run_choices(r).external_registry_uri == "silkit://127.0.0.1:18500");
+
+    for (const char* bad : {"silkit://127.0.0.1:0", "silkit://0.0.0.0:18500", "silkit://127.0.0.1:18500/sim"})
+    {
+        r.host.external_registry_uri = bad;
+        CHECK(!messages(r, RequestCommand::Run).empty());
+        CHECK(!messages(r, RequestCommand::Test).empty());
+        r.host.config = "not-a-file.yaml";
+        CHECK(check_file(r).usage);
+        CHECK(run_file(r).check.usage);
+    }
+
+    const std::filesystem::path dir = scratch("ext-reg-conflict");
+    {
+        std::ofstream out(dir / "fixed.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n"
+               "registry_uri: silkit://127.0.0.1:8500\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Engine\n"
+               "    command: [./missing]\n";
+    }
+    {
+        std::ofstream out(dir / "plain.yaml", std::ios::binary);
+        out << "vehicle_sil_simulation: 2\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Engine\n"
+               "    command: [./missing]\n";
+    }
+    RunRequest conflict;
+    conflict.host.config = (dir / "fixed.yaml").string();
+    conflict.host.external_registry_uri = "silkit://127.0.0.1:18500";
+    CheckOptions opts;
+    opts.file_only = true;
+    const Checked bad_check = check_file(conflict, opts);
+    CHECK(bad_check.usage);
+    CHECK(!bad_check.hot_eligibility.eligible);
+    CHECK(bad_check.findings.front().message.find("cannot be used when the configuration file sets registry_uri") !=
+          std::string::npos);
+
+    RunRequest eligible;
+    eligible.host.config = (dir / "plain.yaml").string();
+    eligible.host.external_registry_uri = "silkit://127.0.0.1:18500";
+    const Checked ok_check = check_file(eligible, opts);
+    CHECK(!ok_check.usage);
+    CHECK(ok_check.hot_eligibility.eligible);
+}

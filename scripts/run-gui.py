@@ -23,6 +23,7 @@ task") leaves uv, the GUI server and a running simulation behind. A tool stops t
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import shlex
@@ -52,6 +53,56 @@ class Missing(Exception):
 
 class Usage(Exception):
     """An argument names a file that is not there: the message says which, and what to give."""
+
+
+def _external_registry_uri_error(uri: str) -> str | None:
+    fmt_err = (
+        "--external-registry must be silkit://<loopback-host>:<port> with a port from 1 to 65535 and no path "
+        f"(e.g. silkit://127.0.0.1:8500 or silkit://localhost:8500), not '{uri}'"
+    )
+    if not uri.startswith("silkit://"):
+        return fmt_err
+    rest = uri[len("silkit://"):]
+    if any(ord(c) <= 0x20 or ord(c) == 0x7F or c in "/?#" for c in rest):
+        return fmt_err
+    is_v6 = False
+    if rest.startswith("["):
+        close = rest.find("]")
+        if close <= 1 or close + 2 > len(rest) or rest[close + 1] != ":":
+            return fmt_err
+        host, port_part, is_v6 = rest[1:close], rest[close + 2:], True
+        if "%" in host:
+            return fmt_err
+    else:
+        colon = rest.find(":")
+        if colon <= 0 or rest.find(":", colon + 1) != -1:
+            return fmt_err
+        host, port_part = rest[:colon], rest[colon + 1:]
+        if "[" in host or "]" in host:
+            return fmt_err
+    if not port_part or port_part[0] == "0" or not port_part.isascii() or not port_part.isdigit():
+        return fmt_err
+    if not 1 <= int(port_part) <= 65535:
+        return fmt_err
+    if is_v6:
+        try:
+            addr6 = ipaddress.IPv6Address(host)
+            mapped = addr6.ipv4_mapped
+            loopback = addr6.is_loopback or (mapped is not None and mapped.is_loopback)
+        except ValueError:
+            return fmt_err
+    else:
+        try:
+            loopback = ipaddress.IPv4Address(host).is_loopback
+        except ValueError:
+            trimmed = host[:-1] if host.endswith(".") else host
+            loopback = trimmed.lower() == "localhost"
+    if not loopback:
+        return (
+            "--external-registry must name a loopback address on this computer "
+            f"(e.g. silkit://127.0.0.1:8500 or silkit://localhost:8500), not '{uri}'"
+        )
+    return None
 
 
 def features_of(launcher: Path) -> list[str] | None:
@@ -163,6 +214,10 @@ def plan(args: argparse.Namespace, root: Path = ROOT, probe: Probe = features_of
     usage = False
     cwd = Path.cwd() if cwd is None else cwd
     notes: list[str] = []
+    external_registry: str | None = getattr(args, "external_registry", None)
+    if external_registry is not None and (uri_err := _external_registry_uri_error(external_registry)):
+        usage = True
+        problems.append(uri_err)
     launcher: Path | None = None
     config: Path | None = None
     if args.launcher:
@@ -224,6 +279,8 @@ def plan(args: argparse.Namespace, root: Path = ROOT, probe: Probe = features_of
         raise (Usage if usage else Missing)("\n".join(lines))
     assert launcher is not None and config is not None
     command = [runner, "run", "--project", str(root), "vehicle-sil-gui", "--launcher", str(launcher)]
+    if external_registry is not None:
+        command += ["--external-registry", external_registry]
     if args.workbench:
         command += ["--web", str(workbench)]
     if args.port is not None:
@@ -250,6 +307,9 @@ def parse(argv: list[str]) -> argparse.Namespace:
                         f"{(EXAMPLE / CONFIG).as_posix()} of the launcher's build)")
     parser.add_argument("--launcher", metavar="PATH", help="the vehicle_sil_launch to use (default: the newest "
                         "build/*/tools/launch/vehicle_sil_launch that has the Control Server)")
+    parser.add_argument("--external-registry", metavar="URI",
+                        help="connect each run to a user-started SIL Kit registry at silkit://<loopback-host>:<port> "
+                             "(forwarded to vehicle-sil-gui)")
     parser.add_argument("--workbench", action="store_true", help="serve the alternate ECU I/O Workbench")
     parser.add_argument("--port", type=int, help="the GUI server's port on 127.0.0.1 (default: a free one)")
     parser.add_argument("--no-browser", action="store_true", help="do not open the browser (the URL is still printed)")

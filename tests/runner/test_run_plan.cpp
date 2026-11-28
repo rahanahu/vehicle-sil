@@ -382,3 +382,41 @@ TEST_CASE(plan_run_validates_after_scenario_pause_contract)
         CHECK(thrown);
     }
 }
+
+TEST_CASE(plan_run_validates_external_registry_uri_and_conflict_with_config_registry_uri)
+{
+    Given base = checked({10000});
+    RunChoices choices;
+    choices.external_registry_uri = "silkit://127.0.0.1:18500";
+    const RunPlan ok = plan_run(base.report, nullptr, "dir", choices);
+    CHECK(ok.external_registry_uri == "silkit://127.0.0.1:18500");
+
+    for (const char* bad : {"silkit://127.0.0.1:0", "silkit://0.0.0.0:18500", "silkit://127.0.0.1:18500/sim"})
+    {
+        choices.external_registry_uri = bad;
+        bool thrown = false;
+        try
+        {
+            static_cast<void>(plan_run(base.report, nullptr, "dir", choices));
+        }
+        catch (const std::invalid_argument&)
+        {
+            thrown = true;
+        }
+        CHECK(thrown);
+    }
+
+    Given fixed = checked({10000});
+    fixed.report.config->registry_uri = "silkit://127.0.0.1:8500";
+    choices.external_registry_uri = "silkit://127.0.0.1:18500";
+    bool conflict_thrown = false;
+    try
+    {
+        static_cast<void>(plan_run(fixed.report, nullptr, "dir", choices));
+    }
+    catch (const std::invalid_argument&)
+    {
+        conflict_thrown = true;
+    }
+    CHECK(conflict_thrown);
+}

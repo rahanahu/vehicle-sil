@@ -77,6 +77,7 @@ int main(int argc, char** argv)
             {"events_stalled", events_stalled},
             {"events_stderr", events_stderr},
             {"events_usage", events_usage},
+            {"external_registry", external_registry},
             {"grandchild", grandchild},
             {"hang", hang},
             {"interrupt", interrupt},

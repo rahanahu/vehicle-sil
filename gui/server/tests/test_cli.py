@@ -90,3 +90,37 @@ def test_serve_localized_winerror_port_conflict_outputs_pure_ascii(
     assert rc == cli.EXIT_USAGE == 2
     assert captured.err.isascii()
     assert "cannot listen on 127.0.0.1:18080 (address already in use)" in captured.err
+
+
+def test_cli_external_registry_validation_and_missing_feature(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc_bad = cli.main(["--external-registry", "silkit://0.0.0.0:8500", "--no-browser"])
+    err_bad = capsys.readouterr().err
+    assert rc_bad == cli.EXIT_USAGE == 2
+    assert "loopback address" in err_bad
+
+    rc_path = cli.main(["--external-registry", "silkit://127.0.0.1:8500/sim", "--no-browser"])
+    err_path = capsys.readouterr().err
+    assert rc_path == cli.EXIT_USAGE == 2
+    assert "silkit://<loopback-host>:<port>" in err_path
+
+    from vehicle_sil_gui import __version__
+    from vehicle_sil_gui.launcher import REQUIRED_FEATURES
+
+    old_launcher = tmp_path / "old_launcher.py"
+    old_launcher.write_text(
+        "import json\n"
+        f"print(json.dumps({{'vehicle_sil_launch': 1, 'vehicle_sil': {__version__!r}, "
+        f"'features': {list(REQUIRED_FEATURES)!r}}}))\n",
+        encoding="utf-8",
+    )
+    rc_feat = cli.main([
+        "--launcher", str(old_launcher),
+        "--root", str(tmp_path),
+        "--external-registry", "silkit://127.0.0.1:8500",
+        "--no-browser",
+    ])
+    err_feat = capsys.readouterr().err
+    assert rc_feat == cli.EXIT_USAGE == 2
+    assert "has no 'external-registry'" in err_feat

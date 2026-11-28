@@ -436,6 +436,16 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
         finalize(report);
         return report;
     }
+    if (!host.external_registry_uri.empty())
+    {
+        if (const std::string err = external_registry_uri_error(host.external_registry_uri); !err.empty())
+        {
+            report.usage = true;
+            report.findings.push_back(config::Finding{config::Severity::Error, "usage", err, 0, "", ""});
+            finalize(report);
+            return report;
+        }
+    }
     if (auto conflicts = config::override_conflicts(overrides); !conflicts.empty())
     {
         report.usage = true;
@@ -481,6 +491,27 @@ Checked check_file(const RunRequest& request, const CheckOptions& options,
     }
     if (report.config)
     {
+        if (!host.external_registry_uri.empty() && report.config->registry_uri.has_value())
+        {
+            config::Finding finding{config::Severity::Error,
+                                    "usage",
+                                    "--external-registry (" + host.external_registry_uri +
+                                        ") cannot be used when the configuration file sets registry_uri (" +
+                                        *report.config->registry_uri +
+                                        "): take registry_uri out of the file, or leave --external-registry out",
+                                    0,
+                                    "",
+                                    ""};
+            Checked usage;
+            usage.file = std::move(report.file);
+            usage.strict = report.strict;
+            usage.variants = std::move(report.variants);
+            usage.file_sha256 = std::move(report.file_sha256);
+            usage.usage = true;
+            usage.findings = {std::move(finding)};
+            finalize(usage);
+            return usage;
+        }
         config::ConfigConnect counted = config::connect_for_config(*report.config, intent.connect, request.origin);
         connect = std::move(counted.connect);
         report.findings.insert(report.findings.end(), counted.notes.begin(), counted.notes.end());

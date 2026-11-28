@@ -720,6 +720,9 @@ void timeline(const Options& o);
 // launch_run_control_metrics.cpp
 void control_metrics(const Options& o);
 
+// launch_run_external_registry.cpp
+void external_registry(const Options& o);
+
 // launch_run_availability.cpp
 void availability(const Options& o);
 

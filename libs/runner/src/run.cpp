@@ -166,14 +166,17 @@
 #include <silkit/vendor/CreateSilKitRegistry.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -206,6 +209,18 @@ std::vector<std::string> participant_names(const config::SimulationConfig& confi
         names.push_back(p.name);
     }
     return names;
+}
+
+std::string new_run_simulation_path()
+{
+    static std::atomic<std::uint64_t> seq{0};
+    std::random_device device;
+    std::uint64_t value = (std::uint64_t{device()} << 32) ^ std::uint64_t{device()};
+    value ^= static_cast<std::uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    value ^= seq.fetch_add(1, std::memory_order_relaxed) * 0x9E3779B97F4A7C15ULL;
+    char text[22];
+    std::snprintf(text, sizeof(text), "vsil-%016llx", static_cast<unsigned long long>(value));
+    return text;
 }
 
 std::chrono::milliseconds fault_close_timeout(std::chrono::milliseconds fallback)
@@ -312,35 +327,45 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
     }
     std::string uri;
     std::string listened;
+    const bool external_registry = !ctx_.plan.external_registry_uri.empty();
     try
     {
-        connection->registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
-            SilKit::Config::ParticipantConfigurationFromString(std::string(default_registry_configuration())));
-        // A participant started by hand gets a command that stays the same from run to run.
-        const bool fixed = !ctx_.config.registry_uri && config::waits_for_manual(ctx_.config);
-        const std::string listen =
-            ctx_.config.registry_uri.value_or(fixed ? std::string(kManualRegistryUri) : std::string("silkit://127.0.0.1:0"));
-        try
+        std::string listen;
+        if (external_registry)
         {
-            listened = connection->registry->StartListening(listen);
-            uri = uri_for_participants(listened);
+            listen = ctx_.plan.external_registry_uri;
+            uri = uri_for_participants(listen) + "/" + new_run_simulation_path();
         }
-        catch (const std::exception& e)
+        else
         {
-            throw std::runtime_error("the registry cannot listen at " + listen + ": " + one_line(e.what()) +
-                                     detail::registry_listen_hint(listen, ctx_.config.registry_uri.has_value(), fixed,
-                                                                  detail::host_addresses(true, true)));
-        }
-        outcome_.setup.registry_uri = uri;
-        out_.event([&uri](RunEvents& e) { e.registry(uri); });
-        out_.say("registry at " + uri);
-        if (!is_loopback_registry_uri(listen))
-        {
-            // On [::]: IPv6, and IPv4 too where such a socket takes it.
-            const bool any6 = listened.rfind("silkit://[::]:", 0) == 0;
-            const bool ipv4 = !any6 || detail::ipv6_any_takes_ipv4();
-            out_.say(detail::other_computers_line(listened, detail::host_addresses(ipv4, any6), any6 && !ipv4,
-                                                  listen.substr(listen.rfind(':') + 1)));
+            connection->registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
+                SilKit::Config::ParticipantConfigurationFromString(std::string(default_registry_configuration())));
+            // A participant started by hand gets a command that stays the same from run to run.
+            const bool fixed = !ctx_.config.registry_uri && config::waits_for_manual(ctx_.config);
+            listen =
+                ctx_.config.registry_uri.value_or(fixed ? std::string(kManualRegistryUri) : std::string("silkit://127.0.0.1:0"));
+            try
+            {
+                listened = connection->registry->StartListening(listen);
+                uri = uri_for_participants(listened);
+            }
+            catch (const std::exception& e)
+            {
+                throw std::runtime_error("the registry cannot listen at " + listen + ": " + one_line(e.what()) +
+                                         detail::registry_listen_hint(listen, ctx_.config.registry_uri.has_value(), fixed,
+                                                                      detail::host_addresses(true, true)));
+            }
+            outcome_.setup.registry_uri = uri;
+            out_.event([&uri](RunEvents& e) { e.registry(uri); });
+            out_.say("registry at " + uri);
+            if (!is_loopback_registry_uri(listen))
+            {
+                // On [::]: IPv6, and IPv4 too where such a socket takes it.
+                const bool any6 = listened.rfind("silkit://[::]:", 0) == 0;
+                const bool ipv4 = !any6 || detail::ipv6_any_takes_ipv4();
+                out_.say(detail::other_computers_line(listened, detail::host_addresses(ipv4, any6), any6 && !ipv4,
+                                                      listen.substr(listen.rfind(':') + 1)));
+            }
         }
         SimulationControllerOptions c;
         c.participant_name = std::string(config::kControllerName);
@@ -369,7 +394,28 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
         // answer; beyond it, stop_timeout_ms as for every other wait of the end, but never
         // less than kCloseMargin: a small stop_timeout_ms must not cut a close that is going on.
         close_limit_ = c.shutdown_timeout + std::max(std::chrono::milliseconds(ctx_.plan.stop_timeout_ms), kCloseMargin);
-        connection->controller = std::make_unique<SimulationController>(std::move(c));
+        if (external_registry)
+        {
+            try
+            {
+                connection->controller = std::make_unique<SimulationController>(std::move(c));
+            }
+            catch (const std::exception& e)
+            {
+                throw std::runtime_error("cannot connect to the external registry at " + ctx_.plan.external_registry_uri +
+                                         " (--external-registry): " + one_line(e.what()) +
+                                         "; start sil-kit-registry first (e.g. sil-kit-registry --listen-uri " +
+                                         ctx_.plan.external_registry_uri +
+                                         " --dashboard-uri http://localhost:8082), or leave --external-registry out");
+            }
+            outcome_.setup.registry_uri = uri;
+            out_.event([&uri](RunEvents& e) { e.registry(uri); });
+            out_.say("registry at " + uri);
+        }
+        else
+        {
+            connection->controller = std::make_unique<SimulationController>(std::move(c));
+        }
         // Before the participants start and before the controller does: SIL Kit connects the
         // publisher of the commands and the subscribers with every participant that starts.
         connection->transport =

@@ -242,6 +242,7 @@ vehicle-sil-gui [options] [<configuration file>]
 | `--port <n>` | The port to listen on (127.0.0.1). The default 0 picks a free port. 80 cannot be used (browsers drop the port from `Host`) |
 | `--no-browser` | Do not open the browser |
 | `--launcher <path>` | The path of `vehicle_sil_launch` (a path that ends in `.py` is run with this Python) |
+| `--external-registry <uri>` | Connect each run to a user-started loopback SIL Kit registry at `silkit://<loopback-host>:<port>` (port 1 to 65535, no path), such as official `sil-kit-registry` started with `--dashboard-uri` (see "[Observing GUI runs in Vector SIL Kit Dashboard](#observing-gui-runs-in-vector-sil-kit-dashboard)") |
 | `--web <dir>` | Serve your own screen: its build output directory (must contain `index.html`). Default: the sample screens (see "[Files served with `--web`](#files-served-with---web)") |
 | `--dev-origin <origin>` | Also accept requests from the screen's development server (`ng serve`, Vite and others; only of the form `http://127.0.0.1:<port>`) (see "[Use a development server](#use-a-development-server)") |
 | `--json` | Print `{"vehicle_sil_gui": 4, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI; with `--no-auth`, also `"auth": false` and no `#token=...` in `url`/`dev_url`) |
@@ -348,6 +349,20 @@ The top **Network** menu selects a simulation configuration and calls `POST api/
 When a recorded run is started with **Record & start**, **Load recording** on the **Scenario** tab loads the recorded scenario YAML both mid-run (where `end_ms` is omitted so replay stops at the last `set` step) and after the run ends (where `end_ms` is finalized from the recorded run's end virtual time). When a scenario is selected and the launcher supports `scenario-handover`, **After scenario** lets you choose **Stop run** (default) or **Pause for manual control**; selecting **Pause for manual control** disables and omits **Stop at (ms)**. After a passed handover, **ECU I/O** unlocks on the same run so you can write inputs and continue with **1 step**, **Resume**, or **Speed**.
 
 In **Settings → Scenario folder**, choose a local directory for opening and saving YAML from the **Scenario** tab. If the browser offers read-only folder access, **Save YAML** downloads the file. To run a local file on the server, put it in the selected network's server-side `scenarios/` directory and refresh the run list.
+
+### Observing GUI runs in Vector SIL Kit Dashboard
+
+Pass `--external-registry silkit://<loopback-host>:<port>` to `vehicle-sil-gui` (or to `scripts/run-gui.py`) to attach standard **Start** runs in the browser GUI and Workbench to a user-started official `sil-kit-registry` connected to Vector SIL Kit Dashboard (see "Observing runs in Vector SIL Kit Dashboard (`--external-registry`)" in [simulation-run.md](simulation-run.md#observing-runs-in-vector-sil-kit-dashboard---external-registry)).
+
+```sh
+sil-kit-registry --listen-uri silkit://127.0.0.1:8500 --dashboard-uri http://localhost:8082
+vehicle-sil-gui --external-registry silkit://127.0.0.1:8500 simulation.live.yaml
+# or, from a repository build:
+scripts/run-gui.py --external-registry silkit://127.0.0.1:8500
+```
+
+- While idle (including Hot Start `POST api/prepare`), no participant connects to the external registry. Clicking **Start** mints a fresh `silkit://<host>:<port>/vsil-<16hex>` URI for that run, and clicking **Stop** followed by **Start** creates a separate Simulation in Vector SIL Kit Dashboard without mixing data from the previous run.
+- Participants whose `command` in the configuration file (or selected variant) passes `--silkit-config` with a `Remote` metrics sink report standard SIL Kit metrics to Vector SIL Kit Dashboard while the GUI run is active.
 
 ## Stopping and exiting
 

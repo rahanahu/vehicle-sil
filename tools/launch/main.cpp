@@ -45,6 +45,7 @@
 #include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/config/check.hpp"
+#include "vehicle_sil/core/registry_uri.hpp"
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/command_input.hpp"
 #include "vehicle_sil/launch/connections.hpp"
@@ -114,17 +115,20 @@ constexpr const char* kUsage =
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
     "                              [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]\n"
     "                              [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]\n"
-    "                              [--timeout-ms <ms>] [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]\n"
+    "                              [--external-registry <uri>] [--timeout-ms <ms>] [--stop-at-ms <ms>]\n"
+    "                              [--late-tolerance-ms <ms>]\n"
     "                              [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                              [--time-policy realtime|free] [--request <file>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
-    "       vehicle_sil_launch serve [--once] [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
+    "       vehicle_sil_launch serve [--once] [--external-registry <uri>] [--log-dir <dir>] [--timeout-ms <ms>]\n"
+    "                                [--describe-timeout-ms <ms>]\n"
     "                                [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
     "                                [--events-stall-ms <ms>] [--control <address> [--control-credentials <file>]\n"
     "                                [--control-tls-cert <file> --control-tls-key <file>] [--control-audit-log <file>]]\n"
     "                                [--] <file>\n"
-    "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--case <name>]... [--param <name>=<value>]...\n"
+    "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--external-registry <uri>] [--variant <name>]...\n"
+    "                               [--case <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]\n"
     "                               [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]\n"
     "                               [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]\n"
@@ -203,6 +207,10 @@ constexpr const char* kUsage =
     "  --control-metrics <file>    run: write the Control Hub SIL Kit transport counters (HubTransport::stats())\n"
     "                              to <file> as JSON at the end of the run (docs/simulation-run.md;\n"
     "                              schema/control-metrics.schema.json)\n"
+    "  --external-registry <uri>   run, serve, test: connect each run to a user-started SIL Kit registry at\n"
+    "                              silkit://<loopback-host>:<port> (port 1..65535; e.g. official sil-kit-registry\n"
+    "                              started with --dashboard-uri for Vector SIL Kit Dashboard) instead of starting\n"
+    "                              an in-process registry; each run joins an isolated /vsil-<id> path\n"
     "  --fail-fast                 test: do not run what comes after the first run that fails\n"
     "  --speed <speed>             check, run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); overrides speed in the request file\n"
@@ -1003,7 +1011,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
                  a == "--network" || a == "--time-policy" || a == "--request" || a == "--descriptions" ||
                  a == "--write-descriptions" || a == "--compare-commands" || a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log" ||
-                 a == "--control-metrics")
+                 a == "--control-metrics" || a == "--external-registry")
         {
             ++i;
         }
@@ -1302,6 +1310,10 @@ int check(const cli::Args& args)
             throw cli::UsageError("--" + std::string(runOnly) + " is for run: check starts no participant");
         }
     }
+    if (args.has("external-registry"))
+    {
+        throw cli::UsageError("--external-registry is for run, serve and test: check starts no participant");
+    }
     if (args.flag("once"))
     {
         throw cli::UsageError("--once is for serve: check starts no participant");
@@ -1419,6 +1431,15 @@ int run(const cli::Args& args, std::string& active_control_metrics, std::optiona
             throw cli::UsageError("--control-metrics needs a file to write: --control-metrics <file>.json");
         }
         require_valid(request, launch::RequestCommand::Run, asked);
+    }
+    if (args.has("external-registry"))
+    {
+        const std::string uri = args.str("external-registry", "");
+        if (const std::string err = external_registry_uri_error(uri); !err.empty())
+        {
+            throw cli::UsageError(err);
+        }
+        host.external_registry_uri = uri;
     }
     if (args.has("timeout-ms"))
     {
@@ -1657,6 +1678,15 @@ int serve(const cli::Args& args, launch::EventStream* events, const std::string&
             throw cli::UsageError("--timeout-ms must be at least 1");
         }
     }
+    if (args.has("external-registry"))
+    {
+        const std::string uri = args.str("external-registry", "");
+        if (const std::string err = external_registry_uri_error(uri); !err.empty())
+        {
+            throw cli::UsageError(err);
+        }
+        host.external_registry_uri = uri;
+    }
     const bool control = args.has("control");
     for (const char* option : {"control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
     {
@@ -1831,6 +1861,15 @@ int test(const cli::Args& args)
             throw cli::UsageError("--timeout-ms must be at least 1");
         }
     }
+    if (args.has("external-registry"))
+    {
+        const std::string uri = args.str("external-registry", "");
+        if (const std::string err = external_registry_uri_error(uri); !err.empty())
+        {
+            throw cli::UsageError(err);
+        }
+        request.host.external_registry_uri = uri;
+    }
     const std::vector<std::string> given = args.all("scenarios");
     if (given.empty())
     {
@@ -1996,7 +2035,7 @@ int main(int argc, char** argv)
                                 "participant-start-timeout-ms", "participant-stop-timeout-ms",
                                 "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
-                                "control-metrics", "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
+                                "control-metrics", "external-registry", "time-policy", "request", "descriptions", "write-descriptions", "compare-commands"},
                                {"json", "strict", "events", "once", "stdin-commands", "start-paused", "fail-fast", "text-from-stdin", "file-only"},
                                {"disable", "enable", "manual", "param", "variant", "case", "scenarios", "connect"})
                    : cli::Args(arguments,
@@ -2004,7 +2043,7 @@ int main(int argc, char** argv)
                                 "participant-start-timeout-ms", "participant-stop-timeout-ms",
                                 "events-stall-ms", "speed", "scenario", "case", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
-                                "timeline", "control-metrics", "time-policy", "request", "descriptions", "write-descriptions",
+                                "timeline", "control-metrics", "external-registry", "time-policy", "request", "descriptions", "write-descriptions",
                                 "compare-commands"},
                                {"json", "strict", "events", "once", "stdin-commands", "start-paused", "text-from-stdin", "file-only"},
                                {"disable", "enable", "manual", "param", "connect"});

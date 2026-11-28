@@ -893,16 +893,17 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
-                       [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>] [--timeout-ms <ms>]
+                       [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
+                       [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
-vehicle_sil_launch serve [--once] [--events-stall-ms <ms>]
+vehicle_sil_launch serve [--once] [--external-registry <uri>] [--events-stall-ms <ms>]
                          [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                          [--control-audit-log <file>]] [--] <file>
-vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--case <name>]... [--param <name>=<value>]...
+vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--external-registry <uri>] [--variant <name>]... [--case <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
@@ -937,6 +938,7 @@ vehicle_sil_launch version [--json]
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
 | `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ | シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
 | `--control-metrics <file>` | `run` だけ | 実行の終わりに、Control Hub の SIL Kit トランスポートの累計カウンター（`HubTransport::stats()`）を JSON のファイルに書きます。`--control` は要りません（[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」）。 |
+| `--external-registry <uri>` | `run`、`serve`、`test` | プロセス内の registry を立てる代わりに、起動済みのループバック SIL Kit registry（`silkit://<loopback-host>:<port>`。ポートは 1 から 65535、パスなし）へ接続し、実行ごとに分離された `/vsil-<id>` のシミュレーションパスを使います（[simulation-run.md](simulation-run.md#vector-sil-kit-dashboard-で実行を観測する--external-registry) の「Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）」）。 |
 | `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |
 | `--fail-fast` | `test` だけ | 最初に失敗した組の後は実行しません。 |
 | `--speed <speed>` | `check`、`run` | Run の速度（数値か `max`）。 |
@@ -982,6 +984,7 @@ vehicle_sil_launch version [--json]
 | `--param` | `test` では、その名前のパラメーターがあるシナリオにだけ反映されます（どのシナリオにもなければ引数のエラー）。 |
 | `--timeline` | 開けなければ、何も起動せずに終了コード 3 です。 |
 | `--control-metrics` | `run` の終わりにアトミックに書きます（親ディレクトリがなければ作ります）。書き込みに失敗しても標準出力と `run --json` は変えず標準エラーに理由を出し、実行が非 0 ならその終了コードを保ち、0 なら 3 にします。 |
+| `--external-registry` | 設定ファイルの `registry_uri` とは併用できません（終了コード 4）。開始時に外部 registry が待ち受けていなければ、どの participant も起動せずに準備失敗（終了コード 3）になります。 |
 | `--scenarios` | ディレクトリ（直下の `.yaml`、`.yml`、`.json` を名前の順に）か、ファイル（書いた順に）です。 |
 | `--scenarios` | 後ろにいくつでも並べられ、繰り返せます。 |
 | `--scenarios` | 設定ファイルは、`--scenarios` より前か、`--` の後に書きます。 |
@@ -1046,7 +1049,8 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | どのコマンドでも | 値のない `--describe-timeout-ms` |
 | どのコマンドでも | `--events`（廃止。`serve --once` または `serve` を使う） |
 | `check` | `--stdin-commands`、`--events-stall-ms` |
-| `check` | `--log-dir`、`--timeout-ms`、`--start-paused`、`--control` と `--control-*` |
+| `check` | `--log-dir`、`--timeout-ms`、`--start-paused`、`--control` と `--control-*`、`--external-registry` |
+| `run`、`serve`、`test` | 形式不正またはループバックでない `--external-registry`、あるいは設定ファイルに `registry_uri` があるときの `--external-registry` |
 | `run` | `--file-only`、`--text-from-stdin`、`--descriptions`、`--write-descriptions`、`--compare-commands`（`check` だけのもの） |
 | `run` | `--events-stall-ms`（`serve` だけのもの）、または `serve` で範囲外の `--events-stall-ms` |
 | `run` | `--stdin-commands` も `--control` もない `--start-paused` |

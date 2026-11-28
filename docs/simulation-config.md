@@ -895,16 +895,17 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
-                       [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>] [--timeout-ms <ms>]
+                       [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
+                       [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
                        [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                        [--time-policy realtime|free] [--request <file>] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
-vehicle_sil_launch serve [--once] [--events-stall-ms <ms>]
+vehicle_sil_launch serve [--once] [--external-registry <uri>] [--events-stall-ms <ms>]
                          [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                          [--control-audit-log <file>]] [--] <file>
-vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--case <name>]... [--param <name>=<value>]...
+vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--external-registry <uri>] [--variant <name>]... [--case <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
                         [--stop-at-ms <ms>] [--late-tolerance-ms <ms>] [--request <file>]
                         [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>]
@@ -939,6 +940,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
 | `--timeline <file>` | `run` only, and only with `--scenario` | Writes the values that the scenario wrote and saw to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
 | `--control-metrics <file>` | `run` only | Writes the cumulative Control Hub SIL Kit transport counters (`HubTransport::stats()`) to a JSON file at the end of the run; does not require `--control` (see "Recording Control Hub transport metrics (`--control-metrics`)" in [simulation-run.md](simulation-run.md#recording-control-hub-transport-metrics---control-metrics)). |
+| `--external-registry <uri>` | `run`, `serve`, `test` | Connects each run to a user-started loopback SIL Kit registry at `silkit://<loopback-host>:<port>` (port 1 to 65535, no path) instead of starting an in-process registry, giving each run an isolated `/vsil-<id>` simulation path (see "Observing runs in Vector SIL Kit Dashboard (`--external-registry`)" in [simulation-run.md](simulation-run.md#observing-runs-in-vector-sil-kit-dashboard---external-registry)). |
 | `--scenarios <dir or files>` | `test` only | The scenarios to run. |
 | `--fail-fast` | `test` only | Runs nothing after the first run that fails. |
 | `--speed <speed>` | `check`, `run` | Run speed (a number or `max`). |
@@ -984,6 +986,7 @@ Notes on individual options:
 | `--param` | In `test`, applies only to the scenarios that have a parameter of that name (if no scenario has it, a usage error). |
 | `--timeline` | If the file cannot be opened, nothing is started and the exit code is 3. |
 | `--control-metrics` | Written atomically at the end of `run` (missing parent directories are created). If writing fails, stderr prints the error, stdout/`run --json` stay unchanged, a non-zero run exit code is preserved, and exit code 0 becomes 3. |
+| `--external-registry` | Cannot be combined with `registry_uri` in the configuration file (exit code 4). If the external registry is not listening when a run starts, setup fails before starting any participant (exit code 3). |
 | `--scenarios` | A directory (the `.yaml`, `.yml` and `.json` files directly in it, in name order) or files (in the order written). |
 | `--scenarios` | Takes any number of paths after it, and can be repeated. |
 | `--scenarios` | Write the configuration file before `--scenarios` or after `--`. |
@@ -1048,7 +1051,8 @@ The following give exit code 4:
 | Every command | `--describe-timeout-ms` without a value |
 | Every command | `--events` (removed: use `serve --once` or `serve`) |
 | `check` | `--stdin-commands`, `--events-stall-ms` |
-| `check` | `--log-dir`, `--timeout-ms`, `--start-paused`, `--control` and `--control-*` |
+| `check` | `--log-dir`, `--timeout-ms`, `--start-paused`, `--control` and `--control-*`, `--external-registry` |
+| `run`, `serve` or `test` | An invalid or non-loopback `--external-registry`, or `--external-registry` together with `registry_uri` in the configuration file |
 | `run` | `--file-only`, `--text-from-stdin`, `--descriptions`, `--write-descriptions`, `--compare-commands` (they are for `check`) |
 | `run` | `--events-stall-ms` (it is for `serve`), or `--events-stall-ms` out of range on `serve` |
 | `run` | `--start-paused` with neither `--stdin-commands` nor `--control` |

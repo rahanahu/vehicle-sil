@@ -23,6 +23,7 @@ This reference describes what `vehicle_sil_launch run <file>` does and in which 
 | Recording cumulative Control Hub transport counters in a JSON file | [`--control-metrics`](#recording-control-hub-transport-metrics---control-metrics) |
 | Running several scenarios on every variant | [`test`](#running-several-scenarios-vehicle_sil_launch-test) |
 | Keeping one launcher process for sequential runs | [`serve`](#running-sequentially-in-one-launcher-vehicle_sil_launch-serve) |
+| Observing participants, CAN topology and Metrics in Vector SIL Kit Dashboard | [`--external-registry`](#observing-runs-in-vector-sil-kit-dashboard---external-registry) |
 
 ## How a run proceeds
 
@@ -37,7 +38,7 @@ This reference describes what `vehicle_sil_launch run <file>` does and in which 
 
 Stage 1: If the check finds errors (with `--strict`, also warnings), `run` starts nothing, writes the check result and exits with code 1. For a configuration file with variants (`variants`), `run` checks the variant you select with `--variant <name>` and runs with that variant's executables, variable map and participants (see "Variants (`variants`, `--variant`)" in [simulation-config.md](simulation-config.md#variants-variants---variant)). If you omit `--variant`, `run` reports a usage error and starts nothing.
 
-Stage 2: The registry address is `registry_uri`, or a free port on 127.0.0.1 if `registry_uri` is not set. The first line on stderr gives that URI (`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`). With `--control`, the Control Server starts before the registry and `run` writes the line `[vehicle_sil_launch] control server at <address>`.
+Stage 2: The registry address is `registry_uri`, or a free port on 127.0.0.1 if `registry_uri` is not set (with `--external-registry <uri>`, the launcher skips starting an in-process registry and connects the run to `<uri>/vsil-<id>`; see [Observing runs in Vector SIL Kit Dashboard (`--external-registry`)](#observing-runs-in-vector-sil-kit-dashboard---external-registry)). The first line on stderr gives that URI (`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`). With `--control`, the Control Server starts before the registry and `run` writes the line `[vehicle_sil_launch] control server at <address>`.
 
 Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (the configured or resolved `time_step_ms`). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
 
@@ -2184,8 +2185,8 @@ Keys of `runs[]`:
 `vehicle_sil_launch serve <file>` stays running for one configuration file and executes runs one at a time as stdin `{"command":"run"}` commands arrive. Each run creates and destroys its own SIL Kit registry, controller, hub, Control Server, participant processes and scenario, and starts at virtual time 0 with no state carried over from earlier runs.
 
 ```sh
-vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>] \
-  [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>] \
+vehicle_sil_launch serve [--once] [--external-registry <uri>] [--log-dir <dir>] [--timeout-ms <ms>] \
+  [--describe-timeout-ms <ms>] [--participant-start-timeout-ms <ms>] [--participant-stop-timeout-ms <ms>] \
   [--events-stall-ms <ms>] [--control <address> [--control-credentials <file>] \
   [--control-tls-cert <file> --control-tls-key <file>] [--control-audit-log <file>]] \
   [--] <file>
@@ -2218,6 +2219,43 @@ vehicle_sil_launch serve [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeo
 | 4 | Startup usage error (including `VEHICLE_SIL_TRACE` set) |
 | 6 | A run left the launcher in an unknown state (`connection-not-closed` or internal error; `"launcher_ends": true`) |
 | 130 | Interrupted by a signal or console event, stdin EOF during a run, or closed event output |
+
+## Observing runs in Vector SIL Kit Dashboard (`--external-registry`)
+
+By default, `vehicle_sil_launch` runs an in-process SIL Kit registry built without the Vector SIL Kit Dashboard HTTP client. Passing `--external-registry silkit://<loopback-host>:<port>` connects `run`, `serve` (including Hot Start in [gui.md](gui.md)) and `test` to a user-started external `sil-kit-registry`—such as the official Vector `sil-kit-registry` started with `--dashboard-uri`—so Vector SIL Kit Dashboard displays each run's participants (`SimulationController` and every started participant), lifecycle state transitions, and network topology.
+
+```sh
+# 1. Start Vector SIL Kit Dashboard separately (browser UI on 8080, OTLP/REST ingestion on 8082),
+#    then start an official Dashboard-capable sil-kit-registry once:
+sil-kit-registry --listen-uri silkit://127.0.0.1:8500 --dashboard-uri http://localhost:8082
+
+# 2. Run any existing scenario or configuration through the external registry:
+vehicle_sil_launch run --external-registry silkit://127.0.0.1:8500 \
+  --speed 1 --scenario scenarios/throttle_step.yaml simulation.yaml
+```
+
+- **Opt-in and loopback only**: Without `--external-registry`, `vehicle_sil_launch` starts its own in-process registry as before. `--external-registry` accepts loopback addresses only (`127.x.x.x`, `[::1]`, `localhost`), a concrete port from `1` to `65535`, and no `/path`, `?query` or `#fragment`. It cannot be combined with `registry_uri` in `simulation.yaml` (exit code 4).
+- **Per-run isolation (`silkit://<host>:<port>/vsil-<id>`)**: For every run, `vehicle_sil_launch` appends a fresh 16-hex-digit simulation name (`silkit://127.0.0.1:8500/vsil-<16hex>`) and passes that URI to `SimulationController` and every started participant (`registry_uri` in `run --json`, the `registry` event of `serve`, and `[vehicle_sil_launch] registry at ...`). Consecutive `run`, `serve`, and GUI **Start** → **Stop** → **Start** runs appear as separate Simulations in Vector SIL Kit Dashboard without mixing participant states or colliding with a closing connection from the previous run. Keep the external `sil-kit-registry` running across runs so its background worker finishes flushing `SimulationEnd` events.
+- **Unreachable external registry vs unreachable Dashboard**: If `sil-kit-registry` is not reachable at `--external-registry`, `SimulationController` fails during Stage 3 before any bridge or ECU process is started (`result: "setup_failed"`, exit code 3). If `sil-kit-registry` is running while Vector SIL Kit Dashboard is not reachable, `sil-kit-registry` logs warnings locally and the simulation still runs and completes normally.
+- **Participant Remote Metrics (`--silkit-config`)**: To view SIL Kit counters and statistics in Vector SIL Kit Dashboard for a participant, pass a SIL Kit participant configuration file with a `Remote` metrics sink in `participants[].command` (or in a `variants` entry) of `simulation.yaml`:
+
+```yaml
+# remote-metrics.silkit.yaml
+Experimental:
+  Metrics:
+    UpdateInterval: 1
+    Sinks:
+      - Type: Remote
+```
+
+```yaml
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu, --silkit-config, remote-metrics.silkit.yaml]
+    step_ms: 10
+```
+
+  `UpdateInterval` is measured in wall-clock seconds (minimum `1` second), so run paced (`--speed 1`, or an interactive GUI run) for at least 1–2 wall-clock seconds when inspecting periodic metrics; unpaced `--speed max` runs that finish in milliseconds complete before the first periodic flush.
 
 ## See also
 
