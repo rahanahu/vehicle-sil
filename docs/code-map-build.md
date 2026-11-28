@@ -106,7 +106,7 @@ Where to change:
 - The version in `template/README.md` and `template/README.ja.md`
 - The heading `## [<version>] - Unreleased` in `CHANGELOG.md`
 
-After updating the root `CMakeLists.txt`, `scripts/package.py version --sync` updates the files above (except `CHANGELOG.md`) and runs `uv lock --offline` when `uv.lock` needs updating (`--dry-run` previews without writing).
+After updating the root `CMakeLists.txt`, `scripts/package.py version --sync` updates the files above (except `CHANGELOG.md`), updates the workspace member versions directly in `uv.lock`, and verifies `uv.lock` offline with `uv lock --check --offline` without re-resolving third-party dependencies or needing a warm PyPI cache (`--dry-run` previews without writing).
 
 Notes on Python packaging:
 
